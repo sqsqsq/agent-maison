@@ -621,6 +621,40 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: 'D-1（plan c4e7a9b2 §3.5）testing FAIL → phase_backtrack_requested(invalidated coding/review/ut) → coding phase_start：当前阶段 = coding',
+    run: () => {
+      const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+      let t = 0;
+      const ts = (): string => new Date(Date.UTC(2026, 5, 10, 12, 0, t++)).toISOString();
+      const events: Array<Record<string, unknown>> = [{ ts: ts(), type: 'run_start', chain }];
+      for (const phase of chain.slice(0, -1)) {
+        events.push(
+          { ts: ts(), type: 'phase_start', phase, attempt: 1 },
+          { ts: ts(), type: 'phase_verdict', phase, verdict: 'PASS', action: 'advance' },
+        );
+      }
+      events.push(
+        { ts: ts(), type: 'phase_start', phase: 'testing', attempt: 1 },
+        { ts: ts(), type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'backtrack_to_phase' },
+        {
+          ts: ts(), type: 'phase_backtrack_requested', phase: 'testing', from_phase: 'testing', to_phase: 'coding',
+          invalidated_phases: ['coding', 'review', 'ut'], reason: 'repair_candidates', backtracks_used: 1, backtracks_limit: 2,
+        },
+        { ts: ts(), type: 'phase_start', phase: 'coding', attempt: 2 },
+        { ts: ts(), type: 'agent_invoke_start', phase: 'coding' },
+      );
+      const snap = projectGoalProgress({
+        projectRoot: '/tmp', manifest: mkManifest(), events: events as unknown as GoalRunEvent[], workflow,
+        nowMs: Date.UTC(2026, 5, 10, 12, 1, 0),
+      });
+      assert(snap.chain.current_phase === 'coding', `current_phase=${snap.chain.current_phase}`);
+      assert(snap.phase.name === 'coding' && snap.phase.status === 'AGENT_RUNNING', JSON.stringify(snap.phase));
+      const status = Object.fromEntries(snap.phases_summary.map(p => [p.phase, p.status]));
+      assert(status.spec === 'PASSED' && status.plan === 'PASSED', JSON.stringify(status));
+      assert(status.review === 'NOT_STARTED' && status.ut === 'NOT_STARTED' && status.testing === 'NOT_STARTED', JSON.stringify(status));
+    },
+  },
+  {
     name: 'applyFreshnessDegradation liveProbe: pid dead → ORPHAN branch',
     run: () => {
       const snap = projectGoalProgress({

@@ -3914,6 +3914,10 @@ export function runAll(): UnitCaseResult[] {
     { id: 'add_card_result', refId: 'result_ref', specId: 'add_result' },
   ];
   const JDG_ANCHORS = ['添加卡片', '中信银行', '短信验证码'];
+  const JDG_DECLARED_ANCHORS: Record<string, string[]> = {
+    card_type_sheet: ['cts_close', 'cts_protocol', 'cts_title', 'cts_confirm', 'cts_logo'],
+    sms_verification_sheet: ['sms_close'],
+  };
 
   /**
    * plan e7a2c4f1 §5 夹具硬要求：ui-spec 节点带真实文本锚；spec.md 写
@@ -3949,6 +3953,9 @@ export function runAll(): UnitCaseResult[] {
       schema_version: '1.0', verified: 'unverified', assets: [], tokens: {},
       screens: JDG_SCREENS.map(s => ({
         id: s.id, priority: 'P0', ref_id: opts.alignRefIds ? s.specId : s.refId,
+        // plan c4e7a9b2 三轮返修：返修授权要求缺陷锚点已在 ui-spec 声明（宿主实况 13/13 锚点均声明）；
+        // 本夹具各用例缺陷所挂的锚点按宿主形态声明为屏级必备元素。
+        ...(JDG_DECLARED_ANCHORS[s.id] ? { must_have_elements: JDG_DECLARED_ANCHORS[s.id] } : {}),
         root: {
           id: `${s.id}_root`, type: 'navigation_frame', order: 0,
           children: JDG_ANCHORS.slice(0, anchorCount).map((text, i) => ({
@@ -4328,6 +4335,257 @@ export function runAll(): UnitCaseResult[] {
           }
         });
       }
+    });
+  });
+
+  // ==========================================================================
+  // plan c4e7a9b2 t2（A2）：视觉缺陷有锚点 ≠ 修复有授权。宿主 ae92d8 形态：add_card_result
+  // 屏 missing_render 挂在合法锚点 result_done 上、要的是参考图里的 NFC 卡（需求原句明确排除）。
+  // 全部走 checkVisualDiff → loadVisualScreenVerdicts / deriveVisualDebt 生产路径。
+  // ==========================================================================
+  const NFC_QUOTE = '再往下的激活nfc部分本次先不需要';
+  const nfcDefect = (extra: Record<string, unknown> = {}) => ({
+    class: 'missing_render', element: 'result_done', ref_element: 'result_nfc_card', severity: 'major',
+    note: 'reference shows a grey NFC activation card above result_done', must_fix_refs: [0],
+    source: { producer: 'visual_provider', invoke_id: 'review-i1' }, ...extra,
+  });
+  /** add_card_result（第 4 屏）= 宿主形态：verdict=fail，唯一 must_fix 只由 NFC 缺陷支撑 */
+  const nfcPatch = (defect: Record<string, unknown>, more: Record<string, unknown> = {}) =>
+    (_id: string, i: number): Record<string, unknown> => (i === 3 ? {
+      verdict: 'fail',
+      must_fix: ['Add the NFC activation card above result_done'],
+      defects: [defect],
+      ...more,
+    } : {});
+  const writeRefElements = (root: string, elements: Array<Record<string, unknown>>): void => {
+    fs.writeFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'ref-elements.yaml'),
+      JSON.stringify({ schema_version: '1.0', elements }));
+  };
+  const NFC_EXCLUDED = { element_id: 'result_nfc_card', disposition: 'excluded', requirement_quote: NFC_QUOTE };
+  const RESULT_DONE_IMPL = { element_id: 'add_card_result_t0', disposition: 'implement' };
+  const withA2 = (
+    patch: ((id: string, i: number) => Record<string, unknown>) | undefined,
+    refElements: Array<Record<string, unknown>> | null,
+    fn: (root: string) => void,
+  ): void => {
+    const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true, anchorCount: 3, patch });
+    try {
+      if (refElements) writeRefElements(root, refElements);
+      fn(root);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+  const openDebtIds = (gate: JdgGate): string[] =>
+    deriveVisualDebt('bank-card', [gate as never], null).entries.filter(e => e.status === 'open').map(e => e.id).sort();
+
+  run('c4e7a9b2 A2-1 excluded NFC defect: gate does not FAIL on it, no must-fix hit, no visual debt, one-line disclosure', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      let control: JdgGate | null = null;
+      withA2(undefined, [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        control = runTieringCheck(root);
+        // `=== 'implement'` 分母：excluded 不是必须实现的元素（visual-diff 双向残差 + capture-completeness 同口径）
+        if (/ref-elements implement 未进 ui-spec/.test(control.details ?? '')) {
+          throw new Error(`excluded 元素不得被当成 implement 残差：${control.details}`);
+        }
+        const specMd = fs.readFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'), 'utf-8');
+        const cc = checkCaptureCompleteness(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd)
+          .find(r => r.id === 'capture_completeness');
+        if (cc && (cc.status === 'FAIL' || (cc.details ?? '').includes('result_nfc_card'))) {
+          throw new Error(`capture-completeness 不得把 excluded 当缺失：${cc.status} / ${cc.details}`);
+        }
+      });
+      withA2(nfcPatch(nfcDefect()), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status !== control!.status) {
+          throw new Error(`excluded 缺陷不得改变门禁结论：对照 ${control!.status} / 实得 ${gate.status}：${gate.details}`);
+        }
+        if (/must-fix：/.test(gate.details ?? '')) throw new Error(`excluded 缺陷不得进 must-fix 命中：${gate.details}`);
+        if (!gate.details?.includes('需求排除项') || !gate.details.includes(NFC_QUOTE)) {
+          throw new Error(`details 须一行披露需求排除项与引文：${gate.details}`);
+        }
+        if (JSON.stringify(openDebtIds(gate)) !== JSON.stringify(openDebtIds(control!))) {
+          throw new Error(`excluded 不得进视觉债务：${JSON.stringify(openDebtIds(gate))}`);
+        }
+        if ((gate.structured?.downgraded_screens ?? []).includes('add_card_result')) {
+          throw new Error('excluded 缺陷不得被当成降级残差入账');
+        }
+      });
+    });
+  });
+
+  run('c4e7a9b2 A2-2 unregistered ref_element: gate does not FAIL on it, disclosure names the element and the three registrations', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      withA2(nfcPatch(nfcDefect()), [RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status === 'FAIL') throw new Error(`范围不明不得 FAIL：${gate.details}`);
+        if (/must-fix：/.test(gate.details ?? '')) throw new Error(`范围不明不得进 must-fix 命中：${gate.details}`);
+        for (const must of ['result_nfc_card', 'implement', 'defer', 'excluded', 'spec']) {
+          if (!gate.details?.includes(must)) throw new Error(`披露须含「${must}」：${gate.details}`);
+        }
+        if (gate.structured?.channel_evidence_usable !== true) {
+          throw new Error(`范围不明不否决证据：${JSON.stringify(gate.structured)}`);
+        }
+      });
+    });
+  });
+
+  run('c4e7a9b2 A2-5 declared element shape_mismatch still fails the strict gate and refuses evidence (no regression)', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      const real = { class: 'shape_mismatch', element: 'add_card_result_t0', bbox: [0.3, 0.1, 0.4, 0.2], severity: 'major',
+        note: 'result_status icon too small', must_fix_refs: [0] };
+      withA2(nfcPatch(real, { must_fix: ['Enlarge result_status to 72vp'] }), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status !== 'FAIL' || !/must-fix：/.test(gate.details ?? '')) {
+          throw new Error(`已声明元素的真实缺陷照旧一档：${gate.status} / ${gate.details}`);
+        }
+        if (gate.structured?.channel_evidence_usable !== false || gate.structured?.evidence_block_owner !== 'coding') {
+          throw new Error(`真实缺陷仍须否决证据、责任 coding：${JSON.stringify(gate.structured)}`);
+        }
+      });
+    });
+  });
+
+  run('c4e7a9b2 A2-6 effective view: fail screen whose only defect is excluded leaves failScreens/must_fix/product truth/evidence; a real defect on the same screen still fails', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      withA2(nfcPatch(nfcDefect()), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (!/fail=0/.test(gate.details ?? '')) throw new Error(`有效视图 fail 屏须为 0：${gate.details}`);
+        if (gate.structured?.channel_evidence_usable !== true || gate.structured?.evidence_block_owner !== null) {
+          throw new Error(`productTruthIntact 不得被 excluded 否决：${JSON.stringify(gate.structured)}`);
+        }
+        const visual = loadVisualScreenVerdicts({
+          projectRoot: root, feature: 'bank-card', currentBuildFingerprint: null, visualGate: gate as never,
+        });
+        const v = visual.byScreen.get('add_card_result');
+        if (!visual.available || v?.usable !== true) throw new Error(`该屏视觉证据须可消费：${JSON.stringify(v)} / ${visual.detail}`);
+        const raw = JSON.parse(fs.readFileSync(path.join(root, 'doc', 'features', 'bank-card', 'device-testing',
+          'device-screenshots', 'visual-diff.json'), 'utf-8')) as { screens: Array<{ screen_id: string; verdict: string; defects?: unknown[] }> };
+        const rawScreen = raw.screens.find(s => s.screen_id === 'add_card_result');
+        if (rawScreen?.verdict !== 'fail' || rawScreen.defects?.length !== 1) throw new Error('原始观察须原样保留在报告里');
+      });
+      const real = { class: 'shape_mismatch', element: 'add_card_result_t0', bbox: [0.3, 0.1, 0.4, 0.2], severity: 'major',
+        note: 'result_status icon too small', must_fix_refs: [1] };
+      withA2(nfcPatch(nfcDefect(), {
+        must_fix: ['Add the NFC activation card above result_done', 'Enlarge result_status to 72vp'],
+        defects: [nfcDefect(), real],
+      }), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status !== 'FAIL' || !/Enlarge result_status/.test(gate.details ?? '')) {
+          throw new Error(`同屏真实缺陷照常 FAIL：${gate.status} / ${gate.details}`);
+        }
+        if (/Add the NFC activation card/.test(gate.details ?? '')) throw new Error(`excluded 支撑的 must_fix 不得出现在命中里：${gate.details}`);
+        if (gate.structured?.channel_evidence_usable !== false) throw new Error('同屏真实缺陷仍否决证据');
+      });
+    });
+  });
+
+  run('c4e7a9b2 返修#2 reverse_missing 读有效视图：仅 excluded 元素 → 不 FAIL、无债务；混有真实缺失 → 照常 FAIL 且只列真实元素', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      let control: JdgGate | null = null;
+      withA2(nfcPatch(nfcDefect()), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => { control = runTieringCheck(root); });
+      withA2(nfcPatch(nfcDefect(), { reverse_missing: ['result_nfc_card'] }), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status !== control!.status || /反向 diff 残差/.test(gate.details ?? '')) {
+          throw new Error(`excluded 元素进 reverse_missing 不得成为残差：对照 ${control!.status} / 实得 ${gate.status}：${gate.details}`);
+        }
+        if (JSON.stringify(openDebtIds(gate)) !== JSON.stringify(openDebtIds(control!))) {
+          throw new Error(`excluded reverse_missing 不得进视觉债务：${JSON.stringify(openDebtIds(gate))}`);
+        }
+      });
+      // 三轮返修#2 对照：混入的是 ref-elements 登记 implement 的真实缺失元素 → 仍阻断
+      withA2(nfcPatch(nfcDefect(), { reverse_missing: ['result_nfc_card', 'result_qr_hint'] }),
+        [NFC_EXCLUDED, RESULT_DONE_IMPL, { element_id: 'result_qr_hint', disposition: 'implement' }], (root) => {
+        const gate = runTieringCheck(root);
+        const line = (gate.details ?? '').split('\n').find(l => l.includes('反向 diff 残差')) ?? '';
+        if (gate.status !== 'FAIL' || !line.includes('result_qr_hint') || line.includes('result_nfc_card')) {
+          throw new Error(`真实缺失照常 FAIL 且只列真实元素：${gate.status} / ${gate.details}`);
+        }
+      });
+    });
+  });
+
+  run('c4e7a9b2 三轮返修#1 排除范围优先于缺陷分类：excluded NFC 写成 shape_mismatch / other 仍不返修；锚点未登记的非 missing_render → scope_unclear WARN', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      let control: JdgGate | null = null;
+      withA2(undefined, [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => { control = runTieringCheck(root); });
+      for (const cls of ['shape_mismatch', 'other']) {
+        withA2(nfcPatch(nfcDefect({ class: cls })), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+          const gate = runTieringCheck(root);
+          if (gate.status !== control!.status || /must-fix：/.test(gate.details ?? '')) {
+            throw new Error(`${cls}：excluded 元素换分类不得重获返修：对照 ${control!.status} / 实得 ${gate.status}：${gate.details}`);
+          }
+          if (!gate.details?.includes('需求排除项')) throw new Error(`${cls}：须按需求排除项披露：${gate.details}`);
+        });
+      }
+      const undeclared = { class: 'shape_mismatch', element: 'result_mystery_banner', bbox: [0.3, 0.1, 0.4, 0.2], severity: 'major',
+        note: 'banner looks different', must_fix_refs: [0] };
+      withA2(nfcPatch(undeclared, { must_fix: ['Restyle result_mystery_banner'] }), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status === 'FAIL' || /must-fix：/.test(gate.details ?? '') || !gate.details?.includes('result_mystery_banner')) {
+          throw new Error(`锚点未登记不直接授权：WARN 披露、不返修：${gate.status} / ${gate.details}`);
+        }
+      });
+    });
+  });
+
+  run('c4e7a9b2 四轮：excluded NFC 以 provider shape_mismatch 无 element 重述 → 与 missing_render 缺 ref_element 同路（证据不可消费待重评，不静默放行、不冒充排除项）', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      const restated = { class: 'shape_mismatch', bbox: [0.05, 0.55, 0.9, 0.2], severity: 'major',
+        note: 'Add NFC activation card', must_fix_refs: [0], source: { producer: 'visual_provider', invoke_id: 'review-i1' } };
+      const { ref_element: _r, ...noRef } = nfcDefect();
+      const shape = (gate: JdgGate) => [gate.status, gate.structured?.channel_evidence_usable,
+        /需求排除项/.test(gate.details ?? ''), /未在 ui-spec \/ ref-elements 登记/.test(gate.details ?? '')];
+      let control: unknown[] = [];
+      withA2(nfcPatch(noRef), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => { control = shape(runTieringCheck(root)); });
+      withA2(nfcPatch(restated), [NFC_EXCLUDED, RESULT_DONE_IMPL], (root) => {
+        const got = shape(runTieringCheck(root));
+        if (JSON.stringify(got) !== JSON.stringify(control)) {
+          throw new Error(`须与 missing_render 缺 ref_element 同路：对照 ${JSON.stringify(control)} / 实得 ${JSON.stringify(got)}`);
+        }
+        if (got[1] !== false) throw new Error(`证据不全不得被当可消费（静默放行）：${JSON.stringify(got)}`);
+      });
+    });
+  });
+
+  run('c4e7a9b2 三轮返修#2 未登记元素进 reverse_missing：与缺陷通道一致按范围不明披露、不 FAIL', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      withA2(nfcPatch(nfcDefect(), { reverse_missing: ['result_nfc_card'] }), [RESULT_DONE_IMPL], (root) => {
+        const gate = runTieringCheck(root);
+        if (gate.status === 'FAIL' || /反向 diff 残差/.test(gate.details ?? '')) {
+          throw new Error(`未登记元素不得经 reverse_missing 再次 FAIL：${gate.status} / ${gate.details}`);
+        }
+        if (!/result_nfc_card[^\n]*未在 ui-spec \/ ref-elements 登记/.test(gate.details ?? '')) {
+          throw new Error(`须按范围不明披露：${gate.details}`);
+        }
+      });
+    });
+  });
+
+  run('c4e7a9b2 返修#3 缺 disposition 的旧 ref-elements 条目读兼容为 implement：capture-completeness 1/2 FAIL、双向残差照报', () => {
+    if (!isJimpAvailable()) return;
+    withoutVisualProvider(() => {
+      withA2(undefined, [RESULT_DONE_IMPL, { element_id: 'legacy_uncovered_badge' }], (root) => {
+        const specMd = fs.readFileSync(path.join(root, 'doc', 'features', 'bank-card', 'spec', 'spec.md'), 'utf-8');
+        const cc = checkCaptureCompleteness(baseCtx(root, { fidelityTarget: 'pixel_1to1' }), specMd)
+          .find(r => r.id === 'capture_completeness');
+        if (cc?.status !== 'FAIL' || !(cc.details ?? '').includes('legacy_uncovered_badge')) {
+          throw new Error(`旧条目须计入分母（1/2 FAIL）：${cc?.status} / ${cc?.details}`);
+        }
+        const gate = runTieringCheck(root);
+        if (!/ref-elements implement 未进 ui-spec[^\n]*legacy_uncovered_badge/.test(gate.details ?? '')) {
+          throw new Error(`旧条目仍须进双向残差：${gate.details}`);
+        }
+      });
     });
   });
 
@@ -5439,7 +5697,8 @@ export function runAll(): UnitCaseResult[] {
       const uiSpec = JSON.stringify({
         schema_version: '1.0',
         screens: [
-          { id: 'home', priority: 'P0', ref_id: 'home', root: { type: 'navigation_frame', order: 0, children: [] } },
+          // plan c4e7a9b2 三轮返修：下方人工裁决缺陷挂在 close 上——锚点须已声明才有返修授权
+          { id: 'home', priority: 'P0', ref_id: 'home', must_have_elements: ['close'], root: { type: 'navigation_frame', order: 0, children: [] } },
           { id: 'all_banks', priority: 'P0', ref_id: 'all_banks', root: { type: 'navigation_frame', order: 0, children: [] } },
         ],
         tokens: {},

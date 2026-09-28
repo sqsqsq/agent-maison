@@ -146,13 +146,18 @@ elements:
   - element_id: search_bar
     zone: top_nav
     type: search_field
-    disposition: implement   # implement | defer
+    disposition: implement   # implement | defer | excluded
   - element_id: nfc_entry
     disposition: defer       # pixel_1to1/P0 下 defer 是 BLOCKER，legacy human_signed 不放行
+  - element_id: result_nfc_card
+    disposition: excluded    # 需求明文排除：requirement_quote 逐字复制需求原句
+    requirement_quote: "再往下的激活nfc部分本次先不需要"
 ```
 
 - `pixel_1to1` 下 `disposition: defer` 是未满足的 strict 质量义务；`fidelity_deferrals` 仅用于兼容披露，`human_signed`/`signed_by` 不改变结论
 - `disposition: implement` 须被 ui-spec 节点 id 或 `must_have_elements` 覆盖
+- `disposition: excluded`（需求明文排除，≠ defer）：必带 `requirement_quote`，须逐字出现在需求原文，且该元素不得进 ui-spec，否则 `ref_elements_excluded` BLOCKER；参考图有而需求明确不要的元素（如"激活 NFC 本次先不需要"）一律登记 excluded——不是质量义务、不进 `fidelity_deferrals`/视觉债务，testing 对它的 `missing_render` 缺陷不返修
+- testing 的 `missing_render` 缺陷以 `ref_element` 指向本清单的 `element_id`；任何类别的缺陷只要 `ref_element` 或锚点 `element` 登记为 excluded 都不返修；缺失元素 / 缺陷锚点 / `reverse_missing` 条目在 ui-spec 与本清单都未登记时不作返修依据，只 WARN 交 spec 澄清；`missing_render` 缺 `ref_element`、其余类缺 `element`判证据不全须重评——所以参考图上每个可见元素都应在此登记 implement / defer / excluded
 
 ## 素材清单：`asset-manifest.yaml`（v2.4+）
 

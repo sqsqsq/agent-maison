@@ -31,6 +31,7 @@ import { resolveEffectiveDiffBaseline } from './git-diff';
 import { resolveEffectiveScopeSource } from './goal-run-creation';
 import { readRunBoundContracts, type ResolvedPhaseInputs } from './capability-resolution';
 import {
+  evidenceEntryMatchesCurrentFile,
   loadPhaseEvidenceManifest,
 } from './phase-evidence-manifest';
 import { diffChangedFilesWithStatus, readFileAtRef, StatusDiffEntry } from './git-diff';
@@ -260,7 +261,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
       suggestion: '恢复 contracts.yaml 或重跑 plan 重新闭环。',
     };
   }
-  if (liveSha !== contractsEntry.sha256) {
+  if (!evidenceEntryMatchesCurrentFile(projectRoot, contractsEntry, feature)) {
     return {
       status: 'FAIL',
       failureKind: 'ui_scope_frozen_contract_missing',

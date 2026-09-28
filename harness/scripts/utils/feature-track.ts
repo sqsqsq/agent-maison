@@ -8,6 +8,7 @@ import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } fr
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
+import { authoritativeContentDrift, describeAuthoritativeDrift } from './blueprint-skill-projection';
 import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { inferRepoLayout } from '../../repo-layout';
@@ -496,9 +497,13 @@ function deriveDefinitionContext(
 ): {
   contracts?: InputBinding; acceptance?: InputBinding; writeSet: string[]; writeSetBinding?: InputBinding;
   wantsImplementation: boolean; designAvailable: boolean; acceptanceAvailable: boolean;
+  /** plan c4e7a9b2 A1：手写产物与当前设计权威的对齐缺口（人读）；对齐 / 不适用为 undefined。 */
+  acceptanceGap?: string; contractsGap?: string;
 } {
-  const contracts = candidateBinding(ctx, 'plan', 'contracts');
-  const acceptance = candidateBinding(ctx, 'ut', 'acceptance');
+  const contractsInput = candidateInput(ctx, 'plan', 'contracts');
+  const acceptanceInput = candidateInput(ctx, 'ut', 'acceptance');
+  const contracts = contractsInput?.binding;
+  const acceptance = acceptanceInput?.binding;
   const implementationPhases = workflow.artifacts
     .filter(artifact => (OBLIGATION_PROVIDERS[artifact.obligation_provider_id ?? ''] ?? []).includes('implementation'))
     .map(artifact => artifact.id);
@@ -512,7 +517,25 @@ function deriveDefinitionContext(
     contracts, acceptance, writeSet, writeSetBinding, wantsImplementation,
     designAvailable: !!contracts && (!wantsImplementation || writeSet.length > 0),
     acceptanceAvailable: !!acceptance,
+    acceptanceGap: authorityGapOf(ctx, 'acceptance', acceptanceInput),
+    contractsGap: authorityGapOf(ctx, 'contracts', contractsInput),
   };
+}
+
+/**
+ * plan c4e7a9b2 §3.1 A1：按 artifact 绑定的手写验收 / 设计（值取同一 P1 解析器的规范化结果）与当前规范化投影的对齐缺口。
+ * 候选派生、修订重算与 `assessFeature` 共用；derive 来源的值本身就是投影，不比。
+ */
+export function definitionAuthorityGap(ctx: { projectRoot: string; frameworkRoot: string; feature: string }, kind: 'acceptance' | 'contracts'): string | undefined {
+  return authorityGapOf(ctx, kind, candidateInput(ctx, kind === 'acceptance' ? 'ut' : 'plan', kind));
+}
+function authorityGapOf(
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string },
+  kind: 'acceptance' | 'contracts',
+  input: { binding: InputBinding; value: unknown } | undefined,
+): string | undefined {
+  if (!input || input.binding.source.kind !== 'artifact') return undefined;
+  return describeAuthoritativeDrift(authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, input.value), kind);
 }
 
 /**
@@ -553,6 +576,9 @@ export function recomputeDefinitionFacts(
       fact.applicability = 'required';
       fact.basis = [binding];
       fact.reason = design ? '已有设计可用' : '已有验收可用';
+      // A1：手写产物与当前设计权威不一致 → 责任仍在、未兑现（出生与修订共用，防修订输入带回满足证明）。
+      const gap = design ? derived.contractsGap : derived.acceptanceGap;
+      if (gap) { delete fact.satisfied_by; fact.reason = gap; }
     } else {
       // 来源不可用 → **无条件**清掉满足证明（含 `onlyTighten` 的修订路径）：那份「证明」
       // 同样是自报，留着会让 `execution-scope.ts` 把这条责任当成「已兑现」而跳过责任阶段。
@@ -587,6 +613,15 @@ function candidateBinding(
   inputId: string,
   testTargets: string[] = [],
 ): InputBinding | undefined {
+  return candidateInput(ctx, phase, inputId, testTargets)?.binding;
+}
+
+function candidateInput(
+  ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string; requirementSourceFiles?: string[] },
+  phase: string,
+  inputId: string,
+  testTargets: string[] = [],
+): { binding: InputBinding; value: unknown } | undefined {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
   /* eslint-enable @typescript-eslint/no-require-imports */
@@ -598,7 +633,7 @@ function candidateBinding(
       ...(ctx.requirementSourceFiles?.length ? { requirementSourceFiles: ctx.requirementSourceFiles } : {}),
       inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
     }).inputs?.values?.[inputId];
-    return value && value.state === 'resolved' ? value.binding : undefined;
+    return value && value.state === 'resolved' ? { binding: value.binding, value: value.value } : undefined;
   } catch {
     return undefined;
   }
@@ -675,12 +710,14 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   // 既没有缺口挡住 coding，resolver 又会自动补一条 basis 为空的 implementation 请求标记，
   // 等于放一条无来源的实现义务进链。降成 unknown 走既有 definition-gap 通路（与「压根没有
   // 契约」同一条路），只在**请求跳过设计阶段**时才拒绝（见下方 fail-closed）。
-  if (derived.designAvailable) facts.push({ id: 'design-context:candidate', kind: 'design-context', applicability: 'required', reason: '已有设计可用', basis: [contracts!], satisfied_by: [contracts!] });
+  // A1（plan c4e7a9b2 §3.1）：手写产物与当前设计权威不一致时责任仍 required、不写 satisfied_by——责任阶段入链对齐，
+  // 下游按链序等待；出生不拒绝。
+  if (derived.designAvailable) facts.push({ id: 'design-context:candidate', kind: 'design-context', applicability: 'required', reason: derived.contractsGap ?? '已有设计可用', basis: [contracts!], ...(derived.contractsGap ? {} : { satisfied_by: [contracts!] }) });
   else if (contracts) facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）', basis: [contracts] });
   // 缺设计 ≠ 没有设计责任：落一条 unknown 的 design-context（owner=plan），由既有 definition-gap
   // 通路把下游（含 coding）挂进 needed_by，等设计阶段产出 contracts 后再由 D0.3/D2 同 run 补链。
   else facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '本 feature 尚无可解析的设计来源（仅有需求）', basis: gapBasis });
-  if (acceptance) facts.push({ id: 'acceptance-context:candidate', kind: 'acceptance-context', applicability: 'required', reason: '已有验收可用', basis: [acceptance], satisfied_by: [acceptance] });
+  if (acceptance) facts.push({ id: 'acceptance-context:candidate', kind: 'acceptance-context', applicability: 'required', reason: derived.acceptanceGap ?? '已有验收可用', basis: [acceptance], ...(derived.acceptanceGap ? {} : { satisfied_by: [acceptance] }) });
   // 缺验收 ≠ 没有验收责任：落一条 unknown 的 acceptance-context（resolver 会把它送进
   // unresolved、owner=spec），不静默省略、也不伪造蓝图（需求 D0.2 原文）。
   else facts.push({ id: 'acceptance-context:pending', kind: 'acceptance-context', applicability: 'unknown', reason: '本 feature 尚无可解析的验收来源', basis: gapBasis });

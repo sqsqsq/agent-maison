@@ -768,6 +768,12 @@ export function runAll(): UnitCaseResult[] {
     });
     w(f.root, `doc/features/${FEATURE}/device-testing/device-screenshots/visual-diff.json`,
       JSON.stringify({ schema_version: '1.1', screens: rows }, null, 2));
+    // plan c4e7a9b2 三轮返修：返修授权要求缺陷锚点已登记（宿主实况 13/13 锚点均在 ui-spec）。
+    // 本夹具 UI_SPEC 只建模两屏，其余锚点按参考图侧 implement 登记，等价宿主"锚点已声明"。
+    const anchors = [...new Set(screens.flatMap(sc => sc.defects.map(d => (d as { element?: string }).element).filter(Boolean)))];
+    w(f.root, `doc/features/${FEATURE}/spec/ref-elements.yaml`, JSON.stringify({
+      schema_version: '1.0', elements: anchors.map(element_id => ({ element_id, disposition: 'implement' })),
+    }));
     return rows;
   }
   /** plan 6644ea45：gate 物化 downgraded_screens 的同一判定（唯一判定点，这里直接复用） */

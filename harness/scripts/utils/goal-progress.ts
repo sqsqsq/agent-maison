@@ -289,25 +289,36 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
   }));
 
   const spanByPhase = new Map(chain.map((p, i) => [p, i]));
+  const resetSpan = (j: number): void => {
+    spans[j] = {
+      phase: chain[j],
+      attempt: 0,
+      started_at: null,
+      ended_at: null,
+      status: 'NOT_STARTED',
+      substep: null,
+      recovered: false,
+      ended: false,
+      deferred: false,
+      halted: false,
+    };
+  };
 
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
 
     if (e.type === 'resume') {
       const startIndex = Math.max(0, Math.min(e.start_index ?? 0, spans.length));
-      for (let j = startIndex; j < spans.length; j++) {
-        spans[j] = {
-          phase: chain[j],
-          attempt: 0,
-          started_at: null,
-          ended_at: null,
-          status: 'NOT_STARTED',
-          substep: null,
-          recovered: false,
-          ended: false,
-          deferred: false,
-          halted: false,
-        };
+      for (let j = startIndex; j < spans.length; j++) resetSpan(j);
+      continue;
+    }
+    // plan c4e7a9b2 §3.5：回退失效的阶段与来源阶段重置（同 resume）——否则 `ended` 锁存让重跑的
+    // phase_start 被挡、当前阶段停在来源阶段。
+    if (e.type === 'phase_backtrack_requested') {
+      const b = e as { from_phase?: string; invalidated_phases?: string[] };
+      for (const p of [...(b.invalidated_phases ?? []), b.from_phase ?? e.phase]) {
+        const j = spanByPhase.get(p as FeaturePhase);
+        if (j !== undefined) resetSpan(j);
       }
       continue;
     }

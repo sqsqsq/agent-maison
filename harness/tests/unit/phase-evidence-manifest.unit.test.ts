@@ -30,8 +30,16 @@ import {
 } from '../../scripts/utils/phase-evidence-manifest';
 import { resolveFactsAbsPath, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { readBoundInput, resolveCapabilityInputs, type InputBinding } from '../../scripts/utils/capability-resolution';
+import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
+import { changeUnitPath } from '../../scripts/utils/change-unit-path';
+import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
+import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
+import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import type { Phase } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import * as crypto from 'crypto';
+import * as YAML from 'yaml';
 
 const FEATURE = 'ev-manifest-fixture';
 
@@ -68,6 +76,54 @@ function writeManifestWithPointer(root: string, phase: string): void {
   const written = writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: phase as Phase, now: FIXED_NOW }));
   writeReceiptManifestPointer(root, FEATURE, phase, `doc/features/${FEATURE}/${phase}/reports/phase-evidence-manifest.json`, written.sha256);
 }
+
+// ---- plan c4e7a9b2 §6 B2：已证明业务内容相同的身份更新不触发重验（上一版宿主快照的 CU Feature） ----
+const B2_BLUEPRINT = 'ledger-app-blueprint';
+type Snapshot = ReturnType<typeof loadHostSnapshot>;
+type Blueprint = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+function withCuSnapshot(run: (s: Snapshot) => void): void {
+  const s = loadHostSnapshot();
+  try {
+    clearFrameworkConfigCache();
+    run(s);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(s.root, { recursive: true, force: true });
+  }
+}
+/** 蓝图升一个 revision 并改内容 → 生产调和 writer 原位升版 CU 指针、刷新派生投影。 */
+function bumpAndReconcile(s: Snapshot, mutate: (bp: Blueprint) => void): ReturnType<typeof reconcileChangeUnitBlueprintRefs> {
+  const file = componentBlueprintPath(s.root, B2_BLUEPRINT);
+  const bp = YAML.parse(fs.readFileSync(file, 'utf8')) as Blueprint;
+  bp.revision = Number(bp.revision) + 1;
+  for (const result of bp.derived_results ?? []) result.input_revision = bp.revision;
+  mutate(bp);
+  fs.writeFileSync(file, YAML.stringify(bp));
+  clearFrameworkConfigCache();
+  return reconcileChangeUnitBlueprintRefs(s.root, B2_BLUEPRINT);
+}
+const bumped = (r: ReturnType<typeof reconcileChangeUnitBlueprintRefs>): boolean => r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length;
+/** 本 CU（ledger-refresh）未消费的蓝图内容：开放缺口的解锁条件。 */
+export const changeUnconsumedBlueprintContent = (bp: Blueprint): void => { bp.decisions_and_gaps.gaps[0].unlock_condition += '（措辞调整）'; };
+/** 本 CU 消费的 target（design_refs 与 touches 都指向的 development 节点 ledger-module）的内容；不进派生投影。 */
+export const changeConsumedTargetContent = (bp: Blueprint): void => {
+  const node = (bp.design_views as Blueprint[]).flatMap(view => view.nodes ?? []).find((n: Blueprint) => n.node_id === 'ledger-module');
+  assert(node, '快照蓝图缺 ledger-module');
+  node.target_state += '（目标态调整）';
+};
+function b2Files(s: Snapshot): string[] {
+  return [
+    changeUnitPath(s.root, B2_BLUEPRINT, 'ledger-refresh'), componentBlueprintPath(s.root, B2_BLUEPRINT),
+    ...['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => resolveFeatureArtifact(s.root, SNAPSHOT_CU_FEATURE, name).actualPath),
+  ];
+}
+const relOf = (s: Snapshot, abs: string): string => path.relative(s.root, abs).split(path.sep).join('/');
+/** 蓝图新增一条已裁决的 dependency_edge remove 架构影响决策（不进任何 CU 的 design_refs）。 */
+const addEdgeRemoval = (id: string, from: string, to: string) => (bp: Blueprint): void => {
+  bp.decisions_and_gaps.decisions.push({ decision_id: id, kind: 'architecture_impact', change: 'dependency_edge', from, to, direction: 'remove',
+    rationale: 'fixture', status: 'decided_with_authority', owner: 'architecture-owner', provenance: bp.provenance, verification_refs: [`verify:${id}`] });
+};
 
 interface Case { name: string; run: () => void }
 
@@ -483,6 +539,104 @@ const cases: Case[] = [
       assert.strictEqual(r2[0].verdict, 'missing');
       assert.strictEqual(r2[1].propagated_from, 'spec');
     },
+  },
+  {
+    name: 'B2-1/B2-2/B2-4 阶段证据：纯身份升版（改本 CU 未消费的蓝图内容）→ 新写证据 fresh、旧快照证据按字节 stale；改本 CU 消费的 target 内容 → 新写证据 stale',
+    run: () => withCuSnapshot(s => {
+      const feature = SNAPSHOT_CU_FEATURE;
+      const freshness = (phase: string) => recomputePhaseEvidenceStaleness(s.root, feature, [phase], { frameworkRoot: s.frameworkRoot })[0];
+      const files = b2Files(s);
+      writePhaseEvidenceManifest(s.root, resolvePhaseEvidenceManifest({ projectRoot: s.root, feature, phase: 'plan', extraInputs: files, frameworkRoot: s.frameworkRoot }));
+      assert.strictEqual(freshness('plan').verdict, 'fresh', '前提：新写证据当下 fresh');
+      assert.strictEqual(freshness('coding').verdict, 'fresh', '前提：快照 coding 证据当下 fresh');
+      const before = files.map(file => sha256File(file));
+      assert(bumped(bumpAndReconcile(s, changeUnconsumedBlueprintContent)), '前提：调和原位升版 ledger-refresh');
+      assert.deepStrictEqual(files.filter((file, i) => sha256File(file) === before[i]), [], '前提：五个登记文件字节都已变化（身份更新真实发生）');
+      const identityOnly = freshness('plan');
+      assert.strictEqual(identityOnly.verdict, 'fresh', `纯身份变化不得判 stale：${JSON.stringify(identityOnly)}`);
+      const legacy = freshness('coding');
+      assert(legacy.verdict === 'stale' && legacy.changed_paths.includes(relOf(s, files[0])), `旧格式证据仍按字节口径失效：${JSON.stringify(legacy)}`);
+      assert(bumped(bumpAndReconcile(s, changeConsumedTargetContent)), '前提：第二次调和原位升版');
+      const consumed = freshness('plan');
+      assert(consumed.verdict === 'stale' && consumed.changed_paths.includes(relOf(s, files[0])), `本 CU 消费的 target 内容变化必须失效：${JSON.stringify(consumed)}`);
+    }),
+  },
+  {
+    name: 'B2 授权边界：新增端点与本 CU 无关的架构影响决策 → 证据 fresh、绑定命中；新增端点落在本 CU 可修改模块的 dependency_edge remove → 证据 stale、绑定 stale',
+    run: () => withCuSnapshot(s => {
+      const feature = SNAPSHOT_CU_FEATURE;
+      // 快照 DSL 只有一个 dag 外层（层内依赖全允许），「删除边」在其下永远未生效、会被施工门挡在调和之外；
+      // 先把层内依赖改为 forbid（在写证据之前，环境指纹随证据一起定格），使 remove 决策合法生效。
+      const configFile = path.join(s.root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      config.architecture.outer_layers[0].intra_layer_deps = 'forbid';
+      fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+      clearFrameworkConfigCache();
+      const freshness = () => recomputePhaseEvidenceStaleness(s.root, feature, ['plan'], { frameworkRoot: s.frameworkRoot })[0];
+      writePhaseEvidenceManifest(s.root, resolvePhaseEvidenceManifest({ projectRoot: s.root, feature, phase: 'plan', extraInputs: b2Files(s), frameworkRoot: s.frameworkRoot }));
+      const inputs = resolveCapabilityInputs({
+        projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase: 'plan', track: 'full',
+        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+      }).inputs!.values;
+      const contracts = inputs.contracts;
+      assert(contracts?.state === 'resolved', `前提：plan.contracts 可解析：${JSON.stringify(contracts)}`);
+      const read = () => readBoundInput({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase: 'plan', track: 'full' }, contracts.binding);
+      const unrelated = bumpAndReconcile(s, addEdgeRemoval('edge-elsewhere', '04-BusinessBase', '05-Foundation'));
+      assert(bumped(unrelated), `前提：无关决策下调和原位升版：${JSON.stringify(unrelated)}`);
+      assert.strictEqual(freshness().verdict, 'fresh', `端点与本 CU 无关的决策不得使证据失效：${JSON.stringify(freshness())}`);
+      assert.doesNotThrow(read, '端点与本 CU 无关的决策不得使绑定失效');
+      const relevant = bumpAndReconcile(s, addEdgeRemoval('edge-from-ledger', 'ledger', 'FinancialCard'));
+      assert(bumped(relevant), `前提：相关决策下调和原位升版：${JSON.stringify(relevant)}`);
+      const result = freshness();
+      assert(result.verdict === 'stale' && result.changed_paths.includes(relOf(s, b2Files(s)[0])), `作用于本 CU 可修改模块的决策是授权边界，必须失效：${JSON.stringify(result)}`);
+      assert.throws(read, /input binding stale/, '作用于本 CU 可修改模块的决策必须使 contracts 绑定失效');
+    }),
+  },
+  {
+    name: 'B2-3 阶段证据：本 CU 消费的 relation 被删（引用解析失败）→ 新写证据 stale',
+    run: () => withCuSnapshot(s => {
+      const feature = SNAPSHOT_CU_FEATURE;
+      writePhaseEvidenceManifest(s.root, resolvePhaseEvidenceManifest({ projectRoot: s.root, feature, phase: 'plan', extraInputs: b2Files(s), frameworkRoot: s.frameworkRoot }));
+      const r = bumpAndReconcile(s, bp => { bp.relations = (bp.relations as Blueprint[]).filter(item => item.relation_id !== 'repository-publishes-store'); });
+      assert(r.skipped.some(item => item.change_unit_id === 'ledger-refresh'), `前提：target 被删的 CU 不能原位升版：${JSON.stringify(r)}`);
+      const result = recomputePhaseEvidenceStaleness(s.root, feature, ['plan'], { frameworkRoot: s.frameworkRoot })[0];
+      assert.strictEqual(result.verdict, 'stale', `解析失败不得判等价：${JSON.stringify(result)}`);
+    }),
+  },
+  {
+    name: 'B2-1/B2-2/B2-4 输入绑定：纯身份升版后本轮绑定仍命中（重读与冻结对照两条路径），旧全值指纹按全值口径 stale；改消费 target 内容 → stale',
+    run: () => withCuSnapshot(s => {
+      const feature = SNAPSHOT_CU_FEATURE;
+      const specs = [['plan', 'contracts'], ['ut', 'acceptance']] as const;
+      const resolve = (phase: string, expected?: InputBinding[]) => resolveCapabilityInputs({
+        projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase, track: 'full',
+        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [], ...(expected ? { expected_bindings: expected } : {}) },
+      }).inputs!.values;
+      const read = (phase: string, binding: InputBinding) => readBoundInput({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase, track: 'full' }, binding);
+      const current = specs.map(([phase, id]) => {
+        const value = resolve(phase)[id];
+        assert(value?.state === 'resolved', `前提：${phase}.${id} 可解析：${JSON.stringify(value)}`);
+        return { phase, id, binding: value.binding, legacy: { ...value.binding, content_fingerprint: crypto.createHash('sha256').update(stableStringify(value.value)).digest('hex') } };
+      });
+      assert(bumped(bumpAndReconcile(s, changeUnconsumedBlueprintContent)), '前提：调和原位升版 ledger-refresh');
+      for (const { phase, id, binding, legacy } of current) {
+        assert.doesNotThrow(() => read(phase, binding), `${id}：纯身份变化后本轮绑定应仍命中`);
+        const again = resolve(phase, [binding])[id];
+        assert.strictEqual(again?.state, 'resolved', `${id}：冻结绑定对照不应判 stale：${JSON.stringify(again)}`);
+        assert.throws(() => read(phase, legacy), /input binding stale/, `${id}：旧全值指纹只能按全值命中`);
+      }
+      assert(bumped(bumpAndReconcile(s, changeConsumedTargetContent)), '前提：第二次调和原位升版');
+      // contracts 经 change_unit_ref 依赖 CU 契约（含其消费的 target 内容）→ stale；
+      // acceptance 投影正文未变、来源戳指向当前 CU/蓝图 → 仍是同一内容（阶段级重验由 CU/蓝图证据条目负责，见上一例）。
+      const [contracts, acceptance] = current;
+      assert.throws(() => read(contracts.phase, contracts.binding), /input binding stale/, 'contracts：本 CU 消费的 target 内容变化必须 stale');
+      assert.doesNotThrow(() => read(acceptance.phase, acceptance.binding), 'acceptance：投影正文未变不应 stale');
+      assert(bumped(bumpAndReconcile(s, bp => {
+        const domain = (bp.design_views as Blueprint[]).flatMap(view => view.nodes ?? []).find((n: Blueprint) => n.node_id === 'ledger-domain');
+        domain.acceptance.criteria[0].expected_result = 'consumer refreshed and balance survives restart';
+      })), '前提：第三次调和原位升版');
+      assert.throws(() => read(acceptance.phase, acceptance.binding), /input binding stale/, 'acceptance：本 CU 消费的验收内容变化必须 stale');
+    }),
   },
 ];
 

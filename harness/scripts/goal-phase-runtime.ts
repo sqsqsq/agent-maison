@@ -113,6 +113,7 @@ import {
   resolvePhaseRunIds,
 } from './utils/verify-feature-completion';
 import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
+import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, isP0DeviceInteractive } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
@@ -2374,6 +2375,13 @@ export function collectActionableDefects(
       isStaleVisualDiffVerdict: (sc: unknown, root: string, o: { currentBuildFingerprint?: string | null }) => boolean;
       computeDefectFingerprint: (screenId: string, d: unknown) => string;
       hashScreenshotFile: (p: string) => string | null;
+      loadRepairAuthorityScope: (root: string, feature: string) => unknown;
+      defectRepairAuthority: (d: unknown, scope: unknown) => 'authorized' | 'excluded' | 'scope_unclear' | 'incomplete';
+      effectiveScreens: (rep: { screens: unknown[] }, scope: unknown) => {
+        screens: unknown[];
+        excluded: Array<{ screen_id: string; ref_element: string; requirement_quote?: string }>;
+        scopeUnclear: Array<{ screen_id: string; ref_element: string }>;
+      };
     };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const bf = require(path.join(profileDir, 'build-fingerprint')) as {
@@ -2391,7 +2399,17 @@ export function collectActionableDefects(
         }>;
       };
       const currentFp = bf.resolveCurrentBuildFingerprint(projectRoot, feature, 'testing');
-      for (const sc of doc.screens ?? []) {
+      // plan c4e7a9b2 A2：候选只读授权过滤后的有效视图（与 gate 同一函数）——需求排除项与
+      // 范围不明（参考图元素未登记，gate 已 WARN 交 spec 澄清）都不产候选、不回退。
+      const authorityScope = vd.loadRepairAuthorityScope(projectRoot, feature);
+      const authorityView = vd.effectiveScreens({ screens: doc.screens ?? [] }, authorityScope);
+      for (const e of authorityView.excluded) {
+        console.warn(`[actionable] ${e.screen_id}: 需求排除项 ${e.ref_element}（引文「${e.requirement_quote ?? ''}」）不返修`);
+      }
+      for (const u of authorityView.scopeUnclear) {
+        console.warn(`[actionable] ${u.screen_id}: 元素 ${u.ref_element} 未在 ui-spec / ref-elements 登记，不作返修依据（待 spec 澄清）`);
+      }
+      for (const sc of authorityView.screens as NonNullable<typeof doc.screens>) {
         const id = typeof sc.screen_id === 'string' ? sc.screen_id.trim() : '';
         if (!id) continue;
         // ⑤ 前置（review 第 13 轮）：evaluation_invalidated 的语义是"该屏评估整体不可信、
@@ -2460,8 +2478,12 @@ export function collectActionableDefects(
           //（留视觉债务台账 / 报告 WARN），major/blocker 照旧；provider 源同规则。
           // 宿主 i13：12 条 minor 声明差以 coding 候选身份吃掉最后一次回退。零文本解析。
           let minorSkipped = 0;
+          let anchorMissing = 0;
           for (const { d, fp } of structural) {
             if ((d as { severity?: unknown }).severity === 'minor') { minorSkipped++; continue; }
+            // plan c4e7a9b2 A2：missing_render 缺 ref_element / 其余类缺 element → 不说改的是
+            // 哪个元素，授权无从判定，走既有 unverified 通路（不回退、testing 重评补标识）。
+            if (vd.defectRepairAuthority(d, authorityScope) === 'incomplete') { anchorMissing++; continue; }
             // plan ab072691 t5⑤：**provider 评审缺陷是独立的 critic candidate 源**，
             // 不是 producer 感知信号。它结构上恒「未经 primary defect-review 复核」——
             // provider 后于 primary 运行，而且让**盲的** primary 去复核视觉缺陷是伪制衡。
@@ -2497,6 +2519,10 @@ export function collectActionableDefects(
           }
           if (minorSkipped > 0) {
             console.warn(`[actionable] ${id}: ${minorSkipped} 条 minor 视觉信号不产回修候选（留视觉债务台账 / 报告 WARN）`);
+          }
+          if (anchorMissing > 0) {
+            pushVisualUnverified(id, 'ref_element_missing',
+              `${anchorMissing} 条缺陷未指明元素（missing_render 缺 ref_element / 其余类缺 element），返修授权无从判定——重评时补标识`);
           }
         } else {
           // 纯文本 must_fix 保底：整屏文案 hash（legacy；信号级收敛不作用于其后代候选）
@@ -5977,6 +6003,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const supersededRunIds: string[] = ([] as string[])
       .concat(argv.supersede ?? [])
       .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+    // plan c4e7a9b2 §3.3 B1：交付周期边界 = 上一次可信完成（assessFeature record ok）的 run——出生时算一次，
+    // 只在它落在本次 supersede 血缘内时写进每条审计事件；预算三维（回退/轮次/活跃时长）自它之后起算。
+    // 评估不可算即不设边界（按全血缘折叠的现状口径，不拒绝出生）。
+    let cycleBoundary: string | undefined;
+    if (supersededRunIds.length > 0) {
+      try {
+        const record = assessFeatureCompletion(projectRoot, manifest.feature, {
+          ...resolveChangeUnitExpectedExecution(projectRoot, manifest.feature), frameworkRoot,
+        }).record;
+        if (record.state === 'ok' && record.run_id) {
+          cycleBoundary = foldBudgetLineage({
+            projectRoot, featuresDir, feature: manifest.feature,
+            seedTargets: supersededRunIds, currentEvents: priorEvents, cycleBoundary: record.run_id,
+          }).cycleBoundary;
+        }
+      } catch (error) {
+        console.warn(`[goal-runner] 交付周期边界不可算，预算按 supersede 全血缘折叠：${(error as Error).message}`);
+      }
+    }
     for (const target of supersededRunIds) {
       // b7e4d2a9 Todo2：supersede 现在连带删除目标场外状态——新增两道前置：
       // ① target 来自原始 CLI 串，先过 runId 严格 basename 契约（禁 /\ 与 . ..）；
@@ -6017,6 +6062,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       goalEvents.emit(buildSupersedeAuditEvent({
         targetRunId: target,
         supersedingRunId: manifest.run_id,
+        ...(cycleBoundary ? { deliveryCycleBoundary: cycleBoundary } : {}),
         ...(rebaselineRequest?.sourceRunId === target
           ? { rebaselineTo: rebaselineRequest.baseSha, creation: freshCreation }
           : {}),
@@ -6056,6 +6102,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         feature: manifest.feature,
         seedTargets: supersededRunIds,
         currentEvents: priorEvents,
+        cycleBoundary,
       }).budgetFoldEvents.filter(
         event => (event as { type?: string }).type === 'phase_backtrack_requested',
       ).length;
@@ -6207,6 +6254,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const budgetLineage = foldBudgetLineage({
       projectRoot, featuresDir, feature: manifest.feature,
       seedTargets: [...new Set([...supersededRunIds, ...(manifest.execution_scope && manifest.successor_of ? [manifest.successor_of] : [])])], currentEvents: priorEvents,
+      cycleBoundary,
     });
     const ancestorBudgetEvents = budgetLineage.ancestorEvents;
     const budgetFoldEvents = budgetLineage.budgetFoldEvents;
@@ -6342,8 +6390,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
 
     let halted = false;
-    // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 1 次/run。
-    // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents）
+    // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 DEFAULT_MAX_BACKTRACKS / 本交付周期。
+    // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents），c4e7a9b2：自上次可信完成起算
     let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
     let backtrackReviewFocus: string[] = [];
     // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
@@ -6372,9 +6420,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const remainingWallMs = Math.max(0, wallMs - activeElapsedMs);
       const min = Math.round.bind(null);
       console.log(
-        `[goal-runner] ${argv.resume ? 'resume' : 'run_start'} 预算（supersede lineage 折叠口径）: ` +
+        `[goal-runner] ${argv.resume ? 'resume' : 'run_start'} 预算（本交付周期口径：自上次可信完成起，含 supersede 链` +
+          `${budgetLineage.cycleBoundary ? `；边界 ${budgetLineage.cycleBoundary}` : ''}）: ` +
           `turns ${budgetBase.totalTurns}/${manifest.budget.max_total_turns}（remaining ${remainingTurns}）；` +
-          `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）`,
+          `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）；` +
+          `回退 ${backtracksUsed}/${DEFAULT_MAX_BACKTRACKS}`,
       );
     }
 
@@ -6958,7 +7008,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ? '→ **未启动 coding agent**，'
                 : '→ **本轮 coding 产出不予采信、gate 不运行**，') +
               `自动回退 plan 重新裁决并重新签发快照（tx=${replan.txId}）。\n` +
-              `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
+              `（回退预算：本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））\n`,
             );
             phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
             // adjudicated-repair-loop M1（review 修复）：scope-replan 回退路径同样记录
@@ -9870,7 +9920,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               + (backtrackHaltGuidance ?? (haltReason === 'backtrack_fingerprint_repeat'
                 ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转，进入收敛熔断。\n`
                 : haltReason === 'backtrack_limit'
-                  ? `回退预算已耗尽（共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——本 run 诚实终止，可由新 correction/successor 输入继续。\n`
+                  ? `回退预算已耗尽（本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））——本 run 诚实终止，可由新 correction/successor 输入继续。\n`
                   : '')),
             );
           } else {
@@ -9922,7 +9972,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   + summaryRepairCandidates.slice(0, 6).map(c => `${c.id}→${c.category}`).join('、')
                   + `）——责任阶段=${targetPhaseBt}。\n`)
               + `回退 ${targetPhaseBt}（候选清单按阶段注入后续 prompt），再级联重走下游。\n`
-              + `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
+              + `（回退预算：本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））\n`,
             );
             outcomes = outcomes.filter(o => !invalidatedBt.includes(o.phase));
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: String(targetPhaseBt) });

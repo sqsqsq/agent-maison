@@ -791,7 +791,8 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       assert.deepStrictEqual(reused.phase_chain, []);
       assert(verifyReusedExecutionScope(root, feature, reused).complete, 'fully reused Feature evidence did not validate');
       const designBytes = fs.readFileSync(contractsFile);
-      fs.appendFileSync(contractsFile, '\n# stale design contract\n');
+      // plan c4e7a9b2 B2：CU Feature 的登记证据按解析内容等价（与输入绑定同口径），只加注释不再是设计漂移——漂移须改内容。
+      fs.appendFileSync(contractsFile, '\nstale_design_contract: changed after validated execution\n');
       // §4.1.4 on the PRODUCTION path: the reading layer re-resolves every `satisfied_by` binding,
       // so a drifted design source is reported as not-ok and the freeze is refused — no hand-built
       // verdict, both the binding and the drift are real.
@@ -1339,7 +1340,7 @@ function seedRunlessChain(root: string, feature: string, chain: readonly string[
 }
 
 /** 最小 1.2 项目：config + workflow + feature.yaml 候选。返回 root 与 frameworkRoot。 */
-function setupRunlessProject(options?: { chain?: string[]; uiFile?: boolean; completionTarget?: 'feature' | 'request' }): { root: string; frameworkRoot: string; feature: string } {
+export function setupRunlessProject(options?: { chain?: string[]; uiFile?: boolean; completionTarget?: 'feature' | 'request' }): { root: string; frameworkRoot: string; feature: string } {
   const repo = path.resolve(__dirname, '../../..');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'd1-runless-'));
   const frameworkRoot = path.join(root, 'framework');
@@ -1485,7 +1486,7 @@ cases.push({ name: 'D1 runless interactive delivery reaches VALID completion', r
  * Codex 四轮 P1 现场：生产入口生成无 run 完成原件，再经生产 `appendFeatureScopeRevision` 追加一条新增义务的合法修订。
  * 返回链、原件路径与修订前的原件字节。
  */
-function runlessCompletionThenRevision(root: string, frameworkRoot: string, feature: string): { chain: string[]; originalAbs: string; originalBytes: string; newDuty: string } {
+export function runlessCompletionThenRevision(root: string, frameworkRoot: string, feature: string): { chain: string[]; originalAbs: string; originalBytes: string; newDuty: string } {
   assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature }).status, 'frozen');
   const chain = executionCompletionPhases(featureEffectiveScope(readFeatureFrozenScope(root, feature)!)).map(String);
   seedRunlessChain(root, feature, chain);

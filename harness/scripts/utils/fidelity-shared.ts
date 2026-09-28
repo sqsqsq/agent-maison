@@ -49,7 +49,9 @@ export interface RefElementEntry {
   color_ref?: string;
   icon_kind?: string;
   badge?: string;
-  disposition: 'implement' | 'defer';
+  /** plan c4e7a9b2 A2：`excluded` = 需求明文排除（非质量义务、非债务），须带 requirement_quote 逐字引自需求原文 */
+  disposition: 'implement' | 'defer' | 'excluded';
+  requirement_quote?: string;
   /** structured | vl — 第二刀双写优先级 */
   provenance?: 'structured' | 'vl';
 }
@@ -424,6 +426,56 @@ export function collectRequirementIntentText(
     } catch { /* 单 manifest 损坏跳过 */ }
   }
   return parts.join('\n\n');
+}
+
+/**
+ * plan c4e7a9b2 返修#1/#4：**当前执行身份**的权威需求原文（授权类门禁用，不合并历史 run）。
+ *  · goal：`MAISON_GOAL_RUN_ID` 对应权威 run 的 manifest.requirement（同源解引用）+ requirement_source_files 原文；
+ *  · 无 run：身份匹配（`phase:<feature>:spec`）的 explicit_cli fidelity-intent SSOT 所记单个
+ *    requirement_source_files 原文，且按原文重算 requirement_sha256 须等于签发值（`--requirement-file` 路径）。
+ * 其余一律空串——spec.md / 宽泛意图文本 / 行内 `--requirement`（未落原文）都不能授权。
+ */
+export function collectCurrentRequirementText(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+): string {
+  const excludePrefixes = [`${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`];
+  const readSource = (p: string): string => {
+    try {
+      return fs.readFileSync(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'utf-8').replace(/^﻿/, '').trim();
+    } catch {
+      return '';
+    }
+  };
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (runId) {
+    if (!listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs.includes(runId)) return '';
+    try {
+      const m = JSON.parse(fs.readFileSync(
+        path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json'), 'utf-8',
+      )) as { requirement?: unknown; requirement_source_files?: unknown };
+      const parts = typeof m.requirement === 'string' && m.requirement.trim()
+        ? [dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel, excludePrefixes }).combined]
+        : [];
+      if (Array.isArray(m.requirement_source_files)) {
+        for (const f of m.requirement_source_files) if (typeof f === 'string') parts.push(readSource(f));
+      }
+      return parts.join('\n\n');
+    } catch {
+      return '';
+    }
+  }
+  const ssot = loadFidelityIntentSsot(projectRoot, feature);
+  const sources = ssot?.requirement_source_files ?? [];
+  if (
+    ssot?.requirement_provenance !== 'explicit_cli' ||
+    ssot.execution_identity !== `phase:${feature}:spec` ||
+    sources.length !== 1
+  ) return '';
+  const text = readSource(sources[0]);
+  if (!text || computeRequirementShaFromText(projectRoot, feature, text, featuresDirRel) !== ssot.requirement_sha256) return '';
+  return dereferenceRequirementDocs(projectRoot, text, { featuresDirRel, excludePrefixes }).combined;
 }
 
 /**
@@ -1155,7 +1207,14 @@ export function loadRefElementsFile(absPath: string): RefElementsDoc | null {
   try {
     const doc = YAML.parse(fs.readFileSync(absPath, 'utf-8')) as RefElementsDoc;
     if (!doc || typeof doc !== 'object' || !Array.isArray(doc.elements)) return null;
-    return doc;
+    // plan c4e7a9b2 返修#3：读兼容——缺省/非法 disposition 按 implement（旧口径 `!== 'defer'` 的等价），
+    // 下游一律严格 `=== 'implement'`，旧条目不得因此静默移出分母。
+    return {
+      ...doc,
+      elements: doc.elements.map(e => (e && typeof e === 'object' && e.disposition !== 'defer' && e.disposition !== 'excluded'
+        ? { ...e, disposition: 'implement' as const }
+        : e)),
+    };
   } catch {
     return null;
   }

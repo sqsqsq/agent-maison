@@ -34,6 +34,7 @@ import * as fs from 'fs';
 import { resolveFactsAbsPath, isFactsEstablishingPhase, factsPhaseFingerprint } from './context-facts';
 import { isInsideProjectRoot } from './project-relative-path';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
 import {
   artifactReadCandidatePaths,
@@ -79,6 +80,37 @@ export interface EvidenceEntry {
   facts_phase?: string;
   /** Phase authorized by the frozen execution scope to advance this source path. */
   owner_phase?: string;
+  /** plan c4e7a9b2 B2（沿 facts_phase 先例）：登记路径条目的 sha256 是身份中立摘要，不是字节哈希。 */
+  identity_neutral?: typeof IDENTITY_NEUTRAL_EVIDENCE;
+}
+
+export const IDENTITY_NEUTRAL_EVIDENCE = 'ref-content@1';
+
+/**
+ * CU 派生 Feature 的登记路径 → 身份中立摘要（`identityNeutralDigest`）；undefined = 非登记路径（字节口径），
+ * null = 登记路径但算不出（不能证明等价）。登记：canonical CU、Feature 目录的三份派生投影文件、CU 所属蓝图——
+ * 蓝图条目在本 Feature 里只代表「本 CU 消费的权威内容」，摘要取 CU 中立视图（已展开全部消费目标，所有权引用不展开）。
+ */
+function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string): string | null | undefined {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { tryParseCuFeatureId } = require('./feature-identity') as typeof import('./feature-identity');
+  const identity = tryParseCuFeatureId(feature);
+  if (!identity) return undefined;
+  const { identityNeutralDigest } = require('./change-unit-design-preparation') as typeof import('./change-unit-design-preparation');
+  const { changeUnitPath } = require('./change-unit-path') as typeof import('./change-unit-path');
+  const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
+  const { BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const target = path.resolve(absPath);
+  const digestOf = (artifact: string, file: string): string | null => {
+    try { return identityNeutralDigest(projectRoot, artifact, YAML.parse(fs.readFileSync(file, 'utf8'))); } catch { return null; }
+  };
+  const cuFile = changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId);
+  if (target === path.resolve(cuFile) || target === path.resolve(componentBlueprintPath(projectRoot, identity.blueprintId))) return digestOf('change-unit@1', cuFile);
+  for (const [artifact, name] of Object.entries(BLUEPRINT_PROJECTION_FILES)) {
+    if (target === path.resolve(resolveFeatureArtifact(projectRoot, feature, name).actualPath)) return digestOf(artifact, target);
+  }
+  return undefined;
 }
 
 export interface EvidenceEnvironment {
@@ -200,12 +232,17 @@ function isGoalRunManifestPath(relPath: string): boolean {
   return /(?:^|\/)goal-runs\/(?:\.dry\/)?[^/]+\/manifest\.json$/.test(relPath.replace(/\\/g, '/'));
 }
 
-function evidenceEntryMatchesCurrentFile(
+export function evidenceEntryMatchesCurrentFile(
   projectRoot: string,
   entry: EvidenceEntry,
+  feature: string,
 ): boolean {
   const absPath = path.join(projectRoot, entry.path);
   if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase) === entry.sha256;
+  if (entry.identity_neutral !== undefined) {
+    return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE && entry.sha256 !== null
+      && identityNeutralEvidenceDigest(projectRoot, feature, absPath) === entry.sha256;
+  }
   const current = sha256File(absPath);
   if (current === entry.sha256) return true;
   if (!isGoalRunManifestPath(entry.path) || entry.sha256 === null || !fs.existsSync(absPath)) return false;
@@ -414,8 +451,9 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
       return;
     }
     const isFacts = factsPath !== undefined && path.resolve(absPath) === path.resolve(factsPath);
-    const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? sha256File(absPath);
-    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}), ...(ownerPhase ? { owner_phase: ownerPhase } : {}) });
+    const neutral = isFacts || stagedHashes.has(rel) || !fs.existsSync(absPath) ? undefined : identityNeutralEvidenceDigest(projectRoot, feature, absPath);
+    const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? neutral ?? sha256File(absPath);
+    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}), ...(neutral ? { identity_neutral: IDENTITY_NEUTRAL_EVIDENCE } : {}), ...(ownerPhase ? { owner_phase: ownerPhase } : {}) });
   };
   const addBoundInput = (dep: import('./capability-resolution').ResolutionDependency): void => {
     const rel = toPosixRel(projectRoot, dep.path);
@@ -658,7 +696,8 @@ function isValidEntry(e: unknown): e is EvidenceEntry {
     && (o.sha256 === null || typeof o.sha256 === 'string')
     && typeof o.exists === 'boolean'
     && (o.facts_phase === undefined || (typeof o.facts_phase === 'string' && o.facts_phase.length > 0))
-    && (o.owner_phase === undefined || (typeof o.owner_phase === 'string' && o.owner_phase.length > 0));
+    && (o.owner_phase === undefined || (typeof o.owner_phase === 'string' && o.owner_phase.length > 0))
+    && (o.identity_neutral === undefined || o.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE);
 }
 
 export interface LoadedManifest {
@@ -826,7 +865,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
     if (stagedSha !== undefined) {
       seenStaged.add(entry.path);
       if (!entry.exists || entry.sha256 !== stagedSha) changed.add(entry.path);
-    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry)) {
+    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry, input.feature)) {
       changed.add(entry.path);
     }
   }
@@ -872,7 +911,7 @@ export function recomputePhaseEvidenceStaleness(
     }
     return fresh && !!owner?.integrityOk && owner.manifest.outputs.some(output =>
       output.path === entry.path && output.owner_phase === entry.owner_phase
-      && evidenceEntryMatchesCurrentFile(projectRoot, output));
+      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature));
   };
 
   for (const phase of chain) {
@@ -943,7 +982,7 @@ export function recomputePhaseEvidenceStaleness(
     const { manifest } = loaded;
     const changed = new Set<string>();
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
     // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
     const receiptChanged = false;

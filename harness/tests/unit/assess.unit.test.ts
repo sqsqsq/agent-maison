@@ -2,10 +2,14 @@
 // assess.unit.test.ts — deterministic diff/recommend/fuse behavior
 // ============================================================================
 
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { clearFrameworkConfigCache, featureFilePath } from '../../config';
+import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { runlessCompletionThenRevision, setupRunlessProject } from './execution-scope.unit.test';
 import {
   assessObservation,
   assessFeature,
@@ -36,6 +40,7 @@ interface Case {
 
 const H = 'a'.repeat(64);
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
+const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -308,6 +313,56 @@ const cases: Case[] = [
     run: () => {
       const argv = parseAssessCliArgs(['--feature', 'demo', '--no-write']);
       assert(argv.write === false, JSON.stringify(argv));
+    },
+  },
+  {
+    // plan c4e7a9b2 §3.5 / §6 D-2：无 run 时推荐以完成评估入口为准，CLI stdout 与 next.json 同源。
+    name: 'D-2 无 run CLI：评估判 uncovered 在 coding（spec 由输入绑定复用、spec summary 缺）→ run_phase coding（不是 spec），next.json 与 stdout 一致',
+    run: () => {
+      const s = loadHostSnapshot();
+      try {
+        const feature = SNAPSHOT_CU_FEATURE;
+        clearFrameworkConfigCache();
+        assert(!fs.existsSync(featureFilePath(s.root, feature, 'spec/reports/summary.json')), '前提：spec summary 缺');
+        fs.rmSync(featureFilePath(s.root, feature, 'coding/reports/phase-evidence-manifest.json'));
+        const cli = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(HARNESS_ROOT, 'scripts', 'assess.ts'),
+          '--feature', feature, '--project-root', s.root, '--framework-root', s.frameworkRoot], {
+          cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 180_000, env: { ...process.env, TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json') },
+        });
+        assert(cli.status === 0, `assess CLI exit=${cli.status}: ${cli.stderr}`);
+        const out = JSON.parse(cli.stdout.slice(cli.stdout.indexOf('{'))) as {
+          recommendation: { action: string; phase: string | null; reason: string }; projection_fingerprint: string;
+          feature_assessment: { record: { state: string; run_id: string }; uncovered: Array<{ owner_phase: string }> };
+        };
+        assert(out.feature_assessment.record.state === 'ok', JSON.stringify(out.feature_assessment.record));
+        assert(JSON.stringify([...new Set(out.feature_assessment.uncovered.map(o => o.owner_phase))]) === '["coding"]', `前提：只有 coding uncovered：${JSON.stringify(out.feature_assessment.uncovered)}`);
+        assert(out.recommendation.action === 'run_phase' && out.recommendation.phase === 'coding', JSON.stringify(out.recommendation));
+        assert(out.recommendation.reason.includes(`--supersede ${out.feature_assessment.record.run_id}`), out.recommendation.reason);
+        const next = JSON.parse(fs.readFileSync(nextProjectionPath(s.root, feature), 'utf8')) as typeof out;
+        assert(JSON.stringify(next.recommendation) === JSON.stringify(out.recommendation), `next.json ≠ stdout：${JSON.stringify(next.recommendation)}`);
+        assert(next.projection_fingerprint === out.projection_fingerprint, 'projection_fingerprint 不一致');
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(s.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // codex 批二 P2：feature 载体完成记录 run_id=null，没有可 supersede 的 run——不得拼出 `--supersede null`。
+    name: 'D-2b 无 run assess：feature 载体完成后追加修订、新增义务 uncovered → 保留责任阶段推荐，提示先追加范围修订再起新 run',
+    run: () => {
+      const { root, frameworkRoot, feature } = setupRunlessProject();
+      try {
+        const { newDuty } = runlessCompletionThenRevision(root, frameworkRoot, feature);
+        const result = assessFeature({ projectRoot: root, frameworkRoot, feature, writeProjection: false });
+        assert(result.recommendation.action === 'run_phase' && result.recommendation.phase === 'plan', JSON.stringify(result.recommendation));
+        assert(result.recommendation.reason.includes(newDuty), result.recommendation.reason);
+        assert(!result.recommendation.reason.includes('--supersede'), result.recommendation.reason);
+        assert(result.recommendation.reason.includes('feature 载体：先按当前输入追加范围修订再起新 run'), result.recommendation.reason);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   },
   {

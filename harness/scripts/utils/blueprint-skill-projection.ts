@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
-import { resolveFeatureArtifact, loadFrameworkConfig } from '../../config';
+import { resolveFeatureArtifact, loadFrameworkConfig, featureFilePath } from '../../config';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
@@ -14,7 +14,7 @@ import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
-import { resolveContractFileReferences, findUnauthorizedContractFileReferences } from './contract-reference-closure';
+import { resolveContractFileReferences, findUnauthorizedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot } from './project-relative-path';
 import { evaluateAcceptanceFlowStructure } from './p0-semantic-gates';
@@ -154,8 +154,19 @@ export function inspectProjectionStamps(projectRoot: string, feature: string, re
   return mismatched.length ? mismatched : 'stamped';
 }
 
-/** Copy only explicit machine content selected by the canonical CU; never infer from refs/touches. */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, refresh?: ProjectionRefresh): BlueprintSkillProjection {
+/** 投影合并与 A1 对齐共用的记录身份（plan c4e7a9b2 §3.1）：`[module, file, holder, id ?? name ?? class ?? data]`。 */
+function projectionRowIdentity(row: unknown): string | undefined {
+  const record = asRecord(row);
+  const id = record?.id ?? record?.name ?? record?.class ?? record?.data;
+  return id === undefined ? undefined : canonical([record?.module, record?.file, record?.holder, id]);
+}
+
+/**
+ * Copy only explicit machine content selected by the canonical CU; never infer from refs/touches.
+ * `refresh === 'pure'`（plan c4e7a9b2 §3.1 纯投影读取）：只跳过「既有 use-cases.yaml 与投影冲突」一处——
+ * 那是拿待比较的手写产物反向校验权威；CU 映射来源 stale、投影门与规范化照跑。
+ */
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, refresh?: ProjectionRefresh | 'pure'): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     if (!dependencies.some(dep => dep.path === file)) dependencies.push({ path: file, exists: fs.existsSync(file), sha256: fs.existsSync(file) ? digest(file) : null, role: 'artifact' });
@@ -205,13 +216,8 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
             for (const item of value) {
               const rows = result[key] as unknown[];
               if (rows.some(old => canonical(old) === canonical(item))) continue;
-              const identity = (row: unknown): string | undefined => {
-                const record = asRecord(row);
-                const id = record?.id ?? record?.name ?? record?.class ?? record?.data;
-                return id === undefined ? undefined : canonical([record?.module, record?.file, record?.holder, id]);
-              };
-              const id = identity(item);
-              if (id && rows.some(old => identity(old) === id)) throw new Error(`component-design/外部 owner: ${field}.${key} 同一标识内容冲突`);
+              const id = projectionRowIdentity(item);
+              if (id && rows.some(old => projectionRowIdentity(old) === id)) throw new Error(`component-design/外部 owner: ${field}.${key} 同一标识内容冲突`);
               rows.push(structuredClone(item));
             }
           } else if (canonical(result[key]) !== canonical(value)) throw new Error(`component-design/外部 owner: ${field}.${key} 存在冲突`);
@@ -267,12 +273,109 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       const existing = resolveFeatureArtifact(projectRoot, feature, 'use-cases.yaml');
       if (existing.exists) {
         depend(existing.actualPath);
-        // 刷新模式由唯一 writer 在覆盖前核对同一文件的来源戳（hasPreBumpStamp），此处不重复判。
-        if (!refresh && canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) throw new Error('plan: 既有 use-cases.yaml 与获准投影冲突');
+        // 刷新模式由唯一 writer 在覆盖前核对同一文件的来源戳（hasPreBumpStamp），此处不重复判；纯投影读取不拿手写产物校验权威。
+        if (!refresh &&canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) throw new Error('plan: 既有 use-cases.yaml 与获准投影冲突');
       }
     }
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
   } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
+}
+
+export interface AuthoritativeDriftItem { id: string; field: string; expected: unknown; actual: unknown }
+export type AuthoritativeContentDrift =
+  | { state: 'aligned' }
+  | { state: 'not_applicable' }
+  | { state: 'drift'; items: AuthoritativeDriftItem[] }
+  | { state: 'invalid'; detail: string };
+/**
+ * 集合语义字段；其余数组一律有序。contracts 内的列表型文件引用字段名取自统一解析边界登记
+ * （`CONTRACT_FILE_REFERENCE_FIELDS` 中 `schemaField` 以 `[]` 结尾者），本地只补边界外的 contracts.files /
+ * planned_locations 与 acceptance tags。
+ */
+const SET_FIELDS = new Set([
+  'files', 'planned_locations', 'tags',
+  ...CONTRACT_FILE_REFERENCE_FIELDS.filter(field => field.schemaField.endsWith('[]')).map(field => field.kind.slice(field.kind.lastIndexOf('.') + 1)),
+]);
+/** 顶层身份 / 来源字段不比；`change_unit` 由 `changeUnitMappingIssues` 负责。 */
+const UNCOMPARED_TOP_LEVEL = new Set(['feature', 'source', 'version', 'change_unit']);
+const rowLabel = (row: unknown): string => { const r = asRecord(row)!; return String(r.id ?? r.name ?? r.class ?? r.data); };
+
+function alignNode(expected: unknown, actual: unknown, id: string, field: string, key: string, items: AuthoritativeDriftItem[]): void {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) { items.push({ id, field, expected, actual }); return; }
+    if (SET_FIELDS.has(key)) {
+      if (expected.some(item => !actual.some(row => canonical(row) === canonical(item)))) items.push({ id, field, expected, actual });
+      return;
+    }
+    // 有序数组：投影元素按权威顺序以子序列出现在手写侧，其间 / 末尾可插入补充元素。
+    let cursor = 0;
+    let wholeArray = false;
+    for (const item of expected) {
+      const identity = projectionRowIdentity(item);
+      const matches = (row: unknown): boolean => identity !== undefined ? projectionRowIdentity(row) === identity : canonical(row) === canonical(item);
+      const at = actual.findIndex((row, index) => index >= cursor && matches(row));
+      const found = at >= 0 ? at : actual.findIndex(matches);
+      if (found < 0) {
+        if (identity !== undefined) items.push({ id: rowLabel(item), field: '<missing>', expected: item, actual: undefined });
+        else if (asRecord(item)) items.push({ id: canonical(item), field: '<missing>', expected: item, actual: undefined });
+        else wholeArray = true;
+        continue;
+      }
+      if (at < 0) wholeArray = true;
+      else cursor = at + 1;
+      if (identity !== undefined) alignNode(item, actual[found], rowLabel(item), '', '', items);
+    }
+    if (wholeArray) items.push({ id, field, expected, actual });
+    return;
+  }
+  const record = asRecord(expected);
+  if (record) {
+    const other = asRecord(actual);
+    if (!other) { items.push({ id, field, expected, actual }); return; }
+    for (const [child, value] of Object.entries(record)) alignNode(value, other[child], id, field ? `${field}.${child}` : child, child, items);
+    return;
+  }
+  if (canonical(expected) !== canonical(actual)) items.push({ id, field, expected, actual });
+}
+
+/**
+ * plan c4e7a9b2 §3.1 A1 唯一比较：无来源戳的手写产物（`SpecLoader` 规范化值）按稳定 ID 逐字段对齐当前规范化投影，
+ * 允许不冲突的补充。带 `derive.blueprint-*` 来源戳的文件走 `resolveArtifact` 的整份比对，不经本函数。
+ * `absent`（蓝图不携带机器内容）→ not_applicable；投影自身 invalid → 不跳过，交调用方报 `authority_projection_invalid`。
+ * 放弃的准确性：投影删除的旧条目仍留在手写侧按补充放行（无旧投影可比，不建档案）。
+ */
+export function authoritativeContentDrift(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, handwritten: unknown): AuthoritativeContentDrift {
+  const record = asRecord(handwritten);
+  if (!record || String(record.source ?? '').startsWith('derive.blueprint-')) return { state: 'not_applicable' };
+  const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, 'pure');
+  if (projected.state === 'absent') return { state: 'not_applicable' };
+  if (projected.state === 'invalid') return { state: 'invalid', detail: projected.detail ?? 'blueprint projection invalid' };
+  const items: AuthoritativeDriftItem[] = [];
+  for (const [key, value] of Object.entries(asRecord(projected.artifacts?.[`${kind}@1`]) ?? {})) {
+    if (!UNCOMPARED_TOP_LEVEL.has(key)) alignNode(value, record[key], key, '', key, items);
+  }
+  return items.length ? { state: 'drift', items } : { state: 'aligned' };
+}
+
+const driftLabel = (item: AuthoritativeDriftItem): string => item.field ? `${item.id}.${item.field}` : item.id;
+/** 人读缺口：drift → `手写<验收/设计>与当前设计权威不一致：<id.field …>`；invalid → `authority_projection_invalid：…`；其余 undefined。 */
+export function describeAuthoritativeDrift(drift: AuthoritativeContentDrift, kind: BlueprintProjectionKind): string | undefined {
+  if (drift.state === 'invalid') return `authority_projection_invalid：${kind === 'acceptance' ? '验收' : '设计'}权威投影不可用（${drift.detail}）`;
+  if (drift.state !== 'drift') return undefined;
+  return `手写${kind === 'acceptance' ? '验收' : '设计'}与当前设计权威不一致：${drift.items.map(driftLabel).join(', ')}`;
+}
+
+/** 责任阶段门（spec → acceptance / plan → contracts）：BLOCKER `authoritative_content_aligned`。不适用时不出行。 */
+export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: BlueprintProjectionKind): CheckResult[] {
+  const value = kind === 'acceptance' ? ctx.featureSpec.acceptance : ctx.featureSpec.contracts;
+  const drift = authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, value);
+  if (drift.state === 'not_applicable') return [];
+  const file = `${kind}.yaml`;
+  const base = { id: 'authoritative_content_aligned', category: 'traceability' as const, severity: 'BLOCKER' as const, description: `手写 ${file} 与当前设计权威按稳定 ID 逐字段对齐`, affected_files: [featureFilePath(ctx.projectRoot, ctx.feature, file)] };
+  if (drift.state === 'aligned') return [{ ...base, status: 'PASS', details: `${file} 与当前规范化投影对齐（补充内容不判）` }];
+  if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
+  const details = drift.items.map(item => `${driftLabel(item)}: 期望=${JSON.stringify(item.expected)} 实际=${JSON.stringify(item.actual)}`).join('\n');
+  return [{ ...base, status: 'FAIL', details, suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
 }
 
 /**

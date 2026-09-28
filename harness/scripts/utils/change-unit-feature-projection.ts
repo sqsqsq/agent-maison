@@ -487,11 +487,33 @@ export function deriveModifiableModules(projectRoot: string, cu: ChangeUnitArtif
   return [...modules].sort();
 }
 
+const MACHINE_CHECKED_ARCHITECTURE_CHANGES = ['add_module', 'move_module', 'dependency_edge'];
+const architectureImpactEndpoints = (decision: BlueprintRecord): string[] =>
+  decision.change === 'dependency_edge' ? [String(decision.from), String(decision.to)] : [String(decision.module)];
+
+/**
+ * 与本 CU 相关的机检类 architecture_impact 决策（add_module / move_module / dependency_edge）：
+ * 在 CU design_refs 中，或模块/端点落在可修改模块（或其所在层）上。施工门（`architectureImpactIssues`）与
+ * 身份中立摘要（plan c4e7a9b2 B2 授权边界）共用这一个谓词。
+ */
+export function relevantArchitectureImpactDecisions(
+  projectRoot: string,
+  blueprint: BlueprintRecord,
+  modifiable: string[],
+  designDecisionIds: string[] = [],
+): BlueprintRecord[] {
+  const admitted = resolveAdmittedModules(projectRoot, blueprint);
+  const touched = new Set([...modifiable, ...modifiable.map(name => admitted.modules.get(name)).filter((l): l is string => Boolean(l))]);
+  return asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).filter(decision => decision.kind === 'architecture_impact'
+    && MACHINE_CHECKED_ARCHITECTURE_CHANGES.includes(String(decision.change ?? ''))
+    && (designDecisionIds.includes(String(decision.decision_id ?? '?')) || architectureImpactEndpoints(decision).some(name => touched.has(name))));
+}
+
 /**
  * plan a3c7e9d1 t3：与本 CU 相关的 architecture_impact 决策在施工前必须已生效——
  * add_module / move_module / dependency_edge 已裁决（decided_with_authority）且与当前 DSL 一致；
  * dependency_edge 按操作核对当前许可（add 须已允许、remove 须已不允许）；dsl_other 只登记，返回 WARN 文案。
- * 相关 = 在 CU design_refs 中，或模块/端点落在可修改模块（或其所在层）上。
+ * 相关 = `relevantArchitectureImpactDecisions`。
  */
 export function architectureImpactIssues(
   projectRoot: string,
@@ -503,19 +525,16 @@ export function architectureImpactIssues(
   const warnings: string[] = [];
   const admitted = resolveAdmittedModules(projectRoot, blueprint);
   const layers = new Set(loadArchitectureDsl(projectRoot).outer_layers.map(layer => layer.id));
-  const touched = new Set([...modifiable, ...modifiable.map(name => admitted.modules.get(name)).filter((l): l is string => Boolean(l))]);
   const fail = (id: string, message: string) => issues.push(issue('cu_architecture_impact_not_effective', `decision:${id} ${message}`, 'reconcile_blueprint'));
   for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
-    if (decision.kind !== 'architecture_impact') continue;
+    if (decision.kind === 'architecture_impact' && decision.change === 'dsl_other') {
+      warnings.push(`decision:${String(decision.decision_id ?? '?')} dsl_other（${asStrings(decision.affected_items).join('、')}）不机检：请人工核对该 DSL 变更已经权威批准并经 framework-init 获准路径落盘。`);
+    }
+  }
+  for (const decision of relevantArchitectureImpactDecisions(projectRoot, blueprint, modifiable, designDecisionIds)) {
     const id = String(decision.decision_id ?? '?');
     const change = String(decision.change ?? '');
-    if (change === 'dsl_other') {
-      warnings.push(`decision:${id} dsl_other（${asStrings(decision.affected_items).join('、')}）不机检：请人工核对该 DSL 变更已经权威批准并经 framework-init 获准路径落盘。`);
-      continue;
-    }
-    if (!['add_module', 'move_module', 'dependency_edge'].includes(change)) continue;
-    const endpoints = change === 'dependency_edge' ? [String(decision.from), String(decision.to)] : [String(decision.module)];
-    if (!designDecisionIds.includes(id) && !endpoints.some(name => touched.has(name))) continue;
+    const endpoints = architectureImpactEndpoints(decision);
     if (decision.status !== 'decided_with_authority') {
       fail(id, `status=${String(decision.status)}：架构影响未裁决（open_decision），当前 CU 不得施工；回 /component-design 取得权威裁决。`);
       continue;
@@ -680,12 +699,16 @@ export function checkChangeUnitFeatureProjection(
     dags,
   );
   if (!result.applicable) return componentChecks;
+  // plan c4e7a9b2 A1：plan 责任阶段门——手写 contracts 与当前设计权威对齐。不放进 validateChangeUnitFeatureProjection：
+  // 投影自己（deriveBlueprintSkillInput）调用它，放进去会自递归。惰性 require 同理避开模块环。
+  /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+  const authority = phase === 'plan' ? (require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection')).checkAuthoritativeContentAligned(ctx, 'contracts') : [];
   const dslWarnings: CheckResult[] = (result.warnings ?? []).map(details => ({
     id: 'cu_architecture_dsl_other', category: 'traceability' as const, description: 'architecture_impact dsl_other 只登记不机检',
     severity: 'MAJOR' as const, status: 'WARN' as const, details,
   }));
   if (result.issues.length > 0) {
-    return [...componentChecks, ...dslWarnings, ...result.issues.map(item => ({
+    return [...componentChecks, ...dslWarnings, ...authority, ...result.issues.map(item => ({
       id: item.id,
       category: 'traceability' as const,
       description: 'Change Unit → Feature ID-only 施工投影',
@@ -699,7 +722,7 @@ export function checkChangeUnitFeatureProjection(
           : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
     }))];
   }
-  return [...componentChecks, ...dslWarnings, {
+  return [...componentChecks, ...dslWarnings, ...authority, {
     id: 'change_unit_feature_projection',
     category: 'traceability',
     description: 'Change Unit → Feature ID-only 施工投影',

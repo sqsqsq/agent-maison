@@ -34,6 +34,9 @@ import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { assessObservation, type AssessObservation, type AssessPhaseObservation } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
+import { resolveCurrentBuildFingerprint } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { clearFrameworkConfigCache } from '../../config';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -202,6 +205,11 @@ export function runAll(): UnitCaseResult[] {
         }],
       };
       fs.writeFileSync(path.join(shotsDir, 'visual-diff.json'), JSON.stringify(visualDiff, null, 2), 'utf-8');
+      // plan c4e7a9b2 三轮返修：缺陷锚点须已登记才有返修授权（本用例测的是身份 fail-closed）
+      fs.mkdirSync(path.join(featDir, 'spec'), { recursive: true });
+      fs.writeFileSync(path.join(featDir, 'spec', 'ref-elements.yaml'), JSON.stringify({ elements: [
+        { element_id: 'hc_page_title', disposition: 'implement' }, { element_id: 'hc_bank_row', disposition: 'implement' },
+      ] }), 'utf-8');
       const result = collectActionableDefects(root, 'demo', 'run-1');
       assert(result.defects.length === 0, '身份未绑定不产候选（fail-closed 不变）');
       assert(result.unverified.length >= 1, '身份缺失进 unverified（不静默丢）');
@@ -553,6 +561,158 @@ export function runAll(): UnitCaseResult[] {
     assert(JSON.stringify(resolveInvalidatablePhases({
       chain, hasActionable: false, candidateCategories: ['spec'], track: 'full',
     })) === JSON.stringify(chain), 'resolveInvalidatablePhases 不得被本笔改动');
+  });
+
+  // ==========================================================================
+  // plan c4e7a9b2 t2（A2）：候选生成读授权过滤后的有效视图（宿主 ae92d8 add_card_result 形态）。
+  // 生产路径 collectActionableDefects：身份齐全（截图 hash + install meta 算出的 build 指纹）。
+  // ==========================================================================
+  const A2_FEATURE = 'bc-openCard-2';
+  const A2_QUOTE = '再往下的激活nfc部分本次先不需要';
+  const a2Write = (root: string, rel: string, content: string): void => {
+    const p = path.join(root, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content, 'utf-8');
+  };
+  const a2NfcDefect = (extra: Record<string, unknown> = {}) => ({
+    class: 'missing_render', element: 'result_done', ref_element: 'result_nfc_card', severity: 'major',
+    note: 'reference shows a grey NFC activation card above result_done', must_fix_refs: [0],
+    source: { producer: 'visual_provider', invoke_id: 'review-i1' }, ...extra,
+  });
+  const withA2Runtime = (
+    defects: Array<Record<string, unknown>>,
+    refElements: Array<Record<string, unknown>>,
+    fn: (root: string) => void,
+    mustFix = ['Add the NFC activation card above result_done'],
+  ): void => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-a2-'));
+    try {
+      a2Write(root, 'framework.config.json', JSON.stringify({
+        schema_version: '1.1', project_name: 'T', project_profile: { name: 'hmos-app', sub_variant: 'app' },
+        paths: { features_dir: 'doc/features' },
+      }));
+      const feat = `doc/features/${A2_FEATURE}`;
+      a2Write(root, `${feat}/spec/ui-spec.yaml`, [
+        "schema_version: '1.0'", 'screens:', '- id: add_card_result', '  priority: P0', '  must_have_elements:',
+        '  - result_status', '  - result_title', '  - result_desc', '  - result_illustration', '  - result_done', '',
+      ].join('\n'));
+      a2Write(root, `${feat}/spec/ref-elements.yaml`, JSON.stringify({ schema_version: '1.0', elements: refElements }));
+      a2Write(root, `${feat}/testing/reports/device-test-install.meta.json`, JSON.stringify({ hapPath: 'build/app.hap' }));
+      a2Write(root, 'build/app.hap', 'hap-bytes-v1');
+      clearFrameworkConfigCache();
+      const buildFp = resolveCurrentBuildFingerprint(root, A2_FEATURE, 'testing');
+      assert(!!buildFp, '夹具须能算出 build fingerprint');
+      const shotRel = `${feat}/device-testing/device-screenshots/shot-add_card_result.png`;
+      a2Write(root, shotRel, 'png-bytes-add_card_result');
+      const h = hashScreenshotFile(path.join(root, shotRel));
+      a2Write(root, `${feat}/device-testing/device-screenshots/visual-diff.json`, JSON.stringify({
+        schema_version: '1.1',
+        screens: [{
+          screen_id: 'add_card_result', verdict: 'fail', screenshot_path: shotRel,
+          screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: buildFp,
+          must_fix: mustFix, defects,
+        }],
+      }));
+      fn(root);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+  const a2Collect = (root: string) => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => { warns.push(args.map(String).join(' ')); };
+    try {
+      return { res: collectActionableDefects(root, A2_FEATURE, 'run-1'), warns };
+    } finally {
+      console.warn = orig;
+    }
+  };
+  const A2_EXCLUDED = { element_id: 'result_nfc_card', disposition: 'excluded', requirement_quote: A2_QUOTE };
+  const A2_DONE = { element_id: 'result_done', disposition: 'implement' };
+
+  run('c4e7a9b2 A2-1 excluded NFC defect on a legal anchor: no candidate, no unverified, one warn line', () => {
+    withA2Runtime([a2NfcDefect()], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res, warns } = a2Collect(root);
+      assert(res.defects.length === 0, `excluded 不得产任何候选：${JSON.stringify(res.defects)}`);
+      assert(res.unverified.length === 0, `excluded 不进 unverified：${JSON.stringify(res.unverified)}`);
+      assert(warns.some(l => l.includes('add_card_result') && l.includes('需求排除项')), `须一行 warn：${JSON.stringify(warns)}`);
+    });
+  });
+
+  run('c4e7a9b2 三轮返修#1 excluded NFC 改写成 shape_mismatch / other 仍不产候选；锚点未登记的 shape_mismatch 不产候选', () => {
+    for (const cls of ['shape_mismatch', 'other']) {
+      withA2Runtime([a2NfcDefect({ class: cls })], [A2_EXCLUDED, A2_DONE], (root) => {
+        const { res } = a2Collect(root);
+        assert(res.defects.length === 0 && res.unverified.length === 0, `${cls}：excluded 换分类不得重获返修：${JSON.stringify(res)}`);
+      });
+    }
+    const undeclared = { class: 'shape_mismatch', element: 'result_mystery_banner', severity: 'major', note: 'x', must_fix_refs: [0] };
+    withA2Runtime([undeclared], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res, warns } = a2Collect(root);
+      assert(res.defects.length === 0, `锚点未登记不产候选：${JSON.stringify(res.defects)}`);
+      assert(warns.some(l => l.includes('result_mystery_banner')), `须 warn 点名锚点：${JSON.stringify(warns)}`);
+    }, ['Restyle result_mystery_banner']);
+  });
+
+  run('c4e7a9b2 A2-2 ref_element not registered: no candidate, no backtrack (scope_unclear goes to disclosure)', () => {
+    withA2Runtime([a2NfcDefect()], [A2_DONE], (root) => {
+      const { res, warns } = a2Collect(root);
+      assert(res.defects.length === 0, `范围不明不得产候选：${JSON.stringify(res.defects)}`);
+      assert(res.unverified.length === 0, `范围不明不是证据不可信：${JSON.stringify(res.unverified)}`);
+      assert(warns.some(l => l.includes('result_nfc_card')), `须 warn 点名 ref_element：${JSON.stringify(warns)}`);
+    });
+  });
+
+  run('c4e7a9b2 A2-3 missing_render without ref_element: unverified ref_element_missing, no coding candidate', () => {
+    const { ref_element: _r, ...legacy } = a2NfcDefect();
+    withA2Runtime([legacy], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res } = a2Collect(root);
+      assert(res.defects.length === 0, `格式不全不得产 coding 候选：${JSON.stringify(res.defects)}`);
+      assert(res.unverified.length === 1 && res.unverified[0].reason_code === 'ref_element_missing',
+        `须进 unverified(ref_element_missing)：${JSON.stringify(res.unverified)}`);
+    });
+  });
+
+  run('c4e7a9b2 四轮：excluded NFC 以 provider shape_mismatch 无 element 重述 → 不产 coding 候选，unverified ref_element_missing', () => {
+    const restated = { class: 'shape_mismatch', bbox: [0.05, 0.55, 0.9, 0.2], severity: 'major',
+      note: 'Add NFC activation card', must_fix_refs: [0], source: { producer: 'visual_provider', invoke_id: 'review-i1' } };
+    withA2Runtime([restated], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res } = a2Collect(root);
+      assert(res.defects.length === 0, `省略标识不得重获返修授权：${JSON.stringify(res.defects)}`);
+      assert(res.unverified.length === 1 && res.unverified[0].reason_code === 'ref_element_missing',
+        `须进 unverified(ref_element_missing)：${JSON.stringify(res.unverified)}`);
+    });
+    // 五轮：来源标签不构成授权——伪 T8（无锚点、finding_id 不存在）同判证据不全
+    const fakeT8 = { ...restated, source: { producer: 'T8', finding_id: 'nonexistent', signal: 'clip' } };
+    withA2Runtime([fakeT8], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res } = a2Collect(root);
+      assert(res.defects.length === 0, `自称 T8 不得重获返修授权：${JSON.stringify(res.defects)}`);
+      assert(res.unverified.length === 1 && res.unverified[0].reason_code === 'ref_element_missing',
+        `须进 unverified(ref_element_missing)：${JSON.stringify(res.unverified)}`);
+    });
+    // 真实 T8 转录形状（模板恒带 finding.elements[0] 已声明锚点）照常产候选
+    const t8 = { class: 'clipping', element: 'result_done', bbox: [0.05, 0.55, 0.9, 0.2], severity: 'major', note: 'text clipped at bottom',
+      must_fix_refs: [0], source: { producer: 'T8', finding_id: 'T8-1', signal: 'clip' } };
+    withA2Runtime([t8], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res } = a2Collect(root);
+      assert(res.defects.length === 1 && res.unverified.length === 0, `真实 T8 转录照常产候选：${JSON.stringify(res)}`);
+    }, ['Fix clipped text']);
+  });
+
+  run('c4e7a9b2 A2-5 declared-element shape_mismatch still yields one coding candidate', () => {
+    const real = { class: 'shape_mismatch', element: 'result_status', bbox: [0.3, 0.1, 0.4, 0.2], severity: 'major',
+      note: 'result_status icon too small', must_fix_refs: [1] };
+    withA2Runtime([a2NfcDefect(), real], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res } = a2Collect(root);
+      assert(res.defects.length === 1 && res.defects[0].fingerprint.includes('result_status'),
+        `只有真实缺陷产候选：${JSON.stringify(res.defects)}`);
+      assert(res.defects[0].instructions.includes('Enlarge result_status to 72vp')
+        && !res.defects[0].instructions.some(s => s.includes('NFC')), `指令只带真实缺陷的 must_fix：${JSON.stringify(res.defects[0].instructions)}`);
+      const cands = actionableDefectsToCandidates(res.defects, 'testing');
+      assert(cands.length === 1 && cands[0].category === 'coding', `category 恒 coding：${JSON.stringify(cands)}`);
+    }, ['Add the NFC activation card above result_done', 'Enlarge result_status to 72vp']);
   });
 
   // 标准执行模式：逐条执行并捕获异常（不可只登记 ok:true——那是假 PASS）

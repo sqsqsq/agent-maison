@@ -68,15 +68,15 @@ import {
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
 } from './utils/fidelity-shared';
-import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, type UiSpecAsset } from './utils/ui-spec-shared';
-import { loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
+import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, collectAllComponentNodes, type UiSpecAsset } from './utils/ui-spec-shared';
+import { collectCurrentRequirementText, loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
 import { scanUiSpecCounterevidence, type RefElementLite } from './utils/vision-counterevidence';
 import { verifyVlSigningChain } from './utils/critic-receipt-producer';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
-import { designScopeRevisionChecks } from './utils/blueprint-skill-projection';
+import { designScopeRevisionChecks, checkAuthoritativeContentAligned } from './utils/blueprint-skill-projection';
 import { loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
@@ -1568,6 +1568,7 @@ const checker: PhaseChecker = {
         const requirement = input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '';
         results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, requirement), ...dispatchSpecUiSpec(ctx, requirement), ...dispatchSpecAssetAcquisition(ctx));
       }
+      results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
       return [...results, ...designScopeRevisionChecks(ctx, results)];
     }
     const prd = loadPrd(ctx);
@@ -1700,6 +1701,9 @@ const checker: PhaseChecker = {
     // --- goal-fakepass-hardening t7：ux-reference 逐图建模对账（out-of-scope 加界）---
     results.push(...safeRun(() => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
 
+    // plan c4e7a9b2 A1：手写 acceptance 与当前设计权威对齐（spec 是责任阶段，不对齐不得 PASS）。
+    results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
+
     return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
 };
@@ -1708,8 +1712,49 @@ const checker: PhaseChecker = {
  * t7（codex 二轮 P1-2/四轮 P1-8）：每张参考图须映射 ui-spec 屏或显式 out-of-scope
  * 登记（裁剪证明：crop_of 父图 + reason）；需求正文直接引用的图片 agent 无权自划
  * out-of-scope；多数（>50%）out-of-scope → FAIL——"难还原的截图全标裁剪素材"后门关闭。
+ * plan c4e7a9b2 A2：同一入口另核 ref-elements `excluded`（参考图侧元素的需求排除登记）。
  */
-function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
+export function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
+  return [...checkUxReferenceImages(ctx), ...checkRefElementsExcluded(ctx)];
+}
+
+/**
+ * plan c4e7a9b2 A2：`disposition: excluded` = 需求明文排除（下游视觉缺陷据此退出返修）。
+ * 须带 requirement_quote 且**逐字**出现在**当前执行身份**的需求原文（collectCurrentRequirementText：
+ * 当前 goal run 的 manifest，或无 run 时身份匹配的 explicit_cli SSOT 原文；历史 run 不得替当前 run
+ * 授权，spec.md 不是需求、agent 不能自证排除）；被 ui-spec 覆盖的元素不得排除。无 excluded 条目不产结果。
+ */
+function checkRefElementsExcluded(ctx: CheckContext): CheckResult[] {
+  const id = 'ref_elements_excluded';
+  const description = 'ref-elements excluded 须逐字引自需求原文且不被 ui-spec 覆盖';
+  const excluded = (loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature))?.elements ?? [])
+    .filter((e) => e?.disposition === 'excluded');
+  if (excluded.length === 0) return [];
+  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const covered = new Set([
+    ...(uiDoc ? collectAllComponentNodes(uiDoc).map((n) => n.id) : []),
+    ...(uiDoc?.screens ?? []).flatMap((s) => s.must_have_elements ?? []),
+  ].filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()));
+  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const reqText = collectCurrentRequirementText(ctx.projectRoot, ctx.feature, featuresDirRel);
+  const failures: string[] = [];
+  for (const e of excluded) {
+    const quote = typeof e.requirement_quote === 'string' ? e.requirement_quote.trim() : '';
+    if (!quote) failures.push(`${e.element_id}：excluded 缺 requirement_quote`);
+    else if (!reqText.includes(quote)) failures.push(`${e.element_id}：requirement_quote「${quote}」未逐字出现在需求原文`);
+    if (covered.has(String(e.element_id).toLowerCase())) failures.push(`${e.element_id}：已被 ui-spec 覆盖，不得登记 excluded`);
+  }
+  return [{
+    id, category: 'structure', description, severity: 'BLOCKER',
+    status: failures.length > 0 ? 'FAIL' : 'PASS',
+    details: failures.length > 0 ? failures.join('\n') : `${excluded.length} 条 excluded 均有逐字需求引文且未被 ui-spec 覆盖。`,
+    ...(failures.length > 0
+      ? { suggestion: 'requirement_quote 须逐字复制需求原文的排除句；需求没说排除的元素改登 implement 或 defer。' }
+      : {}),
+  }];
+}
+
+function checkUxReferenceImages(ctx: CheckContext): CheckResult[] {
   const id = 'ux_reference_mapping';
   const description = 'ux-reference 参考图逐图建模对账（未映射/越权 out-of-scope 拦截）';
   const uxDir = featureFilePath(ctx.projectRoot, ctx.feature, 'ux-reference');

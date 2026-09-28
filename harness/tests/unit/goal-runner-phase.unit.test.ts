@@ -30,7 +30,10 @@ import {
   buildHalfPhaseRecoveryEvents,
   findUnclosedAgentInvokeStart,
   isReceiptFreshForInvokeStart,
+  foldBudgetLineage,
+  type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
+import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
 import { resolveGoalRunStatus } from '../../scripts/utils/phase-transition-policy';
 import type { GoalPhaseOutcome } from '../../scripts/utils/goal-report-generator';
 import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability';
@@ -673,6 +676,83 @@ cases.push(
     },
   },
 );
+
+// plan c4e7a9b2 §3.3 B1：预算以可信完成为交付周期边界——折叠 = 祖先(seeds) − ({B} ∪ 祖先(B))。
+// 夹具形状 = 宿主 ae92d8：F 成功完成（1 次回退、3 轮）→ N 失败（无 supersede，2 轮）→ O 失败（supersede F+N，1 轮）→ 后继 S。
+{
+  const turn = (ts: string): GoalRunEvent => ({ type: 'agent_invoke_start', ts });
+  const bt = (ts: string): GoalRunEvent => ({ type: 'phase_backtrack_requested', ts });
+  const sup = (target: string, by: string, ts: string, boundary?: string): GoalRunEvent =>
+    ({ ts, ...buildSupersedeAuditEvent({ targetRunId: target, supersedingRunId: by, ...(boundary ? { deliveryCycleBoundary: boundary } : {}) }) }) as GoalRunEvent;
+  const store: Record<string, GoalRunEvent[]> = {
+    F: [turn('2026-09-20T00:01Z'), bt('2026-09-20T00:02Z'), turn('2026-09-20T00:03Z'), turn('2026-09-20T00:04Z')],
+    N: [turn('2026-09-21T00:01Z'), turn('2026-09-21T00:02Z')],
+    O: [sup('F', 'O', '2026-09-22T00:00Z'), sup('N', 'O', '2026-09-22T00:00Z'), turn('2026-09-22T00:01Z')],
+  };
+  const loaderOf = (m: Record<string, GoalRunEvent[]>) => (abs: string): GoalRunEvent[] =>
+    m[/goal-runs[\\/]([^\\/]+)[\\/]events\.jsonl$/.exec(abs)?.[1] ?? ''] ?? [];
+  const loadEvents = loaderOf(store);
+  const fold = (o: Partial<Parameters<typeof foldBudgetLineage>[0]>) =>
+    foldBudgetLineage({ projectRoot: '/x', featuresDir: 'doc/features', feature: 'f', loadEvents, ...o });
+  const count = (events: readonly GoalRunEvent[], type: string): number => events.filter(e => e.type === type).length;
+  const born: GoalRunEvent[] = [{ type: 'run_start', ts: '2026-09-26T00:00Z' }];
+  const bornWithAudit = (boundary?: string): GoalRunEvent[] => [
+    ...['F', 'N', 'O'].map(t => sup(t, 'S', '2026-09-26T00:00Z', boundary)), ...born,
+  ];
+  cases.push(
+    {
+      name: 'B1-1 foldBudgetLineage：fresh 出生显式 cycleBoundary=F → 上一周期（F 及其祖先）不计，N/O 照计',
+      run: () => {
+        const r = fold({ seedTargets: ['F', 'N', 'O'], currentEvents: born, cycleBoundary: 'F' });
+        assert(r.cycleBoundary === 'F', `边界应生效：${r.cycleBoundary}`);
+        assert(count(r.budgetFoldEvents, 'phase_backtrack_requested') === 0, `出生回退应为 0：${count(r.budgetFoldEvents, 'phase_backtrack_requested')}`);
+        assert(count(r.budgetFoldEvents, 'agent_invoke_start') === 3, `轮次应只含 N(2)+O(1)：${count(r.budgetFoldEvents, 'agent_invoke_start')}`);
+        // 对照：无边界 = 现状全血缘折叠（F 的 1 次回退与 3 轮被继承）
+        const all = fold({ seedTargets: ['F', 'N', 'O'], currentEvents: born });
+        assert(all.cycleBoundary === undefined && count(all.budgetFoldEvents, 'phase_backtrack_requested') === 1 && count(all.budgetFoldEvents, 'agent_invoke_start') === 6, '无边界应全链折叠');
+      },
+    },
+    {
+      name: 'B1-4 foldBudgetLineage：resume / progress / heartbeat 从本 run supersede 事件的 delivery_cycle_boundary 得到同一结果',
+      run: () => {
+        const explicit = fold({ seedTargets: ['F', 'N', 'O'], currentEvents: born, cycleBoundary: 'F' });
+        const fromEvents = fold({ currentEvents: bornWithAudit('F') });
+        assert(fromEvents.cycleBoundary === 'F', `应从本 run 事件读到边界：${fromEvents.cycleBoundary}`);
+        assert(count(fromEvents.ancestorEvents, 'agent_invoke_start') === count(explicit.ancestorEvents, 'agent_invoke_start')
+          && count(fromEvents.ancestorEvents, 'phase_backtrack_requested') === 0, '事件读边界与显式边界结果不同');
+        // 本 run 事件没有边界字段（旧事件 / 记录不可信）→ 现状全链折叠
+        assert(count(fold({ currentEvents: bornWithAudit() }).budgetFoldEvents, 'phase_backtrack_requested') === 1, '无边界字段应全链折叠');
+      },
+    },
+    {
+      name: 'B1 只看当前 run 自己事件里的边界：祖先 supersede 事件上的旧边界字段不切本周期；边界不在本次血缘内不生效',
+      run: () => {
+        const staleStore = { ...store, O: [sup('F', 'O', '2026-09-22T00:00Z', 'N'), sup('N', 'O', '2026-09-22T00:00Z', 'N'), turn('2026-09-22T00:01Z')] };
+        const r = foldBudgetLineage({
+          projectRoot: '/x', featuresDir: 'doc/features', feature: 'f', currentEvents: bornWithAudit(),
+          loadEvents: loaderOf(staleStore),
+        });
+        assert(r.cycleBoundary === undefined && count(r.budgetFoldEvents, 'agent_invoke_start') === 6, '祖先事件上的边界字段不得参与');
+        const outside = fold({ seedTargets: ['N'], currentEvents: born, cycleBoundary: 'F' });
+        assert(outside.cycleBoundary === undefined && count(outside.budgetFoldEvents, 'agent_invoke_start') === 2, '边界不在血缘内不得生效');
+      },
+    },
+    {
+      name: 'B1-3 本周期内失败 run 再 supersede（无新完成）：边界仍是 F，S 与 N/O 的消耗累计不清零',
+      run: () => {
+        const s1 = [...bornWithAudit('F'), turn('2026-09-26T00:01Z'), bt('2026-09-26T00:02Z'), turn('2026-09-26T00:03Z')];
+        const chained = foldBudgetLineage({
+          projectRoot: '/x', featuresDir: 'doc/features', feature: 'f',
+          seedTargets: ['S'], currentEvents: [{ type: 'run_start', ts: '2026-09-27T00:00Z' }], cycleBoundary: 'F',
+          loadEvents: loaderOf({ ...store, S: s1 }),
+        });
+        assert(chained.cycleBoundary === 'F', `边界应仍为 F：${chained.cycleBoundary}`);
+        assert(count(chained.budgetFoldEvents, 'phase_backtrack_requested') === 1, `S 的 1 次回退应累计：${count(chained.budgetFoldEvents, 'phase_backtrack_requested')}`);
+        assert(count(chained.budgetFoldEvents, 'agent_invoke_start') === 5, `轮次应为 S(2)+N(2)+O(1)：${count(chained.budgetFoldEvents, 'agent_invoke_start')}`);
+      },
+    },
+  );
+}
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];

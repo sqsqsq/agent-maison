@@ -518,7 +518,7 @@ export function bindingHasParsedValue(binding: InputBinding): boolean {
  * `source_refs` 列表。这类差异自动对齐（采用本轮重算的 binding），不判 stale。
  * source 或 `content_fingerprint` 任一不等 = 身份或内容真变了，照旧回 scope owner。
  */
-function isLedgerOnlyBindingDrift(expected: InputBinding, actual: InputBinding): boolean {
+function isLedgerOnlyBindingDrift(expected: InputBinding, actual: InputBinding, actualFullFingerprint: string): boolean {
   // `role` 与 `readBoundInput` 同口径：同一路径两侧登记的 role 必须一致——放开的只有
   // 依赖清单的增删与字节，不含"这条依赖是什么性质"（codex 二轮建议 2）。
   const actualRoleByPath = new Map(actual.dependencies.map(dep => [dep.path, dep.role]));
@@ -528,8 +528,23 @@ function isLedgerOnlyBindingDrift(expected: InputBinding, actual: InputBinding):
   });
   return expected.input_id === actual.input_id
     && stableStringify(expected.source) === stableStringify(actual.source)
-    && expected.content_fingerprint === actual.content_fingerprint
+    && (expected.content_fingerprint === actual.content_fingerprint || expected.content_fingerprint === actualFullFingerprint)
     && roleAgrees;
+}
+
+const fullFingerprint = (value: unknown): string => crypto.createHash('sha256').update(stableStringify(value)).digest('hex');
+
+/**
+ * plan c4e7a9b2 §3.4 B2：登记 artifact（derive.blueprint-* 与同名 artifact 同一 schema）的身份中立摘要；
+ * 未登记或算不出（引用解析失败）为 null——调用方回落全值哈希。旧绑定存的是全值哈希，只能按全值命中。
+ */
+function identityNeutralFingerprint(projectRoot: string, source: ContractInputSource, value: unknown): string | null {
+  const artifact = source.kind === 'artifact' ? source.artifact
+    : source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1' : source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
+  if (!artifact) return null;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { identityNeutralDigest } = require('./change-unit-design-preparation') as typeof import('./change-unit-design-preparation');
+  return identityNeutralDigest(projectRoot, artifact, value);
 }
 
 /**
@@ -549,6 +564,7 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   // 不放开的两条：
   //  · `content_fingerprint` 一个字不放宽——改了条件的 acceptance.yaml 仍然叫 acceptance.yaml，
   //    指纹不等即内容真变，抛回 scope owner 走既有 correction / 重验，绝不"同名即换绑"；
+  //    （plan c4e7a9b2 B2：「相等」= 全值哈希相等 或 身份中立摘要相等——后者把引用换成解析到的权威内容，不是放宽）
   //  · 依赖项的**存在性**仍须逐条一致——绑定时记着"该 artifact 不在场、值由 derive 得出"，
   //    事后物化出一个同名文件就是换了来源，不是账本漂移（blueprint 物化反例即锁此条）；
   //  · 依赖项的 **`role`** 仍须逐条一致——`role` 有下游语义（`execution-scope` 出生时按
@@ -562,7 +578,8 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   if (result.state !== 'resolved' || result.value === undefined
     || binding.dependencies.some(existenceDrift)
     || result.dependencies.some(dep => !boundSame(dep))
-    || crypto.createHash('sha256').update(stableStringify(result.value)).digest('hex') !== binding.content_fingerprint) {
+    || (fullFingerprint(result.value) !== binding.content_fingerprint
+      && identityNeutralFingerprint(options.projectRoot, binding.source, result.value) !== binding.content_fingerprint)) {
     throw new Error(`input binding stale; return to scope owner: ${result.detail ?? binding.input_id}`);
   }
   return result.value;
@@ -669,15 +686,16 @@ function resolveInput(
     attempts.push(attempt);
     let binding: InputBinding | undefined;
     if (result.state === 'resolved' && resolved) {
+      const full = fullFingerprint(result.value);
       binding = { input_id: input.id, source, dependencies: dedupeDependencies(attempts.flatMap(attempt => attempt.dependencies)),
         source_refs: result.dependencies.filter(d => d.exists).map(d => path.relative(options.projectRoot, d.path).replace(/\\/g, '/')),
-        content_fingerprint: crypto.createHash('sha256').update(stableStringify(result.value)).digest('hex') };
+        content_fingerprint: identityNeutralFingerprint(options.projectRoot, source, result.value) ?? full };
       const expected = options.inputContext?.expected_bindings?.find(b => b.input_id === input.id);
       const legacyRequirementResupply = expected?.input_id === 'requirement'
         && expected.dependencies.length === 0 && expected.source_refs.length === 0
         && stableStringify({ ...binding, dependencies: [], source_refs: [] }) === stableStringify(expected);
       if (expected && stableStringify(expected) !== stableStringify(binding)
-        && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding)) {
+        && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding, full)) {
         result = { ...result, state: 'invalid', detail: 'input binding stale; return to scope owner' };
         attempt.state = 'invalid'; attempt.detail = result.detail;
       } else {

@@ -13,7 +13,7 @@ import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { assertFactsSourceReadable, parseContextExploration } from './context-exploration';
-import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
+import { evidenceEntryMatchesCurrentFile, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { featuresDirPath, enumerateFeatures, featureFilePath, receiptDirPath, featurePhaseReportsDir } from '../../config';
 import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
@@ -305,7 +305,10 @@ export function resolveCapabilityResolutionEntryInput(
                 ? loadPhaseEvidenceManifest(options.projectRoot, options.feature, entry.owner_phase)?.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase)
                 : undefined;
               const abs = path.join(options.projectRoot, entry.path);
-              return ownedNow
+              // plan c4e7a9b2 B2：身份中立条目存的是摘要；等价成立时基线依赖按当前字节登记（下游按字节核对）。
+              const recorded = owner ?? entry;
+              const neutralCurrent = recorded.identity_neutral !== undefined && evidenceEntryMatchesCurrentFile(options.projectRoot, recorded, options.feature);
+              return ownedNow || neutralCurrent
                 ? { path: abs, exists: fs.existsSync(abs), sha256: sha256File(abs), role: 'derive' }
                 : { path: abs, exists: owner?.exists ?? entry.exists, sha256: owner?.sha256 ?? entry.sha256, role: 'derive' };
             }) };

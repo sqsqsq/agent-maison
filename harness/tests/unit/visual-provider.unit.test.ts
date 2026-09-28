@@ -67,6 +67,7 @@ import { countBlockingDebt, deriveVisualDebt } from '../../scripts/utils/visual-
 import { hashImageFile, invokeVisualProvider } from '../../scripts/utils/visual-provider-invoke';
 import {
   applyProviderReviewToScreen,
+  buildVisualProviderReviewPrompt,
   clearProviderReviewFromScreen,
   collectReviewTargets,
   resetDelegatedRoundState,
@@ -830,6 +831,23 @@ function goodPayload(targets: ReviewTargetScreen[], over: Record<string, unknown
     ...over,
   });
 }
+
+test('c4e7a9b2 A2 产出方同步：prompt 要求 missing_render 带 ref_element 并列出 ref-elements；载荷保留 ref_element', () => {
+  const t1 = mkTarget();
+  const prompt = buildVisualProviderReviewPrompt([t1], {
+    runId: 'R', attemptId: 'A', requireRegionAttest: false,
+    refElements: [{ element_id: 'result_nfc_card', disposition: 'excluded' }, { element_id: 'result_done', disposition: 'implement' }],
+  });
+  assert.match(prompt, /missing_render MUST carry `ref_element`/);
+  assert.match(prompt, /result_nfc_card\(excluded\)/);
+  const body = goodPayload([t1]).replace(
+    '{"class":"clipping","severity":"major","note":"被裁切","must_fix_refs":[0]}',
+    '{"class":"missing_render","element":"result_done","ref_element":"result_nfc_card","severity":"major","note":"缺 NFC 卡","must_fix_refs":[0]}',
+  );
+  const r = validateVisualProviderReviewPayload(body, { targets: [t1], runId: 'R', attemptId: 'A', requireRegionAttest: false });
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual((r as { screens: Array<{ defects: Array<{ ref_element?: string }> }> }).screens[0].defects[0].ref_element, 'result_nfc_card');
+});
 
 test('t5 载荷校验拒收矩阵：空/漏屏/重复屏/hash 不符/旧 attempt/非法枚举', () => {
   const t1 = mkTarget();

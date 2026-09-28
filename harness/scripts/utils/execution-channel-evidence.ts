@@ -52,8 +52,10 @@ import type { AcceptanceFlowsDoc } from './p0-semantic-gates';
 import type { CheckResult } from './types';
 import { loadUiSpecFile, uiSpecAbsPath } from './ui-spec-shared';
 import {
+  effectiveScreens,
   isMissingEvaluatedScreenshotHash,
   isStaleVisualDiffVerdict,
+  loadRepairAuthorityScope,
   validateVisualDiffJson,
 } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import {
@@ -273,7 +275,9 @@ export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScr
   const downgradedRaw = (opts.visualGate?.structured as { downgraded_screens?: unknown } | undefined)?.downgraded_screens;
   const downgraded = new Set(Array.isArray(downgradedRaw) ? downgradedRaw.filter((s): s is string => typeof s === 'string') : []);
   const byScreen = new Map<string, ScreenEvidence>();
-  for (const screen of validated.report.screens ?? []) {
+  // plan c4e7a9b2 A2：逐屏证据资格读 gate 同一授权过滤后的有效视图（需求排除项不否决该屏证据）。
+  const effective = effectiveScreens(validated.report, loadRepairAuthorityScope(opts.projectRoot, opts.feature));
+  for (const screen of effective.screens) {
     const id = typeof screen.screen_id === 'string' ? screen.screen_id.trim() : '';
     if (!id) continue;
     const verdict = String(screen.verdict ?? '');

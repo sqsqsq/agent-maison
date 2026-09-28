@@ -42,6 +42,8 @@ import {
   type MinimumAssurance,
 } from './skill-contract';
 import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './capability-resolution';
+import { assessFeature as assessFeatureCompletion } from './feature-assessment';
+import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 import type { CapabilityResolution } from './capability-resolution';
 
 export type AssessGapKind =
@@ -1004,12 +1006,61 @@ export function writeNextProjection(
   return target;
 }
 
+/**
+ * plan c4e7a9b2 §3.5：无 run 时推荐以完成评估入口（feature-assessment）为准——与出生链同源，
+ * 不再按逐阶段 summary 推荐。无完成记录时评估无「已完成部分哪里失效」可答，保留观察器推荐（返回 null）。
+ */
+function completionAssessmentRecommendation(
+  options: AssessFeatureOptions,
+  chain: string[],
+): AssessRecommendation | null {
+  let a: ReturnType<typeof assessFeatureCompletion>;
+  try {
+    a = assessFeatureCompletion(options.projectRoot, options.feature, {
+      ...resolveChangeUnitExpectedExecution(options.projectRoot, options.feature),
+      frameworkRoot: options.frameworkRoot,
+    });
+  } catch {
+    return null;
+  }
+  if (a.record.state === 'absent') return null;
+  if (a.complete) {
+    return { action: 'validate_feature_completion', phase: null, reason: '完成评估：记录可信、义务全覆盖；仍须执行 feature completion validation', requires_driver_authorization: true };
+  }
+  const uncovered = a.obligations.filter(o => o.status === 'uncovered' && o.owner_phase);
+  if (uncovered.length) {
+    const rank = (p: string): number => (chain.includes(p) ? chain.indexOf(p) : Infinity);
+    const phase = uncovered.map(o => o.owner_phase).sort((x, y) => rank(x) - rank(y))[0];
+    // feature 载体完成记录 run_id=null：没有可 supersede 的 run（execution-scope 测试 b2d7 t3 #15）。
+    const hint = a.record.state !== 'ok' ? ''
+      : a.record.run_id ? `；完成后修正经 \`--supersede ${a.record.run_id}\``
+        : '；feature 载体：先按当前输入追加范围修订再起新 run';
+    return { action: 'run_phase', phase, reason: `完成评估 uncovered：${uncovered.map(o => o.id).join(', ')}${hint}`, requires_driver_authorization: true };
+  }
+  if (a.blocking.length) {
+    return { action: 'stop', phase: null, reason: `完成评估 blocking：${a.blocking.join('；')}`, requires_driver_authorization: true };
+  }
+  return null;
+}
+
 export function assessFeature(options: AssessFeatureOptions): AssessResult {
   const observation = observeFeatureState(options);
-  const result = assessObservation(
+  let result = assessObservation(
     observation,
     options.authorization ?? { mode: 'manual' },
   );
+  const override = options.runId ? null : completionAssessmentRecommendation(options, observation.phases.map(p => p.phase));
+  if (override) {
+    const { projection_fingerprint: _stale, ...rest } = result;
+    const reconciled = rest.gaps.length === 0 && !rest.stop.fused && override.action === 'validate_feature_completion';
+    const withoutProjection = {
+      ...rest,
+      recommendation: override,
+      run_status_candidate: reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
+      feature_completion: reconciled ? 'REQUIRES_VALIDATION' as const : null,
+    };
+    result = { ...withoutProjection, projection_fingerprint: hash(withoutProjection) };
+  }
   if (options.writeProjection !== false) {
     writeNextProjection(options.projectRoot, options.feature, result);
   }

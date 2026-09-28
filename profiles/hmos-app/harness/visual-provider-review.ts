@@ -23,7 +23,7 @@ import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { isPixel1to1, loadSpecMarkdown } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, loadRefElementsFile, loadSpecMarkdown, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { readImageDimensions, resolveCompareReference, splitMustHaveByTopSlice } from './image-toolkit';
 import { canonicalOverlayBase } from './visual-diff-nav';
@@ -168,6 +168,8 @@ export interface ReviewPromptIdentity {
   attemptId?: string;
   /** pixel_1to1 硬契约：pass 屏须附 region_attest（既有 candidate-pass 要求，非新机制） */
   requireRegionAttest: boolean;
+  /** plan c4e7a9b2 A2：spec/ref-elements.yaml 的参考图侧元素——missing_render 的 ref_element 取值域 */
+  refElements?: ReadonlyArray<{ element_id: string; disposition: string }>;
 }
 
 export function buildVisualProviderReviewPrompt(
@@ -188,6 +190,14 @@ export function buildVisualProviderReviewPrompt(
     '- Do NOT produce a verdict, a score, or a pass/fail judgement. That is the gate\'s job, not yours.',
     '- Do NOT write legacy `confirmed_by` or claim human authority; only report machine observations.',
     '- Anchor every defect to the fixes: `must_fix_refs` holds indices into that screen\'s `must_fix`.',
+    '- class=missing_render MUST carry `ref_element`: the id of the reference-side element that is missing.',
+    '- Every other class MUST carry `element`: the ui-spec node id of the rendered element that is wrong.',
+    ...(identity.refElements?.length
+      ? [
+          `  Reference-side element ids (spec/ref-elements.yaml): ${identity.refElements.map(e => `${e.element_id}(${e.disposition})`).join(', ')}.`,
+          '  Elements marked (excluded) are explicitly out of scope for this delivery — do not request them.',
+        ]
+      : []),
     '',
     'Screens:',
   ];
@@ -224,7 +234,8 @@ export function buildVisualProviderReviewPrompt(
     '      "evaluated_screenshot_hash": "<that screen\'s screenshot hash>",',
     '      "must_fix": ["<minimal concrete fix>"],',
     '      "defects": [{"class": "clipping|overlap|shape_mismatch|missing_render|other",',
-    '                   "severity": "blocker|major|minor", "element": "<optional id>",',
+    '                   "severity": "blocker|major|minor", "element": "<ui-spec node id; required unless missing_render>",',
+    '                   "ref_element": "<reference element id; required for missing_render>",',
     '                   "note": "<what is wrong>", "must_fix_refs": [0]}]',
     ...(identity.requireRegionAttest
       ? [
@@ -366,6 +377,7 @@ export function validateVisualProviderReviewPayload(
         severity: dd.severity as VisualDiffDefect['severity'],
         note: dd.note.trim(),
         ...(typeof dd.element === 'string' && dd.element.trim() ? { element: dd.element.trim() } : {}),
+        ...(typeof dd.ref_element === 'string' && dd.ref_element.trim() ? { ref_element: dd.ref_element.trim() } : {}),
         ...(bbox ? { bbox } : {}),
         ...(refs ? { must_fix_refs: refs } : {}),
       });
@@ -790,10 +802,12 @@ export async function runVisualProviderReview(
   }
   writeVisualDiffJsonAtomic(jsonPath, doc);
 
+  const refElements = loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature))?.elements;
   const prompt = buildVisualProviderReviewPrompt(targets, {
     ...(runId ? { runId } : {}),
     ...(attemptId ? { attemptId } : {}),
     requireRegionAttest,
+    ...(refElements?.length ? { refElements } : {}),
   });
   const invocation = await (opts.invoke ?? invokeVisualProvider)({
     projectRoot: ctx.projectRoot,

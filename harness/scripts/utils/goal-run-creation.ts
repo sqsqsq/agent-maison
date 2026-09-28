@@ -287,11 +287,14 @@ export function buildSupersedeAuditEvent(input: {
   supersedingRunId: string;
   rebaselineTo?: string;
   creation?: GoalRunCreationResult | null;
+  /** plan c4e7a9b2 §3.3 B1：出生时算出的交付周期边界（上一次可信完成的 run）；预算折叠只认当前 run 自己事件上的这个字段。 */
+  deliveryCycleBoundary?: string;
 }): Record<string, unknown> {
   return {
     type: 'supersede',
     target_run_id: input.targetRunId,
     superseding_run_id: input.supersedingRunId,
+    ...(input.deliveryCycleBoundary ? { delivery_cycle_boundary: input.deliveryCycleBoundary } : {}),
     ...(input.rebaselineTo
       ? {
           rebaseline_to: input.rebaselineTo,

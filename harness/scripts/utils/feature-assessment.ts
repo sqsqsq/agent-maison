@@ -20,6 +20,8 @@ import { tryParseCuFeatureId } from './feature-identity';
 import { asChangeUnitArtifact, inspectDerivedFeatureBinding, loadCanonicalChangeUnit } from './change-unit-path';
 import { changeUnitMappingIssues } from './change-unit-feature-projection';
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
+import { definitionAuthorityGap } from './feature-track';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import {
   FEATURE_COMPLETION_FILENAME,
   collectCleanPassIssues,
@@ -160,6 +162,20 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
     for (const detail of cuIssues) {
       if (!bound.length) add('cu:feature-binding', 'binding', detail, { kind: 'change-unit-binding', owner_phase: 'plan', applicability: 'required' });
       for (const o of bound) add(o.id, 'binding', detail);
+    }
+  }
+  // plan c4e7a9b2 §3.1 A1：手写验收 / 设计与当前设计权威按稳定 ID 对齐（与出生候选同一判定 `definitionAuthorityGap`）。
+  // 摊到以该手写产物为来源的定义义务；范围里没有时合成一条，沿用上方 `cu:feature-binding` 先例。
+  // 不传 frameworkRoot 的默认调用方（goal-status / observeChangeUnitCompletion）按既有布局解析补齐（工程内框架树，
+  // 找不到回落当前 harness 所在框架，不抛），传与不传同一裁决。
+  if (tryParseCuFeatureId(feature)) {
+    const frameworkRoot = opts.frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot);
+    for (const [kind, contextKind, owner] of [['acceptance', 'acceptance-context', 'spec'], ['contracts', 'design-context', 'plan']] as const) {
+      const gap = definitionAuthorityGap({ projectRoot, feature, frameworkRoot }, kind);
+      if (!gap) continue;
+      const bound = (scope?.obligations ?? []).filter(o => o.kind === contextKind && o.basis.some(b => b.source.kind === 'artifact' && b.source.artifact === `${kind}@1`));
+      if (!bound.length) add(`${contextKind}:authority`, 'binding', gap, { kind: contextKind, owner_phase: owner, applicability: 'required' });
+      for (const o of bound) add(o.id, 'binding', gap);
     }
   }
 

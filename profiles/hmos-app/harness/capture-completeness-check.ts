@@ -66,8 +66,9 @@ function uiSpecCoversElement(
   return false;
 }
 
+/** plan c4e7a9b2 A2：分母只认 implement——defer 是债务、excluded 是需求明文排除，都不是"必须实现"。 */
 function denominatorElements(refElements: RefElementEntry[]): RefElementEntry[] {
-  return refElements.filter(e => e.disposition !== 'defer');
+  return refElements.filter(e => e.disposition === 'implement');
 }
 
 export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string): CheckResult[] {
@@ -160,7 +161,6 @@ export function checkCaptureCompleteness(ctx: CheckContext, specMarkdown: string
 
   const missing: string[] = [];
   for (const el of denom) {
-    if (el.disposition === 'defer') continue;
     if (!uiSpecCoversElement(el.element_id, nodeIds, mustHave)) {
       missing.push(el.element_id);
     }

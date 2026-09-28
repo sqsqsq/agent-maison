@@ -394,7 +394,10 @@ export function classifyPhaseAssessment(
     }
   }
 }
-/** 回退预算缺省值（plan d8c5f3a7 T4；与轮次指纹熔断共同防 ping-pong） */
+/**
+ * 回退预算缺省值（plan d8c5f3a7 T4；与轮次指纹熔断共同防 ping-pong）。
+ * 口径 = 本交付周期（plan c4e7a9b2 §3.3：自上次可信完成起，含 supersede 链；见 foldBudgetLineage）。硬常量，无用户配置。
+ */
 export const DEFAULT_MAX_BACKTRACKS = 2;
 
 /**

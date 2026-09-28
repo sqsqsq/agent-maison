@@ -27,6 +27,7 @@ import { computeRequirementShaFromText, computeRunRequirementSha } from '../../s
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
+import { handWriteProjections } from './component-design-handoff.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
@@ -124,7 +125,7 @@ export function completionOriginal(s: Snapshot, feature: string): string {
 }
 
 /** ledger-refresh 的 design_ref 目标 node `ledger-domain` 自带的验收内容——`deriveBlueprintSkillInput` 原样拷进 acceptance 投影。 */
-const NEW_EXPECTED_RESULT = 'consumer refreshed and balance survives restart';
+export const NEW_EXPECTED_RESULT = 'consumer refreshed and balance survives restart';
 export function changeProjectedAcceptance(bp: Record<string, unknown>): void {
   const visit = (value: unknown): boolean => {
     if (Array.isArray(value)) return value.some(visit);
@@ -271,6 +272,38 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert.strictEqual(readJson<{ requirement: string }>(runFile(s.root, feature, successor!, 'manifest.json')).requirement, finalRequirement, '前提：后继任务真源 = 合并后的最终需求');
     assert.deepStrictEqual(scope.phase_chain, born.phase_chain);
     console.log(`[successor-exit] 需求增量 actual phase_chain=${JSON.stringify(scope.phase_chain)} reused=${JSON.stringify(scope.reused_phases.map(item => item.phase))}`);
+  }) },
+  { name: 'A1-7 手写派生文件 + 蓝图投影自身坏（验收写成文本）→ authority_projection_invalid：--supersede 照常出生，spec/plan 入链、不拒绝', run: () => withSnapshot(async s => {
+    const feature = SNAPSHOT_CU_FEATURE;
+    const [source] = runIds(s.root, feature);
+    handWriteProjections(s.root);
+    const bpFile = componentBlueprintPath(s.root, BLUEPRINT_ID);
+    const bp = YAML.parse(fs.readFileSync(bpFile, 'utf8'));
+    bp.revision = Number(bp.revision) + 1;
+    for (const result of bp.derived_results ?? []) result.input_revision = bp.revision;
+    const visit = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(visit);
+      if (!value || typeof value !== 'object') return false;
+      if ((value as { node_id?: string }).node_id === 'ledger-domain') { (value as { acceptance?: unknown }).acceptance = '验收写成了一段文本'; return true; }
+      return Object.values(value).some(visit);
+    };
+    assert(visit(bp), '快照蓝图缺 ledger-domain');
+    fs.writeFileSync(bpFile, YAML.stringify(bp));
+    const reconcile = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+    assert(reconcile.bumped.some(item => item.change_unit_id === 'ledger-refresh') && !reconcile.skipped.length, JSON.stringify(reconcile));
+    const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
+    clearFrameworkConfigCache();
+    const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!;
+    const expected = uncoveredOwnerPhases(assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot, scope: born }));
+    const { successor, error } = await supersede(s, feature, source, expected);
+    assert(successor, `投影 invalid 不得拒绝出生：${error}`);
+    const scope = successorScope(s, feature, successor!);
+    assert(scope.phase_chain.includes('spec') && scope.phase_chain.includes('plan'), `spec/plan 应入链对齐：${JSON.stringify(scope.phase_chain)}`);
+    for (const kind of ['acceptance-context', 'design-context']) {
+      const d = scope.obligations.find(o => o.kind === kind && o.applicability === 'required');
+      assert(d && !d.satisfied_by?.length && d.reason.includes('authority_projection_invalid'), `${kind}：${JSON.stringify(d)}`);
+    }
+    assert.deepStrictEqual(scope.phase_chain, expected);
   }) },
   { name: '#16a 源 run 出生记录 creation_incomplete → 出生拒绝：不建 run、不写审计、转交记录不变', run: () => withSnapshot(async s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
