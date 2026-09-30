@@ -172,7 +172,22 @@ export interface IncidentSpec {
   recover_action?: RecoverAction;
   /** plan e5d8a2c4 5b：保留 incident 的来源标注，行为由 class/recover_action 决定。 */
   suspected_misclassified?: boolean;
+  /**
+   * plan 4e6fb3b6 §3：故障类别（总纲 272acb5f §5.3 六类）——**只是默认解释**：这类故障通常怎么
+   * 恢复、什么时候交还。处置仍以 class / structurally_terminal / recover_action 为真源，
+   * decide() 不读本字段。六类不是完备互斥的根因分类；框架程序异常、汇总性原因、能力缺口等
+   * 归不进任何一类时留空，并在条目上方注释写明原因。
+   */
+  fault_category?: FaultCategory;
 }
+
+export type FaultCategory =
+  | 'transient'               // 瞬时与进程中断：有界退避，从失败动作继续
+  | 'incompatible_parameter'  // 模型或工具参数永久不兼容：停止重复相同调用，获准范围内换参数重探
+  | 'artifact_drift'          // 文件格式、投影、机器身份漂移：确定性修复或交既有责任阶段重建
+  | 'requirement_conflict'    // 需求与设计或观察矛盾：按责任阶段调和后局部验证
+  | 'product_failure'         // 产品测试失败：依据可复现证据修根因
+  | 'authority_boundary';     // 权限、秘密、不可逆操作、硬预算：停止对应动作，保留恢复上下文
 
 export type RecoverAction = 'backtrack_to_coding' | 'retry_transaction';
 
@@ -181,67 +196,83 @@ export type RecoverAction = 'backtrack_to_coding' | 'retry_transaction';
  * **新增 incident 未在此注册 → t4 元门禁单测红**，写不出第二套分类。
  */
 export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.freeze({
+  // 类别留空：汇总性状态，具体原因在 unresolved 各项里
   execution_scope_unresolved: { class: 'external' },
   // --- 本 plan 打通的两条恢复路 -------------------------------------------
   /** legacy-only（plan 1741b6f2 T3/T4）：runner 级 drift reconciliation 已删除，新 run 不再
    *  写入本 halt——同一漂移事实改由 ut_no_src_mutation / review_closure_attestation 单次分级
    *  裁决。条目保留仅供历史 events.jsonl 解释与归档工具，不参与新 run 决策。 */
-  unauthorized_source_mutation: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
+  unauthorized_source_mutation: { class: 'recoverable', recover_action: 'backtrack_to_coding', fault_category: 'artifact_drift' },
 
   // --- 结构上无法在本 run 继续 ---------------------------------------------
+  // 类别留空：链结构前提（截断链），不是故障本身
   authorized_mutation_requires_full_chain: { class: 'recoverable', structurally_terminal: true },
-  backtrack_limit: { class: 'recoverable', structurally_terminal: true },
-  backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true },
+  backtrack_limit: { class: 'recoverable', structurally_terminal: true, fault_category: 'authority_boundary' },
+  backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true, fault_category: 'product_failure' },
+  // 类别留空：链结构前提（回退目标不在本链）
   backtrack_target_absent: { class: 'recoverable', structurally_terminal: true },
   /** legacy-only（plan 1741b6f2 T1/T2/T4）：归属信息不足不再是裁决依据——owner 解析不出
    *  只说明 artifact inventory 不描述该路径（它按定义只收 skill 叙事产物），不构成越权；
    *  边界解析失败只说明本次拿不到归因证据。两者现均降为 phase_write_boundary_degraded /
    *  phase_write_observed 诊断事件，新 run 不再写入本 halt。条目保留供历史事件解释。 */
+  // 类别留空：框架程序异常（legacy）
   phase_write_boundary_unresolved: { class: 'framework_fault', structurally_terminal: true },
+  // 类别留空：框架程序异常（legacy）
   phase_write_owner_unresolved: { class: 'framework_fault', structurally_terminal: true },
   /** 同一越权写入已在本 run 重现，现有收敛熔断不允许 resume 重置。 */
-  phase_write_violation_repeat: { class: 'recoverable', structurally_terminal: true },
+  phase_write_violation_repeat: { class: 'recoverable', structurally_terminal: true, fault_category: 'artifact_drift' },
   /** legacy-only（plan 1741b6f2 T2/T4）：见 pre_invoke_snapshot_failed；新 run 不再写入。 */
+  // 类别留空：框架程序异常（legacy）
   post_invoke_snapshot_failed: { class: 'framework_fault', structurally_terminal: true },
   /** legacy-only：本 id 已无产地，仅 goal-phase-runtime 的 resume 兼容读取历史 events.jsonl
    *  时用到（该保护按事件本身而非 halt_reason 判定）。plan 1741b6f2 不重设计历史 run 恢复。 */
-  testing_write_violation: { class: 'recoverable', structurally_terminal: true },
-  visual_ledger_integrity: { class: 'framework_fault', structurally_terminal: true },
+  testing_write_violation: { class: 'recoverable', structurally_terminal: true, fault_category: 'artifact_drift' },
+  visual_ledger_integrity: { class: 'framework_fault', structurally_terminal: true, fault_category: 'artifact_drift' },
 
   // --- 需要人的决定（可问则问，不可问则停放） -------------------------------
   /** legacy 事件只读：不再接受人签释放；当前证据须在 correction/successor run 重算。 */
+  // 类别留空：已退役的人签停机，只读历史事件
   await_human_visual_confirm: { class: 'recoverable', structurally_terminal: true },
   /** 累计 one-shot/no-op 收敛熔断；same-run resume 无释放权，只能 successor/new evidence。 */
-  repair_not_converging: { class: 'recoverable', structurally_terminal: true },
+  repair_not_converging: { class: 'recoverable', structurally_terminal: true, fault_category: 'product_failure' },
   /** legacy-only：当前实现以 device/provider capability-missing 投影，不接受 runtime 人签。 */
+  // 类别留空：环境验证能力缺口，六类不含能力缺口（legacy）
   await_human_verification_evidence: { class: 'external' },
+  // 类别留空：环境验证能力缺口，六类不含能力缺口
   capability_tightened_hard_pixel: { class: 'external' },
-  declared_product_layer_missing: { class: 'operator' },
-  unverifiable_must_fix: { class: 'operator' },
+  declared_product_layer_missing: { class: 'operator', fault_category: 'requirement_conflict' },
+  unverifiable_must_fix: { class: 'operator', fault_category: 'product_failure' },
+  // 类别留空：执行者请求交互，起因可能是授权也可能是需求歧义，按具体问题判断
   headless_interaction_required: { class: 'operator' },
   /** Attended executor cannot finish the current request without new host/user input. */
+  // 类别留空：执行者等待新输入，起因按具体请求判断
   executor_waiting: { class: 'operator' },
-  operator_interrupt: { class: 'operator' },
+  operator_interrupt: { class: 'operator', fault_category: 'transient' },
   /** c7e4a2d9：**只读兼容**——历史 3.0.0 前 events.jsonl 可能含
    * `halt_reason=await_human_p0_skip`，本映射供状态读取/归档工具解释旧事件；
    * 新 run 不再写该 halt（无 StepResult 的 explicit skip 保持 testing FAIL；只有已执行
    * assertion mismatch 才能进入 coding candidate 路由），本条目**不是**新 run 的写入口，
    * 不参与 driver 决策。 */
+  // 类别留空：已退役，只读历史事件
   await_human_p0_skip: { class: 'recoverable', recover_action: 'backtrack_to_coding' },
   /** 闭环墙：脚本门禁反复 PASS 但机器证据/closure 事务无法关环。 */
-  closure_open: { class: 'recoverable', recover_action: 'retry_transaction' },
+  closure_open: { class: 'recoverable', recover_action: 'retry_transaction', fault_category: 'artifact_drift' },
+  /** plan 4e6fb3b6 §3.2：推进阻断原因之一（goal-runner-phase advance_block_reason），经
+   *  `haltReason = resolved.advance_block_reason` 间接成为 halt_reason；与 closure_open 同处置。 */
+  receipt_missing: { class: 'recoverable', recover_action: 'retry_transaction', fault_category: 'artifact_drift' },
   /**
    * assess 侧 halt 的**通用**兜底（运行时带 `assess_halt:<reason>` 后缀——normalizeIncidentId 归一）。
    * f9c2e6b4 t3 起，产生端对"重试耗尽"改发下面两个带责任类别的 id；本条只留给未分类的
    * 其余 assess halt，**不再是所有 assess halt 的唯一出口**。
    */
+  // 类别留空：汇总性兜底原因
   assess_halt: { class: 'operator' },
 
   /**
    * f9c2e6b4 t3：重试耗尽 · **内容失败**。反复做不对内容，重启同一个 run 只会在同一处再死，
    * 故结构上终局——supervisor 不得拉起（人工 --resume 仍是人的选择，不由框架自动做）。
    */
-  content_retry_exhausted: { class: 'operator', structurally_terminal: true },
+  content_retry_exhausted: { class: 'operator', structurally_terminal: true, fault_category: 'product_failure' },
 
   /**
    * f9c2e6b4 t3：重试耗尽 · **外部条件**（工具链/设备/网络/断流）。环境恢复后可继续，
@@ -249,6 +280,7 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * 注意：这**不等于**会被自动重试——a4 的 supervisor 对 `stale × WAITING` 一律 no_op；
    * 本条的收益是责任归属正确（据此决定找谁、是否值得重启），不是自动恢复。
    */
+  // 类别留空：汇总性原因：外部条件可能是瞬时、工具链或设备
   external_retry_exhausted: { class: 'external' },
 
   /**
@@ -257,21 +289,25 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * 需要人看上游那一环，但**不是**内容失败、也不是重试耗尽——不得再被洗成
    * content_retry_exhausted（那正是宿主 run 20260804T033834Z-99c0a1 的错误标签）。
    */
-  upstream_closure_gap: { class: 'operator' },
+  upstream_closure_gap: { class: 'operator', fault_category: 'artifact_drift' },
 
   // --- 外部条件未满足 -------------------------------------------------------
+  // 类别留空：环境能力缺口，六类不含能力缺口
   await_human_capability_gap: { class: 'external' },
-  managed_device_session_conflict: { class: 'external' },
-  transient_api_error_exhausted: { class: 'external' },
+  managed_device_session_conflict: { class: 'external', fault_category: 'transient' },
+  transient_api_error_exhausted: { class: 'external', fault_category: 'transient' },
+  // 类别留空：起因可能是 spawn、权限或模型能力，无法归一类
   agent_no_output: { class: 'external' },
+  // 类别留空：起因可能是预算、需求规模或 adapter 环境，无法归一类
   agent_timeout_repeated: { class: 'external' },
+  // 类别留空：起因可能是 verifier 卡住或预算不足，无法归一类
   closure_timeout: { class: 'external' },
   /**
    * plan d7f3a9c4 t4：金丝雀 CLI 硬失败（child spawn race / CLI·config 参数不兼容）——
    * CLI/adapter 兼容性问题、**非需求代码**。修复 adapter 版本/配置/环境后可重跑
    * （--refresh-vision-probe 触发重探）；不是内容失败（agent 做不对），也不是框架缺陷。
    */
-  canary_cli_hard_failure: { class: 'external' },
+  canary_cli_hard_failure: { class: 'external', fault_category: 'incompatible_parameter' },
   /**
    * plan c4e8a1f7 T1a：正式 phase invoke 的 CLI/guardian 硬失败（child spawn race /
    * guardian containment 建立失败 / CLI·config 参数不兼容 / Codex 模型兼容 400）——
@@ -279,14 +315,14 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * 不伪归因 spec_file_exists）。修复 adapter 版本/配置/环境/升级 CLI 后可重跑；
    * 普通内容失败（含无 guardian 诊断的 exit 2）不属此类，保持既有 harness/retry。
    */
-  adapter_cli_hard_failure: { class: 'external' },
+  adapter_cli_hard_failure: { class: 'external', fault_category: 'incompatible_parameter' },
   /**
    * plan a7c3f9e2 t4/t5：编译形态无法确定（多候选未确认 / build-profile 缺失 /
    * products 为空 / build-profile 不可解析——后三者无真实候选，不得虚构 default）——
    * 工程配置侧问题，需用户经 init.product_selection / record-product-selection / env
    * 显式确认；不是内容失败（agent 改代码无意义），确认后 --resume 重检即放行。
    */
-  product_selection_unresolved: { class: 'external' },
+  product_selection_unresolved: { class: 'external', fault_category: 'requirement_conflict' },
   /**
    * plan a7c3f9e2 review P1（第二轮）：编译形态解析器执行失败（profile 模块存在但
    * require/解析抛错）——build-profile 缺失/空/不可解析及普通配置读取错误已被解析器
@@ -294,15 +330,19 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
    * fault**；按 external 会给出"等待外部环境恢复"的不合理结论。归类 framework_fault，
    * 修复框架侧后 --resume 重检。
    */
+  // 类别留空：框架程序异常
   product_selection_probe_failed: { class: 'framework_fault' },
 
   // --- 预算熔断（本 run 内无从调整——DEFAULT_MAX_BACKTRACKS 是硬常量、
   //     budget 字段已入 manifest identity 冻结） ------------------------------
-  budget_wall_clock: { class: 'operator', structurally_terminal: true },
-  no_progress_fuse: { class: 'operator', structurally_terminal: true },
-  closure_wall_repeated: { class: 'operator', structurally_terminal: true },
+  budget_wall_clock: { class: 'operator', structurally_terminal: true, fault_category: 'authority_boundary' },
+  no_progress_fuse: { class: 'operator', structurally_terminal: true, fault_category: 'product_failure' },
+  closure_wall_repeated: { class: 'operator', structurally_terminal: true, fault_category: 'artifact_drift' },
+  /** plan 4e6fb3b6 §3.2：轮次预算耗尽，与 budget_wall_clock 同处置（此前未登记，落 fail-safe 等人）。 */
+  budget_turns: { class: 'operator', structurally_terminal: true, fault_category: 'authority_boundary' },
 
   // --- 框架自身缺陷 / 当前机器 integrity（如 process injection） ------------
+  //     本节类别一律留空：框架程序异常或进程完整性异常，不属六类任何一类。
   framework_bug: { class: 'framework_fault' },
   framework_integrity_block: { class: 'framework_fault' },
   framework_internal: { class: 'framework_fault' },
@@ -317,36 +357,45 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   //     一律按**保持现行行为**的类登记（这些今天都是停下求人/等外部），
   //     绝不落 recoverable —— 映射完整 ≠ 行为改动。
   /** legacy-only：新运行不再生成；resume 只能触发机器重验，不能靠签名改写质量结论。 */
+  // 类别留空：已退役，只读历史事件
   await_human_gate_deferral: { class: 'recoverable', recover_action: 'retry_transaction' },
   /** 存在 toolchain 阻塞项——环境修好后继续。 */
+  // 类别留空：环境工具链缺失，六类不含能力缺口
   await_operator_toolchain: { class: 'external' },
   /** in-session 调和熔断（goal-mode-entry）。codex 七轮 P1：`fuse_reason` **持久化在
    *  会话状态里**，下一次进入立即再次 fused，同一 run 没有清除或恢复入口——按
    *  structurally_terminal 的既定定义（不存在使本 run 能继续的未来输入）应判 terminal，
    *  而不是「等人一下就能续」的 WAITING(human)。 */
+  // 类别留空：汇总性熔断原因
   in_session_reconcile_fused: { class: 'operator', structurally_terminal: true },
   /** no-progress 家族：签名重复 / 超时无进展——盲重试只烧预算，停下求人。 */
-  no_progress_guard: { class: 'operator' },
+  no_progress_guard: { class: 'operator', fault_category: 'product_failure' },
   /** codex 八轮 P1：产生端把 agent_timeout 与 toolchain/capture 同归「基建/环境问题」
    *  （goal-runner driverGuard 分支注释原文），且既有 `agent_timeout_repeated` 也是
    *  external——判 operator 会错报成「等人决策」。 */
+  // 类别留空：同 agent_timeout_repeated，无法归一类
   no_progress_agent_timeout: { class: 'external' },
   /** 视觉门禁无改善熔断（与基建类分流，见 goal-runner driverGuard 分支注释）。 */
-  no_progress_visual_gap: { class: 'recoverable', structurally_terminal: true },
+  no_progress_visual_gap: { class: 'recoverable', structurally_terminal: true, fault_category: 'product_failure' },
   /** 基建类无进展：工具链 / 采集失败——环境修好后继续。 */
+  // 类别留空：环境工具链缺失，六类不含能力缺口
   no_progress_toolchain: { class: 'external' },
+  // 类别留空：采集导航失败，可能是环境也可能是采集脚本，无法归一类
   no_progress_capture: { class: 'external' },
   /** CUMULATIVE 家族（原按 failureKind 模板生成 id，已收敛为稳定 literal）。
    *  codex 八轮 P1：**必须拆两个**——CUMULATIVE_HALT_FAMILY 同时含 `toolchain`（等环境）
    *  历史上也覆盖 `await_human_confirm`；当前质量缺口已重投影到 owner/capability 路径，
    *  压成一个会让 wait_kind 真值永久丢失，而下游被禁止读 failure_kind_classified 自行纠正。 */
+  // 类别留空：汇总性原因（工具链累计）
   no_progress_cumulative_external: { class: 'external' },
+  // 类别留空：已退役，只读历史事件
   no_progress_cumulative_human: { class: 'recoverable', structurally_terminal: true },
   /** 设备就绪门（delegated producer：device-readiness-gate）。 */
-  device_not_ready: { class: 'external' },
+  device_not_ready: { class: 'external', fault_category: 'transient' },
   /** codex 七轮 P1：AMBIGUOUS 的原契约是「多设备无法唯一确定 → HALT 求人，须用户配置
    *  target_serial」——登记成 external 会产出 WAITING(external) 的错误报告（等环境自愈，
    *  可这环境不会自愈）。它等的是**人做一次配置决定**。 */
+  // 类别留空：多设备须人配置目标，是配置决定而非六类故障
   device_target_ambiguous: { class: 'operator' },
 
   // --- harness 侧 blocking_class（与上面的 halt_reason 同为 incident 形态；
@@ -354,12 +403,17 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   /** legacy-only（plan 1741b6f2 T3/T4）：unauthorized_source_mutation 的 harness 侧孪生，
    *  随 runner 级 reconciliation 一并退役；保留仅供历史事件解释。 */
   goal_post_review_source_mutation_unresolved: {
+    fault_category: 'artifact_drift',
     class: 'recoverable', recover_action: 'backtrack_to_coding',
   },
+  // 类别留空：保真档位能力缺口，六类不含能力缺口
   await_human_fidelity_tier: { class: 'external' },
+  // 类别留空：harness 侧 legacy blocking_class 投影
   needs_human: { class: 'recoverable', recover_action: 'retry_transaction' },
   /** codex 第九批 P1：--supersede 参数校验失败的启动期优雅收口（改参数重跑即可） */
+  // 类别留空：启动参数本身无效，不是六类故障
   supersede_target_invalid: { class: 'operator' },
+  // 类别留空：环境工具链缺失，六类不含能力缺口
   device_toolchain: { class: 'external' },
 
   // --- 5b：快照/事务故障的行为映射 -----------------------------------------
@@ -367,34 +421,48 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   // pre-invoke 的失败点在写保护边界，可能是磁盘/权限等外部条件，因此保留 external
   // 等 probe；其余纯缓存/事务故障走可重复的责任阶段恢复。
   pass_snapshot_unavailable: {
+    fault_category: 'artifact_drift',
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
   pass_snapshot_restore_refused: {
+    fault_category: 'artifact_drift',
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
   pass_snapshot_journal_unverifiable: {
+    fault_category: 'artifact_drift',
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
   /** legacy-only（plan 1741b6f2 T2/T4）：快照拿不到只意味着本次 invocation 无写归因证据，
    *  不是产物有问题——现降为诊断并继续出 verdict，新 run 不再写入这两个 halt。 */
+  // 类别留空：已退役；存储条件问题
   pre_invoke_snapshot_failed: { class: 'external', suspected_misclassified: true },
   /** runner-owned-machine-facts：invoke 前回执骨架写失败（目录只读/模板缺失/文件占用）。
    *  不启动 agent、不烧 attempt——静默吞会让旧身份回执存活，receipt_attempt_identity
    *  死结复发；外部存储条件恢复后 probe 续跑。 */
+  // 类别留空：存储或文件占用等外部条件，六类不含
   receipt_scaffold_unwritable: { class: 'external' },
   /** plan c6a9e4d2 P0-2：Windows containment 绑定失败且 guardian 未证明消失——
    *  旧 agent 无 Job 契约仍在野（kill 失败/复验仍活），halt 阻断续跑求人（真冲突
    *  勿自动覆盖）；人工清理后 --resume（接管对账再拦/放行）。 */
-  agent_containment_unresolved: { class: 'external' },
+  agent_containment_unresolved: { class: 'external', fault_category: 'authority_boundary' },
+  /** plan 4e6fb3b6 §3.2：resume 接管对账——旧版 run 有未闭合 invoke 却无 Job 绑定，须人工清理
+   *  残留进程并显式确认（concludeStartupBlocker 实参；此前未登记，落 fail-safe 等人，处置不变）。 */
+  legacy_run_requires_manual_cleanup: { class: 'operator', fault_category: 'authority_boundary' },
+  /** plan 4e6fb3b6 §3.2：身份匹配的 guardian 终止失败（权限或句柄占用）——等外部条件，
+   *  **不认定为可自动重试**（重试同样杀不死；真冲突勿自动覆盖）。 */
+  guardian_termination_failed: { class: 'external', fault_category: 'authority_boundary' },
   /** 责任阶段统一路由（plan b6e4c9f2）：可信缺陷候选写不回 summary（唯一真源）——
    *  assess 因此看不见缺陷、回退链断裂。存储条件问题，修好后 probe 续跑。 */
+  // 类别留空：存储或文件占用等外部条件，六类不含
   repair_candidates_unwritable: { class: 'external' },
   closure_finalization_failed: {
+    fault_category: 'artifact_drift',
     class: 'recoverable', recover_action: 'retry_transaction', suspected_misclassified: true,
   },
   /** legacy-only（plan 1741b6f2 T3/T4）：缺 attestation 基线现由 checker 报"无基线：做一次
    *  最终合并 diff review"并继续，不再 halt；保留仅供历史事件解释。 */
   goal_review_closure_baseline_unavailable: {
+    fault_category: 'artifact_drift',
     class: 'recoverable', recover_action: 'backtrack_to_coding', suspected_misclassified: true,
   },
 } as const satisfies Record<string, IncidentSpec>);

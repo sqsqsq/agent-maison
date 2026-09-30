@@ -17,7 +17,6 @@
     "summary_json",
     "run_statuses",
     "readiness_signals",
-    "blocking_warnings",
     "blocking_skips",
     "blockers",
     "next_action"
@@ -42,6 +41,21 @@
     "feature": { "type": "string", "minLength": 1 },
     "verdict": { "type": "string", "enum": ["PASS", "FAIL", "INCOMPLETE"] },
     "blocker_count": { "type": "integer", "minimum": 0 },
+    "disclosed_failures": {
+      "type": "array",
+      "description": "plan f7045213 §4.3：去向表判为披露、不阻断的失败（账本与形状类）；条数计入完成缺口。当代 writer 恒写（去向表为空时为空数组），旧 summary 可缺省",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "protects", "severity", "details_excerpt"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "protects": { "type": "string", "enum": ["product_truth", "result_basis", "ledger_shape", "capability_gap"] },
+          "severity": { "type": "string", "minLength": 1 },
+          "details_excerpt": { "type": "string" }
+        }
+      }
+    },
     "fail_count": { "type": "integer", "minimum": 0 },
     "warn_count": { "type": "integer", "minimum": 0 },
     "asset_debt_revision": {
@@ -100,6 +114,7 @@
     },
     "blocking_warnings": {
       "type": "array",
+      "description": "plan 3abca824 t3：已停写（没有决策读取方）；保留属性只为读取带该字段的旧 summary",
       "items": { "$ref": "#/$defs/blocking_notice" }
     },
     "blocking_skips": {

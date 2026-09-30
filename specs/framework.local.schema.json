@@ -16,6 +16,24 @@
       "type": "string",
       "description": "Active adapter for this developer (must be in project materialized_adapters when set)"
     },
+    "adapters": {
+      "type": "object",
+      "description": "Per-adapter personal settings, keyed by adapter name (plan 4e6fb3b6 §6.1). Unparsable values are treated as not configured, with a warning.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "approved_models": {
+            "type": "array",
+            "description": "Approved alternative models, tried in order when the effective model is rejected as unsupported and the user did not pin a model with --adapter-model. Absent = no alternatives (current behavior).",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
     "toolchain": {
       "type": "object",
       "properties": {

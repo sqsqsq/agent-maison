@@ -240,6 +240,7 @@ import {
   buildInstallBlockingCheckDetails,
   writeInstallDiagJson,
 } from '../../profiles/hmos-app/harness/device-install-diag';
+import { isBlockingCheck } from './utils/check-disposition';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -5452,6 +5453,11 @@ export function __testing_checkHylyreFailureRouting(
   return checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath);
 }
 
+/** plan f7045213 §4.4 回归入口：聚合运行状态检查的真实产出（去重两个方向与运行时归因用）。 */
+export function __testing_buildTestingRunStatusResult(plan: string | null, report: string | null, results: CheckResult[]): CheckResult {
+  return buildTestingRunStatusResult(plan, report, results);
+}
+
 function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
   const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'use-cases.yaml');
   if (!fs.existsSync(resolved.actualPath)) return null;
@@ -5850,7 +5856,7 @@ function buildTestingRunStatusResult(
     install?.status === 'FAIL' &&
     (install.blocking_class === 'externalBlocked' || install.failure_kind === 'device_blocked');
   const compilePassed = build?.status === 'PASS';
-  const blockerFails = results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
+  const blockerFails = results.filter(r => isBlockingCheck(r));
   const blockerSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER');
   const blockingWarnings = results.filter(r => r.status === 'WARN' && r.severity === 'BLOCKER');
   const staticBlockerFails = blockerFails.filter(
@@ -6030,7 +6036,7 @@ const checker: PhaseChecker = {
     // 而且 AI 会去改 UT / 改标 manual 绕路。分层结果只在这里算一次，后面不再重算。
     const unitLayerAcResults = safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac');
     results.push(...unitLayerAcResults);
-    const unitOnlyTcBlocked = unitLayerAcResults.find(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
+    const unitOnlyTcBlocked = unitLayerAcResults.find(r => isBlockingCheck(r));
     const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
     // 声明未闭合时，被拦的是**设备动作**，不是全部分析。report-only 按契约零设备/零 provider
     // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，

@@ -6,6 +6,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   countSupervisorRestarts,
@@ -15,7 +16,23 @@ import {
   RESTART_BACKOFF_BASE_MS,
   restartBackoffMs,
   schedulerSupport,
+  superviseRun,
 } from '../../scripts/utils/goal-supervisor';
+import { reduceRunState } from '../../scripts/utils/run-state-reducer';
+import { waitForConditionRecovery } from '../../scripts/utils/condition-wait';
+import { livenessBeaconPath } from '../../scripts/utils/liveness-beacon';
+import { FINALIZE_RESERVE_MS, resolveWallClockMs } from '../../scripts/utils/goal-timeout';
+import * as supervise from '../../scripts/goal-supervise';
+import { clearFrameworkConfigCache } from '../../config';
+import {
+  recordHvigorBuildOutcome,
+  resetCapabilityFailedByHumanReprobe,
+} from '../../../profiles/hmos-app/harness/toolchain-probe';
+import {
+  FEATURE,
+  runGoalRuntimeChain,
+  setupGoalRuntimeHost,
+} from './goal-runner-testing-integrity.unit.test';
 import {
   resolveSurvivalCapability,
   resolveSurvivalFacet,
@@ -91,7 +108,9 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'runner-owned-machine-facts（codex 三轮）：RECOVERY_PENDING + 显式 successor_start_phase → resume 且起点取显式值（不按 halt 现场 phase）',
+    // plan 4e6fb3b6 §5.3：后继分支已删（生产无产出方）。旧版本发布件写过的 successor 字段只剩兼容读取意义：
+    // RECOVERY_PENDING 照常恢复同一个 run，字段本身不再改变决策。
+    name: 'P3 t3 兼容：旧事件带 successor_required/successor_start_phase → 仍按 RECOVERY_PENDING 恢复同一 run，字段不再被消费',
     run: () => {
       const events: unknown[] = [
         { type: 'run_start' },
@@ -103,10 +122,7 @@ const cases: TestCase[] = [
       ];
       const d = decideSupervision({ events, restartsSoFar: 0, beaconStale: true });
       assert(d.action === 'resume', `RECOVERY_PENDING 应拉起，实际 ${d.action}`);
-      assert(
-        d.action === 'resume' && d.successor_start_phase === 'coding',
-        `后继起点须取事件显式声明（coding），不得按 halt 现场 phase（review）推导：${JSON.stringify(d)}`,
-      );
+      assert(!('successor_required' in d) && !('successor_start_phase' in d), `决策不得再带后继字段：${JSON.stringify(d)}`);
     },
   },
   {
@@ -370,38 +386,13 @@ cases.push(
     },
   },
   {
-    name: 'T3 截断链用现有 resume 决策标记 successor，不引入新状态',
-    run: () => {
-      const decision = decideSupervision({
-        events: [
-          { type: 'run_start' },
-          {
-            type: 'phase_halt',
-            phase: 'coding',
-            successor_required: true,
-            run_disposition: 'RECOVERY_PENDING',
-          },
-        ],
-        restartsSoFar: 0,
-        beaconStale: true,
-      });
-      assert(decision.action === 'resume', '截断链仍沿用既有 resume 动作');
-      assert(
-        decision.action === 'resume' &&
-          decision.successor_required === true &&
-          decision.successor_start_phase === 'coding',
-        '必须携带责任阶段 successor 元数据',
-      );
-    },
-  },
-  {
-    name: 'T3 probe/successor 必须绑定当前 run_start 之后的投影事件，不得消费旧 run 元数据',
+    name: 'T3 probe 必须绑定当前 run_start 之后的投影事件，不得消费旧 run 元数据',
     run: () => {
       const events = [
         { type: 'run_start' },
         {
           type: 'phase_halt', phase: 'ut', run_disposition: 'WAITING', run_wait_kind: 'external',
-          probe: 'device_readiness', successor_required: true,
+          probe: 'device_readiness',
         },
         { type: 'run_end', status: 'PARTIAL' },
         { type: 'run_start', resume: 'same-run' },
@@ -412,10 +403,6 @@ cases.push(
         condition: { probe: 'device_readiness', ready: true },
       });
       assert(staleProbe.action === 'no_op', '新一轮 WAITING(human) 不得被旧 probe 唤醒');
-      assert(
-        staleProbe.action !== 'resume' || staleProbe.successor_required !== true,
-        '新一轮不得继承旧 phase_halt 的 successor_required',
-      );
 
       const current = [
         { type: 'run_start' },
@@ -426,6 +413,58 @@ cases.push(
         condition: { probe: 'device_readiness', ready: true },
       });
       assert(ready.action === 'resume', '当前投影事件的 probe 转绿仍须唤醒');
+    },
+  },
+  {
+    name: 'P3 t3 run_end 作来源：带探针的 WAITING(external) run_end 与停机事件同判据；探针与责任阶段取自 run_end',
+    run: () => {
+      const halt = {
+        type: 'phase_halt', phase: 'coding', halt_reason: 'await_human_capability_gap',
+        run_disposition: 'WAITING', run_wait_kind: 'external', probe: 'capability_preflight_ready',
+      };
+      const withProbe = [
+        { type: 'run_start' }, halt,
+        { type: 'run_end', status: 'HALTED', run_disposition: 'WAITING', run_wait_kind: 'external',
+          probe: 'capability_preflight_ready', probe_phase: 'coding' },
+      ];
+      assert(reduceRunState(withProbe).source_event_type === 'run_end', '前提：HALTED run_end 自带投影即为来源');
+      const woke = decideSupervision({
+        events: withProbe, restartsSoFar: 0, beaconStale: true,
+        condition: { probe: 'capability_preflight_ready', ready: true },
+      });
+      assert(woke.action === 'resume', `带探针的 run_end 须可被唤醒：${JSON.stringify(woke)}`);
+      const phases: Array<string | undefined> = [];
+      superviseRun({
+        projectRoot: os.tmpdir(), reportDir: 'no-such-run-dir', runId: 'r', events: withProbe,
+        conditionProbe: (_p, phase) => { phases.push(phase); return { ready: false }; },
+      });
+      assert(phases.length === 1 && phases[0] === 'coding', `责任阶段须取 run_end.probe_phase：${JSON.stringify(phases)}`);
+      const noProbe = [
+        { type: 'run_start' }, halt,
+        { type: 'run_end', status: 'HALTED', run_disposition: 'WAITING', run_wait_kind: 'external' },
+      ];
+      const kept = decideSupervision({
+        events: noProbe, restartsSoFar: 0, beaconStale: true,
+        condition: { probe: 'capability_preflight_ready', ready: true },
+      });
+      assert(kept.action === 'no_op', 'run_end 不带探针 = 无可核验条件，保持等待');
+      const humanWait = [
+        { type: 'run_start' },
+        { type: 'run_end', status: 'HALTED', run_disposition: 'WAITING', run_wait_kind: 'human',
+          probe: 'capability_preflight_ready', probe_phase: 'coding' },
+      ];
+      assert(decideSupervision({
+        events: humanWait, restartsSoFar: 0, beaconStale: true,
+        condition: { probe: 'capability_preflight_ready', ready: true },
+      }).action === 'no_op', '等人（human）不因探针被拉起：等待类限制不变');
+      assert(decideSupervision({
+        events: withProbe, restartsSoFar: MAX_SUPERVISED_RESTARTS, beaconStale: true,
+        condition: { probe: 'capability_preflight_ready', ready: true },
+      }).action === 'restart_budget_exhausted', '重启次数上限不变');
+      assert(decideSupervision({
+        events: withProbe, restartsSoFar: 0, beaconStale: false,
+        condition: { probe: 'capability_preflight_ready', ready: true },
+      }).action === 'no_op', '进程活着不介入');
     },
   },
   {
@@ -471,8 +510,415 @@ cases.push(
   },
 );
 
-export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
-  return cases.map((testCase) => {
+// ---------------------------------------------------------------------------
+// plan 4e6fb3b6 §5（批二 t3）：进程内有界等待 + 探针贯通到 run_end + supervisor 接受 run_end 作来源
+// ---------------------------------------------------------------------------
+
+const asyncCases: Array<{ name: string; run: () => Promise<void> }> = [];
+
+function goalRunsDir(root: string): string {
+  return path.join(root, 'doc', 'features', FEATURE, 'goal-runs');
+}
+
+function readRunEvents(root: string, runId: string): Array<Record<string, unknown>> {
+  const p = path.join(goalRunsDir(root), runId, 'events.jsonl');
+  if (!fs.existsSync(p)) return [];
+  return fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+/** 运行中找本 feature 唯一 run 的事件文件里有没有某类事件（等待期间由测试侧"修环境"用）。 */
+function anyRunHasEvent(root: string, type: string): boolean {
+  const dir = goalRunsDir(root);
+  if (!fs.existsSync(dir)) return false;
+  return fs.readdirSync(dir).filter((n) => !n.startsWith('.')).some((n) => {
+    const p = path.join(dir, n, 'events.jsonl');
+    return fs.existsSync(p) && fs.readFileSync(p, 'utf-8').includes(`"type":"${type}"`);
+  });
+}
+
+/** 真实 hmos 宿主 + 真实 wrapper 记录的能力失败：coding 的 invoke 前能力门（生产 runInvokeCapabilityGate）会停。 */
+function hostWithCapabilityGap(): string {
+  const { root } = setupGoalRuntimeHost();
+  recordHvigorBuildOutcome(root, {
+    kind: 'capability_failed',
+    fingerprint: 'p3-b2-fp',
+    failure_code: 'sdk_component_missing',
+    evidence: ['sdk_manifest_format=sdk-pkg.json'],
+  });
+  return root;
+}
+
+/** 以生产 supervisor CLI 真跑一轮；spawn 注入只记录参数。探针不注入时走共享的真实实现。 */
+async function superviseOnce(
+  root: string,
+  runId: string,
+  conditionProbe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null,
+): Promise<{ code: number; spawned: string[][] }> {
+  const spawned: string[][] = [];
+  const prevArgv = process.argv;
+  const prevCwd = process.cwd();
+  // run 在本进程内跑完，beacon 记的是本进程 pid（活着）；删掉 beacon = 进程已不在（与 goal-run-driver 同法）
+  fs.rmSync(livenessBeaconPath(root, `doc/features/${FEATURE}/goal-runs/${runId}`), { force: true });
+  try {
+    supervise.__testing_setSpawnImpl((_file, args) => {
+      spawned.push(args.slice(1));
+      return { pid: 4242, unref: () => undefined } as never;
+    });
+    supervise.__testing_setConditionProbe(conditionProbe);
+    process.argv = ['node', 'goal-supervise.ts', '--feature', FEATURE, '--run-id', runId, '--project-root', root];
+    process.chdir(root);
+    clearFrameworkConfigCache();
+    const code = await supervise.__testing_main();
+    return { code, spawned };
+  } finally {
+    supervise.__testing_setSpawnImpl(null);
+    supervise.__testing_setConditionProbe(null);
+    process.argv = prevArgv;
+    try { process.chdir(prevCwd); } catch { /* ignore */ }
+  }
+}
+
+/** 回拨最近一段已结束会话：活跃时长 = consumedMs，run_end 早于现在 10 分钟（过恢复冷却）。 */
+function backdateLastSession(reportDir: string, consumedMs: number): void {
+  const p = path.join(reportDir, 'events.jsonl');
+  const events = fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+  const lastEnd = events.map((e) => e.type).lastIndexOf('run_end');
+  const lastStart = events.map((e) => e.type).lastIndexOf('run_start');
+  assert(lastEnd > lastStart && lastStart >= 0, '夹具：须是一个已结束的会话');
+  const endMs = Date.now() - 10 * 60_000;
+  events[lastStart].ts = new Date(endMs - consumedMs).toISOString();
+  if (typeof events[lastStart].session_started_at === 'string') events[lastStart].session_started_at = events[lastStart].ts;
+  events[lastEnd].ts = new Date(endMs).toISOString();
+  fs.writeFileSync(p, events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+}
+
+asyncCases.push(
+  {
+    name: 'P3 R2 等待函数：到上限后不再探测、不再重查；重查拿到的是剩余额度',
+    run: async () => {
+      const probeAt: number[] = [];
+      const recheckBudgets: number[] = [];
+      const t0 = Date.now();
+      const ok = await waitForConditionRecovery({
+        phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
+        availableMs: 150, maxWaitMs: 5_000, pollMs: 40,
+        runProbe: () => { probeAt.push(Date.now() - t0); return { ready: true }; },
+        recheck: async (remainingMs) => { recheckBudgets.push(remainingMs); return false; },
+        emit: () => undefined,
+      });
+      assert(ok === false, '一直未恢复应超时');
+      assert(probeAt.every((ms) => ms < 150), `到上限后不得再探测：${JSON.stringify(probeAt)}`);
+      assert(recheckBudgets.length === probeAt.length && recheckBudgets.every((b) => b > 0 && b <= 150),
+        `重查拿到的须是剩余额度：${JSON.stringify(recheckBudgets)}`);
+    },
+  },
+  {
+    name: 'P3 批二遗留 等待函数：同步探针自身耗尽余额后不再重查，按超时收尾',
+    run: async () => {
+      const recheckBudgets: number[] = [];
+      const events: Array<Record<string, unknown>> = [];
+      const ok = await waitForConditionRecovery({
+        phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
+        availableMs: 60, maxWaitMs: 5_000, pollMs: 20,
+        // 同步探针（真实探针会 spawn hdc 等）：一次探测就把 60ms 余额耗尽，结论却是"就绪"
+        runProbe: () => { const until = Date.now() + 90; while (Date.now() < until) { /* busy */ } return { ready: true }; },
+        recheck: async (remainingMs) => { recheckBudgets.push(remainingMs); return true; },
+        emit: (e) => events.push(e),
+      });
+      assert(ok === false, '余额已尽应按超时收尾');
+      assert(recheckBudgets.length === 0, `余额已尽不得再重查（会把非正余额传给重查）：${JSON.stringify(recheckBudgets)}`);
+      assert(events.map((e) => e.type).join(',') === 'condition_wait_started,condition_wait_timeout', JSON.stringify(events));
+      assert(events[1].probe_ready_count === 1, `探针就绪次数照常计：${String(events[1].probe_ready_count)}`);
+    },
+  },
+  {
+    name: 'P3 R2 运行时链：等待用掉一部分预算后，正式调用只拿到余额（事件记录与实际调用同一最终值）',
+    run: async () => {
+      const root = hostWithCapabilityGap();
+      try {
+        const first = await runGoalRuntimeChain(root, { freshEndPhase: 'coding', conditionWait: { maxWaitMs: 100, pollMs: 50 } });
+        const runId = path.basename(first.reportDir);
+        assert(first.events.some((e) => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap'), '夹具：第一段须停在能力缺口');
+        const manifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as { phase_chain?: string[] };
+        const wallMs = resolveWallClockMs(manifest as never, manifest.phase_chain);
+        backdateLastSession(first.reportDir, wallMs - FINALIZE_RESERVE_MS - 25_000);
+        let waitSeenAt = 0;
+        const fixer = setInterval(() => {
+          if (!waitSeenAt && anyRunHasEvent(root, 'condition_wait_started')) waitSeenAt = Date.now();
+          if (waitSeenAt && Date.now() - waitSeenAt > 4_000) {
+            clearInterval(fixer);
+            resetCapabilityFailedByHumanReprobe(root, true);
+          }
+        }, 20);
+        let resumed: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
+        try {
+          resumed = await runGoalRuntimeChain(root, {
+            resume: runId, forceResume: true, freshEndPhase: 'coding',
+            conditionWait: { maxWaitMs: 60_000, pollMs: 100 },
+          });
+        } finally {
+          clearInterval(fixer);
+        }
+        const thisSession = resumed.events.slice(resumed.events.map((e) => e.type).lastIndexOf('run_start'));
+        const started = thisSession.find((e) => e.type === 'condition_wait_started');
+        const ready = thisSession.find((e) => e.type === 'condition_wait_ready');
+        assert(!!started && !!ready, `须先等待再恢复：${thisSession.map((e) => e.type).join(',')}`);
+        const invoke = thisSession.find((e) => e.type === 'agent_invoke_start' && e.phase === 'coding');
+        assert(!!invoke, '恢复后 coding 须真正调用');
+        const limit = Number(started!.limit_ms);
+        const waited = Number(ready!.waited_ms);
+        const effective = Number(invoke!.effective_timeout_ms);
+        assert(waited >= 3_000, `夹具：等待须用掉数秒，实得 ${waited}`);
+        assert(effective <= limit - waited + 1_500,
+          `调用时限须按等待后的余额重新钳制：limit=${limit} waited=${waited} effective=${effective}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 批二遗留 运行时链：等待后再钳制的时限同步进写给执行者的提示词（不是门禁前的值）',
+    run: async () => {
+      const { root } = setupGoalRuntimeHost();
+      try {
+        // 时限只写在"上一次调用被中断、从半成品续作"的提示词段里：第一段让 coding 调用中途崩溃（留下未闭合调用），
+        // 恢复时它就是续作提示词。随后记下真实 wrapper 的能力失败，恢复会先在能力门前等待。
+        const first = await runGoalRuntimeChain(root, {
+          freshEndPhase: 'coding',
+          onCoding: () => { throw new Error('injected crash inside coding invoke'); },
+        });
+        const runId = path.basename(first.reportDir);
+        assert(first.events.some((e) => e.type === 'run_end' && e.status === 'INTERRUPTED'), `夹具：第一段须中断：${first.events.map((e) => e.type).join(',')}`);
+        recordHvigorBuildOutcome(root, {
+          kind: 'capability_failed', fingerprint: 'p3-b3-fp', failure_code: 'sdk_component_missing',
+          evidence: ['sdk_manifest_format=sdk-pkg.json'],
+        });
+        const manifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as { phase_chain?: string[] };
+        const wallMs = resolveWallClockMs(manifest as never, manifest.phase_chain);
+        // 余额约 95 秒：门禁前时限四舍五入为 2 分钟；等过约 9 秒后余额低于 90 秒，四舍五入为 1 分钟——两者可区分
+        backdateLastSession(first.reportDir, wallMs - FINALIZE_RESERVE_MS - 95_000);
+        let waitSeenAt = 0;
+        const fixer = setInterval(() => {
+          if (!waitSeenAt && anyRunHasEvent(root, 'condition_wait_started')) waitSeenAt = Date.now();
+          if (waitSeenAt && Date.now() - waitSeenAt > 9_000) {
+            clearInterval(fixer);
+            resetCapabilityFailedByHumanReprobe(root, true);
+          }
+        }, 20);
+        let resumed: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
+        try {
+          resumed = await runGoalRuntimeChain(root, {
+            resume: runId, forceResume: true, freshEndPhase: 'coding',
+            conditionWait: { maxWaitMs: 120_000, pollMs: 100 },
+          });
+        } finally {
+          clearInterval(fixer);
+        }
+        const thisSession = resumed.events.slice(resumed.events.map((e) => e.type).lastIndexOf('run_start'));
+        const started = thisSession.find((e) => e.type === 'condition_wait_started');
+        const invoke = thisSession.find((e) => e.type === 'agent_invoke_start' && e.phase === 'coding');
+        assert(!!started && !!invoke, `须等待后真正调用 coding：${thisSession.map((e) => e.type).join(',')}`);
+        const minutes = (ms: number): number => Math.max(1, Math.round(ms / 60_000));
+        assert(minutes(Number(started!.limit_ms)) === 2, `夹具：门禁前时限须四舍五入为 2 分钟，limit=${String(started!.limit_ms)}`);
+        const effective = Number(invoke!.effective_timeout_ms);
+        assert(minutes(effective) === 1, `夹具：等待后时限须四舍五入为 1 分钟，effective=${effective}`);
+        const prompt = resumed.codingPrompts[resumed.codingPrompts.length - 1] ?? '';
+        const shown = /Time budget: ~(\d+) minutes/.exec(prompt)?.[1];
+        assert(shown === String(minutes(effective)), `提示词时限须取最终钳制值：提示词=${shown} 分钟，实际=${effective}ms`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 R2 设备门重查：有耗时操作的重查拿到剩余额度（模拟器启动预算不超过等待余额）',
+    run: async () => {
+      const { root } = setupGoalRuntimeHost();
+      const budgets: Array<number | undefined> = [];
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          freshEndPhase: 'ut',
+          deviceGate: (o: { phase: string; retries: number; input: { emulatorBootBudgetMs?: number }; emitEvent: (e: Record<string, unknown>) => void }) => {
+            budgets.push(o.input.emulatorBootBudgetMs);
+            if (budgets.length === 1) {
+              o.emitEvent({ type: 'phase_halt', phase: o.phase, halt_reason: 'device_not_ready', verdict: 'FAIL', reason: '注入', probe: 'device_readiness', notes: [] });
+              return {
+                outcome: { phase: o.phase, verdict: 'FAIL', halted: false, retries: o.retries, halt_reason: 'device_not_ready',
+                  halt_guidance: '注入', blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness' },
+                notes: [],
+              };
+            }
+            return { env: {}, target: { serial: 'fake-device', targetKind: 'physical' as const }, notes: [] };
+          },
+          conditionWait: { maxWaitMs: 3_000, pollMs: 50, runProbe: () => ({ ready: true }) },
+        });
+        const started = probe.events.find((e) => e.type === 'condition_wait_started');
+        assert(!!started && probe.events.some((e) => e.type === 'condition_wait_ready'), '须等待后恢复');
+        assert(budgets[0] === undefined, '首次门禁不改既有预算');
+        assert(typeof budgets[1] === 'number' && budgets[1]! > 0 && budgets[1]! <= Number(started!.limit_ms),
+          `重查的模拟器启动预算须取等待余额：${JSON.stringify(budgets)} limit=${String(started!.limit_ms)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 t3 等待函数：先探后等；就绪但原检查未过继续等；原检查通过即恢复；到上限停并只落一条收尾事件',
+    run: async () => {
+      const events: Array<Record<string, unknown>> = [];
+      let probes = 0;
+      let rechecks = 0;
+      const recovered = await waitForConditionRecovery({
+        phase: 'coding', probe: 'capability_preflight_ready', blockedBy: 'await_human_capability_gap',
+        availableMs: 60_000, maxWaitMs: 2_000, pollMs: 10,
+        runProbe: () => { probes += 1; return { ready: probes >= 2 }; },
+        recheck: async () => { rechecks += 1; return rechecks >= 2; },
+        emit: (e) => events.push(e),
+      });
+      assert(recovered === true, '原检查通过应返回已恢复');
+      assert(rechecks === 2, `探针就绪才重查原检查：rechecks=${rechecks}`);
+      assert(JSON.stringify(events.map((e) => e.type)) === JSON.stringify(['condition_wait_started', 'condition_wait_ready']),
+        `事件=${JSON.stringify(events)}`);
+      assert(events.every((e) => !('halt_reason' in e)), '等待事件不得带 halt_reason（写盘层会给它补处置投影）');
+
+      const timeoutEvents: Array<Record<string, unknown>> = [];
+      const t0 = Date.now();
+      const timedOut = await waitForConditionRecovery({
+        phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready',
+        availableMs: 120, maxWaitMs: 5_000, pollMs: 30,
+        runProbe: () => ({ ready: false, reason: 'no device' }),
+        recheck: async () => true,
+        emit: (e) => timeoutEvents.push(e),
+      });
+      assert(timedOut === false, '探针一直未就绪应超时');
+      assert(Date.now() - t0 < 2_000, '上限取剩余墙钟预算的较小者（这里是 120ms）');
+      assert(timeoutEvents.map((e) => e.type).join(',') === 'condition_wait_started,condition_wait_timeout',
+        JSON.stringify(timeoutEvents));
+      assert(timeoutEvents[0].limit_ms === 120, `上限=${String(timeoutEvents[0].limit_ms)}`);
+
+      const none: Array<Record<string, unknown>> = [];
+      const skipped = await waitForConditionRecovery({
+        phase: 'ut', probe: 'device_readiness', blockedBy: 'device_not_ready', availableMs: 0,
+        runProbe: () => ({ ready: true }), recheck: async () => true, emit: (e) => none.push(e),
+      });
+      assert(skipped === false && none.length === 0, '预算已尽不等、不落事件');
+    },
+  },
+  {
+    name: 'P3 A6 运行时链：真实能力门停在 coding，等待中环境修好→同一 attempt 继续，无停机、不耗内容重试',
+    run: async () => {
+      const root = hostWithCapabilityGap();
+      const fixer = setInterval(() => {
+        if (anyRunHasEvent(root, 'condition_wait_started')) {
+          clearInterval(fixer);
+          resetCapabilityFailedByHumanReprobe(root, true);
+        }
+      }, 20);
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          freshEndPhase: 'coding',
+          conditionWait: { maxWaitMs: 20_000, pollMs: 50 },
+        });
+        const types = probe.events.map((e) => String(e.type));
+        const started = probe.events.find((e) => e.type === 'condition_wait_started');
+        assert(!!started && started.phase === 'coding' && started.probe === 'capability_preflight_ready' &&
+          started.blocked_by === 'await_human_capability_gap', `须在 coding 开始等待：${JSON.stringify(started)}`);
+        assert(types.includes('condition_wait_ready') && !types.includes('condition_wait_timeout'), `须就绪恢复：${types.join(',')}`);
+        assert(!probe.events.some((e) => e.type === 'phase_halt'), '恢复后不得留下停机事件');
+        assert(probe.invokedPhases.includes('coding'), `coding 须真正执行：${probe.invokedPhases.join('→')}`);
+        const codingVerdicts = probe.events.filter((e) => e.type === 'phase_verdict' && e.phase === 'coding');
+        assert(codingVerdicts.every((e) => e.action !== 'retry'), '等待不消耗内容重试');
+        const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
+        assert(end?.status === 'CHAIN_SLICE_COMPLETED', `run 须到终点：${JSON.stringify(end)}`);
+      } finally {
+        clearInterval(fixer);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A6+A7 能力探针：等待超时→停放 HALTED，run_end 带探针与责任阶段；修好后生产 supervisor 接受 run_end 作来源并发出恢复',
+    run: async () => {
+      const root = hostWithCapabilityGap();
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          freshEndPhase: 'coding',
+          conditionWait: { maxWaitMs: 300, pollMs: 50 },
+        });
+        const runId = path.basename(probe.reportDir);
+        const types = probe.events.map((e) => String(e.type));
+        assert(types.includes('condition_wait_started') && types.includes('condition_wait_timeout'), `须先等再停：${types.join(',')}`);
+        const halt = probe.events.find((e) => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap');
+        assert(!!halt && types.indexOf('condition_wait_timeout') < types.indexOf('phase_halt'), '超时之后按现状停放');
+        const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
+        assert(end?.status === 'HALTED', `run_end=${JSON.stringify(end)}`);
+        assert(end?.run_disposition === 'WAITING' && end?.run_wait_kind === 'external', `run_end 处置=${JSON.stringify(end)}`);
+        assert(end?.probe === 'capability_preflight_ready' && end?.probe_phase === 'coding',
+          `run_end 须带探针与责任阶段：${JSON.stringify(end)}`);
+        const state = reduceRunState(probe.events);
+        assert(state.source_event_type === 'run_end', `来源事件应为 run_end：${JSON.stringify(state)}`);
+
+        // 环境未修：真实探针未就绪 → supervisor 不拉起
+        const before = await superviseOnce(root, runId, null);
+        assert(before.code === 0 && before.spawned.length === 0, `探针未就绪不得拉起：${JSON.stringify(before)}`);
+        // 人工 reprobe 修好 → 同一份真实探针转绿 → supervisor 发出恢复（同一 run）
+        assert(resetCapabilityFailedByHumanReprobe(root, true), '夹具：人工 reprobe 须重置');
+        const after = await superviseOnce(root, runId, null);
+        assert(after.code === 0 && after.spawned.length === 1, `须发出恢复：${JSON.stringify(after)}`);
+        const args = after.spawned[0];
+        assert(args.includes('--resume') && args.includes(runId) && !args.includes('--supersede'),
+          `须恢复同一 run：${args.join(' ')}`);
+        assert(readRunEvents(root, runId).some((e) => e.type === 'supervisor_restart'), '须先落 supervisor_restart');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A7 设备探针：设备门停放的完整事件流（含 run_end）经生产 supervisor 决策发出恢复',
+    run: async () => {
+      const { root } = setupGoalRuntimeHost();
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          freshEndPhase: 'ut',
+          // 设备门桩按生产 runDeviceReadinessGate 的 BLOCKED 字面形状发事件、回 outcome（含 probe）
+          deviceGate: (o: { phase: string; retries: number; emitEvent: (e: Record<string, unknown>) => void }) => {
+            o.emitEvent({
+              type: 'phase_halt', phase: o.phase, halt_reason: 'device_not_ready', verdict: 'FAIL',
+              reason: '注入：设备锁屏', probe: 'device_readiness', notes: [],
+            });
+            return {
+              outcome: {
+                phase: o.phase, verdict: 'FAIL', halted: false, retries: o.retries,
+                halt_reason: 'device_not_ready', halt_guidance: '注入：设备锁屏',
+                blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness',
+              },
+              notes: [],
+            };
+          },
+          conditionWait: { maxWaitMs: 200, pollMs: 50, runProbe: () => ({ ready: false, reason: '测试不接真机' }) },
+        });
+        const runId = path.basename(probe.reportDir);
+        const types = probe.events.map((e) => String(e.type));
+        assert(types.includes('condition_wait_timeout'), `设备停机前须先等：${types.join(',')}`);
+        const end = [...probe.events].reverse().find((e) => e.type === 'run_end');
+        assert(!!end && typeof end.status === 'string', `须有 run_end：${JSON.stringify(end)}`);
+        const state = reduceRunState(probe.events);
+        assert(state.run_disposition === 'WAITING' && state.run_wait_kind === 'external', `投影=${JSON.stringify(state)}`);
+        const notReady = await superviseOnce(root, runId, () => ({ ready: false }));
+        assert(notReady.spawned.length === 0, '探针未就绪不拉起');
+        const ready = await superviseOnce(root, runId, (p) => ({ ready: p === 'device_readiness' }));
+        assert(ready.spawned.length === 1 && ready.spawned[0].includes('--resume') && ready.spawned[0].includes(runId),
+          `设备探针转绿须发出恢复：${JSON.stringify(ready)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+);
+
+export async function runAll(): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+  const out = cases.map((testCase) => {
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
@@ -480,4 +926,13 @@ export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
       return { name: testCase.name, ok: false, error: (error as Error).message };
     }
   });
+  for (const testCase of asyncCases) {
+    try {
+      await testCase.run();
+      out.push({ name: testCase.name, ok: true });
+    } catch (error) {
+      out.push({ name: testCase.name, ok: false, error: (error as Error).stack ?? (error as Error).message });
+    }
+  }
+  return out;
 }

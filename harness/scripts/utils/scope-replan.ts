@@ -218,7 +218,7 @@ export function checkPlanAuthority(input: {
   if (input.executionScope) {
     const design = input.executionScope.obligations.filter(o => o.kind === 'design-context' && o.applicability === 'required');
     if (design.length && design.every(o => o.satisfied_by?.length) && !input.executionScope.obligations.some(o => o.kind === 'design-decision' && o.applicability !== 'not_applicable' && !o.satisfied_by?.length)) {
-      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId, input.pendingOwnerPhase);
+      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId, input.pendingOwnerPhase, input.frameworkRoot);
       return issues.length ? { kind: 'replan', reason: 'live_drift', detail: issues.join('; '), affectedFiles: [] } : { kind: 'ok' };
     }
   }

@@ -164,7 +164,17 @@ function loadScriptReportFromManifest(
   const reportPath = path.resolve(projectRoot, reportEntry.path);
   try {
     const report = JSON.parse(fs.readFileSync(reportPath, 'utf8')) as ScriptReport;
-    if (report.feature !== featureId || String(report.phase) !== phase || report.summary?.verdict !== 'PASS') return null;
+    if (report.feature !== featureId || String(report.phase) !== phase) return null;
+    // plan f7045213 §5：结论读同目录 summary 的共享结论（与退出码同源；summary 同在 manifest 保护面内）。
+    // manifest 没登记 summary 的旧产物才回退脚本报告的 legacy 结论。外层另有完成记录与新鲜度检查——
+    // 这里只是换读结论出处，不据此声称此前存在假完成。
+    const summaryPath = path.join(path.dirname(reportPath), 'summary.json');
+    const summaryTracked = [...loaded.manifest.inputs, ...loaded.manifest.outputs].some(entry =>
+      entry.role !== 'input' && entry.exists && path.resolve(projectRoot, entry.path) === summaryPath);
+    const verdict = summaryTracked
+      ? (JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verdict?: string }).verdict
+      : report.summary?.verdict;
+    if (verdict !== 'PASS') return null;
     return report;
   } catch {
     return null;

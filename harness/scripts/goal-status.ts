@@ -103,8 +103,8 @@ Goal status — progress projection reader
     // goal-fakepass-hardening t8 / plan b2d7f4e9 §3.5：feature 级完成状态——唯一入口 assessFeature
     // （expectedChain 由 workflow SSOT 独立解析；禁止消费文件存在性/自报字段）。
     try {
-      const { expectedChain, expectedTrack: track } = resolveChangeUnitExpectedExecution(projectRoot, feature);
-      const a = assessFeature(projectRoot, feature, { expectedChain, expectedTrack: track });
+      const { expectedChain, expectedTrack: track } = resolveChangeUnitExpectedExecution(projectRoot, feature, false, frameworkRoot);
+      const a = assessFeature(projectRoot, feature, { expectedChain, expectedTrack: track, frameworkRoot });
       if (a.complete) {
         console.log(`feature_status=FEATURE_COMPLETED (verify=VALID, chain=${expectedChain.join('→')})`);
       } else {

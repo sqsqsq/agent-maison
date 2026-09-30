@@ -222,6 +222,47 @@ const cases: Array<{ name: string; run: () => void }> = [
     assert(ut.status === 'uncovered' && ut.class === 'evidence', brief(a));
     assert.strictEqual(a.complete, false);
   }) },
+  { name: 'P4 A11 结果依据类检查失败（ref_elements_excluded）：spec 义务保持未覆盖，assessFeature 不判完成；同链 PASS 时义务覆盖', run: () => {
+    const { generateScriptReport } = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+    const { resolvePhaseVerdict } = require('../../harness-runner') as typeof import('../../harness-runner');
+    const scope = scopeOf({
+      phase_chain: ['spec', 'plan'],
+      obligations: [{ id: 'acceptance-context:probe', kind: 'acceptance-context', owner_phase: 'spec', applicability: 'required', reason: 'probe', basis: [] }],
+    });
+    const failing = {
+      id: 'ref_elements_excluded', category: 'structure' as const, description: 'ref-elements excluded', severity: 'BLOCKER' as const, status: 'FAIL' as const,
+      details: 'result_nfc_card：requirement_quote 未逐字出现在需求原文',
+    };
+    for (const checks of [[failing], [{ ...failing, status: 'PASS' as const }]]) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-assess-a11-'));
+      clearFrameworkConfigCache();
+      try {
+        const now = () => new Date('2026-07-13T00:00:00.000Z');
+        // spec 的结论由生产的共享结论函数对真实脚本报告求值
+        const verdict = resolvePhaseVerdict(root, generateScriptReport('', 'spec', SEED_FEATURE, root, checks)).verdict;
+        seedCleanCompletionChain({ projectRoot: root, feature: SEED_FEATURE, chain: ['spec', 'plan'], now, phaseVerdict: phase => (phase === 'spec' ? verdict : 'PASS') });
+        let refused = false;
+        try {
+          generateFeatureCompletion({ projectRoot: root, feature: SEED_FEATURE, chain: ['spec', 'plan'], workflowTrack: 'full', runId: 'RUN1',
+            runDirAbs: featureFilePath(root, SEED_FEATURE, path.join('goal-runs', 'RUN1')), phaseRunIds: {}, now });
+        } catch { refused = true; }
+        const a = seededAssess(root, scope);
+        const spec = obligation(a, 'acceptance-context:probe');
+        if (checks[0].status === 'FAIL') {
+          assert.strictEqual(verdict, 'FAIL', '结果依据类失败保持阻断');
+          assert(refused, '完成凭证拒绝生成');
+          assert(spec.status === 'uncovered', brief(a));
+          assert.strictEqual(a.complete, false);
+        } else {
+          assert.strictEqual(verdict, 'PASS');
+          assert(spec.status === 'covered', `正对照：${brief(a)}`);
+        }
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  } },
   { name: '#17 unknown 适用性 / unresolved 非空 → uncovered/unknown，complete=false', run: () => withSeededCompletion(root => {
     const scope = scopeOf({
       obligations: [{ id: 'device-evidence:probe', kind: 'device-evidence', owner_phase: 'testing', applicability: 'unknown', reason: 'probe', basis: [] }],

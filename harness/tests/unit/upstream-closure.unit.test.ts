@@ -80,7 +80,7 @@ function base(overrides: Record<string, unknown> = {}): never {
  * scratch/refresh-plan-freeze.ts 同一配方）——这样 freshness 重算走的是真实判据，
  * 不是被 mock 掉的。
  */
-function freshUpstreamProject(): string {
+function freshUpstreamProject(frameworkRoot?: string): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'upstream-closure-'));
   tmpRoots.push(root);
   fs.writeFileSync(
@@ -110,7 +110,7 @@ function freshUpstreamProject(): string {
     'utf-8',
   );
   // 生产 writer：先冻结 manifest，再把指针写回回执——顺序与 finalizer 同源
-  const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: 'demo', phase: 'plan' });
+  const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: 'demo', phase: 'plan', ...(frameworkRoot ? { frameworkRoot } : {}) });
   const written = writePhaseEvidenceManifest(root, manifest);
   writeReceiptManifestPointer(
     root, 'demo', 'plan',
@@ -261,6 +261,23 @@ const cases: Array<{ name: string; run: () => void }> = [
         order.filter((x) => x === 'fence').length === 2,
         `fence 须在 validator 前与 finalizer 前各一次，实得 ${order.join('→')}`,
       );
+    },
+  },
+  {
+    // 批三全量回归评审返修：框架与工程分开放时，证据按调用方的框架根记下环境（gate 指纹、框架版本）；
+    // 关环前的新鲜度重算必须用同一个框架根——按工程根推断会得到空身份、把合法证据误判 stale。
+    name: 't2 框架与工程分开放：新鲜度重算用调用方的框架根，合法证据照常关环',
+    run: () => {
+      const realFramework = path.resolve(__dirname, '../../..');
+      const root = freshUpstreamProject(realFramework);
+      const out = tryCloseUpstreamPhase(base({
+        projectRoot: root,
+        frameworkRoot: realFramework,
+        harnessRoot: path.join(realFramework, 'harness'),
+        validate: stubValidator('passed', []),
+        finalize: (() => undefined) as never,
+      }));
+      assert(out.kind === 'closed', `分开放布局下合法证据应关环，实得 ${out.kind}：${JSON.stringify(out)}`);
     },
   },
   {

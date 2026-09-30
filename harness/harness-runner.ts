@@ -40,6 +40,7 @@ import {
   writeVerifierMaterial,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
+import { assembleGoalBrief, CONSOLE_BRIEF_SECTIONS, renderGoalBrief, resolvedInputsCarryRequirement } from './scripts/utils/goal-brief';
 import { resolveFactsAbsPath } from './scripts/utils/context-facts';
 import { phaseEvidenceManifestCandidatePaths } from './scripts/utils/phase-evidence-manifest';
 import { REVALIDATE_ENV, runRevalidate } from './scripts/utils/revalidate';
@@ -56,6 +57,7 @@ import {
 } from './scripts/utils/types';
 import { isLegacyPhaseId, normalizePhaseId } from './scripts/utils/phase-alias';
 import { buildSummaryBlockers } from './scripts/utils/summary-blockers';
+import { collectDisclosedFailures } from './scripts/utils/check-disposition';
 import {
   applyAssetAxisInheritance,
   deriveSummaryVerdictLattice,
@@ -128,6 +130,7 @@ import {
 } from './scripts/utils/personal-setup-gate';
 import {
   buildSummaryRepairCandidates,
+  loadRepairDeclineState,
   findUnreadableDiagnosisChecks,
   scopeRevisionInputFromRepairCandidates,
   writeScopeRevisionInputToScriptReport,
@@ -575,7 +578,7 @@ async function main(): Promise<void> {
       const { executionScopeEvidenceIssues } = require('./scripts/utils/verify-feature-completion') as typeof import('./scripts/utils/verify-feature-completion');
       // D2: same-run evidence is not sealed yet (a revision never seals), so the terminal check is
       // skipped for THIS run only — cross-run references keep it.
-      const issues = executionScopeEvidenceIssues(projectRoot, feature, scope, undefined, goalRunId);
+      const issues = executionScopeEvidenceIssues(projectRoot, feature, scope, undefined, goalRunId, undefined, resolvedFrameworkRoot);
       console.log(JSON.stringify({ subject: 'feature', feature, phase, report_reconcile_only: true, applicability: issues.length ? 'unknown' : 'not_applicable', issues }));
       process.exit(issues.length ? 1 : 0);
     }
@@ -1332,8 +1335,11 @@ async function main(): Promise<void> {
   // Step 3: 生成脚本报告
   console.log('\n📊 Step 3: 生成脚本报告...');
   const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot, capabilityReport);
+  // plan f7045213 §5：阶段结论在内存求值一次，控制台、verifier 资格、合并报告与 summary 写入器共用。
+  const scriptPhaseVerdict = resolvePhaseVerdict(projectRoot, scriptReport);
   printReportToConsole(scriptReport, {
     failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
+    verdict: scriptPhaseVerdict.verdict,
   });
 
   // Step 4/5：组装 AI prompt + 合并报告。
@@ -1354,7 +1360,9 @@ async function main(): Promise<void> {
   //     产品 verdict/closure 一律不变——诊断不是通过。
   // plan 07a41ec6 T7：审前材料视图——subject 按它寻址（不再按 ai-prompt.md 字节）。
   let verifierMaterial: VerifierMaterialView | null = null;
-  const verifierEligibility = resolveVerifierRequestEligibility(projectRoot, scriptReport, verifierPlan.mode);
+  // plan 33784ed1 §3：目标简报现算一次，verifier 提示词、材料摘要与控制台收尾同源消费。
+  const goalBrief = !phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL ? assembleGoalBrief(projectRoot, feature) : null;
+  const verifierEligibility = resolveVerifierRequestEligibility(verifierPlan.mode, scriptPhaseVerdict);
   const verifierProductionAllowed = verifierEligibility.allowed;
   if (!verifierProductionAllowed) {
     const why = verifierPlan.mode === 'enabled' ? verifierEligibility.reason : verifierPlan.message;
@@ -1379,6 +1387,10 @@ async function main(): Promise<void> {
       const extensionInstructions = formatExtensionPhasePrompt(resolvedProfile.extensionBundle, phase, projectRoot);
       const extensionKnowledgeFiles: import('./scripts/utils/types').ContextFileEntry[] = extensionPhaseKnowledge(resolvedProfile.extensionBundle, phase, { includeBound: true })
         .map(item => ({ label: path.relative(projectRoot, item.absPath).replace(/\\/g, '/'), kind: 'path', content: item.summary }));
+      // 已解析输入里已有需求正文时简报不重复它（§3.2 装配去重）。
+      const goalBriefText = goalBrief
+        ? renderGoalBrief(goalBrief, { requirementInContext: resolvedInputsCarryRequirement(context.resolvedInputs) })
+        : '';
 
       assembleAIPrompt(
         harnessRoot,
@@ -1403,6 +1415,7 @@ async function main(): Promise<void> {
             verifierEligibility.kind === 'repair_diagnosis'
               ? { failedCheckIds: verifierEligibility.diagnosticCheckIds, reason: verifierEligibility.reason }
               : undefined,
+          goalBrief: goalBriefText,
         },
       );
       console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
@@ -1420,6 +1433,7 @@ async function main(): Promise<void> {
         contextFiles: [...contextFiles, ...extensionKnowledgeFiles],
         lifecycleFragments: lifecycleFragments,
         extensionInstructions,
+        goalBriefText,
       });
     } catch (err) {
       const e = err as Error;
@@ -1439,7 +1453,7 @@ async function main(): Promise<void> {
         console.log(`   ✓ 读取 AI 报告: ${aiReportPath}`);
       }
 
-      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent, resolvedFrameworkRoot);
+      generateMergedReport(harnessRoot, projectRoot, phase, feature, scriptReport, aiReportContent, resolvedFrameworkRoot, scriptPhaseVerdict.verdict);
       console.log(`   ✓ 合并报告已写入 ${reportDirRel}/merged-report.md`);
     } catch (err) {
       const e = err as Error;
@@ -1455,6 +1469,8 @@ async function main(): Promise<void> {
     factsContext,
     verifierPlan,
     verifierMaterial,
+    // Step 4/5 崩栈时 finalReport 已换成致命失败报告，writer 按报告身份核对后自行重算。
+    phaseVerdict: scriptPhaseVerdict,
   });
   if (!phaseIsGlobal) {
   }
@@ -1478,7 +1494,7 @@ async function main(): Promise<void> {
     !phaseIsGlobal &&
     !deferFullClosureToGoalRunner &&
     closureTrack === 'full' &&
-    finalReport.summary.verdict === 'PASS' &&
+    baseSummary.verdict === 'PASS' &&
     receiptValidation?.status === 'passed'
   ) {
     try {
@@ -1489,7 +1505,7 @@ async function main(): Promise<void> {
         frameworkRoot: resolvedFrameworkRoot,
         feature,
         phase,
-        blockerCount: finalReport.summary.blockers,
+        blockerCount: baseSummary.blocker_count,
         persistPhaseState: () =>
           syncPhaseStateOnReceiptPassStrict(
             projectRoot,
@@ -1497,7 +1513,7 @@ async function main(): Promise<void> {
             phase,
             receiptValidation,
             {
-              blocker_count: finalReport.summary.blockers,
+              blocker_count: baseSummary.blocker_count,
               frameworkRoot: resolvedFrameworkRoot,
             },
           ),
@@ -1527,8 +1543,8 @@ async function main(): Promise<void> {
       feature,
       status: 'harness_finished',
       last_run_at: new Date().toISOString(),
-      verdict: finalReport.summary.verdict,
-      blocker_count: finalReport.summary.blockers,
+      verdict: baseSummary.verdict,
+      blocker_count: baseSummary.blocker_count,
       receipt: receiptValidation,
     });
     runSummary = patchRunSummaryClosure(
@@ -1604,12 +1620,13 @@ async function main(): Promise<void> {
 
   // 最终结果
   console.log('\n' + '='.repeat(60));
-  if (finalReport.summary.verdict === 'PASS') {
+  // plan f7045213 §5：最终控制台与退出码读最后一次写入的 summary（共享结论），不读脚本报告的 legacy 结论。
+  if (runSummary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
     for (const line of buildPassGuidanceLines(runSummary, verifierPlan, phase, String(feature))) {
       console.log(line);
     }
-  } else if (finalReport.summary.verdict === 'INCOMPLETE') {
+  } else if (runSummary.verdict === 'INCOMPLETE') {
     // plan a9d4e7c2 P1-3：INCOMPLETE 不止"设备不可用"一种成因。统一渲染机器投影
     // next_action，不再把所有 INCOMPLETE 硬解释成设备问题。
     console.log('  ⚠️  脚本 Harness 部分就绪（INCOMPLETE）');
@@ -1620,7 +1637,7 @@ async function main(): Promise<void> {
       console.log(`  ❌ Harness runner 执行异常 (详见 ${reportDirRel}/script-report.json)`);
       console.log('  🔧 请修复 runner_*_failed 报告项后重新运行');
     } else {
-      console.log(`  ❌ 脚本 Harness 检查未通过 (${finalReport.summary.blockers} BLOCKER)`);
+      console.log(`  ❌ 脚本 Harness 检查未通过 (${runSummary.blocker_count} BLOCKER)`);
       console.log('  🔧 请修复 BLOCKER 项后重新运行');
     }
   }
@@ -1629,11 +1646,14 @@ async function main(): Promise<void> {
       outerGoalRerun: outerGoalHarnessWillRerun(projectRoot, String(feature)),
     })}`,
   );
+  // plan 33784ed1 §3.3：普通模式执行者的目标简报送达点——只打印"明确不做"与"已裁决的冲突"，两栏都空不打印。
+  const consoleBrief = goalBrief ? renderGoalBrief(goalBrief, { sections: CONSOLE_BRIEF_SECTIONS }) : '';
+  if (consoleBrief) console.log(`\n${consoleBrief}\n`);
   console.log('='.repeat(60) + '\n');
 
   // D1.2（第四轮阻断 4）：收尾失败已写进失败报告，退出码也必须非零——只打印会让
   // 脚本调用方以 exit 0 溜过去。
-  process.exit(featureScopeClosingFailure || finalReport.summary.verdict !== 'PASS' ? 1 : 0);
+  process.exit(featureScopeClosingFailure || runSummary.verdict !== 'PASS' ? 1 : 0);
 }
 
 /**
@@ -1727,10 +1747,37 @@ function consumeVisualRoundPayload(
  * "Step 4 允许装配、writer 却判不许签发"这类错位不可能发生。
  */
 function resolveVerifierRequestEligibility(
-  projectRoot: string,
-  report: ScriptReport,
   planMode: VerifierPlan['mode'] | undefined,
+  phaseVerdict: PhaseVerdict,
 ): VerifierRequestEligibility {
+  const { report, lattice } = phaseVerdict;
+  return canProduceVerifierRequest({
+    planMode: planMode ?? 'disabled',
+    phase: report.phase,
+    scriptVerdict: phaseVerdict.verdict,
+    checks: report.checks,
+    reportValidity: lattice.report_validity,
+    hasBlockedCapability: lattice.has_blocked,
+    parseClassificationFromDetails: extractFailureClassification,
+  });
+}
+
+/**
+ * plan f7045213 §5：阶段结论的**唯一计算处**——既有质量格与有效结论函数在内存求值一次。
+ * 控制台、verifier 签发资格、summary 写入器（进而闭环入口门、lite 闭环、退出码）用同一份结果；
+ * 不先读磁盘。结果绑定到它所求值的那份报告对象：报告被致命失败替换后必须重算。
+ * 脚本报告里的 legacy 结论字段保留，供旧产物读取与设备外部阻塞判据使用。
+ */
+export interface PhaseVerdict {
+  report: ScriptReport;
+  verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  legacy: 'PASS' | 'FAIL' | 'INCOMPLETE';
+  mismatch: boolean;
+  /** 只读：写入器改轴（继承、视觉债务）前自行克隆。 */
+  lattice: ReturnType<typeof deriveSummaryVerdictLattice>;
+}
+
+export function resolvePhaseVerdict(projectRoot: string, report: ScriptReport): PhaseVerdict {
   const lattice = deriveSummaryVerdictLattice(
     report.checks,
     resolveAxisApplicability(projectRoot, report.feature, report.phase),
@@ -1738,15 +1785,13 @@ function resolveVerifierRequestEligibility(
       ? undefined
       : { capabilities: report.capability_resolutions as CapabilityResolutionReport['capabilities'] },
   );
-  return canProduceVerifierRequest({
-    planMode: planMode ?? 'disabled',
-    phase: report.phase,
-    scriptVerdict: report.summary.verdict,
-    checks: report.checks,
-    reportValidity: lattice.report_validity,
-    hasBlockedCapability: lattice.has_blocked,
-    parseClassificationFromDetails: extractFailureClassification,
+  const legacy = report.summary.verdict;
+  const { verdict, mismatch } = resolveEffectiveVerdict({
+    pre: lattice.pre_projection_verdict,
+    post: lattice.projected_verdict,
+    legacy,
   });
+  return { report, verdict, legacy, mismatch, lattice };
 }
 
 /**
@@ -1996,8 +2041,11 @@ export function writeRunSummaryBase(
     verifierPlan?: VerifierPlan | null;
     /** plan 07a41ec6 T7：Step 4 计算的审前材料视图（subject 寻址材料）；缺省/null = 不生成 request */
     verifierMaterial?: VerifierMaterialView | null;
+    /** plan f7045213 §5：调用方已求值的共享结论；与本报告对象不符（或缺省）时就地重算。 */
+    phaseVerdict?: PhaseVerdict;
   },
 ): HarnessRunSummary {
+  const phaseVerdict = opts?.phaseVerdict?.report === report ? opts.phaseVerdict : resolvePhaseVerdict(projectRoot, report);
   const dir = featurePhaseReportsDir(projectRoot, report.feature, report.phase, frameworkRoot);
   const rel = (name: string): string => path.relative(projectRoot, path.join(dir, name)).replace(/\\/g, '/');
   // review#3：blocker 映射抽至 buildSummaryBlockers（可测纯函数），保真传 c.blocking_class（如 device_toolchain）。
@@ -2010,15 +2058,8 @@ export function writeRunSummaryBase(
       can_claim_done: extractCanClaimDone(c.details),
       details: c.details,
     }));
-  const blockingWarnings = report.checks
-    .filter(c => c.status === 'WARN' && c.severity === 'BLOCKER')
-    .map(c => ({
-      id: c.id,
-      blocking_class: c.blocking_class,
-      details_excerpt: excerpt(c.details, 500),
-      suggestion: c.suggestion,
-      ...(c.source ? { source: c.source } : {}),
-    }));
+  // plan 3abca824 t3：summary.blocking_warnings 已停写——没有决策读取方（decideNextAction 只读
+  // blocking_skips）；schema 保留该属性，带它的旧 summary 照常可读。
   // plan 7b3e9a15 D2（codex 实施 review 一轮 medium）：SKIP+BLOCKER 的语义是"门禁没跑完"。
   // 已确认不适用的章节（check-plan 的 n/a 出口）同样是 SKIP+BLOCKER，进这里就会让
   // decideNextAction 提前返回 review_blocking_skips_then_verifier——把不适用说成待办，
@@ -2075,13 +2116,8 @@ export function writeRunSummaryBase(
   // plan c8e5b3f1 t2 B：归因统一走共享 deriveSummaryVerdictLattice（暴露 pre/post/has_blocked），
   // runner 与测试同源；post 已含 hasBlocked 顶层钳制（不拿 rawPost 归因，否则 visual/asset blocked
   // 会漏判），pre 供 pre!==legacy 的真派生缺陷判定。
-  const lattice = deriveSummaryVerdictLattice(
-    report.checks,
-    resolveAxisApplicability(projectRoot, report.feature, report.phase),
-    report.capability_resolution_contract_fingerprint === null
-      ? undefined
-      : { capabilities: report.capability_resolutions as CapabilityResolutionReport['capabilities'] },
-  );
+  // 共享结论的格只读；下面的继承与视觉债务会改轴（只影响 release/completion，不影响结论），先克隆。
+  const lattice = structuredClone(phaseVerdict.lattice);
   const { has_blocked: hasBlocked, pre_projection_verdict: pre, projected_verdict: post } = lattice;
   // S7（visual-capability-truth P2-J.2）：testing 期 asset 轴带 provenance 继承——
   // 上游（coding）asset PASS 只有在源码/资产指纹链未漂移时才可继承为证据引用；
@@ -2111,11 +2147,11 @@ export function writeRunSummaryBase(
   //（FAIL > INCOMPLETE > PASS），绝不选择较宽松侧放行。plan c8e5b3f1 t2 B 因果归因：
   //   · 仅 pre===legacy && post!==legacy → 差异由 capability 合法投影造成，**不报** mismatch；
   //   · pre!==legacy → 独立派生缺陷，即使同时存在 blocked 也**照报** mismatch。
-  const legacy = report.summary.verdict;
   // plan c8e5b3f1 t2 B：顶层 verdict 归因统一走共享纯函数 resolveEffectiveVerdict（评审：裁决逻辑
   // 不该埋在 runner 内联，且 FAIL 降级保护须有守门测试）。它保证投影取更严侧、不把既有 FAIL 降级，
   // mismatch 只在 pre!==legacy 时报（pre===legacy 的 capability 合法投影不报）。
-  const { verdict: effectiveVerdict, mismatch } = resolveEffectiveVerdict({ pre, post, legacy });
+  // plan f7045213 §5：求值在 resolvePhaseVerdict 一处完成，这里只取结果。
+  const { legacy, verdict: effectiveVerdict, mismatch } = phaseVerdict;
   // plan a9d4e7c2 T2：verifier **调用凭证**的单点生成。放在这里而不是 Step 4，是因为
   // 这里同时握有 gate 指纹与 worktree/source identity，且 ai-prompt.md 已在 Step 4 落盘——
   // 一个函数内取齐全部输入，不给第二个生产者留位置。
@@ -2128,7 +2164,7 @@ export function writeRunSummaryBase(
   // 与 Step 4 **同一函数**（plan 3a7f9c12 D1）：writer 侧独立复核，保证即使调用方漏传
   // 门控也不会凭空产出一份没有 prompt 的凭证；同时保证 Step 4 装了 prompt 而 writer 拒签
   // 这类错位不可能发生（两处判据只有一处实现）。
-  const eligibility = resolveVerifierRequestEligibility(projectRoot, report, opts?.verifierPlan?.mode);
+  const eligibility = resolveVerifierRequestEligibility(opts?.verifierPlan?.mode, phaseVerdict);
   const verifierIssued = eligibility.allowed
     ? issueVerifierRequest({
         dir,
@@ -2198,7 +2234,8 @@ export function writeRunSummaryBase(
     quality_axes: lattice.quality_axes,
     release_readiness: lattice.release_readiness,
     completion_status: lattice.completion_status,
-    blocker_count: report.summary.blockers,
+    // plan f7045213 §5：计数由谓词得出，就是有效阻断清单（§4.4 去重后）的长度，不另建计数来源。
+    blocker_count: blockers.length,
     fail_count: report.summary.fail,
     warn_count: report.summary.warn,
     ...(gateFingerprint ? { gate_fingerprint: gateFingerprint } : {}),
@@ -2212,9 +2249,10 @@ export function writeRunSummaryBase(
     run_statuses: runStatuses,
     ut_run_status: utStatus,
     readiness_signals: readinessSignals,
-    blocking_warnings: blockingWarnings,
     blocking_skips: blockingSkips,
     blockers,
+    // plan f7045213 §4.3：被披露（不阻断）的失败；条数已计入完成缺口。去向表为空时恒空。
+    disclosed_failures: collectDisclosedFailures(report.checks),
     // base 初值：未闭环/等待 receipt——closure 定稿归 patchRunSummaryClosure。
     next_action: decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals, {
       effectiveVerdict,
@@ -2293,6 +2331,14 @@ export function writeRunSummaryBase(
       // → null = 零候选。
       verifierReportText,
       parseClassificationFromDetails: extractFailureClassification,
+      // plan 33784ed1 §4.5：沿用的历史 subject 没看过拒修依据，确认不了拒修在案的 review 候选。
+      verifierSubjectCurrent: carriedVerifierSubjectId === null,
+      ...(report.phase === 'review' && carriedVerifierSubjectId !== null && process.env.MAISON_GOAL_RUN_ID?.trim()
+        ? {
+            declinedFingerprints: new Set([...loadRepairDeclineState(projectRoot, report.feature, process.env.MAISON_GOAL_RUN_ID.trim())]
+              .filter(([, s]) => s.declined_rounds > 0).map(([fp]) => fp)),
+          }
+        : {}),
     });
     if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;
   } catch (e) {
@@ -2584,7 +2630,7 @@ function patchRunSummaryClosure(
   // C2：closure 来源按 track 分派——lite 的 receipt 恒 not_applicable，闭环判据改用
   // 该 phase 自身脚本 verdict（如 exit 的 script-report PASS），不再被误判为"未闭环"。
   const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, report.feature));
-  const closed = resolvePhaseClosureSource(closureTrack, report.summary.verdict, base.closure_status) !== 'open';
+  const closed = resolvePhaseClosureSource(closureTrack, base.verdict, base.closure_status) !== 'open';
   const patched: HarnessRunSummary = {
     ...base,
     next_action: closed ? 'phase_closed_wait_user' : base.next_action,
@@ -2623,6 +2669,13 @@ function printStableSummary(summary: HarnessRunSummary): void {
     console.log('blockers:');
     for (const b of summary.blockers) {
       console.log(`  - ${b.id}${b.classification ? ` (${b.classification})` : ''}`);
+    }
+  }
+  // plan f7045213 §4.3：被披露（不阻断）的失败在控制台渲染一次——没人看清单等于没处理。
+  if (summary.disclosed_failures?.length) {
+    console.log('disclosed_failures:');
+    for (const d of summary.disclosed_failures) {
+      console.log(`  - ${d.id} [${d.protects}/${d.severity}]: ${d.details_excerpt.split('\n')[0]}`);
     }
   }
   // codex P2：readiness_signals 此前只写 summary.json、从不打印——PASS 场景下的"值得单独提醒"

@@ -1,0 +1,260 @@
+{
+  "visual_provider_pin": {
+    "adapter": "claude",
+    "model": "claude-opus-5"
+  },
+  "requirement_source_files": [
+    "doc/features/原始需求/1-2-银行卡/原始需求.md"
+  ],
+  "execution_scope": {
+    "schema_version": "1.0",
+    "completion_target": "feature",
+    "requested_results": [
+      "TC-004 在输入五位验证码后点击“下一步”，断言仍停留在短信半模态、未进入结果页",
+      "为 AC-6 失败结果页分支（RDB 写入失败→失败结果页→完成回到添加银行卡页）补登测试用例",
+      "spec/ui-spec.yaml 的 screens[].ref_id 与 spec/spec.md 的 visual_handoff.authoritative_refs[].id 统一为同一套"
+    ],
+    "obligations": [
+      {
+        "id": "acceptance-context:candidate",
+        "kind": "acceptance-context",
+        "applicability": "required",
+        "reason": "已有验收可用",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml",
+                "exists": true,
+                "sha256": "64d2a868713ba8c166d2abf1fc1368fbecd5e31f70c89e534c58886a2b6260cf",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/acceptance.yaml"
+            ],
+            "content_fingerprint": "2cc6721d0afa360d19907dd0821357f7772f9a1ebfae8ab715b9242dfb4c4d17"
+          }
+        ],
+        "satisfied_by": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml",
+                "exists": true,
+                "sha256": "64d2a868713ba8c166d2abf1fc1368fbecd5e31f70c89e534c58886a2b6260cf",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/acceptance.yaml"
+            ],
+            "content_fingerprint": "2cc6721d0afa360d19907dd0821357f7772f9a1ebfae8ab715b9242dfb4c4d17"
+          }
+        ],
+        "owner_phase": "spec"
+      },
+      {
+        "id": "design-context:candidate",
+        "kind": "design-context",
+        "applicability": "required",
+        "reason": "已有设计可用",
+        "basis": [
+          {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\contracts.yaml",
+                "exists": true,
+                "sha256": "a1b00f594961901782ed017350ca50a4edec1dbc540e7accf8ddf11b2364314b",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/contracts.yaml"
+            ],
+            "content_fingerprint": "d11aa133facc2e6fdc92d86b50eb408a72d1365e783dd8ce82ecb0265cb66872"
+          }
+        ],
+        "satisfied_by": [
+          {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\contracts.yaml",
+                "exists": true,
+                "sha256": "a1b00f594961901782ed017350ca50a4edec1dbc540e7accf8ddf11b2364314b",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/contracts.yaml"
+            ],
+            "content_fingerprint": "d11aa133facc2e6fdc92d86b50eb408a72d1365e783dd8ce82ecb0265cb66872"
+          }
+        ],
+        "owner_phase": "plan"
+      },
+      {
+        "id": "unit-evidence:acceptance",
+        "kind": "unit-evidence",
+        "applicability": "required",
+        "reason": "unit-evidence: AC-2,AC-3,AC-4,AC-5,BD-1,BD-2,BD-3,BD-4",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml",
+                "exists": true,
+                "sha256": "64d2a868713ba8c166d2abf1fc1368fbecd5e31f70c89e534c58886a2b6260cf",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/acceptance.yaml"
+            ],
+            "content_fingerprint": "2cc6721d0afa360d19907dd0821357f7772f9a1ebfae8ab715b9242dfb4c4d17"
+          }
+        ],
+        "owner_phase": "ut"
+      },
+      {
+        "id": "device-evidence:acceptance",
+        "kind": "device-evidence",
+        "applicability": "required",
+        "reason": "device-evidence: AC-1,AC-3,AC-6,AC-7,AC-8,NFR-1,NFR-2",
+        "basis": [
+          {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml",
+                "exists": true,
+                "sha256": "64d2a868713ba8c166d2abf1fc1368fbecd5e31f70c89e534c58886a2b6260cf",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/acceptance.yaml"
+            ],
+            "content_fingerprint": "2cc6721d0afa360d19907dd0821357f7772f9a1ebfae8ab715b9242dfb4c4d17"
+          }
+        ],
+        "owner_phase": "testing"
+      },
+      {
+        "id": "visual-evidence:fidelity",
+        "kind": "visual-evidence",
+        "applicability": "required",
+        "reason": "fidelity ssot: pixel_1to1",
+        "basis": [],
+        "owner_phase": "testing"
+      }
+    ],
+    "phase_chain": [
+      "ut",
+      "testing"
+    ],
+    "reused_phases": [],
+    "unresolved": [],
+    "policy_fingerprint": "e4b8b3b4f42f824faeebc561d2a99c74e9bccf59ae5e5f941b156673b76047d8",
+    "request_impact": {
+      "user_visible_behavior_change": false,
+      "reason": "只修测试用例与 spec 参考图 id 对齐，短信门禁与结果页产品实现不变",
+      "basis": [
+        {
+          "input_id": "codebase",
+          "source": {
+            "kind": "derive",
+            "provider_id": "derive.codebase"
+          },
+          "dependencies": [
+            {
+              "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\SmsVerificationSheet.ets",
+              "exists": true,
+              "sha256": "cfdc3f4aaf24bf4c1387c0d32eb7867496030ca078e13c3c4ed9c13f2a4d7db4",
+              "role": "derive"
+            },
+            {
+              "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddCardResultPage.ets",
+              "exists": true,
+              "sha256": "9da47c0ca229e27d70af26d0450832fc0ec24f3e342ccc34645a2c769b7fc755",
+              "role": "derive"
+            }
+          ],
+          "source_refs": [
+            "02-Feature/WalletMain/src/main/ets/presentation/components/SmsVerificationSheet.ets",
+            "02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets"
+          ],
+          "content_fingerprint": "687edf64b0fe59c67d3bcbf89d9296da9eba78adb846485d0dfca7ea869a4105"
+        }
+      ]
+    }
+  },
+  "schema_version": "1.0",
+  "start_phase": "ut",
+  "end_phase": "testing",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg",
+  "requirement": "# BankCard原始需求描述\n\n> **需求名**: `bc-openCard-2`\n> **创建日期**: 2026-06-10\n\n---\n\n## 一、需求描述\n\n### 需求内容\n\n本次需求内容是银行卡开卡需求，我把原始图片都归档到了本文件同级目录下。\n\n#### 需求规格：\n\n1.用户进入已有的添加卡片页面，之前已经开发过了。之前点击任一银行点击后，提示暂不支持，本次需求改为拉起选择卡类型半模态页面。\n\n2.用户在全部银行页面，任一银行点击后，效果与添加银行卡页面效果一致。\n\n3.选择卡类型半模态页面，会展示本银行支持的储蓄卡+信用卡，如果只支持储蓄卡或者信用卡则只展示一个即可。最多只能选择一种卡类型添加，选择后，下方可点击同意并继续按钮进入对应银行的选择具体卡片页面。\n\n4.银行的选择具体卡片页面，展示该银行支持的银行卡信息，卡号只显示前四后四，但实际后台数据要按完整卡号处理。用户选择一张银行卡后，同意协议，点击下一步，拉起输入验证码半模态页面。\n\n5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。\n\n6.添加结果页是个全屏页面，没有左滑箭头，也禁止左滑事件。添加结果页根据带过来的添卡结果，展示成功或者失败状态。同时本页面只有点击完成按钮才能退出页面，并且在页面退出时，关闭当前栈中1-6的所有页面（都是本轮银行卡添卡页面）。如果本次添加是成功状态，则带着卡片卡号跳转到钱包首页（后续等银行卡详情页开发完，这里会引导跳到银行卡详情页，并携带当前卡片参数）。如果本次添加失败则仅将过程中的页面全部退出，回到最开始的添加卡片页面。\n\n#### 页面说明：\n\n- 1）选择卡类型半模态：页面布局完全参考'3-点击任意银行拉起添卡选卡半模态.jpg'。在添加银行卡或全部银行页面，点击某个银行后，拉起选择卡类型半模态（默认所有mock银行都支持储蓄卡和信用卡，该数据随银行数据走），上方是银行信息，然后是储蓄卡/信用卡二选一，下方有小字提示，然后是协议内容（本次默认按文本展示，不需要可点击富文本），最下方是同意并继续按钮。\n\n- 2）选择具体卡片页面：页面布局完全参考'4-点击信用卡或储蓄卡后拉起选卡页面.jpg'。在第3步选择银行+卡类型后点击继续，跳转全屏的银行内部选卡页面，页面title就是银行名称，上方是小字提示，中间是可选择的不同卡片（每个银行，储蓄卡/信用卡，分别mock 1-2张卡数据），下方是协议（文本即可，不需要富文本），最下方是下一步。\n\n- 3）输入验证码半模态：页面布局完全参考'5-选中某张卡片后拉起短信验证.jpg'。第4步选择具体卡片下一步后，拉起短语输入弹框，上方是小字提示（里面要展示用户手机号，从账号mock数据读），中间是输入框，左边输入右边发送按钮，用户点击发送后，需要将按钮变为60s倒计时，倒计时过程中按钮不允许再次点击。倒计时清零后，按钮重新变成再次发送，并且可再次点击。用户在短信输入框中，只能输入6位数字（需要校验），只有输入正确，下方下一步按钮才从置灰状态变为可点击。点击下一步后，则绑卡完成，进入添卡成功结果页。\n\n- 4）添加结果页：页面布局完全参考'6-短信验证完成后结果页.jpg'。无title，全屏页面。上方根据前一个页面传递的添卡结果，控制上方图标/文案/下方小字的提示内容，然后附一张引导图片（大差不差就行了），再往下的激活nfc部分本次先不需要。最下方是完成按钮。点击完成按钮后，跳转到卡详情页。并且本次添加的卡片数据则需要写入数据库中，数据库要包含卡片的详细数据，比如卡号/类型/哪家银行/支持华为支付或银联手机闪付/交易记录，后续的卡详情等页面都是根据数据库读取卡数据并展示。有一点要注意：到了添加结果页，要屏蔽左滑事件，并且在点击完成按钮后，要把整个开卡过程中的所有开卡相关页面全部从页面栈中剔除（从添加银行卡页面开始，一直到结果页自身）。避免开卡完成后还能一直左滑看到开卡过程页面。\n\n#### 路由规格\n\n1. 所有页面跳转要遵循已有路由规则，相关代码参考模块画像去找，不要自由发挥或者另外写一套。\n2. 测试用例要包含老代码和本轮新开发代码的页面互相跳转功能，不能导致原有路由受损。",
+  "adapter": "codex",
+  "adapter_provenance": "local_config",
+  "chain_override": [
+    "ut",
+    "testing"
+  ],
+  "budget": {
+    "max_retries_per_phase": 2,
+    "max_total_turns": 30,
+    "wall_clock_minutes": 480,
+    "max_transient_api_retries": 3
+  },
+  "dependency_policy": {
+    "deferrable_blocking_classes": [
+      "externalBlocked"
+    ],
+    "deferrable_failure_kinds": [
+      "device_blocked"
+    ],
+    "propagate_to_downstream": true
+  },
+  "unattended": {
+    "write_mode": "full-access",
+    "approval_mode": "never",
+    "max_turns": 20
+  },
+  "run_id": "20260924T135354Z-97af3f",
+  "report_dir": "doc/features/bc-openCard-2/open-card-flow-v2/goal-runs/20260924T135354Z-97af3f",
+  "created_at": "2026-09-24T13:53:54.255Z",
+  "phase_chain": [
+    "ut",
+    "testing"
+  ],
+  "run_base_sha": "62aed108a5fa88e1385d8ea52f66fb50922b805b"
+}

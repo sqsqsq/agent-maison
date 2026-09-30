@@ -88,7 +88,7 @@ function assert(cond: unknown, msg: string): void { if (!cond) throw new Error(m
 const DEBUG = process.env.REAL_CHAIN_DEBUG === '1';
 
 /** 工程里有指向源仓的 junction；已实测 `fs.rmSync(recursive)` 不跟进目标。 */
-function withProject(body: (p: RealChainProject, birthChain: string[]) => Promise<void>): () => Promise<void> {
+export function withProject(body: (p: RealChainProject, birthChain: string[]) => Promise<void>): () => Promise<void> {
   return async () => {
     const project = provisionRealChainProject();
     try {
@@ -816,11 +816,33 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
 // 早先"删掉术语映射表整章"因此是空动作：实跑里 spec 照常 PASS，真正停机的是随后**没有
 // 契约**的 plan。也就是说 (a) 报的"生产误熔断"与 (b) 的"通过"都不是它们各自声称的东西。
 // 改法：把失败点显式落在 1.2 下**真会执行**的那格，并先证明它确实到达了失败结果（见
-// `assertPlanFailedOnFactsDelta`），再做单变量对照。**不动生产熔断。**
+// `assertPlanFailedOnRc8Target`），再做单变量对照。**不动生产熔断。**
+//
+// **失败点换载体（plan 3abca824 t4，2026-09-29）**：原载体 `context_exploration_facts_phase_delta_missing`
+// 登记为账本披露后不再阻断（正向证据见下方 RC-8c）。换成仍保持阻断的
+// `contract_file_reference_closure`（结果依据，P4 取证 #48）：plan 材料齐全，只在 contracts.yaml 追加一条
+// 未列入 `contracts.files` 的 `navigation.config_files` 引用；`affected_files` 恰为 contracts.yaml
+// （check-plan.ts `checkContractFileReferenceClosure`）。调度方建议的 `context_exploration_facts_baseline_stale`
+// 不可用：基线指纹在同一次调用入口按当前字节现算（capability-resolution-entry-input.ts:302），
+// 同一轮里不会失配；facts 真被改时入口直接抛 `facts baseline stale`，不产该检查。
 // ===========================================================================
 
-/** plan 期确定性失败点的 check id（`context-facts.ts:123`，BLOCKER，带 affected_files）。 */
-const RC8_CHECK_ID = 'context_exploration_facts_phase_delta_missing';
+/** plan 期确定性失败点的 check id（BLOCKER，带 affected_files=contracts.yaml）。 */
+const RC8_CHECK_ID = 'contract_file_reference_closure';
+/** 未列入 contracts.files 的引用（不必存在于盘上：授权闭包按路径判）。 */
+const RC8_UNLISTED_REFERENCE = 'doc/rc8-unlisted-nav.json5';
+
+function rc8ContractsRel(p: RealChainProject): string {
+  return `doc/features/${p.feature}/contracts.yaml`;
+}
+
+/** 写齐 plan 材料，再往 contracts.yaml 追加一条未授权引用；`marker` 非空时再追加一行注释（真换字节、不修问题）。 */
+function writePlanWithUnlistedReference(p: RealChainProject, marker?: string): void {
+  writePlanMaterials(p);
+  const abs = path.join(p.root, rc8ContractsRel(p));
+  const body = fs.readFileSync(abs, 'utf-8').replace(/\s*$/, '\n');
+  fs.writeFileSync(abs, `${body}navigation:\n  config_files:\n    - ${RC8_UNLISTED_REFERENCE}\n${marker ? `# ${marker}\n` : ''}`, 'utf-8');
+}
 
 /** 两条共用：无关文件每轮都变（把"无关变化"这一项在 (a)/(b) 之间拉平）。 */
 function writeUnrelatedNote(p: RealChainProject, attempt: number): void {
@@ -829,18 +851,18 @@ function writeUnrelatedNote(p: RealChainProject, attempt: number): void {
 
 /**
  * 先证明失败触发到了预期契约：plan 因 `RC8_CHECK_ID` 失败，且**相关文件集合**里确实有
- * `context/facts.md`——熔断的 watched 集合正来自 `blockers[].affected_files`
+ * contracts.yaml——熔断的 watched 集合正来自 `blockers[].affected_files`
  * （`extractContentRelatedFiles`，goal-failure-classifier.ts:406）。这一格不成立时，
  * (a)/(b) 的结论各自都无从谈起。
  */
-function assertPlanFailedOnFactsDelta(p: RealChainProject): void {
-  const factsRel = `doc/features/${p.feature}/context/facts.md`;
+function assertPlanFailedOnRc8Target(p: RealChainProject): void {
+  const contractsRel = rc8ContractsRel(p);
   const plan = readSummary(p, 'plan');
   assert(plan?.verdict === 'FAIL', `plan 没按预期失败：${dumpPhase(p, 'plan')}`);
   const hit = (plan?.blockers ?? []).find(b => (b.id ?? b.check_id) === RC8_CHECK_ID);
   assert(hit, `plan 的失败不在目标检查 ${RC8_CHECK_ID} 上：${dumpPhase(p, 'plan')}`);
   assert(
-    (hit!.affected_files ?? []).includes(factsRel),
+    (hit!.affected_files ?? []).includes(contractsRel),
     `目标检查没把相关文件带进失败结果，熔断的 watched 集合失去对象：${JSON.stringify(hit)}`,
   );
 }
@@ -857,17 +879,14 @@ test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续�
     onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
     onPlan: ctx => {
       project.runId = ctx.runId;
-      // 与 RC-8b 的**唯一**差别：相关文件（facts.md）每轮真换一次字节，但那一格仍没修好
-      //——追加一个新的 `##` 标题节：`factsBaselineFingerprint`（首个 `## phase_delta:`
-      // 之前的全部）不变，已闭环的 spec delta 段被下一个 `##` 截断因而也不变
-      //（`findPhaseDeltaSection` 的 `(?=\n##\s|$)`），plan 自己的 delta 段依旧缺失 → 同一组 blocker。
+      // 与 RC-8b 的**唯一**差别：相关文件（contracts.yaml）每轮真换一次字节，但那一格仍没修好
+      //——末尾多一行本轮注释，未授权引用原样保留 → 同一组 blocker。
       // 这正是"agent 动了被点名的文件、但没解决问题"那种真修复尝试的形态。
-      const factsAbs = featureFilePath(project.root, project.feature, 'context/facts.md');
-      fs.appendFileSync(factsAbs, `\n## attempt marker\n\nplan attempt ${ctx.attempt}\n`, 'utf-8');
+      writePlanWithUnlistedReference(project, `plan attempt ${ctx.attempt}`);
       writeUnrelatedNote(project, ctx.attempt);
     },
   });
-  assertPlanFailedOnFactsDelta(project);
+  assertPlanFailedOnRc8Target(project);
   const planAttempts = probe.invokedPhases.filter(x => x === 'plan').length;
   // 判据只对 plan 说话：spec 已 PASS 推进，plan 之后没有别的阶段跑起来。
   const noProgress = haltEvents(probe.events)
@@ -888,11 +907,12 @@ test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress �
     onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
     onPlan: ctx => {
       project.runId = ctx.runId;
-      // 与 RC-8a 的唯一差别：相关文件（facts.md）字节恒定；无关的 notes 变化两边一模一样。
+      // 与 RC-8a 的唯一差别：相关文件（contracts.yaml）字节恒定（每轮写出同样字节）；无关的 notes 变化两边一模一样。
+      writePlanWithUnlistedReference(project);
       writeUnrelatedNote(project, ctx.attempt);
     },
   });
-  assertPlanFailedOnFactsDelta(project);
+  assertPlanFailedOnRc8Target(project);
   const halts = haltEvents(probe.events);
   const planAttempts = probe.invokedPhases.filter(x => x === 'plan').length;
   const noProgress = halts.filter(e => e.phase === 'plan' && /^no_progress/.test(String(e.halt_reason ?? '')));
@@ -909,7 +929,7 @@ ${dumpPhase(project, 'plan')}`,
     /零变化/.test(String(halt.reason ?? '')) && /failure_kind=code_regression/.test(String(halt.reason ?? '')),
     `停机理由没说清无进展事实或失败分类不是内容失败：${JSON.stringify(halt.reason)}`,
   );
-  // 相关集合在本条里是**已知**的（facts.md，由 assertPlanFailedOnFactsDelta 坐实），
+  // 相关集合在本条里是**已知**的（contracts.yaml，由 assertPlanFailedOnRc8Target 坐实），
   // 故不得走 d84cd6de 的「相关目标未知」话术——那条是相关集合为空时的另一支，混用即归因错位。
   assert(
     !/没能解析出任何相关目标|相关目标未知/.test(String(halt.halt_guidance ?? '')),
@@ -918,6 +938,58 @@ ${dumpPhase(project, 'plan')}`,
   assert(planAttempts <= 3, `无进展停机太晚：plan 跑了 ${planAttempts} 轮`);
   assert(probe.exitCode !== 0, '停机后整条 run 仍报成功');
 }));
+
+// ===========================================================================
+// RC-8c（plan 3abca824 t4 · A7 公开入口）：plan 是非建立阶段（facts 由 spec 建立）；plan 材料齐全，
+// 只是本阶段增量小节缺失 / 为空。登记为账本披露后：原始 FAIL 仍在脚本报告里，plan 这一轮结论 PASS、
+// 该失败进 `disclosed_failures`，链越过 plan 继续推进。对照：去向表去掉该条时 plan 应 FAIL（反向变异）。
+// ===========================================================================
+
+function stripPlanDelta(p: RealChainProject, mode: 'missing' | 'empty'): void {
+  const abs = featureFilePath(p.root, p.feature, 'context/facts.md');
+  const raw = fs.readFileSync(abs, 'utf-8');
+  const at = raw.search(/^##\s*phase_delta:\s*plan\b/m);
+  assert(at >= 0, `writePlanMaterials 未写 plan 增量节，夹具前提不成立：\n${raw}`);
+  const rest = raw.slice(at).replace(/^##\s*phase_delta:\s*plan\b[^\n]*\n/, '');
+  const next = rest.search(/^##\s/m);
+  const tail = next >= 0 ? rest.slice(next) : '';
+  fs.writeFileSync(abs, raw.slice(0, at) + (mode === 'empty' ? '## phase_delta: plan\n\n' : '') + tail, 'utf-8');
+}
+
+async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Promise<void> {
+  {
+    await withProject(async (project, birthChain) => {
+      const probe = await runGoalRuntimeChain(project.root, {
+        frameworkRoot: project.frameworkRoot,
+        featureId: project.feature,
+        realHarness: true,
+        adapter: 'codex',
+        freshStartPhase: birthChain[0] as 'spec',
+        freshEndPhase: birthChain[birthChain.length - 1],
+        freshRequirement: REAL_CHAIN_REQUIREMENT,
+        onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
+        onPlan: ctx => {
+          project.runId = ctx.runId;
+          writePlanMaterials(project);
+          stripPlanDelta(project, mode);
+          if (ctx.attempt > 1) publishVerifier(project, 'plan');
+        },
+      });
+      const script = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(project.root, project.feature, 'plan'), 'script-report.json'), 'utf-8')) as { checks: CheckResult[] };
+      const raw = script.checks.filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
+      assert(JSON.stringify(raw) === JSON.stringify([`${id}/BLOCKER`]), `${mode}：plan 完整检查结果里应只有这一条原始 FAIL：${JSON.stringify(raw)}\n${dumpPhase(project, 'plan')}`);
+      const plan = readSummary(project, 'plan') as (ReturnType<typeof readSummary> & { disclosed_failures?: Array<{ id: string }> }) | null;
+      assert(plan?.verdict === 'PASS', `${mode}：披露后 plan 应通过：${dumpPhase(project, 'plan')}`);
+      assert((plan?.disclosed_failures ?? []).some(d => d.id === id), `${mode}：${id} 应进 disclosed_failures：${JSON.stringify(plan?.disclosed_failures)}`);
+      assert(!(plan?.blockers ?? []).some(b => (b.id ?? b.check_id) === id), `${mode}：${id} 不应再进 blockers`);
+      assert(probe.invokedPhases.includes('coding'), `${mode}：plan 通过后链应推进到 coding：${JSON.stringify(probe.invokedPhases)}`);
+    })();
+  }
+}
+
+// 缺节与空节各一条独立用例：各自只产出本 id 的原始 FAIL，反向变异可在一次运行里逐条归因。
+test('RC-8c plan 增量小节缺失：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）', () => rc8cPlanDeltaDisclosed('missing', 'context_exploration_facts_phase_delta_missing'));
+test('RC-8d plan 增量小节为空：原始 FAIL 仍在，plan 通过、进披露清单，链继续推进（A7）', () => rc8cPlanDeltaDisclosed('empty', 'context_exploration_facts_phase_delta_empty'));
 
 // ===========================================================================
 // RC-9（plan 14771034 §2.1 路径 1）：testing 回退 coding 后 review/ut 重验、再进 testing
@@ -942,7 +1014,7 @@ ${dumpPhase(project, 'plan')}`,
 // UT→coding 回退见下方 RC-9b（plan d7e3b9a4 修复后登记）。
 // ===========================================================================
 
-function codingBacktrackRequested(p: RealChainProject): boolean {
+export function codingBacktrackRequested(p: RealChainProject): boolean {
   if (!p.runId) return false;
   const eventsAbs = path.join(featureFilePath(p.root, p.feature, 'goal-runs'), p.runId, 'events.jsonl');
   return fs.existsSync(eventsAbs) && loadAuthoritativeEvents(eventsAbs)

@@ -443,7 +443,7 @@ export function collectTextPlacementSignals(
     const mustFix: string[] = [];
     const failSignals: string[] = [];
     const uncertain: string[] = [];
-    const uncertainTargets: string[] = []; // 每条 uncertain 的稳定候选锚（用于 defect-review 恢复绑定）
+    const uncertainTargets: string[] = []; // 每条 uncertain 的稳定候选锚（参与信号身份）
     const matched: MatchedText[] = [];
     const refClaims = matchSideWithConflictResolution(refLines, texts);
     const shotClaims = matchSideWithConflictResolution(shotLines, texts);

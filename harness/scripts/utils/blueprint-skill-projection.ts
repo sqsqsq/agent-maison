@@ -22,6 +22,7 @@ import { SpecLoader } from './spec-loader';
 import { checkUseCaseSpecSchema } from '../check-ut';
 import type { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
 import type { ResolutionDependency } from './capability-resolution';
+import { resolveCheckDisposition } from './check-disposition';
 
 export type BlueprintProjectionKind = 'acceptance' | 'contracts';
 export interface BlueprintSkillProjection {
@@ -37,7 +38,9 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
   const subject = ctx.factsContext?.subject;
   // D1 §6.4：无 run 不再直接放弃修订提议——feature 载体也要能发布新设计事实。
   // 身份位按载体二分：run 载体取 `run_id`，feature 载体（`{ feature }`）走统一入口的 feature 分支。
-  if (!subject || !('feature' in subject) || !ctx.resolvedInputs || checks.some(check => check.status === 'FAIL')) return [];
+  // plan f7045213 第二批：已登记为披露的账本与形状类失败（探索过程的自报数字与格式，不是设计事实的依据）
+  // 不挡发布；其余任何 FAIL（不分级别）保持原判据——这里不整体改成谓词。
+  if (!subject || !('feature' in subject) || !ctx.resolvedInputs || checks.some(check => check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose')) return [];
   const runId = 'run_id' in subject ? subject.run_id : undefined;
   if ('run_id' in subject && !runId) return [];
   const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
@@ -373,7 +376,8 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
   const file = `${kind}.yaml`;
   const base = { id: 'authoritative_content_aligned', category: 'traceability' as const, severity: 'BLOCKER' as const, description: `手写 ${file} 与当前设计权威按稳定 ID 逐字段对齐`, affected_files: [featureFilePath(ctx.projectRoot, ctx.feature, file)] };
   if (drift.state === 'aligned') return [{ ...base, status: 'PASS', details: `${file} 与当前规范化投影对齐（补充内容不判）` }];
-  if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
+  // 无效分支责任在链外的设计 owner（plan f7045213 最终评审返修二）：既有字段 repair_owner='external' 让 goal 首次即停交设计 owner；漂移分支不标。
+  if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', repair_owner: 'external', details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
   const details = drift.items.map(item => `${driftLabel(item)}: 期望=${JSON.stringify(item.expected)} 实际=${JSON.stringify(item.actual)}`).join('\n');
   return [{ ...base, status: 'FAIL', details, suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
 }

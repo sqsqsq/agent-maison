@@ -49,6 +49,8 @@ import {
   __testing_setValidateReceipt,
   main as goalMain,
 } from '../../scripts/goal-runner';
+import { FINALIZE_RESERVE_MS, resolveWallClockMs } from '../../scripts/utils/goal-timeout';
+import { loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import * as goalRunnerMod from '../../scripts/goal-runner';
 import { setupMinimalHost } from '../helpers/goal-run-driver';
 import { inferRepoLayout } from '../../repo-layout';
@@ -761,6 +763,450 @@ function readEvents(reportDir: string): Array<Record<string, unknown>> {
     try { return JSON.parse(l) as Record<string, unknown>; } catch { return {}; }
   });
 }
+
+// ============================================================================
+// plan 4e6fb3b6 §6（批二 t4）：获准替代模型——判断依据是**实际调用的型号**（从调用计划的 argv 取）
+// ============================================================================
+
+/** 调用计划里实际传给 adapter CLI 的型号；没有 --model = 用 adapter 的用户配置默认型号（null）。 */
+function modelOf(plan: unknown): string | null {
+  const argv = (plan as { argv?: string[] }).argv ?? [];
+  const i = argv.indexOf('--model');
+  return i >= 0 ? argv[i + 1] ?? null : null;
+}
+
+interface ModelChainProbe {
+  exitCode: number;
+  root: string;
+  reportDir: string;
+  events: Array<Record<string, unknown>>;
+  canaryCalls: Array<{ model: string | null; timeoutMs: number }>;
+  formalModels: Array<string | null>;
+}
+
+/** 生产 goalMain 真跑（cursor 宿主）；金丝雀与正式调用只替换调用传输，型号从调用计划读。 */
+async function runModelChain(opts: {
+  root: string;
+  feature: string;
+  ui: boolean;
+  args: string[];
+  canary?: (model: string | null, timeoutMs: number) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  formal?: (model: string | null, n: number) => Record<string, unknown>;
+}): Promise<ModelChainProbe> {
+  const { root, feature } = opts;
+  const canaryCalls: ModelChainProbe['canaryCalls'] = [];
+  const formalModels: Array<string | null> = [];
+  const prevArgv = process.argv;
+  const prevCwd = process.cwd();
+  const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
+  try {
+    __testing_setCanaryProbeInvoke((async (plan: unknown, _cwd: string, o?: { timeoutMs?: number }) => {
+      const model = modelOf(plan);
+      const timeoutMs = Number(o?.timeoutMs ?? -1);
+      canaryCalls.push({ model, timeoutMs });
+      return opts.canary
+        ? await opts.canary(model, timeoutMs)
+        : { exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' };
+    }) as never);
+    __testing_setInvokeAgent((async (plan: unknown) => {
+      const model = modelOf(plan);
+      formalModels.push(model);
+      return opts.formal?.(model, formalModels.length) ?? { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
+    }) as never);
+    __testing_setRunHarnessPhase((async () => ({ exitCode: 0, timedOut: false })) as never);
+    __testing_setRepoLayout({ kind: 'standalone', projectRoot: root, frameworkRoot: REPO_ROOT, frameworkRel: '' } as ReturnType<typeof inferRepoLayout>);
+    __testing_setDeviceReadinessGate((() => ({
+      env: { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' },
+      target: { serial: 'fake-device', targetKind: 'physical' as const },
+      notes: ['test seam'],
+    })) as never);
+    __testing_setValidateReceipt(((_hr: string, _pr: string, ph: string, feat: string) => ({
+      status: 'passed' as const, receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`, exit_code: 0,
+    })) as never);
+    process.argv = ['node', 'goal-runner.ts', '--feature', feature, '--adapter', 'cursor', '--foreground-ok', ...opts.args];
+    process.chdir(root);
+    clearFrameworkConfigCache();
+    const exitCode = await goalMain();
+    const runsDir = path.join(root, 'doc/features', feature, 'goal-runs');
+    const runs = fs.existsSync(runsDir) ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.')) : [];
+    const reportDir = runs.length > 0
+      ? path.join(runsDir, runs.map(n => ({ n, t: fs.statSync(path.join(runsDir, n)).mtimeMs })).sort((a, b) => a.t - b.t).slice(-1)[0].n)
+      : '';
+    return { exitCode, root, reportDir, events: readEvents(reportDir), canaryCalls, formalModels };
+  } finally {
+    __testing_resetGoalRunnerSeams();
+    process.argv = prevArgv;
+    if (prevTrustDir === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+    else process.env.MAISON_GOAL_CHECKPOINT_DIR = prevTrustDir;
+    try { process.chdir(prevCwd); } catch { /* ignore */ }
+  }
+}
+
+/** 最小 cursor 宿主；ui=true 时 spec.md 声明 ui_change，启动期金丝雀真实走 probe 分支。 */
+function modelHost(feature: string, approved: string[] | undefined, ui: boolean): string {
+  const root = setupMinimalHost(feature);
+  if (ui) {
+    fs.writeFileSync(path.join(root, 'doc', 'features', feature, 'spec', 'spec.md'), '```yaml\nui_change: new_or_changed\n```\n', 'utf-8');
+  }
+  if (approved) {
+    writeLocalConfig(root, { schema_version: '1.0', agent_adapter: 'cursor', adapters: { cursor: { approved_models: approved } } });
+  }
+  const { spawnSync } = require('child_process') as typeof import('child_process');
+  spawnSync('git', ['add', '-A'], { cwd: root, encoding: 'utf-8' });
+  spawnSync('git', ['commit', '-qm', 'model-host'], { cwd: root, encoding: 'utf-8' });
+  return root;
+}
+
+/** 最近一条 run_end 连同它的会话起点一起往前平移（只为过恢复冷却，不改该段时长）。 */
+function shiftLastRunEnd(reportDir: string, byMs: number): void {
+  const p = path.join(reportDir, 'events.jsonl');
+  const events = readEvents(reportDir);
+  const i = events.map(e => e.type).lastIndexOf('run_end');
+  const shift = (v: unknown): string => new Date(Date.parse(String(v)) - byMs).toISOString();
+  events[i].ts = shift(events[i].ts);
+  if (typeof events[i].session_started_at === 'string') events[i].session_started_at = shift(events[i].session_started_at);
+  fs.writeFileSync(p, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+}
+
+const UNSUPPORTED = (): Record<string, unknown> => codexTurnFailedInvoke(HOST_400_MESSAGE, 400, 'invalid_request_error');
+const REQ_ARGS = (req: string): string[] => ['--requirement', req, '--start', 'spec', '--end', 'spec', '--force'];
+const NON_UI_REQ = '整理后端对账脚本的日志格式。';
+
+/** 回拨一个已结束 run 的会话：活跃时长 = consumedMs，run_end 早于现在 10 分钟（过恢复冷却）。 */
+function backdateSession(reportDir: string, consumedMs: number): void {
+  const p = path.join(reportDir, 'events.jsonl');
+  const events = readEvents(reportDir);
+  const endMs = Date.now() - 10 * 60_000;
+  const lastEnd = events.map(e => e.type).lastIndexOf('run_end');
+  const lastStart = events.map(e => e.type).lastIndexOf('run_start');
+  assert.ok(lastEnd > lastStart && lastStart >= 0, '夹具：须是一个已结束的会话');
+  events[lastStart].ts = new Date(endMs - consumedMs).toISOString();
+  if (typeof events[lastStart].session_started_at === 'string') events[lastStart].session_started_at = events[lastStart].ts;
+  events[lastEnd].ts = new Date(endMs).toISOString();
+  fs.writeFileSync(p, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+}
+
+cases.push(
+  {
+    name: 'P3 A8①：型号由用户显式钉死 → 不替换，交还并写明用户钉死；实际调用的型号只有钉值',
+    run: async () => {
+      const feature = 'model-alt-pinned';
+      const root = modelHost(feature, ['gpt-alt-1'], true);
+      try {
+        const p = await runModelChain({
+          root, feature, ui: true,
+          args: [...REQ_ARGS(UI_REQ), '--adapter-model', 'gpt-user'],
+          canary: () => UNSUPPORTED(),
+        });
+        assert.deepStrictEqual(p.canaryCalls.map(c => c.model), ['gpt-user'], JSON.stringify(p.canaryCalls));
+        assert.deepStrictEqual(p.formalModels, [], '不得进入正式 phase');
+        assert.ok(!p.events.some(e => e.type === 'adapter_model_substituted'), '不得有替代事件');
+        const halt = p.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure');
+        assert.ok(String(halt?.halt_guidance ?? '').includes('钉死') && String(halt?.halt_guidance ?? '').includes('gpt-user'),
+          `说明须写明型号由用户钉死：${String(halt?.halt_guidance)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A8②：未钉型号 + 获准清单 → 按序换型号、每次重探金丝雀，不支持就继续下一个；任务继续，正式调用用替代型号',
+    run: async () => {
+      const feature = 'model-alt-switch';
+      const root = modelHost(feature, ['gpt-alt-1', 'gpt-alt-2', 'gpt-alt-3'], true);
+      try {
+        const p = await runModelChain({
+          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: (model) => (model === 'gpt-alt-2'
+            ? { exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }
+            : UNSUPPORTED()),
+        });
+        assert.deepStrictEqual(p.canaryCalls.map(c => c.model), [null, 'gpt-alt-1', 'gpt-alt-2'], JSON.stringify(p.canaryCalls));
+        assert.ok(p.formalModels.length > 0 && p.formalModels.every(m => m === 'gpt-alt-2'),
+          `正式调用须用替代型号：${JSON.stringify(p.formalModels)}`);
+        const subs = p.events.filter(e => e.type === 'adapter_model_substituted');
+        assert.deepStrictEqual(subs.map(e => [e.from, e.to, e.trigger]), [[null, 'gpt-alt-1', 'canary'], ['gpt-alt-1', 'gpt-alt-2', 'canary']]);
+        const rebases = p.events.filter(e => e.type === 'manifest_identity_rebase' && e.authorized_by === 'approved_model_alternatives');
+        assert.ok(rebases.length === 2 && rebases.every(e => JSON.stringify(e.changed_fields) === '["adapter_model_pin"]'),
+          `身份改写只授权模型钉值：${JSON.stringify(rebases)}`);
+        assert.ok(!p.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure'), '不得以金丝雀硬失败停机');
+        const manifest = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'manifest.json'), 'utf-8')) as GoalManifest;
+        assert.deepStrictEqual(manifest.adapter_model_pin, { adapter: 'cursor', value: 'gpt-alt-2', source: 'approved_alternative' });
+        // 恢复时身份基线是否前进到替代钉值，由 R3 用例经真实 --resume 验证（原先这里把原始事件直接交给基线函数，
+        // 绕过了恢复读取链里的会话过滤——codex 批二 review R3）。
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A8③：清单为空 / 已全部试过 → 交还并列出试过的型号',
+    run: async () => {
+      for (const [feature, approved, want] of [
+        ['model-alt-none', undefined, ['没有配置获准替代型号']],
+        ['model-alt-used-up', ['gpt-alt-1'], ['已全部试过', '(adapter 默认型号)、gpt-alt-1']],
+      ] as Array<[string, string[] | undefined, string[]]>) {
+        const root = modelHost(feature, approved, true);
+        try {
+          const p = await runModelChain({ root, feature, ui: true, args: REQ_ARGS(UI_REQ), canary: () => UNSUPPORTED() });
+          assert.deepStrictEqual(p.canaryCalls.map(c => c.model), [null, ...(approved ?? [])], JSON.stringify(p.canaryCalls));
+          const guidance = String(p.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure')?.halt_guidance ?? '');
+          for (const w of want) assert.ok(guidance.includes(w), `${feature} 说明须含「${w}」：${guidance}`);
+          assert.deepStrictEqual(p.formalModels, [], '不得进入正式 phase');
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    },
+  },
+  {
+    name: 'P3 A8④：其它 CLI 硬失败（spawn error）保持现状——有获准清单也不换型号',
+    run: async () => {
+      const feature = 'model-alt-other-hard';
+      const root = modelHost(feature, ['gpt-alt-1'], true);
+      try {
+        const p = await runModelChain({
+          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }),
+        });
+        assert.deepStrictEqual(p.canaryCalls.map(c => c.model), [null]);
+        assert.ok(!p.events.some(e => e.type === 'adapter_model_substituted'));
+        assert.ok(p.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure'));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A8⑤ 正式调用：模型不受支持 → 换获准型号重跑同一 attempt，不消耗内容重试；实际调用型号依次为默认、替代',
+    run: async () => {
+      const feature = 'model-alt-formal';
+      const root = modelHost(feature, ['gpt-alt-1'], false);
+      try {
+        const p = await runModelChain({
+          root, feature, ui: false, args: REQ_ARGS(NON_UI_REQ),
+          formal: (model) => (model === null ? UNSUPPORTED() : { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' }),
+        });
+        assert.deepStrictEqual(p.canaryCalls, [], '非 UI 需求不跑金丝雀');
+        assert.deepStrictEqual(p.formalModels.slice(0, 2), [null, 'gpt-alt-1'], JSON.stringify(p.formalModels));
+        const sub = p.events.find(e => e.type === 'adapter_model_substituted');
+        assert.ok(sub && sub.trigger === 'invoke' && sub.to === 'gpt-alt-1' && sub.phase === 'spec', JSON.stringify(sub));
+        assert.ok(!p.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'adapter_cli_hard_failure'), '换上型号后不得以 CLI 硬失败停机');
+        const firstStarts = p.events.filter(e => e.type === 'agent_invoke_start').slice(0, 2);
+        assert.ok(firstStarts.length === 2, '须有第二次正式调用');
+        const between = p.events.slice(p.events.indexOf(firstStarts[0]), p.events.indexOf(firstStarts[1]));
+        assert.ok(!between.some(e => e.type === 'phase_verdict'), `替代重跑不产生 retry 裁决（不占内容重试）：${JSON.stringify(between.map(e => e.type))}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 R3 启动期替代 → 正式会话 → 停机 → 真实 --resume：不报身份漂移并继续；恢复中"已授权预算改写 + 启动期再替代"后再恢复同样不漂移',
+    run: async () => {
+      const feature = 'model-alt-resume';
+      const root = modelHost(feature, ['gpt-alt-1', 'gpt-alt-2'], true);
+      const spawnFail = (): Record<string, unknown> =>
+        ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } });
+      const notCached = (): Record<string, unknown> => ({ exitCode: 1, stdout: '', stderr: 'boom', command: 'fake-canary' });
+      const drift = (p: ModelChainProbe): unknown[] => p.events.filter(e => e.type === 'manifest_identity_drift');
+      try {
+        // 第一段：启动期默认型号不受支持 → 换 alt-1（金丝雀非硬失败、不写缓存）→ 正式调用 spawn 失败 → HALTED
+        const first = await runModelChain({
+          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: (m) => (m === null ? UNSUPPORTED() : notCached()),
+          formal: () => spawnFail(),
+        });
+        const runId = path.basename(first.reportDir);
+        assert.deepStrictEqual(first.formalModels, ['gpt-alt-1'], JSON.stringify(first.formalModels));
+        backdateSession(first.reportDir, 60_000);
+        // 恢复 A（不带任何 override）：替代钉值有启动期授权事件 → 不漂移，继续执行
+        const resumedA = await runModelChain({
+          root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
+          canary: () => notCached(), formal: () => spawnFail(),
+        });
+        assert.deepStrictEqual(drift(resumedA), [], '启动期合法替代不得在恢复时被报成漂移');
+        assert.deepStrictEqual(resumedA.formalModels, ['gpt-alt-1'], `恢复后须以替代型号继续执行：${JSON.stringify(resumedA.formalModels)}`);
+        backdateSession(first.reportDir, 60_000);
+        // 恢复 B：有权者改预算 + --override-manifest，同一次启动里 alt-1 被判不受支持 → 换 alt-2
+        const manifestPath = path.join(first.reportDir, 'manifest.json');
+        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as GoalManifest;
+        m.budget.max_total_turns = 31;
+        fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n', 'utf-8');
+        const resumedB = await runModelChain({
+          root, feature, ui: true, args: ['--resume', runId, '--force-resume', '--override-manifest'],
+          canary: (mm) => (mm === 'gpt-alt-1' ? UNSUPPORTED() : notCached()), formal: () => spawnFail(),
+        });
+        assert.deepStrictEqual(resumedB.formalModels, ['gpt-alt-2'], JSON.stringify(resumedB.formalModels));
+        backdateSession(first.reportDir, 60_000);
+        // 恢复 C（不带 override）：预算改写与恢复中替代都已授权 → 不漂移
+        const resumedC = await runModelChain({
+          root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
+          canary: () => notCached(), formal: () => spawnFail(),
+        });
+        assert.deepStrictEqual(drift(resumedC), [], '已授权的预算改写 + 恢复中替代之后再恢复不得漂移');
+        assert.deepStrictEqual(resumedC.formalModels, ['gpt-alt-2']);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 R3 已试型号含启动期记录：启动期拒绝过 alt-1 换到 alt-2，正式调用时 alt-2 也不受支持 → 选 alt-3，不再选 alt-1',
+    run: async () => {
+      const feature = 'model-alt-tried';
+      const root = modelHost(feature, ['gpt-alt-1', 'gpt-alt-2', 'gpt-alt-3'], true);
+      try {
+        const p = await runModelChain({
+          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: (m) => (m === null || m === 'gpt-alt-1'
+            ? UNSUPPORTED()
+            : { exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
+          formal: (m) => (m === 'gpt-alt-2' ? UNSUPPORTED() : { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' }),
+        });
+        assert.deepStrictEqual(p.formalModels.slice(0, 2), ['gpt-alt-2', 'gpt-alt-3'], `不得回到启动期已拒绝的 alt-1：${JSON.stringify(p.formalModels)}`);
+        assert.ok(!p.formalModels.includes('gpt-alt-1'));
+        assert.ok(!p.canaryCalls.slice(2).some(c => c.model === 'gpt-alt-1'), JSON.stringify(p.canaryCalls));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 R4 本次调用显式给的型号恰好等于替代值：带/不带 --override-manifest 都按用户钉死处理，不调用其它型号',
+    run: async () => {
+      for (const withOverride of [false, true]) {
+        const feature = withOverride ? 'model-alt-explicit-ovr' : 'model-alt-explicit';
+        const root = modelHost(feature, ['gpt-alt-1', 'gpt-alt-2'], true);
+        try {
+          const first = await runModelChain({
+            root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+            canary: (m) => (m === null ? UNSUPPORTED() : { exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
+            formal: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }),
+          });
+          const runId = path.basename(first.reportDir);
+          backdateSession(first.reportDir, 60_000);
+          const resumed = await runModelChain({
+            root, feature, ui: true,
+            args: ['--resume', runId, '--force-resume', '--adapter-model', 'gpt-alt-1', ...(withOverride ? ['--override-manifest'] : [])],
+            canary: () => UNSUPPORTED(),
+            formal: () => UNSUPPORTED(),
+          });
+          const label = withOverride ? '带 override' : '不带 override';
+          assert.ok([...resumed.formalModels, ...resumed.canaryCalls.map(c => c.model)].every(m => m === 'gpt-alt-1'),
+            `${label}：不得调用其它型号：${JSON.stringify({ formal: resumed.formalModels, canary: resumed.canaryCalls })}`);
+          const thisSession = resumed.events.slice(resumed.events.map(e => e.type).lastIndexOf('run_start'));
+          assert.ok(!thisSession.some(e => e.type === 'adapter_model_substituted'), `${label}：不得替代`);
+          const halt = resumed.events.filter(e => e.type === 'phase_halt').slice(-1)[0];
+          assert.ok(String(halt?.halt_guidance ?? '').includes('用户') && String(halt?.halt_guidance ?? '').includes('gpt-alt-1'),
+            `${label}：交还说明须写明型号由用户指定：${String(halt?.halt_guidance)}`);
+          const pin = (JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as GoalManifest).adapter_model_pin;
+          assert.deepStrictEqual(pin, withOverride
+            ? { adapter: 'cursor', value: 'gpt-alt-1' }
+            : { adapter: 'cursor', value: 'gpt-alt-1', source: 'approved_alternative' },
+          `${label}：来源只在带 override 时改为用户（走身份授权路径），否则 manifest 不变`);
+          assert.ok(!resumed.events.some(e => e.type === 'manifest_identity_drift'), `${label}：不得报漂移`);
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    },
+  },
+  {
+    name: 'P3 R3 反例：没有授权事件的钉值改动，恢复时仍报未授权漂移',
+    run: async () => {
+      const feature = 'model-alt-tamper';
+      const root = modelHost(feature, ['gpt-alt-1'], true);
+      try {
+        const first = await runModelChain({
+          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: (m) => (m === null ? UNSUPPORTED() : { exitCode: 1, stdout: '', stderr: 'boom', command: 'fake-canary' }),
+          formal: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }),
+        });
+        backdateSession(first.reportDir, 60_000);
+        const manifestPath = path.join(first.reportDir, 'manifest.json');
+        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as GoalManifest;
+        m.adapter_model_pin = { adapter: 'cursor', value: 'gpt-tampered', source: 'approved_alternative' };
+        fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n', 'utf-8');
+        await assert.rejects(
+          runModelChain({ root, feature, ui: true, args: ['--resume', path.basename(first.reportDir), '--force-resume'] }),
+          /漂移/,
+        );
+        assert.ok(readEvents(first.reportDir).some(e => e.type === 'manifest_identity_drift'), '须落 manifest_identity_drift');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A9 预算：剩余额度短于金丝雀固定时长 → 按剩余额度结束；耗尽后不试下一个型号；恢复与后继都不重置已消耗额度',
+    run: async () => {
+      const feature = 'model-alt-budget';
+      const root = modelHost(feature, ['gpt-alt-1'], true);
+      try {
+        // 第一段：正式调用 spawn 失败（其它 CLI 硬失败）→ HALTED；金丝雀非硬失败（不写缓存，恢复时会重探）。
+        // 金丝雀先花 1.5 秒——批二 review R1：正常进入正式会话时，run_start 之前的启动探测耗时须进已用时长。
+        const first = await runModelChain({
+          root, feature, ui: true, args: REQ_ARGS(UI_REQ),
+          canary: async () => {
+            await new Promise(r => setTimeout(r, 1_500));
+            return { exitCode: 1, stdout: '', stderr: 'boom', command: 'fake' };
+          },
+          formal: () => ({ exitCode: 1, stdout: '', stderr: '', command: 'fake', spawn_error: { code: 'ENOENT', message: 'spawn ENOENT' } }),
+        });
+        const runId = path.basename(first.reportDir);
+        assert.ok(first.events.some(e => e.type === 'run_end' && e.status === 'HALTED'), '夹具：第一段须 HALTED');
+        {
+          const start = first.events.find(e => e.type === 'run_start')!;
+          const end = [...first.events].reverse().find(e => e.type === 'run_end')!;
+          const counted = resolveResumedBudget(loadAuthoritativeEvents(path.join(first.reportDir, 'events.jsonl'))).priorActiveMs;
+          const sinceRunStart = Date.parse(String(end.ts)) - Date.parse(String(start.ts));
+          assert.ok(typeof start.session_started_at === 'string', 'run_start 须记录会话起点');
+          assert.ok(counted >= sinceRunStart + 1_400,
+            `启动期探测耗时须计入已用时长：counted=${counted} run_start→run_end=${sinceRunStart}`);
+        }
+        const manifest = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'manifest.json'), 'utf-8')) as GoalManifest;
+        const wallMs = resolveWallClockMs(manifest, ['spec']);
+        const leftMs = 12_000;
+        backdateSession(first.reportDir, wallMs - FINALIZE_RESERVE_MS - leftMs);
+
+        // 恢复：剩余约 12 秒 → 金丝雀允许时长按剩余额度；它把额度用完后返回"不受支持" → 预算已尽，不试 gpt-alt-1
+        const resumed = await runModelChain({
+          root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
+          canary: async (_m, timeoutMs) => {
+            await new Promise(r => setTimeout(r, Math.max(0, timeoutMs) + 50));
+            return UNSUPPORTED();
+          },
+        });
+        assert.strictEqual(resumed.canaryCalls.length, 1, `预算耗尽后不得再试下一个型号：${JSON.stringify(resumed.canaryCalls)}`);
+        assert.ok(!resumed.events.some(e => e.type === 'adapter_model_substituted'),
+          `预算耗尽后不得换型号：${JSON.stringify(resumed.events.filter(e => e.type === 'adapter_model_substituted'))}`);
+        const t = resumed.canaryCalls[0].timeoutMs;
+        assert.ok(t > 0 && t <= leftMs && t < 120_000, `金丝雀允许时长须取剩余额度（≤${leftMs}ms），实得 ${t}`);
+        const guidance = String(resumed.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure')?.halt_guidance ?? '');
+        assert.ok(guidance.includes('预算已尽') && guidance.includes('(adapter 默认型号)'), `说明须写明预算已尽并列出试过的型号：${guidance}`);
+
+        // 批二 review R1：恢复里的探测提前退出（run_start 之前停机），它花掉的约 12 秒必须持久计入——
+        // 再次恢复、以及起后继，都不能重新拿到探测额度（金丝雀一次都不该再被调用）。
+        shiftLastRunEnd(first.reportDir, 10 * 60_000); // 只为过恢复冷却，保持该段时长不变
+        const resumedAgain = await runModelChain({
+          root, feature, ui: true, args: ['--resume', runId, '--force-resume'],
+          canary: () => ({ exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
+        });
+        assert.deepStrictEqual(resumedAgain.canaryCalls, [], `预算耗尽后再次恢复不得重新获得探测额度：${JSON.stringify(resumedAgain.canaryCalls)}`);
+        const successor = await runModelChain({
+          root, feature, ui: true, args: [...REQ_ARGS(UI_REQ), '--supersede', runId],
+          canary: () => ({ exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
+        });
+        assert.ok(path.basename(successor.reportDir) !== runId, '夹具：后继须是新 run');
+        assert.deepStrictEqual(successor.canaryCalls, [], `后继不得重新获得探测额度：${JSON.stringify(successor.canaryCalls)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+);
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];

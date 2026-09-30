@@ -434,36 +434,81 @@ export function collectRequirementIntentText(
  *  · 无 run：身份匹配（`phase:<feature>:spec`）的 explicit_cli fidelity-intent SSOT 所记单个
  *    requirement_source_files 原文，且按原文重算 requirement_sha256 须等于签发值（`--requirement-file` 路径）。
  * 其余一律空串——spec.md / 宽泛意图文本 / 行内 `--requirement`（未落原文）都不能授权。
+ * `runIdOverride`：runner 自身进程没有 `MAISON_GOAL_RUN_ID` 时显式给出 run（语义同 env）。
  */
 export function collectCurrentRequirementText(
   projectRoot: string,
   feature: string,
   featuresDirRel = 'doc/features',
+  runIdOverride?: string,
 ): string {
   const excludePrefixes = [`${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`];
-  const readSource = (p: string): string => {
-    try {
-      return fs.readFileSync(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'utf-8').replace(/^﻿/, '').trim();
-    } catch {
-      return '';
-    }
-  };
-  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const source = resolveCurrentRequirementSource(projectRoot, feature, featuresDirRel, runIdOverride);
+  if (!source) return '';
+  if (source.kind === 'runless') {
+    return dereferenceRequirementDocs(projectRoot, source.text, { featuresDirRel, excludePrefixes }).combined;
+  }
+  try {
+    const parts = source.requirement.trim()
+      ? [dereferenceRequirementDocs(projectRoot, source.requirement, { featuresDirRel, excludePrefixes }).combined]
+      : [];
+    for (const f of source.sourceFiles) parts.push(readRequirementSourceFile(projectRoot, f));
+    return parts.join('\n\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 需求引文核对的唯一实现（plan 33784ed1 §4.2）：非空，且逐字出现在当前目标文本
+ * （collectCurrentRequirementText 的产出）。`ref_elements_excluded` 与拒修核验共用。
+ */
+export function checkRequirementQuote(quote: unknown, requirementText: string): 'ok' | 'missing' | 'not_verbatim' {
+  const q = typeof quote === 'string' ? quote.trim() : '';
+  if (!q) return 'missing';
+  return requirementText.includes(q) ? 'ok' : 'not_verbatim';
+}
+
+function readRequirementSourceFile(projectRoot: string, p: string): string {
+  try {
+    return fs.readFileSync(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'utf-8').replace(/^﻿/, '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 当前执行身份与需求来源的唯一解析（collectCurrentRequirementText 与目标简报共用，plan 33784ed1 §3.2）：
+ *  · 有 run 身份（缺省取 `MAISON_GOAL_RUN_ID`）：须是权威 run，返回其冻结的 manifest.requirement 原文
+ *    （未解引用）与 requirement_source_files 清单；run 不权威或 manifest 不可读 → null（不回落无 run 分支）；
+ *  · 无 run：身份匹配的 explicit_cli SSOT 所记单个源文件原文，且重算 requirement_sha256 等于签发值；否则 null。
+ */
+export function resolveCurrentRequirementSource(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+  runIdOverride?: string,
+):
+  | { kind: 'run'; runId: string; requirement: string; sourceFiles: string[] }
+  | { kind: 'runless'; text: string }
+  | null {
+  const runId = (runIdOverride ?? process.env.MAISON_GOAL_RUN_ID)?.trim();
   if (runId) {
-    if (!listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs.includes(runId)) return '';
+    if (!listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs.includes(runId)) return null;
     try {
       const m = JSON.parse(fs.readFileSync(
         path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json'), 'utf-8',
       )) as { requirement?: unknown; requirement_source_files?: unknown };
-      const parts = typeof m.requirement === 'string' && m.requirement.trim()
-        ? [dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel, excludePrefixes }).combined]
-        : [];
-      if (Array.isArray(m.requirement_source_files)) {
-        for (const f of m.requirement_source_files) if (typeof f === 'string') parts.push(readSource(f));
-      }
-      return parts.join('\n\n');
+      return {
+        kind: 'run',
+        runId,
+        requirement: typeof m.requirement === 'string' ? m.requirement : '',
+        sourceFiles: Array.isArray(m.requirement_source_files)
+          ? m.requirement_source_files.filter((f): f is string => typeof f === 'string')
+          : [],
+      };
     } catch {
-      return '';
+      return null;
     }
   }
   const ssot = loadFidelityIntentSsot(projectRoot, feature);
@@ -472,10 +517,10 @@ export function collectCurrentRequirementText(
     ssot?.requirement_provenance !== 'explicit_cli' ||
     ssot.execution_identity !== `phase:${feature}:spec` ||
     sources.length !== 1
-  ) return '';
-  const text = readSource(sources[0]);
-  if (!text || computeRequirementShaFromText(projectRoot, feature, text, featuresDirRel) !== ssot.requirement_sha256) return '';
-  return dereferenceRequirementDocs(projectRoot, text, { featuresDirRel, excludePrefixes }).combined;
+  ) return null;
+  const text = readRequirementSourceFile(projectRoot, sources[0]);
+  if (!text || computeRequirementShaFromText(projectRoot, feature, text, featuresDirRel) !== ssot.requirement_sha256) return null;
+  return { kind: 'runless', text };
 }
 
 /**

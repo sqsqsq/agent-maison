@@ -54,6 +54,7 @@ import { validateProjectRelativePath } from './utils/project-relative-path';
 import { findBasenameCandidates, formatPrefixMismatchHint } from './utils/path-candidates';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 import { resolveHarnessDiffBaseRef } from './utils/phase-state';
+import { isBlockingCheck } from './utils/check-disposition';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -625,7 +626,7 @@ const CODING_CRITICAL_SKIP_IDS = new Set([
 ]);
 
 function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): CheckResult {
-  const blockerFails = results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
+  const blockerFails = results.filter(r => isBlockingCheck(r));
   const criticalSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER' && CODING_CRITICAL_SKIP_IDS.has(r.id));
   const blockingWarnings = results.filter(r => r.status === 'WARN' && r.severity === 'BLOCKER');
   const compile = results.find(

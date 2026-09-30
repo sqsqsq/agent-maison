@@ -310,6 +310,12 @@ export interface ExecutionSession {
   /** 段内是否有 run_end（无 = 崩溃/hard-kill 段，已保守补收） */
   clean: boolean;
   mode: 'dry' | 'authoritative';
+  /**
+   * 本段真实的活动区间（ms，互不重叠、按时间序）；Σ(end−start) = activeMs。通常只有一段 [startMs, startMs+activeMs]；
+   * 段内第一个 run_end 之后的启动提前退出（带 session_started_at 的 run_end）各自多一段——它们在时间上不与前段连续，
+   * 按时间窗求交集的消费方（恢复成本）必须用这里，不能把 [startMs, startMs+activeMs] 当连续区间。
+   */
+  intervals: Array<{ startMs: number; endMs: number }>;
 }
 
 export interface PartitionedSessions {
@@ -351,12 +357,26 @@ export function partitionExecutionSessions(
     if (e.type === 'run_start') starts.push(i);
   });
   if (starts.length === 0 && events.length > 0) starts.push(0); // 孤儿前缀兜底
+  // plan 4e6fb3b6 批二 review R1：`session_started_at` 是进程会话真实起点（早于 run_start，含启动期探测）。
+  // 只在事件带该字段时生效：run_start 的段首取它（不早于上一段已计到的时刻，防重叠）；段内第一个 run_end 之后
+  // 再出现的、带该字段的 run_end（恢复会话在 run_start 之前提前退出）另计一段。段的切分（下标）不变，旧事件流结果不变。
+  const sessionStartedAtMs = (e: GoalRunEvent): number | null => {
+    const v = (e as { session_started_at?: unknown }).session_started_at;
+    if (typeof v !== 'string') return null;
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? null : t;
+  };
+  let coveredUntilMs = Number.NEGATIVE_INFINITY;
   for (let s = 0; s < starts.length; s++) {
     const startIndex = starts[s];
     const nextStartIndex = s + 1 < starts.length ? starts[s + 1] : events.length;
     const endIndex = nextStartIndex - 1;
     const seg = events.slice(startIndex, nextStartIndex);
-    const startMs = eventTsMs(events[startIndex]) ?? NaN;
+    let startMs = eventTsMs(events[startIndex]) ?? NaN;
+    const declaredStartMs = events[startIndex].type === 'run_start' ? sessionStartedAtMs(events[startIndex]) : null;
+    if (declaredStartMs !== null && !Number.isNaN(startMs) && declaredStartMs < startMs) {
+      startMs = Math.max(declaredStartMs, coveredUntilMs);
+    }
     const runEnd = seg.find((e) => e.type === 'run_end');
     let maxTs = Number.isNaN(startMs) ? 0 : startMs;
     for (const e of seg) {
@@ -379,10 +399,27 @@ export function partitionExecutionSessions(
     const isDry =
       (events[startIndex].type === 'run_start' && startEvent.dry_run === true) ||
       (seg.length > 0 && seg.every((e) => (e as { dry_run?: unknown }).dry_run === true));
-    const activeMs = Number.isNaN(startMs) ? 0 : Math.max(0, endMs - startMs);
+    let activeMs = Number.isNaN(startMs) ? 0 : Math.max(0, endMs - startMs);
+    const intervals = [{ startMs: Number.isNaN(startMs) ? 0 : startMs, endMs: Number.isNaN(startMs) ? 0 : startMs + activeMs }];
+    let segCoveredUntil = endMs;
+    if (runEnd) {
+      for (const e of seg.slice(seg.indexOf(runEnd) + 1)) {
+        if (e.type !== 'run_end') continue;
+        const declared = sessionStartedAtMs(e);
+        const endE = eventTsMs(e);
+        if (declared === null || endE === null) continue;
+        const from = Math.max(declared, segCoveredUntil);
+        if (endE > from) {
+          activeMs += endE - from;
+          intervals.push({ startMs: from, endMs: endE });
+          segCoveredUntil = endE;
+        }
+      }
+    }
+    coveredUntilMs = Math.max(coveredUntilMs, segCoveredUntil);
     sessions.push({
       startIndex, endIndex, startMs: Number.isNaN(startMs) ? 0 : startMs, activeMs, clean,
-      mode: isDry ? 'dry' : 'authoritative',
+      mode: isDry ? 'dry' : 'authoritative', intervals,
     });
   }
   const authSessions = sessions.filter((x) => x.mode === 'authoritative');
@@ -670,6 +707,8 @@ export interface BudgetLineageFold {
   budgetFoldEvents: GoalRunEvent[];
   /** 仅祖先部分（runner 侧 transient 计数等已折叠消费仍需要） */
   ancestorEvents: GoalRunEvent[];
+  /** 与 ancestorEvents 同一集合，按 run 分组（回修轮窗口按 run 界定，plan 33784ed1 §4.1） */
+  ancestorRuns: Array<{ run_id: string; events: GoalRunEvent[] }>;
   /** 折叠种子（显式 ∪ 事件派生，去重保序） */
   foldSeeds: string[];
   /** 实际生效的交付周期边界（落在本次血缘内才生效）；undefined = 全血缘折叠 */
@@ -706,10 +745,12 @@ export function foldBudgetLineage(opts: {
     previousCycle.add(id);
     queue.push(...extractSupersedeTargets(lineage.get(id)!));
   }
-  const ancestorEvents = sortByTs([...lineage].filter(([id]) => !previousCycle.has(id)).flatMap(([, evs]) => evs));
+  const ancestorRuns = [...lineage].filter(([id]) => !previousCycle.has(id)).map(([run_id, events]) => ({ run_id, events }));
+  const ancestorEvents = sortByTs(ancestorRuns.flatMap(r => r.events));
   return {
     budgetFoldEvents: ancestorEvents.length > 0 ? [...ancestorEvents, ...current] : current,
     ancestorEvents,
+    ancestorRuns,
     foldSeeds,
     ...(cycleBoundary ? { cycleBoundary } : {}),
   };
@@ -977,7 +1018,15 @@ export function loadEventsJsonlStrict(absPath: string): EventsLoadStrictResult {
  * 状态（预算/重试计数/棘轮/resume 重建/对账期望集）一律走本口径；纯审计/展示读取
  * 显式用 loadEventsJsonl 并注明。 */
 export function filterAuthoritativeEvents(events: GoalRunEvent[]): GoalRunEvent[] {
-  return partitionExecutionSessions(events).authoritativeEvents;
+  const partitioned = partitionExecutionSessions(events);
+  // plan 4e6fb3b6 批二 review R3：启动期（首个 run_start 之前）金丝雀换型号写下的两种事件——身份改写授权与替代记录——
+  // 不属于任何执行会话，会被上面的分段过滤掉；恢复时身份基线与"已试型号"都要读它们。只接回这两种，
+  // dry 标记的不接回（与 run_created 的接回同一思路；会话切分与计时不变）。
+  const firstSessionStart = partitioned.sessions.length > 0 ? partitioned.sessions[0].startIndex : 0;
+  const birthPrefix = events.slice(0, firstSessionStart).filter((e) =>
+    (e.type === 'manifest_identity_rebase' || e.type === 'adapter_model_substituted')
+    && (e as { dry_run?: unknown }).dry_run !== true);
+  return birthPrefix.length > 0 ? [...birthPrefix, ...partitioned.authoritativeEvents] : partitioned.authoritativeEvents;
 }
 
 export function loadAuthoritativeEvents(absPath: string): GoalRunEvent[] {

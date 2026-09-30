@@ -1,0 +1,4268 @@
+{
+  "schema": "reliability-scenario-registry/1",
+  "plan": "1dbe4fa4",
+  "note": "baseline 是报告不是断言对象；assertion 三值见 plan §4.3：baseline_met=基线已满足期望、correct_stop=期望本身是正确失败/暂停/交还、gap_only=基线未达期望只打印差距。；baseline_p1 = P1（plan 1dbe4fa4）记录的基线，原样保留为历史；baseline = 最近一次补行为断言的 plan 收口时的实测（S5、S6、S7、S13 由 plan 33784ed1 批三记录；S1、S2 codex 支、S8、S9、S12 由 plan 4e6fb3b6 批三记录，这些分支原先的 baseline 改名 baseline_p1 保留为历史）。；baseline_p4 = P4（plan f7045213）批三 t6 收口时 13 场景全量复跑的实测，与 baseline 并列记录；baseline 与 baseline_p1 原样保留为历史。；baseline_p5 = P5（plan 3abca824）第二批后半 t6 收口时 13 场景全量复跑的实测，与 baseline、baseline_p4 并列记录；已有字段原样保留。",
+  "scenarios": [
+    {
+      "id": "S1",
+      "title": "模型永久不兼容",
+      "source_incident": "be091c（金丝雀 400）、0457a6（正式调用 400）",
+      "premise": "adapter 默认模型不被账号支持（400 invalid_request_error model is not supported）：金丝雀与正式调用分别命中；另含预算、以及重演 be091c 的三个现场（真实孤儿锁、已有范围转交、模型不兼容后显式换型号）各经一个公开入口",
+      "driver_layer": "运行时链",
+      "coverage_note": "400 信封按宿主真实形状（codex exec --json 行 + 生产 scanner 求出的 terminal_error_excerpt）；金丝雀经既有缝 __testing_setCanaryProbeInvoke，正式调用经 invokeResultFor，型号一律从调用计划 argv 的 --model 读（判断依据是实际调用的型号）。全部请求经 plan 4e6fb3b6 §7 的公开入口（驱动不带自动 --force，不做手工预修）；重新发起请求计为操作者动作。harness 为测试桩。be091c 三个现场：显式换型号走前台（explicit-model-successor），真实孤儿锁走 detach（子进程那一半经 spawn 测试缝在进程内跑同一 goalMain），已有范围转交走有人在场（prepare-run + host bridge，上一版宿主快照 + 生产冻结/转交 writer）。",
+      "unaffected_phases": [],
+      "expected": "有获准替代则自动恢复；无获准替代或型号被钉死则带明确理由交还，重发同一请求不新建 run；显式给了新型号则起后继；三个 be091c 现场都不需要拼技术旗标",
+      "branches": [
+        {
+          "key": "canary-no-alternative",
+          "label": "无获准替代（金丝雀 400）",
+          "premise": "未钉模型、未配置获准替代型号；随后无人脚本重发同一请求（什么都没变）",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "未宣称完成；带 400 原文与\"未配置获准替代\"理由交还；零正式调用；重发同一请求不新建 run，由金丝雀这项原检查以同一原因再停",
+          "assertion": "correct_stop",
+          "coverage_note": "启动即失败的 run 没有正式开始，按接续决策重新接入（附着）而不是保持停止：原检查（金丝雀）再判一次、以同一原因再停。\"保持停止、不写事件\"只发生在结构终局或有正式开始的 run 的冷却期内。",
+          "baseline_p1": {
+            "task_id": "S1/canary-no-alternative",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-C46Kve\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：金丝雀阶段即停机，产品源码未变化（交还理由另由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "reading": "waiting_external_no_wake"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "未宣称完成；原文 + --adapter-model 指引交还；零正式调用",
+            "hit_evidence": "phase_halt canary_cli_hard_failure @1",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S1/canary-no-alternative",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-qG6umy\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：金丝雀阶段即停机，产品源码未变化（交还理由另由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_external_no_wake",
+              "incident_class": "external"
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "未宣称完成；原文与\"未配置获准替代\"交还；重发同一请求不新建 run、以同一原因再停、零正式调用",
+            "hit_evidence": "phase_halt canary_cli_hard_failure @1",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S1/canary-no-alternative",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-i0ckq8\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：金丝雀阶段即停机，产品源码未变化（交还理由另由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_external_no_wake",
+              "incident_class": "external"
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "未宣称完成；原文与\"未配置获准替代\"交还；重发同一请求不新建 run、以同一原因再停、零正式调用",
+            "hit_evidence": "phase_halt canary_cli_hard_failure @1",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S1/canary-no-alternative",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-5HyJJt\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：金丝雀阶段即停机，产品源码未变化（交还理由另由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_external_no_wake",
+              "incident_class": "external"
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "未宣称完成；原文与\"未配置获准替代\"交还；重发同一请求不新建 run、以同一原因再停、零正式调用",
+            "hit_evidence": "phase_halt canary_cli_hard_failure @1",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "formal-with-alternative",
+          "label": "有获准替代（正式调用 400）",
+          "premise": "本机 framework.local.json adapters.codex.approved_models = [gpt-5.5]；未钉模型",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "同一 run 内自动换用 gpt-5.5、留替代事件并正确完成，操作者动作 0",
+          "assertion": "baseline_met",
+          "coverage_note": "coding 首次调用（默认型号）注入 400，按 argv 里实际型号判定：换到 gpt-5.5 之后的调用成功并写产品完成态。P1 基线（baseline_p1）是\"操作者以 --supersede + --adapter-model 起后继\"的旧路径。",
+          "baseline_p1": {
+            "task_id": "S1/formal-with-alternative",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-pKVKC4\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 2
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": false,
+            "expectation_detail": "结论=correct_completion，操作者动作=1（期望：自动换用获准替代并正确完成，动作 0）",
+            "hit_evidence": "run1 phase_halt adapter_cli_hard_failure @24",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S1/formal-with-alternative",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-GervTO\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "同一 run 内自动换用 gpt-5.5 并正确完成，操作者动作 0；调用型号=(default)→gpt-5.5",
+            "hit_evidence": "coding 实际调用型号=(default)→gpt-5.5；替代事件=null→gpt-5.5@25",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S1/formal-with-alternative",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-VpxUba\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "同一 run 内自动换用 gpt-5.5 并正确完成，操作者动作 0；调用型号=(default)→gpt-5.5",
+            "hit_evidence": "coding 实际调用型号=(default)→gpt-5.5；替代事件=null→gpt-5.5@25",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S1/formal-with-alternative",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-sku1rJ\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "同一 run 内自动换用 gpt-5.5 并正确完成，操作者动作 0；调用型号=(default)→gpt-5.5",
+            "hit_evidence": "coding 实际调用型号=(default)→gpt-5.5；替代事件=null→gpt-5.5@25",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "explicit-model-successor",
+          "label": "显式给了新型号（重演 be091c 第三现场，前台入口）",
+          "premise": "金丝雀 400 停在启动期后，宿主重发同一请求并显式给 --adapter-model gpt-5.5（不带 --supersede，不枚举 run）",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "起后继、承接启动失败的 run（审计事件）、钉新型号、以新型号过金丝雀并正确完成",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S1/explicit-model-successor",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-qG6umy\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "起后继 20260929T132316Z-21c2e1（承接 20260929T132315Z-283d42，钉 gpt-5.5）并正确完成；操作者动作=2（含 1 次不必要的重发），未枚举 run",
+            "hit_evidence": "run1 金丝雀 400；后继=20260929T132316Z-21c2e1",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S1/explicit-model-successor",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-i0ckq8\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "起后继 20260929T141412Z-70b1ef（承接 20260929T141411Z-3d1a74，钉 gpt-5.5）并正确完成；操作者动作=2（含 1 次不必要的重发），未枚举 run",
+            "hit_evidence": "run1 金丝雀 400；后继=20260929T141412Z-70b1ef",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S1/explicit-model-successor",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-5HyJJt\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "起后继 20260929T161109Z-944c7f（承接 20260929T161108Z-452847，钉 gpt-5.5）并正确完成；操作者动作=2（含 1 次不必要的重发），未枚举 run",
+            "hit_evidence": "run1 金丝雀 400；后继=20260929T161109Z-944c7f",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "budget",
+          "label": "预算短于金丝雀时长",
+          "premise": "首段正式调用 spawn 失败停机；回拨会话使剩余墙钟额度约 12 秒；获准替代清单有 gpt-alt-1；重发同一请求",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "金丝雀按剩余额度结束；额度用尽后不再试下一个型号；说明写明预算已尽；不新建 run；随后无人脚本连续两次重发（什么都没变）保持停止、不写事件、不新建 run（\"重复请求\"一行的无人值守部分）",
+          "assertion": "correct_stop",
+          "coverage_note": "回拨会话只动事件时间，不动内容（为过冷却与制造余额）；这是测试的时间操作，不计操作者动作。",
+          "baseline": {
+            "task_id": "S1/budget",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-U5ZYdz\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：预算已尽（交还是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_external_no_wake",
+              "incident_class": "external"
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "无人脚本两次重复请求保持停止；金丝雀按剩余额度 11999ms 结束、不再换型号、说明写明预算已尽",
+            "hit_evidence": "首段 adapter_cli_hard_failure=true；重新接入后金丝雀停机=true",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S1/budget",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-yGGIDx\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：预算已尽（交还是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_external_no_wake",
+              "incident_class": "external"
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "无人脚本两次重复请求保持停止；金丝雀按剩余额度 11999ms 结束、不再换型号、说明写明预算已尽",
+            "hit_evidence": "首段 adapter_cli_hard_failure=true；重新接入后金丝雀停机=true",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S1/budget",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-vic224\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：预算已尽（交还是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "canary_cli_hard_failure",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_external_no_wake",
+              "incident_class": "external"
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "无人脚本两次重复请求保持停止；金丝雀按剩余额度 12000ms 结束、不再换型号、说明写明预算已尽",
+            "hit_evidence": "首段 adapter_cli_hard_failure=true；重新接入后金丝雀停机=true",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "be091c-orphan-lock",
+          "label": "重演 be091c 第一现场：真实孤儿锁（detach 入口）",
+          "premise": "coding 中进程中断；feature 锁由生产锁 writer 以已死进程写下；宿主重发同一请求（--detach，不带 --resume/--force）",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "重新接入孤儿 run 并正确完成，不新建 run，子进程 argv 不带技术旗标",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S1/be091c-orphan-lock",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-3j3dIe\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "detach 重发同一请求即重新接入孤儿 run 并正确完成；操作者动作=1",
+            "hit_evidence": "中断 run=20260929T132333Z-f48536；已死进程的 feature 锁写下=true",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S1/be091c-orphan-lock",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-6Hmn0j\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "detach 重发同一请求即重新接入孤儿 run 并正确完成；操作者动作=1",
+            "hit_evidence": "中断 run=20260929T141429Z-158c8f；已死进程的 feature 锁写下=true",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S1/be091c-orphan-lock",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-pBvl26\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "detach 重发同一请求即重新接入孤儿 run 并正确完成；操作者动作=1",
+            "hit_evidence": "中断 run=20260929T161126Z-71048e；已死进程的 feature 锁写下=true",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "be091c-scope-transfer",
+          "label": "重演 be091c 第二现场：已有范围转交（有人在场入口）",
+          "premise": "上一版宿主快照；feature 范围已转交给一个显式后继，该后继在 ut 中断；宿主以有人在场入口重发同一请求",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "重新接入持有范围的后继并完成，不新建 run，不被\"范围已转交\"拒绝",
+          "assertion": "baseline_met",
+          "coverage_note": "附着前调用 sealLegacyInvokes（测试桩代际补丁：假 agent 不落 Job 绑定事件，中断留下的未闭合调用会被 Windows 接管对账拒绝），如实计为一次 manual_file_edit。持有范围的后继本身由显式 --supersede 造出（夹具历史，不在本任务的 run 里）。 重发之前调用了 sealLegacyInvokes，属于接线夹具：不能据此说\"未经预修的恢复\"已验收（本分支只证明接续决策把请求路由到持有范围的后继并附着执行）。独立验收只读产物（UT 阶段证据重新产出、UT 结果 PASS），不读 run_end 等框架完成宣称（批三返修 R6）。",
+          "baseline": {
+            "task_id": "S1/be091c-scope-transfer",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T132336Z-973c04",
+              "generated_at": "2026-09-29T13:23:39.446Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "UT 阶段证据重新产出、UT 结果 PASS（产物，不读框架完成宣称）"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "有人在场重发同一请求即重新接入持有范围的中断后继并完成；操作者动作=2（其中 1 次为测试桩代际补丁）",
+            "hit_evidence": "范围已转交给中断的后继 20260929T132336Z-973c04",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S1/be091c-scope-transfer",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T141431Z-441309",
+              "generated_at": "2026-09-29T14:14:34.777Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "UT 阶段证据重新产出、UT 结果 PASS（产物，不读框架完成宣称）"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "有人在场重发同一请求即重新接入持有范围的中断后继并完成；操作者动作=2（其中 1 次为测试桩代际补丁）",
+            "hit_evidence": "范围已转交给中断的后继 20260929T141431Z-441309",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S1/be091c-scope-transfer",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T161129Z-ee4892",
+              "generated_at": "2026-09-29T16:11:32.149Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "UT 阶段证据重新产出、UT 结果 PASS（产物，不读框架完成宣称）"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "有人在场重发同一请求即重新接入持有范围的中断后继并完成；操作者动作=2（其中 1 次为测试桩代际补丁）",
+            "hit_evidence": "范围已转交给中断的后继 20260929T161129Z-ee4892",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "title": "瞬时 API 失败",
+      "source_incident": "历次 transient_api_error",
+      "premise": "coding 首轮 agent 断流（claude 内核 stream-json 信封：api_retry 500 ×3 + 重试耗尽 result），gate 如实判产物缺失",
+      "driver_layer": "运行时链",
+      "coverage_note": "输出日志用 2026-07-29 codeagent 断网实采原形（claude 同源 writer）；生产哨兵只识别 claude 内核与 chrys 信封，故 adapter 取 claude。退避 5s 真实等待。harness 为测试桩，断流轮 FAIL 由真实 writer 落盘。",
+      "unaffected_phases": [
+        "spec",
+        "plan"
+      ],
+      "expected": "正确完成，操作者动作 0",
+      "branches": [
+        {
+          "key": "transient",
+          "label": "coding 断流一次",
+          "premise": "可恢复故障",
+          "recoverable_fault": true,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "正确完成，操作者动作 0，spec/plan 不重跑",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S2/transient",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-xLsjtF\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=0，无影响重跑=0",
+            "hit_evidence": "transient_api_retry_scheduled @27",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "task_id": "S2/transient",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-8Gzfy7\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=0，无影响重跑=0",
+            "hit_evidence": "transient_api_retry_scheduled @27",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S2/transient",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-UPNa9N\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=0，无影响重跑=0",
+            "hit_evidence": "transient_api_retry_scheduled @27",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "codex-synthetic-429",
+          "label": "codex 终态 429（合成）",
+          "premise": "[合成] 宿主 0457a6 / be091c 的真实 400 信封逐字不变、只把 status 换成 429；coding 首轮命中",
+          "recoverable_fault": true,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "进入瞬时重试并恢复，正确完成，操作者动作 0，spec/plan 不重跑",
+          "assertion": "baseline_met",
+          "coverage_note": "429 没有真实样本（plan 4e6fb3b6 §12 第 5 条）；本分支证明的是\"该信封形状加状态码\"被识别，不证明真实 429 信封就是这个形状。",
+          "baseline": {
+            "task_id": "S2/codex-synthetic-429",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-AUQ6Ph\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "[合成] 结论=correct_completion，操作者动作=0，无影响重跑=0",
+            "hit_evidence": "[合成] codex 429 → transient_api_retry_scheduled @27",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S2/codex-synthetic-429",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-FpZt2t\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "[合成] 结论=correct_completion，操作者动作=0，无影响重跑=0",
+            "hit_evidence": "[合成] codex 429 → transient_api_retry_scheduled @27",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S2/codex-synthetic-429",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-QWFxCC\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "[合成] 结论=correct_completion，操作者动作=0，无影响重跑=0",
+            "hit_evidence": "[合成] codex 429 → transient_api_retry_scheduled @27",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S3",
+      "title": "完成后蓝图升版",
+      "source_incident": "f829b8 之后（宿主蓝图升版致 CU 指针失配）",
+      "premise": "已完成的 CU Feature：蓝图升一个 revision 且改动进投影的验收内容，生产调和原位升版 CU 指针并提交，再 --supersede 源 run",
+      "driver_layer": "真实链路",
+      "coverage_note": "lifecycle-evolution evolve（真 harness 子进程跑后继链，authorHooks 覆盖默认失败执行器）；宿主快照基线 commit 用 git replace 近似（见 lifecycle-evolution withHost）；freezeAndTransfer 以生产 writer 补冻结记录属夹具。起后继的 --supersede 计为操作者动作，蓝图升版计为产品决策。 无影响阶段取 spec/plan：投影验收由调和原位刷新，设计阶段无须重跑；CU 源链 coding/review/ut 都消费被改的验收（实现、审查、UT 证据义务均 uncovered），不声明为无影响。",
+      "unaffected_phases": [
+        "spec",
+        "plan"
+      ],
+      "expected": "正确完成，只重跑受影响阶段",
+      "branches": [
+        {
+          "key": "blueprint-bump",
+          "label": "蓝图升版改投影验收",
+          "premise": "改动进投影验收",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "正确完成，只重跑受影响阶段",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S3/blueprint-bump",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "CU 源码实现 add/restore、UT 含 [AC-1]、盘上验收为新文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，出生链=[\"coding\",\"review\",\"ut\"]，无影响阶段重跑=0",
+            "hit_evidence": "后继 20260928T103247Z-6ba3da chain=[\"coding\",\"review\",\"ut\"] supersede@2",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "task_id": "S3/blueprint-bump",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "CU 源码实现 add/restore、UT 含 [AC-1]、盘上验收为新文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，出生链=[\"coding\",\"review\",\"ut\"]，无影响阶段重跑=0",
+            "hit_evidence": "后继 20260929T141556Z-9c2e8b chain=[\"coding\",\"review\",\"ut\"] supersede@2",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S3/blueprint-bump",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T161251Z-4d402b",
+              "generated_at": "2026-09-29T16:13:51.476Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "CU 源码实现 add/restore、UT 含 [AC-1]、盘上验收为新文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，出生链=[\"coding\",\"review\",\"ut\"]，无影响阶段重跑=0",
+            "hit_evidence": "后继 20260929T161251Z-4d402b chain=[\"coding\",\"review\",\"ut\"] supersede@2",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S4",
+      "title": "验收实质变化",
+      "source_incident": "codex 合成宿主 L1b（bc-openCard-2 手写派生文件形状）",
+      "premise": "手写无戳派生文件下的完成记录；蓝图升版改 AC-1.expected_result；后继由 spec 责任方按权威对齐（L1c 反例不对齐）",
+      "driver_layer": "真实链路",
+      "coverage_note": "lifecycle-evolution handWrittenCompletion + specFirstCuHooks；每支各起一个宿主（先真跑一条后继造完成记录，再真跑验收变化后继）。“旧证据不得自动有效”取升版后、起后继前的 assessFeature().complete。",
+      "unaffected_phases": [],
+      "expected": "正确完成，最终验收用新文本，旧证据不得自动有效",
+      "branches": [
+        {
+          "key": "aligned",
+          "label": "spec 按权威对齐验收",
+          "premise": "spec 责任方对齐 acceptance",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "正确完成，最终验收用新文本，旧证据不得自动有效",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S4/aligned",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与后继 run 绑定的验收均为新文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 2,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，升版后旧证据自动有效=false，无影响重跑=null",
+            "hit_evidence": "出生链预判=[\"spec\",\"coding\",\"review\",\"ut\"]；spec 门 authoritative_content_aligned=PASS",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "task_id": "S4/aligned",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与后继 run 绑定的验收均为新文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 2,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，升版后旧证据自动有效=false，无影响重跑=null",
+            "hit_evidence": "出生链预判=[\"spec\",\"coding\",\"review\",\"ut\"]；spec 门 authoritative_content_aligned=PASS",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S4/aligned",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T161509Z-3a40f9",
+              "generated_at": "2026-09-29T16:15:47.659Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与后继 run 绑定的验收均为新文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 2,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，升版后旧证据自动有效=false，无影响重跑=null",
+            "hit_evidence": "出生链预判=[\"spec\",\"coding\",\"review\",\"ut\"]；spec 门 authoritative_content_aligned=PASS",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "counter-unaligned",
+          "label": "L1c 反例：spec 不对齐",
+          "premise": "spec 责任方不改 acceptance",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "不对齐就不能完成（未宣称完成，独立验收失败）",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S4/counter-unaligned",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": false,
+              "complete": false,
+              "uncovered": 5,
+              "blocking": 1
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "盘上新文本=false，后继绑定新文本=false"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "no_progress_guard",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "reading": "waiting_human"
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "不对齐：宣称完成=false，独立验收=fail（期望不得完成）",
+            "hit_evidence": "出生链预判=[\"spec\",\"coding\",\"review\",\"ut\"]；spec 门 authoritative_content_aligned=FAIL",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "task_id": "S4/counter-unaligned",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": false,
+              "complete": false,
+              "uncovered": 5,
+              "blocking": 1
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "盘上新文本=false，后继绑定新文本=false"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "no_progress_guard",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "reading": "waiting_human"
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "不对齐：宣称完成=false，独立验收=fail（期望不得完成）",
+            "hit_evidence": "出生链预判=[\"spec\",\"coding\",\"review\",\"ut\"]；spec 门 authoritative_content_aligned=FAIL",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S4/counter-unaligned",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T161556Z-07c29a",
+              "generated_at": "2026-09-29T16:16:18.619Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [
+                {
+                  "id": "acceptance-context:candidate",
+                  "owner_phase": "spec",
+                  "class": "binding",
+                  "reason": "手写验收与当前设计权威不一致：AC-1.expected_result"
+                },
+                {
+                  "id": "design-context:candidate",
+                  "owner_phase": "plan",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-0eypWI\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-0eypWI\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml"
+                },
+                {
+                  "id": "implementation:request",
+                  "owner_phase": "coding",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] closure 后证据变更：doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml, doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md"
+                },
+                {
+                  "id": "code-review:request:review",
+                  "owner_phase": "review",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                },
+                {
+                  "id": "unit-evidence:acceptance",
+                  "owner_phase": "ut",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                }
+              ],
+              "blocking": [
+                "存在晚于凭证的未终局 run：20260929T161626Z-22865a（status=HALTED）"
+              ],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "盘上新文本=false，后继绑定新文本=false"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "no_progress_guard",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "不对齐：宣称完成=false，独立验收=fail（期望不得完成）",
+            "hit_evidence": "出生链预判=[\"spec\",\"coding\",\"review\",\"ut\"]；spec 门 authoritative_content_aligned=FAIL",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S5",
+      "title": "参考图与需求排除冲突",
+      "source_incident": "NFC（ae92d8 add_card_result）",
+      "premise": "需求原文排除 NFC 激活卡，参考图上有；ref-elements 已登记 excluded；testing 执行者按参考图报 NFC 缺失",
+      "driver_layer": "函数级加运行时链",
+      "coverage_note": "函数级：withA2Runtime + collectActionableDefects 不对排除项产候选。运行时链：每轮 testing 由真实 checkVisualDiff + 真实 writer 决定推进，coding 执行者替身按提示词字面行事（出现 NFC 返修指令就加 NFC）。公开入口未覆盖视觉采集段（check-testing 直接 spawn hylyre screenshot，无替换口子）：visual-diff 由测试写入。 plan 33784ed1：另断言裁判（testing 执行者）每轮提示词都含需求原文与「明确不做」栏（排除元素与逐字引文），回修事件里没有补排除内容的候选。",
+      "unaffected_phases": [
+        "spec",
+        "plan"
+      ],
+      "expected": "正确完成，产品中没有排除内容",
+      "branches": [
+        {
+          "key": "excluded-reference",
+          "label": "参考图有、需求排除",
+          "premise": "排除项已登记",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "正确完成，产品中没有排除内容",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S5/excluded-reference",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-P2sqjR\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素且含 result_done"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品含 NFC=false，函数级候选=0",
+            "hit_evidence": "真实 visual gate 执行 1 轮（首轮 PASS）；函数级排除项 warn=true；NFC 指令到达 coding=false",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S5/excluded-reference",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-QmCKS0\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素且含 result_done"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品含 NFC=false，裁判输入含需求原文与排除项=true（testing 提示词 1 轮），补排除内容的候选=0，NFC 指令到达 coding=false，函数级候选=0",
+            "hit_evidence": "真实 visual gate 执行 1 轮（首轮 PASS）；函数级排除项 warn=true；NFC 指令到达 coding=false",
+            "recorded_at": "2026-09-29T02:12:04.180Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：plan 33784ed1 批一至批三与 P1 套件均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S5/excluded-reference",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-MR6WsF\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素且含 result_done"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品含 NFC=false，裁判输入含需求原文与排除项=true（testing 提示词 1 轮），补排除内容的候选=0，NFC 指令到达 coding=false，函数级候选=0",
+            "hit_evidence": "真实 visual gate 执行 1 轮（首轮 PASS）；函数级排除项 warn=true；NFC 指令到达 coding=false",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S5/excluded-reference",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-2rOrPA\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素且含 result_done"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品含 NFC=false，裁判输入含需求原文与排除项=true（testing 提示词 1 轮），补排除内容的候选=0，NFC 指令到达 coding=false，函数级候选=0",
+            "hit_evidence": "真实 visual gate 执行 1 轮（首轮 PASS）；函数级排除项 warn=true；NFC 指令到达 coding=false",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S6",
+      "title": "排除内容已被实现",
+      "source_incident": "ae92d8 之后（NFC 卡已被补进产品）",
+      "premise": "需求原文加一句排除 NFC 激活；coding 执行者多写一个 NFC 元素",
+      "driver_layer": "真实链路",
+      "coverage_note": "real-chain 六阶段真 harness；独立断言直接查 src/main/ets 产品源码。plan 33784ed1：review 执行者替身只在自己的提示词里看到需求的排除句时，按 verify-review「多做核对」记一条 MAJOR「其他」、涉及文件写产品源码；verifier 替身逐条确认 → review 候选按涉及文件路由到 coding → coding 移除后 review 复审通过。semantic_layout 档无 ref-elements，视觉采集段（testing / provider 报 unexpected_render）在真实链路里仍未覆盖，该路径由 goal-runner-repair-convergence 的 A15 在生产入口 collectActionableDefects 上覆盖。 说明：排除句本来就经 Requirement 行进入各阶段提示词，review 发现并回退到 coding 的通路在 plan 33784ed1 之前就有；P1 基线“错误完成”首先是因为当时的脚本 review 替身固定写干净报告。本 plan 为 S6 新增的是会报告“多做”的脚本裁判驱动（及回退后不再写入 NFC 的 coding 替身），覆盖既有通路；新旧基线不是同一实验条件下的对照，不能据此说框架在该场景上的可靠性提升；真实裁判是否会发现多做的内容，要到真实 agent 层验证。",
+      "unaffected_phases": [
+        "spec",
+        "plan"
+      ],
+      "expected": "正确完成，排除内容被发现并移除",
+      "branches": [
+        {
+          "key": "excluded-implemented",
+          "label": "排除元素已写进产品",
+          "premise": "coding 越权实现",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "正确完成，排除内容被发现并移除",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S6/excluded-implemented",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码（src/main/ets）仍含需求排除的 NFC 元素"
+            },
+            "conclusion": "wrong_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": false,
+            "expectation_detail": "结论=wrong_completion，产品仍含 NFC=true（期望：发现并移除）",
+            "hit_evidence": "coding 注入排除元素=true；run_end=CHAIN_SLICE_COMPLETED",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S6/excluded-implemented",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T020624Z-8e651a",
+              "generated_at": "2026-09-29T02:07:36.459Z",
+              "reasons": [],
+              "obligations_total": 9,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品仍含 NFC=false，review 发现进入返修（review 候选驱动回退到 coding）=true（期望：发现并移除）",
+            "hit_evidence": "coding 注入排除元素=true；review 提示词含排除句=true；review 记问题 2 轮；run_end=CHAIN_SLICE_COMPLETED",
+            "recorded_at": "2026-09-29T02:12:04.180Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：plan 33784ed1 批一至批三与 P1 套件均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S6/excluded-implemented",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T141946Z-26e121",
+              "generated_at": "2026-09-29T14:20:57.975Z",
+              "reasons": [],
+              "obligations_total": 9,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品仍含 NFC=false，review 发现进入返修（review 候选驱动回退到 coding）=true（期望：发现并移除）",
+            "hit_evidence": "coding 注入排除元素=true；review 提示词含排除句=true；review 记问题 2 轮；run_end=CHAIN_SLICE_COMPLETED",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S6/excluded-implemented",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T161641Z-239450",
+              "generated_at": "2026-09-29T16:17:50.790Z",
+              "reasons": [],
+              "obligations_total": 9,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码无 NFC 元素"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，产品仍含 NFC=false，review 发现进入返修（review 候选驱动回退到 coding）=true（期望：发现并移除）",
+            "hit_evidence": "coding 注入排除元素=true；review 提示词含排除句=true；review 记问题 2 轮；run_end=CHAIN_SLICE_COMPLETED",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S7",
+      "title": "非关键描述冲突",
+      "source_incident": "ref_id 两套命名等",
+      "premise": "冲突 A：派生 Hylyre 计划 TC-002 第 1 步用屏 id all_banks 当元素 id（ui-spec 屏 id 与节点 id 两套命名）；冲突 B：spec.md 功能清单 F1=P0 而 acceptance 中 F1 的 AC-2=P1（real-chain 作者材料原有）",
+      "driver_layer": "真实链路",
+      "coverage_note": "冲突 A 披露落点：testing/reports/script-report.json 的非 PASS 检查（derived_selector_contract）。冲突 B（plan 33784ed1）：review 裁判替身首轮把它记为 MAJOR，涉及文件为 spec.md 与 acceptance.yaml，verifier 替身逐条确认 → 候选路由到 spec；spec 执行者替身按候选段写法在 spec 账本拒修（引文逐字取自需求）；下一轮 review 提示词「已裁决的冲突」里出现该记录，裁判替身接受、不再提出。两个分支共用同一次链路、同一个任务：独立验收涵盖冲突 A 被披露与冲突 B 的裁决记录到达下一轮裁判输入两项。独立断言能区分“未披露”由自检用固定输入证明。确定性层的执行者与裁判是脚本，只验证框架把裁决记录送到了裁判，不验证裁决是否正确。",
+      "unaffected_phases": [],
+      "expected": "正确完成，差异被披露",
+      "branches": [
+        {
+          "key": "disclosed",
+          "label": "冲突 A（屏 id 当元素 id）",
+          "premise": "非关键动作步命名冲突",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "宣称完成且冲突 A 被披露（任务的正确完成另受冲突 B 影响）",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S7",
+            "shared_task_branches": [
+              "disclosed",
+              "undisclosed-in-chain"
+            ],
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "冲突 A 披露=true（testing script-report 点名 all_banks）；冲突 B 披露=false（六阶段 script-report 点名 F1 优先级）"
+            },
+            "conclusion": "wrong_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=true，冲突 A 披露=true（任务结论=wrong_completion，另受冲突 B 影响）",
+            "hit_evidence": "派生计划冲突写入=true；derived_selector_contract=WARN",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S7",
+            "shared_task_branches": [
+              "disclosed",
+              "undisclosed-in-chain"
+            ],
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "冲突 A（all_banks）在非 PASS 检查中被点名；冲突 B（F1 优先级）的执行者裁决记录在账本且出现在下一轮 review 提示词"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=true，冲突 A 披露=true（任务结论=correct_completion）",
+            "hit_evidence": "派生计划冲突写入=true；derived_selector_contract=WARN",
+            "recorded_at": "2026-09-29T02:12:04.180Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：plan 33784ed1 批一至批三与 P1 套件均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S7",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "冲突 A（all_banks）在非 PASS 检查中被点名；冲突 B（F1 优先级）的执行者裁决记录在账本且出现在下一轮 review 提示词"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=true，冲突 A 披露=true（任务结论=correct_completion）",
+            "hit_evidence": "派生计划冲突写入=true；derived_selector_contract=WARN",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S7",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "冲突 A（all_banks）在非 PASS 检查中被点名；冲突 B（F1 优先级）的执行者裁决记录在账本且出现在下一轮 review 提示词"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=true，冲突 A 披露=true（任务结论=correct_completion）",
+            "hit_evidence": "派生计划冲突写入=true；derived_selector_contract=WARN",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "undisclosed-in-chain",
+          "label": "冲突 B（F1 优先级，作者材料原有）",
+          "premise": "real-chain 作者材料原有的优先级不一致：spec.md F1=P0，acceptance AC-2（F1）=P1；裁判提出后执行者按目标拒修",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "执行者的裁决记录出现在下一轮裁判输入里，裁判接受，任务正确完成",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S7",
+            "shared_task_branches": [
+              "disclosed",
+              "undisclosed-in-chain"
+            ],
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "冲突 A 披露=true（testing script-report 点名 all_banks）；冲突 B 披露=false（六阶段 script-report 点名 F1 优先级）"
+            },
+            "conclusion": "wrong_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": null,
+              "note": "代理指标：无故障事件，不适用"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": false,
+            "expectation_detail": "冲突 B（F1 优先级）披露=false，任务结论=wrong_completion",
+            "hit_evidence": "冲突 B 在盘：spec.md F1=P0，acceptance AC-2（F1）=P1",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S7",
+            "shared_task_branches": [
+              "disclosed",
+              "undisclosed-in-chain"
+            ],
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "冲突 A（all_banks）在非 PASS 检查中被点名；冲突 B（F1 优先级）的执行者裁决记录在账本且出现在下一轮 review 提示词"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "冲突 B（F1 优先级）裁决记录到达下一轮裁判=true，任务结论=correct_completion",
+            "hit_evidence": "冲突 B 在盘（spec.md F1=P0，acceptance AC-2（F1）=P1）；review 提出 4 轮；回退到 spec=true；spec 拒修 1 条",
+            "recorded_at": "2026-09-29T02:12:04.180Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：plan 33784ed1 批一至批三与 P1 套件均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S7",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "冲突 A（all_banks）在非 PASS 检查中被点名；冲突 B（F1 优先级）的执行者裁决记录在账本且出现在下一轮 review 提示词"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "冲突 B（F1 优先级）裁决记录到达下一轮裁判=true，任务结论=correct_completion",
+            "hit_evidence": "冲突 B 在盘（spec.md F1=P0，acceptance AC-2（F1）=P1）；review 提出 4 轮；回退到 spec=true；spec 拒修 1 条",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S7",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "冲突 A（all_banks）在非 PASS 检查中被点名；冲突 B（F1 优先级）的执行者裁决记录在账本且出现在下一轮 review 提示词"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 2,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "冲突 B（F1 优先级）裁决记录到达下一轮裁判=true，任务结论=correct_completion",
+            "hit_evidence": "冲突 B 在盘（spec.md F1=P0，acceptance AC-2（F1）=P1）；review 提出 4 轮；回退到 spec=true；spec 拒修 1 条",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S8",
+      "title": "进程中断",
+      "source_incident": "detach 子进程夭折",
+      "premise": "原子失效记录落盘后进程崩溃（scope-replan 既有崩溃缝）；宿主重新发起同一请求",
+      "driver_layer": "子进程",
+      "coverage_note": "goal-run-driver crash_scope_in_run → crash_rerequest（与崩溃段同一需求文本，不带 --resume/--force，不手工修 contracts）。转绿的一部分来自替身行为变化：plan 执行者替身在回退后的 plan 轮里把 contracts 收回范围内文件（plan 阶段自己的工作；P1 基线里这一步由测试在 resume 前手工完成，计为操作者动作）。supervisor 自动拉起段仍未覆盖。",
+      "unaffected_phases": [
+        "spec"
+      ],
+      "expected": "重新发起请求即重新接入同一 run 并正确完成，操作者动作 1（重发请求），没有旗标、没有手工预修",
+      "branches": [
+        {
+          "key": "crash-resume",
+          "label": "崩溃后重发同一请求",
+          "premise": "可恢复故障",
+          "recoverable_fault": true,
+          "unaffected_phases": [
+            "spec"
+          ],
+          "expected": "重新接入同一 run 并正确完成，操作者动作 1",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S8/crash-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-liTzrs\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在、contracts 只含范围内文件"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": false,
+            "expectation_detail": "结论=correct_completion，操作者动作=2（期望自动恢复、动作 0）",
+            "hit_evidence": "崩溃段 run_end.reason=uncaught_exception；恢复段 exit=0 phase_start=[\"plan\",\"coding\",\"review\",\"ut\",\"testing\"]",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S8/crash-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-SH5I8c\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在、contracts 只含范围内文件"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=1（期望 1：重发同一请求），run 数=1，同一 run 重新接入=true",
+            "hit_evidence": "崩溃段 run_end.reason=uncaught_exception；重发段 exit=0 phase_start=[\"plan\",\"coding\",\"review\",\"ut\",\"testing\"]",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S8/crash-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-Q8KsFU\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在、contracts 只含范围内文件"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=1（期望 1：重发同一请求），run 数=1，同一 run 重新接入=true",
+            "hit_evidence": "崩溃段 run_end.reason=uncaught_exception；重发段 exit=0 phase_start=[\"plan\",\"coding\",\"review\",\"ut\",\"testing\"]",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S8/crash-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-I5SAG7\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在、contracts 只含范围内文件"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=1（期望 1：重发同一请求），run 数=1，同一 run 重新接入=true",
+            "hit_evidence": "崩溃段 run_end.reason=uncaught_exception；重发段 exit=0 phase_start=[\"plan\",\"coding\",\"review\",\"ut\",\"testing\"]",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S9",
+      "title": "真机暂不可用",
+      "source_incident": "锁屏、未连接（fa0663）",
+      "premise": "ut 起设备门 BLOCKED（device_not_ready，带 device_readiness 探针）：进程内等待期间就绪则继续；等待超时则停放，由 supervisor 探针唤醒恢复",
+      "driver_layer": "子进程",
+      "coverage_note": "goal-run-driver device_wait_ready（首次设备门 BLOCKED、之后放行；等待探针注入为就绪）与 device_park → supervisor_probe_wake（生产 supervisor CLI，探针注入为就绪，spawn 只记参数）→ resume_with_device_ready（按 supervisor 发出的命令执行；测试代替计划任务跑它，不计操作者动作）。设备停放的 run_end 是 PARTIAL、不带探针（批二已记），探针与责任阶段在停放事件（phase_halt）上，supervisor 以它为来源。独立验收只看产品源码与测试侧 testing 桩写下的结果。P1 基线里的 sealLegacyInvokes 与显式 --resume 两个动作在新路径里都不再需要。",
+      "unaffected_phases": [
+        "spec",
+        "plan",
+        "coding",
+        "review"
+      ],
+      "expected": "进程内等待后就绪即继续；超时停放后由 supervisor 唤醒并完成；操作者动作 0",
+      "branches": [
+        {
+          "key": "park-resume",
+          "label": "等待超时停放 → supervisor 唤醒",
+          "premise": "可恢复故障；进程内等待超时",
+          "recoverable_fault": true,
+          "unaffected_phases": [
+            "spec",
+            "plan",
+            "coding",
+            "review"
+          ],
+          "expected": "停放读法为可唤醒等待，停放事件带探针与责任阶段，supervisor 发出恢复，同一 run 正确完成，操作者动作 0",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S9/park-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-rryqDT\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 1
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": false,
+            "expectation_detail": "停放读法=waiting_external_wakeable，恢复段 exit=0 phase_start=[\"ut\",\"testing\"]，结论=correct_completion，操作者动作=2（期望可唤醒等待后自动完成）",
+            "hit_evidence": "停放 exit=2；device_not_ready 停机=true；停放时停止状态=waiting_external_wakeable",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S9/park-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-AsrPqA\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "进程内等待超时后停放（可唤醒等待）→ supervisor 探针就绪发出 --resume 20260929T133139Z-bf1c33 → 同一 run 完成，操作者动作 0",
+            "hit_evidence": "停放 exit=2；进程内等待超时=true；device_not_ready 停机=true；停放时停止状态=waiting_external_wakeable",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S9/park-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-zJGAs6\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "进程内等待超时后停放（可唤醒等待）→ supervisor 探针就绪发出 --resume 20260929T142235Z-cb09e7 → 同一 run 完成，操作者动作 0",
+            "hit_evidence": "停放 exit=2；进程内等待超时=true；device_not_ready 停机=true；停放时停止状态=waiting_external_wakeable",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S9/park-resume",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-5Csakq\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "进程内等待超时后停放（可唤醒等待）→ supervisor 探针就绪发出 --resume 20260929T161924Z-a1efa2 → 同一 run 完成，操作者动作 0",
+            "hit_evidence": "停放 exit=2；进程内等待超时=true；device_not_ready 停机=true；停放时停止状态=waiting_external_wakeable",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "in-process-wait",
+          "label": "进程内等待后就绪",
+          "premise": "可恢复故障；等待期间设备就绪",
+          "recoverable_fault": true,
+          "unaffected_phases": [
+            "spec",
+            "plan",
+            "coding",
+            "review"
+          ],
+          "expected": "进程内等待后探针就绪、原设备门放行，同一 run 正确完成，操作者动作 0",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S9/in-process-wait",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-Fju4eX\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "进程内等待 1ms 后设备就绪、原设备门放行、同一 run 完成，操作者动作 0",
+            "hit_evidence": "condition_wait_started(device_readiness) @37",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S9/in-process-wait",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-5PIKzf\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "进程内等待 1ms 后设备就绪、原设备门放行、同一 run 完成，操作者动作 0",
+            "hit_evidence": "condition_wait_started(device_readiness) @37",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S9/in-process-wait",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\goal-drv-fPnVGJ\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码在；testing 桩（测试侧）写下的 testing 结果为 PASS"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan/coding/review 的 agent_invoke_start"
+            },
+            "recovery_cost": "no_failure",
+            "expectation_met": true,
+            "expectation_detail": "进程内等待 2ms 后设备就绪、原设备门放行、同一 run 完成，操作者动作 0",
+            "hit_evidence": "condition_wait_started(device_readiness) @37",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S10",
+      "title": "纯身份或时间戳漂移",
+      "source_incident": "facts_source_stale 24 次",
+      "premise": "蓝图升版只改本 CU 未消费的内容（纯身份漂移），调和原位升版",
+      "driver_layer": "函数级",
+      "coverage_note": "函数级预判，未执行任务：先例是评估与出生范围推导（resolveSuccessorExecutionScope / recomputePhaseEvidenceStaleness / assessFeature），不是扰动后真跑链。预判出生链与“预判会重跑的已执行阶段数”写进结果文件的 predictions（不进任务、不进任何指标，不是实际重跑次数）。新格式分支复用 S3 宿主（后继已由当前代码写出新格式记录）。",
+      "unaffected_phases": [],
+      "expected": "无影响阶段重跑 0",
+      "branches": [
+        {
+          "key": "old-snapshot",
+          "label": "旧快照（3.1.0 旧格式记录）",
+          "premise": "旧格式记录（无投影标记 / 全值指纹）",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "无影响阶段重跑 0（已知旧格式仍按字节口径重跑）",
+          "assertion": "gap_only",
+          "baseline": {
+            "function_level_prediction": true,
+            "note": "函数级预判，未执行任务，不计入任何指标",
+            "predicted_chain": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "executed_phases": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "predicted_reruns": 3,
+            "complete_after_drift": false,
+            "expectation_met": false,
+            "expectation_detail": "预判出生链=[\"coding\",\"review\",\"ut\"]，预判重跑已执行阶段 3 个（预判，未执行任务），升版后完成结论=false",
+            "hit_evidence": "纯身份升版调和=true；freshness=[\"coding:stale\",\"review:stale\",\"ut:stale\"]",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "function_level_prediction": true,
+            "note": "函数级预判，未执行任务，不计入任何指标",
+            "predicted_chain": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "executed_phases": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "predicted_reruns": 3,
+            "complete_after_drift": false,
+            "expectation_met": false,
+            "expectation_detail": "预判出生链=[\"coding\",\"review\",\"ut\"]，预判重跑已执行阶段 3 个（预判，未执行任务），升版后完成结论=false",
+            "hit_evidence": "纯身份升版调和=true；freshness=[\"coding:stale\",\"review:stale\",\"ut:stale\"]",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "function_level_prediction": true,
+            "note": "函数级预判，未执行任务：旧格式记录（3.1.0 快照）；升版后完成结论=false；产品字节不变=true",
+            "predicted_chain": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "executed_phases": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "predicted_reruns": 3,
+            "complete_after_drift": false,
+            "expectation_met": false,
+            "expectation_detail": "预判出生链=[\"coding\",\"review\",\"ut\"]，预判重跑已执行阶段 3 个（预判，未执行任务），升版后完成结论=false",
+            "hit_evidence": "纯身份升版调和=true；freshness=[\"coding:stale\",\"review:stale\",\"ut:stale\"]",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "new-format",
+          "label": "新格式（当前代码写出的记录）",
+          "premise": "新格式记录",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "无影响阶段重跑 0，完成结论仍成立",
+          "assertion": "baseline_met",
+          "baseline": {
+            "function_level_prediction": true,
+            "note": "函数级预判，未执行任务，不计入任何指标",
+            "predicted_chain": [],
+            "executed_phases": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "predicted_reruns": 0,
+            "complete_after_drift": true,
+            "expectation_met": true,
+            "expectation_detail": "预判出生链=[]，预判重跑已执行阶段 0 个（预判，未执行任务），升版后完成结论=true",
+            "hit_evidence": "纯身份升版调和=true；freshness=[\"coding:fresh\",\"review:fresh\",\"ut:fresh\"]",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "function_level_prediction": true,
+            "note": "函数级预判，未执行任务，不计入任何指标",
+            "predicted_chain": [],
+            "executed_phases": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "predicted_reruns": 0,
+            "complete_after_drift": true,
+            "expectation_met": true,
+            "expectation_detail": "预判出生链=[]，预判重跑已执行阶段 0 个（预判，未执行任务），升版后完成结论=true",
+            "hit_evidence": "纯身份升版调和=true；freshness=[\"coding:fresh\",\"review:fresh\",\"ut:fresh\"]",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "function_level_prediction": true,
+            "note": "函数级预判，未执行任务：出生链由 resolveSuccessorExecutionScope 预判；升版后完成结论=true；产品字节不变=true",
+            "predicted_chain": [],
+            "executed_phases": [
+              "coding",
+              "review",
+              "ut"
+            ],
+            "predicted_reruns": 0,
+            "complete_after_drift": true,
+            "expectation_met": true,
+            "expectation_detail": "预判出生链=[]，预判重跑已执行阶段 0 个（预判，未执行任务），升版后完成结论=true",
+            "hit_evidence": "纯身份升版调和=true；freshness=[\"coding:fresh\",\"review:fresh\",\"ut:fresh\"]",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S11",
+      "title": "真实产品回归",
+      "source_incident": "半模态溢出致按钮被裁（ae92d8）",
+      "premise": "coding 未写开卡页标题 id，testing 已执行断言失败 → 责任路由回退 coding",
+      "driver_layer": "真实链路",
+      "coverage_note": "real-chain-seams RC-9 形态（attended 宿主桥）；是否修复依据本 run 权威事件里的实际回退事件。device_test.run 替身按源码字面渲染，不证明设备真值。",
+      "unaffected_phases": [
+        "spec",
+        "plan"
+      ],
+      "expected": "修好一支正确完成；不修一支未完成，不得宣称完成",
+      "branches": [
+        {
+          "key": "fixed",
+          "label": "回退后修好",
+          "premise": "回退后 coding 补上 id",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "正确完成",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S11/fixed",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 .id('open_card_title')（开卡页标题可被断言）"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，无影响重跑=0",
+            "hit_evidence": "phase_backtrack_requested testing→coding @110",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "task_id": "S11/fixed",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "issued_in_task": true,
+              "complete": true,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 .id('open_card_title')（开卡页标题可被断言）"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，无影响重跑=0",
+            "hit_evidence": "phase_backtrack_requested testing→coding @110",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S11/fixed",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260929T161933Z-871f6d",
+              "generated_at": "2026-09-29T16:20:55.053Z",
+              "reasons": [],
+              "obligations_total": 9,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 .id('open_card_title')（开卡页标题可被断言）"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，无影响重跑=0",
+            "hit_evidence": "phase_backtrack_requested testing→coding @110",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "never-fixed",
+          "label": "始终不修",
+          "premise": "coding 从不补 id",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "未完成，不得宣称完成",
+          "assertion": "correct_stop",
+          "baseline": {
+            "task_id": "S11/never-fixed",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "issued_in_task": false,
+              "complete": false,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码缺 .id('open_card_title')，开卡页标题断言必失败"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": "terminal"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=false（不得宣称完成），停止=HALTED/backtrack_fingerprint_repeat/TERMINAL",
+            "hit_evidence": "phase_backtrack_requested testing→coding @110",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline_p4": {
+            "task_id": "S11/never-fixed",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "issued_in_task": false,
+              "complete": false,
+              "uncovered": 0,
+              "blocking": 0
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码缺 .id('open_card_title')，开卡页标题断言必失败"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": "terminal"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=false（不得宣称完成），停止=HALTED/backtrack_fingerprint_repeat/TERMINAL",
+            "hit_evidence": "phase_backtrack_requested testing→coding @110",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S11/never-fixed",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "absent",
+              "run_id": null,
+              "generated_at": null,
+              "reasons": [],
+              "obligations_total": 0,
+              "uncovered": [],
+              "blocking": [],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码缺 .id('open_card_title')，开卡页标题断言必失败"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "terminal",
+              "incident_class": "recoverable"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "宣称完成=false（不得宣称完成），停止=HALTED/backtrack_fingerprint_repeat/TERMINAL",
+            "hit_evidence": "phase_backtrack_requested testing→coding @110",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S12",
+      "title": "合法人工暂停",
+      "source_incident": "需要授权的操作",
+      "premise": "coding 执行者停在授权确认处，等待用户输入（attended 执行器 waiting 形状）",
+      "driver_layer": "运行时链",
+      "coverage_note": "waiting 结果经 attended 执行器桩送达 goal-phase-runtime 的 executor_waiting 分支（operator 类）；全部请求经不带自动 --force 的前台入口（attended 执行器）。有人在场不设冷却（调度方 2026-09-29 裁定），重发不需要回拨时间；授权由测试切换执行器桩的行为模拟，计为 reauthorization。",
+      "unaffected_phases": [],
+      "expected": "正确停下；未补授权的重复请求仍停、不新建 run；补上授权后继续完成",
+      "branches": [
+        {
+          "key": "human-authorization",
+          "label": "等待授权",
+          "premise": "合法人工暂停",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "未完成，停止状态为等人，恢复上下文完整",
+          "assertion": "correct_stop",
+          "baseline_p1": {
+            "task_id": "S12/human-authorization",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-CWI3nX\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：停在授权确认处（暂停是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "reading": "waiting_human"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "等人；原因、已过阶段、manifest、run-control 释放均在，可 --resume",
+            "hit_evidence": "phase_halt executor_waiting @24",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S12/human-authorization",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-xMwz08\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：停在授权确认处（暂停是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "等人；原因、已过阶段、manifest、run-control 释放均在，可 --resume",
+            "hit_evidence": "phase_halt executor_waiting @24",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S12/human-authorization",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-enKhQP\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：停在授权确认处（暂停是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "等人；原因、已过阶段、manifest、run-control 释放均在，可 --resume",
+            "hit_evidence": "phase_halt executor_waiting @24",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S12/human-authorization",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-nfvEs2\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：停在授权确认处（暂停是否正确由期望判定）"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "等人；原因、已过阶段、manifest、run-control 释放均在，可 --resume",
+            "hit_evidence": "phase_halt executor_waiting @24",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "repeat-unchanged",
+          "label": "重复请求（有人在场，未补授权）",
+          "premise": "有人在场连续三次立即重发同一请求，未补授权",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "调度方 2026-09-29 裁定有人在场不设冷却：每次重新接入并由原授权检查以同一原因再停，run 数量不增加",
+          "assertion": "correct_stop",
+          "baseline": {
+            "task_id": "S12/repeat-unchanged",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-XgB9G5\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：仍停在授权确认处"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "三次重复请求均重新接入并以授权确认再停，run 数 1",
+            "hit_evidence": "首次停在 executor_waiting；重复请求 3 次，退出码 1,1,1",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S12/repeat-unchanged",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-olL2si\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：仍停在授权确认处"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "三次重复请求均重新接入并以授权确认再停，run 数 1",
+            "hit_evidence": "首次停在 executor_waiting；重复请求 3 次，退出码 1,1,1",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S12/repeat-unchanged",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-tPJetj\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：仍停在授权确认处"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "executor_waiting",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "human",
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "waiting_human",
+              "incident_class": "operator"
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "三次重复请求均重新接入并以授权确认再停，run 数 1",
+            "hit_evidence": "首次停在 executor_waiting；重复请求 3 次，退出码 1,1,1",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "reauthorized",
+          "label": "补上授权后继续",
+          "premise": "有人在场立即重发一次（未补授权），再补上授权立即重发",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "未补授权时以原因再停、不新建 run；补上授权后立即重新接入同一 run 并正确完成（有人在场不设冷却）",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S12/reauthorized",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-y27Nqp\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "未补授权仍停（不新建 run）；补授权后重新接入同一 run 并正确完成；操作者动作=3",
+            "hit_evidence": "未补授权的重发后停在授权确认 2 次",
+            "recorded_at": "2026-09-29T13:34:40.058Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P1、P2、plan 4e6fb3b6 批一至批三均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S12/reauthorized",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-Kr85T6\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "未补授权仍停（不新建 run）；补授权后重新接入同一 run 并正确完成；操作者动作=3",
+            "hit_evidence": "未补授权的重发后停在授权确认 2 次",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S12/reauthorized",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-ftBLJq\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"开卡完成\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 3,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "未补授权仍停（不新建 run）；补授权后重新接入同一 run 并正确完成；操作者动作=3",
+            "hit_evidence": "未补授权的重发后停在授权确认 2 次",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S13",
+      "title": "执行者错误拒修后被纠正",
+      "source_incident": "声称已移除 NFC 而截图仍有",
+      "premise": "testing 证据（由产品现状求出的已执行断言失败）驱动回退；回退后第一轮 coding 按候选段写法在账本拒修（引文逐字取自本 run 需求）、不改产品",
+      "driver_layer": "运行时链",
+      "coverage_note": "确定性层只验证框架一侧的行为：来源核验通过的第一次拒修不终局、裁判再提进入反驳轮、第二次拒修照常终局且停机说明并列双方原文；“拒修是否正确”这一语义不在确定性层声称。harness 为测试桩，FAIL 轮经真实 writer 落 summary 与候选。",
+      "unaffected_phases": [
+        "spec",
+        "plan"
+      ],
+      "expected": "正确完成，产品符合目标",
+      "branches": [
+        {
+          "key": "refusal-corrected",
+          "label": "拒修一轮后修复",
+          "premise": "执行者第一次拒修",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "第一轮拒修不终局；裁判再次提出；反驳轮修复；任务正确完成",
+          "assertion": "baseline_met",
+          "baseline_p1": {
+            "task_id": "S13/refusal-corrected",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-PxcXi3\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码不含 Text(\"已开卡\")"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "reading": "terminal"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": false,
+            "expectation_detail": "结论=incomplete，拒修后证据再次驱动回退=false（回退 1 次，coding 所见最大回退数 1）",
+            "hit_evidence": "testing→coding 回退 1 次；执行者拒修轮已发生=true",
+            "recorded_at": "2026-09-28T10:41:32.928Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：t1 采集器与本套件均未提交；含 codex 首轮返修）"
+          },
+          "baseline": {
+            "task_id": "S13/refusal-corrected",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-0wHy2I\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"已开卡\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "第一轮拒修不终局；裁判再提进入反驳轮；反驳轮修复；结论=correct_completion（coding 所见最大回退数 2）",
+            "hit_evidence": "testing→coding 回退 2 次；拒修轮 1 次（每轮账本行数 1）",
+            "recorded_at": "2026-09-29T02:12:04.180Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：plan 33784ed1 批一至批三与 P1 套件均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S13/refusal-corrected",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-0wlO4L\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"已开卡\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "第一轮拒修不终局；裁判再提进入反驳轮；反驳轮修复；结论=correct_completion（coding 所见最大回退数 2）",
+            "hit_evidence": "testing→coding 回退 2 次；拒修轮 1 次（每轮账本行数 1）",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S13/refusal-corrected",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-XRvfq5\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "产品源码含 Text(\"已开卡\")"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "第一轮拒修不终局；裁判再提进入反驳轮；反驳轮修复；结论=correct_completion（coding 所见最大回退数 2）",
+            "hit_evidence": "testing→coding 回退 2 次；拒修轮 1 次（每轮账本行数 1）",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        },
+        {
+          "key": "refusal-twice",
+          "label": "两轮都拒（反面）",
+          "premise": "执行者在拒修轮与反驳轮都拒修，裁判两轮都提出",
+          "recoverable_fault": false,
+          "unaffected_phases": [
+            "spec",
+            "plan"
+          ],
+          "expected": "以既有停机原因停下，未宣称完成，停机说明含双方原文",
+          "assertion": "correct_stop",
+          "baseline_p1": null,
+          "baseline": {
+            "task_id": "S13/refusal-twice",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-OSdBA9\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码不含 Text(\"已开卡\")"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "terminal",
+              "incident_class": "recoverable"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "停在 backtrack_fingerprint_repeat；未宣称完成；停机说明并列双方原文",
+            "hit_evidence": "testing→coding 回退 2 次；拒修轮 2 次（每轮账本行数 1/1）",
+            "recorded_at": "2026-09-29T02:12:04.180Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：plan 33784ed1 批一至批三与 P1 套件均未提交）"
+          },
+          "baseline_p4": {
+            "task_id": "S13/refusal-twice",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-eGq10b\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码不含 Text(\"已开卡\")"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "terminal",
+              "incident_class": "recoverable"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "停在 backtrack_fingerprint_repeat；未宣称完成；停机说明并列双方原文",
+            "hit_evidence": "testing→coding 回退 2 次；拒修轮 2 次（每轮账本行数 1/1）",
+            "recorded_at": "2026-09-29T14:25:36.328Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P4 f7045213 批一至批三与 P1–P3 在制改动均未提交）"
+          },
+          "baseline_p5": {
+            "task_id": "S13/refusal-twice",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": false,
+              "reason": "assessFeature 抛错，无法评估：[workflow-loader] 未找到 workflow 文件：C:\\Users\\shengqsq\\AppData\\Local\\Temp\\gr-v23-cy67Og\\framework\\workflows\\spec-driven.workflow.yaml"
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "产品源码不含 Text(\"已开卡\")"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "backtrack_fingerprint_repeat",
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": "terminal",
+              "incident_class": "recoverable"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 0,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": 0,
+              "proxy": null,
+              "note": "精确值：扰动点之后 spec/plan 的 agent_invoke_start"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "停在 backtrack_fingerprint_repeat；未宣称完成；停机说明并列双方原文",
+            "hit_evidence": "testing→coding 回退 2 次；拒修轮 2 次（每轮账本行数 1/1）",
+            "recorded_at": "2026-09-29T16:22:19.724Z",
+            "recorded_at_commit": "3315f9a6（工作区未提交：P5 3abca824 第二批后半与 P1–P4 在制改动均未提交）"
+          }
+        }
+      ]
+    }
+  ]
+}

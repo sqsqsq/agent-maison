@@ -43,6 +43,13 @@ import {
 import { resolveRequirementInput } from '../../scripts/utils/goal-manifest';
 import { reduceRunState, supervisorAction } from '../../scripts/utils/run-state-reducer';
 import {
+  buildAdapterCliHardFailureGuidance,
+  buildBudgetExhaustedGuidance,
+  buildClosureWallGuidance,
+  buildNoRelevantTargetGuidance,
+  buildProductSelectionUnresolvedGuidance,
+} from '../../scripts/utils/await-confirm-guidance';
+import {
   renderPhaseDiagnosticProse,
   renderPhaseDispositionCell,
 } from '../../scripts/utils/goal-report-generator';
@@ -258,8 +265,12 @@ function scanHaltReasonLiteralsIn(src: string): string[] {
   const spans: string[] = [];
   // 窗口放宽到 600：展开后的多分支三元比 300 长，截断会让后面的分支静默逃逸
   //（此前 no_progress_* 家族正是这样漏掉的）。
-  for (const m of src.matchAll(/haltReason\s*=(?!=|>)[\s\S]{0,600}?;/g)) spans.push(m[0]);
+  // plan 4e6fb3b6 §3.2：不区分大小写——`budgetHaltReason = … ? 'budget_wall_clock' : 'budget_turns'`
+  // 这类带前缀的局部变量此前扫不到（budget_turns 因此长期未登记）。
+  for (const m of src.matchAll(/haltReason\s*=(?!=|>)[\s\S]{0,600}?;/gi)) spans.push(m[0]);
   for (const m of src.matchAll(/halt_reason:\s*[\s\S]{0,200}?[,}]/g)) spans.push(m[0]);
+  // plan 4e6fb3b6 §3.2：启动期阻断的原因是 concludeStartupBlocker 的第一个实参，不经 halt_reason: 字面量。
+  for (const m of src.matchAll(/concludeStartupBlocker\(\s*'[^']*'/g)) spans.push(m[0]);
   const hits = new Set<string>();
   for (const span of spans.map(stripComparisonOperands)) {
     for (const m of span.matchAll(/'([a-z][a-z0-9_]{3,})'/g)) {
@@ -275,7 +286,7 @@ function scanHaltReasonLiteralsIn(src: string): string[] {
  * 只扫单文件会让「全覆盖」变成虚的（实测漏掉 in_session_* / device_* / no_progress_* 等
  * 约 10 条）。这里递归扫 scripts/ 全树，新增产出点自动进扫描域。
  */
-function scanHaltReasonLiterals(): string[] {
+function scanHaltReasonLiterals(rootDir: string = SCRIPTS_DIR): string[] {
   const hits = new Set<string>();
   const walk = (dir: string): void => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -285,7 +296,7 @@ function scanHaltReasonLiterals(): string[] {
       for (const r of scanHaltReasonLiteralsIn(fs.readFileSync(abs, 'utf8'))) hits.add(r);
     }
   };
-  walk(SCRIPTS_DIR);
+  walk(rootDir);
   return [...hits].sort();
 }
 
@@ -295,7 +306,193 @@ function scanGoalEnvOffenders(files: Array<{ name: string; text: string }>): str
     .map((f) => f.name);
 }
 
+/**
+ * plan 4e6fb3b6 A1：加 fault_category **之前**（HEAD 3315f9a6 + P1/P2 工作区）全部 72 个条目经
+ * decide({incident}) 的处置投影，脚本导出后原样固化。类别只是默认解释，不得改变其中任何一项。
+ */
+const PRE_FAULT_CATEGORY_PROJECTION: Readonly<Record<string, string>> = {
+  adapter_cli_hard_failure: 'WAITING/external', agent_containment_unresolved: 'WAITING/external',
+  agent_no_output: 'WAITING/external', agent_timeout_repeated: 'WAITING/external',
+  assess_halt: 'WAITING/human', authorized_mutation_requires_full_chain: 'TERMINAL',
+  await_human_capability_gap: 'WAITING/external', await_human_fidelity_tier: 'WAITING/external',
+  await_human_gate_deferral: 'RECOVERY_PENDING', await_human_p0_skip: 'RECOVERY_PENDING',
+  await_human_verification_evidence: 'WAITING/external', await_human_visual_confirm: 'TERMINAL',
+  await_operator_toolchain: 'WAITING/external', backtrack_fingerprint_repeat: 'TERMINAL',
+  backtrack_limit: 'TERMINAL', backtrack_target_absent: 'TERMINAL', budget_wall_clock: 'TERMINAL',
+  canary_cli_hard_failure: 'WAITING/external', capability_tightened_hard_pixel: 'WAITING/external',
+  closure_finalization_failed: 'RECOVERY_PENDING', closure_open: 'RECOVERY_PENDING',
+  closure_probe_error: 'WAITING/external', closure_state_invariant: 'WAITING/external',
+  closure_timeout: 'WAITING/external', closure_wall_repeated: 'TERMINAL',
+  content_retry_exhausted: 'TERMINAL', declared_product_layer_missing: 'WAITING/human',
+  device_not_ready: 'WAITING/external', device_target_ambiguous: 'WAITING/human',
+  device_toolchain: 'WAITING/external', execution_scope_unresolved: 'WAITING/external',
+  executor_waiting: 'WAITING/human', external_retry_exhausted: 'WAITING/external',
+  framework_bug: 'WAITING/external', framework_integrity_block: 'WAITING/external',
+  framework_internal: 'WAITING/external', goal_post_review_source_mutation_unresolved: 'RECOVERY_PENDING',
+  goal_review_closure_baseline_unavailable: 'RECOVERY_PENDING',
+  headless_interaction_required: 'WAITING/human', in_session_phase_exception: 'WAITING/external',
+  in_session_reconcile_fused: 'TERMINAL', managed_device_session_conflict: 'WAITING/external',
+  needs_human: 'RECOVERY_PENDING', no_progress_agent_timeout: 'WAITING/external',
+  no_progress_capture: 'WAITING/external', no_progress_cumulative_external: 'WAITING/external',
+  no_progress_cumulative_human: 'TERMINAL', no_progress_fuse: 'TERMINAL', no_progress_guard: 'WAITING/human',
+  no_progress_toolchain: 'WAITING/external', no_progress_visual_gap: 'TERMINAL',
+  operator_interrupt: 'WAITING/human', pass_snapshot_journal_unverifiable: 'RECOVERY_PENDING',
+  pass_snapshot_restore_refused: 'RECOVERY_PENDING', pass_snapshot_unavailable: 'RECOVERY_PENDING',
+  phase_write_boundary_unresolved: 'TERMINAL', phase_write_owner_unresolved: 'TERMINAL',
+  phase_write_violation_repeat: 'TERMINAL', post_invoke_snapshot_failed: 'TERMINAL',
+  pre_invoke_snapshot_failed: 'WAITING/external', product_selection_probe_failed: 'WAITING/external',
+  product_selection_unresolved: 'WAITING/external', receipt_scaffold_unwritable: 'WAITING/external',
+  repair_candidates_unwritable: 'WAITING/external', repair_not_converging: 'TERMINAL',
+  supersede_target_invalid: 'WAITING/human', testing_write_violation: 'TERMINAL',
+  transient_api_error_exhausted: 'WAITING/external', unauthorized_source_mutation: 'RECOVERY_PENDING',
+  unverifiable_must_fix: 'WAITING/human', upstream_closure_gap: 'WAITING/human',
+  visual_ledger_integrity: 'TERMINAL',
+};
+
+/** plan 4e6fb3b6 §3.2 补登的四个原因：处置与类别按表。 */
+const P3_NEWLY_REGISTERED: ReadonlyArray<[string, string, string]> = [
+  ['budget_turns', 'TERMINAL', 'authority_boundary'],
+  ['receipt_missing', 'RECOVERY_PENDING', 'artifact_drift'],
+  ['legacy_run_requires_manual_cleanup', 'WAITING/human', 'authority_boundary'],
+  ['guardian_termination_failed', 'WAITING/external', 'authority_boundary'],
+];
+
+function neutralProjection(incident: string): string {
+  const f = runDispositionFields(decide({ incident }, NO_AUTHORITY, ctx()));
+  return f.run_disposition + (f.run_wait_kind ? `/${f.run_wait_kind}` : '');
+}
+
 const metaGateCases: TestCase[] = [
+  {
+    name: 'A1 类别不改变任何处置：加 fault_category 前的 72 条投影逐条不变；注册表 = 旧 72 条 + 补登 4 条',
+    run: () => {
+      const changed = Object.entries(PRE_FAULT_CATEGORY_PROJECTION)
+        .filter(([id, want]) => neutralProjection(id) !== want)
+        .map(([id, want]) => `${id}: ${want} → ${neutralProjection(id)}`);
+      assert(changed.length === 0, `以下条目的处置投影被改变：\n  ${changed.join('\n  ')}`);
+      const expected = new Set([...Object.keys(PRE_FAULT_CATEGORY_PROJECTION), ...P3_NEWLY_REGISTERED.map(([id]) => id)]);
+      const actual = new Set(Object.keys(INCIDENT_REGISTRY));
+      const extra = [...actual].filter((id) => !expected.has(id));
+      const lost = [...expected].filter((id) => !actual.has(id));
+      assert(extra.length === 0 && lost.length === 0, `注册表键集变化：多出 ${extra.join(',')}；缺失 ${lost.join(',')}`);
+    },
+  },
+  {
+    name: 'A1 补登四个原因：处置与类别按 §3.2；budget_turns 与 budget_wall_clock 同处置',
+    run: () => {
+      for (const [id, wantDisp, wantCat] of P3_NEWLY_REGISTERED) {
+        const spec = lookupIncident(id);
+        assert(Boolean(spec), `${id} 未登记`);
+        assertEq(neutralProjection(id), wantDisp, `${id} 处置`);
+        assertEq(spec!.fault_category, wantCat as never, `${id} 类别`);
+      }
+      const turns = lookupIncident('budget_turns')!;
+      const wall = lookupIncident('budget_wall_clock')!;
+      assert(turns.class === wall.class && turns.structurally_terminal === wall.structurally_terminal,
+        'budget_turns 须与 budget_wall_clock 同处置');
+      // guardian 终止失败不得被认定为可自动重试
+      const g = decide({ incident: 'guardian_termination_failed' }, NO_AUTHORITY, ctx());
+      assert(g.kind === 'waiting' && g.wait_kind === 'external', `guardian_termination_failed 须等外部：${JSON.stringify(g)}`);
+      assert(supervisorAction({ beaconStale: true, state: { run_disposition: 'WAITING' } }) === 'no_op',
+        '等外部的 run 不被 supervisor 自动拉起');
+    },
+  },
+  {
+    // 返修 1 核对：两个启动期阻断原因的产出点是 concludeStartupBlocker（模块私有），它写盘前唯一的
+    // 投影步骤是 withRunDisposition(run_end{HALTED, halt_reason, error})——此处以同一形状经同一函数验证。
+    // 完整运行时链需要一个被硬杀、留有未闭合 invoke 的进程或一个杀不死的 guardian，进程内造不出来。
+    name: '返修 1 核对：启动期阻断两原因经写盘层投影与登记一致（非 recoverable，写盘层补投影）',
+    run: () => {
+      for (const [reason, disp, kind] of [
+        ['legacy_run_requires_manual_cleanup', 'WAITING', 'human'],
+        ['guardian_termination_failed', 'WAITING', 'external'],
+      ] as const) {
+        assert(!isStructuralFactsIncident(reason), `${reason} 不应属结构敏感类`);
+        const ev = withRunDisposition({ type: 'run_end', status: 'HALTED', halt_reason: reason, error: 'x' });
+        assert(ev.run_disposition === disp && ev.run_wait_kind === kind, `${reason}：${JSON.stringify(ev)}`);
+      }
+    },
+  },
+  {
+    name: 'A1 元门禁反例（临时夹具）：未登记原因以三种新扫描形态出现时元门禁变红',
+    run: () => tmpProject((root) => {
+      fs.writeFileSync(path.join(root, 'fixture-producer.ts'), [
+        "const budgetHaltReason = budget === 'wall_clock' ? 'budget_wall_clock' : 'p3_fixture_budget_reason';",
+        "concludeStartupBlocker('p3_fixture_startup_reason', msg);",
+        "goalEvents.emit({ type: 'phase_halt', halt_reason: 'p3_fixture_literal_reason' });",
+        '',
+      ].join('\n'), 'utf8');
+      const missing = scanHaltReasonLiterals(root).filter((r) => !lookupIncident(r));
+      for (const r of ['p3_fixture_budget_reason', 'p3_fixture_startup_reason', 'p3_fixture_literal_reason']) {
+        assert(missing.includes(r), `元门禁漏报 ${r}：${JSON.stringify(missing)}`);
+      }
+      // 已登记者不误报
+      assert(!missing.includes('budget_wall_clock'), '已登记的 budget_wall_clock 被误报');
+    }),
+  },
+  {
+    // plan 4e6fb3b6 §3.3 / A2：内容要求，不规定固定格式；这里只核"读得出"四件事，
+    // 并核说明不要求用户枚举 run 或自拼 run 相关旗标（已填好的命令里出现 run id 属诊断信息）。
+    name: 'A2 需要人介入的停机说明读得出四件事（六类各抽一个原因，文本取生产产出处）',
+    run: () => {
+      const f = 'bc-openCard';
+      const r = '20260929T000000Z-abc123';
+      const samples: Array<{ reason: string; text: string; affects: string[] }> = [
+        {
+          reason: 'transient_api_error_exhausted',
+          text: renderPhaseDiagnosticProse({ halt_reason: 'transient_api_error_exhausted', halted: true }),
+          affects: ['本阶段'],
+        },
+        {
+          reason: 'adapter_cli_hard_failure',
+          text: buildAdapterCliHardFailureGuidance({ feature: f, phase: 'coding', detail: 'Codex 模型不可用硬错误' }).join('\n'),
+          affects: [f, 'coding'],
+        },
+        {
+          reason: 'closure_wall_repeated',
+          text: buildClosureWallGuidance({
+            feature: f, runId: r, phase: 'plan', receiptPathRel: 'doc/features/x/plan/phase-completion-receipt.md',
+            harnessPrefixRel: 'framework/harness', receiptStatus: 'failed', cumulativeBlockedCount: 2,
+          }).join('\n'),
+          affects: [f, 'plan'],
+        },
+        {
+          reason: 'product_selection_unresolved',
+          text: buildProductSelectionUnresolvedGuidance({
+            feature: f, phase: 'spec', candidates: ['default', 'rom'], projectRoot: '/host',
+          }).join('\n'),
+          affects: [f, 'spec'],
+        },
+        {
+          reason: 'no_progress_guard',
+          text: buildNoRelevantTargetGuidance({
+            feature: f, runId: r, phase: 'testing', blockerIds: ['device_test_run'], harnessPrefixRel: 'framework/harness',
+          }).join('\n'),
+          affects: [f, 'testing'],
+        },
+        {
+          reason: 'budget_turns',
+          text: buildBudgetExhaustedGuidance({
+            feature: f, runId: r, phase: 'ut', kind: 'budget_turns', activeElapsedMs: 0, limit: 40,
+            harnessPrefixRel: 'framework/harness',
+          }).join('\n'),
+          affects: [f, 'ut'],
+        },
+      ];
+      const categories = new Set<string>();
+      for (const s of samples) {
+        const cat = lookupIncident(s.reason)?.fault_category;
+        assert(Boolean(cat), `${s.reason} 须有类别`);
+        categories.add(cat!);
+        assert(/影响[：:]/.test(s.text) && s.affects.every((a) => s.text.includes(a)), `${s.reason} 读不出影响哪个结果：${s.text}`);
+        assert(/谁能修[：:]\s*\S/.test(s.text), `${s.reason} 读不出谁能修：${s.text}`);
+        assert(/(怎么恢复|处置|处理完后续跑)[：:]\s*\S/.test(s.text), `${s.reason} 读不出做什么能恢复：${s.text}`);
+        assert(/确认已恢复[：:]\s*\S/.test(s.text), `${s.reason} 读不出怎样确认已恢复：${s.text}`);
+        assert(!/<run|run_id>|--supersede|新 run_id/i.test(s.text), `${s.reason} 要求用户枚举 run 或自拼旗标：${s.text}`);
+      }
+      assertEq(categories.size, 6, `六类须各有一例（实得 ${[...categories].join(',')}）`);
+    },
+  },
   {
     name: '元门禁：goal-runner 出现的每个 halt_reason 都必须在 INCIDENT_REGISTRY 注册（未注册即红）',
     run: () => {

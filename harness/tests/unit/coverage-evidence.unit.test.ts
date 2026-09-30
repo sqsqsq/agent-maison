@@ -171,12 +171,22 @@ function testStableCoveragePreservesVerifierSubject(): void {
   }
 }
 
-function testTwoRealUtHarnessRunsPreserveSubject(): void {
+/**
+ * 真 UT harness 子进程夹具（能走到 PASS 并签发 verifier subject）。goal-brief 套件复用它
+ * 验证目标简报经生产入口 harness-runner 进入 verifier 提示词、材料摘要与控制台（plan 33784ed1 A1/A5）。
+ */
+export function setupRealUtHarnessProject(): {
+  root: string; frameworkRoot: string; feature: string; testRel: string;
+  write: (rel: string, body: string) => void;
+  run: (clock: string) => import('child_process').SpawnSyncReturns<string>;
+  reportsDir: string; summaryPath: string; cleanup: () => void;
+} {
   const repo = path.resolve(__dirname, '../../..');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-harness-subject-'));
   const frameworkRoot = path.join(root, 'framework');
   const feature = 'demo';
   const write = (rel: string, body: string): void => { const abs = path.join(root, rel); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, body); };
+  const cleanup = (): void => { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); };
   try {
     fs.mkdirSync(frameworkRoot, { recursive: true });
     for (const dir of ['harness', 'skills', 'specs', 'workflows', 'agents', 'templates', 'docs']) fs.symlinkSync(path.join(repo, dir), path.join(frameworkRoot, dir), process.platform === 'win32' ? 'junction' : 'dir');
@@ -216,8 +226,18 @@ function testTwoRealUtHarnessRunsPreserveSubject(): void {
     write(`doc/features/${feature}/context/facts.md`, '---\n' + YAML.stringify({ schema_version: '1.1', feature, frozen_scope_fingerprint: fingerprint, established_by: 'ut', ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: [sourceRel, 'src/demo/helper.ts', 'src/demo/model.ts', testRel], key_inputs_read: [sourceRel, 'src/demo/helper.ts', 'src/demo/model.ts', testRel], files_inspected_count: 5, searches_performed_estimate: 4, decisions_unlocked: ['verify value'], exploration_mode: 'sequential' }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | value exported | verify |\n| src/demo/helper.ts | helper exists | verify dependency |\n| src/demo/model.ts | model exists | verify type |\n| ' + testRel + ' | test target | verify |\n');
     write(testRel, "import { describe, it, expect } from '@ohos/hypium';\ndescribe('Value',()=>{it('[AC-1] reads value',0,()=>{expect(1).assertEqual(1);});});\n");
     const run = (clock: string) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(repo, 'harness/harness-runner.ts'), '--phase', 'ut', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 120000, env: { ...process.env, NODE_ENV: 'test', TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_TEST_AC_COVERAGE_NOW: clock } });
+    const reportsDir = featurePhaseReportsDir(root, feature, 'ut', frameworkRoot);
+    return { root, frameworkRoot, feature, testRel, write, run, reportsDir, summaryPath: path.join(reportsDir, 'summary.json'), cleanup };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+function testTwoRealUtHarnessRunsPreserveSubject(): void {
+  const { root, feature, testRel, write, run, reportsDir: reports, summaryPath, cleanup } = setupRealUtHarnessProject();
+  try {
     const first = run('2026-01-01T00:00:00.000Z');
-    const reports = featurePhaseReportsDir(root, feature, 'ut', frameworkRoot); const summaryPath = path.join(reports, 'summary.json');
     assert(fs.existsSync(summaryPath), String(first.stderr ?? '') + String(first.stdout ?? '') + String(first.error ?? ''));
     const firstSummary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string; verdict?: string; blockers?: unknown[] };
     assert(typeof firstSummary.verifier_subject_id === 'string', JSON.stringify(firstSummary));
@@ -235,7 +255,7 @@ function testTwoRealUtHarnessRunsPreserveSubject(): void {
     const beforeSource = coverageChanged.verifier_subject_id; write(testRel, "import { describe, it, expect } from '@ohos/hypium';\ndescribe('Value',()=>{it('[AC-1] reads value',0,()=>{expect(2).assertEqual(2);});it('[AC-1] second path',0,()=>{expect(1).assertEqual(1);});});\n"); const sourceRun = run('2026-01-04T00:00:00.000Z');
     const sourceChanged = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string };
     assert(typeof sourceChanged.verifier_subject_id === 'string' && sourceChanged.verifier_subject_id !== beforeSource, 'reviewed source change must advance subject: ' + JSON.stringify(sourceChanged) + String(sourceRun.stderr ?? '') + String(sourceRun.stdout ?? ''));
-  } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } finally { cleanup(); }
 }
 
 function testDagNodeLevelLinkedAcceptance(): void {

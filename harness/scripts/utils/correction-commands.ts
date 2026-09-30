@@ -57,6 +57,7 @@ import {
   type AdapterEnforcementManifest,
 } from './runtime-policy';
 import { isGoalOrchestrationEnv } from './phase-state';
+import { isBlockingCheck } from './check-disposition';
 
 // --------------------------------------------------------------------------
 // 公共装配
@@ -103,10 +104,13 @@ export function closedPhasesFor(
     try {
       if (fs.existsSync(resolveReceiptFilePath(projectRoot, feature, p).path)) return true;
       if (track !== 'lite') return false;
-      const reportAbs = path.join(
-        featurePhaseReportsDir(projectRoot, feature, p, frameworkRoot),
-        'script-report.json',
-      );
+      // plan f7045213 §5：读 summary 的共享结论；没有 summary 的旧产物才回退脚本报告的 legacy 结论。
+      const dir = featurePhaseReportsDir(projectRoot, feature, p, frameworkRoot);
+      const summaryAbs = path.join(dir, 'summary.json');
+      if (fs.existsSync(summaryAbs)) {
+        return (JSON.parse(fs.readFileSync(summaryAbs, 'utf-8')) as { verdict?: string }).verdict === 'PASS';
+      }
+      const reportAbs = path.join(dir, 'script-report.json');
       if (!fs.existsSync(reportAbs)) return false;
       const doc = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as {
         summary?: { verdict?: string };
@@ -553,7 +557,7 @@ export async function runAdhocCorrection(
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const outDir = path.join(adhocReportsRoot(harnessRoot), ts);
   fs.mkdirSync(outDir, { recursive: true });
-  const blockerFails = results.filter((r) => r.severity === 'BLOCKER' && r.status === 'FAIL');
+  const blockerFails = results.filter((r) => isBlockingCheck(r));
   const verdict = blockerFails.length === 0 ? 'PASS' : 'FAIL';
   const generatedAt = new Date().toISOString();
   fs.writeFileSync(

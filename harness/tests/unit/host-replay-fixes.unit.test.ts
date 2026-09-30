@@ -485,15 +485,26 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'T2: budget guidance——不出现裸「重启」，含新 run 与 --override-manifest 两路',
+    // plan 4e6fb3b6 §3.3：原断言要求保留"复制 manifest、以新 run_id 启动、旧 run 用 --supersede 废弃"一路；
+    // 该路要求用户自拼 run 与旗标（且新 run 会被接续守卫拒绝），已删，改为断言不再出现。
+    name: 'T2: budget guidance——不出现裸「重启」，走 --override-manifest 授权续跑，不要求用户自拼新 run',
     run: () => {
       const g = buildBudgetExhaustedGuidance({
         feature: 'f1', runId: 'r1', phase: 'ut', kind: 'budget_wall_clock',
         activeElapsedMs: 480 * 60_000, limit: 480 * 60_000, harnessPrefixRel: 'harness',
       }).join('\n');
       if (!/--override-manifest/.test(g)) throw new Error('缺 override 路');
-      if (!/新起 run|新 run/.test(g)) throw new Error('缺新 run 路');
+      if (/--supersede|新 run_id/.test(g)) throw new Error('不得要求用户自拼新 run 或 --supersede');
+      // plan 4e6fb3b6 返修 3：overrideAuthorizedIdentityFields 对 --override-manifest 返回 'all'——是整体授权
+      if (/字段级授权|只放行这次预算/.test(g)) throw new Error('不得把整体 manifest 授权说成只授权预算');
+      if (!/整体授权/.test(g) || !/只应.{0,8}预算/.test(g)) throw new Error('须写明整体授权、本次修改只应涉及预算');
       if (!/活跃/.test(g)) throw new Error('未说明活跃时间口径');
+      // plan 4e6fb3b6 §7（调度方 2026-09-29 裁定）：首选显式续跑本 run（已填好 run id）；"重新发起同一请求"起后继时沿用
+      // 合同来源的预算，只能写成"仅在本 run 就是合同来源时有效"的次选，放在显式命令之后。
+      const explicitAt = g.indexOf('--resume r1 --override-manifest --force-resume');
+      const rerequestAt = g.indexOf('重新发起同一请求');
+      if (explicitAt < 0 || rerequestAt < explicitAt) throw new Error('首选须是已填好的显式续跑命令，重新发起只作次选');
+      if (!/只在本 run 就是该任务的合同来源时有效/.test(g)) throw new Error('重新发起须写明只在本 run 是合同来源时有效');
     },
   },
   // ------------------------------------------------------------ T3b

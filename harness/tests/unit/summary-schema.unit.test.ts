@@ -101,7 +101,6 @@ function assertSummaryShape(summary: Record<string, unknown>): void {
     'summary_json',
     'run_statuses',
     'readiness_signals',
-    'blocking_warnings',
     'blocking_skips',
     'blockers',
     'next_action',
@@ -113,7 +112,7 @@ function assertSummaryShape(summary: Record<string, unknown>): void {
   assert(['PASS', 'FAIL', 'INCOMPLETE'].includes(String(summary.verdict)), 'verdict 必须是 PASS/FAIL/INCOMPLETE');
   assert(Array.isArray(summary.run_statuses), 'run_statuses 必须是数组');
   assert(Array.isArray(summary.readiness_signals), 'readiness_signals 必须是数组');
-  assert(Array.isArray(summary.blocking_warnings), 'blocking_warnings 必须是数组');
+  assert(summary.blocking_warnings === undefined || Array.isArray(summary.blocking_warnings), 'blocking_warnings 在场时必须是数组');
   assert(Array.isArray(summary.blocking_skips), 'blocking_skips 必须是数组');
   assert(Array.isArray(summary.blockers), 'blockers 必须是数组');
   if (summary.compile_first_error != null) {
@@ -134,12 +133,16 @@ function testSchemaRequiredFields(): void {
     'compile_first_error',
     'soft_advisories',
     'ai_prompt',
+    // plan 3abca824 t3：已停写，只为读取旧 summary 保留属性
+    'blocking_warnings',
   ]);
   for (const key of Object.keys(validSample())) {
     if (CONDITIONAL.has(key)) continue;
     assert(required.includes(key), `schema.required 未声明 ${key}`);
   }
   assert(!required.includes('ai_prompt'), 'ai_prompt 必须是条件字段（verifier disabled 时不生成）');
+  assert(!required.includes('blocking_warnings'), 'blocking_warnings 已停写，不得必填');
+  assert(Object.prototype.hasOwnProperty.call(schema.properties as object, 'blocking_warnings'), 'blocking_warnings 属性须保留以读取旧 summary');
   const props = schema.properties as Record<string, Record<string, unknown>>;
   assert(
     Object.prototype.hasOwnProperty.call(props, 'verifier_request'),

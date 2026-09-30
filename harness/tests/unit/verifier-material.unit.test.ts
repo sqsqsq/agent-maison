@@ -166,6 +166,33 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
+  {
+    // 金值 = 引入目标简报分量之前的 computeMaterialSha256 对同一输入的产出（改动前实跑取得）。
+    name: '目标简报分量（plan 33784ed1 §3.4）：简报为空 → material_sha256 与改动前逐字节相同；有简报 → 换指纹且 diff 只标 goal_brief',
+    run: () => {
+      const root = mkProject();
+      try {
+        const GOLDEN_WITHOUT_BRIEF = '4c01c04e4e085143e62744c7293b577ecbe897a5e2fa7a959ecc83337820e54c';
+        const mk = (goalBriefText?: string) => buildVerifierMaterialView({
+          projectRoot: root, feature: FEATURE, phase: 'plan', gateFingerprint: '3.0.0:abcdef012345',
+          phaseRuleText: 'rule: 1', templateText: '# template', checks: CHECKS, contextFiles: [],
+          ...(goalBriefText === undefined ? {} : { goalBriefText }),
+        } as Parameters<typeof buildVerifierMaterialView>[0]);
+        const none = mk();
+        assert.strictEqual(none.material_sha256, GOLDEN_WITHOUT_BRIEF, '未传简报时材料指纹必须与改动前相同');
+        assert.strictEqual(mk('').material_sha256, GOLDEN_WITHOUT_BRIEF, '简报为空串时材料指纹必须与改动前相同');
+        const withBrief = mk('## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。');
+        const briefSha = (withBrief as unknown as { goal_brief_sha256?: string }).goal_brief_sha256 ?? '';
+        assert.strictEqual(briefSha.length, 64, '有简报时分量为 sha256');
+        assert.notStrictEqual(withBrief.material_sha256, GOLDEN_WITHOUT_BRIEF, '简报进入材料指纹');
+        assert.deepStrictEqual(diffVerifierMaterial(none, withBrief), ['goal_brief']);
+        assert.notStrictEqual(mk('## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。\n- 新排除项').material_sha256,
+          withBrief.material_sha256, '简报内容变 → 换指纹');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
 ];
 
 export function runAll(): UnitCaseResult[] {

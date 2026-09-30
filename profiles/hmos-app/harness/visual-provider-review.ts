@@ -10,8 +10,7 @@
 // 边界（不得放宽）：
 //   · provider **不产 verdict**——它只交出逐屏 must_fix/defects；「能否推进」唯一归 gate；
 //   · provider **永不写 confirmed_by**——legacy 字段无质量权威；
-//   · 合法载荷 = 可直接回修的 critic candidate，**不进** producer 感知信号的
-//     defect-review；primary dispute 或缺复核没有否决权；
+//   · 合法载荷 = 可直接回修的 critic candidate；primary 的反对或缺复核没有否决权；
 //   · 写入前**只清掉旧 provider 结果**——T8 转录与其它来源的 defect/must_fix 原样保留，
 //     否则转录对账会被本机制误伤。
 // ============================================================================
@@ -24,6 +23,7 @@ import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 import { isPixel1to1, loadRefElementsFile, loadSpecMarkdown, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
+import { assembleGoalBrief, renderGoalBrief } from '../../../harness/scripts/utils/goal-brief';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { readImageDimensions, resolveCompareReference, splitMustHaveByTopSlice } from './image-toolkit';
 import { canonicalOverlayBase } from './visual-diff-nav';
@@ -170,6 +170,8 @@ export interface ReviewPromptIdentity {
   requireRegionAttest: boolean;
   /** plan c4e7a9b2 A2：spec/ref-elements.yaml 的参考图侧元素——missing_render 的 ref_element 取值域 */
   refElements?: ReadonlyArray<{ element_id: string; disposition: string }>;
+  /** plan 33784ed1 §3.3：目标简报渲染文本（provider 原本没有需求输入，拿完整简报） */
+  goalBrief?: string;
 }
 
 export function buildVisualProviderReviewPrompt(
@@ -191,12 +193,18 @@ export function buildVisualProviderReviewPrompt(
     '- Do NOT write legacy `confirmed_by` or claim human authority; only report machine observations.',
     '- Anchor every defect to the fixes: `must_fix_refs` holds indices into that screen\'s `must_fix`.',
     '- class=missing_render MUST carry `ref_element`: the id of the reference-side element that is missing.',
+    '- class=unexpected_render = something is rendered that the goal does not want. It MUST carry `element` (id of the rendered element, when it has one) or `bbox`;',
+    '  add `requirement_quote` when a sentence of the goal says it is not wanted (copy it verbatim).',
     '- Every other class MUST carry `element`: the ui-spec node id of the rendered element that is wrong.',
     ...(identity.refElements?.length
       ? [
           `  Reference-side element ids (spec/ref-elements.yaml): ${identity.refElements.map(e => `${e.element_id}(${e.disposition})`).join(', ')}.`,
           '  Elements marked (excluded) are explicitly out of scope for this delivery — do not request them.',
+          '  If one of them is already rendered, report it as class=unexpected_render with that element id in `element` (not in `ref_element`).',
         ]
+      : []),
+    ...(identity.goalBrief
+      ? ['', 'Goal of this delivery (the same brief every participant receives):', '', identity.goalBrief]
       : []),
     '',
     'Screens:',
@@ -233,9 +241,10 @@ export function buildVisualProviderReviewPrompt(
     '      "reference_image_hash": "<that screen\'s reference hash>",',
     '      "evaluated_screenshot_hash": "<that screen\'s screenshot hash>",',
     '      "must_fix": ["<minimal concrete fix>"],',
-    '      "defects": [{"class": "clipping|overlap|shape_mismatch|missing_render|other",',
-    '                   "severity": "blocker|major|minor", "element": "<ui-spec node id; required unless missing_render>",',
+    '      "defects": [{"class": "clipping|overlap|shape_mismatch|missing_render|unexpected_render|other",',
+    '                   "severity": "blocker|major|minor", "element": "<rendered element id; required except missing_render (ref_element) and unexpected_render (element or bbox)>",',
     '                   "ref_element": "<reference element id; required for missing_render>",',
+    '                   "requirement_quote": "<verbatim goal sentence; optional, unexpected_render only>",',
     '                   "note": "<what is wrong>", "must_fix_refs": [0]}]',
     ...(identity.requireRegionAttest
       ? [
@@ -266,7 +275,7 @@ export type ReviewPayloadResult =
   | { ok: true; screens: ReviewScreenPayload[] }
   | { ok: false; reason: string };
 
-const DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'other']);
+const DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'unexpected_render', 'other']);
 const DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
 
 /**
@@ -372,12 +381,19 @@ export function validateVisualProviderReviewPayload(
         }
         bbox = b as number[];
       }
+      if (dd.requirement_quote !== undefined && dd.requirement_quote !== null && typeof dd.requirement_quote !== 'string') {
+        return { ok: false, reason: `${screenId} defect.requirement_quote 须为字符串` };
+      }
+      if (dd.class === 'unexpected_render' && !(typeof dd.element === 'string' && dd.element.trim()) && !bbox) {
+        return { ok: false, reason: `${screenId} defect class=unexpected_render 须带 element 或 bbox` };
+      }
       defects.push({
         class: dd.class as VisualDiffDefect['class'],
         severity: dd.severity as VisualDiffDefect['severity'],
         note: dd.note.trim(),
         ...(typeof dd.element === 'string' && dd.element.trim() ? { element: dd.element.trim() } : {}),
         ...(typeof dd.ref_element === 'string' && dd.ref_element.trim() ? { ref_element: dd.ref_element.trim() } : {}),
+        ...(typeof dd.requirement_quote === 'string' && dd.requirement_quote.trim() ? { requirement_quote: dd.requirement_quote.trim() } : {}),
         ...(bbox ? { bbox } : {}),
         ...(refs ? { must_fix_refs: refs } : {}),
       });
@@ -808,6 +824,7 @@ export async function runVisualProviderReview(
     ...(attemptId ? { attemptId } : {}),
     requireRegionAttest,
     ...(refElements?.length ? { refElements } : {}),
+    goalBrief: renderGoalBrief(assembleGoalBrief(ctx.projectRoot, ctx.feature, { runId: runId ?? '' })),
   });
   const invocation = await (opts.invoke ?? invokeVisualProvider)({
     projectRoot: ctx.projectRoot,

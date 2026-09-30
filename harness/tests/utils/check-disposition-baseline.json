@@ -1,0 +1,471 @@
+{
+  "files": {
+    "harness/compat-loader.ts": {
+      "literal_ids": [
+        "compat_expired"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/harness-runner.ts": {
+      "literal_ids": [
+        "capability_resolution_contract",
+        "execution_scope_frozen",
+        "feature_artifact_resolution",
+        "feature_spec_shape"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/check-catalog.ts": {
+      "literal_ids": [
+        "catalog_file_exists",
+        "easily_confused_no_self_reference",
+        "easily_confused_references_exist",
+        "entry_file_matches_oh_package_main",
+        "format_value_valid",
+        "key_exports_fresh_vs_index",
+        "layer_value_valid",
+        "module_required_fields",
+        "modules_is_list",
+        "name_unique",
+        "requested_module_present",
+        "schema_version_present"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/check-change.ts": {
+      "literal_ids": [
+        "change_checkbox_syntax",
+        "change_file_exists",
+        "change_scope_modules_known",
+        "change_scope_yaml"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/check-coding.ts": {
+      "literal_ids": [
+        "coding_host_missing",
+        "coding_run_status",
+        "coordinator_file_exists_if_declared",
+        "diff_within_scope",
+        "file_completeness",
+        "inter_module_dependency",
+        "layer_compliance",
+        "named_business_handler",
+        "plan_to_code"
+      ],
+      "dynamic_count": 2
+    },
+    "harness/scripts/check-docs.ts": {
+      "literal_ids": [
+        "correction_layer_unconditional_confirm",
+        "entry_template_budget",
+        "forced_full_read_blacklist",
+        "inventory_exists",
+        "inventory_schema_valid",
+        "requested_docs_present",
+        "skill_body_max_lines"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/check-exit.ts": {
+      "literal_ids": [
+        "exit_change_doc_present",
+        "exit_checkboxes_all_checked",
+        "exit_compile",
+        "exit_scope_declared",
+        "exit_ut"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/check-extensions.ts": {
+      "literal_ids": [],
+      "dynamic_count": 1
+    },
+    "harness/scripts/check-glossary.ts": {
+      "literal_ids": [
+        "alias_unique_across_terms",
+        "canonical_module_exists_in_catalog",
+        "catalog_for_glossary_crosscheck",
+        "easily_confused_modules_exist_in_catalog",
+        "glossary_file_exists",
+        "owner_layer_matches_catalog",
+        "owner_layer_value_valid",
+        "requested_terms_present",
+        "schema_version_present",
+        "seed_no_technical_words",
+        "term_required_fields",
+        "term_unique",
+        "terms_is_list"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/check-init.ts": {
+      "literal_ids": [
+        "adapter_yaml_resolvable",
+        "diff_for_populated_provided",
+        "hooks_config_target_compatible",
+        "inspection_table_complete",
+        "template_files_resolvable"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/check-module-graph.ts": {
+      "literal_ids": [
+        "catalog_required",
+        "code_graph_schema_valid",
+        "module_source_resolved",
+        "requested_graph_present"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/check-no-numbered-skill-paths.ts": {
+      "literal_ids": [
+        "no_numbered_skill_paths"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/check-no-numbered-skill-prose.ts": {
+      "literal_ids": [
+        "no_numbered_skill_prose"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/check-plan.ts": {
+      "literal_ids": [
+        "architecture_diagram",
+        "architecture_impact_declared",
+        "contract_file_reference_closure",
+        "data_model_typed",
+        "file_structure_per_module",
+        "interface_signatures_complete",
+        "mapping_to_file",
+        "module_change_table",
+        "plan_file_exists",
+        "required_chapters",
+        "scope_consistency_with_spec",
+        "scope_declaration",
+        "spec_constraint_traceability",
+        "spec_mapping_table"
+      ],
+      "dynamic_count": 10
+    },
+    "harness/scripts/check-review.ts": {
+      "literal_ids": [
+        "conclusion_with_verdict",
+        "issue_table_format",
+        "issue_to_file",
+        "required_chapters",
+        "review_context_source_files",
+        "review_report_exists",
+        "review_request_scope",
+        "review_required_design",
+        "review_scope_to_design",
+        "severity_values"
+      ],
+      "dynamic_count": 5
+    },
+    "harness/scripts/check-skills-confirmation-ux.ts": {
+      "literal_ids": [
+        "confirmation_ux_lint"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/check-spec.ts": {
+      "literal_ids": [
+        "acceptance_criteria_format",
+        "acceptance_to_feature",
+        "at_least_one_p0",
+        "feature_table_format",
+        "feature_to_acceptance",
+        "mermaid_flowchart",
+        "priority_values",
+        "required_chapters",
+        "scope_declaration",
+        "scope_matches_catalog",
+        "spec_file_exists",
+        "terminology_mapping_table",
+        "terminology_modules_within_scope"
+      ],
+      "dynamic_count": 24
+    },
+    "harness/scripts/check-testing.ts": {
+      "literal_ids": [
+        "device_case_contract",
+        "device_test_build",
+        "device_test_install",
+        "device_test_run",
+        "hylyre_evidence_gate",
+        "testing_channel_evidence_obligation",
+        "testing_docs_missing",
+        "testing_failure_routing_protocol",
+        "visual_diff"
+      ],
+      "dynamic_count": 124
+    },
+    "harness/scripts/check-ut.ts": {
+      "literal_ids": [
+        "acceptance_coverage",
+        "boundaries_all_stubbed",
+        "branch_coverage_full",
+        "dag_acyclic",
+        "dag_linked_usecase",
+        "dag_node_type_valid",
+        "dag_schema_compliance",
+        "dag_source_file_exists",
+        "dag_to_source",
+        "harness_host_artifact_pollution",
+        "it_name_has_ac_or_branch_tag",
+        "mock_stub_for_async",
+        "named_business_handler",
+        "origin_tag_required",
+        "usecase_spec_schema",
+        "usecase_ui_bindings_nonempty",
+        "ut_assertion_exists",
+        "ut_case_per_unit_ac",
+        "ut_coverage_evidence_mappings_complete",
+        "ut_coverage_evidence_present",
+        "ut_coverage_evidence_resolves",
+        "ut_hvigor_test",
+        "ut_import_whitelist",
+        "ut_no_src_mutation",
+        "ut_profile_host_missing",
+        "ut_target_resolution"
+      ],
+      "dynamic_count": 40
+    },
+    "harness/scripts/utils/adapter-catalog.ts": {
+      "literal_ids": [],
+      "dynamic_count": 2
+    },
+    "harness/scripts/utils/behavior-switch-scan.ts": {
+      "literal_ids": [],
+      "dynamic_count": 2
+    },
+    "harness/scripts/utils/blueprint-skill-projection.ts": {
+      "literal_ids": [
+        "construction_content_complete",
+        "design_scope_facts"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/utils/change-unit-feature-projection.ts": {
+      "literal_ids": [
+        "change_unit_feature_projection"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/utils/check-acceptance.ts": {
+      "literal_ids": [
+        "acceptance_content_complete",
+        "acceptance_use_cases_resolvable"
+      ],
+      "dynamic_count": 9
+    },
+    "harness/scripts/utils/check-result-factory.ts": {
+      "literal_ids": [],
+      "dynamic_count": 1
+    },
+    "harness/scripts/utils/context-exploration.ts": {
+      "literal_ids": [
+        "context_exploration_blocker_risk",
+        "context_exploration_code_facts_min",
+        "context_exploration_decisions_unlocked",
+        "context_exploration_feature_match",
+        "context_exploration_files_inspected_min",
+        "context_exploration_inputs_coverage",
+        "context_exploration_mode_allowed",
+        "context_exploration_mode_required",
+        "context_exploration_parse",
+        "context_exploration_phase_match",
+        "context_exploration_present",
+        "context_exploration_ready",
+        "context_exploration_schema_version",
+        "context_exploration_searches_min",
+        "context_exploration_source_code_paths_exist",
+        "context_exploration_source_code_paths_min",
+        "context_exploration_subagent_required",
+        "context_exploration_subagents_used"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/utils/context-facts.ts": {
+      "literal_ids": [
+        "context_exploration_facts_blocker_risk",
+        "context_exploration_facts_established_by_invalid",
+        "context_exploration_facts_established_by_track_mismatch",
+        "context_exploration_facts_feature_match",
+        "context_exploration_facts_parse",
+        "context_exploration_facts_phase_delta_empty",
+        "context_exploration_facts_phase_delta_missing",
+        "context_exploration_facts_phase_delta_present",
+        "context_exploration_facts_present",
+        "context_exploration_facts_ready",
+        "context_exploration_facts_schema_version"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/utils/correction-commands.ts": {
+      "literal_ids": [
+        "adhoc_architecture_rules",
+        "adhoc_changed_files",
+        "adhoc_compile",
+        "adhoc_touched_modules",
+        "adhoc_verification_evidence"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/utils/device-readiness-gate.ts": {
+      "literal_ids": [
+        "device_target_kind_caps_testing"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/utils/extension-runtime.ts": {
+      "literal_ids": [],
+      "dynamic_count": 2
+    },
+    "harness/scripts/utils/feature-execution-scope.ts": {
+      "literal_ids": [
+        "execution_scope_frozen"
+      ],
+      "dynamic_count": 0
+    },
+    "harness/scripts/utils/fidelity-shared.ts": {
+      "literal_ids": [],
+      "dynamic_count": 2
+    },
+    "harness/scripts/utils/p0-semantic-gates.ts": {
+      "literal_ids": [
+        "p0_pass_rate_dual_metrics"
+      ],
+      "dynamic_count": 7
+    },
+    "harness/scripts/utils/report-generator.ts": {
+      "literal_ids": [],
+      "dynamic_count": 1
+    },
+    "harness/scripts/utils/request-phase.ts": {
+      "literal_ids": [
+        "request_expectation_source",
+        "request_test_execution"
+      ],
+      "dynamic_count": 1
+    },
+    "harness/scripts/utils/ui-spec-shared.ts": {
+      "literal_ids": [],
+      "dynamic_count": 1
+    },
+    "harness/scripts/utils/upstream-verdict-gate.ts": {
+      "literal_ids": [],
+      "dynamic_count": 3
+    },
+    "profiles/hmos-app/harness/arkui-static-rules.ts": {
+      "literal_ids": [],
+      "dynamic_count": 2
+    },
+    "profiles/hmos-app/harness/asset-crop-validation.ts": {
+      "literal_ids": [
+        "asset_crop_validation_toolchain_unavailable"
+      ],
+      "dynamic_count": 1
+    },
+    "profiles/hmos-app/harness/asset-manifest-check.ts": {
+      "literal_ids": [
+        "asset_manifest"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/capture-completeness-check.ts": {
+      "literal_ids": [
+        "capture_completeness",
+        "capture_completeness_external_ocr_unavailable",
+        "capture_style_fields"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/coding-host-rules.ts": {
+      "literal_ids": [
+        "coding_lint",
+        "har_index_export",
+        "lint_no_static_enum",
+        "module_config_registered",
+        "oh_package_dependencies",
+        "page_registration",
+        "plan_file_to_code"
+      ],
+      "dynamic_count": 7
+    },
+    "profiles/hmos-app/harness/coding-visual-parity-check.ts": {
+      "literal_ids": [
+        "visual_parity"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/fidelity-governance-check.ts": {
+      "literal_ids": [
+        "fidelity_deferrals_strict_contract"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/fidelity-snapshot-check.ts": {
+      "literal_ids": [
+        "fidelity_snapshot_promise"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/plan-visual-parity-check.ts": {
+      "literal_ids": [
+        "visual_parity_coverage"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/providers/device-test-request.ts": {
+      "literal_ids": [
+        "request_device_native"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/providers/ut-run.ts": {
+      "literal_ids": [
+        "request_ut_native"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/runtime-mount-conformance.ts": {
+      "literal_ids": [],
+      "dynamic_count": 1
+    },
+    "profiles/hmos-app/harness/spec-ui-spec-check.ts": {
+      "literal_ids": [
+        "ui_spec_fidelity_gate",
+        "ui_spec_structure"
+      ],
+      "dynamic_count": 0
+    },
+    "profiles/hmos-app/harness/spec-visual-handoff-check.ts": {
+      "literal_ids": [
+        "visual_handoff",
+        "visual_handoff_denominator",
+        "visual_handoff_ui_change"
+      ],
+      "dynamic_count": 4
+    },
+    "profiles/hmos-app/harness/ut-host-impl.ts": {
+      "literal_ids": [
+        "ut_framework_import",
+        "ut_hvigor_build",
+        "ut_hvigor_test",
+        "ut_tsc_compiles"
+      ],
+      "dynamic_count": 4
+    },
+    "profiles/hmos-app/harness/visual-diff-check.ts": {
+      "literal_ids": [
+        "visual_diff_no_progress_fuse",
+        "visual_diff_tamper_artifact",
+        "visual_diff_uncertain_evidence"
+      ],
+      "dynamic_count": 0
+    }
+  }
+}

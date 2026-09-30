@@ -74,25 +74,6 @@
 | MINOR | N | N | N | N | N |
 | **合计** | **N** | **N** | **N** | **N** | **N** |
 
-### 逐信号复核（defect-review，**存在 actionable 视觉信号时必填**）
-
-> 本块只提供 agent 诊断说明，不具备否决机器证据的权力。producer 判定为 actionable 且证据合同
-> 有效的结构化视觉信号会直接物化 repair candidate；合法 provider defect 同样直接回修。
-> producer uncertain/provider invalid 表示证据不足，由 required/optional 质量轴投影 FAIL、defer 或 advisory。
-> **signal 必须精确填该 defect 的稳定指纹**（`screen|class|element|bbox_bucket[|producer#finding_id]`，
-> 可从 visual-diff.json 的 defects 条目复制的结构键），不填屏名/指令文本（防同屏多缺陷歧义）。
-> 用户交付后的 UX 反馈应作为 correction/successor run 输入，不回写当前 run 的 verdict。
-> 格式（fenced 块，**逐信号一条**，禁止 inline 注释）：
-
-```defect-review
-- signal: add_card_home_collapsed|shape_mismatch|hc_page_title|0.1,0.2,0.3,0.4
-  verdict: confirmed
-  rationale: 截图/证据核对后确认为真缺陷
-- signal: add_card_home_collapsed|overlap|hc_bank_row|0.5,0.6,0.7,0.8
-  verdict: disputed
-  rationale: OCR 混淆/口径错配，非真缺陷
-```
-
 ---
 
 ## 四、通过率统计

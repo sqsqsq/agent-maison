@@ -74,6 +74,8 @@ interface SlimOpts {
   /** runner-owned-machine-facts 正例：写一条**旧 run** 的账本行（且不覆盖 registry gate）——
    *  账本是跨 run 累积留痕，不再拥有 closure 否决权 */
   staleLedgerFromPriorRun?: boolean;
+  /** plan 3abca824 A4：blocking_warnings 已停写——omit=当代 writer 形状；legacy=旧 summary 带非空清单 */
+  blockingWarnings?: 'omit' | 'legacy';
 }
 
 function buildSlimProject(opts: SlimOpts): { root: string } {
@@ -199,6 +201,10 @@ function buildSlimProject(opts: SlimOpts): { root: string } {
       ...(opts.summaryRunId ? { run_id: opts.summaryRunId } : {}),
     };
     if (opts.dropRequiredKey) delete summary[opts.dropRequiredKey];
+    if (opts.blockingWarnings === 'omit') delete summary.blocking_warnings;
+    if (opts.blockingWarnings === 'legacy') {
+      summary.blocking_warnings = [{ id: 'scope_declaration', blocking_class: 'prd_scope', details_excerpt: 'rationale 为空', suggestion: '补齐 rationale' }];
+    }
     fs.writeFileSync(path.join(reportsDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
     // plan e5b8c3f7：summary 落盘后立刻发布与 hook 同形的 verifier 机器证据
     // （subject 写进本次 summary），slim 回执的 verifier 面自此走真验真。
@@ -319,6 +325,20 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const v = runCase({ dropRequiredKey: 'run_statuses' });
       assert(v.status === 'failed', `expected failed, got ${v.status}`);
+    },
+  },
+  {
+    name: 'plan 3abca824 A4：不带 blocking_warnings 的当代 summary 过回执入口 schema 校验 → passed',
+    run: () => {
+      const v = runCase({ blockingWarnings: 'omit' });
+      assert(v.status === 'passed', `expected passed, got ${v.status}: ${v.message ?? ''}`);
+    },
+  },
+  {
+    name: 'plan 3abca824 A4：带非空 blocking_warnings 的旧 summary 仍过回执入口 schema 校验 → passed',
+    run: () => {
+      const v = runCase({ blockingWarnings: 'legacy' });
+      assert(v.status === 'passed', `expected passed, got ${v.status}: ${v.message ?? ''}`);
     },
   },
   {

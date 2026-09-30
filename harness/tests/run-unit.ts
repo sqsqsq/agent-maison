@@ -330,7 +330,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
   // adjudicated-repair-loop M1：信号级身份 + 累计 one-shot 收敛 + no-op（plan e2b7c4a9 t1.8）
   { id: 'goal-runner-repair-convergence', modulePath: './unit/goal-runner-repair-convergence.unit.test' },
-  // adjudicated-repair-loop M2：producer uncertain 归类 + defect-review 裁决纯函数（plan e2b7c4a9 t2.6）
+  // adjudicated-repair-loop M2：producer uncertain 归类（plan e2b7c4a9 t2.6；defect-review 解析已随 plan 3abca824 t3 删除）
   { id: 'adjudicated-repair-loop', modulePath: './unit/adjudicated-repair-loop.unit.test' },
   { id: 'goal-headless-guard', modulePath: './unit/goal-headless-guard.unit.test' },
   { id: 'patch-openspec-artifacts', modulePath: './unit/patch-openspec-artifacts.unit.test' },
@@ -381,6 +381,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'review-report-lint', modulePath: './unit/review-report-lint.unit.test' },
   { id: 'execution-key', modulePath: './unit/execution-key.unit.test' },
   { id: 'verifier-material', modulePath: './unit/verifier-material.unit.test' },
+  // plan 33784ed1 t1：目标简报同源注入（A1/A2/A3/A5，含真 harness-runner 子进程）
+  { id: 'goal-brief', modulePath: './unit/goal-brief.unit.test' },
   { id: 'revalidate-plan', modulePath: './unit/revalidate-plan.unit.test' },
   { id: 'phase-executor-next-line', modulePath: './unit/phase-executor-next-line.unit.test' },
   { id: 'visual-measure', modulePath: './unit/visual-measure.unit.test' },
@@ -388,6 +390,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'check-testing-traceability', modulePath: './unit/check-testing-traceability.unit.test' },
   { id: 'fidelity-intent', modulePath: './unit/fidelity-intent.unit.test' },
   { id: 'blocker-suggestion-ratchet', modulePath: './unit/blocker-suggestion-ratchet.unit.test' },
+  // plan f7045213 §3：处置函数、判定谓词与开发期静态守卫（A1–A3）
+  { id: 'check-disposition', modulePath: './unit/check-disposition.unit.test' },
+  // plan f7045213 §4、§5：消费矩阵、披露、聚合去重、共享结论（A4–A8，含真实 CLI）
+  { id: 'check-disposition-consumers', modulePath: './unit/check-disposition-consumers.unit.test' },
   { id: 'report-suggestion-normalize', modulePath: './unit/report-suggestion-normalize.unit.test' },
   { id: 'hylyre-keyset-consistency', modulePath: './unit/hylyre-keyset-consistency.unit.test' },
   { id: 'receipt-slim', modulePath: './unit/receipt-slim.unit.test' },
@@ -425,13 +431,17 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   // 是夹具把失败点造错了地方（定位与改法见 d4a1f7c3 §10.14）——
   //   · RC-8a/8b 原先删 spec.md 的术语章节，而 1.2 的范围里 spec 的 required_outputs 不含
   //     spec.md（`check-spec.ts:1484` 早退），那组检查根本不执行；真正停机的是随后缺契约的 plan。
-  //     已改为把失败点显式落在 plan 真会执行的 `context_exploration_facts_phase_delta_missing` 上。
+  //     已改为把失败点显式落在 plan 真会执行的检查上（plan 3abca824 t4 起为 `contract_file_reference_closure`；
+  //     原载体 `context_exploration_facts_phase_delta_missing` 已登记为披露，其正向证据见 RC-8c / RC-8d）。
   //   · RC-4 前提②把「`ac-coverage.json` 进审核材料」当成回归，而 `verifier-material.ts:145-148`
   //     明确允许经 contextFiles 送入的运行期证据进材料。已改为断真实 subject 等值。
   { id: 'real-chain-seams', modulePath: './unit/real-chain-seams.unit.test', releaseOnly: true },
   // plan b2d7f4e9 §6 / t4b：完成后演进端到端（上一版宿主快照 → 调和 / 改动 → --supersede → 真 harness 跑完后继链
   // → assessFeature 新完成结论）。同 real-chain 跑真 harness 子进程，release-only；其中 L0 是发布门基线。
   { id: 'lifecycle-evolution', modulePath: './unit/lifecycle-evolution.unit.test', releaseOnly: true },
+  // plan 1dbe4fa4 t2：十三个事故场景的确定性重放（真实链路 / 运行时链 / 子进程 / 函数级），事实由 t1 采集器求出；
+  // 进程内跑 goalMain，排在 device-session 之后。release-only；RELIABILITY_RESULTS_OUT 设置时写出实测。
+  { id: 'reliability-scenarios', modulePath: './unit/reliability-scenarios.unit.test', releaseOnly: true },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =

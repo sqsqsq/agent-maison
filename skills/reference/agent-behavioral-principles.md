@@ -22,7 +22,7 @@
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；数量下限与磁盘存在性由 harness 在**建立阶段与旧 `context-exploration.md` 兼容路径**校验（delta 阶段只校验 `phase_delta` 节存在且非空——不校验数量不等于可以不读）。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
 4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding `default_mode: subagent`，spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）；L1 trivial 命中豁免条件、L2_small 复合评分低于阈值同样豁免，L4 architectural 全阶段强制。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。**该判定同样只在建立阶段与兼容路径生效**（`harness/scripts/utils/context-facts.ts`）——delta 阶段不按数量或 subagent 硬判，复杂问题该起子代理探索仍须起。
-5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
+5. **能由当前目标裁决的不确定，按目标裁决并留痕**；目标本身冲突或缺失且无法裁决时才停下来问用户（见下文[权威判定](#权威判定)）。禁止静默猜测后继续写 spec/plan/code。
 6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
 7. **框架 / vendor 事实以当前 profile-addendum 与契约为准**：记忆（用户级 / 会话级 memory）只作搜索线索，不能作裁决依据；与 addendum、harness 输出冲突时以后者为准（plan 07a41ec6 T9）。
 8. **动笔前读宿主扩展的作者输入**：`<extension_dir>/manifest.yaml` 的 `provides.knowledge` 所列文件中适用于本阶段者，读后把路径写进 Code Facts；goal 模式下同一清单已注入阶段 prompt（plan a7c3e9d2）。`hooks/<phase>/on_context_load.md` 只进 verifier 上下文，不算送达。
@@ -97,6 +97,19 @@
 | Plan | 一口气写 plan + contracts，再补 context-exploration | 先 Research Sub-Phase PASS，再写 plan.md |
 | Coding | 批量生成 10 个文件后统一 lint | 单文件 lint 闭环 |
 | 任意 | harness FAIL 仍宣称阶段完成 | 修因 → 重跑 harness → 再触发 verifier |
+
+---
+
+## 权威判定
+
+本节是"目标冲突怎么判"的唯一出处。goal 提示词、视觉 provider、verifier 与 harness 控制台收到的**目标简报**（需求原文、请求结果、明确不做、已授予的权限、已裁决的冲突）都从同一组装函数得出，判定办法指向这里。
+
+1. **目标由当前有效的授权与明确修订确定**：有权者最新的明确表述为准，可以是需求原文，也可以是之后明确的修订；其下依次是 spec 产物、设计参考、既往诊断候选。
+2. **证据不定义目标，但能证明实现是否符合目标**：截图、测试结果、真机断言的来源位置再低，也不能因此被排除。
+3. **裁判的缺陷与修法、执行者的裁决记录，都是可纠正的判断**：返修候选是待核验的假设，先对照目标；任何一方都可以用同一权威的正确解释或新的实测证据纠正另一方。
+4. **下位与上位冲突时按上位执行并留一行裁决记录**；只有上位表述彼此冲突且现有授权无法裁决时才问人。
+
+设备策略、人审闸门、scope 扩展确认等属于真实授权，不在本节"自行裁决"的范围内，照原流程停等。
 
 ---
 

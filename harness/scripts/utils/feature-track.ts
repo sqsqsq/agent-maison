@@ -173,7 +173,7 @@ export function resolveWithPriorEvidence(
     }
     return resolveExecutionScope(input, workflow, readScopeAcceptance(projectRoot, input, { feature, frameworkRoot }), facts);
   };
-  const expected = resolveChangeUnitExpectedExecution(projectRoot, feature);
+  const expected = resolveChangeUnitExpectedExecution(projectRoot, feature, false, frameworkRoot);
   const first = resolve();
   if (assessFeature(projectRoot, feature, { ...expected, frameworkRoot }).record.state === 'ok') {
     const projection = JSON.parse(fs.readFileSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME), 'utf8')) as { original_path: string };
@@ -424,7 +424,7 @@ export function collectResolvedScopeFacts(
       const issues = executionScopeEvidenceIssues(projectRoot, feature, {
         schema_version: '1.0', completion_target: input.request.completion_target, requested_results: [...input.request.requested_results],
         obligations: [probe], phase_chain: [], reused_phases: [], unresolved: [], policy_fingerprint: '0'.repeat(64),
-      } as ExecutionScope, new Set([fact.id]), ctx.currentRunId);
+      } as ExecutionScope, new Set([fact.id]), ctx.currentRunId, undefined, frameworkRoot);
       satisfied_by.push({ obligation_id: fact.id, ref_index, ok: issues.length === 0, detail: issues.join('; ') || `${ref.phase}@${ref.run_id}: evidence verified` });
     });
   }

@@ -110,7 +110,7 @@ architecture_impact:
 | `module_set_change` | 模块集合变化 | 新增/下线模块、模块迁外层 |
 | `responsibility_rewrite` | 模块核心职责大调整 | catalog `primary_responsibility` 被大幅重写 |
 
-> **判定原则**：从严判 `none`。不确定就按 `impact != none` 处理并停下确认。
+> **判定原则**：从严判 `none`。不确定就按 `impact != none` 处理；能由当前目标裁决的不确定按目标裁决并留痕，目标本身冲突或缺失且无法裁决时才停下确认（见 [agent-behavioral-principles.md「权威判定」](agent-behavioral-principles.md#权威判定)）。
 
 - **`none`**：`affected_items`等全部 `[]`；不修改 architecture.md/catalog/config；不追加变更记录；跳到 Step 13。
 - **`dsl_change`**：plan 不是 DSL writer。DSL 改写走 framework-init 既有获准路径（`init.architecture_preset` 预设，或[手工编辑 config 后本地校验并重跑 UPDATE](../project/framework-init/templates/custom-architecture-questionnaire.md)），落盘后过 `validateArchitectureDsl`；需要刷新物化产物时再跑 UPDATE。plan 只同步 [doc/architecture.md](../../../doc/architecture.md) 对应小节；末尾「架构级变更记录」追加一行 `| YYYY-MM-DD | dsl_change | <具体变化> |`；回填 `architecture_md_updates`。

@@ -69,7 +69,7 @@ import {
   parseFidelityTargetFromHandoffDoc,
 } from './utils/fidelity-shared';
 import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, collectAllComponentNodes, type UiSpecAsset } from './utils/ui-spec-shared';
-import { collectCurrentRequirementText, loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
+import { checkRequirementQuote, collectCurrentRequirementText, loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
 import { scanUiSpecCounterevidence, type RefElementLite } from './utils/vision-counterevidence';
 import { verifyVlSigningChain } from './utils/critic-receipt-producer';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
@@ -1739,9 +1739,9 @@ function checkRefElementsExcluded(ctx: CheckContext): CheckResult[] {
   const reqText = collectCurrentRequirementText(ctx.projectRoot, ctx.feature, featuresDirRel);
   const failures: string[] = [];
   for (const e of excluded) {
-    const quote = typeof e.requirement_quote === 'string' ? e.requirement_quote.trim() : '';
-    if (!quote) failures.push(`${e.element_id}：excluded 缺 requirement_quote`);
-    else if (!reqText.includes(quote)) failures.push(`${e.element_id}：requirement_quote「${quote}」未逐字出现在需求原文`);
+    const quoteCheck = checkRequirementQuote(e.requirement_quote, reqText);
+    if (quoteCheck === 'missing') failures.push(`${e.element_id}：excluded 缺 requirement_quote`);
+    else if (quoteCheck === 'not_verbatim') failures.push(`${e.element_id}：requirement_quote「${String(e.requirement_quote).trim()}」未逐字出现在需求原文`);
     if (covered.has(String(e.element_id).toLowerCase())) failures.push(`${e.element_id}：已被 ui-spec 覆盖，不得登记 excluded`);
   }
   return [{

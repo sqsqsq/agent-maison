@@ -1,0 +1,114 @@
+{
+  "label": "host-history-20260928",
+  "recorded_at": "2026-09-28",
+  "framework_source_commit": {
+    "note": "跨版本、初始现场不同，只作参考，不与受控基线混算，也不能替代 t5 的真实 agent 层基线",
+    "by_run": {
+      "20260924T135354Z-97af3f": "844606b3 之后的包（具体未核）",
+      "20260926T134302Z-0457a6": "4d3871eb",
+      "20260926T154226Z-ae92d8": "4d3871eb 加宿主手工补丁（change-unit-design-preparation.ts 的 repointHandWrittenContracts）",
+      "20260928T043051Z-be091c": "074a4c3c"
+    }
+  },
+  "initial_state": {
+    "host_commit": null,
+    "worktree_state": "未存档。各 run 起跑时的宿主现场不同：0457a6 起跑前手工 npm install，0457a6 与 ae92d8 之间在宿主 framework 目录手工打补丁，be091c 前同步了 074a4c3c 候选包",
+    "archive_path": null,
+    "archive_sha256sums": null
+  },
+  "environment": {
+    "adapter": "codex",
+    "adapter_version": "未核",
+    "model": "97af3f、0457a6、be091c 未钉模型（生效的是 adapter 用户配置里的默认模型）；ae92d8 钉 gpt-5.5",
+    "reasoning_effort": "未核",
+    "device": "真机 3UJ0225321000395",
+    "vision_provider": "claude / claude-opus-5",
+    "adapter_user_default_model": "~/.codex/config.toml：2026-09-26 至 2026-09-28 上午为 gpt-6-sol（当前账号不支持）；2026-09-28 下午改为 gpt-6-astra",
+    "changes": []
+  },
+  "notes": [
+    "交付周期边界：20260920T100035Z-f829b8（上一次可信完成，2026-09-24）。",
+    "be091c 停机后需要、但记录时尚未执行的动作：换模型或钉模型，并在下一条命令里多写一个 supersede 目标。未执行，不计入 interventions。"
+  ],
+  "tasks": [
+    {
+      "label": "host-history-bc-openCard-2",
+      "scenarios": ["S1", "S6", "S11"],
+      "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg",
+      "runs": [
+        "20260924T135354Z-97af3f",
+        "20260926T134302Z-0457a6",
+        "20260926T154226Z-ae92d8",
+        "20260928T043051Z-be091c"
+      ],
+      "recoverable_fault": true,
+      "interventions": [
+        {
+          "kind": "config_change",
+          "at": "97af3f 停机（2026-09-24T13:58:40Z）之后、0457a6 起跑（2026-09-26T13:43Z）之前",
+          "content": "97af3f 被 change_unit_invalid 阻断（蓝图 rev3 使已完成 CU 失效），宿主 agent 停下询问用户“CU 如何处置”；用户把问题带回 maison，框架侧修复并重新打包同步到宿主。不对应任何候选信号",
+          "actor": "用户 + maison 调度会话",
+          "necessary": false,
+          "related_events": [{ "run_id": "20260924T135354Z-97af3f", "event_index": 21 }]
+        },
+        {
+          "kind": "rescue_command",
+          "at": "0457a6 起跑前（run_created 2026-09-26T13:43:05Z）",
+          "content": "maison 会话给出逐步接续话术（第 0 至 3 步），宿主 agent 按话术起跑 0457a6，supersede f829b8 与 97af3f",
+          "actor": "maison 调度会话 → 宿主 agent",
+          "necessary": false,
+          "related_events": [{ "run_id": "20260926T134302Z-0457a6", "event_index": 2 }]
+        },
+        {
+          "kind": "manual_file_edit",
+          "at": "0457a6 起跑前",
+          "content": "宿主缺依赖，在 framework/harness 手工执行 npm install。不对应任何候选信号",
+          "actor": "未核（人工执行）",
+          "necessary": false,
+          "related_events": []
+        },
+        {
+          "kind": "rescue_command",
+          "at": "0457a6 期间（2026-09-26 13:43–15:25）",
+          "content": "救场指令本身有误：话术对链形状的预期写错（预期含 spec、plan，实际链为 coding→review→ut→testing），宿主 agent 据此杀掉了一条正确的 run。事件上 0457a6 第一段在 #11 harness_start 之后没有 run_end；#14 的 resume 由谁发出未核实，不关联，保持未确认",
+          "actor": "宿主 agent（按 maison 话术）",
+          "necessary": false,
+          "related_events": []
+        },
+        {
+          "kind": "manual_file_edit",
+          "at": "0457a6 停机（2026-09-26T15:25:58Z）之后、ae92d8 创建（15:42:27Z）之前",
+          "content": "在宿主 framework 目录手工打补丁：change-unit-design-preparation.ts 的 repointHandWrittenContracts。不对应任何候选信号",
+          "actor": "未核（人工执行）",
+          "necessary": false,
+          "related_events": []
+        },
+        {
+          "kind": "rescue_command",
+          "at": "ae92d8 起跑（run_created 2026-09-26T15:42:29Z）",
+          "content": "显式钉模型 --adapter-model gpt-5.5，并枚举三个 --supersede 目标（f829b8、97af3f、0457a6）。一条动作关联 supersede 与模型钉值变化两个信号，计一次",
+          "actor": "未核",
+          "necessary": false,
+          "related_events": [
+            { "run_id": "20260926T154226Z-ae92d8", "event_index": 2 },
+            { "run_id": "20260926T154226Z-ae92d8", "event_index": 0 }
+          ]
+        },
+        {
+          "kind": "rescue_command",
+          "at": "be091c 起跑（run_created 2026-09-28T04:31:34Z）",
+          "content": "枚举四个 --supersede 目标，未钉模型（相对 ae92d8 的 gpt-5.5 钉值被去掉，对应 be091c#0 的模型钉值变化候选）。be091c 启动即失败，没有落 supersede 事件，由本观察记录补入任务",
+          "actor": "未核",
+          "necessary": false,
+          "related_events": [{ "run_id": "20260928T043051Z-be091c", "event_index": 0 }]
+        }
+      ],
+      "independent_acceptance": {
+        "result": "fail",
+        "actor": "人工（查看 ae92d8 的失败截图）",
+        "basis": "任务未宣称完成。ae92d8：卡类型半模态溢出安全区，“同意并继续”按钮被裁切、点击不推进（TC-004、TC-005 第 11 步等 bcs_root 超时）；结果页存在需求明确排除的 NFC 卡（AddCardResultPage.ets 中 id 为 result_nfc_card）。be091c 未进入正式阶段，产品状态即 ae92d8 结束时的状态。97af3f、0457a6、be091c 本身未做独立验收（not_checked）"
+      },
+      "source": "maison 调度会话记录（2026-09-24 至 2026-09-28）与宿主只读核查，整理于 p1-t3-host-history-facts.md；run 列表中 be091c 由本观察补入（无 supersede 事件）；场景对应：0457a6/be091c 的 400 模型不支持 = S1，结果页含需求排除的 NFC 卡 = S6，testing 两轮 FAIL 的产品缺陷 = S11；S5 的前提在现场存在但本观察未单独记录其表现，不列；recoverable_fault=true 的依据是 ae92d8 钉 gpt-5.5 后越过了模型不支持"
+    }
+  ]
+}

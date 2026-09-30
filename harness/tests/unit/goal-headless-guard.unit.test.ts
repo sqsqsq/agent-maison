@@ -59,6 +59,7 @@ import {
   type CapabilityAdvisory,
 } from '../../scripts/goal-runner';
 import {
+  buildAgentTimeoutRepeatedGuidance,
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
@@ -343,21 +344,56 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'P0-3 非超时轮: 全 framework_bug → framework_bug；混装走既有归因',
+      // plan 4e6fb3b6 §4：原断言"混装走既有归因（落 code_regression）"被本 plan 改判——
+      // 存在框架阻断类 blocker 即按框架缺陷处理（与工具链阻断聚合同一做法），内容 blocker 留在 summary 里。
+      name: 'P0-3 非超时轮: 全 framework_bug → framework_bug；混装（存在框架阻断）同样 → framework_bug',
       run: () => {
         const pure = classifyFailureKind({
           verdict: 'FAIL',
           blockers: [{ id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' }],
         });
         assert(pure === 'framework_bug', pure);
-        const mixed = classifyFailureKind({
+        const mixedSummary = {
           verdict: 'FAIL',
           blockers: [
-            { id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' },
             { id: 'some_new_lint_rule' },
+            { id: 'ui_spec_structure', classification: 'framework_bug', blocking_class: 'framework_internal' },
+          ],
+        };
+        const mixed = classifyFailureKind(mixedSummary);
+        assert(mixed === 'framework_bug', mixed);
+        assert(mixedSummary.blockers.some((b) => b.id === 'some_new_lint_rule'), '归因不得删掉内容 blocker');
+        // 只有 blocking_class=framework_internal（没有 classification）也属框架阻断类
+        const byClass = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [{ id: 'required_chapters' }, { id: 'x', blocking_class: 'framework_internal' }],
+        });
+        assert(byClass === 'framework_bug', byClass);
+      },
+    },
+    {
+      name: 'A3（plan 4e6fb3b6 §4）外部阻断类 blocker 排在第二位时仍按外部处理；顶层非外部 meta 不遮蔽',
+      run: () => {
+        const second = classifyFailureKind({
+          verdict: 'FAIL',
+          blockers: [
+            { id: 'required_chapters' },
+            { id: 'device_test_run', blocking_class: 'externalBlocked', classification: 'device_blocked' },
           ],
         });
-        assert(mixed === 'code_regression', mixed);
+        assert(second === 'external_block', `外部 blocker 在第二位：${second}`);
+        const shadowed = classifyFailureKind({
+          verdict: 'FAIL',
+          blocking_class: 'product_verdict',
+          blockers: [
+            { id: 'required_chapters', blocking_class: 'product_verdict' },
+            { id: 'device_test_run', classification: 'device_blocked' },
+          ],
+        });
+        assert(shadowed === 'external_block', `顶层非外部 meta 不得遮蔽外部 blocker：${shadowed}`);
+        // 对照：没有外部 blocker 仍按既有归因
+        const none = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'required_chapters' }] });
+        assert(none === 'code_regression', `无外部/框架 blocker 兜底 code_regression 保留：${none}`);
       },
     },
     {
@@ -722,7 +758,8 @@ export function runAll(): UnitCaseResult[] {
       name: 'harness PASS gate and closure catch remain wired together',
       run: () => {
         const source = fs.readFileSync(path.resolve(__dirname, '../../harness-runner.ts'), 'utf8');
-        const gate = source.indexOf("finalReport.summary.verdict === 'PASS'");
+        // plan f7045213 §5：闭环入口门读共享结论（base summary），不再读脚本报告的 legacy 结论。
+        const gate = source.indexOf("baseSummary.verdict === 'PASS'");
         const finalize = source.indexOf('finalizePhaseClosure({');
         const closureFatal = source.indexOf("'closure_finalization'");
         assert(gate >= 0 && finalize > gate, 'PASS gate must guard finalization');
@@ -2357,6 +2394,9 @@ export function runAll(): UnitCaseResult[] {
         assert(text.includes('phase-completion-receipt.md'), '须指向 receipt 路径');
         assert(text.includes('--resume 20260708T023859Z --force-resume'), '须给续跑命令');
         assert(!text.includes('device-screenshots'), '不得混用 visual-confirm 的截图话术');
+        // plan 4e6fb3b6 首轮评审 R5 同类修正：原"提高 phase_timeout_ms 后续跑"点的不是 manifest 字段，且超时字段是身份字段
+        assert(!text.includes('phase_timeout_ms') && text.includes('unattended.phase_timeout_seconds.spec')
+          && /--override-manifest/.test(text), `调超时的办法须点名真实字段并写明续跑带 --override-manifest：${text}`);
       },
     },
     {
@@ -2798,7 +2838,39 @@ export function runAll(): UnitCaseResult[] {
         assert(!/未做修复尝试(?!」)/.test(guidance.replace('「已证明没做修复尝试」', '')),
           `话术不得断言 agent 未做修复尝试：${guidance}`);
         assert(guidance.includes('testing_channel_evidence_obligation'), '话术须列出本轮 blocker');
-        assert(!/--force-resume/.test(guidance), '相关目标未知不是终态覆盖场景，不得引导 --force-resume');
+        // plan 4e6fb3b6 返修 2(b)：旗标只出现在"补齐来源之后"（e7a2c4f1 §3.6"不在无新事实时强推"的本意保留）。
+        // §7/§9：首选改为"补齐之后重新发起同一请求"（重新接入不要求 --force-resume），带旗标的完整命令降为
+        // "也可以显式执行"的备选——原"须写明旗标是恢复守卫的要求"随之改为断言首选与备选的先后。
+        const fillAt = guidance.indexOf('补齐之后');
+        const rerequestAt = guidance.indexOf('重新发起同一请求');
+        const explicitAt = guidance.indexOf('也可以显式执行');
+        const forceAt = guidance.indexOf('--force-resume');
+        assert(fillAt >= 0 && forceAt > fillAt, `--force-resume 只能出现在"补齐来源之后"：${guidance}`);
+        assert(rerequestAt > fillAt && explicitAt > rerequestAt && forceAt > explicitAt,
+          `首选须是补齐后重新发起同一请求，带旗标的命令只作备选：${guidance}`);
+        // plan 4e6fb3b6 首轮评审 R5-1（调度方裁定）：共享的重发说明须区分两种调用——有人在场不设冷却、补好即可立即重发；
+        // 无人值守在停止后 5 分钟内重发会保持停止，显式续跑也一样要等。笼统写"重新发起即可"会让无人值守的重发空转。
+        assert(/有人在场时补好即可立即重发/.test(guidance), `须写明有人在场不设冷却：${guidance}`);
+        assert(/无人值守时.{0,20}5 分钟内重发会先保持停止/.test(guidance), `须写明无人值守的冷却等待条件：${guidance}`);
+        assert(/显式续跑命令也一样要等/.test(guidance), `须写明显式续跑也不能越过冷却：${guidance}`);
+      },
+    },
+    {
+      // plan 4e6fb3b6 首轮评审 R5-2：unattended 是 manifest 身份字段（computeManifestIdentityFields），改超时后不带
+      // --override-manifest 的续跑会被身份漂移检查拒绝；--override-manifest 返回 'all'（整体授权），说明须如实写出范围。
+      name: 'P3 R5-2 连续超时说明：改 phase_timeout_seconds 后给出带 --override-manifest 的续跑命令，并写明整体授权只应改超时字段',
+      run: () => {
+        const g = buildAgentTimeoutRepeatedGuidance({
+          feature: 'bc-openCard', runId: '20260929T010203Z-abc123', phase: 'coding',
+          attemptDurationsMs: [3_600_000, 3_600_000, 5_400_000], effectiveTimeoutMs: 5_400_000,
+          harnessPrefixRel: 'framework/harness',
+        }).join('\n');
+        assert(g.includes('unattended.phase_timeout_seconds.coding'), `须点名真实的超时字段：${g}`);
+        const cmdLine = g.split('\n').find(l => l.includes('--resume 20260929T010203Z-abc123') && l.includes('--override-manifest'));
+        assert(Boolean(cmdLine), `改超时的出路须给出带 --override-manifest 的续跑命令：${g}`);
+        assert(/身份漂移检查拒绝/.test(g), `须写明不带授权会被身份漂移检查拒绝：${g}`);
+        assert(/整体授权/.test(g) && /只应改超时字段/.test(g), `须写明整体授权、这次只应改超时字段：${g}`);
+        assert(!/phase_timeout_ms/.test(g), `不得出现不存在的 manifest 字段 phase_timeout_ms：${g}`);
       },
     },
 

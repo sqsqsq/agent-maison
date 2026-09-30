@@ -604,27 +604,12 @@ function stageGoal(ctx) {
   }
   ctx.log('goal/T3①：supervisor 周期 probe 转绿后自动 resume 同一 run（无人工确认/无 supersede）');
 
-  // T3① 后继分支：用真实 crash 窗留下 RECOVERY_PENDING，再由 supervisor 消费
-  // 既有 phase_halt 的 successor_required 交接，生产 CLI 必须自动改走 --supersede，
-  // 并把责任阶段作为新 run 起点。
+  // T3① 后继：用真实 crash 窗留下的源 run 起一个真实后继（plan 4e6fb3b6 §5.3 起，supervisor 不再
+  // 自动 supersede——那一支没有生产产出方，已删除；原 supervisor_successor_wake 场景随之删除）。
   const successorFeature = 'supervisor-successor';
   runDriver('provision', null, successorFeature);
   const truncated = runDriver('successor_source_crash', null, successorFeature);
-  const successorWake = truncated.runId
-    ? runDriver('supervisor_successor_wake', truncated.runId, successorFeature)
-    : null;
-  const successorArgs = successorWake?.supervisorRunnerArgs ?? [];
-  if (!successorWake || successorWake.error !== null || successorWake.exitCode !== 0
-    || successorWake.supervisorAction !== 'resume'
-    || !successorArgs.includes('--start') || !successorArgs.includes('coding')
-    || !successorArgs.includes('--supersede') || !successorArgs.includes(truncated.runId)
-    || !successorArgs.includes('--force') || !successorArgs.includes('--detach')) {
-    throw new Error(
-      'goal/T3①：截断链不可回退时 supervisor 应自动 supersede 并从 coding 起后继。实得 '
-      + JSON.stringify({ truncated, successorWake }),
-    );
-  }
-  // 参数只是 supervisor 的意图；再启动一次真实 goal-runner，读取生产 writer
+  // 再启动一次真实 goal-runner，读取生产 writer
   // 写出的最终 successor manifest，钉住一次性出生字段不会被整对象深拷贝带过来。
   //
   // 2026-08-17：删去两条 `vision_lineage` 断言（源须为 'reset'、后继须不带该字段）。
@@ -641,10 +626,10 @@ function stageGoal(ctx) {
     || successorManifest.successor_of !== truncated.runId) {
     throw new Error(
       'goal/T3①：真实后继必须新起 run、从 coding 起步并写出 successor_of 绑定的 manifest。实得 '
-      + JSON.stringify({ truncated, successorWake, successorRun }),
+      + JSON.stringify({ truncated, successorRun }),
     );
   }
-  ctx.log('goal/T3①：截断链自动 supersede，真实后继从 coding 起步且 successor_of 绑定源 run');
+  ctx.log('goal/T3①：真实后继从 coding 起步且 successor_of 绑定源 run');
 
   const resume = runDriver('resume_after_park', park.runId);
   // ---- 目标断言（2026-08-06 垂直闭环落地，棘轮翻转而来；fa0663 的解）：

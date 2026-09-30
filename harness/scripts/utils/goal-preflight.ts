@@ -43,12 +43,16 @@ import { resolveUiRelevanceForRun } from './fidelity-shared';
 import {
   buildCanaryPrompt,
   generateRandomCanaryAnswerKey,
+  isModelUnsupportedFailure,
   renderCanaryImage,
   resolveCanaryCacheDecision,
   resolveCanaryHardCliFailure,
   resolveCanaryStdoutEnvelope,
   VISION_CANARY_PROBE_VERSION,
 } from './vision-canary';
+
+/** 金丝雀单次调用的固定允许时长；实际取它与剩余墙钟预算的较小者（plan 4e6fb3b6 §6.3）。 */
+export const VISION_CANARY_TIMEOUT_MS = 120_000;
 
 export type AdapterProvenance =
   | 'argv_adapter'
@@ -396,11 +400,15 @@ export async function runVisionCanaryProbe(input: {
   answerKeyFn?: typeof generateRandomCanaryAnswerKey;
   /** plan c4e8a1f7 T1a：session 级 resolved binary（与正式 invoke 同一绝对路径） */
   resolvedBinary?: ResolvedHeadlessBinary | null;
+  /** plan 4e6fb3b6 §6.3：单次允许时长——调用方取固定 120 秒与剩余墙钟预算的较小者；缺省 120 秒。 */
+  timeoutMs?: number;
 }): Promise<{
   ran: boolean;
   outcome?: VisionCanaryProbeOutcome;
   verdict?: 'tool_read' | 'ocr_capable' | 'none';
   error?: string;
+  /** hard_cli_failure 且属"模型不受支持"（isModelUnsupportedFailure）——获准替代只看这一类。 */
+  modelUnsupported?: boolean;
 }> {
   const { projectRoot, frameworkRoot, manifest } = input;
   const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
@@ -436,7 +444,9 @@ export async function runVisionCanaryProbe(input: {
       manifest.adapter_model_pin?.value,
       input.resolvedBinary,
     );
-    const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
+    const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, {
+      timeoutMs: input.timeoutMs ?? VISION_CANARY_TIMEOUT_MS,
+    });
     // plan d7f3a9c4 t4：硬失败分类在写盘判卷**之前**——child spawn race 与 CLI/config 参数
     // 不兼容只这两类升 hard_cli_failure（由 goal-runner 在 action==='probe' 真实路径升 BLOCKER）；
     // 其余 invoke 结果（auth/quota/API/无效答卷/超时/静默杀）保持既有非阻断语义。
@@ -451,7 +461,10 @@ export async function runVisionCanaryProbe(input: {
       ...(canaryStructuredStdout ? { structuredStdoutFormat: canaryEnvelope } : {}),
     });
     if (hardCli) {
-      return { ran: true, outcome: 'hard_cli_failure', error: hardCli };
+      return {
+        ran: true, outcome: 'hard_cli_failure', error: hardCli,
+        ...(isModelUnsupportedFailure(invoke) ? { modelUnsupported: true } : {}),
+      };
     }
     const decision = resolveCanaryCacheDecision({
       stdout: invoke.stdout,

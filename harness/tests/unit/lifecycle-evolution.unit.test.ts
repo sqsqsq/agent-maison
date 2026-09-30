@@ -46,29 +46,29 @@ import type { UnitCaseResult } from '../run-unit';
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
 type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
 type Writer = (p: RealChainProject) => void;
-const BLUEPRINT_ID = 'ledger-app-blueprint';
+export const BLUEPRINT_ID = 'ledger-app-blueprint';
 const FLAT_WRITERS: Record<Phase, Writer> = {
   spec: writeSpecMaterials, plan: writePlanMaterials, coding: writeCodingMaterials,
   review: writeReviewMaterials, ut: writeUtMaterials, testing: writeTestPlan,
 };
 const CU_WRITERS: Partial<Record<Phase, Writer>> = { coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials };
 
-function project(s: Snapshot, feature: string): RealChainProject {
+export function project(s: Snapshot, feature: string): RealChainProject {
   return feature === SNAPSHOT_CU_FEATURE
     ? { root: s.root, frameworkRoot: s.frameworkRoot, harnessDir: s.harnessDir, feature, module: 'ledger', modulePath: 'src/ledger' }
     : { root: s.root, frameworkRoot: s.frameworkRoot, harnessDir: s.harnessDir, feature, module: 'FinancialCard', modulePath: '02-Feature/FinancialCard' };
 }
 
-function assess(s: Snapshot, feature: string): FeatureAssessment {
+export function assess(s: Snapshot, feature: string): FeatureAssessment {
   clearFrameworkConfigCache();
   return assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
 }
-const brief = (a: FeatureAssessment): string =>
+export const brief = (a: FeatureAssessment): string =>
   JSON.stringify({ record: a.record, uncovered: a.obligations.filter(o => o.status === 'uncovered'), blocking: a.blocking });
 const blueprintDirs = (s: Snapshot): string[] => fs.readdirSync(featureFilePath(s.root, BLUEPRINT_ID, '')).sort();
 
 /** 快照原样加载（★1 基线用）。 */
-async function withSnapshot(run: (s: Snapshot) => Promise<void> | void): Promise<void> {
+export async function withSnapshot(run: (s: Snapshot) => Promise<void> | void): Promise<void> {
   const s = loadHostSnapshot();
   try {
     clearFrameworkConfigCache();
@@ -83,7 +83,7 @@ async function withSnapshot(run: (s: Snapshot) => Promise<void> | void): Promise
  * 真宿主形态：快照 + git 基线（真 harness 按提交核闭环与写集）。父进程 preflight 的假 DevEco 在基线前补齐，
  * 与 successor-exit `supersede()` 的写法逐字节相同，使后继起跑时工作树干净。
  */
-async function withHost(run: (s: Snapshot) => Promise<void>): Promise<void> {
+export async function withHost(run: (s: Snapshot) => Promise<void>): Promise<void> {
   await withSnapshot(async s => {
     const deveco = path.join(s.root, 'fake-deveco');
     const hvigorBin = path.join(deveco, 'tools', 'hvigor', 'bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw');
@@ -121,7 +121,7 @@ async function withHost(run: (s: Snapshot) => Promise<void>): Promise<void> {
     await run(s);
   });
 }
-function commit(s: Snapshot, message: string): void {
+export function commit(s: Snapshot, message: string): void {
   git(s.root, ['add', '-A']);
   git(s.root, ['commit', '-qm', message, '--allow-empty']);
 }
@@ -142,7 +142,7 @@ interface Outcome { source: string; successor: string; chain: string[]; reused: 
  * 通用不变量：出生链 = 预判 uncovered 责任阶段；新 completion 落后继 run 目录；旧原件字节不变；
  * `transfers` 追加为 [源, 后继]；无新 CU 目录；supersede 审计在后继 events。完成与否交调用方按场景断言。
  */
-async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
+export async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
   const { feature } = ev;
   const p = project(s, feature);
   const [source] = runIds(s.root, feature);
@@ -189,7 +189,7 @@ async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
 }
 
 /** 真 harness 跑后继链的逐阶段作者材料（`supersede()` 的 extra）。 */
-function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, Writer>>, after?: Partial<Record<Phase, Writer>>) {
+export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, Writer>>, after?: Partial<Record<Phase, Writer>>) {
   const hook = (phase: Phase) => (ctx: { runId: string; attempt: number }): void => {
     p.runId = factsIdentity(p, phase, ctx.runId);
     writers[phase]?.(p);
@@ -282,7 +282,7 @@ const AC9 = {
   verification_steps: ['打开全部银行页'], expected_result: '列表条目数与数据源一致', ut_layer: 'device', device_focus: '真机核对列表条目数',
 };
 
-function bumpBlueprint(s: Snapshot, mutate?: (bp: Record<string, unknown>) => void): void {
+export function bumpBlueprint(s: Snapshot, mutate?: (bp: Record<string, unknown>) => void): void {
   const file = componentBlueprintPath(s.root, BLUEPRINT_ID);
   const bp = YAML.parse(fs.readFileSync(file, 'utf8'));
   bp.revision = Number(bp.revision) + 1;
@@ -292,19 +292,19 @@ function bumpBlueprint(s: Snapshot, mutate?: (bp: Record<string, unknown>) => vo
 }
 
 /** 宿主升蓝图（附改动）→ 生产调和原位升版 → 提交。 */
-function bumpAndReconcile(s: Snapshot, mutate: (bp: Record<string, unknown>) => void, message: string): void {
+export function bumpAndReconcile(s: Snapshot, mutate: (bp: Record<string, unknown>) => void, message: string): void {
   bumpBlueprint(s, mutate);
   const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
   assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
   commit(s, message);
 }
 /** 以 `source` 为源的后继出生范围（生产解析器预判，纯内存、不出生）。 */
-function successorChain(s: Snapshot, feature: string, source: string): string[] {
+export function successorChain(s: Snapshot, feature: string, source: string): string[] {
   clearFrameworkConfigCache();
   const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
   return resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!.phase_chain.map(String);
 }
-const freshness = (s: Snapshot, feature: string, chain: string[]): string[] =>
+export const freshness = (s: Snapshot, feature: string, chain: string[]): string[] =>
   recomputePhaseEvidenceStaleness(s.root, feature, chain, { frameworkRoot: s.frameworkRoot }).map(r => `${r.phase}:${r.verdict}`);
 
 /**
@@ -348,7 +348,7 @@ function dropFirstDevelopmentModule(bp: Record<string, unknown>): string {
  * L1b / L1c 共用前半段：plan 阶段 agent 手写三份派生文件（无来源戳）→ 真 harness 跑一条后继，让完成记录绑定这些手写文件
  *（宿主原始完成的替身）。返回该完成 run 与出生链预判函数。
  */
-async function handWrittenCompletion(s: Snapshot): Promise<{ completed: string; predict: (source: string) => string[] }> {
+export async function handWrittenCompletion(s: Snapshot): Promise<{ completed: string; predict: (source: string) => string[] }> {
   const feature = SNAPSHOT_CU_FEATURE;
   const p = project(s, feature);
   const requirement = (runId: string) => readJson<{ requirement: string }>(runFile(s.root, feature, runId, 'manifest.json')).requirement;
@@ -381,7 +381,7 @@ const keepSpecEstablished: Writer = p => {
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^established_by: coding$/m, 'established_by: spec'));
 };
 /** 后继链首为 spec 的 CU 作者材料；`align` = spec 责任方是否按设计权威对齐 acceptance。 */
-function specFirstCuHooks(p: RealChainProject, align: boolean) {
+export function specFirstCuHooks(p: RealChainProject, align: boolean) {
   const hooks = authorHooks(p, CU_WRITERS, { coding: keepSpecEstablished, review: keepSpecEstablished, ut: keepSpecEstablished });
   return { ...hooks, onSpec: (ctx: { runId: string; attempt: number }): void => {
     establishFactsAtSpec(p, ctx.runId);

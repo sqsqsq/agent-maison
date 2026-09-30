@@ -155,15 +155,23 @@ const cases: TestCase[] = [
         fs.appendFileSync(path.join(prior.runDir, 'events.jsonl'), `${JSON.stringify({
           ts: '2026-09-20T10:00:00.000Z', type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug',
         })}\n`);
-        let refused = '';
-        try {
-          prepareGoalModeRun({
-            projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
-            feature: 'bc-openCard', runId: 'attended-refused', adapter: 'codex',
-            requirement: 'rewritten inline request', endPhase: 'spec',
-          });
-        } catch (error) { refused = (error as Error).message; }
-        assert(/fresh run refused/.test(refused), `prepare-run 未走 continuation guard：${refused}`);
+        // plan 4e6fb3b6 §7：prepare-run 先走接续决策。同一请求 → 重新接入原 run（不新建）。
+        const same = prepareGoalModeRun({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: 'attended-same', adapter: 'codex',
+          requirement: 'same inline request', endPhase: 'spec',
+        });
+        assert(same.continuation.kind === 'rejoin' && same.manifest.run_id === 'attended-failed', `同一请求须重新接入原 run：${JSON.stringify(same.continuation)}`);
+        // 全量回归裁定（甲）：原 run 从未正式开始过（没有执行证据可继承），改写过的需求按新开出生——不继承、不合并。
+        // 有人在场入口起后继（R4）由 successor-exit 的"快照完成 run 持有范围"用例覆盖。
+        const rewritten = prepareGoalModeRun({
+          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
+          feature: 'bc-openCard', runId: 'attended-rewritten', adapter: 'codex',
+          requirement: 'rewritten inline request', endPhase: 'spec',
+        });
+        assert(rewritten.continuation.kind === 'fresh' && rewritten.manifest.run_id === 'attended-rewritten' && !rewritten.manifest.successor_of,
+          `从未开始过的 run + 需求不同须新开：${JSON.stringify(rewritten.continuation)}`);
+        assert(rewritten.manifest.requirement === 'rewritten inline request', `新开不合并旧需求：${rewritten.manifest.requirement}`);
         const forced = prepareGoalModeRun({
           projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
           feature: 'bc-openCard', runId: 'attended-forced', adapter: 'codex',

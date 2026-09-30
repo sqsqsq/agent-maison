@@ -410,6 +410,7 @@ function issueStrictSubject(
   phase: string,
   report: ScriptReport,
   contextFiles: ContextFileEntry[] = [],
+  goalBriefText?: string,
 ): string {
   const frameworkRoot = path.dirname(HARNESS_ROOT);
   const spec = loadWorkflowSpec(frameworkRoot, 'spec-driven');
@@ -440,7 +441,8 @@ function issueStrictSubject(
     templateText: '# verify template\n',
     checks: report.checks,
     contextFiles,
-  });
+    ...(goalBriefText === undefined ? {} : { goalBriefText }),
+  } as Parameters<typeof buildVerifierMaterialView>[0]);
   const summary = withGoalRunEnv('run-X', () =>
     writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material }),
   );
@@ -1089,6 +1091,44 @@ const cases: Array<{ name: string; run: () => void }> = [
           summary.next_action === 'fix_verifier_findings_then_rerun_harness',
           `已有 FAIL 时必须指向修缺陷，实得 ${summary.next_action}`,
         );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // plan 33784ed1 C2：目标简报进材料摘要后在途 feature 换一次 subject；历史有过 PASS 的阶段
+    // 只出 MAJOR 警告并沿用（差异如实点名 goal_brief），不阻断；从未 PASS 的仍须评审。
+    name: 'C2（plan 33784ed1）：只有简报进材料 → 换 subject；历史 PASS 沿用 + MAJOR 警告点名 goal_brief；从未 PASS 仍阻断',
+    run: () => {
+      const { root } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });
+      try {
+        const reportsDir = path.join(root, 'doc', 'features', 'demo', 'review', 'reports');
+        const report = passScriptReport('review', root);
+        const before = issueStrictSubject(root, 'review', report);
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: 'review', subjectId: before, skipSummaryPatch: true });
+        const after = issueStrictSubject(root, 'review', report, [], '## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。');
+        assert(after !== before, '构造性前提：简报进入材料摘要后必须换 subject');
+        const goal = { runId: 'run-X', attemptId: 'i8', attemptPhase: 'review' };
+        const r = spawnCheckReceipt(root, 'review', goal);
+        assert(r.status === 0, `历史 PASS 沿用不得阻断，实得 exit ${r.status}\n${r.stdout}\n${r.stderr}`);
+        assert(r.stdout.includes('verifier_prior_pass_reused') && r.stdout.includes('goal_brief'),
+          `须出 MAJOR 沿用警告并点名 goal_brief；stdout:\n${r.stdout}`);
+
+        // 反面：历史只有 FAIL（从未 PASS）→ 当前 subject 无报告即阻断，不走沿用。
+        const { root: failRoot } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });
+        try {
+          const failReports = path.join(failRoot, 'doc', 'features', 'demo', 'review', 'reports');
+          const failReport = passScriptReport('review', failRoot);
+          const old = issueStrictSubject(failRoot, 'review', failReport);
+          publishFixtureVerifierEvidence({ projectRoot: failRoot, reportsDir: failReports, feature: 'demo', phase: 'review', subjectId: old, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
+          issueStrictSubject(failRoot, 'review', failReport, [], '## 目标简报（goal brief）\n\n### 判定办法\n\n按目标裁决。');
+          const f = spawnCheckReceipt(failRoot, 'review', goal);
+          assert(f.status !== 0 && `${f.stdout}${f.stderr}`.includes('verifier_evidence_report_missing'),
+            `从未 PASS 的阶段须评审，实得 exit ${f.status}\n${f.stdout}\n${f.stderr}`);
+        } finally {
+          fs.rmSync(failRoot, { recursive: true, force: true });
+        }
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

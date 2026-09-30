@@ -47,6 +47,11 @@ export interface VerifierMaterialView {
   lifecycle_sha256: string;
   /** 实例扩展输入（manifest 1.1 knowledge 索引 / 阶段绑定 / mcp usage，装配进 prompt 尾部）哈希；无则空串 */
   extension_sha256: string;
+  /**
+   * 目标简报（plan 33784ed1 §3.4，装配进 prompt 尾部的渲染文本）哈希；无简报为空串。
+   * 空串时不进 computeMaterialSha256——material_sha256 与引入本分量之前逐字节相同。
+   */
+  goal_brief_sha256?: string;
   /** 按路径排序的材料文件 */
   files: VerifierMaterialFile[];
   material_sha256: string;
@@ -83,6 +88,7 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
       `lifecycle_sha256=${view.lifecycle_sha256 ?? ''}`,
       `extension_sha256=${view.extension_sha256 ?? ''}`,
       ...(view.input_bindings_sha256 ? [`input_bindings_sha256=${view.input_bindings_sha256}`] : []),
+      ...(view.goal_brief_sha256 ? [`goal_brief_sha256=${view.goal_brief_sha256}`] : []),
       ...view.script_checks.map(c => `check=${c}`),
       ...view.files.map(f => `file=${f.path} sha256=${f.sha256 ?? '<absent>'}`),
     ].join('\n'),
@@ -107,6 +113,8 @@ export interface BuildVerifierMaterialInput {
   lifecycleFragments?: ReadonlyArray<string>;
   /** 装配进 prompt 尾部的实例扩展输入（formatExtensionPhasePrompt 输出） */
   extensionInstructions?: string;
+  /** 装配进 prompt 尾部的目标简报渲染文本（renderGoalBrief 输出） */
+  goalBriefText?: string;
 }
 
 export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): VerifierMaterialView {
@@ -158,6 +166,7 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
     template_sha256: sha256Text(input.templateText),
     lifecycle_sha256: input.lifecycleFragments && input.lifecycleFragments.length > 0 ? sha256Text(input.lifecycleFragments.join('\n---\n')) : '',
     extension_sha256: input.extensionInstructions ? sha256Text(input.extensionInstructions) : '',
+    goal_brief_sha256: input.goalBriefText ? sha256Text(input.goalBriefText) : '',
     script_checks: input.checks.map(c => `${c.id}=${c.status}/${c.severity}`).sort(),
     files: [...files.entries()].map(([p, sha256]) => ({ path: p, sha256 })).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
   };
@@ -202,6 +211,7 @@ export function diffVerifierMaterial(prev: VerifierMaterialView | null, curr: Ve
   if (prev.template_sha256 !== curr.template_sha256) out.push('verifier_prompt_template');
   if ((prev.lifecycle_sha256 ?? '') !== (curr.lifecycle_sha256 ?? '')) out.push('lifecycle_hook_fragments');
   if ((prev.extension_sha256 ?? '') !== (curr.extension_sha256 ?? '')) out.push('extension_instructions');
+  if ((prev.goal_brief_sha256 ?? '') !== (curr.goal_brief_sha256 ?? '')) out.push('goal_brief');
   if (prev.script_checks.join('\n') !== curr.script_checks.join('\n')) out.push('script_report_checks');
   const prevFiles = new Map(prev.files.map(f => [f.path, f.sha256]));
   const currFiles = new Map(curr.files.map(f => [f.path, f.sha256]));

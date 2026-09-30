@@ -926,7 +926,8 @@ export interface AgentInvokeResult {
   /**
    * plan e6b3f8d2 t1：terminal 事件里的**纯诊断**摘要——`turn.failed` 的错误正文与
    * 顶层 `error` 事件（后者非契约终态：error→重试成功→turn.completed 合法）。
-   * 只进 `agent_invoke_end` 供排障，**不参与**任何 settle / classifier / retry 判据。
+   * 进 `agent_invoke_end` 供排障，不参与 settle 判据；`turn.failed` 段的状态码另供 CLI 硬失败
+   * 与 codex 瞬时识别（plan 4e6fb3b6 §4），顶层 `error` 段不参与任何判定。
    */
   terminal_error_excerpt?: string;
   signal?: string | null;
@@ -1448,9 +1449,11 @@ async function spawnHeadlessAsync(
   }
 
   // plan e6b3f8d2 t1：terminal 摘要——`turn.failed` 正文 + 顶层 `error` 事件（解析后明文）。
-  // 不参与 settle / retry / api_disconnected / failure classifier；唯一例外：exit≠0 时作为
-  // resolveInvokeHardCliFailure 的输入，只按 400 信封 + 实采措辞表（CODEX_400_PERMANENT_KINDS）
-  // 判适配器硬失败（stdout 里同一信封是转义形态，命不中）。删掉它会让 400 退回门禁误归因。
+  // 不参与 settle / api_disconnected；例外只有两处，且都只读终态信封：exit≠0 时作为
+  // resolveInvokeHardCliFailure 的输入（400 信封 + 实采措辞表 CODEX_400_PERMANENT_KINDS；
+  // plan 4e6fb3b6 起 `turn.failed` 段的 401/403 也算），以及 goal-headless-sentinel 的 codex 分支
+  // （`turn.failed` 段的 429/5xx 归瞬时重试）。顶层 `error` 段不参与任何判定。
+  // stdout 里同一信封是转义形态，命不中；删掉它会让 400 退回门禁误归因。
   const terminalDiagnostics = [
     ...(terminalState?.failureExcerpt ? [`turn.failed: ${terminalState.failureExcerpt}`] : []),
     ...(terminalState?.errorExcerpts ?? []).map((e) => `error: ${e}`),

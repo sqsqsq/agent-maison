@@ -691,6 +691,12 @@ ${rv.stdout}`);
         const hr = runHarness(harnessDir, ['--phase', 'spec', '--feature', 'demo', '--summary'], root);
         const summary = readJson(root, 'doc/features/demo/spec/reports/summary.json');
         assert(summary.verdict === 'INCOMPLETE', `反例 verdict=${summary.verdict}，stdout=${hr.stdout}`);
+        // plan f7045213 §5：能力输入缺口时脚本报告 legacy 结论仍为 PASS，但退出码、控制台与 summary 同读共享结论。
+        const legacyReport = readJson(root, 'doc/features/demo/spec/reports/script-report.json') as { summary?: { verdict?: string } };
+        assert(legacyReport.summary?.verdict === 'PASS', `前提：legacy 结论 PASS（两结论不一致的情形），got ${legacyReport.summary?.verdict}`);
+        assert(hr.status !== 0, `共享结论 INCOMPLETE 时退出码须非零，got ${hr.status}`);
+        assert(hr.stdout.includes('Verdict: INCOMPLETE') && !hr.stdout.includes('Verdict: PASS'), `控制台结论须为 INCOMPLETE：${hr.stdout}`);
+        assert(hr.stdout.includes('部分就绪（INCOMPLETE）'), `最终控制台须为 INCOMPLETE：${hr.stdout}`);
         const cap = (summary.capability_resolutions as Array<{ id: string; state: string }>)
           .find((c) => c.id === 'capability_spec_requirement')!;
         assert(cap.state === 'blocked', `requirement 应 blocked，got ${cap.state}`);

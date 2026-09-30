@@ -715,6 +715,8 @@ export function checkChangeUnitFeatureProjection(
       severity: 'BLOCKER' as const,
       status: 'FAIL' as const,
       details: item.message,
+      // route=reconcile_blueprint 的责任在链外设计 owner：与 authoritative_content_aligned 无效分支同一字段，goal 首次即停交设计 owner。
+      ...(item.route === 'reconcile_blueprint' ? { repair_owner: 'external' as const } : {}),
       suggestion: item.route === 'reconcile_blueprint'
         ? '停止 Feature 补模，返回 P1 调和 canonical blueprint。'
         : item.route === 'repair_change_unit'

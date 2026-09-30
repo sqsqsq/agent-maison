@@ -4369,10 +4369,21 @@ export function runAll(): UnitCaseResult[] {
     fn: (root: string) => void,
   ): void => {
     const { root } = seedTieringProject({ alignRefIds: true, regionAttest: true, anchorCount: 3, patch });
+    // plan f7045213 第二批返修 R1：授权判定对排除登记核引文——带排除登记时给一个冻结需求含该引文的权威 run（宿主 ae92d8 同形）。
+    const needsQuote = (refElements ?? []).some(e => e.disposition === 'excluded');
+    const prevRunId = process.env.MAISON_GOAL_RUN_ID;
     try {
       if (refElements) writeRefElements(root, refElements);
+      if (needsQuote) {
+        const { buildGoalManifestFromInput } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+        const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+        createGoalRun({ projectRoot: root, manifest: buildGoalManifestFromInput({ feature: 'bank-card', run_id: 'p4-a2', requirement: `首页展示余额。${NFC_QUOTE}。`,
+          unattended: { write_mode: 'workspace-write', approval_mode: 'on-request' } }, { projectRoot: root }), chain: ['spec'] });
+        process.env.MAISON_GOAL_RUN_ID = 'p4-a2';
+      }
       fn(root);
     } finally {
+      if (prevRunId !== undefined) process.env.MAISON_GOAL_RUN_ID = prevRunId; else delete process.env.MAISON_GOAL_RUN_ID;
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }

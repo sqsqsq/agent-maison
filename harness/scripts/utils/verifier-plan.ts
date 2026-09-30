@@ -39,6 +39,7 @@
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { EvidenceLevel, EvidencePolicy, FeatureTrack, RuntimeMode } from './runtime-policy';
 import { isCheckNotApplicable } from './types';
+import { isBlockingCheck } from './check-disposition';
 
 export type VerifierPlanMode = 'disabled' | 'enabled';
 
@@ -275,7 +276,7 @@ export function canProduceVerifierRequest(
     return NOT_ALLOWED('存在 blocked capability（输入未解析）：先补齐输入，不进入失败诊断。');
   }
 
-  const blockerFails = input.checks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER');
+  const blockerFails = input.checks.filter(c => isBlockingCheck(c));
   const blockerSkips = input.checks.filter(
     c => c.status === 'SKIP' && c.severity === 'BLOCKER' && !isCheckNotApplicable(c),
   );

@@ -63,13 +63,15 @@ export function resolveChangeUnitExpectedExecution(
   projectRoot: string,
   featureId: string,
   forNewRun = false,
+  /** 调用方已知的框架根（框架与工程分开放时必须传）；缺省按工程布局推断。 */
+  frameworkRoot?: string,
 ): { expectedTrack: string; expectedChain: string[] } {
-  let workflow = resolveWorkflowSpec(projectRoot);
+  let workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
   let frozenTrack: string | undefined;
   if (forNewRun && workflow.schema_version === '1.2') {
     // 第五轮阻断 2：新 run 的交接期望链必须与**出生入口**同源。原来直接从候选算
     //（`resolveFeatureExecutionScope`），feature 已 S0→S1 时交接给的是 S0、出生用的是 S1。
-    const scope = resolveBirthExecutionScope(projectRoot, featureId, workflow).scope!;
+    const scope = resolveBirthExecutionScope(projectRoot, featureId, workflow, frameworkRoot).scope!;
     if (scope.completion_target !== 'feature') throw new Error('CU 施工交接需要 Feature 完成目标');
     return { expectedTrack: 'full', expectedChain: [...scope.phase_chain] };
   }
@@ -95,7 +97,7 @@ export function resolveChangeUnitExpectedExecution(
         if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
         const manifestFile = featureFilePath(projectRoot, featureId, 'goal-runs/' + record.run_id + '/manifest.json');
         const legacy = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : {};
-        workflow = workflowForExistingRun(workflow, legacy, inferRepoLayout(projectRoot).frameworkRoot);
+        workflow = workflowForExistingRun(workflow, legacy, frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot);
         if (Array.isArray(legacy.phase_chain)) frozenTrack = resolveFeatureTrack(undefined, legacy.phase_chain);
       }
     }

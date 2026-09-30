@@ -19,6 +19,8 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { RESULT_MARK, type GoalRunOutcome } from '../helpers/goal-run-driver';
 import type { UnitCaseResult } from '../run-unit';
+import { buildProductSelectionUnresolvedGuidance } from '../../scripts/utils/await-confirm-guidance';
+import { recordProductSelection } from '../../scripts/record-product-selection';
 
 const FEATURE = 'pc-preflight';
 const DRIVER = path.resolve(__dirname, '..', 'helpers', 'goal-run-driver.ts');
@@ -92,12 +94,12 @@ function setupMultiCandidateHost(): { root: string } {
 }
 
 /** spawn 子进程 driver（真实 goalMain 只在子进程内跑；父进程零 import/调用 goalMain）。 */
-function runDriver(projectRoot: string, envSpec?: string): GoalRunOutcome {
+function runDriver(projectRoot: string, envSpec?: string, scenario = 'product_selection_halt'): GoalRunOutcome {
   const r = spawnSync(
     process.execPath,
     [
       TS_NODE, '--transpile-only', DRIVER,
-      'product_selection_halt', FEATURE, '-', projectRoot,
+      scenario, FEATURE, '-', projectRoot,
       ...(envSpec ? [envSpec] : []),
     ],
     { encoding: 'utf-8', timeout: 300_000, cwd: path.resolve(__dirname, '..', '..') },
@@ -151,6 +153,66 @@ const cases: Array<{ name: string; run: () => void }> = [];
       try {
         const out = runDriver(root, 'HARNESS_DEVICE_TEST_PRODUCT=mirror');
         assertHaltedUnresolved(out, name);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  });
+}
+
+{
+  // plan 4e6fb3b6 批一返修 2(a)：停机说明里的恢复办法须经实际入口可用。该停机发生在 run_start 之前——
+  // 用 --resume 续跑会被"缺 authoritative run_start"守卫拒绝（本用例先证明这一点），说明因此改为
+  // "确认后重新发起同一请求"；再用 record-product-selection 的生产函数确认，以同一 requirement、
+  // 不带 --force 新开 run，断言它越过 product 检查正式开始。
+  const name = '返修 2(a)：product_selection_unresolved 说明的恢复办法经实际入口可用（--resume 被拒；确认后重新发起同一请求不被拒）';
+  cases.push({
+    name,
+    run: () => {
+      const { root } = setupMultiCandidateHost();
+      try {
+        const first = runDriver(root);
+        assertHaltedUnresolved(first, name);
+        const firstRunId = first.runId!;
+        const runEvents = (id: string): Array<{ type?: string; halt_reason?: string }> =>
+          fs.readFileSync(path.join(root, 'doc', 'features', FEATURE, 'goal-runs', id, 'events.jsonl'), 'utf-8')
+            .split('\n').filter(Boolean).map(l => JSON.parse(l) as { type?: string; halt_reason?: string });
+        assert(!runEvents(firstRunId).some(e => e.type === 'run_start'),
+          `${name}: 前提——启动即失败的 run 没有 run_start：${runEvents(firstRunId).map(e => e.type).join(',')}`);
+        // 按说明办：先经生产函数确认 product（二轮顺手项：确认放在负向调用之前，使拒绝只可能来自缺 run_start）
+        recordProductSelection(root, 'mirror');
+        // 旧说明的办法：--resume 该 run → 被"缺 authoritative run_start"守卫拒绝（exit 1，不产生新的 run_start）
+        const resumeOut = spawnSync(
+          process.execPath,
+          [TS_NODE, '--transpile-only', DRIVER, 'resume_after_park', FEATURE, '-', root, firstRunId],
+          { encoding: 'utf-8', timeout: 300_000, cwd: path.resolve(__dirname, '..', '..') },
+        );
+        const resumeText = `${resumeOut.stdout ?? ''}\n${resumeOut.stderr ?? ''}`;
+        const at = (resumeOut.stdout ?? '').lastIndexOf(RESULT_MARK);
+        const resumed = JSON.parse((resumeOut.stdout ?? '').slice(at + RESULT_MARK.length)) as GoalRunOutcome;
+        assert(resumed.exitCode === 1 && !runEvents(firstRunId).some(e => e.type === 'run_start'),
+          `${name}: 没有 run_start 的 run 用 --resume 应被拒：${JSON.stringify({ exit: resumed.exitCode, err: resumed.error })}`);
+        assert(/--resume 需要 events 含有效 authoritative run_start/.test(resumeText)
+          // driver 结果 JSON 会带出 run1 的历史停机记录，故只看本次调用有没有打出 product 检查的停机横幅
+          && !/===== product_selection_unresolved =====/.test(resumeText),
+        `${name}: 拒绝原因须是缺 run_start（而非 product 检查）：${resumeText.slice(-800)}`);
+        const guidance = buildProductSelectionUnresolvedGuidance({
+          feature: FEATURE, phase: 'spec', candidates: ['product', 'mirror'], projectRoot: root,
+        }).join('\n');
+        assert(!/run goal -- [^\n]*--resume/.test(guidance), `${name}: 说明不得再给 --resume 续跑命令：${guidance}`);
+        assert(/重新发起同一请求/.test(guidance), `${name}: 说明须写重新发起同一请求：${guidance}`);
+        // 重新发起同一请求（不带 --force）。plan 4e6fb3b6 §7：接续决策把它判为重新接入这个启动即失败的 run（附着），
+        // 不新建 run；product 检查照常重做，确认过的选择让它越过检查正式开始。
+        const rerun = runDriver(root, undefined, 'product_selection_rerun');
+        assert(rerun.error === null, `${name}: 重新发起不得抛异常：${rerun.error}`);
+        const runsDir = path.join(root, 'doc', 'features', FEATURE, 'goal-runs');
+        assert(fs.readdirSync(runsDir).filter(n => !n.startsWith('.')).length === 1, `${name}: 重新接入同一 run，不新建：${fs.readdirSync(runsDir).join(',')}`);
+        const rerunEvents = runEvents(firstRunId);
+        const startAt = rerunEvents.findIndex(e => e.type === 'run_start');
+        assert(startAt >= 0,
+          `${name}: 重新接入后须正式开始（不被恢复守卫等入口拒绝）：${rerunEvents.map(e => e.type).join(',')}`);
+        assert(!rerunEvents.slice(startAt).some(e => e.halt_reason === 'product_selection_unresolved'),
+          `${name}: 确认后不得再以 product_selection_unresolved 停`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

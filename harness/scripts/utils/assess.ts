@@ -542,11 +542,8 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
         closure = evidenceVerdict === 'fresh' ? 'closed' : 'stale';
       }
     } else {
-      const scriptReport = readJson(path.join(reportsDir, 'script-report.json'));
-      const scriptVerdict = scriptReport && scriptReport !== 'corrupt'
-        ? String((scriptReport.summary as { verdict?: unknown } | undefined)?.verdict ?? verdict ?? '')
-        : verdict ?? undefined;
-      closure = resolvePhaseClosureSource(track, scriptVerdict, undefined) === 'closed_by_exit_report'
+      // plan f7045213 §5：lite 闭环读 summary 的共享结论（与退出码、控制台同源），不再读脚本报告的 legacy 结论。
+      closure = resolvePhaseClosureSource(track, verdict ?? undefined, undefined) === 'closed_by_exit_report'
         ? 'closed'
         : 'open';
     }
@@ -1017,7 +1014,7 @@ function completionAssessmentRecommendation(
   let a: ReturnType<typeof assessFeatureCompletion>;
   try {
     a = assessFeatureCompletion(options.projectRoot, options.feature, {
-      ...resolveChangeUnitExpectedExecution(options.projectRoot, options.feature),
+      ...resolveChangeUnitExpectedExecution(options.projectRoot, options.feature, false, options.frameworkRoot),
       frameworkRoot: options.frameworkRoot,
     });
   } catch {

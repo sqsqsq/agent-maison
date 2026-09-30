@@ -128,6 +128,7 @@ import {
 import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS } from './utils/quality-axes';
 import { extractUtItBlocks } from './utils/ut-it-blocks';
 import { hasExactUtBranchTag, hasExactUtScopeTag } from './utils/ut-tag-match';
+import { isBlockingCheck } from './utils/check-disposition';
 
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 
@@ -4225,7 +4226,7 @@ function buildUtRunStatusResult(
     test?.status === 'FAIL' &&
     (test.blocking_class === 'externalBlocked' || test.failure_kind === 'device_blocked');
   const compilePassed = build?.status === 'PASS';
-  const blockerFails = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
+  const blockerFails = results.filter(r => isBlockingCheck(r));
   const canClaimDone = blockerFails.length === 0 && test?.status === 'PASS';
   // 设备阻塞是否为唯一 BLOCKER（决定 INCOMPLETE 而非 FAIL 的资格）
   const deviceBlockedIsOnlyBlocker =
@@ -4674,7 +4675,7 @@ const checker: PhaseChecker = {
     featureGate('boundary_coverage', () => checkBoundaryCoverage(ctx, coverageUtFiles, dags), 'traceability', 'traceability_checks');
 
     if (acCoverageReport && acCoverageRel) {
-      const blockers = results.filter(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
+      const blockers = results.filter(r => isBlockingCheck(r));
       if (blockers.length === 0) {
         results.push({
           id: 'ut_ac_coverage_report_written',

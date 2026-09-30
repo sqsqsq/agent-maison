@@ -100,7 +100,9 @@ test('A2: missing_render 缺 ref_element → schema 命中；带 ref_element / �
   assert.ok(!hasErr(validateErrors({ defects: [{ class: 'shape_mismatch', element: 'result_status', severity: 'major', note: 'x' }] }), 'ref_element'));
 });
 
+// plan f7045213 第二批返修 R1：排除登记须在授权判定处核引文——夹具带上含该引文的目标文本（否则排除不被采用）。
 const A2_SCOPE = {
+  requirementText: '首页展示余额。再往下的激活nfc部分本次先不需要。',
   refElements: [
     { element_id: 'result_nfc_card', disposition: 'excluded' as const, requirement_quote: '再往下的激活nfc部分本次先不需要' },
     { element_id: 'result_banner', disposition: 'defer' as const },
@@ -139,6 +141,79 @@ test('三轮返修#1: 排除范围优先于缺陷分类；非 missing_render 锚
   assert.strictEqual(defectRepairAuthority(d('shape_mismatch', { source: provider, bbox: [0.1, 0.1, 0.2, 0.2] }), A2_SCOPE), 'incomplete', 'provider 源无锚点不得借省略标识重获授权');
   assert.strictEqual(defectRepairAuthority(d('other', {}), A2_SCOPE), 'incomplete', '无 source（primary 手写）无锚点同判证据不全');
   assert.strictEqual(defectRepairAuthority(d('shape_mismatch', { source: provider }), { refElements: null, uiSpecIds: new Set<string>() }), 'authorized', '无声明源（legacy）维持现状');
+});
+
+// ---- plan 33784ed1 t3（A15/A16）：unexpected_render——实现有、目标不要；授权按方向区分 ----
+
+test('A16: unexpected_render schema——element 或 bbox 至少一个；requirement_quote 须为字符串', () => {
+  assert.ok(!hasErr(validateErrors({ defects: [{ class: 'unexpected_render', element: 'result_nfc_card', severity: 'major', note: 'x' }] }), 'defects'));
+  assert.ok(!hasErr(validateErrors({ defects: [{ class: 'unexpected_render', bbox: [0.1, 0.1, 0.2, 0.2], severity: 'major', note: 'x', requirement_quote: 'q' }] }), 'defects'));
+  assert.ok(hasErr(validateErrors({ defects: [{ class: 'unexpected_render', severity: 'major', note: 'x' }] }), 'unexpected_render 须带 element 或 bbox'));
+  assert.ok(hasErr(validateErrors({ defects: [{ class: 'unexpected_render', element: 'a', severity: 'major', note: 'x', requirement_quote: 3 }] }), 'requirement_quote'));
+});
+
+test('A15/A16: unexpected_render 授权判定表（按序四行）；其余类别锚在 excluded 上仍 excluded', () => {
+  const REQ = '首页展示余额。再往下的激活nfc部分本次先不需要。不要显示推广横幅。';
+  const scope = { ...A2_SCOPE, requirementText: REQ };
+  const ur = (extra: Record<string, unknown>) => ({ class: 'unexpected_render' as const, severity: 'major' as const, note: 'x', ...extra });
+  assert.strictEqual(defectRepairAuthority(ur({ element: 'result_nfc_card' }), scope), 'authorized', '① 锚点登记为 excluded → 可返修（删除）');
+  assert.strictEqual(defectRepairAuthority(ur({ element: 'RESULT_NFC_CARD' }), scope), 'authorized', '① 大小写不敏感');
+  assert.strictEqual(defectRepairAuthority(ur({ bbox: [0.1, 0.1, 0.2, 0.2], requirement_quote: '不要显示推广横幅' }), scope), 'authorized', '② 引文逐字 → 可返修');
+  assert.strictEqual(defectRepairAuthority(ur({ element: 'promo_banner', requirement_quote: '不要显示推广横幅' }), { ...scope, requirementText: '' }), 'scope_unclear', '② 目标文本不可得 → 不逐字');
+  assert.strictEqual(defectRepairAuthority(ur({ element: 'promo_banner', requirement_quote: '不要显示广告' }), scope), 'scope_unclear', '③ 引文不逐字 → 只披露');
+  assert.strictEqual(defectRepairAuthority(ur({ element: 'result_status' }), scope), 'scope_unclear', '③ 锚点是已声明要实现的元素 → 只披露');
+  assert.strictEqual(defectRepairAuthority(ur({ bbox: [0.1, 0.1, 0.2, 0.2] }), scope), 'scope_unclear', '③ 无锚无引文 → 只披露');
+  assert.strictEqual(defectRepairAuthority(ur({ element: 'promo_banner' }), { refElements: null, uiSpecIds: new Set<string>() }), 'scope_unclear', '③ 无声明源也不放行');
+  // ④ 其余类别不变（既有 :130 断言同义复核）
+  assert.strictEqual(defectRepairAuthority({ class: 'clipping', element: 'result_nfc_card', severity: 'major', note: 'x' }, scope), 'excluded');
+  assert.strictEqual(defectRepairAuthority({ class: 'other', element: 'result_done', requirement_quote: '不要显示推广横幅', severity: 'major', note: 'x' } as never, scope), 'authorized', '其余类别的引文不参与判定');
+});
+
+test('P4 A10: 授权判定对排除登记做同源引文核验——不通过（含目标文本取不到）不算排除、按已登记或未登记处理，通过时方向区分保持', () => {
+  const REQ = '首页展示余额。再往下的激活nfc部分本次先不需要。';
+  const forged = {
+    refElements: [
+      { element_id: 'result_nfc_card', disposition: 'excluded' as const, requirement_quote: '再往下的激活nfc部分本次先不需要' },
+      { element_id: 'result_promo', disposition: 'excluded' as const, requirement_quote: '推广位本次不做' },
+      { element_id: 'result_quoteless', disposition: 'excluded' as const },
+      { element_id: 'result_status', disposition: 'excluded' as const, requirement_quote: '状态栏不做' },
+    ],
+    uiSpecIds: new Set(['result_status']),
+    requirementText: REQ,
+  };
+  const mr = (ref: string) => ({ class: 'missing_render' as const, element: 'result_nfc_card', ref_element: ref, severity: 'major' as const, note: 'x' });
+  const clip = (anchor: string) => ({ class: 'clipping' as const, element: anchor, severity: 'major' as const, note: 'x' });
+  const ur = (anchor: string) => ({ class: 'unexpected_render' as const, element: anchor, severity: 'major' as const, note: 'x' });
+  // 核验通过：排除照旧，方向区分保持（unexpected_render 可返修，其余类别按排除）
+  assert.strictEqual(defectRepairAuthority(mr('result_nfc_card'), forged), 'excluded');
+  assert.strictEqual(defectRepairAuthority(ur('result_nfc_card'), forged), 'authorized');
+  // 引文不逐字 / 缺引文：不算排除，缺陷按未登记处理
+  assert.strictEqual(defectRepairAuthority({ ...mr('result_promo'), element: 'result_status' }, forged), 'scope_unclear', '引文不逐字的排除 → 未登记');
+  assert.strictEqual(defectRepairAuthority(clip('result_quoteless'), forged), 'scope_unclear', '缺引文的排除 → 未登记');
+  assert.strictEqual(defectRepairAuthority(clip('result_status'), forged), 'authorized', '核验不通过、但 ui-spec 已声明 → 按已登记返修');
+  assert.strictEqual(defectRepairAuthority(ur('result_promo'), forged), 'scope_unclear', '无效排除不给 unexpected_render 删除授权');
+  const view = effectiveScreens({ screens: [{ screen_id: 's', verdict: 'fail', must_fix: ['fix status'], defects: [{ ...clip('result_status'), must_fix_refs: [0] }] }] }, forged);
+  assert.deepStrictEqual(view.excluded, [], '无效排除不进排除披露');
+  assert.strictEqual(view.screens[0].verdict, 'fail', '被无效排除挡住的缺陷重新进入返修');
+  // 当前目标文本取不到（codex 第二批返修 R1，撤回上一轮"取不到即沿用"）：核验不了就不采用 excluded，走既有的已登记/未登记分支——
+  // ui-spec 已声明的元素缺陷保留并进入返修；未声明的只披露（scope_unclear），被排除的内容不会因此被要求实现，也拿不到删除授权。
+  const unreadable = { ...forged, requirementText: '' };
+  assert.strictEqual(defectRepairAuthority({ ...mr('result_status'), element: 'result_status' }, unreadable), 'authorized', '空文本 + 伪造排除 + ui-spec 已声明 → 缺陷保留、进入返修');
+  assert.strictEqual(defectRepairAuthority(clip('result_status'), unreadable), 'authorized');
+  assert.strictEqual(defectRepairAuthority(clip('result_promo'), unreadable), 'scope_unclear', '空文本 + 未声明元素 → 只披露');
+  assert.strictEqual(defectRepairAuthority(ur('result_promo'), unreadable), 'scope_unclear', '空文本不给删除授权');
+  assert.strictEqual(defectRepairAuthority(ur('result_nfc_card'), unreadable), 'scope_unclear', '真引文在空文本下也核验不了，不给删除授权');
+});
+
+test('A15: effectiveScreens 保留锚在 excluded 上的 unexpected_render（不进 excluded 清单），同屏 clipping 照剔', () => {
+  const ur = { class: 'unexpected_render' as const, element: 'result_nfc_card', severity: 'major' as const, note: 'nfc 被渲染了', must_fix_refs: [0] };
+  const clip = { class: 'clipping' as const, element: 'result_nfc_card', severity: 'major' as const, note: 'nfc 被裁', must_fix_refs: [1] };
+  const s: VisualDiffScreenEntry = { screen_id: 'x', verdict: 'fail', must_fix: ['remove nfc', 'unclip nfc'], defects: [ur, clip] };
+  const view = effectiveScreens({ screens: [s] }, A2_SCOPE);
+  assert.strictEqual(view.screens[0].verdict, 'fail');
+  assert.deepStrictEqual(view.screens[0].must_fix, ['remove nfc']);
+  assert.deepStrictEqual(view.screens[0].defects?.map(d => d.class), ['unexpected_render']);
+  assert.deepStrictEqual(view.excluded.map(e => `${e.screen_id}/${e.ref_element}`), ['x/result_nfc_card'], '只有 clipping 进 excluded 披露');
 });
 
 test('A2: effectiveScreens 剔除 excluded/scope_unclear 及只由它们支撑的 must_fix/fail，保留其余并重映射 refs', () => {

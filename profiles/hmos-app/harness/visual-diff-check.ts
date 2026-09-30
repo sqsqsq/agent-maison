@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
-import { relFeatureArtifact, featuresDirPath, featureDir } from '../../../harness/config';
+import { relFeatureArtifact, featuresDirPath, featureDir, loadFrameworkConfig } from '../../../harness/config';
 import { resolveCurrentBuildFingerprint } from './build-fingerprint';
 import {
   UI_CHANGE_REQUIRES_UI_SPEC,
@@ -47,7 +47,7 @@ import {
 } from './image-toolkit';
 const REFERENCE_VIEWPORT_ASPECT_TOLERANCE_TEXT = String(REFERENCE_VIEWPORT_ASPECT_TOLERANCE);
 import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
-import { loadRefElementsFile, refElementsAbsPath, type RefElementEntry } from '../../../harness/scripts/utils/fidelity-shared';
+import { loadRefElementsFile, refElementsAbsPath, type RefElementEntry, checkRequirementQuote, collectCurrentRequirementText } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
 import {
   intermediateRoundsJournalPath,
@@ -83,7 +83,7 @@ const SELFREPORT_COPYFLOOR_MIN_SCREENS = 2;
 /** VL fidelity 显著高于 score_floor 时触发复核 WARN */
 const SCORE_FLOOR_SENTINEL_GAP = 0.35;
 /** defects[] 枚举合法取值（v1 渲染缺陷枚举契约） */
-const VALID_DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'other']);
+const VALID_DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'unexpected_render', 'other']);
 const VALID_DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
 
 function ruleDesc(ctx: CheckContext): string {
@@ -98,7 +98,7 @@ function loadSpecMarkdown(ctx: CheckContext): string | null {
   return fs.readFileSync(p, 'utf-8');
 }
 
-export type VisualDiffDefectClass = 'clipping' | 'overlap' | 'shape_mismatch' | 'missing_render' | 'other';
+export type VisualDiffDefectClass = 'clipping' | 'overlap' | 'shape_mismatch' | 'missing_render' | 'unexpected_render' | 'other';
 export type VisualDiffDefectSeverity = 'blocker' | 'major' | 'minor';
 
 /**
@@ -106,8 +106,8 @@ export type VisualDiffDefectSeverity = 'blocker' | 'major' | 'minor';
  * - `T8`（plan f7a3d9c2 t0）：机械 producer 的转录锚点——transcription audit 主判据；
  * - `visual_provider`（plan ab072691 t5④）：只读视觉 provider 的逐屏评审写入。
  *
- * 两者是**不同的源**，不是同一条管线的两种标签：T8 是感知信号（须经 defect-review 裁决），
- * provider 是独立 critic candidate（合法即物化回修、非法即丢弃，不进停等管线）。
+ * 两者是**不同的源**，不是同一条管线的两种标签：T8 是感知信号（适用性/证据合同通过即物化回修，
+ * agent 反对没有否决权），provider 是独立 critic candidate（合法即物化回修、非法即丢弃）。
  */
 export type VisualDiffDefectSource =
   | { producer: 'T8'; finding_id: string; signal: string }
@@ -144,11 +144,14 @@ export function isTierDowngradedResidual(screen: VisualDiffScreenEntry, hardPixe
 export interface RepairAuthorityScope {
   refElements: readonly RefElementEntry[] | null;
   uiSpecIds: ReadonlySet<string>;
+  /** plan 33784ed1 §5.1：当前目标文本（collectCurrentRequirementText）——unexpected_render 的引文逐字核对；缺省视为不可得 */
+  requirementText?: string;
 }
 
 export type DefectRepairAuthority = 'authorized' | 'excluded' | 'scope_unclear' | 'incomplete';
 
-export function loadRepairAuthorityScope(projectRoot: string, feature: string): RepairAuthorityScope {
+/** runId 缺省取 MAISON_GOAL_RUN_ID（与 collectCurrentRequirementText 同口径）；goal 运行时进程须显式传入。 */
+export function loadRepairAuthorityScope(projectRoot: string, feature: string, runId?: string): RepairAuthorityScope {
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(projectRoot, feature));
   const ids = [
     ...(uiDoc ? collectAllComponentNodes(uiDoc).map(n => n.id) : []),
@@ -157,6 +160,9 @@ export function loadRepairAuthorityScope(projectRoot: string, feature: string): 
   return {
     refElements: loadRefElementsFile(refElementsAbsPath(projectRoot, feature))?.elements ?? null,
     uiSpecIds: new Set(ids.map(id => id.toLowerCase())),
+    requirementText: collectCurrentRequirementText(
+      projectRoot, feature, (loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/'), runId,
+    ),
   };
 }
 
@@ -164,8 +170,22 @@ export function loadRepairAuthorityScope(projectRoot: string, feature: string): 
 function elementScope(id: string, scope: RepairAuthorityScope): 'excluded' | 'registered' | 'unregistered' {
   const key = id.trim().toLowerCase();
   const entry = scope.refElements?.find(e => typeof e?.element_id === 'string' && e.element_id.toLowerCase() === key);
-  if (entry?.disposition === 'excluded') return 'excluded';
+  if (entry?.disposition === 'excluded') {
+    if (exclusionQuoteHolds(entry.requirement_quote, scope)) return 'excluded';
+    // plan f7045213 §6.2：引文核验不通过的排除登记不算排除，缺陷按未登记处理（ui-spec 仍声明的按已登记）。
+    return scope.uiSpecIds.has(key) ? 'registered' : 'unregistered';
+  }
   return entry || scope.uiSpecIds.has(key) ? 'registered' : 'unregistered';
+}
+
+/**
+ * plan f7045213 §6.2：授权判定处对排除登记做与 spec 门（ref_elements_excluded）同源的引文逐字核对——
+ * 只复用 checkRequirementQuote 这一个函数；ui-spec 覆盖冲突仍由 spec 门负责。
+ * 当前目标文本取不到时同样核验不了——不采用 excluded，走既有的"已登记 / 未登记"分支：ui-spec 已声明的元素缺陷照常返修，
+ * 未声明的只披露（scope_unclear），被排除的内容不会因此被要求实现，也拿不到 unexpected_render 的删除授权。
+ */
+function exclusionQuoteHolds(quote: unknown, scope: RepairAuthorityScope): boolean {
+  return checkRequirementQuote(quote, scope.requirementText ?? '') === 'ok';
 }
 
 const trimmedId = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -188,10 +208,17 @@ function authorityElementOf(defect: VisualDiffDefect, scope: RepairAuthorityScop
  *     或 ui-spec 声明）→ authorized（defer 沿用既有债务路径）；否则 scope_unclear；
  *  ③ 其余四类改的是已声明元素：锚点已登记 → authorized；锚点未登记 → scope_unclear；
  *     无声明源 → authorized；无锚点 → incomplete（hard/warn 转录消费的 finding 均带已声明元素锚点，模板恒带 finding.elements[0]；来源标签不构成授权）。
+ * plan 33784ed1 §5.1：unexpected_render（实现有、目标不要）方向相反，先于 ① 判：锚点登记为 excluded →
+ *     authorized；带引文且逐字出现在当前目标文本 → authorized；其余（含锚点是已声明要实现的元素）→ scope_unclear。
+ *     authorized 只表示可进入返修，不证明应当删除。
  */
 export function defectRepairAuthority(defect: VisualDiffDefect, scope: RepairAuthorityScope): DefectRepairAuthority {
   const ref = trimmedId(defect?.ref_element);
   const anchor = trimmedId(defect?.element);
+  if (defect?.class === 'unexpected_render') {
+    if (anchor && elementScope(anchor, scope) === 'excluded') return 'authorized';
+    return checkRequirementQuote(defect.requirement_quote, scope.requirementText ?? '') === 'ok' ? 'authorized' : 'scope_unclear';
+  }
   if ([ref, anchor].some(id => id && elementScope(id, scope) === 'excluded')) return 'excluded';
   if (defect?.class === 'missing_render') {
     if (!ref) return 'incomplete';
@@ -349,6 +376,8 @@ export interface VisualDiffDefect {
    * element_id）。锚点 `element` 只说"挂在哪"，不说"缺什么"；授权判定见 defectRepairAuthority。
    */
   ref_element?: string;
+  /** plan 33784ed1 §5.1：unexpected_render 可选——目标里说明"不要"的那句话，逐字引用（需求引文，不是归属字段） */
+  requirement_quote?: string;
   bbox?: number[];
   severity: VisualDiffDefectSeverity;
   note: string;
@@ -732,6 +761,12 @@ export function validateVisualDiffJson(
             }
             if (dd.class === 'missing_render' && (typeof dd.ref_element !== 'string' || !dd.ref_element.trim())) {
               errors.push(`screens[${i}].defects[${j}] class=missing_render 须带 ref_element（参考图侧缺失元素在 spec/ref-elements.yaml 的 element_id）`);
+            }
+            if (dd.class === 'unexpected_render' && !(typeof dd.element === 'string' && dd.element.trim()) && (dd.bbox === undefined || dd.bbox === null)) {
+              errors.push(`screens[${i}].defects[${j}] class=unexpected_render 须带 element 或 bbox（渲染出来的多余内容在哪）`);
+            }
+            if (dd.requirement_quote !== undefined && typeof dd.requirement_quote !== 'string') {
+              errors.push(`screens[${i}].defects[${j}].requirement_quote 须为字符串`);
             }
             if (dd.bbox !== undefined && dd.bbox !== null) {
               const bb = dd.bbox;
@@ -3268,8 +3303,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     // M2（plan e2b7c4a9 t2.1，review 修复）：producer 归类的 uncertain 信号物化——
     // item_fingerprint 用**稳定**信号级身份（sha256(screen|ocr_uncertain|target)，target=候选
     // 文本锚，非动态 reason）；随 checks[].structured 落盘，不回写 visual-diff.json。
-    // target 字段供恢复链路绑定：人工/agent 在 testing 报告 defect-review 块里用 target
-    // 精确引用该信号（confirmed/disputed）即可 resume，不再重复停等。
+    // target 是该信号的稳定文本锚（参与 item_fingerprint）。
     ...(collectedUncertainSignals.length > 0
       ? {
           uncertain_signals: collectedUncertainSignals.map((sig) => ({

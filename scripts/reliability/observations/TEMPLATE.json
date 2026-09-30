@@ -1,0 +1,54 @@
+{
+  "label": "<标签，例如 host-baseline-20260928-task-a>",
+  "recorded_at": "<记录时间，ISO 8601>",
+  "framework_source_commit": "<被测框架的 source_commit，例如 074a4c3c>",
+  "initial_state": {
+    "host_commit": "<宿主提交号>",
+    "worktree_state": "<工作区状态：干净，或从哪份存档恢复>",
+    "archive_path": "<初始现场存档路径>",
+    "archive_sha256sums": "<存档 SHA256SUMS 的内容或路径>"
+  },
+  "environment": {
+    "adapter": "<adapter 名称>",
+    "adapter_version": "<adapter 版本>",
+    "model": "<实际生效的模型>",
+    "reasoning_effort": "<推理强度>",
+    "device": "<设备序列号，或模拟器>",
+    "vision_provider": "<视觉 provider 与模型>",
+    "adapter_user_default_model": "<adapter 用户配置里的默认模型>",
+    "changes": [
+      "<运行前后对环境做的设置与还原，例如：起跑前把默认模型设为 X，结束后还原为 Y。不计为救场>"
+    ]
+  },
+  "tasks": [
+    {
+      "label": "<任务标签>",
+      "scenarios": ["<场景编号，例如 S1>"],
+      "feature": "<feature id>",
+      "runs": ["<run id，按时间顺序；启动即失败、没有 supersede 事件的 run 也写进来>"],
+      "recoverable_fault": false,
+      "unaffected": {
+        "phases": ["<不受扰动影响的阶段，例如 spec>"],
+        "after": { "run_id": "<扰动所在 run id>", "event_index": 0 }
+      },
+      "interventions": [
+        {
+          "kind": "rescue_command",
+          "at": "<时间>",
+          "content": "<做了什么；kind 取 rescue_command | manual_file_edit | config_change | reauthorization | product_decision。没有任何人工动作时把 interventions 写成 []（明确零次），不要删掉这个字段：缺字段按“动作未知”处理，不计入正确自主完成与自动恢复的分子>",
+          "actor": "<执行者>",
+          "necessary": false,
+          "related_events": [
+            { "run_id": "<run id>", "event_index": 0 }
+          ]
+        }
+      ],
+      "independent_acceptance": {
+        "result": "not_accepted",
+        "actor": "<验收人>",
+        "basis": "<依据：对照需求原文逐条检查了什么；result 取 pass | fail | not_accepted>"
+      },
+      "source": "<这条观察是谁、依据什么写的>"
+    }
+  ]
+}

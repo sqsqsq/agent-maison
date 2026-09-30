@@ -61,7 +61,7 @@ Read <LAYER_DIR>/<ModuleName>/src/main/module.json5
 | `har` | `HAR` |
 | `shared` | `HSP` |
 
-若 `module.type` 不在上表 → **停下来问用户**，不要臆造。
+若 `module.type` 不在上表 → 改走 Step 3.6 build-profile 兜底；兜底后仍无法映射，或两处来源给出互相冲突的值时，**停下来问用户**，不要臆造。
 
 若文件不存在 → 本步跳过，改走 Step 3.6 build-profile 兜底（见 `### format`）。
 
@@ -120,7 +120,8 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 
 ### `layer`
 
-从物理路径前缀推，5 选 1：
+1. 读取 `framework.config.json > architecture.outer_layers[].id`（合法层名全集，harness `check-catalog` 按它校验 `layer`），取与模块物理路径首段目录匹配的那个。
+2. 架构配置未声明外层时，按下表默认的 5 层前缀推：
 
 | 路径前缀 | layer |
 |---------|-------|
@@ -130,7 +131,7 @@ Read <LAYER_DIR>/<ModuleName>/oh-package.json5
 | `04-BusinessBase/` | `04-BusinessBase` |
 | `05-SystemBase/` | `05-SystemBase` |
 
-若路径不以这些前缀开头，**停下来报错**：该工程可能用了不同的层级命名，先更新本 prompt 再继续。
+若仍无法唯一定位（路径不匹配任何已声明层名，或匹配到多个），在草稿里写明缺口并报告给用户，不要猜；不需要修改本 prompt。
 
 ### `sub_layer`
 

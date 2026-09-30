@@ -191,10 +191,8 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 {"decision_id":"<唯一>","run_id":"<run id>","phase":"<phase>","gate_id":"<registry id>","class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<决议内容，或 n/a: 理由>","must_review":true,"source":"agent","ts":"<ISO 8601>"}
 ```
 
-- **check-receipt BLOCKER 校验**（goal 环境）：文件缺失 / 行 schema 非法（含 phase/run_id 失配、
-  decision_id 重复、source 非 agent|goal-runner、ts 非法）/ confirmation-registry.yaml 中该
-  phase 任一 gate 无对应行（decision 或显式 `n/a: 理由`）→ 阶段闭环失败。registry 不可读同样
-  fail-closed。
+- 账本只留痕，不拥有阶段闭环否决权（check-receipt 的账本校验已退役）；返修候选的拒修记录
+  （`gate_id=repair_candidate:<指纹>`）由 goal 运行时从账本回放消费。
 - `headless-assumptions.md` 降级为**人读投影**（可选）；旧 md-only 现场兼容读取时表格行
   **保守全量**计入待复核（事故教训：行内正则 vs 表格错配曾让待审清单静默消失）。
 - **账本 ≠ 授权**：自动决议账本只记录普通输入、假设与审计 provenance，不能降低任何硬门禁。

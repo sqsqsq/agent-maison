@@ -304,8 +304,6 @@ interface DriverEvent {
   run_disposition?: string;
   run_wait_kind?: string;
   action?: string;
-  successor_required?: boolean;
-  successor_start_phase?: string;
 }
 
 /** 按 run 目录名排序合并读全部 events（run id 前缀是 UTC 时间戳，字典序=时间序） */
@@ -339,9 +337,6 @@ function readEvents(root: string, feature: string): DriverEvent[] {
           ...(typeof e.run_disposition === 'string' ? { run_disposition: e.run_disposition } : {}),
           ...(typeof e.run_wait_kind === 'string' ? { run_wait_kind: e.run_wait_kind } : {}),
           ...(typeof e.action === 'string' ? { action: e.action } : {}),
-          ...(e.successor_required === true ? { successor_required: true } : {}),
-          ...(typeof e.successor_start_phase === 'string'
-            ? { successor_start_phase: e.successor_start_phase } : {}),
         });
       } catch { out.push({ type: '?' }); }
     }
@@ -386,9 +381,7 @@ async function runScenario(args: {
   extra?: string;
 }): Promise<GoalRunOutcome> {
   const { scenario, feature, frameworkRoot, projectRoot: root, extra } = args;
-  const isSupervisorScenario = scenario === 'supervisor_probe_wake'
-    || scenario === 'supervisor_successor_wake';
-  const isSupervisorSuccessorScenario = scenario === 'supervisor_successor_wake';
+  const isSupervisorScenario = scenario === 'supervisor_probe_wake';
   const { goal, config } = loadFrameworkModules(frameworkRoot);
   const scope = require(path.join(frameworkRoot, 'harness/scripts/utils/scope-replan')) as {
     __testing_setAfterInvalidationRequested?: (fn: (() => void) | null) => void;
@@ -404,6 +397,9 @@ async function runScenario(args: {
   ) => {
     agentCalls += 1;
     const phase = /[\\/]phases[\\/]([a-z-]+)[\\/]/.exec(invokeOpts.outputLogPath ?? '')?.[1] ?? '';
+    // plan 4e6fb3b6 §8 S8：崩溃后重发同一请求时，plan 执行者（替身）按回退交接重新裁决范围、把 contracts 收回范围内文件——
+    // 这是 plan 阶段自己的工作，不是测试在恢复前手工预修。
+    if (scenario === 'crash_rerequest' && phase === 'plan') writeFixtureContracts(root, feature, [FIXTURE_PRODUCT_FILE]);
     if (scenario === 'ut_source_mutation' && phase === 'ut' && !utSourceMutationInjected) {
       utSourceMutationInjected = true;
       w(root, FIXTURE_PRODUCT_FILE,
@@ -420,7 +416,8 @@ async function runScenario(args: {
     || scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness'
     || scenario === 'ut_build_failure'
     || scenario === 'crash_scope_seed' || scenario === 'crash_after_scope_event'
-    || scenario === 'resume_after_crash_scope';
+    || scenario === 'resume_after_crash_scope'
+    || scenario === 'crash_rerequest' || scenario === 'device_wait_ready';
   const isSeedRunScenario = scenario === 'crash_scope_seed';
   // 写盘桩对全部场景统一；generic 宿主不会消费设备 capability，多注入不改变行为。
   {
@@ -573,10 +570,13 @@ async function runScenario(args: {
       || scenario === 'successor_manifest_probe' || scenario === 'crash_after_scope_event'
       || scenario === 'resume_after_crash_scope'
       || scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness'
-      || scenario === 'ut_build_failure';
+      || scenario === 'ut_build_failure' || scenario === 'crash_rerequest';
+    // plan 4e6fb3b6 §8 S9：首次设备门 BLOCKED（带探针），进程内等待期间设备就绪，原设备门重查放行。
+    let deviceGateCalls = 0;
     (goal.__testing_setDeviceReadinessGate as (f: unknown) => void)(
       async (opts: { phase: string; retries: number; emitEvent: (e: unknown) => void }) => {
-        if (deviceReady) {
+        deviceGateCalls += 1;
+        if (deviceReady || (scenario === 'device_wait_ready' && deviceGateCalls > 1)) {
           return {
             env: {}, target: { serial: 'stub-device', targetKind: 'physical' },
             notes: ['injected-device-ready'],
@@ -637,7 +637,6 @@ async function runScenario(args: {
       __testing_setConditionProbe: (
         probe: ((probe: string) => { ready: boolean; reason?: string }) | null,
       ) => void;
-      __testing_appendSupervisorEvent?: (eventsPath: string, event: Record<string, unknown>) => void;
     };
     const stub = path.join(root, '.goal-supervisor-runner.js');
     supervisorSpawnRecord = path.join(root, '.goal-supervisor-spawn.json');
@@ -650,42 +649,8 @@ async function runScenario(args: {
       livenessBeaconPath: (projectRoot: string, reportDir: string) => string;
     };
     fs.rmSync(beacon.livenessBeaconPath(root, `doc/features/${feature}/goal-runs/${extra}`), { force: true });
-    if (isSupervisorSuccessorScenario) {
-      if (!supervisor.__testing_appendSupervisorEvent) {
-        throw new Error('发布件 supervisor 缺少真实事件 writer seam');
-      }
-      supervisor.__testing_appendSupervisorEvent(
-        path.join(root, 'doc', 'features', feature, 'goal-runs', extra!, 'events.jsonl'),
-        {
-          type: 'phase_halt',
-          phase: 'coding',
-          halt_reason: 'goal_review_closure_baseline_unavailable',
-          run_disposition: 'RECOVERY_PENDING',
-          successor_required: true,
-        },
-      );
-      // supervisor writer 是真实 JSONL writer，但本夹具是在 crash 后才进入 supervisor
-      // 进程，直接 append 会把 successor halt 写到 run_end 之后。生产 run_end 是封口，
-      // reducer 必须忽略其后的旁路事件；把这条真实 writer 产出的记录移到封口前，
-      // 复现生产事件序列，而不是放宽 reducer 去消费封口后的 stale 元数据。
-      const eventsPath = path.join(root, 'doc', 'features', feature, 'goal-runs', extra!, 'events.jsonl');
-      const lines = fs.readFileSync(eventsPath, 'utf-8').split(/\r?\n/).filter(Boolean);
-      const successorLine = lines.pop();
-      if (!successorLine) throw new Error('successor halt writer 未落盘');
-      let runEndIndex = lines.length;
-      for (let i = lines.length - 1; i >= 0; i -= 1) {
-        try {
-          if ((JSON.parse(lines[i]) as { type?: string }).type === 'run_end') {
-            runEndIndex = i;
-            break;
-          }
-        } catch { /* malformed historical line remains in place */ }
-      }
-      lines.splice(runEndIndex, 0, successorLine);
-      fs.writeFileSync(eventsPath, `${lines.join('\n')}\n`, 'utf-8');
-    } else {
-      supervisor.__testing_setConditionProbe(() => ({ ready: true, reason: 'injected device probe green' }));
-    }
+    // plan 4e6fb3b6 §5.3：supervisor 的后继分支（successor_required）已删，原 supervisor_successor_wake 场景随之删除。
+    supervisor.__testing_setConditionProbe(() => ({ ready: true, reason: 'injected device probe green' }));
     supervisor.__testing_setRunnerScript(stub);
     supervisorMain = supervisor.__testing_main;
     supervisorReset = () => {
@@ -733,6 +698,27 @@ async function runScenario(args: {
       ...argvBase,
       '--start', 'coding', '--end', 'testing', '--force', '--supersede', extra,
     ];
+  } else if (scenario === 'crash_rerequest') {
+    // plan 4e6fb3b6 §8 S8：崩溃后重新发起同一请求——与 crash_scope_in_run 同一需求文本，不带 --force、不带 --resume，也不手工修 contracts。
+    process.argv = [
+      ...argvBase,
+      '--requirement', 'T4 driver scenario=crash_scope_in_run',
+      '--start', 'spec', '--end', 'testing',
+    ];
+  } else if (scenario === 'device_wait_ready') {
+    process.argv = [
+      ...argvBase,
+      '--requirement', `T4 driver scenario=${scenario}`,
+      '--start', 'spec', '--end', 'testing',
+    ];
+  } else if (scenario === 'product_selection_rerun') {
+    // plan 4e6fb3b6 返修 2(a)：确认 product 后"重新发起同一请求"——与 product_selection_halt 同一
+    // requirement，**不带 --force**（启动即失败的 run 没有 run_start，不能 --resume）。批三 §7 起由接续决策重新接入（附着）该 run。
+    process.argv = [
+      ...argvBase,
+      '--requirement', 'T4 driver scenario=product_selection_halt',
+      '--start', 'spec', '--end', 'testing',
+    ];
   } else if (scenario === 'crash_scope_in_run'
     || scenario === 'successor_source_crash'
     || scenario === 'ut_source_mutation' || scenario === 'ut_source_drift_post_harness'
@@ -756,9 +742,19 @@ async function runScenario(args: {
   let exitCode: number | null = null;
   let error: string | null = null;
   try {
+    // plan 4e6fb3b6 §5.1：设备停放场景的停机带探针，停放前 runtime 会先进程内等待（生产默认 15 分钟）。
+    // driver 经 runtime 启动入参把上限调小，并不去碰本机真实设备（探针恒未就绪）——停放语义不变。
     exitCode = isSupervisorScenario
       ? await supervisorMain!()
-      : await (goal.main as () => Promise<number>)();
+      : await (goal.main as (o?: unknown) => Promise<number>)({
+          conditionWait: scenario === 'device_wait_ready'
+            ? { maxWaitMs: 5_000, pollMs: 50, runProbe: () => ({ ready: true, reason: '注入：设备已就绪' }) }
+            : {
+                maxWaitMs: 200,
+                pollMs: 50,
+                runProbe: () => ({ ready: false, reason: 'goal-run-driver 不接真机探针' }),
+              },
+        });
   } catch (e) {
     error = (e as Error).message;
   }

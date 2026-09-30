@@ -19,7 +19,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase catalog --module <
 | `catalog_file_exists` FAIL：文件不存在 | **你自己**创建 `doc/module-catalog.yaml`，只写骨架（见下方骨架模板），**不加任何模块**。然后再跑一次 harness 确认变为 `modules_is_list` WARN（这是合法中间态）。 |
 | `modules_is_list` WARN：已有骨架、`modules: []` | 骨架已就绪，进入 Step 1。 |
 | `requested_module_present` FAIL | 本次目标尚未登记，进入 CREATE；不扩为全仓建档。 |
-| 其它 FAIL | 把报告原文贴给用户、停下来问，不要试图"修复"。 |
+| 其它 FAIL，且 harness 结论不是 PASS | 把报告原文贴给用户、停下来问，不要试图"修复"。 |
+| 其它 FAIL，但结论仍是 PASS（控制台 `Verdict: PASS`，该失败列在 summary 的 `disclosed_failures`） | 记下这条披露，继续本流程；合并进主 catalog 前的用户 `y` 确认不变。 |
 
 **写入本次草稿时创建 staging 目录**：`doc/catalog-staging/`
 

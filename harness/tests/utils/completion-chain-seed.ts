@@ -32,6 +32,8 @@ export interface SeedCompletionChainOptions {
   now?: () => Date;
   invocations?: boolean;
   beforeClosure?: (projectRoot: string) => void;
+  /** 每阶段 summary 的结论（缺省 PASS）；调用方用生产的共享结论函数求值后传入。 */
+  phaseVerdict?: (phase: string) => string;
 }
 
 const DEFAULT_NOW = () => new Date('2026-07-13T00:00:00.000Z');
@@ -189,7 +191,7 @@ export function seedCleanCompletionChain(options: SeedCompletionChainOptions): v
 
   const requirementSha = computeRunRequirementSha(projectRoot, feature, runId);
   for (const phase of chain) {
-    writePhaseSummary(projectRoot, feature, phase, 'PASS');
+    writePhaseSummary(projectRoot, feature, phase, options.phaseVerdict?.(phase) ?? 'PASS');
     writePhaseReceipt(projectRoot, feature, phase);
     const written = writePhaseEvidenceManifest(projectRoot, resolvePhaseEvidenceManifest({
       projectRoot,

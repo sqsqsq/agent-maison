@@ -55,15 +55,20 @@ function testFailWhenOtherBlockersPresent(): void {
     },
     deviceBlockedTest(),
     {
-      id: 'it_name_has_ac_or_branch_tag',
+      // plan f7045213 第二批：原用 it_name_has_ac_or_branch_tag，它已登记为披露（账本与形状），不再是"其它阻断"；
+      // 换成未登记的真实覆盖门，语义不变。
+      id: 'ut_case_per_unit_ac',
       category: 'traceability',
-      description: 'naming',
+      description: 'coverage',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: 'bad name',
+      details: 'AC 未覆盖',
     },
   ];
   assert(resolveVerdictFromChecks(checks) === 'FAIL', 'expected FAIL');
+  // 已登记为披露的命名门与设备阻塞并存：仍是 INCOMPLETE（披露不算其它阻断）
+  const withDisclosed: CheckResult[] = [checks[0], checks[1], { ...checks[2], id: 'it_name_has_ac_or_branch_tag', details: 'bad name' }];
+  assert(resolveVerdictFromChecks(withDisclosed) === 'INCOMPLETE', 'disclosed naming gate must not turn device-blocked INCOMPLETE into FAIL');
 }
 
 function testPassWhenNoBlockers(): void {

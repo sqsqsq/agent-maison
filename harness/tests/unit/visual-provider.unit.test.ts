@@ -849,6 +849,39 @@ test('c4e7a9b2 A2 产出方同步：prompt 要求 missing_render 带 ref_element
   assert.strictEqual((r as { screens: Array<{ defects: Array<{ ref_element?: string }> }> }).screens[0].defects[0].ref_element, 'result_nfc_card');
 });
 
+test('33784ed1 A16 unexpected_render：提示词说明新类别；载荷校验、解析、转录贯通 requirement_quote；缺锚拒收', () => {
+  const t1 = mkTarget();
+  const prompt = buildVisualProviderReviewPrompt([t1], {
+    runId: 'R', attemptId: 'A', requireRegionAttest: false,
+    refElements: [{ element_id: 'result_nfc_card', disposition: 'excluded' }],
+  });
+  assert.match(prompt, /already rendered, report it as class=unexpected_render with that element id in `element` \(not in `ref_element`\)/);
+  assert.match(prompt, /"element": "<rendered element id; required except missing_render \(ref_element\) and unexpected_render \(element or bbox\)>"/);
+  assert.match(prompt, /"requirement_quote"/);
+  const expected = { targets: [t1], runId: 'R', attemptId: 'A', requireRegionAttest: false };
+  const withDefect = (defect: string) => goodPayload([t1]).replace(
+    '{"class":"clipping","severity":"major","note":"被裁切","must_fix_refs":[0]}', defect);
+  const r = validateVisualProviderReviewPayload(withDefect(
+    '{"class":"unexpected_render","element":"promo_banner","requirement_quote":" 不要显示推广横幅 ","severity":"major","note":"多了横幅","must_fix_refs":[0]}',
+  ), expected);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  const parsed = (r as { screens: ReviewScreenPayloadLike[] }).screens[0];
+  assert.strictEqual(parsed.defects[0].class, 'unexpected_render');
+  assert.strictEqual(parsed.defects[0].requirement_quote, '不要显示推广横幅', '解析保留引文字段');
+  const entry: VisualDiffScreenEntry = { screen_id: 's1', verdict: 'pending', must_fix: [], defects: [] };
+  applyProviderReviewToScreen(entry, parsed as never, { invokeId: 'inv', provider: { adapter: 'claude', model: 'm' } });
+  assert.strictEqual(entry.defects![0].requirement_quote, '不要显示推广横幅', '转录保留引文字段');
+  const noAnchor = validateVisualProviderReviewPayload(withDefect(
+    '{"class":"unexpected_render","severity":"major","note":"多了横幅","must_fix_refs":[0]}'), expected);
+  assert.strictEqual(noAnchor.ok, false);
+  assert.match((noAnchor as { reason: string }).reason, /unexpected_render 须带 element 或 bbox/);
+  const badQuote = validateVisualProviderReviewPayload(withDefect(
+    '{"class":"unexpected_render","element":"x","requirement_quote":7,"severity":"major","note":"多了横幅","must_fix_refs":[0]}'), expected);
+  assert.strictEqual(badQuote.ok, false);
+  assert.match((badQuote as { reason: string }).reason, /requirement_quote/);
+});
+type ReviewScreenPayloadLike = { defects: Array<{ class: string; requirement_quote?: string }> };
+
 test('t5 载荷校验拒收矩阵：空/漏屏/重复屏/hash 不符/旧 attempt/非法枚举', () => {
   const t1 = mkTarget();
   const t2 = mkTarget({ screen_id: 's2', refHash: 'r2', shotHash: 'h2' });

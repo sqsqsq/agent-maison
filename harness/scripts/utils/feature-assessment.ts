@@ -125,7 +125,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
 
   const recordPhases = new Set(completion?.chain ?? []);
   if (scope) {
-    for (const f of executionScopeEvidenceFindings(projectRoot, feature, scope, undefined, runId ?? undefined)) {
+    for (const f of executionScopeEvidenceFindings(projectRoot, feature, scope, undefined, runId ?? undefined, undefined, opts.frameworkRoot)) {
       const gap = scope.unresolved.find(item => item.obligation_id === f.obligation_id);
       add(f.obligation_id, f.class, f.detail, gap ? { kind: 'unresolved', owner_phase: gap.owner, applicability: 'unknown' } : undefined);
     }

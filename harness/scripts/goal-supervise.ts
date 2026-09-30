@@ -22,8 +22,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import minimist from 'minimist';
 import { detectRepoLayout } from '../repo-layout';
-import { loadFrameworkConfig } from '../config';
-import { loadResolvedProfile } from '../profile-loader';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
 import { superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
 import { defaultProcessProbe } from './utils/device-session';
@@ -32,11 +30,7 @@ import {
   reconcileGuardianOwnership,
   type PidExistenceProbe,
 } from './utils/goal-containment-reconcile';
-import {
-  probeDeviceReadiness,
-} from './utils/device-readiness-deps';
-import { probeCapabilityPreflight } from './utils/capability-preflight';
-import type { ReadinessProbeName } from './utils/device-readiness-gate';
+import { runConditionProbe as runSharedConditionProbe } from './utils/condition-wait';
 import { featureDir } from '../config';
 import { readRunControl, type RunControlV1 } from './utils/goal-run-control';
 import { HANDOFF_REQUEST_NAME, isValidHandoffRequest } from './utils/goal-handoff';
@@ -181,6 +175,7 @@ function runnerScriptPath(): string {
   return injectedRunnerScript ?? path.join(__dirname, 'goal-runner.ts');
 }
 
+// plan 4e6fb3b6 §5.1：探针实现已提到 utils/condition-wait（runtime 进程内等待与本 CLI 共用）。
 function runConditionProbe(
   projectRoot: string,
   reportDir: string,
@@ -188,34 +183,7 @@ function runConditionProbe(
   phase?: string,
 ): { ready: boolean; reason?: string } {
   if (injectedConditionProbe) return injectedConditionProbe(probe, phase);
-  if (probe === 'storage_ready') {
-    const reportDirAbs = path.join(projectRoot, reportDir);
-    try {
-      fs.accessSync(reportDirAbs, fs.constants.W_OK);
-      return { ready: true, reason: 'run report directory is writable' };
-    } catch (error) {
-      return { ready: false, reason: 'run report directory is not writable: ' + String((error as Error).message) };
-    }
-  }
-  if (
-    probe === 'device_readiness' ||
-    probe === 'credential_state_ready' ||
-    probe === 'adapter_capability_ready'
-  ) {
-    const result = probeDeviceReadiness(projectRoot, probe as ReadinessProbeName);
-    return { ready: result.ready, reason: result.reason };
-  }
-  if (probe === 'capability_preflight_ready') {
-    if (!phase?.trim()) return { ready: false, reason: 'capability probe 缺少责任 phase' };
-    const cfg = loadFrameworkConfig(projectRoot);
-    const resolved = loadResolvedProfile(projectRoot, cfg);
-    const result = probeCapabilityPreflight(projectRoot, phase.trim(), resolved);
-    return {
-      ready: result.ready,
-      reason: result.reason ?? result.code ?? 'capability preflight not ready',
-    };
-  }
-  return { ready: false, reason: 'unsupported condition probe: ' + probe };
+  return runSharedConditionProbe(projectRoot, reportDir, probe, phase);
 }
 
 const TASK_PREFIX = 'MaisonGoalSupervise';
@@ -407,36 +375,20 @@ async function main(): Promise<number> {
     restart_seq: decision.restart_seq,
     backoff_ms: decision.backoff_ms,
     reason: decision.reason,
-    ...(decision.successor_required
-      ? {
-          successor_required: true,
-          successor_start_phase: decision.successor_start_phase ?? 'coding',
-        }
-      : {}),
   });
 
-  const successorStartPhase = decision.successor_required
-    ? decision.successor_start_phase ?? 'coding'
-    : null;
-  const runnerArgs = successorStartPhase
-    ? [
-        runnerScriptPath(),
-        '--feature', feature,
-        '--start', successorStartPhase,
-        '--supersede', run.runId,
-        '--force',
-        '--detach',
-      ]
-    : [
-        runnerScriptPath(),
-        '--feature', feature,
-        '--resume', run.runId,
-        // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
-        // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层
-        // 已维持退避。cooldown 语义保留在 runner 端（force 不 bypass cooldown）。
-        ...(allowedForceResume ? ['--force-resume'] : []),
-        '--detach',
-      ];
+  // plan 4e6fb3b6 §5.3：原"事件带 successor_required 就改起后继 run"一支已删——生产代码
+  // 没有任何产出方（检索证据见该 plan 实施记录）。supervisor 只恢复同一个 run。
+  const runnerArgs = [
+    runnerScriptPath(),
+    '--feature', feature,
+    '--resume', run.runId,
+    // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
+    // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层
+    // 已维持退避。cooldown 语义保留在 runner 端（force 不 bypass cooldown）。
+    ...(allowedForceResume ? ['--force-resume'] : []),
+    '--detach',
+  ];
   const spawnImpl = injectedSpawnImpl ?? spawn;
   const child = spawnImpl(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
     cwd: projectRoot,
@@ -449,9 +401,6 @@ async function main(): Promise<number> {
   appendSupervisorEvent(run.eventsPath, {
     type: 'supervisor_restart_spawned', run_id: run.runId,
     restart_seq: decision.restart_seq, pid: child.pid ?? null,
-    ...(successorStartPhase
-      ? { successor_required: true, successor_start_phase: successorStartPhase }
-      : {}),
   });
   return 0;
 }
@@ -467,7 +416,6 @@ if (require.main === module) {
 }
 
 export {
-  appendSupervisorEvent as __testing_appendSupervisorEvent,
   resolveRun as __testing_resolveRun,
   taskName as __testing_taskName,
   runConditionProbe as __testing_runConditionProbe,

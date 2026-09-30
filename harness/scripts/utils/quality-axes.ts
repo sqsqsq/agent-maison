@@ -21,6 +21,7 @@ import type { CheckResult, Phase } from './types';
 import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
 import { validateRepairCandidatesShape } from './repair-candidates';
+import { isBlockingCheck, resolveCheckDisposition } from './check-disposition';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
 export const AXIS_IDS: readonly AxisId[] = ['functional', 'visual', 'asset', 'evidence'];
@@ -167,7 +168,10 @@ export interface CompletionGaps {
 export function extractCompletionGaps(checks: readonly CheckLike[]): CompletionGaps {
   let p0 = 0;
   let total = 0;
+  // plan f7045213 §4.3：被披露（不阻断）的失败每条算一个完成缺口——只是披露，不阻塞完成。
+  let disclosed = 0;
   for (const c of checks) {
+    if (resolveCheckDisposition(c).action === 'disclose') disclosed++;
     const s = c.structured as Record<string, unknown> | undefined;
     if (!s || typeof s !== 'object') continue;
     if (c.id === 'p0_coverage_integrity' && typeof s.unsupported_gap === 'number') p0 = Math.max(p0, s.unsupported_gap);
@@ -175,7 +179,7 @@ export function extractCompletionGaps(checks: readonly CheckLike[]): CompletionG
       total = Math.max(total, s.unsupported_gap_count);
     }
   }
-  return { p0, total: Math.max(total, p0) };
+  return { p0, total: Math.max(total, p0) + disclosed };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +245,7 @@ export function deriveQualityAxes(
     const b = buckets[axis];
     b.sources.push(c.id);
     if (c.status !== 'SKIP') b.executed++;
-    if (c.status === 'FAIL' && c.severity === 'BLOCKER') {
+    if (isBlockingCheck(c)) {
       if (allBlockerFailsExternal) b.externalFails.push(c);
       else b.hardFails.push(c);
     }

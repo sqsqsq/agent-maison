@@ -37,6 +37,8 @@ import type { UnitCaseResult } from '../run-unit';
 import { resolveCurrentBuildFingerprint } from '../../../profiles/hmos-app/harness/build-fingerprint';
 import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { clearFrameworkConfigCache } from '../../config';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -73,6 +75,79 @@ const legacyCandidate = (fp: string) => ({
 });
 
 const events = (...evs: BacktrackWindowEvent[]): BacktrackWindowEvent[] => evs;
+
+// plan c4e7a9b2 t2（A2）夹具：候选生成读授权过滤后的有效视图（宿主 ae92d8 add_card_result 形态）。
+// plan 1dbe4fa4 t2：自 runAll 内移到顶层并导出，供 reliability-scenarios S5 复用；行为不变。
+export const A2_FEATURE = 'bc-openCard-2';
+export const A2_QUOTE = '再往下的激活nfc部分本次先不需要';
+export const a2Write = (root: string, rel: string, content: string): void => {
+  const p = path.join(root, rel);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, content, 'utf-8');
+};
+export const a2NfcDefect = (extra: Record<string, unknown> = {}) => ({
+  class: 'missing_render', element: 'result_done', ref_element: 'result_nfc_card', severity: 'major',
+  note: 'reference shows a grey NFC activation card above result_done', must_fix_refs: [0],
+  source: { producer: 'visual_provider', invoke_id: 'review-i1' }, ...extra,
+});
+export const withA2Runtime = (
+  defects: Array<Record<string, unknown>>,
+  refElements: Array<Record<string, unknown>>,
+  fn: (root: string) => void,
+  mustFix = ['Add the NFC activation card above result_done'],
+  // plan f7045213 第二批返修 R1：授权判定对排除登记核引文，run-1 的冻结需求须含排除引文（宿主 ae92d8 同形）。
+  requirement = `首页展示余额。${A2_QUOTE}。`,
+): void => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-a2-'));
+  try {
+    a2Write(root, 'framework.config.json', JSON.stringify({
+      schema_version: '1.1', project_name: 'T', project_profile: { name: 'hmos-app', sub_variant: 'app' },
+      paths: { features_dir: 'doc/features' },
+    }));
+    const feat = `doc/features/${A2_FEATURE}`;
+    a2Write(root, `${feat}/spec/ui-spec.yaml`, [
+      "schema_version: '1.0'", 'screens:', '- id: add_card_result', '  priority: P0', '  must_have_elements:',
+      '  - result_status', '  - result_title', '  - result_desc', '  - result_illustration', '  - result_done', '',
+    ].join('\n'));
+    a2Write(root, `${feat}/spec/ref-elements.yaml`, JSON.stringify({ schema_version: '1.0', elements: refElements }));
+    a2Write(root, `${feat}/testing/reports/device-test-install.meta.json`, JSON.stringify({ hapPath: 'build/app.hap' }));
+    a2Write(root, 'build/app.hap', 'hap-bytes-v1');
+    clearFrameworkConfigCache();
+    createGoalRun({ projectRoot: root, manifest: buildGoalManifestFromInput({
+      feature: A2_FEATURE, run_id: 'run-1', requirement,
+      unattended: { write_mode: 'workspace-write', approval_mode: 'on-request' },
+    }, { projectRoot: root }), chain: ['spec'] });
+    const buildFp = resolveCurrentBuildFingerprint(root, A2_FEATURE, 'testing');
+    assert(!!buildFp, '夹具须能算出 build fingerprint');
+    const shotRel = `${feat}/device-testing/device-screenshots/shot-add_card_result.png`;
+    a2Write(root, shotRel, 'png-bytes-add_card_result');
+    const h = hashScreenshotFile(path.join(root, shotRel));
+    a2Write(root, `${feat}/device-testing/device-screenshots/visual-diff.json`, JSON.stringify({
+      schema_version: '1.1',
+      screens: [{
+        screen_id: 'add_card_result', verdict: 'fail', screenshot_path: shotRel,
+        screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: buildFp,
+        must_fix: mustFix, defects,
+      }],
+    }));
+    fn(root);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+};
+export const a2Collect = (root: string) => {
+  const warns: string[] = [];
+  const orig = console.warn;
+  console.warn = (...args: unknown[]) => { warns.push(args.map(String).join(' ')); };
+  try {
+    return { res: collectActionableDefects(root, A2_FEATURE, 'run-1'), warns };
+  } finally {
+    console.warn = orig;
+  }
+};
+export const A2_EXCLUDED = { element_id: 'result_nfc_card', disposition: 'excluded', requirement_quote: A2_QUOTE };
+export const A2_DONE = { element_id: 'result_done', disposition: 'implement' };
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
@@ -567,70 +642,6 @@ export function runAll(): UnitCaseResult[] {
   // plan c4e7a9b2 t2（A2）：候选生成读授权过滤后的有效视图（宿主 ae92d8 add_card_result 形态）。
   // 生产路径 collectActionableDefects：身份齐全（截图 hash + install meta 算出的 build 指纹）。
   // ==========================================================================
-  const A2_FEATURE = 'bc-openCard-2';
-  const A2_QUOTE = '再往下的激活nfc部分本次先不需要';
-  const a2Write = (root: string, rel: string, content: string): void => {
-    const p = path.join(root, rel);
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, content, 'utf-8');
-  };
-  const a2NfcDefect = (extra: Record<string, unknown> = {}) => ({
-    class: 'missing_render', element: 'result_done', ref_element: 'result_nfc_card', severity: 'major',
-    note: 'reference shows a grey NFC activation card above result_done', must_fix_refs: [0],
-    source: { producer: 'visual_provider', invoke_id: 'review-i1' }, ...extra,
-  });
-  const withA2Runtime = (
-    defects: Array<Record<string, unknown>>,
-    refElements: Array<Record<string, unknown>>,
-    fn: (root: string) => void,
-    mustFix = ['Add the NFC activation card above result_done'],
-  ): void => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-a2-'));
-    try {
-      a2Write(root, 'framework.config.json', JSON.stringify({
-        schema_version: '1.1', project_name: 'T', project_profile: { name: 'hmos-app', sub_variant: 'app' },
-        paths: { features_dir: 'doc/features' },
-      }));
-      const feat = `doc/features/${A2_FEATURE}`;
-      a2Write(root, `${feat}/spec/ui-spec.yaml`, [
-        "schema_version: '1.0'", 'screens:', '- id: add_card_result', '  priority: P0', '  must_have_elements:',
-        '  - result_status', '  - result_title', '  - result_desc', '  - result_illustration', '  - result_done', '',
-      ].join('\n'));
-      a2Write(root, `${feat}/spec/ref-elements.yaml`, JSON.stringify({ schema_version: '1.0', elements: refElements }));
-      a2Write(root, `${feat}/testing/reports/device-test-install.meta.json`, JSON.stringify({ hapPath: 'build/app.hap' }));
-      a2Write(root, 'build/app.hap', 'hap-bytes-v1');
-      clearFrameworkConfigCache();
-      const buildFp = resolveCurrentBuildFingerprint(root, A2_FEATURE, 'testing');
-      assert(!!buildFp, '夹具须能算出 build fingerprint');
-      const shotRel = `${feat}/device-testing/device-screenshots/shot-add_card_result.png`;
-      a2Write(root, shotRel, 'png-bytes-add_card_result');
-      const h = hashScreenshotFile(path.join(root, shotRel));
-      a2Write(root, `${feat}/device-testing/device-screenshots/visual-diff.json`, JSON.stringify({
-        schema_version: '1.1',
-        screens: [{
-          screen_id: 'add_card_result', verdict: 'fail', screenshot_path: shotRel,
-          screenshot_hash: h, evaluated_screenshot_hash: h, evaluated_build_fingerprint: buildFp,
-          must_fix: mustFix, defects,
-        }],
-      }));
-      fn(root);
-    } finally {
-      clearFrameworkConfigCache();
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  };
-  const a2Collect = (root: string) => {
-    const warns: string[] = [];
-    const orig = console.warn;
-    console.warn = (...args: unknown[]) => { warns.push(args.map(String).join(' ')); };
-    try {
-      return { res: collectActionableDefects(root, A2_FEATURE, 'run-1'), warns };
-    } finally {
-      console.warn = orig;
-    }
-  };
-  const A2_EXCLUDED = { element_id: 'result_nfc_card', disposition: 'excluded', requirement_quote: A2_QUOTE };
-  const A2_DONE = { element_id: 'result_done', disposition: 'implement' };
 
   run('c4e7a9b2 A2-1 excluded NFC defect on a legal anchor: no candidate, no unverified, one warn line', () => {
     withA2Runtime([a2NfcDefect()], [A2_EXCLUDED, A2_DONE], (root) => {
@@ -699,6 +710,41 @@ export function runAll(): UnitCaseResult[] {
       const { res } = a2Collect(root);
       assert(res.defects.length === 1 && res.unverified.length === 0, `真实 T8 转录照常产候选：${JSON.stringify(res)}`);
     }, ['Fix clipped text']);
+  });
+
+  // plan 33784ed1 t3（A15/A16）：不该有却存在——unexpected_render 经同一有效视图进入候选
+  run('33784ed1 A15 unexpected_render anchored on an excluded element yields one coding candidate; clipping on it still none', () => {
+    const ur = { class: 'unexpected_render', element: 'result_nfc_card', bbox: [0.05, 0.55, 0.9, 0.2], severity: 'major',
+      note: 'NFC activation card is rendered although the requirement excludes it', must_fix_refs: [0],
+      source: { producer: 'visual_provider', invoke_id: 'review-i1' } };
+    withA2Runtime([ur], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res, warns } = a2Collect(root);
+      assert(res.defects.length === 1 && res.unverified.length === 0, `越权渲染须进返修：${JSON.stringify(res)}`);
+      assert(res.defects[0].instructions.includes('Remove the NFC activation card'), `指令带 must_fix：${JSON.stringify(res.defects[0])}`);
+      assert(!warns.some(l => l.includes('需求排除项')), `不得按需求排除项剔除：${JSON.stringify(warns)}`);
+      const cands = actionableDefectsToCandidates(res.defects, 'testing');
+      assert(cands.length === 1 && cands[0].category === 'coding', `category 恒 coding：${JSON.stringify(cands)}`);
+    }, ['Remove the NFC activation card']);
+    withA2Runtime([{ ...ur, class: 'clipping' }], [A2_EXCLUDED, A2_DONE], (root) => {
+      const { res } = a2Collect(root);
+      assert(res.defects.length === 0 && res.unverified.length === 0, `其余类别锚在 excluded 上仍不返修：${JSON.stringify(res)}`);
+    }, ['Remove the NFC activation card']);
+  });
+
+  run('33784ed1 A16 unexpected_render authorized by a verbatim quote of the run requirement; non-verbatim quote only disclosed', () => {
+    const requirement = `首页展示余额。${A2_QUOTE}。结果页不要显示推广横幅。`;
+    const ur = (quote: string) => ({ class: 'unexpected_render', element: 'promo_banner', severity: 'major',
+      note: 'a promo banner is rendered', requirement_quote: quote, must_fix_refs: [0],
+      source: { producer: 'visual_provider', invoke_id: 'review-i1' } });
+    const withRun = (quote: string, fn: (r: ReturnType<typeof a2Collect>) => void) =>
+      withA2Runtime([ur(quote)], [A2_EXCLUDED, A2_DONE], (root) => fn(a2Collect(root)), ['Remove the promo banner'], requirement);
+    withRun('结果页不要显示推广横幅', ({ res }) => {
+      assert(res.defects.length === 1 && res.unverified.length === 0, `逐字引文须授权：${JSON.stringify(res)}`);
+    });
+    withRun('不要显示任何广告', ({ res, warns }) => {
+      assert(res.defects.length === 0 && res.unverified.length === 0, `引文不逐字只披露：${JSON.stringify(res)}`);
+      assert(warns.some(l => l.includes('promo_banner')), `须 warn 点名锚点：${JSON.stringify(warns)}`);
+    });
   });
 
   run('c4e7a9b2 A2-5 declared-element shape_mismatch still yields one coding candidate', () => {

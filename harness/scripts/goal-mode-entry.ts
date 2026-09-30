@@ -12,7 +12,8 @@ import type {
 import { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 import { GoalPhaseRuntime } from './goal-phase-runtime';
 import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
-import { loadEventsJsonl } from './utils/goal-runner-phase';
+import { collectSupersededAncestorEvents, loadEventsJsonl } from './utils/goal-runner-phase';
+import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
 import { projectCanonicalLifecycle } from './utils/goal-canonical-lifecycle';
 import {
   ensureRunControl,
@@ -20,6 +21,8 @@ import {
 } from './utils/goal-run-control';
 import {
   buildGoalManifestFromInput,
+  inheritSuccessorManifest,
+  deriveSuccessorRequirement,
   loadGoalManifestFromRun,
   resolveRequirementInput,
   RUN_ADAPTER_PROVENANCES,
@@ -29,7 +32,12 @@ import {
 import {
   assertGoalRunAttachable,
   createGoalRun,
+  decideRunContinuation,
+  inspectGoalRunCreation,
+  successorBoundsConflicts,
+  successorBoundsRefusal,
   resolveActualGoalPhaseChainAtBirth,
+  type RunContinuationDecision,
 } from './utils/goal-run-creation';
 import { loadLocalConfig } from './utils/framework-local-config';
 import {
@@ -40,7 +48,7 @@ import { relFeaturesDir } from '../config';
 import { executionCompletionPhases, executionScopeFingerprint } from './utils/execution-scope';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl, prepareFeatureScopeCandidate, featureScopePhaseHealth } from './utils/feature-track';
-import { resolveBirthExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
+import { resolveBirthExecutionScope, registerFeatureScopeTransfer, resolveSuccessorExecutionScope } from './utils/feature-execution-scope';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
@@ -94,6 +102,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   manifest: GoalManifest;
   manifestPath: string;
   runDir: string;
+  /** plan 4e6fb3b6 §7：本次 prepare 走了哪条路（新开 = 新出生；重新接入 = 返回既有 run，宿主照常以它的 run id 附着）。 */
+  continuation: RunContinuationDecision;
 } {
   const feature = options.feature.trim();
   const adapter = options.adapter.trim();
@@ -101,7 +111,66 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   if (!feature || !adapter || !requirement) {
     throw new Error('--prepare-run requires --feature, --adapter, and --requirement');
   }
+  // plan 4e6fb3b6 §7.3：接续决策在生成出生范围之前执行（与前台、detach 同一个函数）。
+  const continuation: RunContinuationDecision = options.forceFresh
+    ? { kind: 'fresh', explicit: true, reason: '显式 --force' }
+    : decideRunContinuation({
+        projectRoot: options.projectRoot, feature,
+        call: {
+          requirement,
+          ...(options.requirementSourceFiles?.length ? { requirementSourceFiles: options.requirementSourceFiles } : {}),
+          attended: true,
+        },
+      });
+  if (continuation.kind === 'hold') throw new Error(`[goal-mode-entry] ${continuation.guidance}`);
+  if (continuation.kind === 'rejoin') {
+    const existing = loadGoalManifestFromRun(options.projectRoot, continuation.runId, {
+      feature, featuresDir: relFeaturesDir(options.projectRoot),
+    });
+    const existingDir = path.resolve(options.projectRoot, ...existing.report_dir.split('/'));
+    return { manifest: existing, manifestPath: path.join(existingDir, 'manifest.json'), runDir: existingDir, continuation };
+  }
   const workflow = resolveWorkflowSpec(options.projectRoot, { frameworkRoot: options.frameworkRoot });
+  if (continuation.kind === 'successor') {
+    // 批三返修 R4：只出生后继（合同继承、需求合并、范围重解析、出生记录），用的全是 runtime 出生段的既有函数；
+    // 承接审计、身份核对、预算血缘与范围转交由随后的附着按"附着的后继补完承接"做（R2），在原来的有人在场执行者之下运行。
+    const featuresDir = relFeaturesDir(options.projectRoot);
+    const source = loadGoalManifestFromRun(options.projectRoot, continuation.source, { feature, featuresDir });
+    // 批三二轮返修 R3/R4：与 runtime 同一判据——只容忍原请求重放的起止，不同就在出生之前明确拒绝、不建 run。
+    const boundsConflicts = successorBoundsConflicts(source, {
+      ...(options.startPhase !== undefined ? { start: options.startPhase } : {}),
+      ...(options.endPhase !== undefined ? { end: options.endPhase } : {}),
+    });
+    if (boundsConflicts.length) throw new Error(successorBoundsRefusal(continuation.reason, boundsConflicts));
+    const sourceCreation = inspectGoalRunCreation(options.projectRoot, source);
+    if (sourceCreation.state !== 'complete' && sourceCreation.state !== 'legacy') {
+      throw new Error(`[goal-mode-entry] 后继的合同来源 ${source.run_id} 出生记录不完整，不能起后继`);
+    }
+    const baseline = resolveGoalRunBaseline(options.projectRoot, feature, source.run_id);
+    if (baseline.available) source.run_base_sha = baseline.baseSha; else delete source.run_base_sha;
+    const ancestors = collectSupersededAncestorEvents({ projectRoot: options.projectRoot, featuresDir, feature, seedTargets: continuation.targets });
+    const pick = (key: 'round_fingerprint' | 'drift_fingerprint'): string[] => ancestors
+      .map(e => (e as Record<string, unknown>)[key]).filter((v): v is string => typeof v === 'string');
+    const manifest = inheritSuccessorManifest(buildGoalManifestFromInput({
+      feature, run_id: options.runId, requirement, adapter: source.adapter,
+      ...(options.requirementSourceFiles?.length ? { requirement_source_files: options.requirementSourceFiles } : {}),
+      start_phase: source.start_phase, end_phase: source.end_phase,
+      unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
+    }, { projectRoot: options.projectRoot, featuresDir }), source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
+    // 与 runtime 合并块同一个函数：没有新内容时保留源合同全文，否则源全文 + 新增段（本次文本已是合并格式也不丢新增内容）
+    manifest.requirement = deriveSuccessorRequirement(source.requirement, requirement);
+    const scope = resolveSuccessorExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, manifest.requirement, source.run_id);
+    if (scope) {
+      if (!scope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
+      Object.assign(manifest, { execution_scope: scope, start_phase: scope.phase_chain[0], end_phase: scope.phase_chain.at(-1)!, chain_override: [...scope.phase_chain] });
+    }
+    const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, feature));
+    const chain = scope?.phase_chain ?? resolveAutoChain(workflow, manifest.start_phase, manifest.end_phase, manifest.chain_override, track);
+    createGoalRun({ projectRoot: options.projectRoot, manifest, chain, continuation });
+    const successorDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
+    ensureRunControl(successorDir, manifest.run_id);
+    return { manifest, manifestPath: path.join(successorDir, 'manifest.json'), runDir: successorDir, continuation };
+  }
   // D1.3：出生范围 = 转交时 feature 的**有效**范围（有记录时不重算候选）。
   const birth = resolveBirthExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, requirement);
   const executionScope = birth.scope;
@@ -167,7 +236,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     requiresLegacyFidelityRecovery:
       !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });
-  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain, forceFresh: options.forceFresh });
+  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain, forceFresh: options.forceFresh, continuation });
   // D1.3 转交登记：**createGoalRun 成功之后、ensureRunControl 之前**。出生未完成时 feature 侧
   // 绝不能留下指向不存在 run 的指针；反向残留（记录指向不存在的 run）才是 D1.3 第三行的报错。
   if (executionScope) {
@@ -178,7 +247,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   }
   let runDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
   ensureRunControl(runDir, manifest.run_id);
-  return { manifest, manifestPath, runDir };
+  return { manifest, manifestPath, runDir, continuation };
 }
 
 export interface GoalModeHostBridgeOptions {
@@ -456,6 +525,8 @@ async function main(): Promise<void> {
       run_id: prepared.manifest.run_id,
       manifest: prepared.manifestPath,
       run_dir: prepared.runDir,
+      // plan 4e6fb3b6 §7：fresh = 新出生；rejoin = 同一任务的未终局 run，附着它继续（条件是否解除由原检查判断）
+      continuation: prepared.continuation.kind,
       next: 'rerun without --prepare-run to attach the attended host bridge',
     }));
     return;

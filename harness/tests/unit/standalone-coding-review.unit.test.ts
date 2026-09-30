@@ -25,7 +25,7 @@ import { assessFeature } from '../../scripts/utils/assess';
 import { formatAssessNextStep } from '../../scripts/utils/assess-renderer';
 import { checkFactsArtifact } from '../../scripts/utils/context-facts';
 import { checkUpstreamVerdictGate } from '../../scripts/utils/upstream-verdict-gate';
-import { executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { collectCleanPassIssues, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import coding from '../../scripts/check-coding';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
@@ -38,6 +38,7 @@ import type { CheckContext } from '../../scripts/utils/types';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
 import { writePhaseSummary } from '../utils/completion-chain-seed';
+import { withRunDisposition } from '../../scripts/utils/adjudication';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p4', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], artifacts: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
@@ -1163,6 +1164,48 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
       projectRoot: f.root, frameworkRoot, feature: 'demo', completionTarget: 'feature',
       requestedResults: ['value is 42'], requestedPhases: ['coding'], requirement, overwrite: true,
     }), /跳过设计阶段/);
+  } },
+  { name: 'P3 全量回归：框架与工程分开放时，有人在场入口从正式开始过的 run 起后继能正常出生', run(f) {
+    // 夹具 run 有正式开始、停在预算墙（结构终局）；本次需求不同 → 起后继。后继范围重解析要读 workflow，
+    // 框架根只能来自调用方（工程根下没有 framework 目录）。
+    const eventsPath = path.resolve(f.root, f.manifest.report_dir, 'events.jsonl');
+    const ts = new Date().toISOString();
+    for (const event of [
+      { ts, type: 'run_start', dry_run: false, session_started_at: ts, chain: f.manifest.chain_override, manifest_hash: 'h' },
+      { ts, type: 'phase_halt', phase: 'coding', halt_reason: 'budget_wall_clock', verdict: 'FAIL' },
+      { ts, type: 'run_end', status: 'HALTED', halt_reason: 'budget_wall_clock' },
+    ]) fs.appendFileSync(eventsPath, `${JSON.stringify(withRunDisposition(event))}\n`, 'utf8');
+    const run = prepareGoalModeRun({ projectRoot: f.root, frameworkRoot, feature: 'demo', adapter: 'codex', runId: 'p4-successor', requirement: 'make value 42 and keep its type' });
+    assert(run.continuation.kind === 'successor' && run.manifest.successor_of === f.manifest.run_id, JSON.stringify(run.continuation));
+    assert(run.manifest.execution_scope && run.manifest.execution_scope.phase_chain.includes('coding'), JSON.stringify(run.manifest.execution_scope?.phase_chain));
+  } },
+  { name: 'P3 全量回归评审返修：框架与工程分开放时，合法的阶段证据在后继复用核验与完成检查里保持可复用', run(f) {
+    // 阶段证据按调用方的框架根记下环境（gate 指纹、框架版本）；重算时若按工程根推断框架根，
+    // 推断失败得到空身份 → environment_changed → 合法复用被撤销、后继多重跑阶段。
+    fs.mkdirSync(path.join(f.root, 'doc/features/demo/context'), { recursive: true });
+    fs.writeFileSync(path.join(f.root, 'doc/features/demo/context/facts.md'), ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: f.manifest.run_id,
+      established_by: 'review', ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts'], key_inputs_read: ['src/demo/value.ts'],
+      files_inspected_count: 1, searches_performed_estimate: 1, decisions_unlocked: ['verified existing behavior'], exploration_mode: 'sequential' }).trimEnd(), '---',
+      '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', '| src/demo/value.ts | readable current input | verification |', ''].join('\n'));
+    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+    const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...bridge }).inputs!;
+    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', resolvedInputs: inputs, factsContext: bridge.factsContext }));
+    const aggregate = loadPhaseEvidenceManifest(f.root, 'demo', 'review')!.manifest.aggregate_sha256;
+    // 前提：带框架根重算是 fresh；按工程根推断则判 stale（这正是漏传框架根的后果）
+    assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['review'], { frameworkRoot })[0].verdict, 'fresh');
+    assert.notEqual(recomputePhaseEvidenceStaleness(f.root, 'demo', ['review'])[0].verdict, 'fresh', '前提不成立：分开放布局下推断框架根也能重算出同一环境');
+    const ref = { phase: 'review', evidence_manifest_aggregate: aggregate };
+    // ① 后继出生的复用核验（resolveWithPriorEvidence 经 collectResolvedScopeFacts）
+    const facts = collectResolvedScopeFacts({ request: { completion_target: 'feature', requested_results: ['delivery'], requested_phases: ['review'] },
+      facts: [{ id: 'review:result', kind: 'review-result', applicability: 'required', reason: 'reviewed', basis: [], satisfied_by: [ref] }], contract_fingerprints: [] },
+      { projectRoot: f.root, feature: 'demo', frameworkRoot });
+    assert(facts.satisfied_by.length === 1 && facts.satisfied_by[0].ok, `合法阶段证据须可复用：${JSON.stringify(facts.satisfied_by)}`);
+    // ② 完成检查（collectCleanPassIssues → 范围证据核验）
+    const scope = { schema_version: '1.0' as const, completion_target: 'feature' as const, requested_results: ['delivery'], phase_chain: [], reused_phases: [], unresolved: [],
+      policy_fingerprint: '0'.repeat(64), obligations: [{ id: 'review:result', kind: 'review-result', owner_phase: 'review', applicability: 'required' as const, reason: 'reviewed', basis: [], satisfied_by: [ref] }] };
+    const scopeIssues = collectCleanPassIssues({ projectRoot: f.root, feature: 'demo', chain: ['review'], executionScope: scope as ExecutionScope, frameworkRoot })
+      .filter(issue => issue.condition === 'execution_scope' && /reused evidence/.test(issue.detail));
+    assert.deepStrictEqual(scopeIssues, [], '完成检查把合法复用判成失效');
   } },
   { name: 'D0.2 the candidate proves which requirement it was computed for, and a fork or a deleted binding is refused', run(f) {
     // provenance 不是「缺产物时才有」：**任何**候选都带需求绑定，冻结时与本次 --requirement

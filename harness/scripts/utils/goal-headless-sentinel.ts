@@ -205,15 +205,44 @@ function parseChrysApiError(lines: string[]): HeadlessApiErrorSentinel | null {
 }
 
 /**
+ * plan 4e6fb3b6 §4：codex **终态失败**（`turn.failed`）信封里的 HTTP 状态码。只读
+ * agent-invoke 产出的 `terminal_error_excerpt` 的 `turn.failed:` 段——顶层 `error` 事件不是终态
+ * （error → 重试成功 → 正常完成终态是合法序列，见 codex-terminal-events 契约），不参与判定。
+ * 信封形状取自宿主 0457a6 / be091c 的真实 400 样本：`{"type":"error","status":<码>,"error":{…}}`。
+ */
+export function codexTerminalFailureStatus(terminalErrorExcerpt: string | undefined): number | null {
+  const prefix = 'turn.failed: ';
+  if (!terminalErrorExcerpt?.startsWith(prefix)) return null;
+  const body = terminalErrorExcerpt.slice(prefix.length).split(' | error: ')[0];
+  if (!/"type"\s*:\s*"error"/.test(body)) return null;
+  const m = /"status"\s*:\s*(\d{3})\b/.exec(body);
+  return m ? Number(m[1]) : null;
+}
+
+/** codex 终态 429 / 5xx → 瞬时（与 claude 的 STREAM_JSON_TRANSIENT_STATUS 同口径：断流/限流可退避重试）。 */
+function parseCodexTerminalApiError(terminalErrorExcerpt: string | undefined): HeadlessApiErrorSentinel | null {
+  const status = codexTerminalFailureStatus(terminalErrorExcerpt);
+  if (status === null || !(status === 429 || (status >= 500 && status <= 599))) return null;
+  return {
+    code: TRANSIENT_API_ERROR_CODE,
+    matchedLine: `codex turn.failed status=${status} ${terminalErrorExcerpt!.slice(0, 200)}`.slice(0, 300),
+    lineIndex: -1,
+  };
+}
+
+/**
  * API 断流哨兵（P0-D）。adapter 感知：claude 走纯文本 CLI 信封锚定、chrys 走 JSON
- * envelope 解析；其余 adapter（codex/cursor/opencode/generic）断流吐法未实测，
- * 不承诺检测（返回 null）——宁漏判走既有失败路径，不误报吞真 blocker。
+ * envelope 解析；codex 走 terminal 契约的终态失败信封（plan 4e6fb3b6 §4，429/5xx 才算，
+ * 401/403 归 CLI 硬失败、400 保持现状）；其余 adapter（cursor/opencode/generic）断流吐法
+ * 没有真实样本，不承诺检测（返回 null）——宁漏判走既有失败路径，不误报吞真 blocker。
  * 非空信封命中**不依赖 exit code**（实测断流 attempt 可 exit 0）。
  */
 export function parseHeadlessApiError(
   outputLogPath: string,
   adapter: string,
+  terminalErrorExcerpt?: string,
 ): HeadlessApiErrorSentinel | null {
+  if (adapter === 'codex') return parseCodexTerminalApiError(terminalErrorExcerpt);
   if (!fs.existsSync(outputLogPath)) return null;
   const raw = fs.readFileSync(outputLogPath, 'utf-8');
   if (raw.trim().length === 0) return null; // 0 字节走 agent_no_output 兜底，不冒充断流

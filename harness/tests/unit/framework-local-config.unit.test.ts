@@ -23,6 +23,7 @@ import {
   LOCAL_CONFIG_FILENAME,
   mergeLocalIntoToolchain,
   resolveAgentAdapterSource,
+  resolveApprovedModels,
   writeLocalConfig,
 } from '../../scripts/utils/framework-local-config';
 
@@ -37,6 +38,52 @@ function mkTmp(): string {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    // plan 4e6fb3b6 §6.1
+    name: 'P3 t4 adapters.<adapter>.approved_models：按序去重读出；缺省=无替代；解析不了按未配置并提示，不拖垮整个 local；原样 round-trip',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const writeRaw = (obj: unknown): void =>
+          fs.writeFileSync(path.join(root, LOCAL_CONFIG_FILENAME), JSON.stringify(obj), 'utf-8');
+        writeRaw({
+          schema_version: '1.0', agent_adapter: 'codex',
+          adapters: { codex: { approved_models: [' gpt-a ', 'gpt-b', 'gpt-a'] }, claude: { approved_models: 'x' } },
+        });
+        const local = loadLocalConfig(root);
+        assert.deepStrictEqual(resolveApprovedModels(local, 'codex'), { models: ['gpt-a', 'gpt-b'] });
+        const bad = resolveApprovedModels(local, 'claude');
+        assert.deepStrictEqual(bad.models, [], '解析不了按未配置处理');
+        assert.ok(bad.warning?.includes('adapters.claude.approved_models'), `须提示：${bad.warning}`);
+        assert.deepStrictEqual(resolveApprovedModels(local, 'cursor'), { models: [] }, '没有这一项就没有替代，也不提示');
+        assert.deepStrictEqual(resolveApprovedModels(null, 'codex'), { models: [] }, '无 local 文件');
+        for (const v of [[''], ['a'.repeat(129)], ['ok', 1], ['bad\u0001']]) {
+          writeRaw({ schema_version: '1.0', adapters: { codex: { approved_models: v } } });
+          const r = resolveApprovedModels(loadLocalConfig(root), 'codex');
+          assert.ok(r.models.length === 0 && !!r.warning, `非法值 ${JSON.stringify(v)} 须按未配置并提示`);
+        }
+        writeRaw({ schema_version: '1.0', adapters: 'nope' });
+        const warned: string[] = [];
+        const origWarn = console.warn;
+        console.warn = (...a: unknown[]) => { warned.push(a.map(String).join(' ')); };
+        try {
+          assert.deepStrictEqual(loadLocalConfig(root)?.adapters, undefined, 'adapters 不是对象：丢弃，不抛错');
+          loadLocalConfig(root);
+        } finally {
+          console.warn = origWarn;
+        }
+        assert.strictEqual(warned.filter(w => w.includes('adapters 须为对象')).length, 1, `父节点非法须给一次明确提示：${JSON.stringify(warned)}`);
+        // round-trip：其它字段的写回不丢这一节（含坏值——用户的配置由用户改）
+        writeRaw({ schema_version: '1.0', agent_adapter: 'codex', adapters: { codex: { approved_models: ['m1'] }, claude: { approved_models: 3 } } });
+        writeLocalConfig(root, { ...loadLocalConfig(root)!, agent_adapter: 'claude' });
+        const back = loadLocalConfig(root);
+        assert.deepStrictEqual(back?.adapters, { codex: { approved_models: ['m1'] }, claude: { approved_models: 3 } });
+        assert.strictEqual(back?.agent_adapter, 'claude');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     // openspec device-readiness-and-completion：device 策略入 local config
     name: 'device 策略：round-trip 不丢字段；旧配置无 device 键仍可加载（行为等价 manual/disabled）',

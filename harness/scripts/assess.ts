@@ -46,7 +46,7 @@ function main(): void {
   // plan b2d7f4e9 §3.5：完成评估（记录可信性 / uncovered 义务 / blocking）与阶段观察并列展示。
   let featureAssessment: unknown;
   try {
-    const a = assessFeatureCompletion(projectRoot, feature, { ...resolveChangeUnitExpectedExecution(projectRoot, feature), frameworkRoot });
+    const a = assessFeatureCompletion(projectRoot, feature, { ...resolveChangeUnitExpectedExecution(projectRoot, feature, false, frameworkRoot), frameworkRoot });
     featureAssessment = { complete: a.complete, record: a.record, uncovered: a.obligations.filter(o => o.status === 'uncovered'), blocking: a.blocking };
   } catch (error) { featureAssessment = { error: (error as Error).message }; }
   console.log(JSON.stringify({ ...result, feature_assessment: featureAssessment }, null, 2));

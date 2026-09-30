@@ -26,6 +26,8 @@ import { createHash } from 'crypto';
 import { extractTables, getSectionContent, extractDeclaredVerdict } from './markdown-parser';
 import { mapCategoryToChainPhase, type CorrectionCategory } from './correction-routing';
 import type { ExecutionScopeInput } from './execution-scope';
+import type { GoalRunEvent } from './goal-runner-phase';
+import { isBlockingCheck, resultBasisOwner } from './check-disposition';
 
 /** 可产回退候选的责任类别（verification 无回退语义） */
 export type RepairOwnerCategory = Exclude<CorrectionCategory, 'verification'>;
@@ -110,75 +112,6 @@ export function deriveCategoryFromFiles(files: readonly string[]): RepairOwnerCa
 // 同款「prompt 产出端与解析端共用 SSOT」契约）
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// testing 侧 defect-review fenced 块（adjudicated-repair-loop M2 · plan e2b7c4a9 t2.2）
-// ---------------------------------------------------------------------------
-// 契约：testing 报告（test-report.md）可附带逐信号复核块——**裁决发生在候选物化之前**：
-// ```defect-review
-// - signal: 添加银行卡标题
-//   verdict: confirmed     # confirmed（同向）| disputed（反对，须理由）
-//   rationale: 截图/证据核对后确认为真缺陷
-// ```
-//  · 无块/块内无该信号条目 = unreviewed（fail-closed：actionable 未复核 → 停等）；
-//  · verdict=disputed → 停等（原样呈理由），无自动 refuted；
-//  · verdict=confirmed → 与 producer actionable 同向 → 物化为常规候选（signal@1）可回退。
-// ---------------------------------------------------------------------------
-
-export const DEFECT_REVIEW_FENCE = 'defect-review';
-
-export interface DefectReviewEntry {
-  /** 信号引用（producer 给出的信号身份/文本锚，与 uncertain_signals 的 target 呼应） */
-  signal: string;
-  verdict: 'confirmed' | 'disputed';
-  rationale?: string;
-}
-
-const DEFECT_REVIEW_FENCE_RE = new RegExp(
-  '```' + DEFECT_REVIEW_FENCE + '\\s*\\r?\\n([\\s\\S]*?)```',
-  'i',
-);
-
-/**
- * 从 testing 报告解析 defect-review 块。无块/空块 → ok:false（unreviewed，fail-closed）。
- * verdict 非法值按 disputed 处理（不明确不产候选，停等）。
- */
-export function parseDefectReviewBlock(text: string): {
-  ok: boolean;
-  entries: DefectReviewEntry[];
-  reason: string;
-} {
-  if (!text || !text.trim()) return { ok: false, entries: [], reason: 'testing 报告为空' };
-  const m = DEFECT_REVIEW_FENCE_RE.exec(text);
-  if (!m) return { ok: false, entries: [], reason: `缺 ${DEFECT_REVIEW_FENCE} fenced 块` };
-  const entries: DefectReviewEntry[] = [];
-  const lines = m[1].split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length) {
-    const signalMatch = /^\s*-\s*signal:\s*(.+?)\s*$/.exec(lines[i]);
-    if (!signalMatch) { i++; continue; }
-    i++;
-    const verdictMatch = i < lines.length ? /^\s*verdict:\s*(\S+)\s*$/.exec(lines[i]) : null;
-    if (!verdictMatch) continue;
-    const raw = verdictMatch[1].toLowerCase();
-    i++;
-    let rationale: string | undefined;
-    if (i < lines.length) {
-      const raMatch = /^\s*rationale:\s*(.+?)\s*$/.exec(lines[i]);
-      if (raMatch) {
-        rationale = raMatch[1].trim();
-        i++;
-      }
-    }
-    entries.push({
-      signal: signalMatch[1].trim(),
-      verdict: raw === 'confirmed' ? 'confirmed' : 'disputed',
-      ...(rationale ? { rationale } : {}),
-    });
-  }
-  if (entries.length === 0) return { ok: false, entries: [], reason: 'defect-review 块无合法条目' };
-  return { ok: true, entries, reason: `${entries.length} 条逐信号复核` };
-}
-
 export const ISSUE_VERIFICATION_FENCE = 'issue-verification';
 
 export type IssueVerificationVerdict = 'confirmed' | 'refuted' | 'unclear';
@@ -260,6 +193,13 @@ export interface ReviewCandidateInput {
   conditionalReceiptValid?: boolean;
   /** 报告结构/引用/结论一致性等 report-validity 检查存在 BLOCKER FAIL → 抑制 */
   reportValidityBlocked: boolean;
+  /**
+   * plan 33784ed1 §4.5：有拒修在案的候选（resolveRepairDeclineState 的 declined_rounds>0）。
+   * 与 verifierSubjectCurrent=false 合取时该行不成立——沿用的历史评审没看过拒修依据。
+   */
+  declinedFingerprints?: ReadonlySet<string>;
+  /** verifier 正文是否属于本轮签发的 subject（false = 沿用历史 subject）；缺省视为 true */
+  verifierSubjectCurrent?: boolean;
 }
 
 interface IssueRow {
@@ -359,12 +299,15 @@ export function collectReviewRepairCandidates(input: ReviewCandidateInput): Repa
     const category = deriveCategoryFromFiles(row.files);
     if (category === null) continue; // 归属推导不出——宁缺毋滥
     const files = normalizeFiles(row.files);
+    const itemFingerprint = itemFingerprintOf(row.id, files, row.summary);
+    // §4.5：拒修在案的候选只能由当前 subject 的 verifier 证据确认
+    if (input.verifierSubjectCurrent === false && input.declinedFingerprints?.has(itemFingerprint)) continue;
     out.push({
       id: row.id,
       category,
       files,
       summary: row.summary,
-      item_fingerprint: itemFingerprintOf(row.id, files, row.summary),
+      item_fingerprint: itemFingerprint,
       source_phase: 'review',
     });
   }
@@ -391,11 +334,21 @@ export interface CheckOwnedCandidateInput {
   affectedFiles?: readonly string[];
 }
 
+/**
+ * plan f7045213 §7：check id 的有效责任方——去向表登记的结果依据类读去向表，没登记的读既有注册表。
+ * 'current_phase' = 当前阶段修复与重试，不产生回退候选。
+ */
+export function effectiveRepairOwner(checkId: string): RepairOwnerCategory | 'current_phase' | null {
+  const owner = resultBasisOwner(checkId);
+  if (owner) return owner;
+  return CHECK_ID_OWNER_REGISTRY[checkId] ?? null;
+}
+
 /** 机器 check id 归属的候选（check FAIL 时由所在阶段的组装层调用；
- *  信任条件=该 check 自身的判定，不再叠加 verifier）。未注册 id → null。 */
+ *  信任条件=该 check 自身的判定，不再叠加 verifier）。未注册 id 或当前阶段责任 → null。 */
 export function checkOwnedCandidate(input: CheckOwnedCandidateInput): RepairCandidate | null {
-  const category = CHECK_ID_OWNER_REGISTRY[input.checkId];
-  if (!category) return null;
+  const category = effectiveRepairOwner(input.checkId);
+  if (!category || category === 'current_phase' || category === input.sourcePhase) return null;
   const files = normalizeFiles(input.affectedFiles ?? []);
   const summary = normalizeSummary(input.detail);
   return {
@@ -537,6 +490,9 @@ export interface PhaseCandidateInput {
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   /** @deprecated legacy receipt flag, ignored. */
   conditionalReceiptValid?: boolean;
+  /** §4.5：见 ReviewCandidateInput 同名字段 */
+  declinedFingerprints?: ReadonlySet<string>;
+  verifierSubjectCurrent?: boolean;
   /** 本轮 checks（机器 check id 归属的生产点消费） */
   checks: ReadonlyArray<{
     id: string;
@@ -572,6 +528,8 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       verifierReportText: input.verifierReportText,
       // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸
       reportValidityBlocked: input.reportValidity !== 'PASS',
+      declinedFingerprints: input.declinedFingerprints,
+      verifierSubjectCurrent: input.verifierSubjectCurrent,
     }));
   }
   if (input.phase === 'plan') {
@@ -606,7 +564,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     //      均 PASS——测试真在驱动业务且断言有价值，否则失败可能是 UT 写错）。
     const utTest = input.checks.find(c => c.id === 'ut_hvigor_test');
     const utStructureClean = !input.checks.some(
-      c => c.status === 'FAIL' && c.severity === 'BLOCKER' && c.id !== 'ut_hvigor_test',
+      c => isBlockingCheck(c) && c.id !== 'ut_hvigor_test',
     );
     const semanticsValid =
       parseVerifierCheckStatus(input.verifierReportText, 'end_to_end_driving') === 'PASS' &&
@@ -684,6 +642,13 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       if (c) out.push(c);
     }
   }
+  // plan f7045213 §7：去向表登记的结果依据类失败——责任在上游（spec/plan/coding）的产生回退候选，由既有 assess
+  // 推荐路由；责任在当前阶段的走既有的当前阶段修复与重试（checkOwnedCandidate 对 current_phase 返回 null）。
+  for (const check of input.checks) {
+    if (check.status !== 'FAIL' || !resultBasisOwner(check.id) || out.some(c => c.id === check.id)) continue;
+    const c = checkOwnedCandidate({ checkId: check.id, sourcePhase: input.phase, detail: check.details ?? check.id, affectedFiles: check.affected_files });
+    if (c) out.push(c);
+  }
   return out;
 }
 
@@ -716,6 +681,9 @@ export interface SummaryRepairCandidatesInput {
   conditionalReceiptValid?: boolean;
   /** details 文本兜底归因解析器（harness-runner 既有实现注入，测试同款） */
   parseClassificationFromDetails?: (details: string) => string | undefined;
+  /** §4.5：见 ReviewCandidateInput 同名字段 */
+  declinedFingerprints?: ReadonlySet<string>;
+  verifierSubjectCurrent?: boolean;
 }
 
 /**
@@ -731,6 +699,8 @@ export function buildSummaryRepairCandidates(
     reviewReportText: input.reviewReportText,
     verifierReportText: input.verifierReportText,
     reportValidity: input.reportValidity,
+    declinedFingerprints: input.declinedFingerprints,
+    verifierSubjectCurrent: input.verifierSubjectCurrent,
     checks: input.checks.map((c) => ({
       id: c.id,
       status: c.status,
@@ -762,6 +732,190 @@ export function restoreBacktrackCandidatesFromEvents(
     out = Array.isArray(e.candidates) ? (e.candidates as RepairCandidate[]) : [];
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 拒修与反驳状态（plan 33784ed1 §4.3）——四处判定与目标简报的唯一来源
+// ---------------------------------------------------------------------------
+// 回修轮 = 一条 phase_backtrack_requested 及其窗口（到同 run 下一条同类事件；没有时到该 run 的有效
+// run_end——resolveEffectiveRunEnd：没被其后 run_start/resume 取代的最后一条；没有则窗口开放）。
+// 拒修动作 = 候选责任阶段账本里的一行：gate_id=repair_candidate:<fp>、decision 以 `declined:` 开头，
+// run_id 等于回修轮所在 run 且 ts 落在窗口内；来源核验 = 依据里「」引文全部逐字出现在当前目标文本。
+// 只读事件与账本：内存回退待办、完成事件上的清单都不是来源。
+
+export const REPAIR_DECLINE_GATE_PREFIX = 'repair_candidate:';
+
+export interface RepairDeclineRound { run_id: string; ts: string }
+
+export interface RepairDeclineState {
+  id: string;
+  summary: string;
+  /** 有来源核验通过的拒修动作的回修轮数 */
+  declined_rounds: number;
+  /** 是否已在一次拒修之后再次出现在回修轮里（反驳轮已用） */
+  rebuttal_used: boolean;
+  /** 最近一次拒修：依据原文、所在 run 与回修轮 */
+  basis: { text: string; run_id: string; round: RepairDeclineRound } | null;
+  /** 第一次拒修所在回修轮——已尝试记录只豁免这一轮 */
+  first_declined_round: RepairDeclineRound | null;
+}
+
+export interface DeclineLedgerLine { run_id: string; gate_id: string; decision: string; ts: string }
+
+/** 来源核验：返回依据原文；不是拒修或引文不逐字 → null。 */
+function verifiedDeclineBasis(decision: string, requirementText: string): string | null {
+  const m = /^\s*declined:\s*([\s\S]*\S)\s*$/.exec(decision);
+  if (!m) return null;
+  const quotes = [...m[1].matchAll(/「([^」]*)」/g)].map(q => q[1]);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { checkRequirementQuote } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  if (!quotes.length || quotes.some(q => checkRequirementQuote(q, requirementText) !== 'ok')) return null;
+  return m[1];
+}
+
+/**
+ * 候选在一个回修轮里的责任阶段：用责任路由同一张类别→阶段表（mapCategoryToChainPhase），链取该轮会重新执行的阶段。
+ * full/lite 两种投影在 spec/plan 上互斥（spec|plan 对 change）、coding 同名，依次尝试结果唯一；不在重跑阶段内 → null。
+ */
+function roundOwnerPhase(category: unknown, roundPhases: readonly string[]): string | null {
+  if (category !== 'spec' && category !== 'plan' && category !== 'coding') return null;
+  return mapCategoryToChainPhase(category, roundPhases, 'full') ?? mapCategoryToChainPhase(category, roundPhases, 'lite');
+}
+
+export function resolveRepairDeclineState(input: {
+  /** 交付周期内的 run（祖先在前与否不限，按回修事件 ts 排序） */
+  runs: ReadonlyArray<{ run_id: string; events: ReadonlyArray<{ ts?: string; type?: string; to_phase?: unknown; invalidated_phases?: unknown; candidates?: unknown }> }>;
+  /** 阶段 → 该阶段账本行（loadHeadlessLedger 的 entries）；每个候选只读它责任阶段的那份 */
+  ledgers: Readonly<Record<string, ReadonlyArray<DeclineLedgerLine>>>;
+  requirementText: string;
+}): Map<string, RepairDeclineState> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const rounds: Array<RepairDeclineRound & { end: number; candidates: Array<{ fp: string; id: string; summary: string; owner: string }> }> = [];
+  for (const run of input.runs) {
+    const bts = run.events.filter(e => e.type === 'phase_backtrack_requested' && typeof e.ts === 'string');
+    // 窗口上界：同 run 下一条回修事件；没有时取 resolveEffectiveRunEnd（没被其后 run_start/resume 取代的
+    // 最后一条 run_end，其后的 finalize_* 收尾事件不影响），有则以它关窗，否则保持开放
+    //（停机后 resume 同一 run 会接着写同一个 events 文件、不重发回修事件，resume 后写的拒修仍属这一轮）。
+    const effectiveEnd = resolveEffectiveRunEnd(run.events as GoalRunEvent[]);
+    const runEnded = typeof effectiveEnd?.ts === 'string' ? Date.parse(effectiveEnd.ts) : Infinity;
+    bts.forEach((e, i) => {
+      const phases = [e.to_phase, ...(Array.isArray(e.invalidated_phases) ? e.invalidated_phases : [])]
+        .filter((p): p is string => typeof p === 'string');
+      // 本轮下发 = 候选的责任阶段在该轮会重新执行的阶段里；只认责任阶段自己的账本（同一张类别→阶段表）
+      const candidates = (Array.isArray(e.candidates) ? e.candidates : [])
+        .map(c => c as Record<string, unknown>)
+        .filter(c => c && typeof c.item_fingerprint === 'string')
+        .map(c => ({ fp: String(c.item_fingerprint), id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, phases) }))
+        .filter((c): c is { fp: string; id: string; summary: string; owner: string } => c.owner !== null);
+      const next = bts[i + 1]?.ts;
+      rounds.push({ run_id: run.run_id, ts: e.ts!, end: next ? Date.parse(next) : runEnded, candidates });
+    });
+  }
+  rounds.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  const out = new Map<string, RepairDeclineState>();
+  for (const round of rounds) {
+    const start = Date.parse(round.ts);
+    for (const c of round.candidates) {
+      const lines = input.ledgers[c.owner] ?? [];
+      let st = out.get(c.fp);
+      if (!st) {
+        st = { id: c.id, summary: c.summary, declined_rounds: 0, rebuttal_used: false, basis: null, first_declined_round: null };
+        out.set(c.fp, st);
+      }
+      if (st.declined_rounds > 0) st.rebuttal_used = true;
+      st.id = c.id;
+      st.summary = c.summary;
+      let latest: { text: string; at: number } | null = null;
+      for (const line of lines) {
+        if (line.gate_id !== `${REPAIR_DECLINE_GATE_PREFIX}${c.fp}` || line.run_id !== round.run_id) continue;
+        const at = Date.parse(line.ts);
+        if (!(at >= start && at < round.end)) continue;
+        const text = verifiedDeclineBasis(line.decision, input.requirementText);
+        if (text !== null && (!latest || at >= latest.at)) latest = { text, at };
+      }
+      if (!latest) continue;
+      const key = { run_id: round.run_id, ts: round.ts };
+      st.declined_rounds += 1;
+      st.first_declined_round ??= key;
+      st.basis = { text: latest.text, run_id: round.run_id, round: key };
+    }
+  }
+  return out;
+}
+
+/** 本次出现即反驳轮：拒修过一次且反驳轮未用（整轮重复判断排除它）。 */
+export function isRebuttalAppearance(state: RepairDeclineState | undefined): boolean {
+  return !!state && state.declined_rounds === 1 && !state.rebuttal_used;
+}
+
+/** 已尝试记录的豁免：只豁免该候选第一次拒修所在的回修轮。 */
+export function declineAttemptExemption(
+  states: ReadonlyMap<string, RepairDeclineState>,
+  runId: string,
+): (backtrackEvent: { ts?: string }, fingerprint: string) => boolean {
+  return (e, fp) => {
+    const first = states.get(fp)?.first_declined_round;
+    return !!first && first.run_id === runId && first.ts === e.ts;
+  };
+}
+
+/** 未收敛停机说明：并列执行者的拒修依据与裁判的缺陷描述（§4.5）。 */
+export function declineDisputeLines(
+  candidates: ReadonlyArray<Pick<RepairCandidate, 'id' | 'summary' | 'item_fingerprint'>>,
+  states: ReadonlyMap<string, RepairDeclineState>,
+): string[] {
+  const rows = candidates.flatMap(c => {
+    const b = states.get(c.item_fingerprint)?.basis;
+    return b ? [`- ${c.id}：执行者拒修依据（run ${b.run_id}）：${b.text}；裁判缺陷描述：${c.summary}`] : [];
+  });
+  return rows.length ? ['双方依据（执行者按目标拒修、裁判仍然提出；是否修改需求由用户看过双方依据后决定）：', ...rows] : [];
+}
+
+/**
+ * 从盘上读出交付周期内的事件（foldBudgetLineage，祖先 run 计入）、回修轮涉及阶段的账本与当前目标文本，
+ * 交给 resolveRepairDeclineState。run 不存在或不可读 → 空状态。
+ */
+export function loadRepairDeclineState(projectRoot: string, feature: string, runId: string): Map<string, RepairDeclineState> {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const pathMod = require('path') as typeof import('path');
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const { featureRelativePath } = require('./feature-identity') as typeof import('./feature-identity');
+  const { foldBudgetLineage, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const { loadHeadlessLedger } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+  const { collectCurrentRequirementText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  if (!runId.trim()) return new Map();
+  let featuresDir = 'doc/features';
+  try { featuresDir = (loadFrameworkConfig(projectRoot).paths?.features_dir ?? featuresDir).replace(/\\/g, '/'); } catch { /* 默认目录 */ }
+  const runDir = pathMod.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId);
+  const eventsPath = pathMod.join(runDir, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) return new Map();
+  let successorSeed: string[] = [];
+  try {
+    const m = JSON.parse(fs.readFileSync(pathMod.join(runDir, 'manifest.json'), 'utf8')) as { successor_of?: unknown; execution_scope?: unknown };
+    if (m.execution_scope && typeof m.successor_of === 'string' && m.successor_of) successorSeed = [m.successor_of];
+  } catch { /* 无 manifest → 只看事件里的 supersede */ }
+  const events = loadAuthoritativeEvents(eventsPath);
+  // 取法与预算折叠同源（runtime 的 budgetLineage 同一种子：事件里的 supersede ∪ successor_of）
+  const fold = foldBudgetLineage({ projectRoot, featuresDir, feature, seedTargets: successorSeed, currentEvents: events });
+  const runs = [...fold.ancestorRuns, { run_id: runId, events }];
+  const phases = new Set<string>();
+  for (const run of runs) for (const e of run.events) {
+    const ev = e as { type?: string; to_phase?: unknown; invalidated_phases?: unknown };
+    if (ev.type !== 'phase_backtrack_requested') continue;
+    for (const p of [ev.to_phase, ...(Array.isArray(ev.invalidated_phases) ? ev.invalidated_phases : [])]) {
+      if (typeof p === 'string' && p) phases.add(p);
+    }
+  }
+  if (!phases.size) return new Map();
+  const ledgers: Record<string, DeclineLedgerLine[]> = {};
+  for (const p of phases) ledgers[p] = loadHeadlessLedger(projectRoot, feature, p)?.entries ?? [];
+  return resolveRepairDeclineState({
+    runs,
+    ledgers,
+    requirementText: collectCurrentRequirementText(projectRoot, feature, featuresDir, runId),
+  });
 }
 
 // ---------------------------------------------------------------------------

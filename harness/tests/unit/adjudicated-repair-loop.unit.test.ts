@@ -2,7 +2,7 @@
 // adjudicated-repair-loop.unit.test.ts — M2 纯函数层（plan e2b7c4a9 t2.6）
 // ----------------------------------------------------------------------------
 // 覆盖：
-//   1. parseDefectReviewBlock：confirmed / disputed / 无块（unreviewed）/ 非法 verdict\n   2. levenshteinDistance：编辑距离基数（OCR 混淆判定核心）\n   3. collectTextPlacementSignals：OCR 混淆（编辑距离 ≤1）→ uncertain 不产 FAIL 级信号\n      与存在性 must_fix；整页参考图 vs 单视口 → 纵序比较降级 uncertain 注明口径缺口\n// ============================================================================
+//   （原第 1 项 parseDefectReviewBlock 已随解析函数删除，plan 3abca824 t3）\n   2. levenshteinDistance：编辑距离基数（OCR 混淆判定核心）\n   3. collectTextPlacementSignals：OCR 混淆（编辑距离 ≤1）→ uncertain 不产 FAIL 级信号\n      与存在性 must_fix；整页参考图 vs 单视口 → 纵序比较降级 uncertain 注明口径缺口\n// ============================================================================
 
 import * as fs from 'fs';
 import * as os from 'os';
@@ -12,7 +12,6 @@ import {
   collectTextPlacementSignals,
   levenshteinDistance,
 } from '../../../profiles/hmos-app/harness/visual-diff-ocr-gates';
-import { parseDefectReviewBlock } from '../../scripts/utils/repair-candidates';
 import type { OcrResult, OcrWord } from '../../../profiles/hmos-app/harness/ocr-toolkit';
 import type { UnitCaseResult } from '../run-unit';
 
@@ -51,40 +50,6 @@ function shotAbs(rel: string): string { return rel; }
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
-
-  run('parseDefectReviewBlock：confirmed/disputed 逐条解析 + 理由', () => {
-    const r = parseDefectReviewBlock([
-      '```defect-review',
-      '- signal: 添加银行卡标题',
-      '  verdict: confirmed',
-      '  rationale: 截图核对确认为真缺陷',
-      '- signal: 银行行布局',
-      '  verdict: disputed',
-      '  rationale: OCR 混淆，非真缺陷',
-      '```',
-    ].join('\n'));
-    assert(r.ok, `块须可解析：${r.reason}`);
-    assert(r.entries.length === 2, `两条：${r.entries.length}`);
-    assert(r.entries[0].verdict === 'confirmed' && r.entries[0].signal === '添加银行卡标题', '第一条 confirmed');
-    assert((r.entries[1].rationale?.includes('OCR') ?? false), '第二条 disputed + 理由');
-  });
-
-  run('parseDefectReviewBlock：无块 → ok:false（unreviewed，fail-closed）', () => {
-    const empty = parseDefectReviewBlock('');
-    assert(!empty.ok && empty.entries.length === 0, '空报告 → 无块');
-    const noBlock = parseDefectReviewBlock('# 测试报告\n无 fenced 块');
-    assert(!noBlock.ok, '无 fenced 块 → 失败（unreviewed）');
-  });
-
-  run('parseDefectReviewBlock：非法 verdict 按 disputed（fail-closed 不产候选）', () => {
-    const r = parseDefectReviewBlock([
-      '```defect-review',
-      '- signal: X',
-      '  verdict: maybe',
-      '```',
-    ].join('\n'));
-    assert(r.ok && r.entries[0].verdict === 'disputed', `非法 verdict 归 disputed：${r.entries[0].verdict}`);
-  });
 
   run('levenshteinDistance：编辑距离基数（中信/中国 银行 → 1）', () => {
     assert(levenshteinDistance('中信银行', '中国银行') === 1, '中信→中国 距离 1');
@@ -272,7 +237,7 @@ export function runAll(): UnitCaseResult[] {
     );
     assert(res.uncertainSignals.length >= 1, '须有 uncertain 信号');
     assert(res.uncertainSignals[0].target === '中信银行',
-      `target 须为稳定候选锚（供 defect-review 恢复绑定）：${JSON.stringify(res.uncertainSignals[0])}`);
+      `target 须为稳定候选锚（稳定文本锚，参与信号身份）：${JSON.stringify(res.uncertainSignals[0])}`);
   });
 
   run('短串编辑距离 1 不得漏成 actionable（must_fix 前置判定）+ 近似对双方 target 精确断言', () => {

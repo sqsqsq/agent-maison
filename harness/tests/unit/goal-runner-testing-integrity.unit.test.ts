@@ -23,17 +23,36 @@ import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
+import { recordHvigorBuildOutcome, resetCapabilityFailedByHumanReprobe } from '../../../profiles/hmos-app/harness/toolchain-probe';
+import { FEATURE_LOCK_NAME, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
+import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
+import { foldBudgetLineage, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import {
   collectActionableDefects,
   __testing_resetGoalRunnerSeams,
   __testing_setInvokeAgent,
   __testing_setDeviceReadinessGate,
+  __testing_setDetachSpawn,
+  __testing_setCanaryProbeInvoke,
   __testing_setRepoLayout,
   __testing_setRunHarnessPhase,
   __testing_setValidateReceipt,
   __testing_setWorkflowResolver,
   main as goalMain,
+  replayAttemptedSignalIdentities,
 } from '../../scripts/goal-runner';
+import type { GoalPhaseRuntimeLaunchOptions } from '../../scripts/goal-phase-runtime';
+import {
+  declineAttemptExemption,
+  isRebuttalAppearance,
+  loadRepairDeclineState,
+  resolveRepairDeclineState,
+} from '../../scripts/utils/repair-candidates';
+import { loadHeadlessLedger } from '../../scripts/utils/headless-assumptions';
+import { casAcquireRunOwner, ensureRunControl, readRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
+import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
+import { assembleGoalBrief, renderGoalBrief } from '../../scripts/utils/goal-brief';
+import { runVisualProviderReview } from '../../../profiles/hmos-app/harness/visual-provider-review';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
@@ -73,20 +92,23 @@ import {
 } from '../../scripts/utils/visual-rounds-ledger';
 import type { CheckContext, CheckResult, Phase, ScriptReport } from '../../scripts/utils/types';
 import {
+  collectCurrentRequirementText,
   computeRequirementShaFromText,
   computeRunRequirementSha,
   loadFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
 import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
+import { NO_AUTHORITY, decide } from '../../scripts/utils/adjudication';
+import { reduceRunState } from '../../scripts/utils/run-state-reducer';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
-const FEATURE = 'bc-openCard';
+export const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
+export const FEATURE = 'bc-openCard';
 
 function layoutFieldsForTmpHost(root: string): ReturnType<typeof inferRepoLayout> {
   return { kind: 'standalone', projectRoot: root, frameworkRoot: REPO_ROOT, frameworkRel: '' } as ReturnType<typeof inferRepoLayout>;
@@ -104,7 +126,7 @@ function git(root: string, args: string[]): void {
   const r = spawnSync('git', args, { cwd: root, encoding: 'utf-8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
 }
-function writeFile(root: string, rel: string, content: string): void {
+export function writeFile(root: string, rel: string, content: string): void {
   const p = path.join(root, rel);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, content, 'utf-8');
@@ -209,7 +231,7 @@ function withCheckpointDir<T>(root: string, fn: () => T, hmacKey?: string): T {
 }
 
 /** 当前 build fingerprint（生产口径：hap 内容 sha256 前 12）——夹具与收集器同源 */
-function currentBuildFpOf(root: string): string {
+export function currentBuildFpOf(root: string): string {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { resolveCurrentBuildFingerprint } = require('../../../profiles/hmos-app/harness/build-fingerprint') as {
     resolveCurrentBuildFingerprint: (r: string, f: string, ph?: string) => string | null;
@@ -394,7 +416,7 @@ export async function runGoalRuntimeChain(
     onHarnessFailureWithoutSummary?: (ctx: { phase: string; attempt: number }) => string | null;
     /** e9d4b7a3 t5 负向：按 (attemptId, phase) 强制 receipt 复验 failed（模拟旧回执身份
      * 损坏等真实失败路径——桩默认已 identity-aware，此选项只做注入，不改变默认语义） */
-    failReceiptFor?: (attemptId: string, phase: string) => boolean;
+    failReceiptFor?: (attemptId: string, phase: string) => boolean | 'missing';
     /** adjudicated-repair-loop M2（plan e2b7c4a9 t2.6）：向 testing PASS summary 注入
      * 额外字段（如 visual_round 回执）——验证 uncertain 提前停等不丢既有事件投影。 */
     testingSummaryExtras?: Record<string, unknown>;
@@ -453,6 +475,15 @@ export async function runGoalRuntimeChain(
     testingGateChecks?: (ctx: {
       root: string; feature: string; runId: string; attemptId: string; fields: HarnessFidelityContextFields;
     }) => CheckResult[] | null;
+    /** plan 4e6fb3b6 §5.1：进程内有界等待的上限/间隔/探针（runtime 启动入参；生产 CLI 不传，取默认 15 分钟/30 秒/真实探针）。 */
+    conditionWait?: GoalPhaseRuntimeLaunchOptions['conditionWait'];
+    /**
+     * plan 4e6fb3b6 §7：不带自动 `--force` 的变体——宿主"重新发起同一请求"的原样入口（既有用例不传，逐字不变）。
+     * 同一请求重发时由接续决策选路（新开 / 重新接入 / 起后继 / 保持停止）。
+     */
+    noAutoForce?: boolean;
+    /** detach 接线用例：主入口（launcher）返回后、清理测试缝之前再等一件事（进程内跑的子进程那一半）。 */
+    afterMain?: () => Promise<unknown>;
   } = {},
 ): Promise<RunProbe> {
   const frameworkRoot = opts.frameworkRoot ?? REPO_ROOT;
@@ -544,9 +575,11 @@ export async function runGoalRuntimeChain(
       // claimed_attempt_id 严格等值（不得无条件 passed）：回执文件在场的 claimed 与请求
       // attempt 不一致 → failed。这使「刷新伪造 refresh-* attempt」在测试里必然红。
       const attempt = validateOpts?.goalIdentity?.attemptId ?? '';
-      if (attempt && opts.failReceiptFor?.(attempt, String(ph))) {
+      const injected = attempt ? opts.failReceiptFor?.(attempt, String(ph)) : false;
+      if (injected) {
         return {
-          status: 'failed' as const,
+          // plan 4e6fb3b6 返修：'missing' 与真实 check-receipt 的回执缺失状态同名（五态之一）
+          status: injected === 'missing' ? 'missing' as const : 'failed' as const,
           receipt_path: `doc/features/${feat}/${ph}/phase-completion-receipt.md`,
           message: `injected failure for attempt=${attempt} phase=${ph}`,
         };
@@ -980,7 +1013,7 @@ export async function runGoalRuntimeChain(
           '--start', opts.freshStartPhase ?? 'spec', '--end', opts.freshEndPhase ?? 'testing',
           '--adapter', opts.adapter ?? 'cursor',
           ...(opts.runId ? ['--run-id', opts.runId] : []),
-          '--foreground-ok', '--force',
+          '--foreground-ok', ...(opts.noAutoForce ? [] : ['--force']),
           ...(!useManifestPath
             ? []
             : ['--manifest', 'budget-manifest.yaml', '--override-manifest', '--override-start', '--override-end']),
@@ -1048,7 +1081,8 @@ export async function runGoalRuntimeChain(
           ownerKind: 'session',
           executor: attendedExecutor,
         })
-      : await goalMain();
+      : await goalMain(opts.conditionWait ? { conditionWait: opts.conditionWait } : {});
+    if (opts.afterMain) await opts.afterMain();
     const runsDir = featureFilePath(root, featureId, 'goal-runs');
     const runs = fs.existsSync(runsDir)
       ? fs.readdirSync(runsDir).filter(n => !n.startsWith('.'))
@@ -1168,7 +1202,7 @@ function signalFp(screenId: string, cls: string, element: string, bbox: number[]
   return `${screenId}|${cls}|${element}|${bucket}`;
 }
 
-function writeCleanTesting(root: string): void {
+export function writeCleanTesting(root: string): void {
   writeVisualDiff(root, [{ id: 'all_banks', verdict: 'pass', mustFix: [] }]);
 }
 
@@ -1294,6 +1328,49 @@ test('legacy fidelity SSOT + 下游起点：自动回 spec 重建，后续 Check
       `${startPhase}: CheckContext 必须消费重建后的 hard，实得 ${downstreamContext!.fields.acceptanceStrictness}`);
     assertRunReachedEnd(probe, `legacy fidelity downstream recovery (${startPhase})`);
   }
+});
+
+test('P3 批三框架根清点：截断链 preflight 用调用方的框架根重算上游证据——合法证据照常开跑，真实 stale 仍被拒', async () => {
+  // 本夹具的工程根下只有空的 framework/ 骨架，真实框架根由 runtime 的 layout 给出（= 框架与工程分开放）。
+  // 上游 spec/plan 证据按真实框架根写（与生产 closure finalizer 同口径），需求血缘绑定本次请求。
+  const requirement = '从 coding 起链：上游 spec/plan 已闭环';
+  const writeUpstream = (root: string): void => {
+    const requirementSha = computeRequirementShaFromText(root, FEATURE, requirement, 'doc/features');
+    for (const phase of ['spec', 'plan']) {
+      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
+        projectRoot: root, feature: FEATURE, phase, extraInputs: [], extraOutputs: [], frameworkRoot: REPO_ROOT, requirementSha,
+      }));
+    }
+  };
+  // preflight 拒绝走 process.exit(1)：两例都把它换成抛错，拒绝才能作为普通断言失败而不是打断整套。
+  const runCatchingExit = async (root: string, extra: Parameters<typeof runChain>[1] = {}): Promise<{ probe?: RunProbe; exited: string }> => {
+    const realExit = process.exit;
+    process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
+    try {
+      return { probe: await runChain(root, { freshStartPhase: 'coding', freshRequirement: requirement, ...extra }), exited: '' };
+    } catch (error) {
+      return { exited: String((error as Error).message) };
+    } finally { process.exit = realExit; }
+  };
+  const ok = setupHost().root;
+  writeUpstream(ok);
+  const good = await runCatchingExit(ok, { onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot) });
+  assert(!good.exited && !!good.probe, `合法上游证据须照常开跑（不得被判 stale 拒绝）：${good.exited}`);
+  assert(good.probe!.events.some(event => event.type === 'run_start'), `合法上游证据须写 run_start：exit=${good.probe!.exitCode}`);
+  assert(good.probe!.invokedPhases[0] === 'coding', `应从 coding 起跑，实得 ${good.probe!.invokedPhases.join('→')}`);
+
+  // 反例：上游 plan 的输入真变了 → 仍被拒、不开跑
+  const stale = setupHost().root;
+  writeUpstream(stale);
+  writeFile(stale, `doc/features/${FEATURE}/plan/plan.md`, '# plan\n（上游闭环之后被改动）\n');
+  const { exited } = await runCatchingExit(stale);
+  assert(exited.includes('process.exit(1)'), `真实 stale 的上游证据须拒绝启动：${exited || '未退出'}`);
+  const staleRuns = path.join(stale, 'doc', 'features', FEATURE, 'goal-runs');
+  const started = fs.existsSync(staleRuns) && fs.readdirSync(staleRuns).some(id => {
+    const ev = path.join(staleRuns, id, 'events.jsonl');
+    return fs.existsSync(ev) && fs.readFileSync(ev, 'utf8').includes('"type":"run_start"');
+  });
+  assert(!started, '被拒的截断链不得写 run_start');
 });
 
 test('legacy fidelity 回退 crash/resume：提前 completed 不能越过未提交的 spec closure', async () => {
@@ -3406,6 +3483,162 @@ test('T3-④ 机器 envBlocked 在场 → 外部路径不误投 coding（即使 
 });
 
 // ---------------------------------------------------------------------------
+// plan 4e6fb3b6 §4 / A4：框架阻断与内容阻断并存（summary 由真实 writer writeRunSummaryBase 落盘）
+// ---------------------------------------------------------------------------
+test('A4 框架阻断与内容阻断并存：不落 code_regression、不耗内容重试、内容 blocker 仍在清单；框架解除后内容仍须修复', async () => {
+  const { root } = setupHost();
+  const contentCheck: CheckResult = {
+    id: 'required_chapters', category: 'structure', description: 'spec 章节完整性',
+    severity: 'BLOCKER', status: 'FAIL', details: '缺少章节：验收标准',
+  };
+  const frameworkCheck: CheckResult = {
+    id: 'ui_spec_structure', category: 'structure', description: 'checker 自身异常',
+    severity: 'BLOCKER', status: 'FAIL', details: '[Harness 内部错误] TypeError: boom',
+    failure_kind: 'framework_bug', blocking_class: 'framework_internal',
+  };
+  // 内容 blocker 排第一、框架 blocker 排第二：旧判据"须全部是框架"在这里落 code_regression
+  const first = await runChain(root, {
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'spec' && attempt === 1 ? { checks: [contentCheck, frameworkCheck] } : null,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  const specVerdicts = first.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec');
+  assert(specVerdicts.length === 1 && specVerdicts[0].failure_kind_classified === 'framework_bug',
+    `框架与内容并存须归 framework_bug：${JSON.stringify(specVerdicts.map(e => e.failure_kind_classified))}`);
+  assert(!first.events.some(e => e.failure_kind_classified === 'code_regression'), '不得落 code_regression');
+  assert(first.invokedPhases.filter(p => p === 'spec').length === 1,
+    `不得消耗内容重试（spec 只调一次），实得 ${first.invokedPhases.join('→')}`);
+  assert(haltReasons(first.events).includes('framework_bug'), `须以 framework_bug 停：${haltReasons(first.events).join(',')}`);
+  assert(runEndStatus(first.events) === 'HALTED', `须 HALTED：${runEndStatus(first.events)}`);
+  const specSummary = JSON.parse(fs.readFileSync(
+    path.join(root, 'doc', 'features', FEATURE, 'spec', 'reports', 'summary.json'), 'utf-8')) as {
+    blockers?: Array<{ id?: string }>;
+  };
+  assert((specSummary.blockers ?? []).some(b => b.id === 'required_chapters'),
+    `内容 blocker 须仍在清单里：${JSON.stringify(specSummary.blockers)}`);
+  const report = JSON.parse(fs.readFileSync(path.join(first.reportDir, 'goal-report.json'), 'utf-8')) as {
+    phases?: Array<{ phase?: string; halt_guidance?: string }>;
+  };
+  const guidance = (report.phases ?? []).find(p => p.phase === 'spec')?.halt_guidance ?? '';
+  assert(guidance.includes('ui_spec_structure') && guidance.includes('required_chapters'),
+    `停机说明须列出框架 checker 与仍待修复的内容 blocker：${guidance}`);
+
+  // 框架问题解除（checker 不再崩）后续跑：内容 blocker 仍在 → 按内容失败重试，修复后才通过
+  const runId = path.basename(first.reportDir);
+  const evPath = path.join(first.reportDir, 'events.jsonl');
+  fs.writeFileSync(evPath, fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+    if (!l.trim()) return l;
+    const e = JSON.parse(l) as { type?: string; ts?: string };
+    if (e.type !== 'run_end' || !e.ts) return l;
+    e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString(); // cooldown 硬防线：同 R-8 回拨
+    return JSON.stringify(e);
+  }).join('\n'), 'utf-8');
+  const resumed = await runChain(root, {
+    resume: runId, forceResume: true,
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'spec' && attempt === 1 ? { checks: [contentCheck] } : null,
+    onTesting: ({ root: r }) => writeCleanTesting(r),
+  });
+  const resumedSpec = resumed.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec'
+    && e.failure_kind_classified === 'code_regression');
+  assert(resumedSpec.length >= 1, `框架解除后内容 blocker 须按内容失败处理：${JSON.stringify(
+    resumed.events.filter(e => e.type === 'phase_verdict' && e.phase === 'spec').map(e => [e.verdict, e.failure_kind_classified]))}`);
+  assert(resumed.invokedPhases.includes('spec'), `内容问题须重新交给 spec 修复：${resumed.invokedPhases.join('→')}`);
+  assertRunReachedEnd(resumed, 'A4-resumed');
+});
+
+test('A5 接线（plan 4e6fb3b6 §4）：codex 终态 429 [合成] 经 runtime 进入瞬时重试，不耗内容重试', async () => {
+  const { root } = setupHost('codex');
+  // [合成] 宿主 0457a6 真实 400 信封只把 status 换成 429
+  const excerpt429 = 'turn.failed: {"type":"error","status":429,"error":{"type":"invalid_request_error",'
+    + '"message":"The \'gpt-6-sol\' model is not supported when using Codex with a ChatGPT account."}}';
+  const probe = await runChain(root, {
+    adapter: 'codex',
+    freshEndPhase: 'spec',
+    invokeResultFor: (phase, n) => phase === 'spec' && n === 1
+      ? { exitCode: 1, stdout: '', terminal_failure_observed: true, terminal_error_excerpt: excerpt429 }
+      : null,
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase === 'spec' && attempt === 1
+        ? { checks: [{
+          id: 'spec_file_exists', category: 'structure', description: 'spec.md 存在',
+          severity: 'BLOCKER', status: 'FAIL', details: 'agent 未执行，spec.md 缺失',
+        }] }
+        : null,
+  });
+  const verdict = probe.events.find(e => e.type === 'phase_verdict' && e.phase === 'spec');
+  assert(verdict?.failure_kind_classified === 'transient_api_error',
+    `runtime 须把 codex 终态 429 归 transient_api_error：${JSON.stringify(verdict)}`);
+  assert(hasEvent(probe.events, 'transient_api_retry_scheduled'), '须排入瞬时退避重试');
+  assert(probe.invokedPhases.filter(p => p === 'spec').length === 2, `须重试一次：${probe.invokedPhases.join('→')}`);
+});
+
+// ---------------------------------------------------------------------------
+// plan 4e6fb3b6 批一返修 1：补登原因在生产出口落盘后的处置（事件全部来自生产 writer）
+// ---------------------------------------------------------------------------
+const lastRunEnd = (events: Array<Record<string, unknown>>): Record<string, unknown> | undefined =>
+  [...events].reverse().find(e => e.type === 'run_end');
+const contentGate = (id: string): CheckResult => ({
+  id, category: 'structure', description: '内容门禁', severity: 'BLOCKER', status: 'FAIL', details: `${id} 未满足`,
+});
+
+test('R1-1 receipt_missing 停机：phase_halt 与 run_end 同源落 RECOVERY_PENDING（恢复动作=重试闭环事务）', async () => {
+  const { root } = setupHost();
+  // 两轮不同签名的内容 FAIL 耗尽 max_retries_per_phase=2，第三轮脚本 PASS 但回执校验失败——
+  // 首次 advance_blocked（累计 1，未到收敛墙）且重试已耗尽 → haltReason 取 advance_block_reason。
+  const probe = await runChain(root, {
+    freshEndPhase: 'spec',
+    onHarnessSummary: ({ phase, attempt }) =>
+      phase !== 'spec' ? null
+        : attempt === 1 ? { checks: [contentGate('content_gate_a')] }
+          : attempt === 2 ? { checks: [contentGate('content_gate_b')] } : null,
+    failReceiptFor: (_attempt, ph) => (ph === 'spec' ? 'missing' : false),
+  });
+  const verdict = probe.events.find(e => e.type === 'phase_verdict' && e.halt_reason === 'receipt_missing');
+  assert(verdict?.advance_block_reason === 'receipt_missing' && verdict?.action === 'halt',
+    `前提：须由推进阻断原因产生 receipt_missing 停机：${JSON.stringify(probe.events.filter(e => e.type === 'phase_verdict')
+      .map(e => [e.verdict, e.advance_block_reason, e.action, e.halt_reason]))}`);
+  const halt = probe.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'receipt_missing');
+  assert(halt?.run_disposition === 'RECOVERY_PENDING', `phase_halt 须落 RECOVERY_PENDING：${JSON.stringify(halt)}`);
+  const end = lastRunEnd(probe.events);
+  assert(end?.status === 'HALTED' && end.halt_reason === 'receipt_missing' && end.run_disposition === 'RECOVERY_PENDING',
+    `run_end 须同源携带 RECOVERY_PENDING：${JSON.stringify(end)}`);
+  assert(reduceRunState(probe.events).run_disposition === 'RECOVERY_PENDING',
+    `reducer 折叠结果：${JSON.stringify(reduceRunState(probe.events))}`);
+  const d = decide({ incident: 'receipt_missing' }, NO_AUTHORITY,
+    { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'fresh' });
+  assert(d.kind === 'recover' && d.action === 'retry_transaction', `恢复动作：${JSON.stringify(d)}`);
+  // 二轮返修：事件重建（异常收口路径）须与正常报告同一结论——脚本门禁 PASS、已停机
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { rebuildOutcomesFromEvents } = require('../../scripts/utils/goal-runner-phase') as
+    typeof import('../../scripts/utils/goal-runner-phase');
+  const rebuiltSpec = rebuildOutcomesFromEvents(probe.events as never, ['spec'] as never).find(o => o.phase === 'spec');
+  assert(rebuiltSpec?.verdict === 'PASS' && rebuiltSpec.halted === true
+    && rebuiltSpec.halt_reason === 'receipt_missing' && rebuiltSpec.run_disposition === 'RECOVERY_PENDING',
+  `事件重建须为 PASS + halted + receipt_missing + RECOVERY_PENDING：${JSON.stringify(rebuiltSpec)}`);
+});
+
+test('R1-1 反例：closure_wall_repeated 停机仍是 TERMINAL', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, { freshEndPhase: 'spec', failReceiptFor: (_attempt, ph) => ph === 'spec' });
+  assert(haltReasons(probe.events).includes('closure_wall_repeated'),
+    `前提：须以 closure_wall_repeated 停：${haltReasons(probe.events).join(',')}`);
+  assert(!probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'receipt_missing'),
+    '重试分支不得产出 receipt_missing 停机事件');
+  assert(reduceRunState(probe.events).run_disposition === 'TERMINAL',
+    `closure_wall_repeated 须 TERMINAL：${JSON.stringify(reduceRunState(probe.events))}`);
+});
+
+test('R1-1 反例与核对：budget_turns 经生产出口落盘为 TERMINAL（补登前是 fail-safe 等人）', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, { freshEndPhase: 'plan', freshBudget: { max_total_turns: 1 } });
+  const halt = probe.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'budget_turns');
+  assert(halt?.run_disposition === 'TERMINAL', `budget_turns 的 phase_halt 须 TERMINAL：${JSON.stringify(halt)}`);
+  const end = lastRunEnd(probe.events);
+  assert(end?.halt_reason === 'budget_turns' && end.run_disposition === 'TERMINAL', `run_end：${JSON.stringify(end)}`);
+});
+
+// ---------------------------------------------------------------------------
 // adjudicated-repair-loop M2（plan e2b7c4a9 t2.6）：物化前裁决 + uncertain 判停时序
 // ---------------------------------------------------------------------------
 
@@ -4215,7 +4448,7 @@ const LEDGER_OBLIGATION_CHECK: CheckResult = {
 };
 
 /** 已执行 StepResult 的 assertion mismatch —— 一档产品真值（a70eb7 events:101 同形）。 */
-const PRODUCT_ASSERTION_CHECK: CheckResult = {
+export const PRODUCT_ASSERTION_CHECK: CheckResult = {
   id: 'testing_failure_routing_TC-005_s24',
   category: 'structure',
   description: 'Step Outcome v1 责任路由',
@@ -4347,6 +4580,55 @@ test('P3-T13 no-progress halt 的理由与指引必须在 events-only 重建里�
     `重建须保住「相关目标未知」指引：${String(codingOutcome!.halt_guidance).slice(0, 200)}`);
   assert(typeof codingOutcome!.run_disposition === 'string' && codingOutcome!.run_disposition.length > 0,
     `重建须保住 run_disposition 投影：${JSON.stringify(codingOutcome)}`);
+});
+
+test('R1-2b「相关目标未知」说明里的恢复办法经实际入口可用（首选：补齐后重新发起同一请求；刚停下没补齐就重发保持停止、零调用）', async () => {
+  const { root } = setupHost();
+  const unresolvable: CheckResult = {
+    id: 'file_completeness', category: 'structure', description: '契约声明文件完整性',
+    severity: 'BLOCKER', status: 'FAIL', failure_kind: 'code_regression',
+    details: '契约声明文件缺失（夹具：不给 affected_files，相关集合因此未知）',
+  };
+  const first = await runChain(root, {
+    freshEndPhase: 'coding',
+    onHarnessSummary: ({ phase }) => (phase === 'coding' ? { checks: [unresolvable] } : null),
+  });
+  const halt = [...first.events].reverse().find(e => e.type === 'phase_halt' && e.halt_reason === 'no_progress_guard');
+  const guidance = String(halt?.halt_guidance ?? '');
+  assert(guidance.includes('相关目标未知'), `前提：须是相关目标未知分支：${guidance}`);
+  // 二轮返修反例：FAIL 停机的事件重建仍是 FAIL（no-progress 停机事件不带 verdict，重建默认 FAIL，现状）
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { rebuildOutcomesFromEvents: rebuild } = require('../../scripts/utils/goal-runner-phase') as
+    typeof import('../../scripts/utils/goal-runner-phase');
+  const rebuiltCoding = rebuild(first.events as never, ['spec', 'plan', 'coding'] as never).find(o => o.phase === 'coding');
+  assert(rebuiltCoding?.verdict === 'FAIL' && rebuiltCoding.halted === true,
+    `FAIL 停机的重建须仍是 FAIL：${JSON.stringify(rebuiltCoding)}`);
+  const runId = path.basename(first.reportDir);
+  const cmd = guidance.split('\n').find(l => l.includes(`--resume ${runId}`)) ?? '';
+  assert(cmd.length > 0, `说明须给出本 run 的续跑命令：${guidance}`);
+  // plan 4e6fb3b6 §7（批三）：说明的首选办法改为"补齐之后重新发起同一请求"（重新接入不再要求 --force-resume）。
+  // 对照改为：刚停下、什么都没补就重发 → 冷却期内保持停止，零调用（不空转）。原对照"不带 --force-resume 的 --resume 被拒"
+  // 随恢复守卫消费接续决策而失效——该 run 正是决策会重新接入的 run。
+  assert(guidance.includes('重新发起同一请求'), `说明须给出首选的重发办法：${guidance}`);
+  const refused = await runChain(root, { freshEndPhase: 'coding', noAutoForce: true });
+  assert(refused.exitCode === 1 && refused.invokedPhases.length === 0 && goalRunIds(root).length === 1,
+    `刚停下没补齐就重发应保持停止：exit=${refused.exitCode} invoked=${refused.invokedPhases.join('→')}`);
+  const evPath = path.join(first.reportDir, 'events.jsonl');
+  fs.writeFileSync(evPath, fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+    if (!l.trim()) return l;
+    const e = JSON.parse(l) as { type?: string; ts?: string };
+    if (e.type !== 'run_end' || !e.ts) return l;
+    e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString(); // cooldown：同 R-8 回拨
+    return JSON.stringify(e);
+  }).join('\n'), 'utf-8');
+  // 按说明的首选办法：补齐来源（本轮 gate 不再失败）后重新发起同一请求（不带任何旗标）→ 重新接入，coding 重新执行并通过
+  const resumed = await runChain(root, { freshEndPhase: 'coding', noAutoForce: true });
+  assert(goalRunIds(root).length === 1, `须重新接入同一 run：${goalRunIds(root).join(',')}`);
+  assert(resumed.invokedPhases.includes('coding'),
+    `按说明的办法重发须真正重新执行 coding：exit=${resumed.exitCode} invoked=${resumed.invokedPhases.join('→')}`);
+  // events 是整个 run 目录的累计流（含首段的 no_progress_guard 停机），只看续跑后的终态
+  assert(lastRunEnd(resumed.events)?.status === 'CHAIN_SLICE_COMPLETED',
+    `续跑后须到达终点：${JSON.stringify(lastRunEnd(resumed.events))}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -4683,7 +4965,7 @@ async function runI11Chain(requirement: string): Promise<{
 }
 
 /** 真实 checkVisualDiff（档位字段由调用方给：链上=生产解析值）；OCR 桩=执行能力缺失，覆盖由 vl_screening 承担 */
-function runRealVisualGate(root: string, feature: string, fields: Partial<HarnessFidelityContextFields>): CheckResult {
+export function runRealVisualGate(root: string, feature: string, fields: Partial<HarnessFidelityContextFields>): CheckResult {
   const ctx = {
     phase: 'testing', feature, projectRoot: root, frameworkRoot: REPO_ROOT,
     phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual diff' } } },
@@ -4843,6 +5125,703 @@ for (const variant of ['same-attempt-before-gate', 'previous-attempt-touched'] a
     const backtrack = probe.events.find(e => e.type === 'phase_backtrack_requested' && e.reason === 'repair_candidates');
     assert(!!backtrack, `本轮 fail 屏须产候选并回退（旧降级名单不得生效）：${JSON.stringify(probe.events.filter(e =>
       e.type === 'phase_backtrack_requested' || e.type === 'phase_verdict'))}`);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// plan 33784ed1 §4（t2）：判断双向可纠正——拒修、反驳轮、未收敛与回放
+// ---------------------------------------------------------------------------
+// 执行者（fake coding）按返修候选段的写法说明往自己的账本追加拒修行：fingerprint 从提示词里读，
+// 不在测试里另算——这同时证明写法说明与 item_fingerprint 真的送到了执行者手里。
+
+export const GOAL_QUOTE = '真机测试银行卡开卡流程';
+const SIG_X = { class: 'shape_mismatch', element: 'hc_page_title', bbox: [0.1, 0.2, 0.3, 0.4], severity: 'major', note: '标题错位', must_fix_refs: [0] };
+const SIG_Y = { class: 'shape_mismatch', element: 'hc_bank_logo', bbox: [0.5, 0.6, 0.2, 0.2], severity: 'major', note: 'logo 错位', must_fix_refs: [0] };
+const FP_X = signalFp('add_card_home', SIG_X.class, SIG_X.element, SIG_X.bbox);
+const FP_Y = signalFp('add_card_home', SIG_Y.class, SIG_Y.element, SIG_Y.bbox);
+const ITEM_X = createHash('sha256').update(FP_X, 'utf-8').digest('hex');
+
+function writeSignals(root: string, defects: Array<typeof SIG_X>, fps: string[]): void {
+  writeVisualDiff(root, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT], defects }]);
+  writeConfirmedReview(root, fps);
+}
+
+/** 拒修：对提示词候选段里列出的候选（可按 fingerprint 过滤）各追加一行账本记录。返回拒修的 fingerprint。 */
+export function declineFromPrompt(ctx: AgentCtx, quote: string, only?: (fp: string) => boolean): string[] {
+  const fps = [...new Set([...ctx.prompt.matchAll(/item_fingerprint: ([0-9a-f]{64})/g)].map(m => m[1]))].filter(fp => !only || only(fp));
+  const ledger = path.join(ctx.root, `doc/features/${FEATURE}/coding/headless-assumptions.jsonl`);
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  for (const fp of fps) {
+    fs.appendFileSync(ledger, JSON.stringify({
+      decision_id: `decline-${ctx.attempt}-${fp.slice(0, 12)}`, run_id: ctx.runId, phase: 'coding',
+      gate_id: `repair_candidate:${fp}`, class: 'goal_conflict',
+      decision: `declined: 需求只要求「${quote}」，该候选与目标冲突`, must_review: true, source: 'agent',
+      ts: new Date().toISOString(),
+    }) + '\n', 'utf-8');
+  }
+  return fps;
+}
+
+function completedResults(events: Array<Record<string, unknown>>): string[] {
+  return events.filter(e => e.type === 'phase_backtrack_completed').map(e => String(e.result ?? 'done'));
+}
+function haltsOf(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return events.filter(e => e.type === 'phase_halt');
+}
+function fixProduct(root: string, text: string): void {
+  writeFile(root, PRODUCT_FILE, `struct AllBanksPage { build() { Text("${text}") } }`);
+}
+
+test('A7+S13 信号级候选全部拒修且零改动：不停机、completed=declined、下游继续；裁判再提进入反驳轮，反驳轮修复后完成', async () => {
+  const { root } = setupHost();
+  const reviewPrompts: string[] = [];
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt <= 2) writeSignals(r, [SIG_X], [FP_X]);
+      else writeCleanTesting(r);
+    },
+    onCoding: (ctx) => {
+      if (ctx.attempt === 2) assert(declineFromPrompt(ctx, GOAL_QUOTE).length === 1, `回修轮提示词须列出候选 fingerprint：${ctx.prompt.slice(-3000)}`);
+      if (ctx.attempt === 3) fixProduct(ctx.root, 'fixed-after-rebuttal');
+    },
+    onReview: (ctx) => { reviewPrompts.push(ctx.prompt); },
+  });
+  const runId = path.basename(probe.reportDir);
+  // A12(d)：旧拒修行在反驳轮里不算第二次拒修；反驳轮已用（事件取自本次真实运行）
+  const st = loadRepairDeclineState(root, FEATURE, runId).get(ITEM_X);
+  assert(st?.declined_rounds === 1 && st.rebuttal_used === true && st.basis?.run_id === runId, `反驳轮修复后状态：${JSON.stringify(st)}`);
+  assert(JSON.stringify(completedResults(probe.events)) === JSON.stringify(['declined', 'done']),
+    `第一轮拒修记 declined、反驳轮修复后普通完成：${JSON.stringify(completedResults(probe.events))}`);
+  assert(probe.events.filter(e => e.type === 'phase_backtrack_requested').length === 2, '拒修后裁判再提 → 反驳轮（第二次回退）');
+  assertRunReachedEnd(probe, 'A7');
+  assert(probe.invokedPhases.join('→').includes('coding→review→ut→testing→coding'), `拒修后下游照现状重跑：${probe.invokedPhases.join('→')}`);
+  // §4.2：写法说明（任何模式都在返修候选段里）
+  assert(probe.codingPrompts[1].includes('repair_candidate:<item_fingerprint>') && probe.codingPrompts[1].includes('goal_conflict'),
+    '返修候选段须带拒修记录写法');
+  // §4.5：反驳轮逐条写明上一轮依据与"裁判看过依据后仍然提出"
+  assert(probe.codingPrompts[2].includes('反驳轮') && probe.codingPrompts[2].includes(`「${GOAL_QUOTE}」`)
+    && probe.codingPrompts[2].includes('仍然提出'), `反驳轮提示词须逐条写明依据：${probe.codingPrompts[2].slice(-2500)}`);
+  // A14：拒修依据经简报"已裁决的冲突"送到 review、testing 与 provider
+  const section = renderGoalBriefSection(root, runId);
+  assert(section.includes(`「${GOAL_QUOTE}」`) && section.includes(`run ${runId}`), `简报须列出拒修依据：${section}`);
+  assert(reviewPrompts.slice(1).every(p => p.includes(section)) && reviewPrompts.length >= 2, 'review 提示词须逐字含已裁决的冲突');
+  assert(probe.testingPrompts.slice(1).every(p => p.includes(section)), 'testing 提示词须逐字含已裁决的冲突');
+  assert(!probe.testingPrompts[0].includes('### 已裁决的冲突'), '拒修前不出该栏');
+  const providerPrompt = await captureProviderPrompt(root, runId);
+  assert(providerPrompt.includes(section), `provider 提示词须逐字含已裁决的冲突：${providerPrompt.slice(0, 3000)}`);
+});
+
+test('A8 引文不逐字的零改动、或只拒修部分候选的零改动：保持 repair_not_converging', async () => {
+  {
+    const { root } = setupHost();
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => writeSignals(r, [SIG_X], [FP_X]),
+      onCoding: (ctx) => { if (ctx.attempt === 2) declineFromPrompt(ctx, '需求里并没有这句话'); },
+    });
+    assert(haltsOf(probe.events).some(e => e.halt_reason === 'repair_not_converging'), `引文不逐字视同没有拒修：${JSON.stringify(haltsOf(probe.events))}`);
+    assert(JSON.stringify(completedResults(probe.events)) === JSON.stringify(['noop']), '仍记 noop');
+  }
+  {
+    const { root } = setupHost();
+    const probe = await runChain(root, {
+      onTesting: ({ root: r }) => writeSignals(r, [SIG_X, SIG_Y], [FP_X, FP_Y]),
+      onCoding: (ctx) => { if (ctx.attempt === 2) declineFromPrompt(ctx, GOAL_QUOTE, fp => fp === ITEM_X); },
+    });
+    const halt = haltsOf(probe.events).find(e => e.halt_reason === 'repair_not_converging');
+    assert(!!halt, `只拒修部分候选不豁免零改动：${JSON.stringify(haltsOf(probe.events))}`);
+    assert(JSON.stringify(completedResults(probe.events)) === JSON.stringify(['noop']), '部分拒修仍记 noop');
+    // A13：停机说明并列已拒修候选的双方原文
+    assert(String(halt!.halt_guidance).includes('执行者拒修依据') && String(halt!.halt_guidance).includes(`「${GOAL_QUOTE}」`)
+      && String(halt!.halt_guidance).includes('裁判缺陷描述'), `停机说明须并列双方原文：${String(halt!.halt_guidance)}`);
+  }
+});
+
+test('A9 修好一项、拒修一项（非零改动）：被拒候选不计入已尝试，裁判再提进入反驳轮，修复后完成', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt === 1) writeSignals(r, [SIG_X, SIG_Y], [FP_X, FP_Y]);
+      else if (attempt === 2) writeSignals(r, [SIG_X], [FP_X]);
+      else writeCleanTesting(r);
+    },
+    onCoding: (ctx) => {
+      if (ctx.attempt === 2) {
+        fixProduct(ctx.root, 'fixed-y');
+        assert(declineFromPrompt(ctx, GOAL_QUOTE, fp => fp === ITEM_X).length === 1, '拒修 X');
+      }
+      if (ctx.attempt === 3) fixProduct(ctx.root, 'fixed-x');
+    },
+  });
+  const bts = probe.events.filter(e => e.type === 'phase_backtrack_requested');
+  assert(bts.length === 2, `被拒候选再提须进入反驳轮：${JSON.stringify(haltsOf(probe.events))}`);
+  assert(JSON.stringify(completedResults(probe.events)) === JSON.stringify(['done', 'done']), '非零改动是普通完成');
+  assert(probe.codingPrompts[2].includes('反驳轮') && probe.codingPrompts[2].includes(ITEM_X), '反驳轮提示词含被拒候选与依据');
+  assertRunReachedEnd(probe, 'A9');
+});
+
+test('A10 其余候选（纯文本 must_fix）拒修后裁判再提：不撞整轮重复，进入反驳轮，修复后完成', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r, attempt }) => {
+      if (attempt <= 2) {
+        writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+        writeConfirmedReview(r, [MUST_FIX_TEXT]);
+      } else writeCleanTesting(r);
+    },
+    onCoding: (ctx) => {
+      if (ctx.attempt === 2) assert(declineFromPrompt(ctx, GOAL_QUOTE).length === 1, '拒修纯文本候选');
+      if (ctx.attempt === 3) fixProduct(ctx.root, 'fixed-legacy');
+    },
+  });
+  assert(!haltsOf(probe.events).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '拒修后的再提不得撞整轮重复');
+  assert(probe.events.filter(e => e.type === 'phase_backtrack_requested').length === 2, '进入反驳轮');
+  assert(probe.codingPrompts[2].includes('反驳轮'), '反驳轮提示词含依据');
+  assertRunReachedEnd(probe, 'A10');
+});
+
+test('A11+A13 信号级：反驳轮再次拒修 → 第二次拒修计入已尝试 → repair_not_converging，停机说明并列双方原文', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => writeSignals(r, [SIG_X], [FP_X]),
+    onCoding: (ctx) => { if (ctx.attempt >= 2) declineFromPrompt(ctx, GOAL_QUOTE); },
+  });
+  const runId = path.basename(probe.reportDir);
+  const states = loadRepairDeclineState(root, FEATURE, runId);
+  const st = states.get(ITEM_X);
+  assert(st?.declined_rounds === 2 && st.rebuttal_used === true, `两次拒修、反驳轮已用：${JSON.stringify(st)}`);
+  assert(!isRebuttalAppearance(st), '第二次拒修之后整轮指纹不再排除它');
+  const attempted = replayAttemptedSignalIdentities(readEvents(probe.reportDir), declineAttemptExemption(states, runId));
+  assert(attempted.has(ITEM_X), '第二次拒修起照常计入已尝试');
+  assert(JSON.stringify(completedResults(probe.events)) === JSON.stringify(['declined', 'declined']), '两轮都记 declined');
+  const halt = haltsOf(probe.events).find(e => e.halt_reason === 'repair_not_converging');
+  assert(!!halt && haltsOf(probe.events).length === 1, `第二次拒修后裁判再提：已尝试 → 未收敛：${JSON.stringify(haltsOf(probe.events))}`);
+  assert(String(halt!.halt_guidance).includes('执行者拒修依据') && String(halt!.halt_guidance).includes(`「${GOAL_QUOTE}」`)
+    && String(halt!.halt_guidance).includes('标题错位'), `停机说明须并列双方原文：${String(halt!.halt_guidance)}`);
+  assert(runEndStatus(probe.events) === 'HALTED', '未宣称完成');
+});
+
+test('A11+A13 其余候选：反驳轮再次拒修 → 整轮指纹不再排除 → backtrack_fingerprint_repeat，停机说明并列双方原文', async () => {
+  const { root } = setupHost();
+  const probe = await runChain(root, {
+    onTesting: ({ root: r }) => {
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+      writeConfirmedReview(r, [MUST_FIX_TEXT]);
+    },
+    onCoding: (ctx) => { if (ctx.attempt >= 2) declineFromPrompt(ctx, GOAL_QUOTE); },
+  });
+  const halt = haltsOf(probe.events).find(e => e.halt_reason === 'backtrack_fingerprint_repeat');
+  assert(!!halt, `第二次拒修之后整轮重复照常生效：${JSON.stringify(haltsOf(probe.events))}`);
+  assert(probe.events.filter(e => e.type === 'phase_backtrack_requested').length === 2, '只放行一次反驳轮');
+  assert(String(halt!.halt_guidance).includes('执行者拒修依据') && String(halt!.halt_guidance).includes(MUST_FIX_TEXT.slice(0, 12)),
+    `停机说明须并列双方原文：${String(halt!.halt_guidance)}`);
+});
+
+test('A12 回放：完成后重启 / settled 与完成之间中断 / 一次拒修后 supersede —— 状态函数输出相同', async () => {
+  const { root } = setupHost();
+  // 夹具 P：纯文本候选（不经零改动判定——运行本身不依赖状态函数的结论）拒修一轮后在 ut 持续失败停机，
+  // 留下一次拒修、可被 supersede 的 HALTED run。回放断言与夹具生成分开：状态函数的任何改动只会让下面的
+  // 回放比较变红，不会先让夹具跑偏。
+  const p = await runChain(root, {
+    onTesting: ({ root: r }) => {
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+      writeConfirmedReview(r, [MUST_FIX_TEXT]);
+    },
+    onCoding: (ctx) => { if (ctx.attempt === 2) declineFromPrompt(ctx, GOAL_QUOTE); },
+    onHarnessSummary: ({ phase, attempt }) => phase === 'ut' && attempt >= 2
+      ? { blockers: [{ id: 'repair', severity: 'BLOCKER', status: 'FAIL', classification: 'code_regression', details_excerpt: 'ut still failing', actionability: 'agent_fixable' }] }
+      : null,
+  });
+  const pRun = path.basename(p.reportDir);
+  const events = readEvents(p.reportDir);
+  const item = String(((events.find(e => e.type === 'phase_backtrack_requested')?.candidates as Array<{ item_fingerprint?: string }> | undefined) ?? [])[0]?.item_fingerprint ?? '');
+  const cut = events.findIndex(e => e.type === 'phase_backtrack_completed');
+  assert(/^[0-9a-f]{64}$/.test(item) && runEndStatus(p.events) === 'HALTED' && events[events.length - 1].type === 'run_end'
+    && cut > 0 && events.slice(0, cut).some(e => e.type === 'agent_process_settled' && e.phase === 'coding'),
+    `构造性前提：P 拒修一轮后停机、completed 之前有 coding settled：${runEndStatus(p.events)} cut=${cut}`);
+  const ledgers = () => Object.fromEntries(['coding', 'review', 'ut', 'testing'].map(ph => [ph, loadHeadlessLedger(root, FEATURE, ph)?.entries ?? []]));
+  const requirementText = collectCurrentRequirementText(root, FEATURE, 'doc/features', pRun);
+  const replay = (evs: Array<Record<string, unknown>>) =>
+    resolveRepairDeclineState({ runs: [{ run_id: pRun, events: evs }], ledgers: ledgers(), requirementText }).get(item);
+  // (b) agent_process_settled 之后、completed 之前中断（同一 writer 的事件前缀，无 run_end → 窗口开放）
+  const b = replay(events.slice(0, cut));
+  assert(b?.declined_rounds === 1 && b.rebuttal_used === false && b.basis?.run_id === pRun && b.basis.text.includes(`「${GOAL_QUOTE}」`),
+    `(b) 中途中断的回放：${JSON.stringify(b)}`);
+  // (a) 完成事件之后"重启"：从盘上重新回放；返修 2b：run_end 之前的记录有效
+  const a = loadRepairDeclineState(root, FEATURE, pRun).get(item);
+  assert(JSON.stringify(a) === JSON.stringify(b), `(a) 完成后重启须与中途中断相同：${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
+  // (c) 一次拒修后 supersede：后继 run 沿交付周期折叠祖先的拒修
+  const q = await runChain(root, { supersede: [pRun], onTesting: ({ root: r }) => writeCleanTesting(r) });
+  const qRun = path.basename(q.reportDir);
+  assert(qRun !== pRun && q.events.some(e => e.type === 'supersede'), '构造性前提：Q 是 P 的后继');
+  const c = loadRepairDeclineState(root, FEATURE, qRun).get(item);
+  assert(JSON.stringify(c) === JSON.stringify(b), `(c) supersede 后须相同：${JSON.stringify(c)} vs ${JSON.stringify(b)}`);
+  const brief = renderGoalBriefSection(root, qRun);
+  assert(brief.includes(`run ${pRun}`), `后继 run 的简报须带祖先的拒修：${brief}`);
+  // 返修 2a：P 已结束（最后一个事件是 run_end），此后追加的同 run_id 记录无效
+  fs.appendFileSync(path.join(root, `doc/features/${FEATURE}/coding/headless-assumptions.jsonl`), JSON.stringify({
+    decision_id: 'late-after-run-end', run_id: pRun, phase: 'coding', gate_id: `repair_candidate:${item}`, class: 'goal_conflict',
+    decision: `declined: LATE「${GOAL_QUOTE}」`, must_review: true, source: 'agent', ts: new Date().toISOString(),
+  }) + '\n');
+  const late = loadRepairDeclineState(root, FEATURE, pRun).get(item);
+  assert(JSON.stringify(late) === JSON.stringify(a), `(2a) run 结束后追加的记录不得追溯改变旧轮：${JSON.stringify(late)}`);
+  // 返修 2d：没有 run_end 的事件前缀——窗口开放，同一条追加记录落在窗口内
+  const open = replay(events.slice(0, cut));
+  assert(open?.declined_rounds === 1 && open.basis?.text.startsWith('LATE') === true, `(2d) 无 run_end 时窗口开放：${JSON.stringify(open)}`);
+  // 二轮返修：run_end 之后还有收尾事件（finalize_skipped，经生产的 fenced 事件写入函数追加），没有 resume——仍然关窗
+  ensureRunControl(p.reportDir, pRun);
+  const acquired = casAcquireRunOwner(p.reportDir, pRun, readRunControl(p.reportDir, pRun)!.current_epoch, { kind: 'process', owner_id: 'finalize-tail-fixture' });
+  assert(acquired.ok, '构造性前提：已结束的 run 可取得写入权');
+  if (!acquired.ok) return;
+  appendGoalEventFenced(root, loadGoalManifestFromRun(root, pRun, { feature: FEATURE }), p.reportDir, acquired.token, {
+    type: 'finalize_skipped', reason: 'wall deadline 已过——跳过 completion receipt 等 best-effort 收尾（goal-report 已生成）',
+  });
+  releaseRunOwner(p.reportDir, acquired.token);
+  const tail = readEvents(p.reportDir).slice(-2).map(e => e.type);
+  assert(JSON.stringify(tail) === JSON.stringify(['run_end', 'finalize_skipped']), `构造性前提：run_end 后跟收尾事件：${JSON.stringify(tail)}`);
+  const afterFinalize = loadRepairDeclineState(root, FEATURE, pRun).get(item);
+  assert(JSON.stringify(afterFinalize) === JSON.stringify(a), `run_end 后的收尾事件不得重新打开窗口：${JSON.stringify(afterFinalize)}`);
+});
+
+test('返修 2c 停机后 resume 同一 run：resume 之后才写的拒修属于同一回修轮，生效（不落 repair_not_converging）', async () => {
+  const { root } = setupHost();
+  // 第一段：信号级候选回退到 coding；coding 动了产品源码（非零改动，不触发 no-op）但 gate 持续失败直到停机，
+  // 期间执行者没有拒修
+  const first = await runChain(root, {
+    onTesting: ({ root: r }) => writeSignals(r, [SIG_X], [FP_X]),
+    onCoding: (ctx) => { if (ctx.attempt >= 2) fixProduct(ctx.root, `attempt-${ctx.attempt}`); },
+    onHarnessSummary: ({ phase, attempt }) => phase === 'coding' && attempt >= 2
+      ? { blockers: [{ id: 'repair', severity: 'BLOCKER', status: 'FAIL', classification: 'code_regression', details_excerpt: 'coding gate failing', actionability: 'agent_fixable' }] }
+      : null,
+  });
+  const runId = path.basename(first.reportDir);
+  assert(runEndStatus(first.events) === 'HALTED' && first.events.filter(e => e.type === 'phase_backtrack_requested').length === 1
+    && readEvents(first.reportDir).slice(-1)[0].type === 'run_end',
+    `构造性前提：回退后在 coding 停机：${runEndStatus(first.events)} ${JSON.stringify(haltsOf(first.events).map(e => e.halt_reason))}`);
+  // cooldown 硬防线：与 R-8 同法把 run_end 回拨 10 分钟
+  const evPath = path.join(first.reportDir, 'events.jsonl');
+  fs.writeFileSync(evPath, fs.readFileSync(evPath, 'utf-8').split('\n').map(l => {
+    if (!l.trim()) return l;
+    const e = JSON.parse(l) as { type?: string; ts?: string };
+    if (e.type !== 'run_end' || !e.ts) return l;
+    e.ts = new Date(Date.parse(e.ts) - 10 * 60 * 1000).toISOString();
+    return JSON.stringify(e);
+  }).join('\n'), 'utf-8');
+  // 第二段：resume 同一 run；执行者此时才拒修（零改动），裁判再提后在反驳轮修复
+  const second = await runChain(root, {
+    resume: runId, forceResume: true,
+    onTesting: ({ root: r, attempt }) => { if (attempt === 1) writeSignals(r, [SIG_X], [FP_X]); else writeCleanTesting(r); },
+    onCoding: (ctx) => {
+      if (ctx.attempt === 1) assert(declineFromPrompt(ctx, GOAL_QUOTE).length === 1, `resume 后的 coding 提示词须带恢复的候选：${ctx.prompt.slice(-2000)}`);
+      if (ctx.attempt === 2) fixProduct(ctx.root, 'fixed-after-resume');
+    },
+  });
+  const all = second.events;
+  assert(all.filter(e => e.type === 'phase_backtrack_requested').length === 2, `resume 后的拒修生效 → 裁判再提进入反驳轮：${JSON.stringify(haltsOf(all))}`);
+  assert(!haltsOf(all).some(e => e.halt_reason === 'repair_not_converging'), 'resume 后的合法拒修不得落到 repair_not_converging');
+  const st = loadRepairDeclineState(root, FEATURE, runId).get(ITEM_X);
+  assert(st?.declined_rounds === 1 && st.rebuttal_used === true, `resume 后写的拒修计入第一轮：${JSON.stringify(st)}`);
+  // 同一 events 文件里保留着第一段的停机事件；这里只看 resume 之后的终态
+  const st2 = runEndStatus(all);
+  assert(st2 === 'CHAIN_SLICE_COMPLETED' || st2 === 'COMPLETED' || (st2 === 'PARTIAL' && hasEvent(all, 'vision_trust_completion_cap')),
+    `resume 后须到达终点，实得 ${st2}`);
+});
+
+function renderGoalBriefSection(root: string, runId: string): string {
+  const text = renderGoalBrief(assembleGoalBrief(root, FEATURE, { runId }), { sections: ['resolved_conflicts'] });
+  const at = text.indexOf('### 已裁决的冲突');
+  assert(at >= 0, `构造性前提：须有已裁决的冲突一栏：${text}`);
+  return text.slice(at);
+}
+
+async function captureProviderPrompt(root: string, runId: string): Promise<string> {
+  // 与 goal-brief 套件同一最小评审屏（链结束后覆写 visual-diff，只为让 provider 组装提示词）
+  const shotDir = `doc/features/${FEATURE}/device-testing/device-screenshots`;
+  writeFile(root, `${shotDir}/shot.png`, 'shot');
+  writeFile(root, `${shotDir}/ref.png`, 'ref');
+  writeFile(root, `${shotDir}/visual-diff.json`, JSON.stringify({
+    schema_version: '1.1',
+    screens: [{ screen_id: 's1', verdict: 'pending', must_fix: [], defects: [], screenshot_path: `${shotDir}/shot.png`, ref_path: `${shotDir}/ref.png` }],
+  }));
+  let captured = '';
+  await runVisualProviderReview({ projectRoot: root, feature: FEATURE, fidelityTarget: 'semantic_layout' } as never, {
+    frameworkRoot: REPO_ROOT,
+    provider: { adapter: 'claude', model: 'm' },
+    runId, attemptId: 'A',
+    invoke: (async (req: { prompt: string }) => {
+      captured = req.prompt;
+      return {
+        invoke_id: 'i', provider: { adapter: 'claude', model: 'm' }, purpose: 'review', outcome: 'unavailable',
+        reason: 'stub', body: null, duration_ms: 1, image_hashes: [], workspace_dirtied: false, input_provenance: 'unverified',
+      };
+    }) as never,
+  });
+  return captured;
+}
+
+// ============================================================================
+// plan 4e6fb3b6 §7（t5）：同任务接续——三个公开入口（前台 / detach / 有人在场）重复请求，驱动不带自动 --force
+// ============================================================================
+
+export type ContinuationEntry = 'foreground' | 'detach' | 'attended';
+
+export function goalRunIds(root: string, feature = FEATURE): string[] {
+  const dir = featureFilePath(root, feature, 'goal-runs');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => !n.startsWith('.')).sort() : [];
+}
+
+export function goalRunEvents(root: string, runId: string, feature = FEATURE): Array<Record<string, unknown>> {
+  return readEvents(featureFilePath(root, feature, `goal-runs/${runId}`));
+}
+
+/** 过冷却：把该 run 最后一个 run_end 的时刻回拨 10 分钟（只动时间，不动内容；冷却本身是既有的"没有变化时"保护）。 */
+export function backdateLastRunEnd(root: string, runId: string, feature = FEATURE): void {
+  const p = featureFilePath(root, feature, `goal-runs/${runId}/events.jsonl`);
+  const events = fs.readFileSync(p, 'utf-8').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>);
+  const i = events.map(e => e.type).lastIndexOf('run_end');
+  assert(i >= 0, '夹具：须有 run_end');
+  events[i].ts = new Date(Date.now() - 10 * 60_000).toISOString();
+  fs.writeFileSync(p, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
+}
+
+/**
+ * 以指定公开入口"重新发起同一请求"：前台 = goal-runner 不带 --force；detach = 同一 argv 加 --detach（子进程那一半经 spawn 测试缝
+ * 在进程内以同一 goalMain 跑，launcher 返回后等它跑完再清理测试缝）；有人在场 = goal-mode-entry 的 prepare-run + host bridge 附着。
+ */
+export async function requestVia(
+  entry: ContinuationEntry,
+  root: string,
+  opts: Parameters<typeof runGoalRuntimeChain>[1] = {},
+): Promise<RunProbe & { childArgs?: string[] }> {
+  if (entry === 'attended') return runGoalRuntimeChain(root, { adapter: 'codex', ...opts, viaHostBridge: true });
+  if (entry === 'foreground') return runGoalRuntimeChain(root, { adapter: 'codex', ...opts, noAutoForce: true });
+  let child: Promise<number> | null = null;
+  let childArgs: string[] | undefined;
+  __testing_setDetachSpawn(((_exec: string, args: readonly string[]) => {
+    childArgs = args.slice(3);
+    child = new Promise<void>(resolve => setImmediate(resolve))
+      .then(() => goalMain({ args: childArgs!, ...(opts.conditionWait ? { conditionWait: opts.conditionWait } : {}) }));
+    // 子进程那一半在 launcher 等待启动期间就可能失败：先挂一个处理，免得变成进程级未处理拒绝；afterMain 仍把原失败抛给用例
+    void child.catch(() => undefined);
+    return { pid: process.pid, exitCode: null, once: () => undefined, unref: () => undefined };
+  }) as never);
+  const probe = await runGoalRuntimeChain(root, {
+    adapter: 'codex', ...opts, noAutoForce: true,
+    launchArgs: [...(opts.launchArgs ?? []), '--detach'],
+    afterMain: async () => (child ? child : 0),
+  });
+  return { ...probe, ...(childArgs ? { childArgs } : {}) };
+}
+
+function lastRunEndOf(events: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
+  return [...events].reverse().find(e => e.type === 'run_end');
+}
+
+function assertSealedComplete(events: Array<Record<string, unknown>>, label: string): void {
+  const st = String(lastRunEndOf(events)?.status ?? '');
+  const capped = events.some(e => e.type === 'vision_trust_completion_cap');
+  assert(st === 'CHAIN_SLICE_COMPLETED' || st === 'COMPLETED' || (st === 'PARTIAL' && capped), `${label}：须完成（status=${st}）`);
+}
+
+const CAPABILITY_GAP = { kind: 'capability_failed' as const, fingerprint: 'p3-b3-entry', failure_code: 'sdk_component_missing', evidence: ['sdk_manifest_format=sdk-pkg.json'] };
+const TINY_WAIT = { maxWaitMs: 100, pollMs: 50, runProbe: () => ({ ready: false, reason: 'gap not fixed' }) };
+
+for (const entry of ['foreground', 'detach'] as const) {
+  test(`P3 t5 A12/A14 ${entry}：能力缺口停机后重发同一请求——冷却内没变化保持停止；条件未解除以原因再停、不新建 run；修好后重新接入并真正执行到终点`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      recordHvigorBuildOutcome(root, CAPABILITY_GAP);
+      const common = { freshEndPhase: 'coding', conditionWait: TINY_WAIT };
+      await requestVia(entry, root, common);
+      const [run] = goalRunIds(root);
+      const gapHalts = (): number => goalRunEvents(root, run).filter(e => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap').length;
+      assert(gapHalts() === 1, `夹具：首个请求须停在能力缺口：${goalRunEvents(root, run).map(e => e.type).join(',')}`);
+
+      const eventsBefore = goalRunEvents(root, run).length;
+      const held = await requestVia(entry, root, common);
+      assert(held.exitCode === 1, `冷却内没有变化须保持停止：exit=${held.exitCode}`);
+      assert(goalRunIds(root).length === 1 && goalRunEvents(root, run).length === eventsBefore, '保持停止：不新建 run、不写事件');
+
+      backdateLastRunEnd(root, run);
+      const again = await requestVia(entry, root, common);
+      assert(goalRunIds(root).length === 1, `条件未解除不新建 run：${goalRunIds(root).join(',')}`);
+      assert(gapHalts() === 2, `须以原来的原因再次停下（原能力检查照常执行）：${gapHalts()}`);
+      assert(!again.invokedPhases.includes('coding'), `条件未解除不得调用 coding：${again.invokedPhases.join(',')}`);
+
+      resetCapabilityFailedByHumanReprobe(root, true);
+      backdateLastRunEnd(root, run);
+      const done = await requestVia(entry, root, common);
+      assert(goalRunIds(root).length === 1, '重新接入同一 run，不新建');
+      assert(done.invokedPhases.includes('coding'), `修好后须真正执行 coding：${done.invokedPhases.join(',')}`);
+      assertSealedComplete(goalRunEvents(root, run), `${entry} 重新接入`);
+      if (entry === 'detach') {
+        const args = done.childArgs ?? [];
+        assert(args.includes('--run-id') && args[args.indexOf('--run-id') + 1] === run, `detach 须打印并等待既有 run：${args.join(' ')}`);
+        assert(!args.includes('--force') && !args.includes('--resume') && !args.includes('--force-resume'), `子进程 argv 不得带技术旗标：${args.join(' ')}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('P3 t5 A12/A14 attended：执行者停在授权确认处——有人在场不设冷却：未补授权立即重发即重新接入并以原因再停、不新建 run；补上授权立即重发即继续完成', async () => {
+  const { root } = setupHost('codex');
+  const proto = AttendedGoalPhaseExecutor.prototype;
+  const original = proto.execute;
+  let authorized = false;
+  proto.execute = async function (this: AttendedGoalPhaseExecutor, ctx: Parameters<typeof original>[0]) {
+    if (ctx.phase === 'coding' && !authorized) {
+      return { status: 'waiting', phase: ctx.phase, details: '需要设备所有者授权', exitCode: 0, stdout: '', stderr: '', command: 'phase_execute_request' };
+    }
+    return original.call(this, ctx);
+  };
+  try {
+    const common = { freshEndPhase: 'coding' };
+    await requestVia('attended', root, common);
+    const [run] = goalRunIds(root);
+    const waits = (): number => goalRunEvents(root, run).filter(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting').length;
+    assert(waits() === 1, `夹具：首个请求须停在授权确认：${goalRunEvents(root, run).map(e => e.type).join(',')}`);
+    // 调度方 2026-09-29 裁定：有人在场不设冷却——刚停下就重发即重新接入，原授权检查照常执行。
+    await requestVia('attended', root, common);
+    assert(goalRunIds(root).length === 1 && waits() === 2, `有人在场、未补授权的立即重发须重新接入并以原因再停、不新建 run：runs=${goalRunIds(root).length} waits=${waits()}`);
+    authorized = true;
+    const done = await requestVia('attended', root, common);
+    assert(goalRunIds(root).length === 1 && done.invokedPhases.includes('coding'), `补授权后须重新接入并执行：${done.invokedPhases.join(',')}`);
+    assertSealedComplete(goalRunEvents(root, run), 'attended 重新接入');
+  } finally {
+    proto.execute = original;
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('P3 t5 A14 foreground：预算耗尽（结构终局）后无人脚本连续重发同一请求、什么都没变 → run 数量不增加、不写事件', async () => {
+  const { root } = setupHost('codex');
+  try {
+    const common = { freshBudget: { max_total_turns: 1 }, freshEndPhase: 'plan' };
+    await requestVia('foreground', root, common);
+    const [run] = goalRunIds(root);
+    assert(lastRunEndOf(goalRunEvents(root, run))?.halt_reason === 'budget_turns', `夹具：首个请求须耗尽轮次预算：${JSON.stringify(lastRunEndOf(goalRunEvents(root, run)))}`);
+    backdateLastRunEnd(root, run);
+    const eventsBefore = goalRunEvents(root, run).length;
+    for (let i = 0; i < 3; i++) {
+      const again = await requestVia('foreground', root, common);
+      assert(again.exitCode === 1, `第 ${i + 1} 次重发须保持停止：exit=${again.exitCode}`);
+    }
+    assert(goalRunIds(root).length === 1 && goalRunEvents(root, run).length === eventsBefore, `run 数量与事件不得增加：runs=${goalRunIds(root).join(',')}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('P3 t5 预算改动：有权者改了停机 run 的预算后带 --override-manifest 重发同一请求 → 起后继、后继用改过的预算（该 run 即合同来源时）', async () => {
+  const { root } = setupHost('codex');
+  try {
+    const common = { freshBudget: { max_total_turns: 1 }, freshEndPhase: 'plan' };
+    await requestVia('foreground', root, common);
+    const [run] = goalRunIds(root);
+    assert(lastRunEndOf(goalRunEvents(root, run))?.halt_reason === 'budget_turns', '夹具：首个请求须耗尽轮次预算');
+    const manifestPath = featureFilePath(root, FEATURE, `goal-runs/${run}/manifest.json`);
+    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { budget: { max_total_turns: number } };
+    m.budget.max_total_turns = 30;
+    fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n', 'utf-8');
+    const done = await requestVia('foreground', root, common);
+    const next = goalRunIds(root).find(id => id !== run);
+    assert(!!next, `改了预算须起后继：${goalRunIds(root).join(',')}`);
+    const nm = loadGoalManifestFromRun(root, next!, { feature: FEATURE });
+    assert(nm.successor_of === run && nm.budget.max_total_turns === 30, `后继须承接停机 run 并用改过的预算：${JSON.stringify({ of: nm.successor_of, budget: nm.budget })}`);
+    assert(done.invokedPhases.length > 0, `后继须继续执行：${done.invokedPhases.join(',')}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** UI 前提 + 本机没有金丝雀缓存：每次启动都会实测金丝雀。 */
+function uiHostNoCanaryCache(root: string): void {
+  writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, ['# spec', '', '```yaml', 'ui_change: new_or_changed', '```', ''].join('\n'));
+  const localAbs = path.join(root, 'framework.local.json');
+  const local = JSON.parse(fs.readFileSync(localAbs, 'utf-8')) as { vision?: unknown };
+  delete local.vision;
+  fs.writeFileSync(localAbs, JSON.stringify(local, null, 2));
+  git(root, ['add', '-A']);
+  git(root, ['commit', '-qm', 'ui feature, no canary cache']);
+}
+
+test('P3 R2 启动失败的后继被附着时补完承接：审计每个目标一次、预算沿周期折叠、后继执行到终点；出生即成功的后继重新接入不重复审计', async () => {
+  const { root } = setupHost('codex');
+  try {
+    uiHostNoCanaryCache(root);
+    const requirement = '银行卡开卡页面按参考图还原布局';
+    let fixed = false;
+    const canary = (async (plan: { argv?: string[] }) => {
+      const argv = plan.argv ?? [];
+      const model = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : '(default)';
+      return model === 'gpt-5.5' && fixed ? { exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' } : codexModelUnsupportedInvoke();
+    }) as never;
+    const withModel = { freshRequirement: requirement, launchArgs: ['--adapter-model', 'gpt-5.5'] };
+    __testing_setCanaryProbeInvoke(canary);
+    await requestVia('foreground', root, { freshRequirement: requirement });
+    const [run1] = goalRunIds(root);
+    __testing_setCanaryProbeInvoke(canary);
+    await requestVia('foreground', root, withModel);
+    const run2 = goalRunIds(root).find(id => id !== run1)!;
+    const audits = (): Array<Record<string, unknown>> => goalRunEvents(root, run2).filter(e => e.type === 'supersede');
+    assert(!!run2 && audits().length === 0 && !goalRunEvents(root, run2).some(e => e.type === 'run_start'),
+      '夹具：后继已出生、在 run_start 之前停在金丝雀，承接审计尚未写');
+    fixed = true;
+    __testing_setCanaryProbeInvoke(canary);
+    const done = await requestVia('foreground', root, withModel);
+    assert(goalRunIds(root).length === 2, `附着同一后继，不新建：${goalRunIds(root).join(',')}`);
+    assert(audits().length === 1 && audits()[0].target_run_id === run1, `须补写一次承接审计：${JSON.stringify(audits())}`);
+    const fold = foldBudgetLineage({
+      projectRoot: root, featuresDir: 'doc/features', feature: FEATURE,
+      currentEvents: loadAuthoritativeEvents(featureFilePath(root, FEATURE, `goal-runs/${run2}/events.jsonl`)),
+    });
+    assert(fold.foldSeeds.includes(run1), `预算须沿周期折叠进被承接的 run：${JSON.stringify(fold.foldSeeds)}`);
+    assert(done.invokedPhases.includes('spec'), `后继须执行：${done.invokedPhases.join(',')}`);
+    assertSealedComplete(goalRunEvents(root, run2), 'R2 附着的后继');
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  const second = setupHost('codex').root;
+  try {
+    uiHostNoCanaryCache(second);
+    __testing_setCanaryProbeInvoke((async (plan: { argv?: string[] }) => ((plan.argv ?? []).includes('gpt-5.5')
+      ? { exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' } : codexModelUnsupportedInvoke())) as never);
+    await requestVia('foreground', second, { freshRequirement: '银行卡开卡页面按参考图还原布局' });
+    const [r1] = goalRunIds(second);
+    __testing_setCanaryProbeInvoke((async () => ({ exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' })) as never);
+    await requestVia('foreground', second, {
+      freshRequirement: '银行卡开卡页面按参考图还原布局', launchArgs: ['--adapter-model', 'gpt-5.5'],
+      onCoding: () => { throw new Error('injected crash inside coding'); },
+    }).catch(() => undefined);
+    const r2 = goalRunIds(second).find(id => id !== r1)!;
+    const count = (): number => goalRunEvents(second, r2).filter(e => e.type === 'supersede').length;
+    assert(count() === 1, `夹具：出生即成功的后继已审计一次：${count()}`);
+    __testing_setCanaryProbeInvoke((async () => ({ exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' })) as never);
+    await requestVia('foreground', second, { freshRequirement: '银行卡开卡页面按参考图还原布局', launchArgs: ['--adapter-model', 'gpt-5.5'] });
+    assert(count() === 1, `重新接入不得重复审计：${count()}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(second, { recursive: true, force: true });
+  }
+});
+
+test('P3 R1 后继需求合并：带 --override-manifest 重发原请求不丢历史增量；重发已合并过的增量不重复追加', async () => {
+  const { root } = setupHost('codex');
+  const A = '完成开卡';
+  const B = '补绑卡提示';
+  const newRun = async (o: Parameters<typeof runChain>[1]): Promise<string> => {
+    const before = new Set(goalRunIds(root));
+    await runChain(root, { adapter: 'codex', freshEndPhase: 'spec', ...o });
+    const id = goalRunIds(root).find(x => !before.has(x));
+    assert(!!id, '须出生新 run');
+    return id!;
+  };
+  const req = (id: string): string => loadGoalManifestFromRun(root, id, { feature: FEATURE }).requirement ?? '';
+  try {
+    const r1 = await newRun({ freshRequirement: A });
+    const r2 = await newRun({ freshRequirement: B, supersede: [r1] });
+    assert(req(r2) === mergeSuccessorRequirement(A, B), `夹具：r2 须是 A + 增量 B：${req(r2)}`);
+    const r3 = await newRun({ freshRequirement: A, supersede: [r2], launchArgs: ['--override-manifest'] });
+    assert(req(r3) === mergeSuccessorRequirement(A, B), `重发原请求（带 override）不得丢掉历史增量 B：${req(r3)}`);
+    const r4 = await newRun({ freshRequirement: B, supersede: [r3] });
+    assert(req(r4) === mergeSuccessorRequirement(A, B), `重发已合并的增量不得重复追加：${req(r4)}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const entry of ['foreground', 'detach', 'attended'] as const) {
+  test(`P3 t5 A13 ${entry}：真实孤儿锁（进程中断、feature 锁的持有进程已死）→ 重发同一请求即重新接入并完成，不需要 --resume/--force`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      await requestVia(entry, root, { freshEndPhase: 'coding', onCoding: () => { throw new Error('injected crash inside coding'); } }).catch(() => undefined);
+      const [run] = goalRunIds(root);
+      assert(!!run && !lastRunEndOf(goalRunEvents(root, run))?.status?.toString().includes('COMPLETED'), '夹具：首个请求须中断');
+      const dead = spawnSync(process.execPath, ['-e', '']).pid;
+      const lock = tryAcquireLock(featureFilePath(root, FEATURE, `goal-runs/${FEATURE_LOCK_NAME}`), {
+        run_id: run, run_mode: 'authoritative', report_dir: `doc/features/${FEATURE}/goal-runs/${run}`, pid: dead,
+      });
+      assert(!!lock, '夹具：以生产锁 writer 写下持有进程已死的 feature 锁');
+      const realExit = process.exit;
+      process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
+      const done = await (async (): Promise<RunProbe> => {
+        try { return await requestVia(entry, root, { freshEndPhase: 'coding' }); } finally { process.exit = realExit; }
+      })();
+      assert(goalRunIds(root).length === 1, `孤儿 run 须被重新接入，不新建：${goalRunIds(root).join(',')}`);
+      assert(done.invokedPhases.includes('coding'), `重新接入后须执行 coding：${done.invokedPhases.join(',')}`);
+      assertSealedComplete(goalRunEvents(root, run), `${entry} 孤儿锁`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+/** codex `turn.failed` 400 模型不受支持信封（宿主 0457a6 / be091c 同形；摘要经生产 scanner 求出）。 */
+function codexModelUnsupportedInvoke(): Record<string, unknown> {
+  const inner = JSON.stringify({ type: 'error', status: 400, error: { type: 'invalid_request_error', message: "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account." } });
+  const stdout = [
+    JSON.stringify({ type: 'thread.started', thread_id: 'th-1' }),
+    JSON.stringify({ type: 'turn.started' }),
+    JSON.stringify({ type: 'error', message: inner }),
+    JSON.stringify({ type: 'turn.failed', error: { message: inner } }),
+  ].join('\n') + '\n';
+  const scanner = createCodexTerminalScanner();
+  scanner.push(stdout);
+  scanner.flush();
+  const st = scanner.state();
+  return {
+    exitCode: 1, stdout, stderr: '', command: 'fake-codex', terminal_failure_observed: true,
+    terminal_error_excerpt: [`turn.failed: ${st.failureExcerpt}`, ...st.errorExcerpts.map(e => `error: ${e}`)].join(' | '),
+  };
+}
+
+for (const entry of ['foreground', 'detach'] as const) {
+  test(`P3 t5 A13 ${entry}：金丝雀判模型不受支持停在启动期 → 重发同一请求并显式换型号 → 起后继承接启动失败的 run，不需要 --supersede`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, ['# spec', '', '```yaml', 'ui_change: new_or_changed', '```', ''].join('\n'));
+      const localAbs = path.join(root, 'framework.local.json');
+      const local = JSON.parse(fs.readFileSync(localAbs, 'utf-8')) as { vision?: unknown };
+      delete local.vision;
+      fs.writeFileSync(localAbs, JSON.stringify(local, null, 2));
+      git(root, ['add', '-A']);
+      git(root, ['commit', '-qm', 'ui feature, no canary cache']);
+      const canaryModels: string[] = [];
+      const canary = (async (plan: { argv?: string[] }) => {
+        const argv = plan.argv ?? [];
+        const model = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : '(default)';
+        canaryModels.push(model);
+        return model === 'gpt-5.5'
+          ? { exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' }
+          : codexModelUnsupportedInvoke();
+      }) as never;
+      const requirement = '银行卡开卡页面按参考图还原布局';
+      __testing_setCanaryProbeInvoke(canary);
+      await requestVia(entry, root, { freshRequirement: requirement });
+      const [first] = goalRunIds(root);
+      assert(!!first && goalRunEvents(root, first).some(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure'), '夹具：首个请求须停在金丝雀');
+      assert(!goalRunEvents(root, first).some(e => e.type === 'run_start'), '夹具：启动即失败（没有正式开始）');
+      __testing_setCanaryProbeInvoke(canary);
+      const done = await requestVia(entry, root, { freshRequirement: requirement, launchArgs: ['--adapter-model', 'gpt-5.5'] });
+      const second = goalRunIds(root).find(id => id !== first);
+      assert(!!second, `须起后继：${goalRunIds(root).join(',')}`);
+      const manifest = loadGoalManifestFromRun(root, second!, { feature: FEATURE });
+      assert(manifest.successor_of === first && manifest.adapter_model_pin?.value === 'gpt-5.5', `后继须承接启动失败的 run 并钉新型号：${JSON.stringify({ of: manifest.successor_of, pin: manifest.adapter_model_pin })}`);
+      assert(goalRunEvents(root, second!).some(e => e.type === 'supersede' && e.target_run_id === first), '承接须写审计事件');
+      assert(canaryModels.at(-1) === 'gpt-5.5' && done.invokedPhases.includes('spec'), `后继须以新型号过金丝雀并执行：${canaryModels.join(',')} / ${done.invokedPhases.join(',')}`);
+      if (entry === 'detach') assert(!(done.childArgs ?? []).includes('--supersede'), '子进程 argv 不带技术旗标（由子进程按同一决策起后继）');
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 }
 

@@ -61,6 +61,63 @@ in-session 自治必须同时声明 reconcile 与 phase context isolation；缺�
 
 用户**不**直接执行 `goal-runner`；主 agent 按 Skill 内「Agent 必须执行」自跑。
 
+## 停机之后怎么继续（同任务接续，plan 4e6fb3b6 §7）
+
+run 停下来之后，补上缺的那样东西，再**重新发起同一请求**就行：对 agent 说同一句话，或重跑同一条启动命令。
+不用找 run id，也不用拼 `--resume`、`--supersede`、`--force-resume`。前台、`--detach`、有人在场三个入口走同一个判断
+（`decideRunContinuation`）。
+
+框架看这个 feature 上最新一个还没结束的 run，给出四种结果之一：
+
+| 结果 | 什么时候 | 会发生什么 |
+|---|---|---|
+| 新开 | 上一次完成之后没有没结束的 run（且范围不在某个已完成 run 手里，见下）；或最新那个 run 从未正式开始过、本次需求内容不同、而范围不在任何 run 手里也没有上一次完成（见下） | 照常出生新 run，出生范围按当前输入重新解析 |
+| 重新接入 | 最新那个 run 还能原地继续（不是结构终局） | 回到这个 run：正式开始过的走恢复，从未正式开始过的（启动检查就停下）走附着。条件解除没有，仍由原来的检查判断（设备、凭据、产品选择、金丝雀、预算）；没解除就以原来的原因再停一次，**不新建 run** |
+| 起后继 | 最新那个 run 是结构终局，且本次带来了变化 | 出生一个后继，承接所有没结束、没被承接的 run（含启动就失败的）；预算按交付周期累计，不清零。本次请求带了起止阶段（`--start`/`--end`）时：与来源 run 的原始起止相同则照常；不同则明确拒绝并说明、不新建 run（后继不按本次起止缩窄范围）——去掉起止参数重发即可。三个入口同一判据 |
+| 保持停止 | 结构终局且什么都没变；或无人值守的调用、正式开始过的 run 停下不到 5 分钟且什么都没变 | 不新建 run、不写事件；打印原来的停止原因和"补上什么就能继续" |
+
+"变化"只认六种能核对的事实：
+
+1. run 绑定的需求来源文件变了；
+2. 本 run 报告的相关文件有了修复；
+3. 本次请求带了新的需求内容（按全文比较）。只有三种算重复、不算增量：与 run 里合并后的需求全文相同、与最初那次请求的全文相同、与整个历史增量块的全文相同；
+   其余一律算增量。所以重发原请求、或原样重发完整的历史增量都不算；但历史里有多段增量时单独重发其中一段会被当成增量（多起一次后继，需求不会丢）。
+   本次文本若已是合并格式（带框架的"本轮修复增量"标记），框架只去掉能确认已有的部分——与原请求全文相同的原请求段、开头按整行与整个历史增量块相同的那一截——
+   其余都当新增接到后继需求末尾，标记只保留一个；去掉之后什么都不剩才算重复。有人在场与无人值守两个入口得出的后继需求相同；
+4. 本次显式给了与当前钉值不同的型号（`--adapter-model`）；
+5. 有权者改了 run manifest 的预算，并在本次带 `--override-manifest` 授权；
+6. 本次带了显式的 `--resume`、`--attach-created`、`--supersede` 或 `--force`。
+
+补充：
+
+- 最新那个 run 还能原地继续，但本次显式给了新型号或新需求内容：也起后继。原 run 的型号和需求是冻结的，原地接入会丢掉你的输入。
+  例外（结构终局与否都适用）：这个 run 从未正式开始过（没有任何执行证据可继承）、本次需求内容不同，且范围没转交给任何 run、也没有上一次完成可作合同来源时，
+  按**新开**处理——多半是改了需求重新准备，出生范围按当前输入（含刚生成的范围候选）重新解析；那个没开始的 run 不被承接，下一次完成之后自然移出交付周期。
+  只换型号时照旧起后继（需求没变，来源冻结的请求仍是本次请求）。
+- 重新接入不需要 `--force-resume`。5 分钟冷却只在"什么都没变"时生效，只对正式开始过的 run，而且只对**无人值守**的调用：
+  - 有人在场的调用不设冷却：非结构终局的 run 直接重新接入，原来的责任检查照常执行，补好条件即可立即重发；
+    对"决策会重新接入的那个 run"的显式 `--resume` 同样不等；
+  - 从未正式开始过的 run（新 run 在金丝雀、产品选择、产品层目录等启动检查就停下）重发即附着、由原检查立刻重检，不等冷却，
+    这种 run 显式 `--resume` 会被拒；产品选择与产品层目录检查在恢复旧 run 时也会执行，曾正式开始过的 run 被它们拦下，
+    修好之后按正式开始过的 run 处理（重发走恢复，显式恢复也可以）。统一的说法是"修好之后重新发起同一请求，由框架选择恢复方式"；
+  - 无人值守的调用：修好环境、补了授权这类事不在六种变化里，正式开始过的 run 停下不到 5 分钟时要等冷却过去再发（说明里写剩余秒数）。
+    `--force-resume` 也不能越过这段冷却：冷却期内显式 `--resume … --force-resume` 同样被拒。
+- **重新发起不等于授权**。设备策略、凭据登记、人审闸门、scope 扩展确认照旧要人做；没做，重复请求只会再停下，run 数量不增加。
+- 有人在场入口（`goal-mode-entry --prepare-run`）判到重新接入时返回既有 run，照常以它的 run id attach；判到起后继时由 prepare-run
+  出生后继并返回它的 run id，宿主照常附着——附着时补写承接审计、身份核对、预算血缘与范围转交，后继在原来的有人在场执行者之下运行。
+  这个入口没有型号与预算授权的输入，能触发的后继只来自需求增量、需求来源变化、相关修复变化。
+- 三个显式旗标仍然可用、行为不变：`--resume <run-id>`（结构终局仍要 `--force-resume`；无人值守的调用在冷却期内带了也会被拒）、`--supersede <run-id>`、`--force`。
+- 起后继会删掉被承接 run 的场外信任状态（run 目录和事件保留），其中可能有本来能原地恢复的 run。
+- 框架发布件更新本身**不算变化**：run 没记出生时的框架指纹。宿主升级框架后要继续一个结构终局的任务，需要带显式旗标或其它变化。
+- 功能已经完成之后再提需求：没有没结束的 run、且 feature 范围由一个已完成的 run 持有时，本次带来变化（通常是请求里写明的新增或变更需求）就
+  **自动从这个已完成的 run 起后继**（审计、身份核对、范围转交登记照旧）；原样重发同一需求则保持停止，说明"这个功能已经完成；要修改或追加内容，
+  请在请求里写明新增或变更的需求后重新发起"。显式 `--supersede <完成 run>` 照旧可用。范围不在已完成 run 手里时，"新开"行为不变。
+- 预算耗尽后：首选按停机说明改 run manifest 的预算，再显式续跑本 run（`--resume <run> --override-manifest --force-resume`，说明里已填好 run id）。
+  "改预算后带 `--override-manifest` 重新发起同一请求"只在这个 run 本身就是该任务的合同来源时有效（同一 feature 没有更早的完成、范围也没转交给别的 run）；
+  否则起出来的后继沿用来源 run 的旧预算。
+- 闭环墙（`closure_wall_repeated`，结构终局）：只修了回执或闭环事务、产品与契约文件没变时不算变化，重发会保持停止——用停机说明里的显式续跑命令。
+  只有相关产品或契约文件确有改动时，重发才会起后继。
+
 ## 维护者 / CI 调试（非宿主默认路径）
 
 ```bash
@@ -73,7 +130,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 去掉 `--dry-run` 前须确认 `unattended` 契约（manifest 或 adapter `goal_capability.external_runner.unattended`）。
 
-续跑：`--resume <run-id> --feature <feature-slug>`（或 `--manifest <path>`）。
+续跑：重跑同一条命令即可（见上节「停机之后怎么继续」）；显式 `--resume <run-id> --feature <feature-slug>`（或 `--manifest <path>`）仍可用。
 
 证据：`doc/features/<feature>/goal-runs/<run-id>/manifest.json`、`events.jsonl`、`goal-report.{md,json}`。
 
@@ -134,7 +191,7 @@ coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表
 返回 `complete`（记录可信 + 义务逐条覆盖 + 无 blocking；伪造/缩链判记录 broken，世界后变
 判对应义务 uncovered）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
 closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
-废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）；
+结构终局的 HALTED run 由重新发起请求时的接续决策在有变化时起后继承接（写审计事件，completion 只认经审计的 supersede），显式 `--supersede <run_id>` 仍可用；
 只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。completed 源 run 的 successor 重算范围（只跑未覆盖义务的责任阶段）。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
@@ -228,6 +285,26 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
 
 **模型钉（`--adapter-model <id>`）**：并发多窗口跑不同模型、或要钉住本 run 模型时，启动 goal run 传 `--adapter-model`，该值是**权威输入**并随 headless argv 回放（codex/claude/codeagent/cursor 用 `--model <id>`，opencode 用 `-m <id>`），写入 manifest `adapter_model_pin`。`chrys`/`generic` **不支持**（传了即 BLOCKER fail-fast）。CLI、loaded manifest、successor 继承**均无 pin** 时 = 现状零变化；pinned run 的 resume 不传 flag 仍继承并回放冻结 pin。**仅 headless/unattended（含 `--detach`）；有人在场 in-session 不适用**。
 
+### 获准替代型号（`framework.local.json adapters.<adapter>.approved_models`，plan 4e6fb3b6 §6）
+
+型号不受支持时，框架可以换成你事先批准的型号接着做。没配置就不换，行为和以前一样。写在个人级 `framework.local.json`：
+
+```json
+{ "adapters": { "codex": { "approved_models": ["<型号A>", "<型号B>"] } } }
+```
+
+- 按你给的顺序试；去首尾空白、去重。值写错（不是字符串数组、有空串、超 128 字符、含控制字符）按没配置处理并给出提示。
+- **什么时候换**：金丝雀或正式调用判为"模型不受支持"时，取清单里下一个没试过的型号，写事件、重探金丝雀、继续。
+  不占阶段的内容重试次数。目前只认 codex 400 信封的两种实采措辞；其它 CLI 硬失败（参数不识别、认证失败等）不换。
+- **不换的情况**：型号是你显式钉的（`--adapter-model`，包括本次调用显式给的、以及没有来源记录的旧钉值）；adapter 没有型号回放
+  （chrys / generic）；清单为空或都试过；预算已尽。这时照旧停机，说明写清原因并列出试过的型号。你显式钉的型号永远不会被换。
+- **留痕**：每次换型号写 `adapter_model_substituted`（from / to / 已试列表），以及只授权 `adapter_model_pin` 这一个字段的
+  `manifest_identity_rebase`（`authorized_by: approved_model_alternatives`）。manifest 钉值记 `source: approved_alternative`；
+  后继继承钉值时连同来源一起继承，来源是替代的不算你钉死，再不受支持还能接着换。钉值变了，旧的金丝雀缓存不再采信，会重探。
+- **预算**：替代和每次探测都算墙钟预算、受同一截止时刻约束。单次金丝雀最多 120 秒，剩余额度更少时按剩余额度；
+  预算尽了不再试下一个。恢复和后继不重置已用额度。
+- **代价**：换型号会改变成本和产出质量。它只在你配置了清单时发生，每次都有事件可查。
+
 **只读视觉 provider（`--visual-adapter <a> --visual-model <id>`，plan ab072691）**：主模型无视觉时，
 可为本 run 指定**第二个只读 endpoint**——它只看图产逐屏结构化评审，物理上不写工程；正式产物唯一写者
 仍是主模型。两个旗标**成对必填**，单给任一即 fail-fast；值写入 manifest `visual_provider_pin` 并条件
@@ -288,6 +365,43 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 | **用户自开终端 `--detach`** | 一次性临时路线 | 当前终端/宿主会话内能活（关闭启动窗口无碍），但**无 supervisor 自愈——run 崩了没人拉起**，宿主整树清理时也会被杀。适合"我看着这一轮 / 短任务"的临时场景，不写成与 Task Scheduler 同级保证 |
 
 不做 **Job flags 运行时自动探测或自动路由**（探测≠保护；containment 才是保护）——宿主环境是否 kill-on-close 一律由上面这条人工分级决定，不自动判。
+
+### 进程内等待（带探针的停机，plan 4e6fb3b6 §5）
+
+有三种停机会先在进程里等一会，再停放：设备未就绪（设备 / 凭据探针）、能力预检缺口（`capability_preflight_ready`）、
+候选写回不可用（`storage_ready`，只在写回本身出错时）。
+
+- 最多等 15 分钟，且不超过剩余墙钟预算；每 30 秒探一次。探针就绪后由原来的检查（设备门、能力门、写回事务）确认，
+  确认通过就在同一个 attempt 里接着跑，不占内容重试。
+- 等到上限还没好，就照原来的方式停放，supervisor 据探针判断能不能唤醒：
+  - 以 HALTED 收尾的 run（如能力预检缺口），`run_end` 带 `probe` 和 `probe_phase`；
+  - 设备停放的 run 可能以 PARTIAL 收尾，这时 `run_end` 不带探针，探针留在停放那条停机事件上，supervisor 照旧从那条事件读。
+- 有人在场（session owner）不等，立即交回会话。
+- 事件：开始时一条 `condition_wait_started`；收尾时 `condition_wait_ready`（恢复）或 `condition_wait_timeout`（超时）二选一，只有一条。
+- 代价：等待时间算进墙钟预算。设备长时间不可用时，会吃掉一部分本可用于修复的时间。
+
+### supervisor 的适用范围
+
+- **不默认启用**，框架也不会自动安装计划任务。只有你手动运行 `goal-supervise`（Windows 可用上表的 `--install-schtasks`）才有；
+  `--detach` 不带它。
+- 只看两件事：进程是否还活着、run 的处置状态。不做业务裁决。
+- 会拉起：进程已死且状态可续跑；或在等外部条件、带探针且探针已就绪（来源可以是停机事件，也可以是带探针的 `run_end`）。
+  它恢复的永远是**同一个 run**，不起后继。
+- 不拉起：结构终局、等人的 run。每个 run 最多重启 3 次（退避 30 秒起翻倍，最多 10 分钟）。
+- 进程崩溃后的无人自动拉起**仍要你手动启用 supervisor**；没启用时，重新发起同一请求即重新接入（算一次人工操作）。
+
+**迁移说明（旧 run 带 `successor_required`）**：2026-08-08～09-05 之间打的 3.0.0 包可能在停机事件里写
+`successor_required` 或 `successor_start_phase`。supervisor 不再按它们起后继，而是恢复同一个 run，旧的起点字段不再生效；
+恢复仍受当前的各项检查和重启上限（3 次）约束。要换起点或放弃旧 run，按「停机之后怎么继续」重新发起请求，或显式 `--supersede`。
+
+### 已知代价（plan 4e6fb3b6 §12）
+
+- cursor 与 opencode 的瞬时错误（限流、服务端 5xx）识别不出，按既有路径处理；codex 的 401 / 403 / 429 / 5xx 没有真实样本，
+  按 400 信封形状加状态码识别，实际形态不同时同样落回既有路径。
+- 框架发布件更新本身不算"变化"（见「停机之后怎么继续」）。
+- 起后继会删掉被承接 run 的场外信任状态。
+- 修好环境、补了授权这类事不算六种变化：无人值守的调用在正式开始过的 run 停下不到 5 分钟时要等冷却过去再重发（`--force-resume` 也不能越过）；有人在场的调用不等。
+- 启动期被恢复守卫或冷却拒绝（显式 `--resume` 时）、或启动期未处理异常退出时，这次启动的耗时（含至多一轮金丝雀探测）不计入预算。
 
 ### 从无后台能力的宿主 shell 启动（chrys / opencode TUI 等）→ 必须 `--detach`
 

@@ -69,15 +69,15 @@ const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
  * (plan b5c1e9d7 §3.2). Callers that are not "some owner is building right now" omit it and keep
  * today's behavior; terminal completion (:412 below) must never claim it.
  */
-export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string): string[] {
-  return executionScopeEvidenceFindings(projectRoot, feature, scope, obligationIds, currentRunId, pendingOwnerPhase).map(item => `${item.obligation_id}: ${item.detail}`);
+export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string, frameworkRoot?: string): string[] {
+  return executionScopeEvidenceFindings(projectRoot, feature, scope, obligationIds, currentRunId, pendingOwnerPhase, frameworkRoot).map(item => `${item.obligation_id}: ${item.detail}`);
 }
 
 /** plan b2d7f4e9 §3.1：同一判据的逐义务结构化出口（assessFeature 消费）；字符串出口是它的投影。 */
 export interface ScopeEvidenceFinding { obligation_id: string; detail: string; class: 'binding' | 'evidence' | 'unknown' }
 
-export function executionScopeEvidenceFindings(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string): ScopeEvidenceFinding[] {
-  const freshnessOpts = pendingOwnerPhase ? { pendingOwnerPhase } : undefined;
+export function executionScopeEvidenceFindings(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string, frameworkRoot?: string): ScopeEvidenceFinding[] {
+  const freshnessOpts = { ...(pendingOwnerPhase ? { pendingOwnerPhase } : {}), ...(frameworkRoot ? { frameworkRoot } : {}) };
   validateExecutionScope(scope);
   // plan b2d7f4e9 t4：记录的依赖是写入时工程根下的绝对路径；换根加载按记录内一致前缀重定位（只读侧）。
   const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
@@ -102,7 +102,7 @@ export function executionScopeEvidenceFindings(projectRoot: string, feature: str
             const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
             contentAligned = bindingHasParsedValue(ref) && (() => {
               try {
-                readBoundInput({ projectRoot, frameworkRoot: inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, ref, legacyRoot);
+                readBoundInput({ projectRoot, frameworkRoot: frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, ref, legacyRoot);
                 return true;
               } catch { return false; }
             })();
@@ -317,7 +317,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   const { projectRoot, feature, chain } = opts;
   const issues: CleanPassIssue[] = [];
   if (opts.executionScope) {
-    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope, undefined, opts.runId)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
+    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope, undefined, opts.runId, undefined, opts.frameworkRoot)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
     if (opts.executionScope.completion_target !== 'feature') issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: 'request-only 不能签发 Feature completion', kind: 'needs_fix' });
     if (JSON.stringify(chain) !== JSON.stringify(executionCompletionPhases(opts.executionScope))) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: '完成链与冻结范围失配', kind: 'needs_fix' });
   }
@@ -610,16 +610,16 @@ export interface GenerateCompletionOptions extends Omit<CleanPassOptions, 'runId
 }
 
 /** 需求 SSOT 聚合哈希（内联 manifest.requirement + 解引用文档 + ux-reference 的稳定摘要） */
-export function computeRequirementSsotAggregate(projectRoot: string, feature: string, runId?: string): string | null {
+export function computeRequirementSsotAggregate(projectRoot: string, feature: string, runId?: string, frameworkRoot?: string): string | null {
   const scope = runId ? loadEffectiveExecutionScope(projectRoot, feature, runId) : undefined;
   if (scope) {
     const { readBoundInput } = require('./capability-resolution') as typeof import('./capability-resolution');
     const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
-    const frameworkRoot = inferRepoLayout(projectRoot).frameworkRoot;
+    const fwRoot = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
     const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
     const contents = scope.obligations.flatMap(obligation => obligation.basis
       .filter(binding => binding.source.kind === 'artifact' || ['derive.blueprint-acceptance', 'derive.blueprint-contracts'].includes(binding.source.provider_id))
-      .map(binding => ({ input_id: binding.input_id, source: binding.source, value: readBoundInput({ projectRoot, frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, binding, legacyRoot) })));
+      .map(binding => ({ input_id: binding.input_id, source: binding.source, value: readBoundInput({ projectRoot, frameworkRoot: fwRoot, feature, phase: obligation.owner_phase, track: 'full' }, binding, legacyRoot) })));
     return executionScopeFingerprint({ requirement: computeRunRequirementSha(projectRoot, feature, runId, relFeaturesDir(projectRoot)), contents });
   }
   const paths = collectRequirementSsotPaths(projectRoot, feature);
@@ -713,7 +713,7 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
       acceptance_yaml: art('acceptance.yaml'),
       contracts_yaml: art('contracts.yaml'),
     },
-    requirement_sha256: computeRequirementSsotAggregate(projectRoot, feature, runId),
+    requirement_sha256: computeRequirementSsotAggregate(projectRoot, feature, runId, opts.frameworkRoot),
     review_attestation_aggregate: attestation?.inventory.aggregate_sha256 ?? null,
     testing_source_aggregate: buildSourceInventory(projectRoot, { expectProductSources: false }).aggregate_sha256,
     phases,
@@ -1224,7 +1224,7 @@ export function inspectCompletionRecord(opts: VerifyCompletionOptions): Completi
     }
     // codex 七轮 P1-3：需求 SSOT/testing 源码/review attestation 绑定字段重算对账
     try {
-      if (computeRequirementSsotAggregate(projectRoot, feature, completion.run_id ?? undefined) !== completion.requirement_sha256) drift.push({ phase: 'spec', detail: 'requirement_sha256 与凭证记录失配（需求 SSOT 变更）', class: 'binding' });
+      if (computeRequirementSsotAggregate(projectRoot, feature, completion.run_id ?? undefined, opts.frameworkRoot) !== completion.requirement_sha256) drift.push({ phase: 'spec', detail: 'requirement_sha256 与凭证记录失配（需求 SSOT 变更）', class: 'binding' });
     } catch (error) { drift.push({ phase: 'spec', detail: '需求绑定失效：' + String(error), class: 'binding' }); }
     const attNow = loadReviewClosureAttestation(projectRoot, feature);
     if ((attNow?.inventory.aggregate_sha256 ?? null) !== completion.review_attestation_aggregate) {

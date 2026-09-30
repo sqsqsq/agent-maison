@@ -26,8 +26,11 @@ import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal
 import {
   parseCanaryAnswer,
   resolveCanaryStdoutEnvelope,
+  resolveInvokeHardCliFailure,
   type CanaryAnswerKey,
 } from '../../scripts/utils/vision-canary';
+import { codexTerminalFailureStatus, parseHeadlessApiError } from '../../scripts/utils/goal-headless-sentinel';
+import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { loadGoalCapability } from '../../scripts/utils/goal-adapter-capability';
 import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
@@ -366,12 +369,19 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     // errorExcerpts 只被拼进 terminal_error_excerpt（诊断），不参与任何分支判定
     const uses = invokeSrc.split('errorExcerpts').length - 1;
     assertEq(uses, 1, `agent-invoke 中 errorExcerpts 只应出现在诊断拼装处（实际 ${uses} 处）`);
-    // codex 的断流解析保持现状 null——error 不得供给 api_disconnected
+    // plan 4e6fb3b6 §4 调整：原断言"断流哨兵不得出现 turn.failed/turn.completed 字样"（codex 恒 null）。
+    // 本 plan 让哨兵读 **turn.failed 终态段**的状态码（429/5xx 归瞬时）；本用例守的"顶层 error 不供给
+    // 断流判据"不变，改为行为断言：error 段里的状态码一律不产生终态状态码。
+    assertEq(codexTerminalFailureStatus('error: {"type":"error","status":429}'), null, 'error 段不得产生状态码');
+    assertEq(
+      codexTerminalFailureStatus('turn.failed: {"type":"error","status":400} | error: {"type":"error","status":429}'),
+      400, '只取 turn.failed 段，不被其后的 error 段覆盖',
+    );
     const sentinel = fs.readFileSync(
       path.join(__dirname, '..', '..', 'scripts', 'utils', 'goal-headless-sentinel.ts'),
       'utf-8',
     );
-    assert(!/turn\.failed|turn\.completed/.test(sentinel), '断流哨兵不得消费 terminal 事件');
+    assert(!/turn\.completed/.test(sentinel), '断流哨兵不得消费 turn.completed');
   });
 
   // --------------------------------------------------------------------
@@ -580,6 +590,99 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assertEq(r.exitCode, 0, '不得规范化非 codex adapter 的退出码');
     },
   );
+
+  // --------------------------------------------------------------------
+  // plan 4e6fb3b6 §4 / A5：codex 同一信封按状态码分流。样本来源逐条标注：
+  //   [真实·宿主] scripts/tests/fixtures/reliability/20260926T134302Z-0457a6 的
+  //              agent_invoke_end.terminal_error_excerpt（400 model is not supported）
+  //   [真实·本机] fixtures/codex-terminal-failed.real.jsonl 经真实 writer（invokeAgentHeadless）
+  //   [合成]     上面真实样本逐字不变、只把 status 换成 429 / 503 / 401 / 403——这四个码没有真实样本
+  //   [合成·拼接] codex-terminal-error-then-completed.spliced.jsonl 的 error 行 status 换成 429
+  //              （出现过错误但随后 turn.completed：终态契约下不算失败）
+  // 路由面三处，全部是生产函数：CLI 硬失败 resolveInvokeHardCliFailure、瞬时识别
+  // parseHeadlessApiError（codex 读 terminal_error_excerpt 的 turn.failed 段）、归因 classifyFailureKind。
+  // --------------------------------------------------------------------
+  const codexRoute = (r: { exitCode: number; stdout?: string; stderr?: string; terminal_error_excerpt?: string }) => {
+    const hard = resolveInvokeHardCliFailure({
+      exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '',
+      ...(r.terminal_error_excerpt ? { terminal_error_excerpt: r.terminal_error_excerpt } : {}),
+    }, { formalInvoke: true });
+    const transient = parseHeadlessApiError(path.join(os.tmpdir(), 'no-such-agent-output.log'), 'codex', r.terminal_error_excerpt) !== null;
+    const kind = classifyFailureKind({ verdict: 'FAIL', blockers: [{ id: 'spec_file_exists' }] }, undefined, { agentApiError: transient });
+    return { hard, transient, kind };
+  };
+  const statusVariant = (fixtureName: string, status: number): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-codex-status-'));
+    tmpRoots.push(dir);
+    const src = fixture(fixtureName);
+    assert(src.includes('\\"status\\":400'), `真实样本须含 status 400：${fixtureName}`);
+    const out = path.join(dir, `synthetic-${status}-${fixtureName}`);
+    fs.writeFileSync(out, src.split('\\"status\\":400').join(`\\"status\\":${status}`), 'utf-8');
+    return out;
+  };
+
+  run(results, 'A5 [真实·宿主] 0457a6 的 400 model is not supported：保持现状（CLI 硬失败，不进瞬时重试）', () => {
+    const eventsPath = path.resolve(__dirname, '../../../scripts/tests/fixtures/reliability/20260926T134302Z-0457a6/events.jsonl');
+    const end = fs.readFileSync(eventsPath, 'utf-8').split('\n').filter(Boolean)
+      .map((l) => JSON.parse(l) as { type?: string; exit_code?: number; terminal_error_excerpt?: string })
+      .find((e) => e.type === 'agent_invoke_end' && typeof e.terminal_error_excerpt === 'string');
+    assert(!!end, '宿主样本须有 terminal_error_excerpt');
+    assertEq(codexTerminalFailureStatus(end!.terminal_error_excerpt), 400, '终态状态码');
+    const route = codexRoute({ exitCode: end!.exit_code ?? 1, terminal_error_excerpt: end!.terminal_error_excerpt });
+    assert(!!route.hard && route.hard.includes('Codex 模型不可用硬错误'), `400 须保持现状的硬失败定性：${route.hard}`);
+    assertEq(route.transient, false, '400 不进瞬时重试');
+  });
+
+  await runAsync(results, 'A5 [真实·本机] codex-terminal-failed.real.jsonl 经真实 writer：400 保持现状', async () => {
+    const r = await invokeFake(
+      emitFixtureJs(path.join(FIXTURES, 'codex-terminal-failed.real.jsonl'), 'process.exit(1);'),
+      { timeoutMs: 60_000, completionGraceMs: 300, deadlineMs: Date.now() + 60_000 },
+    );
+    const route = codexRoute(r);
+    assert(!!route.hard && route.hard.includes('status=400'), `400 须保持现状：${route.hard}`);
+    assertEq(route.transient, false, '400 不进瞬时重试');
+  });
+
+  for (const status of [429, 503]) {
+    await runAsync(results, `A5 [合成] status=${status} 的 turn.failed 经真实 writer → 瞬时重试（transient_api_error），不计 CLI 硬失败`, async () => {
+      const r = await invokeFake(
+        emitFixtureJs(statusVariant('codex-terminal-failed.real.jsonl', status), 'process.exit(1);'),
+        { timeoutMs: 60_000, completionGraceMs: 300, deadlineMs: Date.now() + 60_000 },
+      );
+      assertEq(r.terminal_failure_observed, true, '终态失败');
+      assertEq(codexTerminalFailureStatus(r.terminal_error_excerpt), status, '终态状态码');
+      const route = codexRoute(r);
+      assertEq(route.hard, null, `${status} 不得计 CLI 硬失败`);
+      assertEq(route.transient, true, `${status} 须进瞬时识别`);
+      assertEq(route.kind, 'transient_api_error', `${status} 归因`);
+    });
+  }
+
+  for (const status of [401, 403]) {
+    await runAsync(results, `A5 [合成] status=${status} 的 turn.failed 经真实 writer → 计入 CLI 硬失败（外部），不进瞬时重试`, async () => {
+      const r = await invokeFake(
+        emitFixtureJs(statusVariant('codex-terminal-failed.real.jsonl', status), 'process.exit(1);'),
+        { timeoutMs: 60_000, completionGraceMs: 300, deadlineMs: Date.now() + 60_000 },
+      );
+      const route = codexRoute(r);
+      assert(!!route.hard && route.hard.includes(`status=${status}`), `${status} 须计 CLI 硬失败：${route.hard}`);
+      assertEq(route.transient, false, `${status} 不得进瞬时重试`);
+      assert(route.kind !== 'transient_api_error', `${status} 不得归 transient`);
+    });
+  }
+
+  await runAsync(results, 'A5 [合成·拼接] error(status=429) 之后 turn.completed：出现过错误但随后成功，不算失败', async () => {
+    const r = await invokeFake(
+      emitFixtureJs(statusVariant('codex-terminal-error-then-completed.spliced.jsonl', 429), 'process.exit(0);'),
+      { timeoutMs: 60_000, completionGraceMs: 300, deadlineMs: Date.now() + 60_000 },
+    );
+    assertEq(r.completion_observed, true, '随后成功');
+    assert((r.terminal_error_excerpt ?? '').includes('429'), `error 诊断须留痕：${r.terminal_error_excerpt}`);
+    assertEq(codexTerminalFailureStatus(r.terminal_error_excerpt), null, '非终态错误不产生终态状态码');
+    const route = codexRoute(r);
+    assertEq(route.hard, null, '不算 CLI 硬失败');
+    assertEq(route.transient, false, '不算瞬时失败');
+  });
 
   for (const d of tmpRoots) {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }

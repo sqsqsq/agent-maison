@@ -67,6 +67,8 @@
      - 视觉保真（UI 需求，P1-B·f2d8c4a6：消费 spec/coding 落盘报告——asset-crop-validation/contact-sheet、
        可见文案豁免表复核、结构声明台账逐条复核（P1-4②·c9e2a7f4：structure-conformance.yaml 的每条
        implemented_by 须打开源码验证 how 属实）、must_have 覆盖；pixel_1to1 全覆盖不许抽查）
+     - 多做核对：对照目标简报的「明确不做」与需求原文，实现了目标明确排除的内容须记一条 MAJOR，
+       分类用「其他」，涉及文件写实现它的产品源码（回修由涉及文件路由到 coding）
   2. 问题清单中是否有来自上述各维度的检查结果
   3. 若某个关键维度完全未审查（未在方法中声明且问题清单无相关分类），标为 FAIL
   4. 特别关注：架构分层和 plan.md 一致性是否被充分审查

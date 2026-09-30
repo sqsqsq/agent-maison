@@ -30,6 +30,8 @@ export interface GoalReportMarkdownOptions {
   events?: Array<Record<string, unknown>>;
   /** P1#7（post-impl review）：operator 专用门禁指引（不进 agent 回喂，在报告渲染给人） */
   operatorNotes?: Array<{ phase: string; blockerId: string; note: string }>;
+  /** plan f7045213 §4.3：各 phase summary 的被披露（不阻断）失败 */
+  disclosedFailures?: Array<{ phase: string; id: string; protects: string; excerpt: string }>;
 }
 
 /** t9：WARN 摘要置顶类——视觉缺席/覆盖不足/证据缺失沉底即事故形状，固定优先展示 */
@@ -56,6 +58,28 @@ export function collectOperatorNotes(
         }
       }
     } catch { /* summary 读不出 → 无 note */ }
+  }
+  return out;
+}
+
+/** plan f7045213 §4.3：收集各 phase summary.disclosed_failures，goal 报告渲染一次。 */
+export function collectDisclosedFailureRows(
+  projectRoot: string,
+  report: GoalReport,
+): Array<{ phase: string; id: string; protects: string; excerpt: string }> {
+  const out: Array<{ phase: string; id: string; protects: string; excerpt: string }> = [];
+  for (const p of report.phases) {
+    if (!p.summary_path) continue;
+    try {
+      const summaryAbs = path.isAbsolute(p.summary_path) ? p.summary_path : path.join(projectRoot, p.summary_path);
+      if (!fs.existsSync(summaryAbs)) continue;
+      const summary = JSON.parse(fs.readFileSync(summaryAbs, 'utf-8')) as {
+        disclosed_failures?: Array<{ id?: string; protects?: string; details_excerpt?: string }>;
+      };
+      for (const d of summary.disclosed_failures ?? []) {
+        out.push({ phase: String(p.phase), id: d.id ?? '(unnamed)', protects: d.protects ?? '?', excerpt: (d.details_excerpt ?? '').split('\n')[0] });
+      }
+    } catch { /* summary 读不出 → 无披露行 */ }
   }
   return out;
 }
@@ -285,24 +309,27 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
     '需人工输入（headless）',
   no_progress_guard:
     '确定性闸门无进展',
+  // plan 4e6fb3b6 §3.3：本原因只有这一处说明（停机时不另发 halt_guidance），四件事写在同一行。
   transient_api_error_exhausted:
-    'API 连接反复中断（非框架/需求/代码问题）——退避重试已达上限，请检查网络/代理稳定性或增大 max_transient_api_retries',
+    'API 连接反复中断（非框架/需求/代码问题）——影响：本阶段未完成、run 已停止；退避重试已达上限；'
+    + '谁能修：你（网络/代理）或等服务端恢复；怎么恢复：确认网络稳定后续跑，必要时增大 max_transient_api_retries；'
+    + '确认已恢复：续跑后本阶段 agent 正常产出，不再出现 transient_api_retry_scheduled',
   agent_no_output:
     'agent 空产出（疑似 spawn/权限/弱模型，非 API 断流）——请人工核查 agent-output.log 与 CLI 环境',
   no_progress_agent_timeout:
     '连续超时且产物零进展——请人工核查（预算见 phase_timeout_seconds）',
   closure_timeout:
-    'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后 --resume',
+    'closure-only attempt（PASS 已冻结仅补关环）超时——不回内容重试；人工核查 receipt/closure 后重新发起同一请求（或 --resume 续跑）',
   pass_snapshot_unavailable:
     'PASS 快照不可复用（head 损坏/快照失败/预期快照消失）——丢弃缓存，重跑责任阶段；若存储不可写则等待 external probe',
   receipt_scaffold_unwritable:
-    '回执骨架无法写入（目录只读/模板缺失/文件占用）——未启动 agent、未烧 attempt；修复存储条件后 --resume',
+    '回执骨架无法写入（目录只读/模板缺失/文件占用）——未启动 agent、未烧 attempt；修复存储条件后重新发起同一请求（或 --resume 续跑）',
   closure_probe_error:
-    'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后 --resume',
+    'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后重新发起同一请求（或 --resume 续跑）',
   closure_state_invariant:
     'lite track 不产生 receipt 却 advance_blocked——runner 状态机不变量违例（framework bug），请回灌源仓核查',
   await_operator_toolchain:
-    '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后 --resume，详见 blocker details',
+    '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后重新发起同一请求（或 --resume 续跑），详见 blocker details',
   await_human_gate_deferral:
     '历史质量人签停车事件（机制已退役）——签名或普通 resume 不改变结论；须按当前机器证据重新投影为修复、能力缺失或可选 advisory',
   pass_snapshot_restore_refused:
@@ -320,7 +347,7 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   budget_wall_clock:
     'wall 总预算耗尽（deadline 制硬截断）',
   await_human_capability_gap:
-    '工具链能力缺口（invoke 前 preflight 拦截，未烧 agent 轮次）——按 HARNESS_PREFLIGHT 双出口处置：修环境或确认停止；修好后 --resume 重检放行',
+    '工具链能力缺口（invoke 前 preflight 拦截，未烧 agent 轮次）——按 HARNESS_PREFLIGHT 双出口处置：修环境或确认停止；修好后重新发起同一请求（或 --resume 续跑）由原检查重检放行',
 };
 
 const SPLIT_LINES = /\r?\n/;
@@ -554,6 +581,14 @@ export function generateGoalReportMarkdown(
     }
   }
 
+  // plan f7045213 §4.3：被披露的失败不阻塞完成，但必须让人看见（计入完成缺口）。
+  if (options.disclosedFailures?.length) {
+    lines.push('', '## 被披露的失败（不阻断，计入完成缺口）', '');
+    for (const d of options.disclosedFailures) {
+      lines.push(`- **${d.phase} · ${d.id}**（${d.protects}）：${d.excerpt.replace(/\|/g, '\\|')}`);
+    }
+  }
+
   // P0-10a 补强②（rev：cursor 复审采纳改为 reason 无关）：凡带 halt_guidance 的 halt
   // 一律渲染进 md——detach 用户只看 md，integrity/framework_bug/
   // agent_timeout_repeated 的补救文案不渲染等于没写。
@@ -573,7 +608,7 @@ export function generateGoalReportMarkdown(
     }
     lines.push(
       '',
-      '补齐上列真实外部输入或权限条件后可用 `--resume` 续跑；该操作不改变任何质量结论。',
+      '补齐上列真实外部输入或权限条件后重新发起同一请求即可继续（也可用 `--resume` 显式续跑）；该操作不改变任何质量结论。',
     );
   }
 
@@ -683,6 +718,7 @@ export function writeGoalReport(
       warnDigest: buildWarnDigest(projectRoot, report),
       events: axesEvents,
       operatorNotes: collectOperatorNotes(projectRoot, report),
+      disclosedFailures: collectDisclosedFailureRows(projectRoot, report),
     }),
     'utf-8',
   );

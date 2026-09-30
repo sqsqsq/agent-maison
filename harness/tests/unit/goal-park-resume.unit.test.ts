@@ -32,7 +32,7 @@ const TS_NODE = path.resolve(__dirname, '..', '..', 'node_modules', 'ts-node', '
  * （agent_process_bound）。测试桩代际的 events 由基线 runner 产出（无该事件）；
  * 追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态（对账归 no_unclosed_bounds）。
  */
-function sealLegacyInvokes(host: string, feature: string, runId: string): void {
+export function sealLegacyInvokes(host: string, feature: string, runId: string): void {
   const eventsPath = path.join(host, 'doc', 'features', feature, 'goal-runs', runId, 'events.jsonl');
   if (!fs.existsSync(eventsPath)) return;
   const raw = fs.readFileSync(eventsPath, 'utf-8');
@@ -59,7 +59,7 @@ function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
 }
 
-function runDriver(scenario: string, feature: string, projectRoot: string, extra?: string): GoalRunOutcome {
+export function runDriver(scenario: string, feature: string, projectRoot: string, extra?: string): GoalRunOutcome {
   const r = spawnSync(
     process.execPath,
     [TS_NODE, '--transpile-only', DRIVER, scenario, feature, '-', projectRoot, ...(extra ? [extra] : [])],

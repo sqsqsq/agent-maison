@@ -724,7 +724,8 @@ export interface HarnessRunSummary {
     message: string;
     source_check?: string;
   }>;
-  blocking_warnings: Array<{
+  /** 已停写（plan 3abca824 t3）：没有决策读取方；只为读取带该字段的旧 summary 保留。 */
+  blocking_warnings?: Array<{
     id: string;
     blocking_class?: string;
     details_excerpt: string;
@@ -750,6 +751,11 @@ export interface HarnessRunSummary {
     suggestion?: string;
     source?: string;
   }>;
+  /**
+   * plan f7045213 §4.3：去向表判为"披露、不阻断"的失败（账本与形状类）。条数计入完成缺口；
+   * 当代 writer 恒写（去向表为空时为 []），旧 summary 可缺省。
+   */
+  disclosed_failures?: import('./check-disposition').DisclosedFailure[];
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';

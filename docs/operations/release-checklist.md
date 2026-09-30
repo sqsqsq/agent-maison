@@ -10,7 +10,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    cd harness && npm test
    ```
 
-   **release-only 套件**：日常 `npm test` 只校验 release-only 套件文件存在、不执行；`release:all` / `candidate:build` 以 `--release` 执行 `real-chain`、`real-chain-seams`、`lifecycle-evolution`。单跑：
+   **release-only 套件**：日常 `npm test` 只校验 release-only 套件文件存在、不执行；`release:all` / `candidate:build` 以 `--release` 执行 `real-chain`、`real-chain-seams`、`lifecycle-evolution`、`reliability-scenarios`。单跑：
 
    ```bash
    cd harness && npm run test:unit -- --filter lifecycle-evolution

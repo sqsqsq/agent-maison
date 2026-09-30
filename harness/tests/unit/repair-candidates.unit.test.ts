@@ -9,7 +9,11 @@ import {
   collectPhaseRepairCandidates,
   collectReviewRepairCandidates,
   checkOwnedCandidate,
+  declineAttemptExemption,
+  declineDisputeLines,
   deriveCategoryFromFiles,
+  isRebuttalAppearance,
+  resolveRepairDeclineState,
   itemFingerprintOf,
   findUnreadableDiagnosisChecks,
   parseIssueVerificationBlock,
@@ -1404,6 +1408,92 @@ export function runAll(): UnitCaseResult[] {
       ].join('\n'),
     });
     assert(fresh.length === 1, `evidence 含文件名且原样复制修复建议应采信：${JSON.stringify(fresh)}`);
+  });
+
+  // --- plan 33784ed1 §4：拒修与反驳状态（唯一状态函数） ----------------------
+
+  run(results, 'A6 拒修在案的 review 候选：沿用的历史 subject 不能确认，当前 subject 能；未拒修的沿用照旧', () => {
+    const report = reviewReport({ verdict: '不通过', rows: [CR1] });
+    const verifier = verifierFresh([{ id: 'CR-001', verdict: 'confirmed', evidence: `SelectBankCardPage.ets | ${CR1.fix}` }]);
+    const base = { phase: 'review', checks: [], reportValidity: 'PASS' as const, reviewReportText: report, verifierReportText: verifier };
+    const fp = buildSummaryRepairCandidates(base)[0]?.item_fingerprint;
+    assert(typeof fp === 'string', '构造性前提：该行本身可成为候选');
+    const declined = new Set([fp]);
+    assert(buildSummaryRepairCandidates({ ...base, declinedFingerprints: declined, verifierSubjectCurrent: false }).length === 0,
+      '沿用的历史评审没看过拒修依据，不能确认拒修在案的候选');
+    assert(buildSummaryRepairCandidates({ ...base, declinedFingerprints: declined, verifierSubjectCurrent: true }).length === 1,
+      '当前 subject 的 verifier 证据确认后成立');
+    assert(buildSummaryRepairCandidates({ ...base, declinedFingerprints: new Set(), verifierSubjectCurrent: false }).length === 1,
+      '没有拒修在案时沿用分支行为不变');
+  });
+
+  run(results, '拒修状态：回修轮窗口、同 run、引文逐字；第二次拒修起计入已尝试、反驳只放行一次', () => {
+    const X = itemFingerprintOf('sig', ['a.ets'], '标题错位');
+    const cand = { id: 'sig', category: 'coding', files: ['a.ets'], summary: '标题错位', item_fingerprint: X, source_phase: 'testing' };
+    const bt = (ts: string) => ({ type: 'phase_backtrack_requested', ts, to_phase: 'coding', invalidated_phases: ['coding', 'review', 'ut', 'testing'], candidates: [cand] });
+    const line = (ts: string, quote: string, runId = 'R') => ({
+      run_id: runId, gate_id: `repair_candidate:${X}`, ts, decision: `declined: 需求写明「${quote}」`,
+    });
+    const goal = '首页只展示余额，本次不做 NFC 卡';
+    const state = (events: Array<Record<string, unknown>>, lines: Array<ReturnType<typeof line>>) =>
+      resolveRepairDeclineState({ runs: [{ run_id: 'R', events }], ledgers: { coding: lines }, requirementText: goal }).get(X);
+    const t1 = '2026-01-01T00:00:01.000Z'; const t2 = '2026-01-01T00:00:05.000Z'; const t3 = '2026-01-01T00:00:09.000Z';
+    const first = state([bt(t1)], [line('2026-01-01T00:00:02.000Z', '本次不做 NFC 卡')]);
+    assert(first?.declined_rounds === 1 && first.rebuttal_used === false && isRebuttalAppearance(first), `一次拒修 → 下次出现即反驳轮：${JSON.stringify(first)}`);
+    assert(first?.basis?.text === '需求写明「本次不做 NFC 卡」' && first.basis.run_id === 'R', '依据原文与所在 run');
+    assert(state([bt(t1)], [line('2026-01-01T00:00:02.000Z', '需求里没有这句')])?.declined_rounds === 0, '引文不逐字视同没有拒修');
+    assert(state([bt(t1)], [line('2026-01-01T00:00:02.000Z', '本次不做 NFC 卡', 'OTHER')])?.declined_rounds === 0, '别的 run 的行不是本轮的拒修动作');
+    assert(state([bt(t1)], [line('2026-01-01T00:00:00.500Z', '本次不做 NFC 卡')])?.declined_rounds === 0, '回修轮之前的行不算');
+    const old = state([bt(t1), bt(t2)], [line('2026-01-01T00:00:02.000Z', '本次不做 NFC 卡')]);
+    assert(old?.declined_rounds === 1 && old.rebuttal_used === true && !isRebuttalAppearance(old), `旧行不落在新窗口 → 不算第二次拒修；反驳轮已用：${JSON.stringify(old)}`);
+    const twice = resolveRepairDeclineState({
+      runs: [{ run_id: 'R', events: [bt(t1), bt(t2), bt(t3)] }],
+      ledgers: { coding: [line('2026-01-01T00:00:02.000Z', '本次不做 NFC 卡'), line('2026-01-01T00:00:06.000Z', '本次不做 NFC 卡')] },
+      requirementText: goal,
+    });
+    const s2 = twice.get(X);
+    assert(s2?.declined_rounds === 2 && s2.rebuttal_used && !isRebuttalAppearance(s2), `两次拒修：${JSON.stringify(s2)}`);
+    const exempt = declineAttemptExemption(twice, 'R');
+    assert(exempt({ ts: t1 }, X) && !exempt({ ts: t2 }, X), '已尝试记录只豁免第一次拒修所在回修轮');
+    assert(!declineAttemptExemption(twice, 'OTHER')({ ts: t1 }, X), '豁免按 run 界定');
+    assert(declineDisputeLines([cand], twice).some(l => l.includes('执行者拒修依据') && l.includes('「本次不做 NFC 卡」') && l.includes('标题错位')),
+      '未收敛说明并列双方原文');
+    assert(declineDisputeLines([cand], new Map()).length === 0, '没有拒修不出说明');
+  });
+
+  const ownerFixture = () => {
+    const goal = '首页只展示余额，本次不做 NFC 卡';
+    const C = itemFingerprintOf('sig', ['a.ets'], '标题错位');
+    const P = itemFingerprintOf('scope_consistency_with_spec', ['plan.md'], 'plan 缺模块');
+    const coding = { id: 'sig', category: 'coding', files: ['a.ets'], summary: '标题错位', item_fingerprint: C, source_phase: 'testing' };
+    const plan = { id: 'scope_consistency_with_spec', category: 'plan', files: ['plan.md'], summary: 'plan 缺模块', item_fingerprint: P, source_phase: 'coding' };
+    const ts = '2026-01-01T00:00:01.000Z';
+    const line = (fp: string) => ({ run_id: 'R', gate_id: `repair_candidate:${fp}`, ts: '2026-01-01T00:00:02.000Z', decision: 'declined: 需求写明「本次不做 NFC 卡」' });
+    const toCoding = { type: 'phase_backtrack_requested', ts, to_phase: 'coding', invalidated_phases: ['coding', 'review', 'ut', 'testing'], candidates: [coding] };
+    const declined = (events: Array<Record<string, unknown>>, ledgers: Record<string, Array<ReturnType<typeof line>>>, fp: string) =>
+      resolveRepairDeclineState({ runs: [{ run_id: 'R', events }], ledgers, requirementText: goal }).get(fp)?.declined_rounds ?? 0;
+    return { goal, C, P, coding, plan, ts, line, toCoding, declined };
+  };
+
+  run(results, '返修 1a/1b：拒修只认候选自己责任阶段的账本', () => {
+    const { C, line, toCoding, declined } = ownerFixture();
+    // a：同 run、同窗口、同指纹、引文逐字，只是写在非责任阶段的账本里
+    for (const other of ['review', 'ut', 'testing']) {
+      assert(declined([toCoding], { [other]: [line(C)] }, C) === 0, `${other} 账本里指向 coding 候选的拒修不得生效`);
+    }
+    // b：写在责任阶段 coding 的账本里
+    assert(declined([toCoding], { coding: [line(C)] }, C) === 1, 'coding 账本里的拒修生效');
+  });
+
+  run(results, '返修 1c：mixed-owner 下非目标责任方在自己账本里的拒修生效，写在目标阶段账本里不生效', () => {
+    const { goal, C, P, coding, plan, ts, line, declined } = ownerFixture();
+    // c：mixed-owner，回退到 plan
+    const toPlan = { type: 'phase_backtrack_requested', ts, to_phase: 'plan', invalidated_phases: ['plan', 'coding', 'review', 'ut', 'testing'], candidates: [plan, coding] };
+    assert(declined([toPlan], { coding: [line(C)] }, C) === 1, '非目标责任方（coding）照写法说明写下的拒修生效');
+    assert(declined([toPlan], { plan: [line(C)] }, C) === 0, 'coding 候选的拒修写在 plan 账本里不生效');
+    const onlyPlan = resolveRepairDeclineState({ runs: [{ run_id: 'R', events: [toPlan] }], ledgers: { plan: [line(P)] }, requirementText: goal });
+    assert(onlyPlan.get(P)?.basis?.round.ts === ts && (onlyPlan.get(C)?.declined_rounds ?? 0) === 0,
+      '目标阶段自身候选的拒修成立，不依赖其他责任阶段表态（零改动豁免只看目标阶段的候选）');
   });
 
   return results;

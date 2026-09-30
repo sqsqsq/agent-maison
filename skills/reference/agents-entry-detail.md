@@ -57,14 +57,14 @@
 
 ## Context Facts Gate（BLOCKER，C4 exploration-scale）
 
-该 track 首个 feature phase（full=spec / lite=change）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths`/`decisions_unlocked`/量化阈值由 harness BLOCKER 校验，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（full 含 plan/coding/review/ut/testing；lite 含 coding/exit）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
+该 track 首个 feature phase（full=spec / lite=change）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths` 与可核实的量化阈值由 harness BLOCKER 校验；`decisions_unlocked`、自报的文件数与搜索次数仍须如实填写，缺了会被披露并计入完成缺口、不单独阻断，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（full 含 plan/coding/review/ut/testing；lite 含 coding/exit）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
 
 `enforced_by`：context-facts。
 
 ## Agent 行为规约（BLOCKER）
 
 1. 进入任一 feature 阶段（spec/plan/coding/review/UT）的 Research Sub-Phase 前，须完整阅读 `framework/skills/reference/agent-behavioral-principles.md`。
-2. Research First：不确定时停下来问；代码与文档冲突时以代码为准并显式标注；达到阈值时必须使用 explore subagents。
+2. Research First：能由当前目标裁决的不确定，按目标裁决并留痕；目标本身冲突或缺失且无法裁决时才停下来问（见行为规约「权威判定」）；代码与文档冲突时以代码为准并显式标注；达到阈值时必须使用 explore subagents。
 3. Minimum Viable：产出不得超出用户诉求/上游契约（spec→plan→contracts→code）范围；禁止投机性抽象或"顺便加上"。
 4. Surgical：coding/review 仅触碰 scope 内变更；禁止顺手改相邻格式、注释或无关文件。
 5. Verify Before Proceed：Context Exploration 完成后自检路径存在性与 Code Facts 充分性；逐文件 lint/局部 harness，禁止批量产出后统一验证。
@@ -82,7 +82,7 @@
 2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；主 agent 必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
-5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式 `--resume` 会重检放行）。
+5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式重新发起同一请求即重新接入原 run 并重检放行）。
 6. **唯一执行 owner 与上下文减负（plan 07a41ec6 T9）**：Claude 原生 `/goal` 路径下主会话是薄 driver——每个阶段最多派发**一个** `subagent_type: phase-executor` 子代理，由它负责该阶段产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入（需求/acceptance/ui-spec/参考图路径、当前改动文件、当前 blocker、已接受 gaps、上一阶段 summary 路径、Skill 路径），收回 summary 路径与终态块；不传历史对话，子代理按需读取。同一会话上下文不连续执行两个阶段。Maison `/goal-mode`（GoalPhaseRuntime）是另一入口，两者不得同时推进同一任务；`--revalidate` 只是检查命令，不推进阶段。
 7. **子代理等待纪律**：对 verifier / phase-executor 的结果只能**同步等待**，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。harness 输出末尾的 `NEXT:` 行就是下一步动作，照做即可，不要读 framework TS 源码反推门禁判词。
 

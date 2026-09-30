@@ -2,7 +2,7 @@
  * Manifest + CLI override pairing — strict per-field validation.
  */
 
-import type { GoalManifest, AdapterModelPin } from './goal-manifest';
+import { isUserPinnedModel, type GoalManifest, type AdapterModelPin } from './goal-manifest';
 import type { FeaturePhase } from './phase-transition-policy';
 import type { ProviderRef } from './types';
 
@@ -260,8 +260,15 @@ export function resolveFinalModelPin(
 
   // cliValue 在场、manifest 绑定 run。
   if (manifestPin && manifestPin.value === cliValue && !adapterChanged && !pinAdapterMismatch) {
-    // 同值幂等
-    return { ok: true, pin: makePin(cliValue) };
+    // 同值幂等。plan 4e6fb3b6 批二 review R4：来源的落盘走身份授权路径——带 --override-manifest 才改为用户显式钉值；
+    // 不带则 manifest 原样（改来源即改身份字段，未授权会被当成漂移）。本次调用内是否按用户钉死，由替代决策看
+    // "本次显式给了型号"（decideModelAlternative.explicitModel）决定，不依赖这里的来源。
+    return {
+      ok: true,
+      pin: overrideManifest || !manifestPin.source
+        ? makePin(cliValue)
+        : { ...makePin(cliValue), source: manifestPin.source },
+    };
   }
   // resume 同时换 adapter 与模型 → 两个 override 都必须有。
   if (adapterChanged && isResume) {
@@ -286,6 +293,68 @@ export function resolveFinalModelPin(
     };
   }
   return { ok: true, pin: makePin(cliValue) };
+}
+
+// ----------------------------------------------------------------------------
+// plan 4e6fb3b6 §6.2：模型不受支持时的获准替代（纯决策；执行与事件在 goal-phase-runtime）
+// ----------------------------------------------------------------------------
+
+/** 未钉型号时实际用的是 adapter CLI 的用户配置默认型号——列"已试过"时用这个说法。 */
+export const ADAPTER_DEFAULT_MODEL_LABEL = '(adapter 默认型号)';
+
+export type ModelAlternativeDecision =
+  | { kind: 'switch'; model: string; tried: string[] }
+  | {
+      kind: 'refuse';
+      reason: 'user_pinned' | 'adapter_unsupported' | 'not_configured' | 'budget_exhausted' | 'exhausted';
+      tried: string[];
+    };
+
+/**
+ * 已试过 = 历次替代事件的 from/to + 当前生效的型号（它刚被判不受支持）。未钉型号记为默认型号标签。
+ * events 取交付周期血缘（祖先 + 当前 run），后继与恢复不会把试过的型号再试一遍。
+ */
+export function collectTriedModels(
+  events: ReadonlyArray<{ type?: string; from?: unknown; to?: unknown }>,
+  currentPin: AdapterModelPin | undefined,
+): string[] {
+  const tried: string[] = [];
+  const add = (v: unknown): void => {
+    const label = typeof v === 'string' && v.trim() ? v.trim() : ADAPTER_DEFAULT_MODEL_LABEL;
+    if (!tried.includes(label)) tried.push(label);
+  };
+  for (const e of events) {
+    if (e.type !== 'adapter_model_substituted') continue;
+    add(e.from);
+    add(e.to);
+  }
+  add(currentPin?.value);
+  return tried;
+}
+
+/**
+ * 四行表（plan §6.2）：用户显式钉了型号 → 交还；没钉、清单里还有没试过的、预算未尽 → 换下一个；
+ * 清单为空 / 全部试过 / 预算已尽 → 交还并列出试过的型号。chrys/generic 没有模型回放旗标，钉不了，也就换不了。
+ */
+export function decideModelAlternative(input: {
+  adapter: string;
+  pin: AdapterModelPin | undefined;
+  /** 本次调用显式给的 --adapter-model（批二 review R4：显式给了即按用户钉死，不论 manifest 里记的来源） */
+  explicitModel?: string;
+  approvedModels: readonly string[];
+  tried: readonly string[];
+  remainingMs: number;
+}): ModelAlternativeDecision {
+  const tried = [...input.tried];
+  if (input.explicitModel !== undefined || isUserPinnedModel(input.pin)) return { kind: 'refuse', reason: 'user_pinned', tried };
+  if (input.adapter === 'chrys' || input.adapter === 'generic') {
+    return { kind: 'refuse', reason: 'adapter_unsupported', tried };
+  }
+  if (input.approvedModels.length === 0) return { kind: 'refuse', reason: 'not_configured', tried };
+  if (!(input.remainingMs > 0)) return { kind: 'refuse', reason: 'budget_exhausted', tried };
+  const next = input.approvedModels.find((m) => !tried.includes(m));
+  if (!next) return { kind: 'refuse', reason: 'exhausted', tried };
+  return { kind: 'switch', model: next, tried };
 }
 
 // ----------------------------------------------------------------------------

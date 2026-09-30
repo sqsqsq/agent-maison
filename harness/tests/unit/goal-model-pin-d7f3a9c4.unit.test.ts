@@ -19,6 +19,8 @@ import {
   type HeadlessInvokePlan,
 } from '../../scripts/utils/agent-invoke';
 import {
+  collectTriedModels,
+  decideModelAlternative,
   normalizeAdapterModelCliValue,
   resolveFinalModelPin,
 } from '../../scripts/utils/goal-manifest-cli';
@@ -27,9 +29,13 @@ import {
   computeManifestIdentityFields,
   computeManifestIdentityHash,
   diffManifestIdentityFields,
+  inheritSuccessorManifest,
+  isUserPinnedModel,
   loadGoalManifestFromRun,
+  manifestIdentityFieldDigest,
   validateAdapterModelPinValue,
   writeGoalManifest,
+  type GoalManifest,
 } from '../../scripts/utils/goal-manifest';
 import { resolveManifestDriftDecision, resolveManifestIdentityBaseline } from '../../scripts/goal-runner';
 
@@ -676,6 +682,102 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         fs.rmSync(root, { recursive: true, force: true });
       } catch { /* best-effort */ }
+    },
+  },
+  // ------------------------- plan 4e6fb3b6 §6.4：钉值来源 -------------------------
+  {
+    name: 'P3 A10 后继出生经生产继承链（inheritSuccessorManifest → resolveFinalModelPin）连同来源继承获准替代钉值，仍可继续替代；恢复与同值显式钉不改来源；出生时显式换型号即用户钉死',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-pin-src-'));
+      try {
+        const featuresDir = 'doc/features';
+        const sourceRun = '20260929T000000Z-src001';
+        const source = buildGoalManifestFromInput(
+          {
+            feature: 'demo', adapter: 'codex', run_id: sourceRun,
+            unattended: { write_mode: 'workspace-write', approval_mode: 'never' },
+            adapter_model_pin: { adapter: 'codex', value: 'gpt-alt-1', source: 'approved_alternative' },
+          },
+          { projectRoot: root, featuresDir, runId: sourceRun },
+        );
+        assert.strictEqual(source.adapter_model_pin?.source, 'approved_alternative', '--manifest 解析保真来源');
+        writeGoalManifest(source, root);
+        const reloaded = loadGoalManifestFromRun(root, sourceRun, { feature: 'demo', featuresDir });
+        assert.deepStrictEqual(reloaded.adapter_model_pin, { adapter: 'codex', value: 'gpt-alt-1', source: 'approved_alternative' });
+
+        const seed = buildGoalManifestFromInput(
+          { feature: 'demo', adapter: 'codex', run_id: '20260929T000100Z-suc001', start_phase: 'coding',
+            unattended: { write_mode: 'workspace-write', approval_mode: 'never' } },
+          { projectRoot: root, featuresDir, runId: '20260929T000100Z-suc001' },
+        );
+        const inherited = inheritSuccessorManifest(seed, reloaded, { round: [], drift: [] });
+        const birth = (cliValue?: string, isResume = false, overrideManifest = false) => resolveFinalModelPin({
+          cliValue, effectiveAdapter: 'codex', originalAdapter: 'codex', manifestPin: inherited.adapter_model_pin,
+          isResume, hasManifestFlag: false, isSuccessor: true, overrideManifest, overrideAdapter: false,
+        });
+        const born = birth();
+        assert.ok(born.ok && born.pin?.source === 'approved_alternative', `后继须连同来源继承：${JSON.stringify(born)}`);
+        const pin = born.ok ? born.pin : undefined;
+        assert.strictEqual(isUserPinnedModel(pin), false, '来源为获准替代的钉值不算用户钉死');
+        const next = decideModelAlternative({
+          adapter: 'codex', pin, approvedModels: ['gpt-alt-1', 'gpt-alt-2'],
+          tried: collectTriedModels([], pin), remainingMs: 60_000,
+        });
+        assert.deepStrictEqual(next, { kind: 'switch', model: 'gpt-alt-2', tried: ['gpt-alt-1'] }, '再次不受支持时可以继续替代');
+        const resumed = birth(undefined, true);
+        assert.ok(resumed.ok && resumed.pin?.source === 'approved_alternative', '恢复不改来源');
+        // 批二 review R4 更正：原断言只锁"同值显式钉保留来源"，漏了"本次调用内按用户钉死"。现在：不带 override 时 manifest
+        // 的来源不改（改来源=改身份字段，须经授权），但本次调用显式给了型号，替代决策按用户钉死处理；带 override 才把来源落为用户。
+        const sameExplicit = birth('gpt-alt-1', true);
+        assert.ok(sameExplicit.ok && sameExplicit.pin?.source === 'approved_alternative',
+          `同值显式钉、不带 override：manifest 来源不变：${JSON.stringify(sameExplicit)}`);
+        assert.strictEqual(decideModelAlternative({
+          adapter: 'codex', pin: sameExplicit.ok ? sameExplicit.pin : undefined, explicitModel: 'gpt-alt-1',
+          approvedModels: ['gpt-alt-1', 'gpt-alt-2'], tried: ['gpt-alt-1'], remainingMs: 60_000,
+        }).kind, 'refuse', '本次显式给了型号 = 用户钉死，不替代');
+        const sameExplicitOverride = birth('gpt-alt-1', true, true);
+        assert.ok(sameExplicitOverride.ok && sameExplicitOverride.pin?.source === undefined,
+          `同值显式钉 + --override-manifest：来源落为用户显式钉值：${JSON.stringify(sameExplicitOverride)}`);
+        const userBirth = birth('gpt-user');
+        assert.ok(userBirth.ok && userBirth.pin?.source === undefined && isUserPinnedModel(userBirth.pin), '出生时显式换型号=用户钉死');
+        assert.strictEqual(decideModelAlternative({
+          adapter: 'codex', pin: userBirth.ok ? userBirth.pin : undefined, approvedModels: ['gpt-alt-2'], tried: ['gpt-user'], remainingMs: 60_000,
+        }).kind, 'refuse');
+        assert.throws(() => validateAdapterModelPinValue('codex', 'x', 'robot'), /source/, '来源只接受两个取值');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'P3 A10 上一版宿主快照（host-snapshot-3.1.0）的真实 manifest：加载不改身份摘要、不回写；无来源的旧钉值按用户钉死读取且摘要不变',
+    run: () => {
+      const project = path.resolve(__dirname, '..', 'fixtures', 'host-snapshot-3.1.0', 'project');
+      const runs = [
+        { feature: 'demo-card', rel: 'doc/features/demo-card/goal-runs/20260925T043142Z-233c9c' },
+        { feature: '', rel: 'doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2' },
+      ];
+      for (const r of runs) {
+        const dir = path.join(project, r.rel);
+        const manifestPath = path.join(dir, 'manifest.json');
+        const before = fs.readFileSync(manifestPath);
+        const raw = JSON.parse(before.toString('utf-8')) as GoalManifest;
+        const runId = path.basename(dir);
+        const loaded = loadGoalManifestFromRun(project, runId, { feature: r.feature || raw.feature });
+        const created = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf-8').split('\n').filter(Boolean)
+          .map((l) => JSON.parse(l) as { type?: string; manifest_identity_fields?: Record<string, string> })
+          .find((e) => e.type === 'run_created');
+        assert.ok(created?.manifest_identity_fields, `${r.rel}：快照须有出生身份`);
+        assert.deepStrictEqual(computeManifestIdentityFields(loaded), created!.manifest_identity_fields,
+          `${r.rel}：加载旧 manifest 后身份摘要须与出生记录逐字段一致`);
+        assert.ok(fs.readFileSync(manifestPath).equals(before), `${r.rel}：加载不得回写 manifest`);
+        // 同一份真实 manifest 加上 3.1.0 形状的旧钉值（只有 adapter/value）：读取即用户钉死，摘要不因新字段变化
+        const legacyPin = { adapter: loaded.adapter ?? 'codex', value: 'gpt-5.5' };
+        const withPin = { ...loaded, adapter_model_pin: legacyPin } as GoalManifest;
+        assert.strictEqual(isUserPinnedModel(withPin.adapter_model_pin), true, '旧钉值无来源=用户显式钉值');
+        assert.strictEqual(computeManifestIdentityFields(withPin).adapter_model_pin, manifestIdentityFieldDigest(legacyPin),
+          '旧钉值的身份摘要按原两字段计算，不因新增的来源一项改变');
+      }
     },
   },
 ];

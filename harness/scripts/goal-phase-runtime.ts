@@ -43,12 +43,15 @@ import {
 import { resolveAuthoritativeHylyreTracePath } from './utils/testing-trace-gates';
 import { parseTestCaseFlowBlock, triageCascade } from './utils/test-case-flow';
 import {
+  buildAdapterCliHardFailureGuidance,
+  describeModelAlternativeRefusal,
   buildAgentTimeoutRepeatedGuidance,
   buildBudgetExhaustedGuidance,
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
   buildNoRelevantTargetGuidance,
+  buildProductSelectionUnresolvedGuidance,
 } from './utils/await-confirm-guidance';
 import {
   decide,
@@ -68,7 +71,7 @@ import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
-import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
+import { loadLocalConfig as loadFrameworkLocalConfig, resolveApprovedModels } from './utils/framework-local-config';
 import {
   clampFidelityByCapability,
   computeRequirementShaFromText,
@@ -87,6 +90,7 @@ import {
   resolveRequirementReferenceImages,
   type FidelityTarget,
 } from './utils/fidelity-shared';
+import { assembleGoalBrief, EXECUTOR_BRIEF_SECTIONS, renderGoalBrief } from './utils/goal-brief';
 import {
   parseUiChangeFromSpecMarkdown,
   parseVisualHandoffYamlRoot,
@@ -135,7 +139,7 @@ import {
   restoreFrozenAdapterProvenance,
   type RawRunInput,
   isSuccessorRepairRequirement,
-  mergeSuccessorRequirement,
+  deriveSuccessorRequirement,
   overrideAuthorizedIdentityFields,
   writeGoalManifest,
   effectiveHeadlessUnattended,
@@ -145,6 +149,10 @@ import {
   assertGoalRunAttachable,
   buildSupersedeAuditEvent,
   createGoalRun,
+  decideRunContinuation,
+  successorCatchUpTargets,
+  successorBoundsConflicts,
+  successorBoundsRefusal,
   evaluateFreshRunContinuation,
   loadEffectiveExecutionScope,
   applyScopeRevisions,
@@ -157,7 +165,9 @@ import {
   resolveActualGoalPhaseChainAtBirth,
   resolveGoalRunHeadSha,
   validateRebaselineRequest,
+  type ContinuationCallFacts,
   type GoalRunCreationResult,
+  type RunContinuationDecision,
 } from './utils/goal-run-creation';
 import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
 import {
@@ -182,6 +192,11 @@ import {
   resolveProductSelectionViaProfile,
 } from './utils/product-selection-bridge';
 import { runDeviceReadinessGate } from './utils/device-readiness-gate';
+import {
+  runConditionProbe,
+  waitForConditionRecovery,
+  type ConditionProbeResult,
+} from './utils/condition-wait';
 import { buildDeviceReadinessInput } from './utils/device-readiness-deps';
 import {
   capsTestingConclusion,
@@ -246,6 +261,7 @@ import {
 import { collectAuthoritativeImagePaths } from './utils/multimodal-probe';
 import {
   resolveInvokeHardCliFailure,
+  isModelUnsupportedFailure,
 } from './utils/vision-canary';
 import * as os from 'os';
 import { reconcileSourceTreeAgainstAttestation } from './utils/closure-attestation';
@@ -322,7 +338,12 @@ import {
 } from './utils/phase-state';
 import {
   actionableDefectsToCandidates,
+  declineAttemptExemption,
+  declineDisputeLines,
+  isRebuttalAppearance,
+  loadRepairDeclineState,
   mergeRepairCandidatesIntoSummary,
+  REPAIR_DECLINE_GATE_PREFIX,
   resolveInvalidatablePhases,
   restoreBacktrackCandidatesFromEvents,
   roundFingerprintOfCandidates,
@@ -345,6 +366,7 @@ import {
   reconcileRunAdapter,
   decideVisionCanaryProbe,
   runVisionCanaryProbe,
+  VISION_CANARY_TIMEOUT_MS,
   evaluateFidelityTierPreflight,
   initializeFidelityRouting,
   evaluateFidelityTransitionAuthorization,
@@ -388,6 +410,8 @@ import {
   validateManifestCliOverrides,
   normalizeAdapterModelCliValue,
   resolveFinalModelPin,
+  decideModelAlternative,
+  collectTriedModels,
   normalizeVisualProviderCliPair,
   resolveFinalVisualProviderPin,
   type ManifestCliArgv,
@@ -778,6 +802,7 @@ function hasTrustedPhaseClosureAfterRequest(input: {
   requestTs?: string;
   requirement: string;
   featuresDir: string;
+  frameworkRoot?: string;
 }): boolean {
   if (!input.requestTs) return false;
   const requestMs = Date.parse(input.requestTs);
@@ -806,7 +831,7 @@ function hasTrustedPhaseClosureAfterRequest(input: {
       input.projectRoot,
       input.feature,
       [String(input.phase)],
-      { currentRequirementSha },
+      { currentRequirementSha, ...(input.frameworkRoot ? { frameworkRoot: input.frameworkRoot } : {}) },
     );
     return staleness?.verdict === 'fresh';
   } catch {
@@ -1196,6 +1221,7 @@ export function __testing_resetGoalRunnerSeams(): void {
   injectedDeviceGate = null;
   injectedCapabilityGate = null;
   injectedCanaryProbeInvoke = null;
+  injectedDetachSpawn = null;
 }
 
 async function runHarnessPhase(
@@ -1351,6 +1377,30 @@ export function buildBacktrackTargetAbsentGuidance(targetPhase: string | null): 
     '如缺陷 id / 责任文件路径 / 复现要点 / 必要素材清单）。增量会与源 requirement 合并，' +
     '成为 successor coding prompt 的唯一任务真源。'
   );
+}
+
+type DesignOwnerBlocker = { id?: string; details_excerpt?: string; repair_owner?: string; blocking_class?: string };
+
+/**
+ * plan f7045213 最终评审返修二：责任在链外设计 owner 的阻断（检查标 repair_owner='external' 且无工具链/外部类
+ * blocking_class——device_toolchain 等已由上方 await_operator_toolchain 接住）。当前阶段修不了，重试只会熔断。
+ */
+export function designOwnerBlockers(blockers: readonly DesignOwnerBlocker[] | undefined): DesignOwnerBlocker[] {
+  return (blockers ?? []).filter((b) => b.repair_owner === 'external' && !b.blocking_class);
+}
+
+/** 复用既有停机原因 execution_scope_unresolved（外部类、首次即停）；说明写清原因、责任方与下一步。 */
+export function buildDesignOwnerGuidance(opts: {
+  feature: string; runId: string; phase: string; blockers: readonly DesignOwnerBlocker[];
+}): string {
+  return [
+    `【${opts.feature} · run ${opts.runId} · ${opts.phase}】设计权威在本 run 内无法修复，已停止，不在当前阶段重试。`,
+    '原因：',
+    ...opts.blockers.map((b) => `  - ${b.id ?? '?'}：${truncateOneLine(b.details_excerpt ?? '', 400)}`),
+    '责任方：设计 owner（/component-design：canonical 蓝图与 Change Unit），不在 feature 阶段链内。',
+    '下一步：在 /component-design 修复蓝图 / CU 中的上述问题，经 design-handoff readiness 原位升版 CU 指针并刷新派生投影，'
+      + '然后重新发起同一请求（框架按接续决策选择续跑或起后继）。',
+  ].join('\n');
 }
 
 /** 把 gate 的真实末尾错误压缩成可直接回喂下一轮的有界文本。 */
@@ -1979,8 +2029,8 @@ export interface ActionableDefect {
   /**
    * adjudicated-repair-loop（plan e2b7c4a9）：是否**结构化视觉信号**（来自 visual-diff
    * json 的结构化 defect，identity = sha256(computeDefectFingerprint(screen, defect))）。
-   * 仅此类进入 signal@1 身份与 M2 物化前复核；crash / device_test / 纯文本 must_fix
-   * 兜底保持既有 legacy 契约（不入累计收敛、不需 defect-review）。
+   * 仅此类进入 signal@1 身份（累计收敛与 no-op 判定）；crash / device_test / 纯文本 must_fix
+   * 兜底保持既有 legacy 契约（不入累计收敛）。
    */
   signal_identity: boolean;
 }
@@ -2016,6 +2066,7 @@ export function evaluateUnverifiedRound(
 // ---------------------------------------------------------------------------
 
 export interface BacktrackWindowEvent {
+  ts?: string;
   type?: string;
   phase?: unknown;
   to_phase?: unknown;
@@ -2040,9 +2091,12 @@ function signalCandidateFingerprints(candidates: unknown): string[] {
  * 窗口语义：一条 phase_backtrack_requested 开启窗口；窗口内出现目标 phase 的
  * agent_process_settled/phase_verdict 即关闭并累计；新 request（或 run 结束）时若
  * 窗口仍未关闭 → 该批候选**不计入**（request-only 崩溃，仍 eligible）。
+ * plan 33784ed1 §4.4：`exempt` 来自拒修状态函数（declineAttemptExemption）——候选第一次
+ * 来源核验通过的拒修所在回修轮不计入；第二次拒修起照常计入。
  */
 export function replayAttemptedSignalIdentities(
   events: ReadonlyArray<BacktrackWindowEvent>,
+  exempt?: (backtrackEvent: BacktrackWindowEvent, fingerprint: string) => boolean,
 ): Set<string> {
   const attempted = new Set<string>();
   let window: { toPhase: string; fingerprints: string[] } | null = null;
@@ -2056,7 +2110,7 @@ export function replayAttemptedSignalIdentities(
       // 上一窗口未执行即开启新窗口 → 丢弃（=request-only 崩溃，候选仍 eligible）
       window = {
         toPhase: typeof e.to_phase === 'string' ? e.to_phase : '',
-        fingerprints: signalCandidateFingerprints(e.candidates),
+        fingerprints: signalCandidateFingerprints(e.candidates).filter(fp => !exempt?.(e, fp)),
       };
       continue;
     }
@@ -2375,7 +2429,7 @@ export function collectActionableDefects(
       isStaleVisualDiffVerdict: (sc: unknown, root: string, o: { currentBuildFingerprint?: string | null }) => boolean;
       computeDefectFingerprint: (screenId: string, d: unknown) => string;
       hashScreenshotFile: (p: string) => string | null;
-      loadRepairAuthorityScope: (root: string, feature: string) => unknown;
+      loadRepairAuthorityScope: (root: string, feature: string, runId?: string) => unknown;
       defectRepairAuthority: (d: unknown, scope: unknown) => 'authorized' | 'excluded' | 'scope_unclear' | 'incomplete';
       effectiveScreens: (rep: { screens: unknown[] }, scope: unknown) => {
         screens: unknown[];
@@ -2401,7 +2455,7 @@ export function collectActionableDefects(
       const currentFp = bf.resolveCurrentBuildFingerprint(projectRoot, feature, 'testing');
       // plan c4e7a9b2 A2：候选只读授权过滤后的有效视图（与 gate 同一函数）——需求排除项与
       // 范围不明（参考图元素未登记，gate 已 WARN 交 spec 澄清）都不产候选、不回退。
-      const authorityScope = vd.loadRepairAuthorityScope(projectRoot, feature);
+      const authorityScope = vd.loadRepairAuthorityScope(projectRoot, feature, runId);
       const authorityView = vd.effectiveScreens({ screens: doc.screens ?? [] }, authorityScope);
       for (const e of authorityView.excluded) {
         console.warn(`[actionable] ${e.screen_id}: 需求排除项 ${e.ref_element}（引文「${e.requirement_quote ?? ''}」）不返修`);
@@ -2485,11 +2539,9 @@ export function collectActionableDefects(
             // 哪个元素，授权无从判定，走既有 unverified 通路（不回退、testing 重评补标识）。
             if (vd.defectRepairAuthority(d, authorityScope) === 'incomplete') { anchorMissing++; continue; }
             // plan ab072691 t5⑤：**provider 评审缺陷是独立的 critic candidate 源**，
-            // 不是 producer 感知信号。它结构上恒「未经 primary defect-review 复核」——
-            // provider 后于 primary 运行，而且让**盲的** primary 去复核视觉缺陷是伪制衡。
-            // 若按 signal@1 走 primary 复核管线，盲 primary 会成为不具备证据的否决点。
+            // 不是 producer 感知信号：provider 后于 primary 运行，**盲的** primary 无从核对视觉缺陷。
             // 故合法 provider 证据直接物化
-            // 驱动回修（legacy 语义：可回退、不入 signal@1 收敛、不需复核），
+            // 驱动回修（legacy 语义：可回退、不入 signal@1 收敛），
             // 收敛兜底交既有 no_progress_fuse。T8 信号一字不改。
             const fromVisualProvider =
               (d as { source?: { producer?: unknown } }).source?.producer === 'visual_provider';
@@ -2512,8 +2564,8 @@ export function collectActionableDefects(
               // ——不变拼接序、不排序聚合；identity=sha256 由 repair-candidates 层计算
               fingerprint: fp,
               evidence_path: `${diffRel}#${id}`,
-              // 结构化视觉信号：进入 signal@1 身份 + M2 物化前复核。
-              // provider 源例外（见上）：直接物化回修，不进复核/停等管线。
+              // 结构化视觉信号：进入 signal@1 身份。
+              // provider 源例外（见上）：直接物化回修，不入 signal@1。
               signal_identity: !fromVisualProvider,
             });
           }
@@ -2535,7 +2587,7 @@ export function collectActionableDefects(
             instructions: mustFix.slice(0, 8),
             fingerprint,
             evidence_path: `${diffRel}#${id}`,
-            // 纯文本兜底 = legacy：不入 signal@1 收敛、不需 defect-review 复核
+            // 纯文本兜底 = legacy：不入 signal@1 收敛
             signal_identity: false,
           });
         }
@@ -3382,7 +3434,7 @@ export function enrichOutcomesWithProjection<T extends { phase: unknown; halted?
   outcomes: readonly T[],
   events: ReadonlyArray<Record<string, unknown>>,
 ): T[] {
-  const byPhase = new Map<string, { run_disposition?: unknown; run_wait_kind?: unknown }>();
+  const byPhase = new Map<string, { run_disposition?: unknown; run_wait_kind?: unknown; probe?: unknown }>();
   // codex 第九批 P0：**有序覆盖语义**（与 rebuildOutcomesFromEvents 同规则）——
   // 后来的 phase_verdict{advance/defer} 清除该 phase 的旧 halt 投影。否则
   // 「ut WAITING 停放 → resume 重跑 PASS」会产出"ut PASS + run_disposition=WAITING"
@@ -3397,7 +3449,9 @@ export function enrichOutcomesWithProjection<T extends { phase: unknown; halted?
     }
     if (e?.type !== 'phase_halt') continue;
     if (typeof e.run_disposition !== 'string') continue;
-    byPhase.set(String(e.phase), { run_disposition: e.run_disposition, run_wait_kind: e.run_wait_kind });
+    // plan 4e6fb3b6 §5.2：停机事件上的探针随处置字段一起进 outcome（责任阶段即 outcome.phase），
+    // run_end 由此同源复制，supervisor 才能在 run_end 成为来源事件时照样唤醒。
+    byPhase.set(String(e.phase), { run_disposition: e.run_disposition, run_wait_kind: e.run_wait_kind, probe: e.probe });
   }
   return outcomes.map((o) => {
     const proj = byPhase.get(String(o.phase));
@@ -3406,6 +3460,7 @@ export function enrichOutcomesWithProjection<T extends { phase: unknown; halted?
       ...o,
       run_disposition: proj.run_disposition,
       ...(typeof proj.run_wait_kind === 'string' ? { run_wait_kind: proj.run_wait_kind } : {}),
+      ...(typeof proj.probe === 'string' && proj.probe ? { probe: proj.probe } : {}),
     };
   });
 }
@@ -3442,7 +3497,6 @@ export function resolveClosureReadRequirement(
   return hasVision === true && provenance === 'structured_events' ? 'structured_events' : 'none';
 }
 
-/** 回退后 review 的增量重点复审块（seam 变更不豁免——注入重审焦点而非跳过）。 */
 /**
  * runner-owned-machine-facts 追补（codex review）：spec closure-only 轮的只读取证指令。
  * 冻结的是产物，不是只读视觉取证。plan 8d2b4f60 D3：终签已改材料寻址（本 run 内读过且
@@ -3486,20 +3540,6 @@ export function buildClosureVisualEvidenceBlock(
         ]),
     '',
     ...refRelPaths.map(p => `- ${p}`),
-    '',
-  ].join('\n');
-}
-
-export function buildBacktrackReviewFocusBlock(files: string[]): string {
-  if (files.length === 0) return '';
-  return [
-    '',
-    '## Incremental re-review focus (post-backtrack — REQUIRED)',
-    '',
-    'This review runs after an authorized source mutation triggered a backtrack. The following files',
-    'changed AFTER the previous review closure and MUST be re-reviewed with priority (seam/glue changes',
-    'are NOT exempt — authorization only means the change may exist, not that it is correct):',
-    ...files.slice(0, 30).map(f => `- ${f}`),
     '',
   ].join('\n');
 }
@@ -3627,6 +3667,9 @@ export function buildPhasePrompt(
     '',
     `Feature: ${manifest.feature}`,
     manifest.requirement ? `Requirement:\n${manifest.requirement}` : '',
+    '',
+    // plan 33784ed1 §3.3：目标简报——需求行与冻结范围段已在本提示词里，只补明确不做、已裁决的冲突与判定办法。
+    renderGoalBrief(assembleGoalBrief(projectRoot, manifest.feature, { runId: manifest.run_id }), { sections: EXECUTOR_BRIEF_SECTIONS }),
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
     ...(capabilityAdvisory ? buildCapabilityBlock(capabilityAdvisory) : []),
@@ -4259,8 +4302,36 @@ function normalizeSupersedeTargets(value: unknown): string[] {
     .map(item => item.trim());
 }
 
+/**
+ * plan 4e6fb3b6 §7.3：前台与 detach 共用的接续决策取数——本次调用事实（显式需求、显式型号、既有预算授权）交给
+ * 同一个 decideRunContinuation；显式旗标由调用方先判，这里只算"去掉显式旗标后的"决策。
+ */
+function decideLaunchContinuation(
+  argv: minimist.ParsedArgs,
+  projectRoot: string,
+  feature: string,
+  opts: { plain: true; requirementSources?: string[]; attended?: boolean },
+): RunContinuationDecision {
+  let model: string | undefined;
+  try { model = normalizeAdapterModelCliValue(argv['adapter-model']); } catch { model = undefined; /* 非法值由既有校验报错 */ }
+  const requirement = !argv.resume && typeof argv.requirement === 'string' && argv.requirement.trim() ? argv.requirement : undefined;
+  const call: ContinuationCallFacts = {
+    ...(requirement ? { requirement, ...(opts.requirementSources?.length ? { requirementSourceFiles: opts.requirementSources } : {}) } : {}),
+    ...(model ? { model } : {}),
+    budgetOverride: Boolean(argv['override-manifest']),
+    ...(opts.attended ? { attended: true } : {}),
+  };
+  return decideRunContinuation({ projectRoot, feature, call });
+}
+
+/** 测试缝：detach 的子进程 spawn（缺省 child_process.spawn）；接线用例据此在进程内跑子进程那一半。 */
+let injectedDetachSpawn: typeof spawn | null = null;
+export function __testing_setDetachSpawn(fn: typeof spawn | null): void {
+  injectedDetachSpawn = fn;
+}
+
 async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
-  const layout = detectRepoLayout(__dirname);
+  const layout = injectedLayout ?? detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDir = (cfg.paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
@@ -4277,14 +4348,46 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   }
   const feature = raw.feature;
   const isResume = raw.isResume;
-  const runId = raw.runId ?? newRunId();
-  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
+  let runId = raw.runId ?? newRunId();
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
+
+  // plan 4e6fb3b6 §7.3：与前台同一个接续决策，在孤儿守卫与接续守卫之前执行。保持停止 = 不起子进程、不新建 run；
+  // 重新接入 = 打印并等待那个既有 run（子进程按同一决策改写为恢复或附着）；新开与起后继照常给新 run id。
+  const explicitContinuation = isResume || supersedeTargets.length > 0 || Boolean(argv.force);
+  if (!explicitContinuation && !raw.dryRun) {
+    let decision: RunContinuationDecision;
+    try {
+      const requirement = resolveRequirementInput({
+        requirement: argv.requirement,
+        requirementFile: argv['requirement-file'],
+        projectRoot,
+      });
+      decision = decideLaunchContinuation(
+        { ...argv, ...(requirement.text !== undefined ? { requirement: requirement.text } : {}) } as minimist.ParsedArgs,
+        projectRoot, feature, { plain: true, requirementSources: requirement.sources },
+      );
+    } catch (error) {
+      console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+      return 1;
+    }
+    if (decision.kind === 'hold') {
+      console.error(`[goal-runner] ${decision.guidance}`);
+      return 1;
+    }
+    if (decision.kind === 'rejoin') {
+      if (raw.runId && raw.runId !== decision.runId) {
+        console.error(`[goal-runner] BLOCKER: 本次请求指定了新 run ${raw.runId}，但同一任务的未终局 run ${decision.runId} 应重新接入（${decision.reason}）`);
+        return 1;
+      }
+      runId = decision.runId;
+    }
+  }
+  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
 
   // Same orphan guard as the foreground path — refuse a stillborn new run_id when an
   // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
-  // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。
-  if (!isResume && !raw.dryRun) {
+  // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。显式旗标的调用照现状执行（其余已由接续决策消费）。
+  if (!isResume && !raw.dryRun && explicitContinuation) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
     try {
       const requirement = resolveRequirementInput({
@@ -4322,7 +4425,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
 
   const childArgs = buildDetachedChildArgv(process.argv.slice(2), runId, { resume: isResume });
   const preloadPath = resolveDetachedPreloadPath();
-  const child = spawn(
+  const child = (injectedDetachSpawn ?? spawn)(
     process.execPath,
     ['-r', preloadPath, __filename, ...childArgs],
     {
@@ -4388,6 +4491,15 @@ export interface GoalPhaseRuntimeLaunchOptions {
   leaseMs?: number;
   /** Maximum number of phase boundaries this invocation may start. */
   maxRounds?: number;
+  /**
+   * plan 4e6fb3b6 §5.1：带探针停机的进程内有界等待。缺省（生产 CLI）取 waitForConditionRecovery
+   * 的默认上限 15 分钟、间隔 30 秒与共享的真实探针；嵌入调用方（测试）可把上限/间隔调小或换探针。
+   */
+  conditionWait?: {
+    maxWaitMs?: number;
+    pollMs?: number;
+    runProbe?: (probe: string, phase: string) => ConditionProbeResult;
+  };
 }
 
 /**
@@ -4426,7 +4538,7 @@ export class GoalPhaseRuntime {
           const terminal = [...events].reverse().find(event => event.type === 'run_end');
           if (terminal?.status === 'CHAIN_SLICE_COMPLETED' && !scope.unresolved.length) {
             const completed = scope.completion_target === 'feature'
-              ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' }).complete
+              ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full', frameworkRoot }).complete
               : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot }).length === 0;
             if (completed) { this.lastRunId = priorRunId; return 0; }
           }
@@ -4529,7 +4641,8 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
     );
     return 1;
   }
-  const attachCreatedRunId = typeof argv['attach-created'] === 'string'
+  // `let`：接续决策判"重新接入一个启动即失败的 run"时改写为附着（plan 4e6fb3b6 §7.2）。
+  let attachCreatedRunId = typeof argv['attach-created'] === 'string'
     ? argv['attach-created'].trim()
     : '';
   if (attachCreatedRunId && !((executorMode === 'attended' && runtimeOwnerKind === 'session') || (executorMode === 'detached' && runtimeOwnerKind === 'process'))) {
@@ -4653,6 +4766,42 @@ Goal runner — tool-agnostic multi-phase orchestrator
     process.exit(1);
   }
 
+  // plan 4e6fb3b6 §7.3：接续决策在选择入口、生成出生范围之前执行。显式旗标原样走；其余按决策改写入口：
+  // 重新接入 = 恢复（有正式开始）或附着（启动即失败），起后继 = 以决策给出的来源与承接目标出生，保持停止 = 不新建 run、不写事件。
+  // `plainContinuation` 是去掉显式旗标后的同一决策，恢复守卫据此判断"这次恢复是不是重新接入"。
+  const launchFeature = (() => {
+    try { return resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot).feature; } catch { return undefined; /* 下方同一解析会如实报错 */ }
+  })();
+  const plainContinuation = !argv['dry-run'] && launchFeature
+    ? decideLaunchContinuation(argv, projectRoot, launchFeature, { plain: true, requirementSources: manifestArgv.requirement_source_files, attended: executorMode === 'attended' })
+    : null;
+  const explicitContinuation = Boolean(argv.resume || attachCreatedRunId || normalizeSupersedeTargets(argv.supersede).length || argv.force);
+  const continuationDecision: RunContinuationDecision | null = explicitContinuation ? null : plainContinuation;
+  if (continuationDecision) {
+    const requestedRunId = typeof argv['run-id'] === 'string' ? argv['run-id'].trim() : '';
+    if (continuationDecision.kind === 'hold') {
+      console.error(`[goal-runner] ${continuationDecision.guidance}`);
+      return 1;
+    }
+    if (continuationDecision.kind === 'rejoin') {
+      if (requestedRunId && requestedRunId !== continuationDecision.runId) {
+        console.error(`[goal-runner] BLOCKER: 本次请求指定了新 run ${requestedRunId}，但同一任务的未终局 run ${continuationDecision.runId} 应重新接入（${continuationDecision.reason}）`);
+        return 1;
+      }
+      // 重新接入不重读需求：run 里冻结的需求已经包含本次文本（否则决策会判需求增量、走后继）。
+      delete argv.requirement;
+      delete argv['requirement-file'];
+      delete manifestArgv.requirement;
+      delete manifestArgv.requirement_source_files;
+      if (continuationDecision.started) argv.resume = continuationDecision.runId;
+      else attachCreatedRunId = argv['attach-created'] = continuationDecision.runId;
+      console.log(`[goal-runner] 重新接入：${continuationDecision.reason}`);
+    } else if (continuationDecision.kind === 'successor') {
+      argv.supersede = [...continuationDecision.targets];
+      console.log(`[goal-runner] 起后继：${continuationDecision.reason}；承接 ${continuationDecision.targets.join('、')}`);
+    }
+  }
+
   const cfg = loadFrameworkConfig(projectRoot);
   let workflow = (injectedWorkflowResolver ?? resolveWorkflowSpec)(
     projectRoot,
@@ -4771,6 +4920,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
   let supersedeSourceRequirement: string | undefined;
   // plan c4e8a1f7 T2（评审 P1 三轮修复）：源 run 的需求来源列表（successor 来源重设用）
   let supersedeSourceSourceFiles: string[] | undefined;
+  // 批三返修 R3：来源 run 的原始起止——接续决策起的后继只容忍"原样重放"的 --start/--end。
+  let supersedeSourceBounds: { start: string; end: string } | undefined;
   // A resumed run that supersedes itself must fail before locks, run_start, progress,
   // or any other event-producing startup work. The later loop keeps the same check as
   // defence in depth, while the resumed source remains strictly read-only here.
@@ -4806,6 +4957,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // successor + manifest override 时继承来源会被 override 整体替换，须在合并块
         // 以「源来源 ∪ 显式增量来源」重设（忽略 manifest 自带旧来源）。
         supersedeSourceSourceFiles = source.requirement_source_files;
+        supersedeSourceBounds = { start: String(source.start_phase), end: String(source.end_phase) };
         const sourceEvents = collectSupersededAncestorEvents({
           projectRoot,
           featuresDir,
@@ -4899,10 +5051,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // （源=A、manifest 自带=B、显式文件内容=A）：显式文本=A == 源 → 不合并，B 不被
   // 冒充增量。
   if (supersedeSourceRequirement !== undefined && explicitRequirementIncrementText) {
-    const sourceRequirement = (supersedeSourceRequirement ?? '').trim();
-    const inc = explicitRequirementIncrementText;
-    if (inc !== sourceRequirement && !isSuccessorRepairRequirement(inc)) {
-      manifest.requirement = mergeSuccessorRequirement(supersedeSourceRequirement, inc);
+    // plan 4e6fb3b6 批三返修 R1 / 最终评审返修：与有人在场入口、接续决策同一个函数（deriveSuccessorRequirement）。
+    // 没有新内容时保留源合同全文——--override-manifest 先把需求替换成了本次文本，不恢复就会丢掉源里的历史增量；
+    // 本次文本已是合并格式时同样只取源还没有的部分接到源全文后面（不再因带标记而保持原值：无 override 时那会丢掉新增内容）。
+    manifest.requirement = deriveSuccessorRequirement(supersedeSourceRequirement, explicitRequirementIncrementText);
+    if (manifest.requirement !== supersedeSourceRequirement) {
       console.log(
         `[goal-runner] supersede 显式 requirement 增量已与源 requirement 合并（successor 任务真源=manifest.requirement）。`,
       );
@@ -5062,7 +5215,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
       manifest.execution_scope = requestedExecutionScope;
     }
     if (!manifest.execution_scope?.phase_chain.length) throw new Error('[execution-scope] empty scope: validate existing completion without a new run');
-    if ((typeof argv.start === 'string' && argv.start !== manifest.execution_scope.phase_chain[0]) || (typeof argv.end === 'string' && argv.end !== manifest.execution_scope.phase_chain.at(-1))) throw new Error('[execution-scope] start/end must match the resolved scope');
+    // plan 4e6fb3b6 §7（批三返修 R3）：接续决策起的后继由重解析的出生范围定链。只容忍能确认是原请求重放的起止
+    // （与来源 run 的原始起止相同）；本次给出不同的起止，后继的出生解析没有按起止缩窄范围的入口——明确拒绝，不静默覆盖。
+    if (continuationDecision?.kind === 'successor') {
+      const changed = successorBoundsConflicts(
+        { start_phase: supersedeSourceBounds?.start, end_phase: supersedeSourceBounds?.end },
+        { ...(typeof argv.start === 'string' ? { start: argv.start } : {}), ...(typeof argv.end === 'string' ? { end: argv.end } : {}) },
+      );
+      if (changed.length) throw new Error(successorBoundsRefusal(continuationDecision.reason, changed));
+    } else if ((typeof argv.start === 'string' && argv.start !== manifest.execution_scope.phase_chain[0]) || (typeof argv.end === 'string' && argv.end !== manifest.execution_scope.phase_chain.at(-1))) throw new Error('[execution-scope] start/end must match the resolved scope');
     manifest.start_phase = manifest.execution_scope.phase_chain[0];
     manifest.end_phase = manifest.execution_scope.phase_chain.at(-1)!;
     manifest.chain_override = [...manifest.execution_scope.phase_chain];
@@ -5138,7 +5299,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // Fresh start (not --resume): if an orphaned-but-incomplete run exists for this
   // feature, refuse a brand-new run_id and guide --resume (--force overrides).
   // dry-run 隔离命名空间不受真实 run 孤儿阻挡（T1b）。
-  if (!argv.resume && !attachCreatedRunId && !dryRun) {
+  // plan 4e6fb3b6 §7.3：接续决策已选好路（孤儿 run 与失败 run 都在决策里被重新接入、承接或保持停止）时消费决策，
+  // 这两道守卫只对显式旗标的调用照现状生效。
+  if (!argv.resume && !attachCreatedRunId && !dryRun && !continuationDecision) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
     const continuation = evaluateFreshRunContinuation({
       projectRoot,
@@ -5184,6 +5347,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       chain: actualBirthChain,
       ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
       forceFresh: Boolean(argv.force),
+      ...(continuationDecision ? { continuation: continuationDecision } : {}),
     });
     // D1.3 转交登记：createGoalRun 成功之后立刻写，理由同 `--prepare-run` 入口
     //（出生未完成时 feature 侧不得留下指向不存在 run 的指针）。
@@ -5374,6 +5538,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         requestTs: pendingLegacyFidelityBacktrack.requested_at,
         requirement: manifest.requirement ?? '',
         featuresDir,
+        frameworkRoot,
       })
     ) {
       pendingLegacyFidelityBacktrack = null;
@@ -5492,6 +5657,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       const staleness = recomputePhaseEvidenceStaleness(projectRoot, manifest.feature, upstream, {
         currentRequirementSha: currentReqSha,
+        frameworkRoot,
       });
       const bad = staleness.filter((r) => r.verdict !== 'fresh');
       const missingAttestation =
@@ -5518,28 +5684,208 @@ Goal runner — tool-agnostic multi-phase orchestrator
       );
     }
 
-    // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
-    // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
-    // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
-    // 探测失败/异常不阻断 run（保守：让主流程走既有 adapter 声明路径继续）。
-    const visionProbeDecision = decideVisionCanaryProbe({
+    // goal-fakepass-hardening t8：--supersede <run_id>（可重复）——显式废弃 HALTED/PARTIAL
+    // 旧 run，写审计事件；completion verify 只认经审计的 supersede（自报 Set 不生效）。
+    const supersededRunIds: string[] = ([] as string[])
+      .concat(argv.supersede ?? [])
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+    // plan 4e6fb3b6 批三返修 R2：已出生、但在 run_start 之前停下的后继被附着时，幂等补完出生收尾——承接目标按当时现场重新算出
+    // （来源 = manifest.successor_of），剔除本后继已经审计过的；随后照旧走预算血缘与周期边界、目标审计与身份核对、范围转交登记。
+    const attachedSuccessorCatchUp = Boolean(attachCreatedRunId && manifest.successor_of && !dryRun && supersededRunIds.length === 0);
+    if (attachedSuccessorCatchUp) {
+      const audited = new Set(loadEventsJsonl(path.join(projectRoot, manifest.report_dir, 'events.jsonl'))
+        .filter(e => e.type === 'supersede' && (e as { superseding_run_id?: unknown }).superseding_run_id === manifest.run_id)
+        .map(e => String((e as { target_run_id?: unknown }).target_run_id)));
+      supersededRunIds.push(...successorCatchUpTargets(projectRoot, manifest.feature, manifest.run_id, manifest.successor_of!)
+        .filter(target => !audited.has(target)));
+      if (supersededRunIds.length) console.log(`[goal-runner] 附着的后继补完承接：${supersededRunIds.join('、')}`);
+    }
+    // plan 4e6fb3b6 §6.3：预算与截止时刻的建立提前到首次探测（下方启动期金丝雀）之前——替代尝试与每次探测
+    // 都消耗墙钟预算、受同一截止时刻约束。计量仍是既有的交付周期折叠（foldBudgetLineage），不另建来源；
+    // 本段整体从 run_start 之后原样上移，折叠用的当前 run 事件改在此处读取（此前在 resume 前置检查之后读）。
+    const budgetStartEvents = loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl'));
+    // plan c4e7a9b2 §3.3 B1：交付周期边界 = 上一次可信完成（assessFeature record ok）的 run——出生时算一次，
+    // 只在它落在本次 supersede 血缘内时写进每条审计事件；预算三维（回退/轮次/活跃时长）自它之后起算。
+    // 评估不可算即不设边界（按全血缘折叠的现状口径，不拒绝出生）。
+    let cycleBoundary: string | undefined;
+    if (supersededRunIds.length > 0) {
+      try {
+        const record = assessFeatureCompletion(projectRoot, manifest.feature, {
+          ...resolveChangeUnitExpectedExecution(projectRoot, manifest.feature, false, frameworkRoot), frameworkRoot,
+        }).record;
+        if (record.state === 'ok' && record.run_id) {
+          cycleBoundary = foldBudgetLineage({
+            projectRoot, featuresDir, feature: manifest.feature,
+            seedTargets: supersededRunIds, currentEvents: budgetStartEvents, cycleBoundary: record.run_id,
+          }).cycleBoundary;
+        }
+      } catch (error) {
+        console.warn(`[goal-runner] 交付周期边界不可算，预算按 supersede 全血缘折叠：${(error as Error).message}`);
+      }
+    }
+    // plan e7c2a4d8 T2：wall-clock 预算改**活跃时间**累计——sessionStartMs 为当前进程
+    // 起点；priorActiveMs 由 partitionExecutionSessions 从历史段求和（崩溃段保守补收
+    // 一个心跳周期；dry 段剔除）；nextSessionStartMs 契约防最后未闭合历史段与当前段
+    // 双计（codex 五轮 P1-②）。隔夜 resume 不再按日历跨度秒撞熔断（4035d4 事故）。
+    const sessionStartMs = Date.now();
+    // 批二 review R1：本会话从这里开始计时（含启动期探测）。run_start 与 run_start 之前的提前退出 run_end 都带上它，
+    // 会话分段据此把 run_start 之前的启动耗时计入已用时长（旧事件流无此字段，计算不变）。
+    const sessionStartedAtIso = new Date(sessionStartMs).toISOString();
+    // T1④（e5d8a2c4）：**预算沿 supersede 链折叠——supersede 不得刷新任何预算**。
+    // 预算是 per-run 从各自 events 回放的，新 run_id 即清零；不折叠的话"废弃旧 run
+    // 开后继"就是绕过 DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道。种子=
+    // 本次 CLI 的 --supersede（fresh）∪ 本 run events 里的 audited supersede（resume）。
+    // **阶段完成状态仍只读当前 run**（进度不跨 run 折叠，见 collectSupersededAncestorEvents 头注）。
+    // e9d4b7a3 t4：折叠逻辑收敛到 foldBudgetLineage 唯一共享入口（runner 熔断 /
+    // progress.json / heartbeat 同源，不再各自复制公式）。
+    const budgetLineage = foldBudgetLineage({
+      projectRoot, featuresDir, feature: manifest.feature,
+      seedTargets: [...new Set([...supersededRunIds, ...(manifest.execution_scope && manifest.successor_of ? [manifest.successor_of] : [])])], currentEvents: budgetStartEvents,
+      cycleBoundary,
+    });
+    const ancestorBudgetEvents = budgetLineage.ancestorEvents;
+    const budgetFoldEvents = budgetLineage.budgetFoldEvents;
+    const budgetBase = resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
+    let totalTurns = budgetBase.totalTurns;
+    const priorActiveMs = budgetBase.priorActiveMs;
+    // 真实时间线起点（sinceMs/partial 回喂消费面——绝不喂合成时间，否则跨夜 resume
+    // 丢上一段落盘产物）；无历史段时=当前会话起点。
+    const wallClockStartMs = budgetBase.firstAuthoritativeStartMs ?? sessionStartMs;
+    // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
+    // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
+    // Derived from the chain in force, and re-derived after a revision: a revision that adds a
+    // phase must not leave that phase without budget. Consumed budget (`priorActiveMs`) is untouched.
+    let wallMs = resolveWallClockMs(manifest, chain);
+    // P0-4（plan d9b4f7e2，rev8 偏离① 定稿口径）：wall deadline 制——**硬上界覆盖
+    // agent/harness/backoff 三路径**（可用预算一律先扣 FINALIZE_RESERVE_MS 收尾预留）；
+    // run_end 后收尾为 pre-check 拦截的 best-effort（finalize_skipped/finalize_overrun）。
+    // 07-13 案实锤：预算只在 attempt 启动前检查，review 在 ~580m 启动后跑满 32m，
+    // 限 585m 实跑 612m。plan e7c2a4d8 T2：deadline 硬上界语义不变，只换基点——
+    // 当前会话起点 + 剩余活跃预算（priorActiveMs 已扣）。
+    let wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
+    const remainingWallMs = (): number => wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+
+    // plan 4e6fb3b6 §6.3：金丝雀单次允许时长取固定 120 秒与剩余墙钟预算的较小者。
+    const runCanaryWithinBudget = (): ReturnType<typeof runVisionCanaryProbe> => runVisionCanaryProbe({
+      projectRoot, frameworkRoot, manifest,
+      // plan c4e8a1f7 T1a：canary 复用 session binary（与正式 invoke 同一绝对路径）
+      resolvedBinary: sessionBinary?.binary ?? null,
+      ...(injectedCanaryProbeInvoke ? { invokeFn: injectedCanaryProbeInvoke } : {}),
+      timeoutMs: Math.max(1, Math.min(VISION_CANARY_TIMEOUT_MS, remainingWallMs())),
+    });
+    const decideCanaryProbe = (): ReturnType<typeof decideVisionCanaryProbe> => decideVisionCanaryProbe({
       projectRoot,
       manifest,
       chain,
       dryRun: dryRun || executorMode === 'attended',
       forceRefresh: Boolean(argv['refresh-vision-probe']),
     });
+    /**
+     * plan 4e6fb3b6 §6.2：金丝雀或正式调用判为"模型不受支持"后的获准替代。
+     * 用户显式钉的型号不换；否则按 framework.local.json adapters.<adapter>.approved_models 的顺序取下一个没试过的，
+     * 预算未尽才换。换型号 = 身份改写：写 manifest（来源记为获准替代）+ 只授权 adapter_model_pin 的
+     * manifest_identity_rebase + adapter_model_substituted 事件；然后按既有判定重探金丝雀（钉值变了，旧缓存不再被采信）。
+     * 重探仍不受支持就继续下一个；清单尽/预算尽/用户钉死则交还，note 说明原因并列出试过的型号。
+     */
+    const trySubstituteApprovedModel = async (
+      phaseName: string,
+      trigger: 'canary' | 'invoke',
+    ): Promise<
+      | { switched: true; probe?: Awaited<ReturnType<typeof runVisionCanaryProbe>> }
+      | { switched: false; note: string; hardFailure?: string }
+    > => {
+      for (;;) {
+        const adapterName = manifest.adapter ?? 'generic';
+        let local: ReturnType<typeof loadFrameworkLocalConfig> = null;
+        try {
+          local = loadFrameworkLocalConfig(projectRoot);
+        } catch (error) {
+          console.warn(`[goal-runner] framework.local.json 读不出，获准替代型号按未配置处理：${(error as Error).message}`);
+        }
+        const approved = resolveApprovedModels(local, adapterName);
+        if (approved.warning) console.warn(`[goal-runner] ${approved.warning}`);
+        const lineageEvents = [
+          ...ancestorBudgetEvents,
+          ...loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl')),
+        ] as ReadonlyArray<{ type?: string; from?: unknown; to?: unknown }>;
+        const decision = decideModelAlternative({
+          adapter: adapterName,
+          pin: manifest.adapter_model_pin,
+          // 批二 review R4：本次调用显式给了型号 = 用户钉死，本次不替代（不论 manifest 里记的来源）
+          ...(cliAdapterModel !== undefined ? { explicitModel: cliAdapterModel } : {}),
+          approvedModels: approved.models,
+          tried: collectTriedModels(lineageEvents, manifest.adapter_model_pin),
+          remainingMs: remainingWallMs(),
+        });
+        if (decision.kind === 'refuse') {
+          return {
+            switched: false,
+            note: describeModelAlternativeRefusal({
+              adapter: adapterName, reason: decision.reason, tried: decision.tried,
+              ...(cliAdapterModel !== undefined
+                ? { pinned: cliAdapterModel }
+                : manifest.adapter_model_pin ? { pinned: manifest.adapter_model_pin.value } : {}),
+            }),
+          };
+        }
+        const from = manifest.adapter_model_pin?.value ?? null;
+        manifest.adapter_model_pin = { adapter: adapterName, value: decision.model, source: 'approved_alternative' };
+        writeGoalManifest(manifest, projectRoot);
+        goalEvents.emit({
+          type: 'manifest_identity_rebase',
+          to_fields: computeManifestIdentityFields(manifest),
+          authorized_by: 'approved_model_alternatives',
+          changed_fields: ['adapter_model_pin'],
+        });
+        goalEvents.emit({
+          type: 'adapter_model_substituted',
+          phase: phaseName,
+          trigger,
+          from,
+          to: decision.model,
+          tried: decision.tried,
+        });
+        console.warn(
+          `[goal-runner] 型号 ${from ?? '(adapter 默认型号)'} 不受支持——按获准替代清单换用 ${decision.model}` +
+            `（已试：${decision.tried.join('、')}）`,
+        );
+        if (decideCanaryProbe().action !== 'probe' || !(remainingWallMs() > 0)) return { switched: true };
+        const reprobe = await runCanaryWithinBudget();
+        if (reprobe.outcome === 'hard_cli_failure' && reprobe.modelUnsupported) continue;
+        if (reprobe.outcome === 'hard_cli_failure') {
+          return {
+            switched: false,
+            hardFailure: reprobe.error ?? '视觉金丝雀探测遇 CLI/adapter 兼容性问题',
+            note: `换用获准替代型号 ${decision.model} 后金丝雀遇到其它 CLI 硬失败，停止替代。`,
+          };
+        }
+        return { switched: true, probe: reprobe };
+      }
+    };
+
+    // E1（多模态降级阶梯 plan d4a8f3c6）：UI 需求且无 local override/新鲜缓存时，探测层
+    // 才刚被声明式 image_input 骗过（案A mx 2.7 套壳）——先跑一次金丝雀实测校准，
+    // 结果缓存进 framework.local.json（adapter 变更即失效），后续 phase 的能力块直接读缓存。
+    // 探测失败/异常不阻断 run（保守：让主流程走既有 adapter 声明路径继续）。
+    const visionProbeDecision = decideCanaryProbe();
     // plan d7f3a9c4 t4：金丝雀 CLI 硬失败（spawn race / CLI·config 参数不兼容）**只有**在
     // 真实 action==='probe' 路径上记录并升 run 级 BLOCKER；终态发射在 manifest 落盘后
     //（见 writeGoalManifest 之后的 canary_cli_hard_failure 块），保证 run 有可监控终态。
     let canaryHardCliFailure: string | null = null;
-    if (visionProbeDecision.action === 'probe') {
-      const probeResult = await runVisionCanaryProbe({
-        projectRoot, frameworkRoot, manifest,
-        // plan c4e8a1f7 T1a：canary 复用 session binary（与正式 invoke 同一绝对路径）
-        resolvedBinary: sessionBinary?.binary ?? null,
-        ...(injectedCanaryProbeInvoke ? { invokeFn: injectedCanaryProbeInvoke } : {}),
-      });
+    let canaryModelAlternativeNote: string | null = null;
+    if (visionProbeDecision.action === 'probe' && !(remainingWallMs() > 0)) {
+      console.warn('[goal-runner] 本交付周期墙钟预算已尽——跳过视觉金丝雀探测（正式 phase 前的预算检查会停机）');
+    } else if (visionProbeDecision.action === 'probe') {
+      let probeResult: Awaited<ReturnType<typeof runVisionCanaryProbe>> = await runCanaryWithinBudget();
+      if (probeResult.outcome === 'hard_cli_failure' && probeResult.modelUnsupported) {
+        const substituted = await trySubstituteApprovedModel(String(chain[0]), 'canary');
+        if (substituted.switched) {
+          probeResult = substituted.probe ?? { ran: false };
+        } else {
+          canaryModelAlternativeNote = substituted.note;
+          if (substituted.hardFailure) probeResult = { ...probeResult, error: substituted.hardFailure };
+        }
+      }
       if (probeResult.outcome === 'hard_cli_failure') {
         canaryHardCliFailure = probeResult.error ?? '视觉金丝雀探测遇 CLI/adapter 兼容性问题';
       } else if (probeResult.ran && probeResult.outcome === 'valid_cached') {
@@ -5593,7 +5939,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const guidance =
         `视觉金丝雀探测遇 CLI/adapter 兼容性问题（非需求代码）：${canaryHardCliFailure}\n` +
         '这是 CLI/config 参数不兼容、模型不可用或 spawn race——请核对 adapter 版本/配置/模型/环境后重跑' +
-        '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。';
+        '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。' +
+        (canaryModelAlternativeNote ? `\n${canaryModelAlternativeNote}` : '');
       goalEvents.emit({
         type: 'phase_halt',
         phase: chain[0],
@@ -5603,7 +5950,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         halt_guidance: guidance,
       });
       goalEvents.emit({
-        type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure',
+        type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure', session_started_at: sessionStartedAtIso,
         error: canaryHardCliFailure.slice(0, 1000),
       });
       runConcluded = true;
@@ -5637,7 +5984,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           declared_layers: declaredLayers,
         });
         goalEvents.emit({
-          type: 'run_end', status: 'HALTED', halt_reason: 'declared_product_layer_missing',
+          type: 'run_end', status: 'HALTED', halt_reason: 'declared_product_layer_missing', session_started_at: sessionStartedAtIso,
         });
         runConcluded = true;
         console.error(
@@ -5645,7 +5992,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `${earlySnap.failureReason ?? earlySnap.sha256}\n` +
             `framework.config.json 的 architecture.outer_layers 声明：${declaredLayers.join('、') || '(空)'}\n` +
             '本链路含 testing，须对产品源码层做快照保护——声明的目录必须真实存在。\n' +
-            '处置：修正配置声明或补建目录后重跑（--resume 会重检）。\n',
+            '处置：修正配置声明或补建目录后重新发起同一请求，由框架选择恢复方式（本检查会重做）。\n',
         );
         return 1;
       }
@@ -5657,7 +6004,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 确定**：多候选未确认 / build-profile 缺失 / products 为空 / build-profile 不可解析）
     // → 复用既有 phase_halt 通道停止
     // （halt_reason=product_selection_unresolved，不新造停止机制、不烧任何预算）；
-    // 确认（record-product-selection / init.product_selection / env）后 --resume 重检。
+    // 确认（record-product-selection / init.product_selection / env）后重新发起同一请求——由接续决策选择附着或恢复，本检查重做。
     // 前置原因：错误 product 恰好编译成功时会直接签发 PASS——必须在选定阶段就要求可信来源，
     // 不允许跑到 coding 阶段中途才停。单候选与已确认工程零摩擦。
     if (!dryRun && chainRequiresProduct(chain as string[], resolvedProfile)) {
@@ -5677,7 +6024,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const guidance =
             `编译形态解析器执行失败（profile=${resolvedProfile.name}）：${probe.message ?? '(无详情)'}\n` +
             '这是框架侧缺陷（profile product-selection 模块异常），不是内容失败，也不是外部环境问题；' +
-            '请更新/修复 framework 后重跑（--resume 会重检）。';
+            '请更新/修复 framework 后重新发起同一请求，由框架选择恢复方式（本检查会重做）。';
           goalEvents.emit({
             type: 'phase_halt',
             phase: chain[0],
@@ -5686,7 +6033,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             reason: probe.message ?? 'product selection 解析失败',
           });
           goalEvents.emit({
-            type: 'run_end', status: 'HALTED', halt_reason: 'product_selection_probe_failed',
+            type: 'run_end', status: 'HALTED', halt_reason: 'product_selection_probe_failed', session_started_at: sessionStartedAtIso,
           });
           runConcluded = true;
           console.error(`\n===== product_selection_probe_failed =====\n${guidance}\n`);
@@ -5694,20 +6041,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
       } else if (probe.selection.source === 'unresolved') {
         const candidates = probe.selection.candidates.join(', ');
-        const guidance =
-          probe.selection.candidates.length > 0
-            ? `编译形态无法确定：工程声明了多个 product（${candidates}），` +
-              '且 toolchain.preferredProduct 未经本机确认（framework.local.json 无匹配确认记录）。'
-            : '编译形态无法确定：build-profile.json5 未声明任何真实 product（缺失/为空/不可解析）。';
-        const confirmLines =
-          'framework 不替宿主猜测编译形态——请先确认一次（任选其一）：\n' +
-          `  1. 机器写入：npx ts-node framework/harness/scripts/record-product-selection.ts --project-root ${projectRoot} --product <候选值>；\n` +
-          '  2. 交互式：framework-init 的 registry `init.product_selection`；\n' +
-          '  3. testing 无人值守：HARNESS_DEVICE_TEST_PRODUCT=<候选值>（仅 testing 起点链路生效，env 属显式确认）。\n' +
-          (probe.selection.candidates.length > 0
-            ? `本次可用候选：${candidates}。`
-            : '请先修复构建配置（build-profile.json5 声明 app.products）或使用显式来源指定 product。') +
-          '\n确认后 --resume 继续（会重新检查）。';
+        const guidance = buildProductSelectionUnresolvedGuidance({
+          feature: manifest.feature,
+          phase: String(chain[0]),
+          candidates: probe.selection.candidates,
+          projectRoot,
+        }).join('\n');
         goalEvents.emit({
           type: 'phase_halt',
           phase: chain[0],
@@ -5717,10 +6056,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           candidates: probe.selection.candidates,
         });
         goalEvents.emit({
-          type: 'run_end', status: 'HALTED', halt_reason: 'product_selection_unresolved',
+          type: 'run_end', status: 'HALTED', halt_reason: 'product_selection_unresolved', session_started_at: sessionStartedAtIso,
         });
         runConcluded = true;
-        console.error(`\n===== product_selection_unresolved =====\n${guidance}\n${confirmLines}\n`);
+        console.error(`\n===== product_selection_unresolved =====\n${guidance}\n`);
         return 1;
       }
     }
@@ -5933,7 +6272,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 投影**取（run_end 事件），不再回退到 goal-report.json——report 纯展示投影，
       // 只 run_end 落盘，崩溃现场其状态陈旧（review/ut 已 advance 仍显示 halt）。
       const lastRunEnd = findLastRunEnd(priorEvents);
-      const guard = checkTerminalResumeGuard({
+      // plan 4e6fb3b6 §7.3：接续决策判定"重新发起请求就是重新接入这个 run"时（最新的未终局 run、非结构终局、
+      // 冷却只在没有变化时生效——决策已处理），恢复守卫消费该结果，不再要求 --force-resume；条件是否解除仍由其后的原检查判断。
+      const decidedRejoin = plainContinuation?.kind === 'rejoin' && plainContinuation.runId === manifest.run_id;
+      const guard: ReturnType<typeof checkTerminalResumeGuard> = decidedRejoin ? { allowed: true } : checkTerminalResumeGuard({
         priorStatus: lastRunEnd?.status,
         lastRunEndTs: lastRunEnd?.ts,
         forceResume,
@@ -5975,7 +6317,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // rebase 的确定性刷新判定在 resume 起点读取本事件字段。
       goalEvents.emit({
         type: 'manifest_identity_rebase',
-        to_fields: manifestDrift.currentFields,
+        // plan 4e6fb3b6 §6.4：启动期金丝雀若已换过获准替代型号（它自己的 rebase 事件更早落盘），
+        // 这里按当前 manifest 重算，避免把基线退回替代前的钉值；没换型号时与 manifestDrift.currentFields 相同。
+        to_fields: computeManifestIdentityFields(manifest),
         authorized_by: manifestDrift.rebaseAuthorizedBy,
         ...(manifestDrift.changedFields.length > 0
           ? { changed_fields: manifestDrift.changedFields }
@@ -5985,6 +6329,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     goalEvents.emit({
       type: 'run_start',
       dry_run: dryRun,
+      session_started_at: sessionStartedAtIso,
       chain,
       manifest_hash: frozenManifestHash,
     });
@@ -5998,30 +6343,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     /** R10：托管模拟器的信号清理反注册句柄（正常回收后摘除，防重复回收） */
     let releaseManagedDeviceCleanup: (() => void) | null = null;
     // 视觉账本控制面已退役；当前执行仅使用 invocation-bound capability/reference receipts。
-    // goal-fakepass-hardening t8：--supersede <run_id>（可重复）——显式废弃 HALTED/PARTIAL
-    // 旧 run，写审计事件；completion verify 只认经审计的 supersede（自报 Set 不生效）。
-    const supersededRunIds: string[] = ([] as string[])
-      .concat(argv.supersede ?? [])
-      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
-    // plan c4e7a9b2 §3.3 B1：交付周期边界 = 上一次可信完成（assessFeature record ok）的 run——出生时算一次，
-    // 只在它落在本次 supersede 血缘内时写进每条审计事件；预算三维（回退/轮次/活跃时长）自它之后起算。
-    // 评估不可算即不设边界（按全血缘折叠的现状口径，不拒绝出生）。
-    let cycleBoundary: string | undefined;
-    if (supersededRunIds.length > 0) {
-      try {
-        const record = assessFeatureCompletion(projectRoot, manifest.feature, {
-          ...resolveChangeUnitExpectedExecution(projectRoot, manifest.feature), frameworkRoot,
-        }).record;
-        if (record.state === 'ok' && record.run_id) {
-          cycleBoundary = foldBudgetLineage({
-            projectRoot, featuresDir, feature: manifest.feature,
-            seedTargets: supersededRunIds, currentEvents: priorEvents, cycleBoundary: record.run_id,
-          }).cycleBoundary;
-        }
-      } catch (error) {
-        console.warn(`[goal-runner] 交付周期边界不可算，预算按 supersede 全血缘折叠：${(error as Error).message}`);
-      }
-    }
+    // supersededRunIds / cycleBoundary 已随预算折叠提前到启动期金丝雀之前计算（plan 4e6fb3b6 §6.3），语义不变。
     for (const target of supersededRunIds) {
       // b7e4d2a9 Todo2：supersede 现在连带删除目标场外状态——新增两道前置：
       // ① target 来自原始 CLI 串，先过 runId 严格 basename 契约（禁 /\ 与 . ..）；
@@ -6080,7 +6402,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
     // plan b2d7f4e9 §3.2 第 4 步：审计事件已落，feature 冻结记录（若有）追加一条转交指向本后继，旧转交保留。
     // 登记函数自己读本 run 的 supersede 审计与出生范围核对，不信这里的声明；无记录时是 no-op。
-    if (freshCreation && manifest.execution_scope && manifest.successor_of && !dryRun) {
+    // 批三返修 R2：附着的后继同样补登转交（登记函数对同一 run 幂等；它自己核对本后继的 supersede 审计）。
+    if ((freshCreation || (attachCreatedRunId && manifest.successor_of)) && manifest.execution_scope && manifest.successor_of && !dryRun) {
       try {
         registerFeatureScopeTransfer({
           projectRoot, feature: manifest.feature, runId: manifest.run_id,
@@ -6239,31 +6562,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 主循环 resumePostAgent 时复用该 attempt 身份，不新建）
     let resumePostAgentAttemptIds: Record<string, string> = {};
 
-    // plan e7c2a4d8 T2：wall-clock 预算改**活跃时间**累计——sessionStartMs 为当前进程
-    // 起点；priorActiveMs 由 partitionExecutionSessions 从历史段求和（崩溃段保守补收
-    // 一个心跳周期；dry 段剔除）；nextSessionStartMs 契约防最后未闭合历史段与当前段
-    // 双计（codex 五轮 P1-②）。隔夜 resume 不再按日历跨度秒撞熔断（4035d4 事故）。
-    const sessionStartMs = Date.now();
-    // T1④（e5d8a2c4）：**预算沿 supersede 链折叠——supersede 不得刷新任何预算**。
-    // 预算是 per-run 从各自 events 回放的，新 run_id 即清零；不折叠的话"废弃旧 run
-    // 开后继"就是绕过 DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道。种子=
-    // 本次 CLI 的 --supersede（fresh）∪ 本 run events 里的 audited supersede（resume）。
-    // **阶段完成状态仍只读当前 run**（进度不跨 run 折叠，见 collectSupersededAncestorEvents 头注）。
-    // e9d4b7a3 t4：折叠逻辑收敛到 foldBudgetLineage 唯一共享入口（runner 熔断 /
-    // progress.json / heartbeat 同源，不再各自复制公式）。
-    const budgetLineage = foldBudgetLineage({
-      projectRoot, featuresDir, feature: manifest.feature,
-      seedTargets: [...new Set([...supersededRunIds, ...(manifest.execution_scope && manifest.successor_of ? [manifest.successor_of] : [])])], currentEvents: priorEvents,
-      cycleBoundary,
-    });
-    const ancestorBudgetEvents = budgetLineage.ancestorEvents;
-    const budgetFoldEvents = budgetLineage.budgetFoldEvents;
-    const budgetBase = resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
-    let totalTurns = budgetBase.totalTurns;
-    const priorActiveMs = budgetBase.priorActiveMs;
-    // 真实时间线起点（sinceMs/partial 回喂消费面——绝不喂合成时间，否则跨夜 resume
-    // 丢上一段落盘产物）；无历史段时=当前会话起点。
-    const wallClockStartMs = budgetBase.firstAuthoritativeStartMs ?? sessionStartMs;
+    // plan 4e6fb3b6 §6.3：会话起点、预算折叠与截止时刻已提前到启动期金丝雀探测之前（见 visionProbeDecision 上方）。
 
     if (argv.resume) {
       // t1（plan c6a9e4d2）：resume 起点/priorOutcomes 一律从 **authoritative events
@@ -6393,19 +6692,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 DEFAULT_MAX_BACKTRACKS / 本交付周期。
     // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents），c4e7a9b2：自上次可信完成起算
     let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
-    let backtrackReviewFocus: string[] = [];
-    // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
-    // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
-    // Derived from the chain in force, and re-derived after a revision: a revision that adds a
-    // phase must not leave that phase without budget. Consumed budget (`priorActiveMs`) is untouched.
-    let wallMs = resolveWallClockMs(manifest, chain);
-    // P0-4（plan d9b4f7e2，rev8 偏离① 定稿口径）：wall deadline 制——**硬上界覆盖
-    // agent/harness/backoff 三路径**（可用预算一律先扣 FINALIZE_RESERVE_MS 收尾预留）；
-    // run_end 后收尾为 pre-check 拦截的 best-effort（finalize_skipped/finalize_overrun）。
-    // 07-13 案实锤：预算只在 attempt 启动前检查，review 在 ~580m 启动后跑满 32m，
-    // 限 585m 实跑 612m。plan e7c2a4d8 T2：deadline 硬上界语义不变，只换基点——
-    // 当前会话起点 + 剩余活跃预算（priorActiveMs 已扣）。
-    let wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
+    // wallMs / wallDeadlineMs 已提前到启动期金丝雀探测之前建立（plan 4e6fb3b6 §6.3），语义不变。
     // P0-A：显式 timeout 低于建议地板只 WARN 不抬升（尊重显式 override 契约）。
     for (const warn of collectPhaseTimeoutWarnings(manifest, chain)) {
       console.warn(warn);
@@ -6528,6 +6815,34 @@ Goal runner — tool-agnostic multi-phase orchestrator
       : Math.max(1, Math.trunc(options.maxRounds));
     let runtimeRoundsStarted = 0;
     let runtimeBoundaryYielded = false;
+
+    // plan 4e6fb3b6 §5.1：带探针的停机先在进程内有界等待。上限 = min(15 分钟, 剩余墙钟预算)；
+    // 有人在场（session owner）不等、立即交回会话。探针就绪只触发 recheck——是否恢复由原检查确认。
+    const awaitProbeRecovery = (
+      phaseName: string,
+      probeName: string,
+      blockedBy: string,
+      recheck: (remainingMs: number) => Promise<boolean>,
+    ): Promise<boolean> => {
+      const runProbe = options.conditionWait?.runProbe
+        ?? ((p: string, ph: string) => runConditionProbe(projectRoot, manifest.report_dir, p, ph));
+      return waitForConditionRecovery({
+        phase: phaseName,
+        probe: probeName,
+        blockedBy,
+        availableMs: runtimeOwnerKind === 'session' ? 0 : wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS,
+        ...(options.conditionWait?.maxWaitMs !== undefined ? { maxWaitMs: options.conditionWait.maxWaitMs } : {}),
+        ...(options.conditionWait?.pollMs !== undefined ? { pollMs: options.conditionWait.pollMs } : {}),
+        runProbe: () => runProbe(probeName, phaseName),
+        recheck,
+        emit: (event) => goalEvents.emit(event as Parameters<typeof appendEvent>[2]),
+      });
+    };
+    /** 门禁经 emitEvent 发出的停机事件先暂存：等待恢复则丢弃，超时才按现状落盘。 */
+    const probedHaltOf = (events: ReadonlyArray<Record<string, unknown>>): { probe: string; haltReason: string } | null => {
+      const halt = events.find((e) => e.type === 'phase_halt' && typeof e.probe === 'string' && e.probe);
+      return halt ? { probe: String(halt.probe), haltReason: String(halt.halt_reason ?? '') } : null;
+    };
     // D2: the `scope_revision_requested` handoff flag is gone — a revision keeps this very loop
     // running, so there is no early exit and no terminal special-casing for it.
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
@@ -6868,16 +7183,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           });
           break;
         }
-        const effectiveAgentTimeoutMs = Math.min(escalatedTimeoutMs, availableForAgentMs);
-        if (escalatedTimeoutMs > baseTimeoutMs) {
-          goalEvents.emit({
-            type: 'timeout_escalated',
-            phase,
-            effective_timeout_ms: effectiveAgentTimeoutMs,
-            // P0-5：升档来源（consecutive_timeouts | granted_highwater | observed_ratchet）
-            source: timeoutResolution.source,
-          });
-        }
+        // 批二 review R2：能力门/设备门之后若发生过进程内等待，下方会按当时余额再钳制一次（let）；
+        // timeout_escalated 随之在钳制之后发出，记的是实际授予的最终值（超时棘轮把它当"曾授予的最高值"读）。
+        let effectiveAgentTimeoutMs = Math.min(escalatedTimeoutMs, availableForAgentMs);
 
         // E0：UI 需求 spec/plan/coding phase 能力感知——非 UI 相关 / 其余 phase 返回 null，
         // 不注入能力块（不打扰无关 phase 的 prompt）。
@@ -7099,7 +7407,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.warn(`[goal-runner] ⚠ 本阶段源码域无法解析（${detail}）——不做写归因；范围违规仍由 check-coding 判定。`);
         }
 
-        const prompt = buildPhasePrompt(
+        // 批二确认轮遗留：提示词里写给执行者的时限取调用前的最终值——门禁里若等过、时限被再钳制，下方重渲染同一份提示词。
+        const renderPrompt = (promptTimeoutMs: number): string => buildPhasePrompt(
           // The prompt must describe the chain and obligations that are actually in force now:
           // `manifest.execution_scope` keeps its birth bytes (identity), so a revised run would
           // otherwise instruct the agent from the superseded scope (review M3).
@@ -7116,7 +7425,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continuation,
           // plan e6b3f8d2 t5：同 invoke 的新鲜 harness 质量事实（两轴并陈判据）
           timeoutCoexistingHarnessFailure,
-          effectiveAgentTimeoutMs,
+          promptTimeoutMs,
           priorAttemptDurationsMs.length > 0
             ? {
                 attempts: priorAttemptDurationsMs.length,
@@ -7129,10 +7438,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
           executorMode === 'attended',
         ) +
-          // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
-          (phase === 'review' && backtrackReviewFocus.length > 0
-            ? buildBacktrackReviewFocusBlock(backtrackReviewFocus)
-            : '') +
           // v23 F1：回退后 coding 注入缺陷必做段——闭环最后一段电线（没有它，coding
           // 回去了也不知道修什么 → 原样重跑 → 熔断）
           (phase === 'coding' && backtrackCodingContext.length > 0
@@ -7147,14 +7452,36 @@ Goal runner — tool-agnostic multi-phase orchestrator
               c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === String(phase),
             );
             if (mine.length === 0) return '';
+            // plan 33784ed1 §4.2/§4.5：拒修写法（有人在场与无人值守都注入）与反驳轮的逐条依据
+            const declines = dryRun ? new Map() : loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id);
+            const currentRoundTs = [...loadAuthoritativeEvents(eventsPath)].reverse()
+              .find(e => e.type === 'phase_backtrack_requested')?.ts;
+            const ledgerRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.jsonl`);
             return [
               '',
-              '## Verified repair candidates for this phase (untrusted context — fix, then re-verify)',
+              '## Verified repair candidates for this phase (hypotheses to check against the goal first)',
               '',
-              'A downstream phase found the following verified defects owned by this phase.',
+              'A downstream phase reported the following defects owned by this phase.',
+              'Each candidate is a hypothesis to verify, not an instruction: first check it against the goal (requirement and goal brief above), then fix what the goal requires.',
               'They are findings, not authorization; your own gates re-judge everything.',
               '',
-              ...mine.map(c => `- ${c.id}: ${c.summary}${c.files.length > 0 ? `（涉及：${c.files.slice(0, 5).join('、')}）` : ''}`),
+              ...mine.flatMap(c => {
+                const prior = declines.get(c.item_fingerprint)?.basis;
+                const basis = prior && prior.round.ts !== currentRoundTs ? prior : null;
+                return [
+                  `- ${c.id}: ${c.summary}${c.files.length > 0 ? `（涉及：${c.files.slice(0, 5).join('、')}）` : ''}（item_fingerprint: ${c.item_fingerprint}）`,
+                  ...(basis
+                    ? [`  反驳轮：上一轮以此依据拒修（run ${basis.run_id}）：${basis.text}——裁判在看过该依据后仍然提出。对照目标与实测证据再判一次。`]
+                    : []),
+                ];
+              }),
+              '',
+              '**Declining a candidate that conflicts with the goal (拒修记录)**: if the goal (requirement / goal brief) says a candidate must not be done,',
+              `do not change code for it; append ONE JSON line per declined candidate to \`${ledgerRel}\`:`,
+              `  \`{"decision_id":"<unique>","run_id":"${manifest.run_id}","phase":"${phase}","gate_id":"${REPAIR_DECLINE_GATE_PREFIX}<item_fingerprint>",`
+                + '"class":"goal_conflict","decision":"declined: <依据，用「」逐字引用目标里的一句话>","must_review":true,"source":"agent","ts":"<写这一行时的当前时间，ISO 8601，带时区>"}`',
+              '- The quote inside 「」 must appear verbatim in the goal, otherwise the line counts as no decline. Declining again in a later round needs a NEW line; earlier lines do not carry over.',
+              '- A declined candidate the judge raises again gets exactly one rebuttal round; a second decline no longer passes and the run stops with both sides quoted for the user.',
               '',
             ].join('\n');
           })() +
@@ -7209,6 +7536,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               return ''; // best-effort：列不出路径时不阻断 prompt（gate 侧判定不变）
             }
           })();
+        let prompt = renderPrompt(effectiveAgentTimeoutMs);
         fs.writeFileSync(promptPath, prompt, 'utf-8');
         progressSubstep = 'prompt';
         goalEvents.emit({
@@ -7227,18 +7555,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           FEATURE: manifest.feature,
           PHASE: phase,
         };
-        const invokePlan: HeadlessInvokePlan = executorMode === 'detached'
+        const planFor = (text: string): HeadlessInvokePlan => executorMode === 'detached'
           ? resolveHeadlessInvokePlan(
               manifest.adapter!,
               cap.capability!,
               manifest.unattended,
-              prompt,
+              text,
               vars,
               manifest.adapter_model_pin?.value,
               // plan c4e8a1f7 T1a：正式 phase invoke 复用 session binary（probe/invoke 同一身份）
               sessionBinary?.binary ?? null,
             )
           : { argv: [], label: 'phase_execute_request', adapterName: manifest.adapter! };
+        let invokePlan: HeadlessInvokePlan = planFor(prompt);
         // plan d7f3a9c4 t1：dry-run 在 plan 输出回显 pin（用户权威输入可见）。
         if (dryRun) {
           console.log(
@@ -7298,13 +7627,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // v5：逻辑抽取为 runInvokeCapabilityGate（真实链可测——goal-capability-gate 单测
         // 断言"缺口无 agent_invoke_start / resume 重检仍 halt / reprobe 后放行"事件序列）。
         if (!dryRun) {
-          const capHalt = (injectedCapabilityGate ?? runInvokeCapabilityGate)({
-            projectRoot,
-            phase,
-            retries,
-            resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)),
-            emitEvent: ev => goalEvents.emit(ev as Parameters<typeof appendEvent>[2]),
-          });
+          const deferredCapHalts: Array<Record<string, unknown>> = [];
+          const runCapGate = (): ReturnType<typeof runInvokeCapabilityGate> => {
+            deferredCapHalts.length = 0;
+            return (injectedCapabilityGate ?? runInvokeCapabilityGate)({
+              projectRoot,
+              phase,
+              retries,
+              resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)),
+              emitEvent: ev => {
+                if ((ev as { type?: unknown }).type === 'phase_halt') deferredCapHalts.push(ev);
+                else goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
+              },
+            });
+          };
+          let capHalt = runCapGate();
+          const capProbed = capHalt ? probedHaltOf(deferredCapHalts) : null;
+          if (capHalt && capProbed) {
+            await awaitProbeRecovery(String(phase), capProbed.probe, capProbed.haltReason, async () => {
+              capHalt = runCapGate();
+              return capHalt === null;
+            });
+          }
+          for (const ev of deferredCapHalts) goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
           if (capHalt) {
             halted = true;
             outcomes.push(capHalt.outcome);
@@ -7325,33 +7670,60 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 不传的话，每个设备 phase 都会当作"从零开始"：真机若一直锁着，UT 起一个、
           // testing 再起一个，后写的 session 覆盖前一个 → 旧进程再也回收不掉。
           // `--resume` 走的也是这条路径（读的是本 run 自己的 report_dir）。
-          const priorSession = readDeviceSession(projectRoot, manifest.report_dir);
-          const reusableManaged =
-            priorSession?.managed &&
-            priorSession.started_by_run === manifest.run_id &&
-            priorSession.status !== 'released'
-              ? { serial: priorSession.serial, identity: priorSession.managed }
-              : null;
-          const decision = await (injectedDeviceGate ?? runDeviceReadinessGate)({
-            phase,
-            retries,
-            sessionId: invokeId,
-            input: { ...buildDeviceReadinessInput(projectRoot), existingManaged: reusableManaged },
-            emitEvent: ev => goalEvents.emit(ev as Parameters<typeof appendEvent>[2]),
-          });
+          // runDeviceGate 每次调用都重算（等待后的重查要看到刚落的 session）；`as` 防 TS 把它收窄成初值 null。
+          let reusableManaged = null as Parameters<typeof runDeviceReadinessGate>[0]['input']['existingManaged'];
+          const deferredDeviceHalts: Array<Record<string, unknown>> = [];
+          // 批二 review R2：等待中的重查带上剩余额度，模拟器启动这类耗时步骤不超出等待余额。
+          const runDeviceGate = async (budgetMs?: number): Promise<Awaited<ReturnType<typeof runDeviceReadinessGate>>> => {
+            deferredDeviceHalts.length = 0;
+            const priorSession = readDeviceSession(projectRoot, manifest.report_dir);
+            reusableManaged =
+              priorSession?.managed &&
+              priorSession.started_by_run === manifest.run_id &&
+              priorSession.status !== 'released'
+                ? { serial: priorSession.serial, identity: priorSession.managed }
+                : null;
+            return (injectedDeviceGate ?? runDeviceReadinessGate)({
+              phase,
+              retries,
+              sessionId: invokeId,
+              input: {
+                ...buildDeviceReadinessInput(projectRoot),
+                existingManaged: reusableManaged,
+                ...(budgetMs !== undefined ? { emulatorBootBudgetMs: Math.max(1, budgetMs) } : {}),
+              },
+              emitEvent: ev => {
+                if ((ev as { type?: unknown }).type === 'phase_halt') deferredDeviceHalts.push(ev);
+                else goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
+              },
+            });
+          };
+          // S10：BLOCKED 但已启动了托管模拟器 → **先落 session 再退出/再等待**，
+          // 否则那个进程没有任何回收凭证，会一直挂到用户手动关闭；等待后的重查据此复用它。
+          const recordBlockedManaged = (d: Awaited<ReturnType<typeof runDeviceReadinessGate>>): void => {
+            if (!d.outcome || !d.managed) return;
+            writeDeviceSession(projectRoot, manifest.report_dir, {
+              serial: d.target?.serial || null,
+              target_kind: 'emulator',
+              started_by_run: manifest.run_id,
+              managed: d.managed,
+              status: 'failed',
+              note: d.outcome.halt_guidance,
+            });
+          };
+          let decision = await runDeviceGate();
+          const deviceProbed = decision.outcome ? probedHaltOf(deferredDeviceHalts) : null;
+          if (decision.outcome && deviceProbed) {
+            recordBlockedManaged(decision);
+            await awaitProbeRecovery(String(phase), deviceProbed.probe, deviceProbed.haltReason, async (remainingMs) => {
+              decision = await runDeviceGate(remainingMs);
+              recordBlockedManaged(decision);
+              return !decision.outcome;
+            });
+          }
+          for (const ev of deferredDeviceHalts) goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
           if (decision.outcome) {
-            // S10：BLOCKED 但已启动了托管模拟器 → **先落 session 再退出**，
-            // 否则那个进程没有任何回收凭证，会一直挂到用户手动关闭。
-            if (decision.managed) {
-              writeDeviceSession(projectRoot, manifest.report_dir, {
-                serial: decision.target?.serial || null,
-                target_kind: 'emulator',
-                started_by_run: manifest.run_id,
-                managed: decision.managed,
-                status: 'failed',
-                note: decision.outcome.halt_guidance,
-              });
-            }
+            recordBlockedManaged(decision);
             halted = decision.outcome.halted;
             outcomes.push(decision.outcome as GoalPhaseOutcome);
             console.error(
@@ -7459,6 +7831,40 @@ Goal runner — tool-agnostic multi-phase orchestrator
               HARNESS_DEVICE_TEST_PRODUCT: frozenDeviceTest.product,
               HARNESS_DEVICE_TEST_BUILD_MODE: frozenDeviceTest.buildMode,
             };
+          }
+        }
+
+        // 批二 review R2：调用时限在门禁之前算好；门禁里若等过（占用墙钟），按此刻余额再钳制一次，
+        // 事件与实际调用用同一个最终值。余额已尽则按既有墙钟预算停机。内容重试与超时升档规则不变。
+        {
+          const availableAfterGatesMs = wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
+          if (availableAfterGatesMs <= 0) {
+            halted = true;
+            goalEvents.emit({ type: 'budget_wall_clock', phase });
+            const wallGuidance = emitWallBudgetHaltGuidance(String(phase));
+            outcomes.push({
+              phase, verdict: 'FAIL', halted: true, retries,
+              halt_reason: 'budget_wall_clock', halt_guidance: wallGuidance,
+            });
+            break;
+          }
+          const clampedTimeoutMs = Math.min(effectiveAgentTimeoutMs, availableAfterGatesMs);
+          if (clampedTimeoutMs !== effectiveAgentTimeoutMs) {
+            // 批二确认轮遗留：提示词里的时限、调用计划与事件同用这个最终值。
+            effectiveAgentTimeoutMs = clampedTimeoutMs;
+            prompt = renderPrompt(effectiveAgentTimeoutMs);
+            fs.writeFileSync(promptPath, prompt, 'utf-8');
+            vars.PROMPT = prompt;
+            invokePlan = planFor(prompt);
+          }
+          if (escalatedTimeoutMs > baseTimeoutMs) {
+            goalEvents.emit({
+              type: 'timeout_escalated',
+              phase,
+              effective_timeout_ms: effectiveAgentTimeoutMs,
+              // P0-5：升档来源（consecutive_timeouts | granted_highwater | observed_ratchet）
+              source: timeoutResolution.source,
+            });
           }
         }
 
@@ -7823,7 +8229,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 覆盖真实原因，也不得消耗内容 retry。incident 登记为 external。
         // 普通 agent 内容失败（含无 guardian 诊断的 exit 2）保持既有 harness/retry。
         if (!dryRun && !resumePostAgent) {
-          const hardCli = resolveInvokeHardCliFailure({
+          const hardCliFacts = {
             exitCode: invoke.exitCode,
             timed_out: invoke.timed_out,
             silent_killed: invoke.silent_killed,
@@ -7832,12 +8238,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
             stderr: invoke.stderr ?? '',
             ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
             ...(invoke.terminal_error_excerpt ? { terminal_error_excerpt: invoke.terminal_error_excerpt } : {}),
-          }, { formalInvoke: true });
+          };
+          let hardCli = resolveInvokeHardCliFailure(hardCliFacts, { formalInvoke: true });
+          // plan 4e6fb3b6 §6.2：模型不受支持 → 获准替代。换上就以新型号重跑同一 attempt（不占内容重试，
+          // 新 invoke 照常计 turn 与墙钟）；换不了则照现状停机，说明里写明原因与试过的型号。
+          let modelAlternativeNote: string | undefined;
+          if (hardCli && isModelUnsupportedFailure(hardCliFacts)) {
+            const substituted = await trySubstituteApprovedModel(String(phase), 'invoke');
+            if (substituted.switched) continue;
+            modelAlternativeNote = substituted.note;
+            if (substituted.hardFailure) hardCli = substituted.hardFailure;
+          }
           if (hardCli) {
-            const guidance =
-              `正式 phase invoke 遇 CLI/guardian 硬失败（非需求代码，agent 未执行任务）：${hardCli}\n` +
-              '这是 CLI 版本/兼容性、配置、参数或 Windows containment 建立问题——请核对 adapter ' +
-              '版本/配置/环境后重跑；不是需求或产品代码问题，本轮不进入 gate harness、不消耗内容重试。';
+            const guidance = buildAdapterCliHardFailureGuidance({
+              feature: manifest.feature, phase: String(phase), detail: hardCli,
+              ...(modelAlternativeNote ? { modelAlternative: modelAlternativeNote } : {}),
+            }).join('\n');
             goalEvents.emit({
               type: 'phase_halt',
               phase,
@@ -7857,7 +8273,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               halt_reason: 'adapter_cli_hard_failure',
               halt_guidance: guidance,
               agent_exit_code: invoke.exitCode,
-              failure_kind_classified: 'external',
+              // plan 4e6fb3b6 §4：原字面量 'external' 不在 FailureKind 取值内；adapter CLI 的版本/配置/
+              // 模型/登录属本机工具链，取 'toolchain'（外部责任类，EXTERNAL_RETRY_RESPONSIBILITY_KINDS 成员）。
+              failure_kind_classified: 'toolchain',
             });
             halted = true;
             phaseDone = true;
@@ -7954,10 +8372,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // plan f3b8d261 §3.1: UT's own source writes ride the same event so check-coding can
             // tell a UT output from a coding write.  Observations are persisted in full — a
             // truncated tail would hide the very rewrite that voids such a fact.
-            const utOwned = phase === 'ut'
-              ? classifiedWrites.allowed.filter((write) => write.roles.some((role) => role.kind === 'source'))
-              : [];
-            if (classifiedWrites.observed.length > 0 || utOwned.length > 0) {
+            // plan 4e6fb3b6 最终评审返修 R1：任何阶段写自己带 artifact 角色的正式产物也记进 owned（写后哈希）——
+            // 这是接续决策"上一轮确实修过"（findChangedRelatedRepair）唯一能读到的产物基线；失败的阶段没有闭环证据可用。
+            // 其它 allowed 写入不记（coding 的源码写入由 review closure attestation 承接）。
+            const ownedWrites = classifiedWrites.allowed.filter((write) => write.roles.some((role) =>
+              role.kind === 'artifact' || (phase === 'ut' && role.kind === 'source')));
+            if (classifiedWrites.observed.length > 0 || ownedWrites.length > 0) {
               // Attribution without adjudication: unresolved ownership is a gap in the
               // artifact registry (which describes skill narratives only), and a
               // source/workspace cross-phase write is already graded once by its checker.
@@ -7966,8 +8386,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 type: 'phase_write_observed',
                 phase,
                 invoke_id: invokeId,
-                ...(utOwned.length > 0 ? {
-                  owned: utOwned.map((write) => ({
+                ...(ownedWrites.length > 0 ? {
+                  owned: ownedWrites.map((write) => ({
                     path: write.path,
                     how: write.how,
                     pre_sha256: write.preSha256,
@@ -8072,7 +8492,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
               });
               goalEvents.emit({ type: 'phase_backtrack_started', to_phase: targetOwner });
               outcomes = outcomes.filter((outcome) => !invalidated.includes(String(outcome.phase)));
-              backtrackReviewFocus = [];
               backtrackCodingContext = [];
               backtrackRepairCandidates = [];
               phaseWriteRecoveryContext = {
@@ -8457,7 +8876,31 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const executed = invoke.exitCode !== undefined || invoke.completion_observed === true;
           if (executed) {
             const { toPhase, signalDriven, preSnapshot, requiresCommittedClosure } = pendingBacktrackCompletion;
-            if (pendingNoopResult === 'noop' && signalDriven && preSnapshot) {
+            // plan 33784ed1 §4.4：本轮下发给目标阶段的候选**全部**有来源核验通过的拒修动作时，
+            // 零改动是按目标裁决的结果而非无效修复——完成事件记 declined，下游照现状全部重跑。
+            const declineStates = pendingNoopResult === 'noop' && signalDriven && preSnapshot
+              ? loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id)
+              : null;
+            const currentRound = declineStates
+              ? [...loadAuthoritativeEvents(eventsPath)].reverse().find(e => e.type === 'phase_backtrack_requested') as
+                { ts?: string; candidates?: unknown } | undefined
+              : undefined;
+            const deliveredNow = (Array.isArray(currentRound?.candidates) ? currentRound?.candidates as RepairCandidate[] : [])
+              .filter(c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === toPhase);
+            const allDeclinedNow = !!declineStates && deliveredNow.length > 0 && deliveredNow.every(c => {
+              const basis = declineStates.get(c.item_fingerprint)?.basis;
+              return basis?.run_id === manifest.run_id && basis.round.ts === currentRound?.ts;
+            });
+            if (allDeclinedNow && preSnapshot) {
+              goalEvents.emit({
+                type: 'phase_backtrack_completed', to_phase: toPhase, result: 'declined',
+                pre_snapshot: preSnapshot.sha256,
+                post_snapshot: preSnapshot.sha256,
+                // 只供诊断：拒修状态只由事件与账本回放（resolveRepairDeclineState）
+                declined_candidates: deliveredNow.map(c => c.item_fingerprint),
+              });
+              pendingBacktrackCompletion = null;
+            } else if (pendingNoopResult === 'noop' && signalDriven && preSnapshot) {
               // no-op：零改动只证明修复无效、不证明候选已解决；不复用下游 closure 继续。
               goalEvents.emit({
                 type: 'phase_backtrack_completed', to_phase: toPhase, result: 'noop',
@@ -8472,6 +8915,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 '零改动只证明修复无效、不证明候选已解决：不再重跑下游、候选已计入 attempted',
                 '（累计 one-shot），本 run 诚实终止。只有新的机器证据形成新 candidate identity，',
                 '或 successor run 以新 run identity/预算全量重验后才能继续；manual resume/人签不改写结论。',
+                ...declineDisputeLines(deliveredNow, declineStates ?? new Map()),
               ].join('\n');
               goalEvents.emit({
                 type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
@@ -8492,10 +8936,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
               phaseDone = true;
               pendingBacktrackCompletion = null;
               break;
-            }
-            // 普通回退仍以 owner 执行完成为 completed；legacy fidelity 恢复必须等下面的
-            // receipt validation + finalizePhaseClosure 真正提交 owner closure 后再发。
-            if (!requiresCommittedClosure) {
+            } else if (!requiresCommittedClosure) {
+              // 普通回退仍以 owner 执行完成为 completed；legacy fidelity 恢复必须等下面的
+              // receipt validation + finalizePhaseClosure 真正提交 owner closure 后再发。
               goalEvents.emit({ type: 'phase_backtrack_completed', to_phase: toPhase });
               pendingBacktrackCompletion = null;
             }
@@ -8697,7 +9140,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const apiErrorSentinel =
           invoke.timed_out === true
             ? null
-            : parseHeadlessApiError(outputLogPath, manifest.adapter ?? '');
+            : parseHeadlessApiError(outputLogPath, manifest.adapter ?? '', invoke.terminal_error_excerpt);
         // P0-D §六-8：0 字节保守兜底——仅"真 spawn 过（duration 存在）+ 空输出 + 极短
         // 时长 + 非零退出"判 agent_no_output；invokeAgentHeadless 的 binary 短路路径无
         // duration/不写 log，排除之（否则 preflight 诊断被吞成泛化"空产出"，codex P2）。
@@ -8796,15 +9239,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (!freshSummary || !summaryAbsPath) {
             repairCandidatesUnwritable = '本轮 summary.json 路径不可用（缺失/解析失败），可信缺陷无处落盘';
           } else {
-            try {
-              summaryRepairCandidates = mergeRepairCandidatesIntoSummary({
-                summaryPath: summaryAbsPath,
-                // 合法 deterministic/provider machine evidence 直接物化；primary 文本和
-                // legacy confirmed_by 都没有否决或排除权。
-                candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase)),
-              });
-            } catch (e) {
-              repairCandidatesUnwritable = (e as Error).message;
+            const candidatePath = summaryAbsPath;
+            const writeBackCandidates = (): boolean => {
+              try {
+                summaryRepairCandidates = mergeRepairCandidatesIntoSummary({
+                  summaryPath: candidatePath,
+                  // 合法 deterministic/provider machine evidence 直接物化；primary 文本和
+                  // legacy confirmed_by 都没有否决或排除权。
+                  candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase)),
+                });
+                repairCandidatesUnwritable = null;
+                return true;
+              } catch (e) {
+                repairCandidatesUnwritable = (e as Error).message;
+                return false;
+              }
+            };
+            // plan 4e6fb3b6 §5.1：只有写回本身失败才等存储探针（报告目录可写）——探针就绪只是提示，
+            // 恢复与否由同一个写回事务重做来确认。summary 路径缺失不是存储条件，等也不会出现，直接按现状停。
+            if (!writeBackCandidates()) {
+              await awaitProbeRecovery(String(phase), 'storage_ready', 'repair_candidates_unwritable', async () => writeBackCandidates());
             }
           }
         }
@@ -8825,7 +9279,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const legacyCandidates = summaryRepairCandidates.filter((c) => c.identity_schema !== 'signal@1');
         // attempted/fingerprint 均由 events 回放且 same-run 单调；manual resume 与 legacy
         // confirmed_by 都不能清空、排除或重新赋予候选资格。
-        const attemptedSignalNow = replayAttemptedSignalIdentities(loadAuthoritativeEvents(eventsPath));
+        // plan 33784ed1 §4.4：拒修与反驳状态——已尝试记录、整轮重复与停机说明共用这一份（事件+账本回放）。
+        const repairDeclines: ReturnType<typeof loadRepairDeclineState> = !dryRun && summaryRepairCandidates.length > 0
+          ? loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id)
+          : new Map();
+        const attemptedSignalNow = replayAttemptedSignalIdentities(
+          loadAuthoritativeEvents(eventsPath), declineAttemptExemption(repairDeclines, manifest.run_id));
         const eligibleSignalNow = computeEligibleSignalIdentities(signalCandidatesAll, attemptedSignalNow);
         const eligibleForBacktrack = [...eligibleSignalNow, ...legacyCandidates];
         const signalOpen = signalCandidatesAll.length > 0;
@@ -8840,8 +9299,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
         // plan e7a2c4f1 §3.6：no-progress guard 的 `phase_halt` 在 `decideAndEmit` 之后才发
-        //（顺序见下方赋值处注释），这里只暂存事件体。
-        let noProgressHaltEvent: Record<string, unknown> | undefined;
+        //（顺序见下方赋值处注释），这里只暂存事件体。plan 4e6fb3b6 返修起推进阻断停机
+        //（closure_open / receipt_missing）也经此发出，故改名 postVerdictHaltEvent。
+        let postVerdictHaltEvent: Record<string, unknown> | undefined;
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
         if (repairCandidatesUnwritable) {
@@ -8875,6 +9335,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...signalCandidatesAll.map((c) => `- ${c.item_fingerprint.slice(0, 12)}`),
             '- 本 run 诚实终止：manual resume、confirmed_by 或其它人签不会清 attempted、不会重置 fingerprint、不会改变质量结论。',
             '- 只有新的机器证据形成新 candidate identity，或 successor run 以新 run identity/预算全量重验后才能继续。',
+            ...declineDisputeLines(signalCandidatesAll, repairDeclines),
           ].join('\n');
           goalEvents.emit({
             type: 'phase_halt', phase, halt_reason: 'repair_not_converging',
@@ -9034,9 +9495,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // agent 改产物绕不过去（案发现场 spec 前 5 轮空转实证），首触即 halt。
           driverGuardAction = 'halt';
           haltReason = 'framework_bug';
+          // plan 4e6fb3b6 §4：框架阻断类按 actionability 注册表取（含 blocking_class=framework_internal）；
+          // 与之并存的内容 blocker 留在 summary 清单里，说明中列出——框架解除后它们仍须修复。
           const bugBlockers = (decisionSummary?.blockers ?? []).filter(
-            (b) => b.classification === 'framework_bug',
+            (b) => resolveBlockerActionability(b) === 'framework_blocked',
           );
+          const pendingContentIds = (decisionSummary?.blockers ?? [])
+            .filter((b) => resolveBlockerActionability(b) !== 'framework_blocked')
+            .map((b) => b.id ?? '')
+            .filter(Boolean) as string[];
           const bugStackHead = bugBlockers
             .map((b) => (b.details_excerpt ?? '').split('\n').find((l) => l.trim()))
             .find((l) => l && l.trim());
@@ -9045,6 +9512,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             runId: manifest.run_id,
             phase,
             checkerIds: bugBlockers.map((b) => b.id ?? '').filter(Boolean) as string[],
+            pendingContentBlockerIds: pendingContentIds,
             stackHead: bugStackHead ? truncateOneLine(bugStackHead, 200) : undefined,
             harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
           }).join('\n');
@@ -9088,6 +9556,34 @@ Goal runner — tool-agnostic multi-phase orchestrator
             '- 这不是产物内容问题：重试 agent 修不了环境。修复对应工具链（详见 blocker details）后 --resume。',
           ].join('\n');
           console.log(`\n${awaitConfirmGuidance}\n`);
+        } else if (
+          // plan f7045213 最终评审返修二：责任在链外设计 owner（设计权威投影无效、CU 投影需回 P1 调和）→ 首次即停，
+          // 复用既有外部类停机原因 execution_scope_unresolved；不进当前阶段重试、不等无进展熔断。
+          verdict !== 'PASS' &&
+          !resolved.stale_summary &&
+          designOwnerBlockers(decisionSummary?.blockers).length > 0
+        ) {
+          driverGuardAction = 'halt';
+          haltReason = 'execution_scope_unresolved';
+          const ownerBlockers = designOwnerBlockers(decisionSummary?.blockers);
+          awaitConfirmGuidance = buildDesignOwnerGuidance({ feature: manifest.feature, runId: manifest.run_id, phase: String(phase), blockers: ownerBlockers });
+          console.log(`\n===== ${haltReason}（设计 owner）=====\n${awaitConfirmGuidance}\n`);
+          postVerdictHaltEvent = {
+            type: 'phase_halt',
+            phase,
+            halt_reason: haltReason,
+            reason: `设计权威在链内无法兑现，责任方=设计 owner：${ownerBlockers.map((b) => b.id ?? '?').join(', ')}`,
+            halt_guidance: awaitConfirmGuidance,
+            ...runDispositionFields(decide(
+              { incident: haltReason, phase: String(phase), detail: ownerBlockers.map((b) => b.id ?? '?').join(', ') },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: runtimeOwnerKind,
+                can_prompt_now: runtimeOwnerKind === 'session',
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            )),
+          };
         } else if (
           shouldHaltNoProgress({
             failureKind,
@@ -9140,7 +9636,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // §3.6 让普通 content 失败（相关集合未知）也能走到这里，必须补齐。
           // **发射点在 `decideAndEmit` 之后**：`rebuildOutcomesFromEvents`（`goal-runner-phase.ts`）
           // 遇到更新的 `phase_verdict` 会丢弃在它之前的 `lastHalt`，先发就等于没发。
-          noProgressHaltEvent = {
+          postVerdictHaltEvent = {
             type: 'phase_halt',
             phase,
             halt_reason: haltReason,
@@ -9256,6 +9752,27 @@ Goal runner — tool-agnostic multi-phase orchestrator
           } else {
             driverGuardAction = 'halt';
             haltReason = resolved.advance_block_reason ?? 'closure_open';
+            // plan 4e6fb3b6 返修 1：closure_open / receipt_missing 登记为 recoverable（重试闭环事务），
+            // 属结构敏感类，写盘层按设计拒绝补投影——在生产出口用 decide() 显式投影，经 phase_halt
+            // 发出，run_end 由 enrichOutcomesWithProjection 同源复制。
+            postVerdictHaltEvent = {
+              type: 'phase_halt',
+              phase,
+              // 二轮返修：带本阶段真实 verdict（此分支恒为脚本 PASS）——rebuildOutcomesFromEvents 以最后一条
+              // phase_halt 为准、缺 verdict 默认 FAIL，不带会让事件重建与正常报告对同一证据给出两个结论。
+              verdict,
+              halt_reason: haltReason,
+              reason: `脚本门禁 PASS 但闭环未完成（advance_block_reason=${haltReason}），内容重试已用尽`,
+              ...runDispositionFields(decide(
+                { incident: haltReason, phase: String(phase) },
+                NO_AUTHORITY,
+                {
+                  orchestration: 'goal', owner_kind: runtimeOwnerKind,
+                  can_prompt_now: runtimeOwnerKind === 'session',
+                  invocation: argv.resume ? 'resume' : 'fresh',
+                },
+              )),
+            };
           }
           // 【closure retry 前建 pass snapshot 已退役 · runner-owned-machine-facts】
           // PASS 产物不再靠冻结快照保护：closure 轮改坏产物=下一轮完整 harness FAIL；
@@ -9435,7 +9952,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           repairConvergence: (() => {
             const signalCands = summaryRepairCandidates.filter((c) => c.identity_schema === 'signal@1');
             if (signalCands.length === 0) return undefined;
-            const attemptedNow = replayAttemptedSignalIdentities(loadAuthoritativeEvents(eventsPath));
+            const attemptedNow = replayAttemptedSignalIdentities(
+              loadAuthoritativeEvents(eventsPath), declineAttemptExemption(repairDeclines, manifest.run_id));
             const eligibleNow = signalCands.filter((c) => !attemptedNow.has(c.item_fingerprint));
             return {
               eligibleEmpty: eligibleNow.length === 0,
@@ -9679,8 +10197,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         // §3.6：guard 驱动的 no-progress halt 在 verdict 之后落事件——`rebuildOutcomesFromEvents`
         // 按"最后一条 phase_halt 覆盖更早的 terminal phase_verdict"重建，先发会被丢掉。
-        if (noProgressHaltEvent && action === 'halt') {
-          goalEvents.emit(noProgressHaltEvent);
+        if (postVerdictHaltEvent && action === 'halt') {
+          goalEvents.emit(postVerdictHaltEvent);
         }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
         flushProgress();
@@ -9878,23 +10396,41 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 observed_fingerprint: assessment.observed_fingerprint,
               }), 'utf8').digest('hex')
             : roundFingerprintOfCandidates(summaryRepairCandidates);
+          // plan 33784ed1 §4.4：整轮重复判断排除"拒修过一次、反驳轮未用"的候选（这次出现即反驳轮）；
+          // 排除后为空则本轮不做重复判断。继承自祖先的指纹同样只和这个集合比。事件里仍记整轮指纹。
+          const repeatCandidates = gapDriven
+            ? []
+            : summaryRepairCandidates.filter(c => !isRebuttalAppearance(repairDeclines.get(c.item_fingerprint)));
+          const roundRepeated = gapDriven
+            ? seenRoundFingerprints.has(roundFp)
+            : repeatCandidates.length > 0 && seenRoundFingerprints.has(roundFingerprintOfCandidates(repeatCandidates));
           // adjudicated-repair-loop M1（review 修复）：eligible 状态已在 assess 前一次性
           // 计算（见 driverGuardAction 链上方 eligibleForBacktrack）——allRepairExhausted
           // 由 guard 前置 halt（唯一裁决面，boundary 发布一致 verdict），本分支只负责：
           //   · 注入过滤：signal@1 只回退 eligible 身份，legacy 原样保留（不误伤）；
           //   · 仍保留既有熔断（target 缺席 / 预算 / 整轮指纹重复）。
-          if (targetIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || seenRoundFingerprints.has(roundFp)) {
+          if (targetIdxBt < 0 || backtracksUsed >= DEFAULT_MAX_BACKTRACKS || roundRepeated) {
             action = 'halt';
             haltReason = targetIdxBt < 0
               ? 'backtrack_target_absent'
-              : seenRoundFingerprints.has(roundFp) ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
+              : roundRepeated ? 'backtrack_fingerprint_repeat' : 'backtrack_limit';
             // e9d4b7a3 t1：跨 run 修复任务交接指引——候选注入通道只活在当前 run 内，
             // successor 以显式 requirement 增量携带任务点名 + 关键证据摘要。
+            // §4.5：未收敛停机并列双方原文（执行者拒修依据 / 裁判缺陷描述）。
+            const disputeLines = declineDisputeLines(summaryRepairCandidates, repairDeclines);
             backtrackHaltGuidance = haltReason === 'backtrack_target_absent'
               ? buildBacktrackTargetAbsentGuidance(targetPhaseBt ?? null)
-              : undefined;
+              : disputeLines.length > 0
+                ? [
+                    haltReason === 'backtrack_fingerprint_repeat'
+                      ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转，进入收敛熔断。`
+                      : `回退预算已耗尽（本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））——本 run 诚实终止，可由新 correction/successor 输入继续。`,
+                    ...disputeLines,
+                    '',
+                  ].join('\n')
+                : undefined;
             const limitReached =
-              targetIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !seenRoundFingerprints.has(roundFp);
+              targetIdxBt >= 0 && backtracksUsed >= DEFAULT_MAX_BACKTRACKS && !roundRepeated;
             const limitDecision = limitReached
               ? decide(
                   { incident: 'backtrack_limit', phase: String(phase) },
@@ -10220,7 +10756,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 分别检索"最后 halt reason"与"最后带投影的 halt"会在最新 halt 无投影时借用更早
     // halt 的 disposition（张冠李戴）；最新 halt 无投影时宁缺（不二次 decide()）。
     const lastHalted = [...enrichedOutcomes].reverse().find((o) => o.halted) as
-      | (Record<string, unknown> & { run_disposition?: unknown; run_wait_kind?: unknown })
+      | (Record<string, unknown> & { run_disposition?: unknown; run_wait_kind?: unknown; probe?: unknown })
       | undefined;
     const lastHaltedProjected =
       lastHalted && typeof lastHalted.run_disposition === 'string' ? lastHalted : undefined;
@@ -10239,6 +10775,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             run_disposition: lastHaltedProjected.run_disposition,
             ...(typeof lastHaltedProjected.run_wait_kind === 'string'
               ? { run_wait_kind: lastHaltedProjected.run_wait_kind }
+              : {}),
+            // plan 4e6fb3b6 §5.2：run_end 带了投影就成为来源事件——探针与责任阶段同源带上，
+            // 否则 supervisor 的探针唤醒对 HALTED 收尾的 run 失效。run_end 无 phase，责任阶段记 probe_phase。
+            ...(typeof lastHaltedProjected.probe === 'string' && lastHaltedProjected.probe
+              ? { probe: lastHaltedProjected.probe, probe_phase: String(lastHaltedProjected.phase) }
               : {}),
           }
         : {}),
@@ -10302,6 +10843,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             phaseRunIds,
             phaseAttempts,
             supersedes: supersededRunIds,
+            frameworkRoot,
           });
           emitMilestone(
             `GOAL_RUN event=feature_completion_generated path=${path.relative(projectRoot, originalAbs).replace(/\\/g, '/')} run_id=${manifest.run_id}`,

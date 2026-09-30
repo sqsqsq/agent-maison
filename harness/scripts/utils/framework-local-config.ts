@@ -132,9 +132,19 @@ export interface FrameworkLocalConfigDevice {
   emulator_profile?: string;
 }
 
+/**
+ * plan 4e6fb3b6 §6.1：按 adapter 的个人级设置。目前只有 `approved_models`——模型不受支持时框架可按序
+ * 换用的获准替代型号。解析器对这一节只做"是对象"的检查并原样保留（坏值不致整个 local 读不出、写回不丢），
+ * 取值合法性由 resolveApprovedModels 在消费点判：解析不了按未配置处理并给出提示。
+ */
+export interface FrameworkLocalAdapterSettings {
+  approved_models?: unknown;
+}
+
 export interface FrameworkLocalConfig {
   schema_version: string;
   agent_adapter?: string;
+  adapters?: Record<string, FrameworkLocalAdapterSettings>;
   toolchain?: {
     devEcoStudio?: {
       installPath?: string;
@@ -155,6 +165,8 @@ export interface FrameworkPersonalSetupStatus {
   local_exists: boolean;
   project_has_legacy_agent_adapter: boolean;
 }
+
+let invalidAdaptersWarned = false;
 
 function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -192,6 +204,14 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   const out: FrameworkLocalConfig = { schema_version: LOCAL_SCHEMA_VERSION };
   if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) {
     out.agent_adapter = raw.agent_adapter.trim();
+  }
+  // plan 4e6fb3b6 §6.1：adapters 原样保留（JSON 深拷贝），只要求是对象；不是对象按未配置丢弃，不抛错。
+  if (raw.adapters && typeof raw.adapters === 'object' && !Array.isArray(raw.adapters)) {
+    out.adapters = JSON.parse(JSON.stringify(raw.adapters)) as Record<string, FrameworkLocalAdapterSettings>;
+  } else if (raw.adapters !== undefined && !invalidAdaptersWarned) {
+    // 批二 review 顺手项：父节点本身非法（字符串/数组/null…）时给一次明确提示（每进程一次，local 会被频繁加载）。
+    invalidAdaptersWarned = true;
+    console.warn('[framework-local-config] framework.local.json 的 adapters 须为对象（按 adapter 名分组），当前值无法解析——按没有获准替代型号处理');
   }
   const tc = raw.toolchain;
   if (tc !== undefined) {
@@ -505,6 +525,36 @@ function rejectUnknownObjectKeys(
       `[framework-local-config] ${pathPrefix} 含非法键：${unknown.join(', ')}`,
     );
   }
+}
+
+/**
+ * plan 4e6fb3b6 §6.1：`adapters.<adapter>.approved_models` 的消费点校验。没有这一项 = 没有替代；
+ * 解析不了（不是数组、含非字符串/空串/超 128 字符/控制字符）按未配置处理，并在 warning 里给出提示。
+ * 型号去首尾空白、按首次出现去重，保持用户给的顺序（按序尝试）。
+ */
+export function resolveApprovedModels(
+  local: FrameworkLocalConfig | null | undefined,
+  adapter: string,
+): { models: string[]; warning?: string } {
+  const adapters = (local as { adapters?: unknown } | null | undefined)?.adapters;
+  const where = `framework.local.json 的 adapters.${adapter}.approved_models`;
+  if (adapters === undefined) return { models: [] };
+  if (!adapters || typeof adapters !== 'object' || Array.isArray(adapters)) {
+    return { models: [], warning: `framework.local.json 的 adapters 不是对象，获准替代型号按未配置处理` };
+  }
+  const entry = (adapters as Record<string, unknown>)[adapter];
+  if (entry === undefined) return { models: [] };
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return { models: [], warning: `framework.local.json 的 adapters.${adapter} 不是对象，获准替代型号按未配置处理` };
+  }
+  const raw = (entry as Record<string, unknown>).approved_models;
+  if (raw === undefined) return { models: [] };
+  const valid = Array.isArray(raw) && raw.every((v) =>
+    typeof v === 'string' && v.trim() !== '' && v.trim().length <= 128 && !/[\u0000-\u001F\u007F]/.test(v));
+  if (!valid) {
+    return { models: [], warning: `${where} 解析不了（须为型号字符串数组，每项非空、≤128 字符、无控制字符），按未配置处理` };
+  }
+  return { models: [...new Set((raw as string[]).map((v) => v.trim()))] };
 }
 
 export function localConfigPath(projectRoot: string): string {

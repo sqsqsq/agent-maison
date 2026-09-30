@@ -33,8 +33,20 @@ export interface GoalBudget {
 export interface AdapterModelPin {
   /** 最终 effective adapter（resolveFinalModelPin 单点裁决后写入） */
   adapter: string;
-  /** 用户显式 --adapter-model 的权威模型值 */
+  /** 用户显式 --adapter-model 的权威模型值，或获准替代换上的型号（见 source） */
   value: string;
+  /**
+   * plan 4e6fb3b6 §6.4：钉值来源。只有获准替代写入时才落 'approved_alternative'；
+   * 缺省（含全部旧 manifest）= 用户显式钉值——这是读取语义，不回写、不改变既有身份摘要。
+   */
+  source?: ModelPinSource;
+}
+
+export type ModelPinSource = 'user' | 'approved_alternative';
+
+/** 用户钉死的型号框架不替换；来源为获准替代的钉值不算用户钉死（plan 4e6fb3b6 §6.4）。 */
+export function isUserPinnedModel(pin: AdapterModelPin | undefined): boolean {
+  return Boolean(pin) && pin!.source !== 'approved_alternative';
 }
 
 export const RUN_ADAPTER_PROVENANCES = [
@@ -463,8 +475,12 @@ function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
     throw new Error('[goal-manifest] adapter_model_pin 必须为对象');
   }
   const r = raw as Record<string, unknown>;
-  validateAdapterModelPinValue(r.adapter, r.value);
-  return { adapter: String(r.adapter).trim(), value: String(r.value).trim() };
+  validateAdapterModelPinValue(r.adapter, r.value, r.source);
+  return {
+    adapter: String(r.adapter).trim(),
+    value: String(r.value).trim(),
+    ...(r.source !== undefined ? { source: r.source as ModelPinSource } : {}),
+  };
 }
 
 /** 已知 adapter 集（model pin 形状校验的 adapter ∈ 已知集约束）。 */
@@ -477,7 +493,10 @@ const KNOWN_MODEL_PIN_ADAPTERS = new Set([
  * adapter 须为非空字符串且 ∈ 已知集；value 须为字符串、trim 后非空 ≤128 无控制字符。
  * 违规整体拒绝加载/解析。
  */
-export function validateAdapterModelPinValue(adapter: unknown, value: unknown): void {
+export function validateAdapterModelPinValue(adapter: unknown, value: unknown, source?: unknown): void {
+  if (source !== undefined && source !== 'user' && source !== 'approved_alternative') {
+    throw new Error('[goal-manifest] adapter_model_pin.source 键在场时须为 user|approved_alternative');
+  }
   if (typeof adapter !== 'string' || !adapter.trim()) {
     throw new Error('[goal-manifest] adapter_model_pin.adapter 必填且须为非空字符串');
   }
@@ -753,6 +772,54 @@ export const SCOPE_REVISION_FIELDS = ['execution_scope', 'phase_chain', 'start_p
 /** 合并后的 requirement 是否携带显式修复增量段。 */
 export function isSuccessorRepairRequirement(requirement: string | undefined | null): boolean {
   return typeof requirement === 'string' && requirement.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER);
+}
+
+/**
+ * plan 4e6fb3b6 批三返修 R1：本次需求文本是不是"重复"（不是需求增量）——接续决策与后继需求合并共用这一个判据。
+ * 只在能确认时判重（比较前只做首尾空白归一）：与合并后的全文相同；与原始请求全文相同；与整个历史增量块全文相同。
+ * 合并格式 `原请求\n标记\n增量1\n增量2…` 里各段历史增量之间只有换行、没有分隔符，拆不出单段边界——其余一律按增量处理
+ * （宁可多起一次后继，不丢需求）。任意子串或历史块内部的片段都不算重复。
+ */
+export function isRepeatedRequirement(prior: string | undefined | null, text: string): boolean {
+  return successorRequirementIncrement(prior, text) === undefined;
+}
+
+/** 按增量标记切成原请求段与历史增量块；没有标记时 history 为 undefined。 */
+function splitAtIncrementMarker(text: string): { head: string; history?: string } {
+  const at = text.indexOf(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER);
+  if (at < 0) return { head: text.trim() };
+  return { head: text.slice(0, at).trim(), history: text.slice(at + SUCCESSOR_REQUIREMENT_INCREMENT_MARKER.length).trim() };
+}
+
+/**
+ * plan 4e6fb3b6 最终评审返修：本次需求文本里源需求还没有的部分；undefined = 没有新内容（重复）。
+ * 接续决策（经 isRepeatedRequirement）与两个后继入口共用。不带标记：沿用上面三种整段重复，其余整段都是新增。
+ * 带标记（本次文本已是合并格式）：标记不是丢弃内容的依据，只在能确认时剥离已有内容——原请求段与源的原请求全文相同才去掉；
+ * 增量段开头按整行与源的**整个**历史增量块相同才去掉那一截；部分相同、子串相同一律保留（宁可重复，不丢需求）。
+ * 剩下的内容里多余的标记去掉，由 mergeSuccessorRequirement 接到源全文后面，标记恒一个。
+ */
+export function successorRequirementIncrement(prior: string | undefined | null, text: string): string | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  const p = (prior ?? '').trim();
+  if (t === p) return undefined;
+  const source = splitAtIncrementMarker(p);
+  if (t === source.head || (source.history !== undefined && t === source.history)) return undefined;
+  const request = splitAtIncrementMarker(t);
+  if (request.history === undefined) return t;
+  let rest = request.history;
+  if (source.history && (rest === source.history || rest.startsWith(`${source.history}\n`))) rest = rest.slice(source.history.length);
+  const parts = [
+    ...(request.head && request.head !== source.head ? [request.head] : []),
+    ...rest.split(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER).map(part => part.trim()).filter(Boolean),
+  ];
+  return parts.length ? parts.join('\n') : undefined;
+}
+
+/** 后继的需求文本（两个入口共用）：没有新内容 → 源需求原样；否则源全文 + 新增段。 */
+export function deriveSuccessorRequirement(source: string | undefined, text: string): string | undefined {
+  const increment = successorRequirementIncrement(source, text);
+  return increment === undefined ? source : mergeSuccessorRequirement(source, increment);
 }
 
 /**
@@ -1087,6 +1154,7 @@ export function validateLoadedGoalManifest(
     validateAdapterModelPinValue(
       manifest.adapter_model_pin.adapter,
       manifest.adapter_model_pin.value,
+      manifest.adapter_model_pin.source,
     );
   }
   // plan ab072691 t1⑤：同款加载期 shape 校验（停机篡改命中既有 manifest_identity_drift）。

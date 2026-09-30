@@ -11,6 +11,7 @@ import {
   type DependencyPolicy,
   DEFAULT_DEPENDENCY_POLICY,
 } from './phase-transition-policy';
+import { AGGREGATE_RUN_STATUS_CHECK_IDS, resultBasisOwner } from './check-disposition';
 
 export type FailureKind =
   | 'deterministic_gate_or_artifact_missing'
@@ -267,7 +268,18 @@ export const DETERMINISTIC_GATE_BLOCKER_IDS = new Set<string>([
   'context_exploration_file_not_found',
   'verifier_report_missing',
   'verifier_report_path_missing',
+  // plan f7045213 §6.2 / 第二批：spec、plan 的设计权威对齐门（结果依据）。drift 与 invalid 两分支共用一个 id、
+  // 检查结果里没有可区分的结构字段，暂不进去向表；归因经本表不落代码回归，重试提示词不含回退指引。
+  'authoritative_content_aligned',
 ]);
+
+/**
+ * plan f7045213 §7：确定性门禁归因与受影响文件提取的同一份有效映射——
+ * 去向表登记的结果依据类检查（resultBasisOwner 非空）与既有的确定性门禁 id 表，不要求两边重复登记。
+ */
+export function isDeterministicGateBlockerId(id: string): boolean {
+  return DETERMINISTIC_GATE_BLOCKER_IDS.has(id) || resultBasisOwner(id) !== null;
+}
 
 export interface GoalSummaryBlocker {
   id?: string;
@@ -400,6 +412,8 @@ export interface GoalSummaryLike {
   failure_kind?: string;
   blockers?: GoalSummaryBlocker[];
   repair_candidates?: Array<{ id?: string; files?: string[] }>;
+  /** summary 的运行状态面板（writer 恒写）；超时分支据此还原去重前的聚合项事实（plan f7045213 R1）。 */
+  run_statuses?: Array<{ id?: string; status?: string }>;
 }
 
 /** Machine-related content paths only; prose/notes/HEAD are deliberately absent. */
@@ -489,17 +503,13 @@ function blockerIds(summary: GoalSummaryLike | null | undefined): string[] {
     .sort();
 }
 
-function topBlockingMeta(summary: GoalSummaryLike | null | undefined): {
-  blocking_class?: string;
-  failure_kind?: string;
-} {
-  if (!summary) return {};
-  if (summary.blocking_class || summary.failure_kind) {
-    return { blocking_class: summary.blocking_class, failure_kind: summary.failure_kind };
-  }
-  const b = summary.blockers?.[0];
-  if (!b) return {};
-  return { blocking_class: b.blocking_class, failure_kind: b.classification };
+/**
+ * plan 4e6fb3b6 §4：外部阻断看**全部** blocker——summary 顶层或任一 blocker 属外部阻断类即成立。
+ * 此前只看顶层或第一个 blocker，外部 blocker 排在后面时落到代码回归。
+ */
+function hasDeferrableExternalBlocker(summary: GoalSummaryLike, policy: DependencyPolicy): boolean {
+  if (isDeferrableExternalBlock(summary.blocking_class, summary.failure_kind, policy)) return true;
+  return (summary.blockers ?? []).some((b) => isDeferrableExternalBlock(b.blocking_class, b.classification, policy));
 }
 
 /**
@@ -560,6 +570,17 @@ export function isAllFrameworkBugBlockers(summary: GoalSummaryLike | null | unde
 }
 
 /**
+ * plan f7045213 §4.4 返修 R1：阻断清单里去重掉的聚合运行状态项（run_statuses 记为 FAIL、清单里却没有它）。
+ * 只供超时决策表的"全部 framework_bug"判定使用——那张表按去重之前的事实定稿：聚合项算一条非框架阻断，
+ * 于是"唯一源失败是 framework_bug + 聚合项"的超时轮仍归 agent_timeout 续作。清单、签名与非超时路径不受影响。
+ */
+function hasDedupedAggregateRunStatus(summary: GoalSummaryLike | null | undefined): boolean {
+  const listed = new Set((summary?.blockers ?? []).map(b => b.id));
+  return (summary?.run_statuses ?? []).some(s =>
+    typeof s.id === 'string' && AGGREGATE_RUN_STATUS_CHECK_IDS.has(s.id) && s.status === 'FAIL' && !listed.has(s.id));
+}
+
+/**
  * P0-B（§七.3）：跨 attempt 比较用的**有效** signature。PASS+timeout 常无普通 blocker
  * → 空 signature 会被 shouldHaltNoProgress 的 `!priorBlockerSignature` 短路、熔断恒不
  * 触发（逃逸）。agent_timeout 无 blocker 时构造专用 signature `agent_timeout@<phase>`，
@@ -579,7 +600,8 @@ export function buildEffectiveBlockerSignature(
 }
 
 /**
- * Classify harness failure for guard + retry-context. Unknown ids → code_regression (prefer retry).
+ * Classify harness failure for guard + retry-context. Unknown ids → code_regression (prefer retry)——
+ * 兜底只在外部阻断、框架阻断及其它专名判定都不成立时生效（plan 4e6fb3b6 §4 保留）。
  * P0-B/P0-D：agent 级信号（signals）优先于 blocker 归因——超时/断流 attempt 的
  * deterministic blocker 只是"没跑完"的派生症状，按症状归因即误熔断（bc-openCard 现场）。
  */
@@ -605,7 +627,7 @@ export function classifyFailureKind(
     if (fresh && hasIntegrityBlocker(currentSummary)) {
       return 'framework_integrity_block';
     }
-    if (fresh && isAllFrameworkBugBlockers(currentSummary)) {
+    if (fresh && isAllFrameworkBugBlockers(currentSummary) && !hasDedupedAggregateRunStatus(currentSummary)) {
       return 'framework_bug';
     }
     // 旧 await_human_confirm 不再压过超时事实；恢复后由当前视觉 checker 重算机器证据。
@@ -627,19 +649,23 @@ export function classifyFailureKind(
   if (hasIntegrityBlocker(currentSummary)) {
     return 'framework_integrity_block';
   }
-  const meta = topBlockingMeta(currentSummary);
-  if (
-    isDeferrableExternalBlock(meta.blocking_class, meta.failure_kind, dependencyPolicy)
-  ) {
+  if (hasDeferrableExternalBlocker(currentSummary, dependencyPolicy)) {
     return 'external_block';
   }
-  // P0-3：非超时轮全 framework_bug（门禁自身崩溃）→ 首触 halt 指向回灌源仓；混装（框架
-  // bug + 内容 blocker）走既有归因——内容 blocker 仍可修，不因框架 bug 把整轮判死。
-  if (isAllFrameworkBugBlockers(currentSummary)) {
+  // P0-3 + plan 4e6fb3b6 §4：存在框架阻断类 blocker（门禁自身崩溃）→ 首触 halt 指向回灌源仓，
+  // 做法与工具链阻断聚合相同（存在即按该类处理）。混装时内容 blocker 留在 summary 清单里，
+  // 框架问题解除后下一轮照常按内容失败重试——此前"须全部是框架"会把混装落到 code_regression，
+  // 让 agent 对着修不了的 checker 崩溃空耗内容重试。
+  if (aggregateBlockerActionability(currentSummary).hasFramework) {
     return 'framework_bug';
   }
   const ids = blockerIds(currentSummary);
-  if (ids.some((id) => DETERMINISTIC_GATE_BLOCKER_IDS.has(id))) {
+  if (ids.some(isDeterministicGateBlockerId)) {
+    return 'deterministic_gate_or_artifact_missing';
+  }
+  // plan f7045213 §4.4：聚合的运行状态项只在没有任何源 blocker 时留在清单里——失败只由关键的
+  // 阻断跳过或必需文档缺失引起，是门禁没跑完/产物缺失，不是代码回归。
+  if (ids.length > 0 && ids.every((id) => AGGREGATE_RUN_STATUS_CHECK_IDS.has(id))) {
     return 'deterministic_gate_or_artifact_missing';
   }
   // legacy compatibility：旧 await_human_confirm 不是通行证，也不再进入等待用户的 kind；
@@ -701,7 +727,7 @@ export function extractDeterministicAffectedFiles(
 ): string[] {
   const out = new Set<string>();
   for (const b of summary?.blockers ?? []) {
-    if (!b.id || !DETERMINISTIC_GATE_BLOCKER_IDS.has(b.id)) continue;
+    if (!b.id || !isDeterministicGateBlockerId(b.id)) continue;
     for (const f of b.affected_files ?? []) {
       if (f.trim()) out.add(f.trim().replace(/\\/g, '/'));
     }
@@ -714,15 +740,21 @@ function hashFileContent(absPath: string): string {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-/** Snapshot existence + content hash (not mtime). */
+/**
+ * Snapshot existence + content hash (not mtime).
+ * 路径可为绝对或相对工程根：生产检查的 affected_files 多为绝对路径（如 featureFilePath），
+ * 若一律 join 到 projectRoot 会拼成不存在的路径、快照恒 exists:false，真实修复被判无进展。
+ * 键统一取工程根下的相对路径（工程外的保留规范化绝对路径），同一文件两种写法前后对得上。
+ */
 export function snapshotArtifacts(
   projectRoot: string,
-  relativePaths: string[],
+  paths: string[],
 ): ArtifactSnapshot {
   const snap: ArtifactSnapshot = {};
-  for (const rel of relativePaths) {
-    const norm = rel.replace(/\\/g, '/');
-    const abs = path.join(projectRoot, norm);
+  for (const p of paths) {
+    const abs = path.isAbsolute(p) ? path.normalize(p) : path.join(projectRoot, p);
+    const rel = path.relative(projectRoot, abs);
+    const norm = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : abs).replace(/\\/g, '/');
     if (!fs.existsSync(abs)) {
       snap[norm] = { exists: false, contentHash: '' };
     } else {

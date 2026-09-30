@@ -19,6 +19,49 @@
 
 入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
 
+## 3.1.0：阶段结论与退出码同源，失败检查按保护对象处置（行为变化，plan f7045213）
+
+**先讲后果**：harness 的退出码、控制台结论、合并报告的"裁定"与 `summary.json` 的 `verdict` 现在是同一个结论。
+过去"脚本报告判通过、summary 判失败或未完成"时进程**退出码为 0**，现在是**非零**。依赖旧退出码的外部脚本
+（CI 卡门、包装脚本）要按 summary 的结论调整预期；goal 模式本来就读 summary，决策不变。
+
+- **退出码从 0 变非零的情形**：报告合法性检查失败但没有阻断级失败（已知实例：review 报告「问题统计」缺严重级别计数，
+  `statistics_summary` 是 MAJOR 失败）；能力输入缺口（例如缺需求来源等能力解析为 blocked）使 summary 为 INCOMPLETE 而旧结论为 PASS。
+  同一情形下 verifier 不再按"脚本通过"签发 request，full track 不再在未通过的结论上定稿闭环，lite track 不再凭旧结论判闭环。
+- **summary 新增 `disclosed_failures`**（被披露的失败清单：id、保护对象、原始严重级别、详情摘录）。有被披露的失败时
+  完成标签为 `COMPLETE_WITH_GAPS`（带缺口的完成），**不阻塞完成**；控制台与 goal 报告各列一次。旧 summary 没有这一项照常可读。
+- **六个检查从阻断改为披露**（检查照常产出原始 FAIL，只是不再挡阶段通过）：
+  - `context_exploration_searches_min`：探索记录自报的"估计搜索次数"偏低；
+  - `context_exploration_subagents_used`：深度探索声明了 subagent 模式却没写用了哪些子 agent；
+  - `context_exploration_facts_schema_version`：facts 版本标签写错（链首建立阶段仍会在入口被 `capability_resolution_contract` 拦下）；
+  - `ut_mock_plan_typed`：mock-plan 预设缺粗类型标注或缺 returns / throws 表达式（独立预校验 `validate:ut-artifact` 仍按原规则报错）；
+  - `it_name_has_ac_or_branch_tag`：`it()` 名不以追溯标签开头，需求模式下禁止 `[REG-*]` 的限制一并解除（覆盖仍由 AC 覆盖门裁决）；
+  - `schema_version_present`：catalog / glossary 的版本标签为空串。
+- **第二批再加四条改为披露**（plan 3abca824，同样照常产出原始 FAIL，只是不再挡阶段通过）：
+  - `context_exploration_files_inspected_min`：探索记录自报的文件数低于阈值；
+  - `context_exploration_decisions_unlocked`：没列出本次探索解锁的决策；
+  - `context_exploration_facts_phase_delta_missing` / `context_exploration_facts_phase_delta_empty`：非建立阶段没写或写空了本阶段增量小节
+    （仍须写，无新增写 "none"）。
+  探索类各条（首批前三条与第二批四条）在 request 入口不适用：request 的输入检查与结论仍是"任意失败即失败"。
+- **聚合的运行状态检查**（`coding_run_status`、`testing_run_status`）在同一失败已由源检查表达时，不再重复计入阻断清单、
+  `blocker_count` 与重试签名；只由关键跳过或文档缺失引起时照常列出。脚本报告、控制台与合并报告里的阻断计数与 summary 一致。
+- **归因**：`ref_elements_excluded` 与 `authoritative_content_aligned` 失败时 goal 归为确定性门禁 / 产物缺失，不再当作代码回归，
+  重试提示词不再要求先回退此前的改动。
+- **设计权威本身有问题时，goal 第一次遇到就停，交给设计 owner**：`authoritative_content_aligned` 判出设计权威投影不可用（details 以
+  `authority_projection_invalid` 开头），或 Change Unit 施工投影要求回 P1 调和蓝图（如 `cu_scope_matches_blueprint`）时，检查结果带
+  `repair_owner: external`，goal 不再在当前阶段重试到"无进展"才停，而是首次即以 `execution_scope_unresolved` 停下，说明写明原因、
+  责任方是设计 owner、下一步是在 `/component-design` 修好蓝图 / CU、经 readiness 升版后重新发起同一请求。手写产物没对齐（漂移）的情形不变，
+  仍由当前阶段修复与重试。
+- **排除登记在返修授权处也核引文**：`ref-elements.yaml` 里 `disposition: excluded` 的元素，只有 `requirement_quote` 逐字出现在当前需求原文里
+  才在 testing 视觉返修中按"需求排除"处理；核验不了（引文不逐字、缺引文、读不到需求原文）时这条排除登记本身不起作用——ui-spec 已声明的元素缺陷照常返修，
+  未声明的只披露。之后仍按缺陷方向判定：多出来的内容（`unexpected_render`）自身带的引文逐字出现在当前需求原文里时，照样授权删除。
+  宿主若依赖"没有需求原文也能排除"，需让 goal run 或 `fidelity-intent-init --requirement-file` 提供需求原文。
+- **summary 不再写 `blocking_warnings`**（plan 3abca824）：新生成的 summary 不再输出这个字段（框架内没有按它做决定的读取方）；
+  旧 summary 里的该字段仍可读，仍能通过 schema 与回执校验，不需要迁移。需要这份清单的外部脚本改为读 `summary.script_report`
+  指向的脚本报告，在 `checks[]` 里筛 `status` 为 `WARN` 且 `severity` 为 `BLOCKER` 的检查项；控制台输出与合并报告
+  （`summary.merged_report`）照常显示这些警告。不要用"字段缺失就当空清单"来兼容——那会把"已停写"误读成"没有警告"。
+  阻断级跳过仍在 `blocking_skips`。
+
 ## 3.1.0：Extension manifest 1.1 与 `/extension`
 
 3.1.0 新增 `/extension` 单一管理入口，manifest 1.1 支持 knowledge audience、宿主执行的
@@ -397,7 +440,7 @@ generic 未登记（共享规则被物化不等于运行时会读取）。未登
 
 - **复用证据采信口径**：goal 模式下同键复用轮此前写不出 `device-test-evidence.json`（写出门槛要求本轮真装），写出了也过不了采信（要求本轮真装 + run meta 落本 attempt 时间窗，而复用回填的是被复用 run 的冻结 meta）——宿主 run `20260907T063800Z-26c3b0` i2 因此以 `unverifiable_must_fix` 白烧一次 retry。3.0.x 起写出门槛改为"装机事实已知（真装成功或复用同 HAP）∧ 设备执行事实存在（真跑或同键复用）"，doc 增可选字段 `install_reused` / `reused_by_execution_key` / `execution_key` / `reused_run_dir`（schema 仍 1.1，旧 doc 逐字按旧规则校验）；采信端对复用 doc 改核被复用 run 的执行键记录身份（与 `decideReuse` 共用 `isExecutionRecordReusable`：同键、成功、trace 在盘、执行事实冻结件齐；派生统计不齐不是拒绝理由）并跳过 run meta 时间窗，对装机复用改核当前盘上 HAP 的完整摘要（由 `device-test-install.meta.json` 的 hapPath/mtime/size/12 位短指纹 + 文件字节三核算出）。**放弃的准确性**：采信的是记录身份 + 冻结件 + 键相等，不再要求本轮装机与本轮时间——手改冻结件能骗过它；防篡改不是优先级。
 - **装机复用摘要**：install provider 的复用分支此前不回传 `hapSha256Full`，执行键的 HAP 输入为 null，代理侧与外层 gate 的键交替、复用被"最新一条是别键"挡住（同一 HAP 一小时内真机跑了四遍）。3.0.x 起复用分支与真装分支同源计算当前 HAP 文件的 64 位 sha256 回传，两路径同键；不做 12 位短指纹回落，不跳过 hap=null 的旧记录（会掩盖较新失败）。**放弃的准确性**：摘要来自当前文件字节，没有任何回落；盘上旧的 null 记录不迁移，最多再导致一次正常真跑。
-- **顶部一屏推导**：参考图与设备视口**同宽但更高**（高宽比超出 ×1.15）时不再整屏剔除，改由框架每次把原图顶部 `shot.h` 像素重裁到 `device-testing/device-screenshots/_derived-ref/<ref_id>.top<shotH>.png` 作为比对输入，采集像素度量、delegated provider、检查前置门与 OCR 比对域、spec 前置门五处共用同一判据（`resolveCompareReference`）；宽度不同仍按现状剔除 FAIL/WARN。比对范围只按 ui-spec 声明的归一化 bbox 划分（`y+h ≤ ratio` 内 / `y ≥ ratio` 外 / 跨线或无 bbox 未确定），provider 覆盖预检与 `visual_diff_region_attest` 只要求范围内子集；范围外与未确定的 must_have 元素记**未验证**——`visual_reference_viewport` 出 MINOR WARN 行（含范围外 N / 未确定 M）并新增同 id 的视觉债务来源（清偿只认 testing 侧证据：该 check 缺席或只剩 PASS 行时，须本轮 `visual_diff` PASS 且 `structured.kind==='visual_diff'` 才 closed——参考资产换成单视口图并跑通视觉流水线后转绿；spec 前置门的 PASS 行、SKIP / 缺报告 / 解析失败都不清偿），`visual_diff` details 注"按顶部一屏比对；其余部分未验证"。attest crop 与 refs 回执仍绑原图；`capture_completeness_external` 分母不动。**放弃的准确性**：只覆盖进入态一屏，其余零证据、以 WARN + 债务显式披露而非静默剔除；范围划分只信声明 bbox，声明错位会把元素划错范围（划外＝少验一个，划内＝可能误报缺失），由既有 defect-review 纠正；长图若非页顶截取，得到显式 WARN/FAIL。
+- **顶部一屏推导**：参考图与设备视口**同宽但更高**（高宽比超出 ×1.15）时不再整屏剔除，改由框架每次把原图顶部 `shot.h` 像素重裁到 `device-testing/device-screenshots/_derived-ref/<ref_id>.top<shotH>.png` 作为比对输入，采集像素度量、delegated provider、检查前置门与 OCR 比对域、spec 前置门五处共用同一判据（`resolveCompareReference`）；宽度不同仍按现状剔除 FAIL/WARN。比对范围只按 ui-spec 声明的归一化 bbox 划分（`y+h ≤ ratio` 内 / `y ≥ ratio` 外 / 跨线或无 bbox 未确定），provider 覆盖预检与 `visual_diff_region_attest` 只要求范围内子集；范围外与未确定的 must_have 元素记**未验证**——`visual_reference_viewport` 出 MINOR WARN 行（含范围外 N / 未确定 M）并新增同 id 的视觉债务来源（清偿只认 testing 侧证据：该 check 缺席或只剩 PASS 行时，须本轮 `visual_diff` PASS 且 `structured.kind==='visual_diff'` 才 closed——参考资产换成单视口图并跑通视觉流水线后转绿；spec 前置门的 PASS 行、SKIP / 缺报告 / 解析失败都不清偿），`visual_diff` details 注"按顶部一屏比对；其余部分未验证"。attest crop 与 refs 回执仍绑原图；`capture_completeness_external` 分母不动。**放弃的准确性**：只覆盖进入态一屏，其余零证据、以 WARN + 债务显式披露而非静默剔除；范围划分只信声明 bbox，声明错位会把元素划错范围（划外＝少验一个，划内＝可能误报缺失）；划内误报的缺失在验真通过后直接成为返修候选，执行者可以按目标拒修并留下理由，裁判可以反驳一轮（defect-review 已退役）；长图若非页顶截取，得到显式 WARN/FAIL。
 - **归因**：`hasRuntimeFailureEvidence` 不再把 unverified（证据身份不齐待重采：绑定失败、截图/build 身份不匹配）当失败事实——仅此类 unverified 的 PASS+retry 轮不带 `failure_kind_classified`/blocker_signature；绑定通过且根 case 失败的可信真机证据（含走 unverified 通路的 test_contract 分类）仍算失败事实，`test_contract` 归因照旧持久化；同轮有 harness FAIL 或可信缺陷时归因照旧。
 - **消费者无需动手**：无配置变更；`_derived-ref/` 为框架产物，可随 device-screenshots 一并清理。
 

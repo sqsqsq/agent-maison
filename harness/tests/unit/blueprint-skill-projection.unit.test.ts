@@ -232,6 +232,10 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       const nextPlan = resolveExecutionScope(proposal, workflow, readScopeAcceptance(f.root, proposal, { feature: f.feature, frameworkRoot }), resolvedStub);
       assert(!nextPlan.unresolved.length && nextPlan.phase_chain.includes('coding'));
       assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [{ id: 'design_fail', status: 'FAIL', severity: 'BLOCKER', category: 'structure', description: 'invalid design', details: 'failed' }]), []);
+      // plan f7045213 第二批：已登记为披露的探索账本失败不挡设计事实发布；其余任何 FAIL（含 MAJOR）仍挡。
+      const ledgerFail = { id: 'context_exploration_searches_min', status: 'FAIL' as const, severity: 'BLOCKER' as const, category: 'structure' as const, description: 'self-reported searches', details: '当前 1，要求 ≥ 4' };
+      assert(designScopeRevisionChecks(planCtx, [ledgerFail])[0]?.scope_revision_input, '披露类账本失败不应挡住修订提议');
+      assert.deepStrictEqual(designScopeRevisionChecks(planCtx, [ledgerFail, { id: 'design_major', status: 'FAIL', severity: 'MAJOR', category: 'structure', description: 'major', details: 'major' }]), [], '其余 FAIL 保持原判据');
     }
     assert.equal(fs.readFileSync(born.manifestPath, 'utf8'), before);
     assert.deepStrictEqual(designScopeRevisionChecks(ctx, [{ id: 'actual_failure', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: 'failure', details: 'failure' }]), []);

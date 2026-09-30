@@ -69,7 +69,7 @@ function readToolchainCapabilityGap(projectRoot: string):
 
 const STOP_GUIDANCE =
   '出口②（诚实停止）：若当前环境暂不具备该能力且你确认不在本机修复——请回复确认后停止本任务；' +
-  'framework 不放行、不绕过该 phase，环境修好后用原命令 resume 继续。' +
+  'framework 不放行、不绕过该 phase，环境修好后重新发起同一请求即可继续（也可用原命令 resume）。' +
   '（你的确认只是停止的知情记录，不构成任何降门禁授权。）';
 
 /**
