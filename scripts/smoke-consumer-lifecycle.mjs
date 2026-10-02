@@ -746,8 +746,9 @@ function stageGoal(ctx) {
   ctx.log('goal/#6：原子失效记录 crash-safe，resume 同一 run 从 plan/coding 继续');
 
   // 第七段（T4#7）：真实 phase verdict 写入 UT build blocker。`ut_hvigor_build`
-  // 的无结构化 device_toolchain 标注仍是可回修的 code_regression；相同内容失败
-  // 只允许在既有 phase retry 上限内收口，不能误归 toolchain 或无限空转。
+  // 的无结构化 device_toolchain 标注仍是可回修的 code_regression，不能误归 toolchain 或无限空转。
+  // 这两条 blocker 没有 affected_files / repair_candidates（相关目标未知）：按 plan e7a2c4f1 §3.6 / §6 H5，
+  // 同签名第二次即沿 no_progress_guard 停下，不再烧满 max_retries_per_phase 判 content_retry_exhausted。
   const buildFailureFeature = 'ut-build-failure';
   runDriver('provision', null, buildFailureFeature);
   const buildFailure = runDriver('ut_build_failure', null, buildFailureFeature);
@@ -755,16 +756,17 @@ function stageGoal(ctx) {
     && buildFailure.exitCode === 1
     && (buildFailure.failureKinds?.length ?? 0) > 0
     && buildFailure.failureKinds.every(k => k === 'code_regression')
-    && buildFailure.phaseHalts.some(h => h.halt_reason === 'content_retry_exhausted')
+    && buildFailure.phaseHalts.some(h => h.halt_reason === 'no_progress_guard')
+    && !buildFailure.phaseHalts.some(h => h.halt_reason === 'content_retry_exhausted')
     && !buildFailure.eventTypes.includes('phase_backtrack_requested')
     && buildFailure.agentCalls < 8;
   if (!buildFailureOk) {
     throw new Error(
-      'goal/#7：build FAIL 应归 code_regression 并在 phase retry 上限收口，不得误判 toolchain/无限重试。实得 '
+      'goal/#7：build FAIL 应归 code_regression，相关目标未知时同签名第二次以 no_progress_guard 停下（e7a2c4f1 §3.6），不得误判 toolchain/无限重试。实得 '
       + JSON.stringify(buildFailure),
     );
   }
-  ctx.log('goal/#7：build 失败保留 code_regression 归因，在 phase retry 上限收口且不无限空转');
+  ctx.log('goal/#7：build 失败保留 code_regression 归因，相关目标未知时同签名第二次以 no_progress_guard 停下，不空转');
 
   // 第四段（#8 整机面）：fresh + head 失配 → **自动续跑**，不 TERMINAL 不裸崩
   // ——宿主 run1"第一死"的整机级回放。独立 feature（first-death），与 recovery-park
