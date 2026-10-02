@@ -14,6 +14,7 @@ import { sha256Bytes } from './component-blueprint-path';
 import {
   CHANGE_UNIT_ARTIFACT,
   ChangeUnitArtifact,
+  ChangeUnitIssue,
   ChangeUnitRecord,
   ChangeUnitRef,
   changeUnitNonEmpty,
@@ -24,7 +25,8 @@ import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-valid
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 export class ChangeUnitResolutionError extends Error {
-  constructor(public readonly code: string, message: string) {
+  /** `issues`：仅 `change_unit_invalid` 携带验证器原始 issue（路线与原因码由消费方直接取，不猜错误码字符串）。 */
+  constructor(public readonly code: string, message: string, public readonly issues?: readonly ChangeUnitIssue[]) {
     super(message);
     this.name = 'ChangeUnitResolutionError';
   }
@@ -198,6 +200,7 @@ export function resolveChangeUnitRef(projectRoot: string, value: unknown): Loade
     throw new ChangeUnitResolutionError(
       'change_unit_invalid',
       `canonical Change Unit 未通过 schema/语义门：${issues.map(item => `${item.id}@${item.path}`).join(', ')}。`,
+      issues,
     );
   }
   const binding = inspectDerivedFeatureBinding(projectRoot, ref.blueprint_id, ref.change_unit_id, ref.component_id);
@@ -208,6 +211,25 @@ export function resolveChangeUnitRef(projectRoot: string, value: unknown): Loade
     );
   }
   return { ...loaded, ref };
+}
+
+/** `validateChangeUnit` 对「蓝图已升到更高 admitted revision、CU 仍指旧 revision」的 issue id。 */
+export const BLUEPRINT_REF_STALE_ISSUE = 'change_unit_blueprint_ref_stale';
+
+/**
+ * plan 9c3d7e1a §3：只读判别「仅发现指针过期、可以尝试机械调和」——canonical CU 的 BLOCKER 只有
+ * `change_unit_blueprint_ref_stale`。不是「纯指针问题」的证明：新蓝图内容坏了或 carry-forward 不过在这一步看不出来，
+ * 由调和器的跳过条件与调和后的重评兜住。非 CU feature、CU 加载失败一律 false。
+ */
+export function pointerStaleCandidate(projectRoot: string, feature: string): boolean {
+  try {
+    const identity = parseCuFeatureId(feature);
+    const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
+    const blockers = blockerChangeUnitIssues(validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath }));
+    return blockers.length > 0 && blockers.every(item => item.id === BLUEPRINT_REF_STALE_ISSUE);
+  } catch {
+    return false;
+  }
 }
 
 /** M5A §5.4 Feature binding 状态机（CU 目录与 Feature 目录合一后）。 */

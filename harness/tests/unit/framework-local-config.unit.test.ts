@@ -24,6 +24,8 @@ import {
   mergeLocalIntoToolchain,
   resolveAgentAdapterSource,
   resolveApprovedModels,
+  resolveUnattendedB1Repair,
+  updateLocalConfig,
   writeLocalConfig,
 } from '../../scripts/utils/framework-local-config';
 
@@ -79,6 +81,35 @@ const cases: Array<{ name: string; run: () => void }> = [
         const back = loadLocalConfig(root);
         assert.deepStrictEqual(back?.adapters, { codex: { approved_models: ['m1'] }, claude: { approved_models: 3 } });
         assert.strictEqual(back?.agent_adapter, 'claude');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // plan 9c3d7e1a §5.5 / D4
+    name: 't6 design_repair.unattended_b1：只有布尔 true 算授权（缺失 / 字符串 / 数字 / 非对象都不算，且不拖垮整个 local）；既有局部写回（updateLocalConfig）之后键仍在',
+    run: () => {
+      const root = mkTmp();
+      try {
+        const writeRaw = (obj: unknown): void =>
+          fs.writeFileSync(path.join(root, LOCAL_CONFIG_FILENAME), JSON.stringify(obj), 'utf-8');
+        assert.strictEqual(resolveUnattendedB1Repair(loadLocalConfig(root)), false, '没有 local 文件 = 未授权');
+        writeRaw({ schema_version: '1.0' });
+        assert.strictEqual(resolveUnattendedB1Repair(loadLocalConfig(root)), false, '缺省关闭');
+        for (const v of [{ unattended_b1: 'true' }, { unattended_b1: 1 }, { unattended_b1: false }, {}, 'yes', [true]]) {
+          writeRaw({ schema_version: '1.0', agent_adapter: 'codex', design_repair: v });
+          const local = loadLocalConfig(root);
+          assert.strictEqual(resolveUnattendedB1Repair(local), false, `${JSON.stringify(v)} 不得算授权`);
+          assert.strictEqual(local?.agent_adapter, 'codex', '坏值不得拖垮整个 local');
+        }
+        writeRaw({ schema_version: '1.0', agent_adapter: 'codex', design_repair: { unattended_b1: true } });
+        assert.strictEqual(resolveUnattendedB1Repair(loadLocalConfig(root)), true);
+        // 既有写回入口（金丝雀缓存等都经它）改别的字段之后，预授权仍在。
+        updateLocalConfig(root, current => ({ ...current, vision: { canary: { adapter: 'codex', verdict: 'tool_read', probed_at: '2026-10-01T00:00:00.000Z', probed_via: 'interactive', probe_version: 2 } } } as typeof current));
+        const back = JSON.parse(fs.readFileSync(path.join(root, LOCAL_CONFIG_FILENAME), 'utf-8')) as Record<string, unknown>;
+        assert.deepStrictEqual(back.design_repair, { unattended_b1: true }, `写回后预授权不得丢：${JSON.stringify(back)}`);
+        assert.strictEqual(resolveUnattendedB1Repair(loadLocalConfig(root)), true);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

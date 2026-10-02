@@ -21,6 +21,7 @@ import {
 import { reduceRunState } from '../../scripts/utils/run-state-reducer';
 import { waitForConditionRecovery } from '../../scripts/utils/condition-wait';
 import { livenessBeaconPath } from '../../scripts/utils/liveness-beacon';
+import { FEATURE_LOCK_NAME, releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 import { FINALIZE_RESERVE_MS, resolveWallClockMs } from '../../scripts/utils/goal-timeout';
 import * as supervise from '../../scripts/goal-supervise';
 import { clearFrameworkConfigCache } from '../../config';
@@ -553,8 +554,9 @@ async function superviseOnce(
   root: string,
   runId: string,
   conditionProbe: ((probe: string, phase?: string) => { ready: boolean; reason?: string }) | null,
-): Promise<{ code: number; spawned: string[][] }> {
+): Promise<{ code: number; spawned: string[][]; lockHeldAtSpawn: boolean[] }> {
   const spawned: string[][] = [];
+  const lockHeldAtSpawn: boolean[] = [];
   const prevArgv = process.argv;
   const prevCwd = process.cwd();
   // run 在本进程内跑完，beacon 记的是本进程 pid（活着）；删掉 beacon = 进程已不在（与 goal-run-driver 同法）
@@ -562,6 +564,7 @@ async function superviseOnce(
   try {
     supervise.__testing_setSpawnImpl((_file, args) => {
       spawned.push(args.slice(1));
+      lockHeldAtSpawn.push(fs.existsSync(path.join(goalRunsDir(root), FEATURE_LOCK_NAME)));
       return { pid: 4242, unref: () => undefined } as never;
     });
     supervise.__testing_setConditionProbe(conditionProbe);
@@ -569,7 +572,7 @@ async function superviseOnce(
     process.chdir(root);
     clearFrameworkConfigCache();
     const code = await supervise.__testing_main();
-    return { code, spawned };
+    return { code, spawned, lockHeldAtSpawn };
   } finally {
     supervise.__testing_setSpawnImpl(null);
     supervise.__testing_setConditionProbe(null);
@@ -910,6 +913,71 @@ asyncCases.push(
         const ready = await superviseOnce(root, runId, (p) => ({ ready: p === 'device_readiness' }));
         assert(ready.spawned.length === 1 && ready.spawned[0].includes('--resume') && ready.spawned[0].includes(runId),
           `设备探针转绿须发出恢复：${JSON.stringify(ready)}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'plan 9c3d7e1a t6（codex 第三轮）supervisor 写事件与拉起在 feature 锁内：锁被持有 → 本轮不写、不拉起；退避在锁外睡，睡完锁内重判，期间重启序号已变 → 让给下一轮',
+    run: async () => {
+      const { root } = setupGoalRuntimeHost();
+      try {
+        const probe = await runGoalRuntimeChain(root, {
+          freshEndPhase: 'ut',
+          deviceGate: (o: { phase: string; retries: number; emitEvent: (e: Record<string, unknown>) => void }) => {
+            o.emitEvent({
+              type: 'phase_halt', phase: o.phase, halt_reason: 'device_not_ready', verdict: 'FAIL',
+              reason: '注入：设备锁屏', probe: 'device_readiness', notes: [],
+            });
+            return {
+              outcome: {
+                phase: o.phase, verdict: 'FAIL', halted: false, retries: o.retries,
+                halt_reason: 'device_not_ready', halt_guidance: '注入：设备锁屏',
+                blocking_class: 'externalBlocked', failure_kind: 'device_blocked', probe: 'device_readiness',
+              },
+              notes: [],
+            };
+          },
+          conditionWait: { maxWaitMs: 200, pollMs: 50, runProbe: () => ({ ready: false, reason: '测试不接真机' }) },
+        });
+        const runId = path.basename(probe.reportDir);
+        const eventsPath = path.join(goalRunsDir(root), runId, 'events.jsonl');
+        const ready = (p: string): { ready: boolean } => ({ ready: p === 'device_readiness' });
+        const restartSeqs = (): unknown[] => readRunEvents(root, runId).filter((e) => e.type === 'supervisor_restart').map((e) => e.restart_seq);
+
+        // 锁被持有（run 在跑、或同蓝图的设计修复进行中）：探针已就绪也不写、不拉起
+        const lockPath = path.join(goalRunsDir(root), FEATURE_LOCK_NAME);
+        const held = tryAcquireLock(lockPath, {});
+        assert(held, '夹具：feature 锁可取');
+        const bytes = fs.readFileSync(eventsPath);
+        let busy: Awaited<ReturnType<typeof superviseOnce>>;
+        try {
+          busy = await superviseOnce(root, runId, ready);
+        } finally {
+          releaseLock(lockPath, held!.ownerId);
+        }
+        assert(busy.code === 0 && busy.spawned.length === 0 && fs.readFileSync(eventsPath).equals(bytes),
+          `锁被持有时不得写事件、不得拉起：${JSON.stringify(busy)}`);
+
+        // 锁放了：第 1 次拉起（不退避）；拉起时锁已放（子进程自己取锁），之后也不留锁
+        const first = await superviseOnce(root, runId, ready);
+        assert(first.spawned.length === 1 && first.lockHeldAtSpawn.every((h) => !h) && !fs.existsSync(lockPath),
+          `放锁后再拉起且不留锁：${JSON.stringify(first)}`);
+        assert(JSON.stringify(restartSeqs()) === '[1]', `重启记账：${JSON.stringify(restartSeqs())}`);
+
+        // 第 2 次要退避 30s（锁外睡）；睡的期间另一轮 supervisor 已记下第 2 次 → 锁内重判序号变了 → 本轮不拉起、不重复记账
+        const other = setTimeout(() => {
+          fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: new Date().toISOString(), type: 'supervisor_restart', action: 'resume', run_id: runId, restart_seq: 2 })}\n`);
+        }, 1_000);
+        let second: Awaited<ReturnType<typeof superviseOnce>>;
+        try {
+          second = await superviseOnce(root, runId, ready);
+        } finally {
+          clearTimeout(other);
+        }
+        assert(second.code === 0 && second.spawned.length === 0, `退避期间序号已变不得再拉起：${JSON.stringify(second)}`);
+        assert(JSON.stringify(restartSeqs()) === '[1,2]', `不得重复记账：${JSON.stringify(restartSeqs())}`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

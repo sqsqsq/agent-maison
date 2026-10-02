@@ -107,7 +107,7 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
    整批拒绝、一个字节都不落盘；
 4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝，契约变化走新 id + `supersedes`；
 5. 派生 design gate / readiness；派生前把 carry-forward 通过的 CU（已完成与未完成同规则）蓝图指针
-   原位升到当前 revision，输出 `blueprintRefs.bumped / skipped` 及跳过原因。既有 CU 不先跑 `check:change-unit`、直接派生；它报 `change_unit_blueprint_ref_stale` 即指这次框架自动升版，不是修 CU（不要手改 change-unit.yaml 或抄 sha256）。
+   原位升到当前 revision，输出 `blueprintRefs.bumped / skipped` 及跳过原因；`blueprintRefs.busy` 有值＝另一执行者正在写入、本次未写也无 readiness 结论，等它结束后重跑，不改设计内容。既有 CU 不先跑 `check:change-unit`、直接派生；它报 `change_unit_blueprint_ref_stale` 即指这次框架自动升版，不是修 CU（不要手改 change-unit.yaml 或抄 sha256）。
 
 一项正式需求只分解出**一个** CU 是正常正向路径，不是退化形态。
 
@@ -118,8 +118,8 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 - 施工：[`/change-unit-progression`](../change-unit-progression/SKILL.md)
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
 
-**边界（BLOCKER）**：本 Skill **停在设计交接**——不进入 P2 selector、不进入 Goal Mode 施工
-循环、不进入 P3 closure、不选择任何 CU、不启动任何 run。用户已授权完整实现时，外层接收 readiness 后在已有授权内创建真实 attended Goal；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。
+**边界（BLOCKER）**：本 Skill **停在设计交接**——设计阶段不启动 run：不进入 P2 selector、不进入施工
+循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内创建真实 attended Goal；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 无人值守时框架派出的 B1 修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
 
 ### 5.（可选）评审投影与反馈回灌
 

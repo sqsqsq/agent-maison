@@ -50,6 +50,21 @@ export interface PreparedRequest {
 export { realProjectPath as realRequestPath } from './project-relative-path';
 import { realProjectPath as realRequestPath } from './project-relative-path';
 
+/**
+ * spec / plan 是否仍持有这条 artifact 绑定的改写权：它产出该 artifact，且本阶段还有未满足的 required 义务。
+ * 持有时该绑定由本阶段在链内改写并经范围修订重签，不作为期望绑定去比对。阶段输入解析与恢复判断（plan 9c3d7e1a §5.3）共用。
+ */
+export function phaseOwnsDesignOutput(
+  produces: ReadonlyArray<{ artifact?: string }>,
+  scope: { obligations: ReadonlyArray<{ owner_phase: string; applicability: string; satisfied_by?: readonly unknown[] }> },
+  phase: string,
+  binding: import('./capability-resolution').InputBinding,
+): boolean {
+  return ['spec', 'plan'].includes(phase)
+    && binding.source.kind === 'artifact' && produces.some(output => output.artifact === (binding.source as { artifact: string }).artifact)
+    && scope.obligations.some(obligation => obligation.owner_phase === phase && obligation.applicability === 'required' && !obligation.satisfied_by?.length);
+}
+
 export function requestProtectedPaths(root: string, frameworkRoot: string): string[] {
   const protectedDirs = [frameworkRoot, path.join(root, '.git'), featuresDirPath(root)];
   const phases = [...phaseContractIndex(loadFeatureContracts(frameworkRoot)).keys()];
@@ -247,9 +262,7 @@ export function resolveCapabilityResolutionEntryInput(
       const contractIndex = phaseContractIndex(loadFeatureContracts(frameworkRoot));
       const indexed = contractIndex.get(options.phase);
       if (indexed?.contract.schema_version !== '1.1') throw new Error('execution scope requires phase contract 1.1');
-      const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean => ['spec', 'plan'].includes(options.phase)
-        && binding.source.kind === 'artifact' && indexed.phase.produces.some(output => output.artifact === (binding.source as { artifact: string }).artifact)
-        && scope.obligations.some(obligation => obligation.owner_phase === options.phase && obligation.applicability === 'required' && !obligation.satisfied_by?.length);
+      const ownsDesignOutput = (binding: import('./capability-resolution').InputBinding): boolean => phaseOwnsDesignOutput(indexed.phase.produces, scope, options.phase, binding);
       const expectedBindings = scope.obligations.flatMap(obligation => [
         ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep))),
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),

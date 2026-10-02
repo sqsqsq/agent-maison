@@ -10,7 +10,7 @@ export const HMOS_DEVICE_TUNING_KEYS = [
   'testRunner',
 ] as const;
 
-export const LOCAL_CANONICAL_TOP_KEYS = new Set(['schema_version', 'agent_adapter', 'adapters', 'toolchain', 'vision', 'device']);
+export const LOCAL_CANONICAL_TOP_KEYS = new Set(['schema_version', 'agent_adapter', 'adapters', 'toolchain', 'vision', 'device', 'design_repair']);
 
 /** device 策略顶层允许键（openspec device-readiness-and-completion） */
 export const LOCAL_DEVICE_KEYS = new Set(['unlock', 'emulator_fallback', 'target_serial', 'emulator_profile']);

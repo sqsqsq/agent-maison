@@ -445,6 +445,12 @@ export async function runGoalRuntimeChain(
      * 见 agent-invoke.ts:1474/1481）。返回 null = 默认结果；只覆盖返回字段，不换 seam。
      */
     invokeResultFor?: (phase: string, attempt: number) => Record<string, unknown> | null;
+    /**
+     * plan 9c3d7e1a §5.5（R12）：链外 adapter 调用（日志在 `phases/design-repair-<用途>/` 下，不属于阶段链）的产出替身。
+     * 只替代 adapter 的产出（写草稿 / 越界写入 / 失败退出），事件、锁、准入、探针、恢复都由生产路径产生。
+     * 返回值覆盖调用结果字段（缺省 exit 0）。既有用例不传，链外调用照旧返回默认结果。
+     */
+    onOutOfChain?: (ctx: AgentCtx) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>;
     /** Production runtime workflow resolution seam used to simulate config drift on resume. */
     workflowTransform?: (workflow: WorkflowSpec) => WorkflowSpec;
     /**
@@ -538,6 +544,14 @@ export async function runGoalRuntimeChain(
       if (phase === 'plan') opts.onPlan?.(ctx);
       if (phase === 'ut') opts.onUt?.(ctx);
       if (phase === 'review') opts.onReview?.(ctx);
+      if (opts.onOutOfChain && phase.startsWith('design-repair-')) {
+        const { activeChildPid, ...override } = (await opts.onOutOfChain(ctx)) ?? {};
+        // 替身 adapter 报告它起的子进程（真实 adapter 在 spawn 后调用 onActiveChild；运行时据此做收容绑定核验）。
+        if (typeof activeChildPid === 'number') {
+          (o as { onActiveChild?: (child: { pid: number; kill: () => Promise<void> }) => void }).onActiveChild?.({ pid: activeChildPid, kill: async () => undefined });
+        }
+        return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent', ...override };
+      }
       const failed = opts.failExecutorFor?.(phase, n) ?? false;
       return {
         exitCode: failed ? 1 : 0,
@@ -996,7 +1010,7 @@ export async function runGoalRuntimeChain(
     process.argv = opts.resume
       ? [
           'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', featureId,
-          '--foreground-ok', '--force',
+          '--foreground-ok', ...(opts.noAutoForce ? [] : ['--force']),
           // 无 HMAC 测试宿主的 resume 须弱 ack vision 账本（生产合法路径；终态封顶人工复核）
           ...(opts.forceResume ? ['--force-resume', '--ack-unverified-ledgers'] : []),
           ...supersedeArgs,

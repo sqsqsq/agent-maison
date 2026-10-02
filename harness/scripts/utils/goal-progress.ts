@@ -709,6 +709,8 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type !== 'agent_invoke_end') continue;
+    // plan 9c3d7e1a §5.5：链外设计修复调用（带用途标识）没有阶段 verdict 跟在后面，不按阶段调用判停滞。
+    if (typeof (e as { purpose?: unknown }).purpose === 'string') continue;
     if (!e.timed_out && !e.silent_killed) break;
     const phase = e.phase;
     const verdictAfter = events

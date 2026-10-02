@@ -101,6 +101,7 @@ import { A2_DONE, A2_EXCLUDED, A2_QUOTE, a2Collect, a2NfcDefect, withA2Runtime }
 import { runDriver, sealLegacyInvokes } from './goal-park-resume.unit.test';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { setupMinimalHost, type GoalRunOutcome } from '../helpers/goal-run-driver';
+import { s14Run, s15AuthorityFlow, s15RejoinFlow, s15StaleFlow, s16MainFlow, s16NoPreauthFlow, s16StaleFlow, type RepairFlow, type S14Key } from './design-authority-repair.unit.test';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const REGISTRY_PATH = path.join(__dirname, '..', 'fixtures', 'reliability-scenarios', 'registry.json');
@@ -1737,6 +1738,141 @@ function runS13Branch(declineTwice: boolean): ScenarioRunner {
 }
 
 // ---------------------------------------------------------------------------
+// S14 / S15 设计权威修复（plan 9c3d7e1a §6）：驱动与机制断言复用 design-authority-repair 套件，这里只把事实交给采集器
+// ---------------------------------------------------------------------------
+
+const DESIGN_ACTOR = 'reliability-scenarios（测试代码，设计 owner / 有权者替身）';
+
+/** 独立验收：盘上验收与最终 run 绑定的验收都是当前设计权威的文本（只读产物与绑定，不读框架结论）。 */
+function authorityAcceptance(s: { root: string; frameworkRoot: string }, feature: string, runId: string): AcceptanceFact {
+  const onDisk = YAML.parse(readText(s.root, path.relative(s.root, featureFilePath(s.root, feature, 'acceptance.yaml')))) as { criteria: Array<{ id: string; expected_result: string }> };
+  const diskNew = onDisk.criteria.find(c => c.id === 'AC-1')?.expected_result === NEW_EXPECTED_RESULT;
+  clearFrameworkConfigCache();
+  let boundNew = false;
+  try {
+    const effective = loadEffectiveExecutionScope(s.root, feature, runId);
+    const bound = effective
+      ? readScopeAcceptance(s.root, { facts: effective.obligations } as unknown as Parameters<typeof readScopeAcceptance>[1], { feature, frameworkRoot: s.frameworkRoot })
+      : null;
+    boundNew = bound?.value.criteria.find(c => c.id === 'AC-1')?.expected_result === NEW_EXPECTED_RESULT;
+  } catch { boundNew = false; }
+  return diskNew && boundNew
+    ? { result: 'pass', actor: 'reliability-scenarios', basis: '盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本' }
+    : { result: 'fail', actor: 'reliability-scenarios', basis: `盘上为权威文本=${diskNew}，最终 run 绑定为权威文本=${boundNew}` };
+}
+
+function runS14(key: S14Key): ScenarioRunner {
+  return async (_entry, done) => {
+    await withHost(async s => {
+      const feature = SNAPSHOT_CU_FEATURE;
+      const run = await s14Run(s, key);
+      const events = eventsOf(s.root, feature, run.successor);
+      const repairIdx = indexOf(events, e => e.type === 'design_authority_repair');
+      const repair = events[repairIdx] as { outcome?: string; bumped?: Array<{ change_unit_id: string }>; skipped?: Array<{ change_unit_id: string }> } | undefined;
+      const halt = events.find(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved');
+      const stopped = key === 'counter-own-skipped';
+      done({
+        key, root: s.root, feature, frameworkRoot: s.frameworkRoot, runIds: [run.successor],
+        // 出生用的 --supersede 属前提（早于扰动）；扰动本身是设计 owner 的升版，不是救场。
+        interventions: [{ kind: 'product_decision', actor: DESIGN_ACTOR, content: 'run 出生并冻结绑定之后，设计 owner 在另一会话把蓝图升到新的 admitted revision（扰动本身，未调调和器）' }],
+        acceptance: stopped
+          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：本 CU 被调和器跳过，停机交设计 owner' }
+          : authorityAcceptance(s, feature, run.successor),
+        after: repairIdx >= 0 ? { run_id: run.successor, event_index: repairIdx } : undefined,
+        hit: {
+          ok: run.injected && repairIdx >= 0,
+          evidence: `plan 首轮窗口内注入升版=${run.injected}；design_authority_repair=${repair?.outcome ?? '无'} 升版 ${repair?.bumped?.length ?? 0} 跳过 ${JSON.stringify((repair?.skipped ?? []).map(x => x.change_unit_id))}；plan 调用 ${run.planInvokes} 次`,
+        },
+        expectation: stopped
+          ? (t) => ({
+              met: !t.facts.claimed_complete && !!halt && /本 CU 被调和器跳过/.test(String(halt.halt_guidance)) && repair?.outcome === 'not_reconciled',
+              detail: `本 CU 被跳过：宣称完成=${t.facts.claimed_complete}，停机=${String(halt?.halt_reason ?? '无')}，说明含跳过原因=${/本 CU 被调和器跳过/.test(String(halt?.halt_guidance))}`,
+            })
+          : (t) => ({
+              met: t.conclusion === 'correct_completion' && t.operator.rescue_count === 0 && !halt && repair?.outcome === 'reconciled'
+                && (key !== 'counter-sibling-skipped' || (repair?.skipped ?? []).length > 0),
+              detail: `结论=${t.conclusion}，操作者动作=${t.operator.rescue_count}，同一 run 内调和=${repair?.outcome}，兄弟 CU 跳过披露=${(repair?.skipped ?? []).length}，设计 owner 停机=${!!halt}`,
+            }),
+        extras: { plan_invokes: run.planInvokes, repair: repair ?? null },
+      });
+    });
+  };
+}
+
+type S15Key = 'b1-rejoin' | 'b1-stale-successor' | 'supervisor-stale-successor' | 'b2-authority' | 'counter-unrepaired';
+
+function runS15(key: S15Key): ScenarioRunner {
+  return async (_entry, done) => {
+    await withHost(async s => {
+      const flow: RepairFlow = key === 'b1-rejoin' ? await s15RejoinFlow(s)
+        : key === 'counter-unrepaired' ? await s15RejoinFlow(s, { repair: false })
+        : key === 'b1-stale-successor' ? await s15StaleFlow(s, 'resend')
+        : key === 'supervisor-stale-successor' ? await s15StaleFlow(s, 'supervisor')
+        : await s15AuthorityFlow(s);
+      const final = flow.runs.at(-1)!;
+      const expectedRuns = key === 'b1-stale-successor' || key === 'supervisor-stale-successor' ? 2 : 1;
+      done({
+        key, root: s.root, feature: flow.feature, frameworkRoot: s.frameworkRoot, runIds: flow.runs,
+        // supervisor 分支里拉起命令由计划任务发出（测试代替计划任务把它跑起来，不是操作者动作）。
+        interventions: flow.interventions.map(iv => ({ ...iv, actor: DESIGN_ACTOR })),
+        acceptance: key === 'counter-unrepaired'
+          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：设计权威未修，保持停止' }
+          : authorityAcceptance(s, flow.feature, final),
+        after: { run_id: flow.halted, event_index: flow.haltIndex },
+        hit: { ok: flow.haltIndex >= 0 && flow.haltClass === (key === 'b2-authority' ? 'B2' : 'B1'), evidence: flow.evidence },
+        expectation: key === 'counter-unrepaired'
+          ? (t) => ({
+              met: !t.facts.claimed_complete && flow.runs.length === 1 && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,
+              detail: `未修就重发：宣称完成=${t.facts.claimed_complete}，run 数=${flow.runs.length}，停止=${t.stop_state?.run_disposition}/${t.stop_state?.run_wait_kind}，带探针=${t.stop_state?.has_probe}`,
+            })
+          : (t) => ({
+              met: t.conclusion === 'correct_completion' && flow.runs.length === expectedRuns && t.operator.unnecessary_count === 0,
+              detail: `结论=${t.conclusion}，任务 run 数=${flow.runs.length}（期望 ${expectedRuns}：${expectedRuns === 1 ? '重新接入同一 run' : '自动起后继'}），操作者动作=${t.operator.rescue_count}，产品决定=${t.operator.product_decisions}`,
+            }),
+        extras: { halt_class: flow.haltClass, runs: flow.runs },
+      });
+    });
+  };
+}
+
+type S16Key = 'b1-auto-repair' | 'stale-supervisor' | 'stale-resend' | 'counter-no-preauth';
+
+/** S16 无人值守 B1 自动接手（plan 9c3d7e1a §5.5、§6）：驱动与机制断言复用 design-authority-repair 套件的 S16 流程函数。 */
+function runS16(key: S16Key): ScenarioRunner {
+  return async (_entry, done) => {
+    await withHost(async s => {
+      const flow: RepairFlow = key === 'b1-auto-repair' ? await s16MainFlow(s)
+        : key === 'stale-supervisor' ? await s16StaleFlow(s, 'supervisor')
+        : key === 'stale-resend' ? await s16StaleFlow(s, 'resend')
+        : await s16NoPreauthFlow(s);
+      const final = flow.runs.at(-1)!;
+      const expectedRuns = key === 'stale-supervisor' || key === 'stale-resend' ? 2 : 1;
+      const expectedRescues = key === 'stale-resend' ? 1 : 0;
+      done({
+        key, root: s.root, feature: flow.feature, frameworkRoot: s.frameworkRoot, runIds: flow.runs,
+        // 预授权与蓝图写坏都是故障之前的前提；supervisor 分支的拉起命令由计划任务发出（测试代替计划任务把它跑起来，不是操作者动作）。
+        interventions: flow.interventions.map(iv => ({ ...iv, actor: DESIGN_ACTOR })),
+        acceptance: key === 'counter-no-preauth'
+          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：没有预授权，B1 停等设计 owner' }
+          : authorityAcceptance(s, flow.feature, final),
+        after: { run_id: flow.halted, event_index: flow.haltIndex },
+        hit: { ok: flow.haltIndex >= 0 && flow.haltClass === 'B1', evidence: flow.evidence },
+        expectation: key === 'counter-no-preauth'
+          ? (t) => ({
+              met: !t.facts.claimed_complete && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,
+              detail: `无预授权：宣称完成=${t.facts.claimed_complete}，停止=${t.stop_state?.run_disposition}/${t.stop_state?.run_wait_kind}，带探针=${t.stop_state?.has_probe}`,
+            })
+          : (t) => ({
+              met: t.conclusion === 'correct_completion' && flow.runs.length === expectedRuns && t.operator.rescue_count === expectedRescues && t.operator.unnecessary_count === 0,
+              detail: `结论=${t.conclusion}，任务 run 数=${flow.runs.length}（期望 ${expectedRuns}），操作者动作=${t.operator.rescue_count}（期望 ${expectedRescues}），产品决定=${t.operator.product_decisions}`,
+            }),
+        extras: { halt_class: flow.haltClass, runs: flow.runs },
+      });
+    });
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 场景表与执行
 // ---------------------------------------------------------------------------
 
@@ -1755,6 +1891,9 @@ export const SCENARIOS: Array<{ id: string; run: ScenarioRunner[] }> = [
   { id: 'S11', run: [runS11Branch(true), runS11Branch(false)] },
   { id: 'S12', run: [runS12] },
   { id: 'S13', run: [runS13Branch(false), runS13Branch(true)] },
+  { id: 'S14', run: [runS14('in-run-reconcile'), runS14('counter-own-skipped'), runS14('counter-sibling-skipped')] },
+  { id: 'S15', run: [runS15('b1-rejoin'), runS15('counter-unrepaired'), runS15('b1-stale-successor'), runS15('supervisor-stale-successor'), runS15('b2-authority')] },
+  { id: 'S16', run: [runS16('b1-auto-repair'), runS16('counter-no-preauth'), runS16('stale-supervisor'), runS16('stale-resend')] },
 ];
 
 /** 按断言策略评估一个分支：命中恒断言；baseline_met / correct_stop 断言期望；gap_only 只打印差距。 */
@@ -1992,5 +2131,7 @@ export async function runScenarios(only?: string[]): Promise<{ results: UnitCase
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  return (await runScenarios()).results;
+  // 只供本地迭代：RELIABILITY_SCENARIOS_ONLY=S14,S15 只跑点名的场景（发布门与收口不设，全量执行）。
+  const only = process.env.RELIABILITY_SCENARIOS_ONLY?.split(',').map(id => id.trim()).filter(Boolean);
+  return (await runScenarios(only?.length ? only : undefined)).results;
 }

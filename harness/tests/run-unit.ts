@@ -442,6 +442,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   // plan 1dbe4fa4 t2：十三个事故场景的确定性重放（真实链路 / 运行时链 / 子进程 / 函数级），事实由 t1 采集器求出；
   // 进程内跑 goalMain，排在 device-session 之后。release-only；RELIABILITY_RESULTS_OUT 设置时写出实测。
   { id: 'reliability-scenarios', modulePath: './unit/reliability-scenarios.unit.test', releaseOnly: true },
+  // plan 9c3d7e1a：设计权威修复的自动接手与同任务续跑（快照宿主 + 真 harness；run 内调和、锁边界、修后续跑）。release-only。
+  { id: 'design-authority-repair', modulePath: './unit/design-authority-repair.unit.test', releaseOnly: true },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =

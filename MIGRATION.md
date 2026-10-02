@@ -47,11 +47,41 @@
   `blocker_count` 与重试签名；只由关键跳过或文档缺失引起时照常列出。脚本报告、控制台与合并报告里的阻断计数与 summary 一致。
 - **归因**：`ref_elements_excluded` 与 `authoritative_content_aligned` 失败时 goal 归为确定性门禁 / 产物缺失，不再当作代码回归，
   重试提示词不再要求先回退此前的改动。
-- **设计权威本身有问题时，goal 第一次遇到就停，交给设计 owner**：`authoritative_content_aligned` 判出设计权威投影不可用（details 以
-  `authority_projection_invalid` 开头），或 Change Unit 施工投影要求回 P1 调和蓝图（如 `cu_scope_matches_blueprint`）时，检查结果带
-  `repair_owner: external`，goal 不再在当前阶段重试到"无进展"才停，而是首次即以 `execution_scope_unresolved` 停下，说明写明原因、
-  责任方是设计 owner、下一步是在 `/component-design` 修好蓝图 / CU、经 readiness 升版后重新发起同一请求。手写产物没对齐（漂移）的情形不变，
-  仍由当前阶段修复与重试。
+- **设计权威本身有问题时，goal 不再在当前阶段重试到"无进展"才停**（plan 9c3d7e1a 补全了修复与续跑）：`authoritative_content_aligned`
+  判出设计权威投影不可用（details 以 `authority_projection_invalid` 开头），或 Change Unit 施工投影要求回 P1 调和蓝图
+  （如 `cu_scope_matches_blueprint`）时，检查结果带 `repair_owner: external`，按两类处理：
+  - **蓝图升了版、CU 指针还指着旧 revision**（CU 的阻断项只有 `change_unit_blueprint_ref_stale`）：框架在同一个 run 内把指针原位升版，
+    当前阶段原地重评并算一轮内容重试，不新建 run、不需要操作者动作；事件流多一条只作记录的 `design_authority_repair`。
+    本 CU 被调和跳过、调和遇到另一执行者持锁（竞争退出）、或该阶段内容重试次数已用完时，落到下一条的停机，说明写明原因；
+    竞争退出时等对方结束后重发同一请求即可，不需要改设计内容（锁释放本身不会让 supervisor 唤醒）。
+  - **其余情形**：首次即以 `execution_scope_unresolved` 停下并停放（释放 feature 锁，不做进程内等待）。停机说明与 `phase_halt` 事件带
+    B1 / B2 分类和修复简报（B1 = 在既有授权内、依据明确，设计 owner 照 `/component-design` 直接修；B2 = 需要有权者先裁决或补事实），
+    并挂探针 `design_authority_projectable`。修好（经 readiness 升版）后重新发起同一请求即续跑：冻结的输入绑定仍有效就重新接入同一 run，
+    由蓝图派生的绑定已失效就自动起后继，都不需要旗标（有人在场的入口同样如此）；已启用 supervisor 时，无人值守的 run（owner 是进程）
+    探针就绪会自动拉起，有人在场的 run（owner 是会话）supervisor 不拉起，由会话重新发起同一请求接入。
+  - **无人值守时 B1 可由框架自动接手（默认关闭）**：在个人配置 `framework.local.json` 写 `"design_repair": { "unattended_b1": true }`
+    （只有布尔 `true` 开启，其它值一律未授权）后，无人值守的 run（owner 是进程）遇到整体为 B1 的停机，框架在同一 run 内先派一次修复：
+    两层锁内（蓝图锁 + 该蓝图下全部 CU 的 feature 锁）只在 run 目录下的草稿里改蓝图，编写与独立质询两次隔离调用，准入由机器派生写回，
+    校验通过才原子发布、同一锁内调和、再用同一探针判定；修好且冻结绑定仍有效就原地继续，绑定失效则停放、由 supervisor 或重发起后继。
+    边界：有人在场、B2、未预授权、该阶段内容重试已用完都不派发；同一停机签名（feature + 阶段 + 检查与原因码）跨 resume 与后继只试一次，
+    取不到锁时不派发也不消耗机会（两个 run 同时撞上可能都停放，需重发一次）；编写调用只许改本次 B1 发现项定位到的位置（改了别处即作废、不发布，失败步骤 `author_scope`，停在设计 owner 出口）；发布前失败不发布；发布成功不等于修复成功，发布后不回滚，
+    没恢复就按新状态停机；调用改了草稿之外的文件（含蓝图工作区里各 run 的事件、manifest、run-control，以及蓝图 `source_ref`
+    引用的文件，即使在 `context/`、`reports/` 下），或改动无从核实（调用后快照不可验证、编写调用新引用了调用前没核对的文件），
+    都以既有违规停机 `backtrack_target_absent` 终止 run；工程文件只检测不还原，被改的事件文件由框架整份写回"调用前字节 + 框架本次
+    写入的行"；只有检出具体改动时才有带路径与哈希的 `phase_write_violation`；调用的子进程没能证明已结束时不做核对、
+    不发布、不启动下一次调用，以既有停机 `agent_containment_unresolved` 终止 run（不挂设计探针）；发布后评审投影
+    `component-blueprint.review.md` 过期、不自动重生成。两次调用计入调用次数与墙钟，不重置预算。`authority_cu_mapping_stale` 的修法是
+    删掉蓝图里可省略的 `contracts.change_unit.change_unit_ref`（由投影按当前 CU 填入），不是改指当前 CU。
+  - **探针就绪算一种变化**（`external_condition_ready`，接续决策的第七种）：对所有带探针的停机（设备、能力预检、候选写回、设计权威）
+    都适用，条件修好后无人值守的重发不再等 5 分钟冷却；探针没就绪时只是这一种变化不成立，其它变化与冷却仍按既有规则判断
+    （例如框架在 run 内调和时改写过 contracts.yaml，算相关修复变化，重发会立即重新接入并以原因再停）。
+  - **supervisor 的重启上限（3 次）改为按任务累计**：起后继之后沿承接关系继续累计、不清零；supervisor 拉起的 `--resume`
+    在探针就绪而冻结绑定已失效时会由 runner 改为起后继。
+  - `/component-design` 的 readiness 在调和取不到锁时报忙（`ready: false`，`blueprintRefs.busy` 带说明）且不给结论：
+    表示另一执行者正在写入，稍后重跑即可。
+
+  手写产物没对齐（漂移）的情形不变，仍由当前阶段修复与重试。操作说明见
+  [goal 模式运行手册](docs/operations/goal-mode-runbook.md)「设计权威出问题时」。
 - **排除登记在返修授权处也核引文**：`ref-elements.yaml` 里 `disposition: excluded` 的元素，只有 `requirement_quote` 逐字出现在当前需求原文里
   才在 testing 视觉返修中按"需求排除"处理；核验不了（引文不逐字、缺引文、读不到需求原文）时这条排除登记本身不起作用——ui-spec 已声明的元素缺陷照常返修，
   未声明的只披露。之后仍按缺陷方向判定：多出来的内容（`unexpected_render`）自身带的引文逐字出现在当前需求原文里时，照样授权删除。

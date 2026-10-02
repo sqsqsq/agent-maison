@@ -253,6 +253,17 @@
           "description": "AVD name used by the managed fallback (e.g. \"Pura 90\")"
         }
       }
+    },
+    "design_repair": {
+      "type": "object",
+      "description": "Pre-authorization for design repairs the framework may dispatch on its own (plan 9c3d7e1a §5.5).",
+      "properties": {
+        "unattended_b1": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, an unattended run that halts on a B1 design-authority failure (repairable within existing authority) may dispatch one isolated repair attempt per halt signature. Only boolean true enables it; absent or any other value means not authorized."
+        }
+      }
     }
   },
   "additionalProperties": false

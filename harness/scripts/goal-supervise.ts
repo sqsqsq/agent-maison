@@ -23,7 +23,7 @@ import * as path from 'path';
 import minimist from 'minimist';
 import { detectRepoLayout } from '../repo-layout';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
-import { superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
+import { countSupervisorRestarts, superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
 import { defaultProcessProbe } from './utils/device-session';
 import {
   pidExists,
@@ -35,6 +35,7 @@ import { featureDir } from '../config';
 import { readRunControl, type RunControlV1 } from './utils/goal-run-control';
 import { HANDOFF_REQUEST_NAME, isValidHandoffRequest } from './utils/goal-handoff';
 import { inspectGoalRunCreationFiles } from './utils/goal-run-creation';
+import { FEATURE_LOCK_NAME, releaseLock, tryAcquireLock } from './utils/goal-run-lock';
 
 interface ResolvedRun {
   runId: string;
@@ -113,6 +114,34 @@ function gateSupervisorOwner(runDir: string, runId: string): OwnerGate {
     };
   }
   return { action: 'process', control };
+}
+
+/**
+ * plan 9c3d7e1a §5.2：起后继不重置重启上限。沿本 run 审计过的 supersede 目标往回，累加同一交付周期内被承接 run 上已记的
+ * 重启次数；已完成的 run 属于上一个交付周期，不计也不再往回走。
+ */
+function inheritedSupervisorRestarts(runDir: string): number {
+  const runsDir = path.dirname(runDir);
+  const seen = new Set<string>([path.basename(runDir)]);
+  let total = 0;
+  const visit = (dir: string, self: boolean): void => {
+    const eventsPath = path.join(dir, 'events.jsonl');
+    if (!fs.existsSync(eventsPath)) return;
+    const events = loadAuthoritativeEvents(eventsPath) as unknown as Array<Record<string, unknown>>;
+    if (!self) {
+      const end = [...events].reverse().find((event) => event.type === 'run_end');
+      if (end && (end.status === 'CHAIN_SLICE_COMPLETED' || end.status === 'COMPLETED')) return;
+      total += countSupervisorRestarts(events);
+    }
+    for (const event of events) {
+      const target = event.type === 'supersede' && typeof event.target_run_id === 'string' ? event.target_run_id : '';
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      visit(path.join(runsDir, target), false);
+    }
+  };
+  visit(runDir, true);
+  return total;
 }
 
 /** 该终局结论是否已记过——同一结论只落一次，防周期任务把事件流刷爆。 */
@@ -283,126 +312,152 @@ async function main(): Promise<number> {
     console.log(`[goal-supervise] run=${run.runId} → no_op：${ownerGate.reason}`);
     return 0;
   }
-  const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
-  const decision = superviseRun({
-    projectRoot, reportDir: run.reportDir, runId: run.runId, events,
-    conditionProbe: (probe, phase) => runConditionProbe(projectRoot, run.reportDir, probe, phase),
-  });
+  const decide = () => {
+    const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
+    const decision = superviseRun({
+      projectRoot, reportDir: run.reportDir, runId: run.runId, events,
+      conditionProbe: (probe, phase) => runConditionProbe(projectRoot, run.reportDir, probe, phase),
+      inheritedRestarts: inheritedSupervisorRestarts(run.runDir),
+    });
+    return { events, decision };
+  };
 
-  console.log(`[goal-supervise] run=${run.runId} → ${decision.action}：${decision.reason}`);
-  if (decision.action !== 'resume') {
-    // 判定不介入/不重启**不是失败**——supervisor 的职责就是分辨该不该拉。
-    // codex 订正：**no_op 不落事件**。feature 级计划任务不随 run 完成而消失，
-    // 每 5 分钟落一条 = 已完成/长期 WAITING 的 run 每天多 288 条零信息事件，
-    // 而且都出现在 run_end 之后。终局类结论有审计价值，但**只记一次**（去重）。
-    if (decision.action !== 'no_op' && !hasObservation(events, decision.action)) {
-      appendSupervisorEvent(run.eventsPath, {
-        type: 'supervisor_observation', run_id: run.runId,
-        action: decision.action, reason: decision.reason,
-      });
-    }
-    return 0;
+  // 退避（首次为 0）——防重启风暴，退避值与重启序号同源自决策核。在锁外睡：最长 10 分钟，持锁睡会挡住
+  // 人工 resume 与同蓝图的设计修复；睡完在锁内重读重判（见下）。
+  const preview = decide().decision;
+  if (!argv['dry-run'] && preview.action === 'resume' && preview.backoff_ms > 0) {
+    console.log(`[goal-supervise] 退避 ${Math.round(preview.backoff_ms / 1000)}s 后重启…`);
+    await new Promise((r) => setTimeout(r, preview.backoff_ms));
   }
 
-  if (argv['dry-run']) {
-    console.log(`[goal-supervise] dry-run：本会退避 ${decision.backoff_ms}ms 后 --resume（第 ${decision.restart_seq} 次）`);
+  // plan 9c3d7e1a t6（codex 第三轮）：写本 run 的事件与决定拉起都在该 feature 的锁内。取不到 = 有人持有
+  // （run 在跑，或同蓝图的设计修复正持锁——修复按整文件期望值核对事件文件，锁外追加会被判越界并写回）
+  // → 本轮不写、不拉起。拉起在放锁之后（子进程自己取锁）。
+  const lockPath = path.join(path.dirname(run.runDir), FEATURE_LOCK_NAME);
+  const lock = tryAcquireLock(lockPath, {});
+  if (!lock) {
+    console.log(`[goal-supervise] run=${run.runId} → no_op：feature 锁被持有（run 在跑或同蓝图的设计修复进行中），本轮不写事件、不拉起`);
     return 0;
   }
-
-  // t3（plan c6a9e4d2）：接管守卫——只允许在确认旧 owner（guardian）死亡后拉起：
-  //   · 任一 guardian 严格身份匹配且存活 → 旧 owner 未死 → 维持退避、保留 cooldown，
-  //     不拉起（多未闭合逐项检查，不漏更早孤儿）；
-  //   · 未闭合 invoke 却无任何 Job 绑定（旧版 run）→ fail-closed，人工清理，
-  //     不自动拉起（--force-resume 是人工确认路径，supervisor 不代其确认）；
-  //   · guardian 已不存在/身份不匹配/不可核实 → 不阻断（警告），确认旧 owner 死亡
-  //     成立后照常拉起；
-  //   · P1-3（review）：**所有允许拉起的分支统一追加受控 --force-resume**——旧 owner
-  //     确认死亡即视为受控恢复现场；若最后一个 events run_end 是 HALTED，不带 force
-  //     会被 terminal guard 拒绝，恢复再次失效。cooldown 语义保留在 runner 端
-  //     （force 不 bypass cooldown）。
-  const guardianState = reconcileGuardianOwnership(events, activeProcessProbe(), activePidExists());
-  if (guardianState.kind === 'legacy_run') {
-    console.log(
-      `[goal-supervise] 旧版 run 无 Job 绑定事件（${guardianState.reason}）——`
-      + 'fail-closed 需人工清理，supervisor 不自动拉起',
-    );
-    if (!hasObservation(events, 'legacy_needs_manual')) {
-      appendSupervisorEvent(run.eventsPath, {
-        type: 'supervisor_observation',
-        run_id: run.runId,
-        action: 'legacy_needs_manual',
-        reason: guardianState.reason,
-      });
-    }
-    return 0;
-  }
-  if (guardianState.kind === 'outcomes') {
-    const aliveMatch = guardianState.items.find((i) => i.kind === 'guardian_alive_matching');
-    if (aliveMatch && aliveMatch.kind === 'guardian_alive_matching') {
-      console.log(
-        `[goal-supervise] 接管守卫：guardian(pid=${aliveMatch.bound.pid}) 仍存活且身份严格匹配` +
-        '——旧 owner 未死，维持退避不拉起',
-      );
-      if (!hasObservation(events, 'owner_alive')) {
+  try {
+    const { events, decision } = decide();
+    console.log(`[goal-supervise] run=${run.runId} → ${decision.action}：${decision.reason}`);
+    if (decision.action !== 'resume') {
+      // 判定不介入/不重启**不是失败**——supervisor 的职责就是分辨该不该拉。
+      // codex 订正：**no_op 不落事件**。feature 级计划任务不随 run 完成而消失，
+      // 每 5 分钟落一条 = 已完成/长期 WAITING 的 run 每天多 288 条零信息事件，
+      // 而且都出现在 run_end 之后。终局类结论有审计价值，但**只记一次**（去重）。
+      if (decision.action !== 'no_op' && !hasObservation(events, decision.action)) {
         appendSupervisorEvent(run.eventsPath, {
-          type: 'supervisor_observation',
-          run_id: run.runId,
-          action: 'owner_alive',
-          reason: `guardian(pid=${aliveMatch.bound.pid}) 身份匹配且存活——不拉起`,
+          type: 'supervisor_observation', run_id: run.runId,
+          action: decision.action, reason: decision.reason,
         });
       }
       return 0;
     }
-    for (const item of guardianState.items) {
-      if (item.kind === 'guardian_identity_unverifiable') {
-        console.warn(`[goal-supervise] ⚠ 接管守卫：${item.reason}（不杀、不阻断，照常拉起）`);
+
+    if (argv['dry-run']) {
+      console.log(`[goal-supervise] dry-run：本会退避 ${decision.backoff_ms}ms 后 --resume（第 ${decision.restart_seq} 次）`);
+      return 0;
+    }
+    // 睡的是锁外那次判定的退避；锁内这次若要求退避而序号对不上（期间另一轮 supervisor 已拉起过），本轮让给下一轮。
+    if (decision.backoff_ms > 0 && !(preview.action === 'resume' && preview.restart_seq === decision.restart_seq)) {
+      console.log(`[goal-supervise] run=${run.runId} → no_op：退避期间重启序号已变（第 ${decision.restart_seq} 次），下一轮再判`);
+      return 0;
+    }
+
+    // t3（plan c6a9e4d2）：接管守卫——只允许在确认旧 owner（guardian）死亡后拉起：
+    //   · 任一 guardian 严格身份匹配且存活 → 旧 owner 未死 → 维持退避、保留 cooldown，
+    //     不拉起（多未闭合逐项检查，不漏更早孤儿）；
+    //   · 未闭合 invoke 却无任何 Job 绑定（旧版 run）→ fail-closed，人工清理，
+    //     不自动拉起（--force-resume 是人工确认路径，supervisor 不代其确认）；
+    //   · guardian 已不存在/身份不匹配/不可核实 → 不阻断（警告），确认旧 owner 死亡
+    //     成立后照常拉起；
+    //   · P1-3（review）：**所有允许拉起的分支统一追加受控 --force-resume**——旧 owner
+    //     确认死亡即视为受控恢复现场；若最后一个 events run_end 是 HALTED，不带 force
+    //     会被 terminal guard 拒绝，恢复再次失效。cooldown 语义保留在 runner 端
+    //     （force 不 bypass cooldown）。
+    const guardianState = reconcileGuardianOwnership(events, activeProcessProbe(), activePidExists());
+    if (guardianState.kind === 'legacy_run') {
+      console.log(
+        `[goal-supervise] 旧版 run 无 Job 绑定事件（${guardianState.reason}）——`
+        + 'fail-closed 需人工清理，supervisor 不自动拉起',
+      );
+      if (!hasObservation(events, 'legacy_needs_manual')) {
+        appendSupervisorEvent(run.eventsPath, {
+          type: 'supervisor_observation',
+          run_id: run.runId,
+          action: 'legacy_needs_manual',
+          reason: guardianState.reason,
+        });
+      }
+      return 0;
+    }
+    if (guardianState.kind === 'outcomes') {
+      const aliveMatch = guardianState.items.find((i) => i.kind === 'guardian_alive_matching');
+      if (aliveMatch && aliveMatch.kind === 'guardian_alive_matching') {
+        console.log(
+          `[goal-supervise] 接管守卫：guardian(pid=${aliveMatch.bound.pid}) 仍存活且身份严格匹配` +
+          '——旧 owner 未死，维持退避不拉起',
+        );
+        if (!hasObservation(events, 'owner_alive')) {
+          appendSupervisorEvent(run.eventsPath, {
+            type: 'supervisor_observation',
+            run_id: run.runId,
+            action: 'owner_alive',
+            reason: `guardian(pid=${aliveMatch.bound.pid}) 身份匹配且存活——不拉起`,
+          });
+        }
+        return 0;
+      }
+      for (const item of guardianState.items) {
+        if (item.kind === 'guardian_identity_unverifiable') {
+          console.warn(`[goal-supervise] ⚠ 接管守卫：${item.reason}（不杀、不阻断，照常拉起）`);
+        }
       }
     }
+    // 到达此处 = 旧 owner 死亡已确认（guardian 不存在/不可核实/无未闭合）——统一受控 force。
+    const allowedForceResume = true;
+
+    // **先落事件再拉起**：崩在 spawn 之前也已计数，避免「拉起失败但没记账」导致无限重试
+    appendSupervisorEvent(run.eventsPath, {
+      type: 'supervisor_restart', action: 'resume',
+      run_id: run.runId,
+      restart_seq: decision.restart_seq,
+      backoff_ms: decision.backoff_ms,
+      reason: decision.reason,
+    });
+
+    // plan 4e6fb3b6 §5.3：原"事件带 successor_required 就改起后继 run"一支已删——生产代码
+    // 没有任何产出方（检索证据见该 plan 实施记录）。supervisor 只拉起 `--resume`，不做判断；
+    // 原 run 继续还是起后继由 runner 的恢复入口决定（plan 9c3d7e1a §5.3）。
+    const runnerArgs = [
+      runnerScriptPath(),
+      '--feature', feature,
+      '--resume', run.runId,
+      // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
+      // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层
+      // 已维持退避。cooldown 语义保留在 runner 端（force 不 bypass cooldown）。
+      ...(allowedForceResume ? ['--force-resume'] : []),
+      '--detach',
+    ];
+    // 放锁后再拉起（子进程自己取锁）；拉起之后不再写本 run 的事件——原 supervisor_restart_spawned 已删：
+    // 它落在锁外，且子进程 pid 由 runner 自己的 beacon 与事件记录。
+    releaseLock(lockPath, lock.ownerId);
+    const spawnImpl = injectedSpawnImpl ?? spawn;
+    const child = spawnImpl(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
+      cwd: projectRoot,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    console.log(`[goal-supervise] 已拉起 goal-runner --resume ${run.runId}（detached, pid=${child.pid ?? '?'}）`);
+    return 0;
+  } finally {
+    // 幂等：已放或已被拉起的子进程取走（ownerId 不同）时不动。
+    releaseLock(lockPath, lock.ownerId);
   }
-  // 到达此处 = 旧 owner 死亡已确认（guardian 不存在/不可核实/无未闭合）——统一受控 force。
-  const allowedForceResume = true;
-
-  // 退避（首次为 0）——防重启风暴，退避值与重启序号同源自决策核
-  if (decision.backoff_ms > 0) {
-    console.log(`[goal-supervise] 退避 ${Math.round(decision.backoff_ms / 1000)}s 后重启…`);
-    await new Promise((r) => setTimeout(r, decision.backoff_ms));
-  }
-
-  // **先落事件再拉起**：崩在 spawn 之前也已计数，避免「拉起失败但没记账」导致无限重试
-  appendSupervisorEvent(run.eventsPath, {
-    type: 'supervisor_restart', action: 'resume',
-    run_id: run.runId,
-    restart_seq: decision.restart_seq,
-    backoff_ms: decision.backoff_ms,
-    reason: decision.reason,
-  });
-
-  // plan 4e6fb3b6 §5.3：原"事件带 successor_required 就改起后继 run"一支已删——生产代码
-  // 没有任何产出方（检索证据见该 plan 实施记录）。supervisor 只恢复同一个 run。
-  const runnerArgs = [
-    runnerScriptPath(),
-    '--feature', feature,
-    '--resume', run.runId,
-    // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
-    // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层
-    // 已维持退避。cooldown 语义保留在 runner 端（force 不 bypass cooldown）。
-    ...(allowedForceResume ? ['--force-resume'] : []),
-    '--detach',
-  ];
-  const spawnImpl = injectedSpawnImpl ?? spawn;
-  const child = spawnImpl(process.execPath, [require.resolve('ts-node/dist/bin.js'), ...runnerArgs], {
-    cwd: projectRoot,
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  child.unref();
-  console.log(`[goal-supervise] 已拉起 goal-runner --resume ${run.runId}（detached, pid=${child.pid ?? '?'}）`);
-  appendSupervisorEvent(run.eventsPath, {
-    type: 'supervisor_restart_spawned', run_id: run.runId,
-    restart_seq: decision.restart_seq, pid: child.pid ?? null,
-  });
-  return 0;
 }
 
 // CLI 入口守卫：纯函数需可被单测 import（同 goal-monitor 的教训）
@@ -419,6 +474,7 @@ export {
   resolveRun as __testing_resolveRun,
   taskName as __testing_taskName,
   runConditionProbe as __testing_runConditionProbe,
+  inheritedSupervisorRestarts as __testing_inheritedSupervisorRestarts,
 };
 // 进程内入口（测试用）：非 dry-run 分支必须真跑一次才算验收，见 supervisor-kill-recovery
 export { main as __testing_main };

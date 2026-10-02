@@ -39,6 +39,16 @@ export function validateComponentBlueprint(
 ): BlueprintIssue[] {
   const blueprint = asRecord(value);
   if (!blueprint) return [issue('component_blueprint_root_invalid', '$', 'canonical YAML 根对象必须是 map。')];
+  const out = validateComponentBlueprintUpstream(blueprint, context);
+  out.push(...validateBlueprintAdmission(blueprint, out));
+  return out;
+}
+
+/** 准入之前的全部校验——准入派生（`deriveBlueprintAdmission`）的输入；无人值守修复写回准入时与校验器同源取用。 */
+export function validateComponentBlueprintUpstream(
+  blueprint: BlueprintRecord,
+  context: ComponentBlueprintValidationContext = {},
+): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   for (const violation of validateLiteSchema(blueprint, loadBlueprintSchema())) {
     out.push(issue('component_blueprint_schema_invalid', violation.path, violation.message));
@@ -75,7 +85,6 @@ export function validateComponentBlueprint(
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);
-  out.push(...validateBlueprintAdmission(blueprint, out));
   return out;
 }
 

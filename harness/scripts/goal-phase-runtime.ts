@@ -71,7 +71,16 @@ import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
-import { loadLocalConfig as loadFrameworkLocalConfig, resolveApprovedModels } from './utils/framework-local-config';
+import { loadLocalConfig as loadFrameworkLocalConfig, resolveApprovedModels, resolveUnattendedB1Repair } from './utils/framework-local-config';
+import {
+  designRepairAttempted,
+  designRepairInvokeLabel,
+  designRepairSignature,
+  runUnattendedDesignRepair,
+  type DesignRepairInvokeOutcome,
+  type DesignRepairPurpose,
+  type UnattendedDesignRepairResult,
+} from './utils/design-repair-unattended';
 import {
   clampFidelityByCapability,
   computeRequirementShaFromText,
@@ -118,6 +127,9 @@ import {
 } from './utils/verify-feature-completion';
 import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
+import { parseChangeUnitFeatureId, pointerStaleCandidate } from './utils/change-unit-path';
+import { reconcileChangeUnitBlueprintRefs, type BlueprintRefReconciliation, type HeldFeatureLock } from './utils/change-unit-design-preparation';
+import { classifyDesignAuthorityCodes, diagnoseDesignAuthority, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, isP0DeviceInteractive } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
@@ -154,6 +166,7 @@ import {
   successorBoundsConflicts,
   successorBoundsRefusal,
   evaluateFreshRunContinuation,
+  staleFrozenBindings,
   loadEffectiveExecutionScope,
   applyScopeRevisions,
   eventsWithScopeRevocations,
@@ -477,6 +490,7 @@ import {
   classifyPhaseInvocationChanges,
   diffPhaseInvocationSnapshots,
   renderPhaseWriteBoundaryGuidance,
+  resolvePhasePathOwnership,
   resolvePhaseWriteBoundary,
   type PhaseWriteBoundaryResolution,
   type PhaseInvocationChange,
@@ -547,6 +561,8 @@ let activeHarnessKill: (() => Promise<void>) | null = null;
 let featureLock: { path: string; ownerId: string; interval?: NodeJS.Timeout } | null = null;
 let runLock: { path: string; ownerId: string } | null = null;
 let runControl: { dir: string; token: RunFenceToken } | null = null;
+/** plan 9c3d7e1a §5.5：无人值守修复尝试期间多持的锁（蓝图锁 + 兄弟 feature 锁）；统一放锁与信号处理都经 releaseAllLocks 放掉。 */
+let designRepairLockRelease: (() => void) | null = null;
 
 
 /** Runtime substep for heartbeat / progress projection. */
@@ -648,6 +664,10 @@ function setupSignalHandlers(): void {
 }
 
 function releaseAllLocks(): void {
+  if (designRepairLockRelease) {
+    try { designRepairLockRelease(); } catch { /* best-effort */ }
+    designRepairLockRelease = null;
+  }
   if (runControl) {
     try { releaseRunOwner(runControl.dir, runControl.token, { allowQuiescing: true }); }
     catch { /* stale owner or already released */ }
@@ -671,15 +691,19 @@ export function setAppendEventBaseFields(fields: Record<string, unknown>): void 
   appendEventBaseFields = fields;
 }
 
+/**
+ * plan 9c3d7e1a §5.5：链外设计修复调用期间，运行时经唯一发射口写出的每一行事件（文件绝对路径、原样字节）——
+ * 调用结束后据此重建 events.jsonl 的期望值（调用前字节 + 本次运行时写出的行，原顺序）。不录时为 null。
+ */
+let eventLineRecorder: ((file: string, line: string) => void) | null = null;
+
 function appendEvent(reportDir: string, projectRoot: string, event: Record<string, unknown>): void {
   assertGoalBoundary('event_append');
   const abs = path.join(projectRoot, reportDir, 'events.jsonl');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.appendFileSync(
-    abs,
-    JSON.stringify({ ts: new Date().toISOString(), ...appendEventBaseFields, ...event }) + '\n',
-    'utf-8',
-  );
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...appendEventBaseFields, ...event }) + '\n';
+  fs.appendFileSync(abs, line, 'utf-8');
+  eventLineRecorder?.(abs, line);
 }
 
 /**
@@ -1379,6 +1403,33 @@ export function buildBacktrackTargetAbsentGuidance(targetPhase: string | null): 
   );
 }
 
+/**
+ * plan c6a9e4d2 t3：guardian 绑定核验——身份四元组完整（含 executable 绝对路径）且命令行含身份 token；
+ * 不成立即同步团灭并用独立通道复验消失（fail-closed），`stillAlive` = 未证明消失。阶段调用与链外设计修复调用共用。
+ */
+function bindGuardianOrKill(pid: number, guardianToken: string):
+  | { ok: true; identity: NonNullable<ReturnType<typeof identifyWithRetry>> }
+  | { ok: false; error: string; stillAlive: boolean } {
+  const identity = identifyWithRetry(pid, defaultProcessProbe());
+  const executableOk = typeof identity?.executable === 'string'
+    && identity.executable.trim().length > 0
+    && /^[a-zA-Z]:[\\/]/.test(identity.executable.trim());
+  const fail = (error: string): { ok: false; error: string; stillAlive: boolean } => {
+    const killed = terminateGuardianProcessOnly(pid);
+    const gone = awaitGuardianGone(pid);
+    return { ok: false, error, stillAlive: !killed || !gone };
+  };
+  if (!identity?.commandLine || !executableOk) {
+    return fail(`guardian(pid=${pid}) 身份不可得/命令行不可读/可执行文件非绝对路径——` +
+      'Windows containment 绑定失败，立即团灭并复验消失（fail-closed）');
+  }
+  if (!identity.commandLine.includes(guardianToken)) {
+    return fail(`guardian(pid=${pid}) 命令行不含身份 token「${guardianToken}」——` +
+      '绑定失败，立即团灭并复验消失（fail-closed）');
+  }
+  return { ok: true, identity };
+}
+
 type DesignOwnerBlocker = { id?: string; details_excerpt?: string; repair_owner?: string; blocking_class?: string };
 
 /**
@@ -1392,15 +1443,80 @@ export function designOwnerBlockers(blockers: readonly DesignOwnerBlocker[] | un
 /** 复用既有停机原因 execution_scope_unresolved（外部类、首次即停）；说明写清原因、责任方与下一步。 */
 export function buildDesignOwnerGuidance(opts: {
   feature: string; runId: string; phase: string; blockers: readonly DesignOwnerBlocker[];
+  /** plan 9c3d7e1a §4.1：run 内指针调和没有修好本 CU 时的原因（调和器自带的跳过原因 / 竞争退出说明）。 */
+  reconcileNote?: string;
+  /** plan 9c3d7e1a §5.0：B1 / B2 分类与修复简报（哪条检查、哪个产物、依据、缺什么）。 */
+  brief?: DesignRepairBrief;
+  /** plan 9c3d7e1a §5.5：无人值守 B1 修复的结果（未派发 / 发布前失败 / 已发布但未恢复 / 已恢复但绑定失效）。 */
+  contentRepairNote?: string;
 }): string {
+  const b1 = opts.brief?.class === 'B1';
   return [
     `【${opts.feature} · run ${opts.runId} · ${opts.phase}】设计权威在本 run 内无法修复，已停止，不在当前阶段重试。`,
     '原因：',
     ...opts.blockers.map((b) => `  - ${b.id ?? '?'}：${truncateOneLine(b.details_excerpt ?? '', 400)}`),
+    ...(opts.reconcileNote ? [`框架已尝试在本 run 内原位升版 CU 指针，未完成：${opts.reconcileNote}`] : []),
+    ...(opts.contentRepairNote ? [`无人值守设计修复（预授权 design_repair.unattended_b1）：${opts.contentRepairNote}`] : []),
+    ...(opts.brief ? [
+      b1
+        ? '分类：B1——在既有授权内、依据明确，设计 owner 可以直接修，不需要新的产品决定。'
+        : '分类：B2——需要有权者先做决定、扩大范围或补事实，设计 owner 不能自行修；缺什么见下。',
+      '修复简报：',
+      ...opts.brief.items.map((item) => `  - 检查 ${item.check}${item.codes.length ? `［${item.codes.join(', ')}］` : ''}（${item.class}）→ 产物 ${item.artifacts.join('、') || '蓝图 / CU'}；${item.class === 'B1' ? '修法' : '缺'}：${item.needs.join('；')}`),
+    ] : []),
     '责任方：设计 owner（/component-design：canonical 蓝图与 Change Unit），不在 feature 阶段链内。',
     '下一步：在 /component-design 修复蓝图 / CU 中的上述问题，经 design-handoff readiness 原位升版 CU 指针并刷新派生投影，'
       + '然后重新发起同一请求（框架按接续决策选择续跑或起后继）。',
+    ...(opts.brief ? ['本 run 已停放并释放 feature 锁（readiness 调和要取这把锁）。修好后重新发起同一请求即自动续跑，冷却期内也可以、不需要任何旗标：'
+      + '冻结的输入绑定仍有效就重新接入本 run，已失效就自动起后继并承接本 run。已安装 supervisor 时探针就绪会自动拉起（同一任务最多 3 次，不重置，用完需人工重发）。'] : []),
   ].join('\n');
+}
+
+/** plan 9c3d7e1a §5.0：设计 owner 停机的分类与修复简报——停机事件、停机说明与探针消费同一份。 */
+export interface DesignRepairBrief { class: DesignRepairClass; items: DesignAuthorityFinding[] }
+
+/**
+ * 按 summary 里的设计 owner 阻断逐条给出原因码与分类：原因码来自只读重跑同一阶段的设计权威门（检查结果的 structured 通道，
+ * 不解析说明文本）；重跑没有对上的阻断按"原因码未登记"归 B2。整体分类：全部 B1 才是 B1。
+ */
+export function designRepairBrief(opts: {
+  projectRoot: string; frameworkRoot: string; feature: string; phase: string; blockers: readonly DesignOwnerBlocker[]; runId?: string;
+}): DesignRepairBrief {
+  let findings: DesignAuthorityFinding[] = [];
+  try {
+    const diagnosis = diagnoseDesignAuthority(opts.projectRoot, opts.frameworkRoot, opts.feature, opts.phase, opts.runId);
+    if (diagnosis.unevaluable) console.warn('[design-authority] 分类用的重跑不可用（按原因码未登记归 B2）：' + diagnosis.unevaluable);
+    findings = diagnosis.findings;
+  } catch { findings = []; }
+  const items = opts.blockers.map((blocker) => {
+    const found = findings.find((finding) => finding.check === blocker.id);
+    const unlisted = classifyDesignAuthorityCodes([]);
+    return found
+      ? { ...found, basis: truncateOneLine(found.basis, 400) }
+      : { check: blocker.id ?? '?', codes: [], class: unlisted.class, artifacts: [], basis: truncateOneLine(blocker.details_excerpt ?? '', 400), needs: unlisted.needs };
+  });
+  return { class: items.length > 0 && items.every((item) => item.class === 'B1') ? 'B1' : 'B2', items };
+}
+
+/**
+ * plan 9c3d7e1a §4.1：A 类（指针过期）run 内调和——调用既有唯一 writer，成败按**本 CU** 判：
+ * 本 CU 被升版或已是当前身份 = ok；本 CU 被跳过、竞争退出、调和抛错 = 不 ok（落回设计 owner 停机）。
+ * 同一蓝图下其它 CU 的跳过只随结果披露。`heldFeatureLock` = 运行时对本 feature 已持有的锁，借给调和器。
+ */
+export function reconcilePointerInRun(opts: {
+  projectRoot: string; feature: string; heldFeatureLock?: HeldFeatureLock | null;
+}): { ok: boolean; blueprintId: string; reason: string } & Pick<BlueprintRefReconciliation, 'bumped' | 'skipped'> {
+  const { blueprintId, changeUnitId } = parseChangeUnitFeatureId(opts.feature);
+  try {
+    const result = reconcileChangeUnitBlueprintRefs(opts.projectRoot, blueprintId, { heldFeatureLocks: opts.heldFeatureLock ? [opts.heldFeatureLock] : [] });
+    const own = result.skipped.find((item) => item.change_unit_id === changeUnitId);
+    const reason = result.busy
+      ?? (own ? `本 CU 被调和器跳过：${own.reasons.join('；')}`
+        : result.bumped.some((item) => item.change_unit_id === changeUnitId) ? '本 CU 指针已原位升版' : '本 CU 指针已是当前蓝图身份');
+    return { ok: !result.busy && !own, blueprintId, bumped: result.bumped, skipped: result.skipped, reason };
+  } catch (error) {
+    return { ok: false, blueprintId, bumped: [], skipped: [], reason: `调和失败：${(error as Error).message}` };
+  }
 }
 
 /** 把 gate 的真实末尾错误压缩成可直接回喂下一轮的有界文本。 */
@@ -4310,7 +4426,7 @@ function decideLaunchContinuation(
   argv: minimist.ParsedArgs,
   projectRoot: string,
   feature: string,
-  opts: { plain: true; requirementSources?: string[]; attended?: boolean },
+  opts: { plain: true; requirementSources?: string[]; attended?: boolean; runProbe?: (probe: string, phase: string) => ConditionProbeResult },
 ): RunContinuationDecision {
   let model: string | undefined;
   try { model = normalizeAdapterModelCliValue(argv['adapter-model']); } catch { model = undefined; /* 非法值由既有校验报错 */ }
@@ -4321,7 +4437,17 @@ function decideLaunchContinuation(
     budgetOverride: Boolean(argv['override-manifest']),
     ...(opts.attended ? { attended: true } : {}),
   };
-  return decideRunContinuation({ projectRoot, feature, call });
+  const runProbe = opts.runProbe;
+  return decideRunContinuation({ projectRoot, feature, call, ...(runProbe ? { runProbe: (_dir: string, probe: string, phase?: string) => runProbe(probe, phase ?? '') } : {}) });
+}
+
+/**
+ * plan 9c3d7e1a §5.3：显式 `--resume <run>`（supervisor 拉起 / 操作者手工）也经同一恢复判断——去掉显式旗标后的接续决策若是
+ * "停机所挂探针已就绪、冻结绑定已失效，从该 run 起后继"，本次调用就按起后继走，不在原 run 上继续。其余情况 `--resume` 照原样。
+ */
+function resumeTurnsIntoSuccessor(argv: minimist.ParsedArgs, decision: RunContinuationDecision | null): boolean {
+  return Boolean(argv.resume) && !argv.force && !normalizeSupersedeTargets(argv.supersede).length
+    && decision?.kind === 'successor' && decision.change === 'external_condition_ready' && decision.targets.includes(String(argv.resume).trim());
 }
 
 /** 测试缝：detach 的子进程 spawn（缺省 child_process.spawn）；接线用例据此在进程内跑子进程那一半。 */
@@ -4347,9 +4473,23 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
     return 1;
   }
   const feature = raw.feature;
-  const isResume = raw.isResume;
+  let isResume = raw.isResume;
   let runId = raw.runId ?? newRunId();
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
+  let launchArgs = process.argv.slice(2);
+  // plan 9c3d7e1a §5.3：supervisor 只负责拉起 `--resume`；原 run 继续还是起后继由这里与子进程用同一判断决定。
+  if (isResume && !raw.dryRun) {
+    let recovery: RunContinuationDecision | null = null;
+    try { recovery = decideLaunchContinuation(argv, projectRoot, feature, { plain: true }); } catch { recovery = null; /* 判断不了就照原样恢复，由恢复守卫把关 */ }
+    if (resumeTurnsIntoSuccessor(argv, recovery)) {
+      console.log(`[goal-runner] --resume ${String(argv.resume)}：${recovery!.reason}——改为起后继并承接它`);
+      const resumeAt = launchArgs.indexOf('--resume');
+      launchArgs = launchArgs.filter((arg, index) => arg !== '--force-resume' && !arg.startsWith('--resume=') && (resumeAt < 0 || (index !== resumeAt && index !== resumeAt + 1)));
+      delete argv.resume;
+      isResume = false;
+      runId = newRunId();
+    }
+  }
 
   // plan 4e6fb3b6 §7.3：与前台同一个接续决策，在孤儿守卫与接续守卫之前执行。保持停止 = 不起子进程、不新建 run；
   // 重新接入 = 打印并等待那个既有 run（子进程按同一决策改写为恢复或附着）；新开与起后继照常给新 run id。
@@ -4423,7 +4563,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   const eventsPathAbs = path.join(reportDirAbs, 'events.jsonl');
   const baselineEventCount = fs.existsSync(eventsPathAbs) ? loadEventsJsonl(eventsPathAbs).length : 0;
 
-  const childArgs = buildDetachedChildArgv(process.argv.slice(2), runId, { resume: isResume });
+  const childArgs = buildDetachedChildArgv(launchArgs, runId, { resume: isResume });
   const preloadPath = resolveDetachedPreloadPath();
   const child = (injectedDetachSpawn ?? spawn)(
     process.execPath,
@@ -4773,8 +4913,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
     try { return resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot).feature; } catch { return undefined; /* 下方同一解析会如实报错 */ }
   })();
   const plainContinuation = !argv['dry-run'] && launchFeature
-    ? decideLaunchContinuation(argv, projectRoot, launchFeature, { plain: true, requirementSources: manifestArgv.requirement_source_files, attended: executorMode === 'attended' })
+    ? decideLaunchContinuation(argv, projectRoot, launchFeature, {
+        plain: true, requirementSources: manifestArgv.requirement_source_files, attended: executorMode === 'attended',
+        ...(options.conditionWait?.runProbe ? { runProbe: options.conditionWait.runProbe } : {}),
+      })
     : null;
+  // plan 9c3d7e1a §5.3：显式 --resume 也经同一恢复判断；判为起后继时去掉恢复旗标，下面按接续决策的"起后继"出生。
+  if (resumeTurnsIntoSuccessor(argv, plainContinuation)) {
+    console.log(`[goal-runner] --resume ${String(argv.resume)} 改为起后继（同一恢复判断）`);
+    delete argv.resume;
+    delete argv['force-resume'];
+  }
   const explicitContinuation = Boolean(argv.resume || attachCreatedRunId || normalizeSupersedeTargets(argv.supersede).length || argv.force);
   const continuationDecision: RunContinuationDecision | null = explicitContinuation ? null : plainContinuation;
   if (continuationDecision) {
@@ -6834,7 +6983,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         ...(options.conditionWait?.maxWaitMs !== undefined ? { maxWaitMs: options.conditionWait.maxWaitMs } : {}),
         ...(options.conditionWait?.pollMs !== undefined ? { pollMs: options.conditionWait.pollMs } : {}),
         runProbe: () => runProbe(probeName, phaseName),
-        recheck,
+        // plan 9c3d7e1a §5.3：进程内唤醒也经同一恢复判断——冻结绑定已失效时不在本进程里继续，立即停放；
+        // 停机事件带着探针，下一次重发或 supervisor 拉起由恢复入口起后继。
+        recheck: async (remainingMs) => {
+          let stale: string[] = [];
+          try { stale = dryRun ? [] : staleFrozenBindings(projectRoot, manifest.feature, manifest.run_id, phaseName); } catch { stale = []; }
+          if (stale.length) {
+            console.log(`\n[goal-runner] 条件已就绪，但本 run 冻结的输入绑定已失效（${stale.join('；')}）——停放；重新发起同一请求将自动起后继。\n`);
+            return 'park';
+          }
+          return recheck(remainingMs);
+        },
         emit: (event) => goalEvents.emit(event as Parameters<typeof appendEvent>[2]),
       });
     };
@@ -8056,28 +8215,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // 未证明消失置 guardianStillAlive（invoke 后阻断续跑，绝不落 settled）。
             if (containmentCtx && pid > 0) {
               guardianPidForCheck = pid;
-              const identity = identifyWithRetry(pid, defaultProcessProbe());
-              const executableOk = typeof identity?.executable === 'string'
-                && identity.executable.trim().length > 0
-                && /^[a-zA-Z]:[\\/]/.test(identity.executable.trim());
-              if (!identity?.commandLine || !executableOk) {
-                guardianBoundError =
-                  `guardian(pid=${pid}) 身份不可得/命令行不可读/可执行文件非绝对路径——` +
-                  'Windows containment 绑定失败，立即团灭并复验消失（fail-closed）';
-                const killed = terminateGuardianProcessOnly(pid);
-                const gone = awaitGuardianGone(pid);
-                if (!killed || !gone) guardianStillAlive = true;
+              const bound = bindGuardianOrKill(pid, guardianToken);
+              if (!bound.ok) {
+                guardianBoundError = bound.error;
+                if (bound.stillAlive) guardianStillAlive = true;
                 return;
               }
-              if (!identity.commandLine.includes(guardianToken)) {
-                guardianBoundError =
-                  `guardian(pid=${pid}) 命令行不含身份 token「${guardianToken}」——` +
-                  '绑定失败，立即团灭并复验消失（fail-closed）';
-                const killed = terminateGuardianProcessOnly(pid);
-                const gone = awaitGuardianGone(pid);
-                if (!killed || !gone) guardianStillAlive = true;
-                return;
-              }
+              const identity = bound.identity;
               goalEvents.emit({
                 type: 'agent_process_bound',
                 phase,
@@ -9302,6 +9446,82 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //（顺序见下方赋值处注释），这里只暂存事件体。plan 4e6fb3b6 返修起推进阻断停机
         //（closure_open / receipt_missing）也经此发出，故改名 postVerdictHaltEvent。
         let postVerdictHaltEvent: Record<string, unknown> | undefined;
+        let pointerReconcile: ReturnType<typeof reconcilePointerInRun> | undefined;
+        // plan 9c3d7e1a §5.5：设计 owner 阻断的分类与简报只算一次——无人值守派发与停机分支共用同一份。
+        let designBrief: DesignRepairBrief | undefined;
+        const designBriefNow = (): DesignRepairBrief => (designBrief ??= designRepairBrief({
+          projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase),
+          blockers: designOwnerBlockers(decisionSummary?.blockers), runId: manifest.run_id,
+        }));
+        let contentRepair: UnattendedDesignRepairResult | undefined;
+        let contentRepairStale: string[] = [];
+        /** 四个前提：无人值守（process owner）；分类 B1；个人配置预授权；本停机签名在本 run 与祖先回放里都没有 attempted。 */
+        const contentRepairEligible = (): boolean => {
+          if (runtimeOwnerKind !== 'process' || designBriefNow().class !== 'B1') return false;
+          let authorized = false;
+          try { authorized = resolveUnattendedB1Repair(loadFrameworkLocalConfig(projectRoot)); } catch { authorized = false; }
+          if (!authorized) return false;
+          const signature = designRepairSignature(manifest.feature, String(phase), designBriefNow().items);
+          return !designRepairAttempted([...ancestorBudgetEvents, ...loadAuthoritativeEvents(eventsPath)], signature);
+        };
+        /** 链外 adapter 调用：沿用 agent_invoke_start / end 计次（phase = 不属于阶段链的用途标识），每次调用前查剩余次数与墙钟，接既有收容与中断杀进程。 */
+        const invokeOutOfChain = async (purpose: DesignRepairPurpose, text: string): Promise<DesignRepairInvokeOutcome> => {
+          const label = designRepairInvokeLabel(purpose);
+          const elapsed = priorActiveMs + (Date.now() - sessionStartMs);
+          const budgetNow = checkRunBudget(totalTurns, manifest.budget.max_total_turns, elapsed, wallMs);
+          const timeoutMs = Math.min(effectiveAgentTimeoutMs, remainingWallMs());
+          if (budgetNow !== 'ok' || !(timeoutMs > 0)) {
+            return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
+          }
+          totalTurns++;
+          const outOfChainId = `${label}-i${totalTurns}`;
+          const dir = path.join(projectRoot, manifest.report_dir, 'phases', label, outOfChainId);
+          fs.mkdirSync(dir, { recursive: true });
+          const promptFile = path.join(dir, 'prompt.md');
+          fs.writeFileSync(promptFile, text, 'utf-8');
+          const logFile = path.join(dir, 'agent-output.log');
+          const outOfChainPlan = resolveHeadlessInvokePlan(manifest.adapter!, cap.capability!, manifest.unattended, text, {
+            PROMPT_FILE: promptFile, PROMPT: text, SKILL_PATH: path.join(frameworkRoot, 'skills', 'reference', 'design-repair-unattended.md'),
+            PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label,
+          }, manifest.adapter_model_pin?.value, sessionBinary?.binary ?? null);
+          goalEvents.emit({ type: 'agent_invoke_start', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, command: outOfChainPlan.label, effective_timeout_ms: timeoutMs });
+          flushProgress();
+          const token = `${manifest.run_id}/${outOfChainId}`;
+          const contained = process.platform === 'win32' ? { runId: manifest.run_id, invokeId: outOfChainId } : null;
+          let containmentError = null as string | null;
+          let containmentStillAlive = false;
+          const result = await (injectedInvokeAgent ?? invokeAgentHeadless)(outOfChainPlan, projectRoot, {
+            timeoutMs, deadlineMs: Date.now() + timeoutMs, outputLogPath: logFile, containment: contained,
+            extraEnv: {
+              MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: `i${totalTurns}`, MAISON_GOAL_ATTEMPT_PHASE: label,
+              ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}),
+            },
+            onActiveChild: ({ pid, kill }) => {
+              activeAgentKill = async () => { await kill(); };
+              if (contained && pid > 0) {
+                const bound = bindGuardianOrKill(pid, token);
+                if (!bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
+                goalEvents.emit({ type: 'agent_process_bound', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, pid, started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable, token });
+              }
+            },
+            onChildExit: () => { activeAgentKill = null; },
+          });
+          activeAgentKill = null;
+          // 与阶段调用同一处置（plan c6a9e4d2 P0-2）：绑定失败且 guardian 未证明消失——不落 invoke_end / settled（旧进程仍可能在野，
+          // 留给恢复对账），也不按普通失败收口；由决策梯走既有 agent_containment_unresolved 停机。
+          if (containmentError && containmentStillAlive) {
+            return { started: true, ok: false, containmentUnresolved: true, detail: `guardian 绑定失败且未证明消失：${containmentError}` };
+          }
+          goalEvents.emit({
+            type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, exit_code: result.exitCode,
+            duration_ms: result.duration_ms, timed_out: result.timed_out, kill_attempted: result.kill_attempted, effective_timeout_ms: timeoutMs,
+            ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}),
+          });
+          if (contained && !containmentError) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
+          flushProgress();
+          const ok = result.exitCode === 0 && result.timed_out !== true && !containmentError;
+          return { started: true, ok, detail: containmentError ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}` };
+        };
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
         if (repairCandidatesUnwritable) {
@@ -9557,6 +9777,100 @@ Goal runner — tool-agnostic multi-phase orchestrator
           ].join('\n');
           console.log(`\n${awaitConfirmGuidance}\n`);
         } else if (
+          // plan 9c3d7e1a §4.1：设计 owner 阻断且本 CU 只是蓝图指针过期 → 框架在本 run 内调用既有调和器（两层锁内）。
+          // 本 CU 修好即原地重评当前阶段（计一轮内容重试，预算用尽不调和）；没修好落到下一分支照常停机，说明附原因。
+          verdict !== 'PASS' &&
+          !resolved.stale_summary &&
+          !dryRun &&
+          designOwnerBlockers(decisionSummary?.blockers).length > 0 &&
+          retries < manifest.budget.max_retries_per_phase &&
+          pointerStaleCandidate(projectRoot, manifest.feature) &&
+          (pointerReconcile = reconcilePointerInRun({ projectRoot, feature: manifest.feature, heldFeatureLock: featureLock })).ok
+        ) {
+          driverGuardAction = 'retry';
+          console.log(`\n[design-authority] ${pointerReconcile!.reason}——当前阶段原地重评。\n`);
+        } else if (
+          // plan 9c3d7e1a §5.5：无人值守 B1 由框架派设计修复自动接手（计一轮内容重试，预算用尽不派发）。
+          // 已发布、调和与探针都过，且冻结绑定仍有效 → 同一 run 原地重评；其余结果落到下面的分支，停机说明附结果。
+          verdict !== 'PASS' &&
+          !resolved.stale_summary &&
+          !dryRun &&
+          designOwnerBlockers(decisionSummary?.blockers).length > 0 &&
+          retries < manifest.budget.max_retries_per_phase &&
+          contentRepairEligible() &&
+          (contentRepair = await runUnattendedDesignRepair({
+            projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase), runId: manifest.run_id,
+            reportDir: manifest.report_dir, brief: designBriefNow(),
+            signature: designRepairSignature(manifest.feature, String(phase), designBriefNow().items),
+            heldFeatureLock: featureLock,
+            runtimeWrites: featureLock ? [path.relative(projectRoot, featureLock.path)] : [],
+            emit: (event) => goalEvents.emit(event),
+            invoke: invokeOutOfChain,
+            registerLockRelease: (release) => { designRepairLockRelease = release; },
+            recordEventLines: () => {
+              const lines: Array<{ file: string; line: string }> = [];
+              eventLineRecorder = (file, line) => { lines.push({ file, line }); };
+              return () => { eventLineRecorder = null; return lines; };
+            },
+          })).outcome === 'published' &&
+          contentRepair.recovered &&
+          (contentRepairStale = staleFrozenBindings(projectRoot, manifest.feature, manifest.run_id, String(phase))).length === 0
+        ) {
+          driverGuardAction = 'retry';
+          console.log(`\n[design-authority] 无人值守修复：${contentRepair.reason}——冻结绑定仍有效，当前阶段原地重评。\n`);
+        } else if (contentRepair?.outcome === 'containment_unresolved') {
+          // 修复调用的子进程收容失败且未证明消失：与阶段调用同一既有处置——停机阻断续跑，不挂设计探针（旧进程可能仍在写）。
+          driverGuardAction = 'halt';
+          haltReason = 'agent_containment_unresolved';
+          const detailMsg = `无人值守设计修复的${contentRepair.step === 'author' ? '编写' : '质询'}调用：${contentRepair.reason}。`
+            + '旧 agent 无 Job 契约仍可能在野，halt 阻断续跑（真冲突勿自动覆盖）；修复未发布。';
+          awaitConfirmGuidance = detailMsg;
+          console.error(`\n===== agent_containment_unresolved =====\n${detailMsg}\n`);
+          postVerdictHaltEvent = {
+            type: 'phase_halt', phase, halt_reason: haltReason, detail: detailMsg.slice(0, 1000),
+            ...runDispositionFields(decide(
+              { incident: 'agent_containment_unresolved', phase: String(phase), detail: detailMsg },
+              NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
+            )),
+          };
+        } else if (contentRepair?.outcome === 'violation') {
+          // plan 9c3d7e1a §5.5 第 2 步：修复调用改了草稿之外的文件——既有越界写入违规处置（证据作废 + 违规记录）。
+          // 链外调用没有责任阶段可回退，走既有的违规停机出口；只检测，不承诺还原（被改文件由操作者的版本控制恢复）。
+          const violationFacts = contentRepair.changes.map((change) => {
+            let owner: ReturnType<typeof resolvePhasePathOwnership> | null = null;
+            try { owner = phaseWriteBoundary ? resolvePhasePathOwnership(phaseWriteBoundary, change.path) : null; } catch { owner = null; }
+            return {
+              path: change.path, how: change.how, owner: owner?.owner ?? null, owner_candidates: owner?.ownerCandidates ?? [],
+              violation: 'outside_design_repair_draft', pre_sha256: change.preSha256, post_sha256: change.postSha256, roles: owner?.roles ?? [],
+            };
+          });
+          const violationFingerprint = createHash('sha256')
+            .update(stableStringify({ phase: designRepairInvokeLabel(contentRepair.step), violations: violationFacts, reason: violationFacts.length ? undefined : contentRepair.reason }), 'utf8').digest('hex');
+          if (violationFacts.length) {
+            goalEvents.emit({
+              type: 'phase_write_violation', phase: designRepairInvokeLabel(contentRepair.step), chain_phase: String(phase),
+              recovery_reason: 'phase_write_violation', fingerprint: violationFingerprint,
+              violations: violationFacts.slice(0, 50), changed_count: violationFacts.length,
+              pre_snapshot: contentRepair.preSnapshot, post_snapshot: contentRepair.postSnapshot,
+            });
+          }
+          driverGuardAction = 'halt';
+          haltReason = 'backtrack_target_absent';
+          const caller = contentRepair.step === 'author' ? '编写' : '质询';
+          awaitConfirmGuidance = [
+            violationFacts.length
+              ? `【${manifest.feature} · run ${manifest.run_id} · ${phase}】无人值守设计修复的${caller}调用改了草稿之外的文件，修复作废、未发布。`
+              : `【${manifest.feature} · run ${manifest.run_id} · ${phase}】无人值守设计修复的${caller}调用之后，草稿之外的文件无法核对（${contentRepair.reason}），不当作干净继续：修复作废、未发布。`,
+            ...violationFacts.slice(0, 20).map((fact) => `  - ${fact.path}（${fact.how}）pre=${fact.pre_sha256 ?? 'missing'} post=${fact.post_sha256 ?? 'missing'}`),
+            '链外调用没有责任阶段可回退，本 run 终止。框架只检测、不还原：请用版本控制核对并恢复工程文件，再以 `--supersede <本 run id>` 起后继。',
+          ].join('\n');
+          console.error(`\n===== ${haltReason}（无人值守设计修复越界写入）=====\n${awaitConfirmGuidance}\n`);
+          postVerdictHaltEvent = {
+            type: 'phase_halt', phase, halt_reason: haltReason, recovery_reason: haltReason, owner_phase: null,
+            fingerprint: violationFingerprint, detail: awaitConfirmGuidance, halt_guidance: awaitConfirmGuidance,
+          };
+        } else if (
           // plan f7045213 最终评审返修二：责任在链外设计 owner（设计权威投影无效、CU 投影需回 P1 调和）→ 首次即停，
           // 复用既有外部类停机原因 execution_scope_unresolved；不进当前阶段重试、不等无进展熔断。
           verdict !== 'PASS' &&
@@ -9566,7 +9880,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
           driverGuardAction = 'halt';
           haltReason = 'execution_scope_unresolved';
           const ownerBlockers = designOwnerBlockers(decisionSummary?.blockers);
-          awaitConfirmGuidance = buildDesignOwnerGuidance({ feature: manifest.feature, runId: manifest.run_id, phase: String(phase), blockers: ownerBlockers });
+          // plan 9c3d7e1a §5.0–§5.2：分类与修复简报随停机事件落盘；挂探针、不做进程内等待——本分支直接停放，
+          // run 收尾即释放 feature 锁（设计 owner 经 readiness 调和要取这把锁）。
+          // 已发布但未恢复：按发布后的新状态重新分类（同一检查换了原因码时，简报与探针对的是现在的阻断）。
+          if (contentRepair?.outcome === 'published' && !contentRepair.recovered) designBrief = undefined;
+          const repairBrief = designBriefNow();
+          // plan 9c3d7e1a §5.5：无人值守修复的结果如实写进说明（发布成功不等于修复成功；绑定失效时停放、由恢复入口起后继）。
+          const contentRepairNote = !contentRepair ? undefined
+            : contentRepair.outcome === 'published' && contentRepair.recovered
+              ? `${contentRepair.reason}；但本 run 冻结的输入绑定已失效（${contentRepairStale.join('；').slice(0, 400)}），不在本 run 继续——已停放，重发同一请求或 supervisor 唤醒时由恢复入口自动起后继。`
+              : contentRepair.outcome === 'published' ? `${contentRepair.reason}；发布不回滚，按当前状态停机。`
+                : contentRepair.outcome === 'failed' ? `尝试失败（步骤 ${contentRepair.step}），草稿已丢弃、未发布：${contentRepair.reason}。本停机签名已用掉唯一一次自动修复机会。`
+                  : contentRepair.reason;
+          awaitConfirmGuidance = buildDesignOwnerGuidance({
+            feature: manifest.feature, runId: manifest.run_id, phase: String(phase), blockers: ownerBlockers,
+            ...(pointerReconcile ? { reconcileNote: pointerReconcile.reason } : {}),
+            brief: repairBrief,
+            ...(contentRepairNote ? { contentRepairNote } : {}),
+          });
           console.log(`\n===== ${haltReason}（设计 owner）=====\n${awaitConfirmGuidance}\n`);
           postVerdictHaltEvent = {
             type: 'phase_halt',
@@ -9574,6 +9905,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             halt_reason: haltReason,
             reason: `设计权威在链内无法兑现，责任方=设计 owner：${ownerBlockers.map((b) => b.id ?? '?').join(', ')}`,
             halt_guidance: awaitConfirmGuidance,
+            probe: 'design_authority_projectable',
+            design_authority: repairBrief,
             ...runDispositionFields(decide(
               { incident: haltReason, phase: String(phase), detail: ownerBlockers.map((b) => b.id ?? '?').join(', ') },
               NO_AUTHORITY,
@@ -9911,6 +10244,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
             }
           }
+        }
+
+        // plan 9c3d7e1a §4.3：纯记录事件（不参与裁决）——这一轮框架做了设计侧修复，成败与兄弟 CU 的跳过都披露。
+        if (pointerReconcile) {
+          goalEvents.emit({
+            type: 'design_authority_repair', phase, blueprint_id: pointerReconcile.blueprintId, action: 'pointer_reconcile',
+            outcome: pointerReconcile.ok ? 'reconciled' : 'not_reconciled',
+            bumped: pointerReconcile.bumped, skipped: pointerReconcile.skipped, reason: pointerReconcile.reason,
+          });
         }
 
         // 【plan PASS 建 pass snapshot 已退役 · runner-owned-machine-facts】原自述目的

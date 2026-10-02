@@ -286,13 +286,16 @@ const cases: TestCase[] = [
         const lines = fs.readFileSync(eventsPath, 'utf-8').trim().split('\n')
           .map((l) => JSON.parse(l) as Record<string, unknown>);
         const iRestart = lines.findIndex((e) => e.type === 'supervisor_restart');
-        const iSpawned = lines.findIndex((e) => e.type === 'supervisor_restart_spawned');
-        childPid = typeof lines[iSpawned]?.pid === 'number' ? (lines[iSpawned].pid as number) : null;
+        // plan 9c3d7e1a t6（codex 第三轮）：supervisor 拉起后不再写本 run 的事件（原 supervisor_restart_spawned 落在
+        // feature 锁外，已删）；被拉起进程的 pid 取它自己写的事件。
+        const iStarted = lines.findIndex((e) => e.type === 'stub_runner_started');
+        childPid = typeof lines[iStarted]?.pid === 'number' ? (lines[iStarted].pid as number) : null;
         assert(iRestart >= 0, '未记账 supervisor_restart——拉起失败将永远重试，重启预算形同虚设');
-        // 本断言只锁「意图事件早于结果事件」。真正的不变量「记账先于 spawn」是**外部不可观测**的
+        // 本断言只锁「意图事件早于被拉起进程的事件」。真正的不变量「记账先于 spawn」是**外部不可观测**的
         // ——实测把 append 挪到 spawn 之后本用例照样绿（父进程写得比子进程冷启动快得多）。
         // 那条不变量改由下一个用例从**它存在的理由**入手验：拉起失败也必须已计数。
-        assert(iSpawned > iRestart, 'supervisor_restart（意图）晚于 supervisor_restart_spawned（结果）');
+        assert(iStarted > iRestart, 'supervisor_restart（意图）晚于被拉起进程的事件');
+        assert(!lines.some((e) => e.type === 'supervisor_restart_spawned'), '拉起之后 supervisor 不得再写本 run 的事件（锁已放）');
         assert(lines[iRestart].restart_seq === 1, `restart_seq 应为 1，实为 ${lines[iRestart].restart_seq}`);
         assert(typeof childPid === 'number', 'spawn 未产出 pid');
         assert(lines.some((e) => e.type === 'stub_runner_started'), '新进程未写入本 run 的事件流');

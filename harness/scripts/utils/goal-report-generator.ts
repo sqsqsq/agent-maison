@@ -537,6 +537,14 @@ export function generateGoalReportMarkdown(
             ` ≠ adapter_model_pin=${String(m.pin).replace(/\|/g, '\\|')}（仅告警，verdict/路由不变） | — |`,
         );
       }
+      // plan 9c3d7e1a §4.3：框架在本 run 内做的设计侧修复（纯记录，不参与裁决）。
+      for (const repair of options.events.filter(e => e.type === 'design_authority_repair' && e.phase === String(p.phase))) {
+        const counts = `升版 ${Array.isArray(repair.bumped) ? repair.bumped.length : 0} 个 CU、跳过 ${Array.isArray(repair.skipped) ? repair.skipped.length : 0} 个`;
+        // §5.5 content_repair：attempted / failed / published 三个阶段各一行；published 带新 revision 与是否恢复。
+        const stage = repair.action === 'content_repair'
+          ? `${String(repair.stage)}${repair.new_revision !== undefined ? ` rev ${String(repair.new_revision)}` : ''}${repair.outcome ? ` ${String(repair.outcome)}` : ''}${repair.failed_step ? ` 卡在 ${String(repair.failed_step)}` : ''}；` : '';
+        lines.push(`| ↳ 设计侧修复 | — | — | — | — | ${String(repair.action)}（蓝图 ${String(repair.blueprint_id)}；${stage}${counts}）：${String(repair.reason ?? '').replace(/\|/g, '\\|')} | — |`);
+      }
       // plan 8d2b4f60 D4（codex finding 7）：参考图读取记录的跨 invocation 沿用披露。
       // summary 不收 PASS check（harness-runner.ts:2574），gate 的 PASS details 到不了这里，
       // 所以披露自己接一条线：走既有 spec_refs_receipt_produced 事件的 carried_over 字段。

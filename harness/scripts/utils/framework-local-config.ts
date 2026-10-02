@@ -155,6 +155,8 @@ export interface FrameworkLocalConfig {
   };
   vision?: FrameworkLocalConfigVision;
   device?: FrameworkLocalConfigDevice;
+  /** plan 9c3d7e1a §5.5：无人值守设计修复的预授权。原样保留（同 adapters），取值由 resolveUnattendedB1Repair 在消费点判。 */
+  design_repair?: { unattended_b1?: unknown };
 }
 
 export type AgentAdapterSource = 'local' | 'project_legacy' | 'fallback';
@@ -212,6 +214,10 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
     // 批二 review 顺手项：父节点本身非法（字符串/数组/null…）时给一次明确提示（每进程一次，local 会被频繁加载）。
     invalidAdaptersWarned = true;
     console.warn('[framework-local-config] framework.local.json 的 adapters 须为对象（按 adapter 名分组），当前值无法解析——按没有获准替代型号处理');
+  }
+  // plan 9c3d7e1a §5.5：design_repair 同 adapters 原样保留（写回不丢）；不是对象按未配置丢弃（= 未授权），不抛错。
+  if (raw.design_repair && typeof raw.design_repair === 'object' && !Array.isArray(raw.design_repair)) {
+    out.design_repair = JSON.parse(JSON.stringify(raw.design_repair)) as NonNullable<FrameworkLocalConfig['design_repair']>;
   }
   const tc = raw.toolchain;
   if (tc !== undefined) {
@@ -555,6 +561,11 @@ export function resolveApprovedModels(
     return { models: [], warning: `${where} 解析不了（须为型号字符串数组，每项非空、≤128 字符、无控制字符），按未配置处理` };
   }
   return { models: [...new Set((raw as string[]).map((v) => v.trim()))] };
+}
+
+/** plan 9c3d7e1a §5.5：`design_repair.unattended_b1` 只有布尔 true 才算授权；缺失、其它值、读不出个人配置一律未授权。 */
+export function resolveUnattendedB1Repair(local: FrameworkLocalConfig | null | undefined): boolean {
+  return local?.design_repair?.unattended_b1 === true;
 }
 
 export function localConfigPath(projectRoot: string): string {

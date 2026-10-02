@@ -39,7 +39,12 @@ summary 判 FAIL 而脚本报告判 PASS、退出码为 0。结果依据类检�
 - `harness-gates`：处置函数与谓词、共享结论、披露清单、聚合去重、首批分类、范围修订提议的放行范围；
   MODIFIED「check-receipt reads current-run base summary」「A diagnosable product failure still issues a verifier request」。
 - `reconcile-assessment`：结果依据类失败按登记责任方路由；lite 闭环读共享结论。
-- `goal-runner`：MODIFIED「Timeout attribution follows the freshness decision table」；结果依据类与仅聚合项失败的归因。
+- `goal-runner`：MODIFIED「Timeout attribution follows the freshness decision table」；结果依据类与仅聚合项失败的归因；
+  设计 owner 失败的 run 内调和或首次即停，以及预授权的无人值守 B1 修复（plan 9c3d7e1a）。
+- `change-unit-continuous-progression`：MODIFIED「Reconciliation re-resolves stable targets without a semantic diff engine」——
+  两层锁、运行中调和、取锁段与锁内调和可分开调用；MODIFIED「Design preparation accepts an admitted blueprint with zero change units」
+  ——readiness 遇竞争报忙、运行时内的指针调和不是设计准备子流程（plan 9c3d7e1a）。
+- `app-component-blueprint`：预授权的无人值守 B1 修复作为合法修订来源（plan 9c3d7e1a）。
 - `visual-diff`：排除登记在返修授权处核引文。
 - `runtime-policy`：MODIFIED「Completion status projects gaps and non-reverified verification honestly」（被披露的失败计入缺口）。
 

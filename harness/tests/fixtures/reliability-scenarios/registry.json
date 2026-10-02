@@ -4263,6 +4263,1012 @@
           }
         }
       ]
+    },
+    {
+      "id": "S14",
+      "title": "蓝图指针过期在 run 内调和",
+      "source_incident": "宿主 A 类会话级停顿（2026-09-26，蓝图升版后 CU 指针过期被路由去手改 CU）；S3 同源形状。plan 9c3d7e1a §4、§6",
+      "premise": "快照宿主（手写派生文件）；先真实出生 run 并冻结旧绑定，plan 首轮进行中设计 owner 在另一会话把蓝图升到新的 admitted revision（只写蓝图，不调调和器）；plan 的真实门报指针过期",
+      "driver_layer": "真实链路",
+      "coverage_note": "design-authority-repair 套件的 runWithStalePointerAtPlan（同一驱动）；被测 run 是公开入口 --supersede 出生的后继（出生属前提）；升版注入在 plan 首轮 agent 窗口内。并发（兄弟 feature 持锁）一支在 design-authority-repair 套件的 A4 用例里，不在本登记。",
+      "unaffected_phases": [],
+      "expected": "同一 run 内框架调用既有调和器、当前阶段原地重评，任务正确完成，操作者动作 0；本 CU 被跳过时停机交设计 owner",
+      "branches": [
+        {
+          "key": "in-run-reconcile",
+          "label": "A 类：run 内调和后原地重评完成",
+          "premise": "本 CU 指针过期、carry-forward 通过",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "同一 run 内调和、plan 重评通过、任务正确完成，操作者动作 0",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S14/in-run-reconcile",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T132709Z-60d90a",
+              "generated_at": "2026-09-30T13:28:13.082Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=0，同一 run 内调和=reconciled，兄弟 CU 跳过披露=0，设计 owner 停机=false",
+            "hit_evidence": "plan 首轮窗口内注入升版=true；design_authority_repair=reconciled 升版 4 跳过 []；plan 调用 3 次",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        },
+        {
+          "key": "counter-own-skipped",
+          "label": "反例一：本 CU 被调和器跳过",
+          "premise": "新蓝图里本 CU 的设计闭包有未决项（carry-forward 不过）",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "停机交设计 owner，说明含跳过原因；不宣称完成",
+          "assertion": "correct_stop",
+          "coverage_note": "plan §6 举的\"三处指针不一致\"到不了调和器（验证器另有阻断项，不是调和候选），改用候选为真时本 CU 被跳过的可达情形（见 plan §15 批一偏离 1）。",
+          "baseline": {
+            "task_id": "S14/counter-own-skipped",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T132821Z-6cdfb2",
+              "generated_at": "2026-09-30T13:28:45.544Z",
+              "reasons": [],
+              "obligations_total": 8,
+              "uncovered": [
+                {
+                  "id": "acceptance-context:candidate",
+                  "owner_phase": "spec",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml；input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml；authority_projection_invalid：验收权威投影不可用（Error: component-design: 蓝图已升到 rev 4（本 CU 指向 rev 3）：经 /component-design 设计交接派生 readiness 原位升版指针（框架自动，不要手改 change-unit.yaml 或抄 sha256）。）"
+                },
+                {
+                  "id": "design-context:candidate",
+                  "owner_phase": "plan",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；authority_projection_invalid：设计权威投影不可用（Error: component-design: 蓝图已升到 rev 4（本 CU 指向 rev 3）：经 /component-design 设计交接派生 readiness 原位升版指针（框架自动，不要手改 change-unit.yaml 或抄 sha256）。）"
+                },
+                {
+                  "id": "implementation:request",
+                  "owner_phase": "coding",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] closure 后证据变更：doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml, doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md"
+                },
+                {
+                  "id": "code-review:request:review",
+                  "owner_phase": "review",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml, doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                },
+                {
+                  "id": "unit-evidence:acceptance",
+                  "owner_phase": "ut",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml；[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/acceptance.yaml, doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                },
+                {
+                  "id": "device-evidence:acceptance",
+                  "owner_phase": "testing",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml"
+                },
+                {
+                  "id": "phase:testing",
+                  "owner_phase": "testing",
+                  "class": "binding",
+                  "reason": "[acceptance_binding] Error: input binding stale; return to scope owner: C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-TInmlL\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\acceptance.yaml"
+                }
+              ],
+              "blocking": [
+                "存在晚于凭证的未终局 run：20260930T132853Z-268682（status=HALTED）"
+              ],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：本 CU 被调和器跳过，停机交设计 owner"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "execution_scope_unresolved",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": true,
+              "has_run_end": true,
+              "reading": "waiting_external_wakeable",
+              "incident_class": "external"
+            },
+            "operator_actions": 0,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "本 CU 被跳过：宣称完成=false，停机=execution_scope_unresolved，说明含跳过原因=true",
+            "hit_evidence": "plan 首轮窗口内注入升版=true；design_authority_repair=not_reconciled 升版 0 跳过 [\"ledger-consumer\",\"ledger-recovery\",\"ledger-refresh\",\"ledger-summary\"]；plan 调用 1 次",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        },
+        {
+          "key": "counter-sibling-skipped",
+          "label": "反例二：兄弟 CU 被跳过",
+          "premise": "本 CU 升版成功；同蓝图下兄弟 CU 三处指针身份不一致、被调和器跳过",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "本 run 续跑并完成；兄弟 CU 的跳过只在事件里披露",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S14/counter-sibling-skipped",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T132957Z-4c5ac5",
+              "generated_at": "2026-09-30T13:30:59.300Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，操作者动作=0，同一 run 内调和=reconciled，兄弟 CU 跳过披露=1，设计 owner 停机=false",
+            "hit_evidence": "plan 首轮窗口内注入升版=true；design_authority_repair=reconciled 升版 3 跳过 [\"ledger-summary\"]；plan 调用 3 次",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S15",
+      "title": "设计权威内容无效：责任方修好后自动续跑",
+      "source_incident": "宿主 run 20260924T135354Z-97af3f（蓝图内容类停机，人修蓝图后被两个后继取代，任务未完成）。plan 9c3d7e1a §5、§6",
+      "premise": "快照宿主；设计权威在链内无法兑现 → 首次即停（带探针、B1/B2 分类与修复简报，停放时释放 feature 锁）；设计 owner / 有权者经真实 readiness 入口修好；冷却期内不带旗标重发同一请求，或由生产 supervisor 拉起；不回拨事件时间",
+      "driver_layer": "真实链路",
+      "coverage_note": "design-authority-repair 套件的 S15 流程函数（同一驱动与机制断言）。两种宿主形状：全手写（绑定由 spec / plan 在链内重签 → 重新接入同一 run）；派生施工契约（acceptance 手写、contracts 不落盘、绑定来自 derive.blueprint-contracts → 修复改了它依赖的蓝图内容时自动起后继）。重发用任务原请求的需求与起止。",
+      "unaffected_phases": [],
+      "expected": "修好后不需要操作者拼命令：绑定仍有效则重新接入同一 run，派生绑定已失效则自动从停机 run 起后继，任务正确完成；未修则保持停止",
+      "branches": [
+        {
+          "key": "b1-rejoin",
+          "label": "B1 修后续跑（绑定仍有效）",
+          "premise": "现有无效例（蓝图验收写成文本）造出停机；设计 owner 在既有授权内改回机器结构并经 readiness 调和；冷却期内重发",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "重新接入同一 run，spec 按新权威重评、链内改写后正确完成",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S15/b1-rejoin",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T133137Z-fb10e4",
+              "generated_at": "2026-09-30T13:32:36.817Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=1（期望 1：重新接入同一 run），操作者动作=2，产品决定=0",
+            "hit_evidence": "停机=execution_scope_unresolved@spec 分类=B1 未修重发 exit=1；修后重发 exit=0 同一 run 第二段 verdicts=[\"spec:FAIL:halt\",\"spec:PASS:retry\",\"spec:PASS:advance\",\"plan:PASS:retry\",\"plan:PASS:advance\",\"coding:PASS:advance\",\"review:PASS:advance\",\"ut:PASS:advance\"]",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        },
+        {
+          "key": "counter-unrepaired",
+          "label": "反例：未修就重发",
+          "premise": "同上停机；不修蓝图，冷却期内重发同一请求",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "保持停止，不新建 run、不写事件；探针未就绪不越过冷却",
+          "assertion": "correct_stop",
+          "baseline": {
+            "task_id": "S15/counter-unrepaired",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T133245Z-6731d2",
+              "generated_at": "2026-09-30T13:33:09.463Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [
+                {
+                  "id": "acceptance-context:candidate",
+                  "owner_phase": "spec",
+                  "class": "binding",
+                  "reason": "authority_projection_invalid：验收权威投影不可用（Error: acceptance 必须是机器结构；文本需交责任 Skill 澄清）"
+                },
+                {
+                  "id": "design-context:candidate",
+                  "owner_phase": "plan",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-Af7Ydc\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-Af7Ydc\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；authority_projection_invalid：设计权威投影不可用（Error: acceptance 必须是机器结构；文本需交责任 Skill 澄清）"
+                },
+                {
+                  "id": "implementation:request",
+                  "owner_phase": "coding",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] closure 后证据变更：doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml, doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md"
+                },
+                {
+                  "id": "code-review:request:review",
+                  "owner_phase": "review",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                },
+                {
+                  "id": "unit-evidence:acceptance",
+                  "owner_phase": "ut",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                }
+              ],
+              "blocking": [
+                "存在晚于凭证的未终局 run：20260930T133316Z-c92894（status=HALTED）"
+              ],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：设计权威未修，保持停止"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "execution_scope_unresolved",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": true,
+              "has_run_end": true,
+              "reading": "waiting_external_wakeable",
+              "incident_class": "external"
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "未修就重发：宣称完成=false，run 数=1，停止=WAITING/external，带探针=true",
+            "hit_evidence": "停机=execution_scope_unresolved@spec 分类=B1 未修重发 exit=1",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        },
+        {
+          "key": "b1-stale-successor",
+          "label": "B1 修后续跑（派生绑定已 stale）",
+          "premise": "派生施工契约宿主；run 出生后蓝图被写坏（run 内先调和指针、再因内容无效停机）；修复同时改了施工契约依赖的蓝图内容；冷却期内重发",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "运行时判定冻结绑定已失效，自动起后继（承接停机 run）并正确完成",
+          "assertion": "baseline_met",
+          "coverage_note": "后继的合同来源沿用既有规则（当前持有范围转交的 run，没有转交记录时取上一次完成的 run）；停机的 run 由后继审计承接。",
+          "baseline": {
+            "task_id": "S15/b1-stale-successor",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T133459Z-441642",
+              "generated_at": "2026-09-30T13:35:42.217Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 2,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=2（期望 2：自动起后继），操作者动作=2，产品决定=0",
+            "hit_evidence": "停机=execution_scope_unresolved@spec 分类=B1 stale=[\"contracts: input binding stale; return to scope owner: contracts\"]；重发 exit=0",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        },
+        {
+          "key": "supervisor-stale-successor",
+          "label": "supervisor 分支（绑定已 stale）",
+          "premise": "同上，无人值守停放；以生产 supervisor CLI 跑一轮（未修时一轮、修好后一轮）",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "未修不拉起；探针就绪即拉起 --resume；运行时恢复入口判定绑定失效 → 起后继；后继正确完成",
+          "assertion": "baseline_met",
+          "coverage_note": "supervisor 发出的命令由测试代替计划任务执行（同一 argv 形状经 detach 入口，子进程那一半在进程内跑，agent 由作者材料替身）；不计操作者动作。",
+          "baseline": {
+            "task_id": "S15/supervisor-stale-successor",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T133721Z-1292bd",
+              "generated_at": "2026-09-30T13:38:06.540Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=2（期望 2：自动起后继），操作者动作=1，产品决定=0",
+            "hit_evidence": "停机=execution_scope_unresolved@spec 分类=B1 stale=[\"contracts: input binding stale; return to scope owner: contracts\"]；supervisor 发出 --feature cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g --resume 20260930T133653Z-d511e9 --force-resume --detach，runner exit=0 child=[\"--feature\",\"cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g\",\"--foreground-ok\",\"--ack-unverified-ledgers\",\"--detached-child\",\"--run-id\",\"20260930T133721Z-1292bd\"]",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        },
+        {
+          "key": "b2-authority",
+          "label": "B2：需要有权者裁决",
+          "premise": "设计闭包内出现未决项（调和器跳过本 CU）；有权者裁决后经 readiness 调和；冷却期内重发",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "停机分类 B2、说明写清缺什么；裁决后重发 → 正确完成",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S15/b2-authority",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20260930T133846Z-c1339d",
+              "generated_at": "2026-09-30T13:39:32.479Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 1,
+            "candidates": {
+              "total": 3,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=1（期望 1：重新接入同一 run），操作者动作=1，产品决定=1",
+            "hit_evidence": "停机=execution_scope_unresolved@spec 分类=B2；裁决后重发 exit=0 完成于 同一 run",
+            "recorded_at": "2026-09-30T13:39:34.782Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "S16",
+      "title": "设计权威 B1 无人值守：框架派设计修复自动接手",
+      "source_incident": "无宿主事故（97af3f 属 B2）；按可靠性口径与用户 2026-09-30 / 2026-10-01 裁定。plan 9c3d7e1a §5.5、§6",
+      "premise": "快照宿主；无人值守 run；framework.local.json 预授权 design_repair.unattended_b1: true；B1 停机（蓝图验收写成文字）；只有 adapter 的编写与独立质询两次链外调用由测试替身，锁、草稿、写归因核对、准入派生与写回、校验、发布、调和、探针、恢复判断全部是生产路径",
+      "driver_layer": "真实链路",
+      "coverage_note": "design-authority-repair 套件的 S16 流程函数（同一驱动与机制断言）。主线用全手写宿主（修复后冻结绑定仍有效 → 同一 run 原地重评）；绑定失效支用派生施工契约宿主（同一节点的验收与施工契约都写成了文字、施工契约原文写明写集另含一个文件；按原文改回机器结构后施工契约与旧绑定内容不同 → 发布后停放，由 supervisor 拉起或重发时起后继；修复只改本次 B1 发现项定位到的字段，不靠扩大写集触发）。",
+      "unaffected_phases": [],
+      "expected": "有预授权时 B1 不再等人：绑定仍有效则同一 run 续跑完成（操作者动作 0）；绑定失效则发布后停放，supervisor 实际拉起后继并完成才计 0，未经 supervisor 需重发一次（如实计人工动作）；没有预授权照旧停等",
+      "branches": [
+        {
+          "key": "b1-auto-repair",
+          "label": "B1 自动接手（绑定仍有效）",
+          "premise": "预授权开启；spec 的真实门报 B1；编写方在草稿里改回机器结构，质询方按必答范围产出质询结果",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "草稿旧质询作废后准入派生未过、质询重生成后派生 pass；发布、调和、探针都过；同一 run 原地重评并正确完成，操作者动作 0",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S16/b1-auto-repair",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20261001T082640Z-e6d000",
+              "generated_at": "2026-10-01T08:27:41.804Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=1（期望 1），操作者动作=0（期望 0），产品决定=0",
+            "hit_evidence": "attempted→published rev 4（recovered），同一 run 完成；verdicts=[\"spec:FAIL:retry\",\"spec:PASS:retry\",\"spec:PASS:advance\",\"plan:PASS:retry\",\"plan:PASS:advance\",\"coding:PASS:advance\",\"review:PASS:advance\",\"ut:PASS:advance\"]",
+            "recorded_at": "2026-10-01T08:34:25.692Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二、批三 t5 前半与 t6）"
+          }
+        },
+        {
+          "key": "counter-no-preauth",
+          "label": "反例：无预授权",
+          "premise": "同上，但个人配置里没有预授权",
+          "recoverable_fault": false,
+          "unaffected_phases": [],
+          "expected": "不派发；B1 停机照旧停等设计 owner（带探针、外部等待）",
+          "assertion": "correct_stop",
+          "baseline": {
+            "task_id": "S16/counter-no-preauth",
+            "claimed_complete": false,
+            "claimed_basis": null,
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20261001T082753Z-ec842a",
+              "generated_at": "2026-10-01T08:28:18.202Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [
+                {
+                  "id": "acceptance-context:candidate",
+                  "owner_phase": "spec",
+                  "class": "binding",
+                  "reason": "authority_projection_invalid：验收权威投影不可用（Error: acceptance 必须是机器结构；文本需交责任 Skill 澄清）"
+                },
+                {
+                  "id": "design-context:candidate",
+                  "owner_phase": "plan",
+                  "class": "binding",
+                  "reason": "input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-3vlZQP\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；input binding stale C:\\Users\\shengqsq\\AppData\\Local\\Temp\\host-snapshot-3vlZQP\\doc\\features\\ledger-app-blueprint\\ledger-refresh\\contracts.yaml；authority_projection_invalid：设计权威投影不可用（Error: acceptance 必须是机器结构；文本需交责任 Skill 澄清）"
+                },
+                {
+                  "id": "implementation:request",
+                  "owner_phase": "coding",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] closure 后证据变更：doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml, doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md"
+                },
+                {
+                  "id": "code-review:request:review",
+                  "owner_phase": "review",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                },
+                {
+                  "id": "unit-evidence:acceptance",
+                  "owner_phase": "ut",
+                  "class": "evidence",
+                  "reason": "[lineage_fresh] stale：doc/features/ledger-app-blueprint/ledger-refresh/context/facts.md, doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml"
+                }
+              ],
+              "blocking": [
+                "存在晚于凭证的未终局 run：20261001T082826Z-92ee96（status=HALTED）"
+              ],
+              "complete": false,
+              "issued_in_task": false
+            },
+            "acceptance": {
+              "result": "fail",
+              "basis": "未交付：没有预授权，B1 停等设计 owner"
+            },
+            "conclusion": "incomplete",
+            "stop_state": {
+              "status": "HALTED",
+              "halt_reason": "execution_scope_unresolved",
+              "run_disposition": "WAITING",
+              "run_wait_kind": "external",
+              "has_probe": true,
+              "has_run_end": true,
+              "reading": "waiting_external_wakeable",
+              "incident_class": "external"
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 1,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "unrecovered",
+            "expectation_met": true,
+            "expectation_detail": "无预授权：宣称完成=false，停止=WAITING/external，带探针=true",
+            "hit_evidence": "停机=execution_scope_unresolved 分类=B1 无预授权、content_repair 事件 0、链外调用 0",
+            "recorded_at": "2026-10-01T08:34:25.692Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二、批三 t5 前半与 t6）"
+          }
+        },
+        {
+          "key": "stale-supervisor",
+          "label": "绑定失效支：supervisor 拉起",
+          "premise": "派生施工契约宿主；验收与施工契约都写成文字，按原文改回后施工契约内容与旧绑定不同（派生绑定依赖的蓝图内容变了）；以生产 CLI 跑一轮 supervisor",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "发布后停放（探针已就绪）；supervisor 实际拉起，恢复入口起后继并正确完成，操作者动作 0",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S16/stale-supervisor",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20261001T083038Z-b6a7dc",
+              "generated_at": "2026-10-01T08:31:30.719Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 0,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=2（期望 2），操作者动作=0（期望 0），产品决定=0",
+            "hit_evidence": "attempted→published rev 5（recovered）、绑定失效停放 stale=[\"contracts: input binding stale; return to scope owner: contracts\"]；supervisor 发出 --feature cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g --resume 20261001T082956Z-c21783 --force-resume --detach，runner exit=0",
+            "recorded_at": "2026-10-01T08:34:25.692Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二、批三 t5 前半与 t6）"
+          }
+        },
+        {
+          "key": "stale-resend",
+          "label": "绑定失效支：未经 supervisor，重发同一请求",
+          "premise": "同上，不经 supervisor",
+          "recoverable_fault": true,
+          "unaffected_phases": [],
+          "expected": "发布后停放；重发同一请求时起后继并正确完成，计一次人工动作（必要）",
+          "assertion": "baseline_met",
+          "baseline": {
+            "task_id": "S16/stale-resend",
+            "claimed_complete": true,
+            "claimed_basis": "run_end",
+            "record": {
+              "evaluable": true,
+              "state": "ok",
+              "run_id": "20261001T083334Z-dec6c6",
+              "generated_at": "2026-10-01T08:34:21.227Z",
+              "reasons": [],
+              "obligations_total": 7,
+              "uncovered": [],
+              "blocking": [],
+              "complete": true,
+              "issued_in_task": true
+            },
+            "acceptance": {
+              "result": "pass",
+              "basis": "盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本"
+            },
+            "conclusion": "correct_completion",
+            "stop_state": {
+              "status": "CHAIN_SLICE_COMPLETED",
+              "halt_reason": null,
+              "run_disposition": "TERMINAL",
+              "run_wait_kind": null,
+              "has_probe": false,
+              "has_run_end": true,
+              "reading": null,
+              "incident_class": null
+            },
+            "operator_actions": 1,
+            "product_decisions": 0,
+            "candidates": {
+              "total": 2,
+              "confirmed": 0
+            },
+            "unaffected_reruns": {
+              "exact": null,
+              "proxy": 0,
+              "note": "代理指标（上界）：首个故障后、故障前已 PASS 的其他阶段又被调用 agent 的次数，含合法回退重跑；事件中没有构建指纹与证据复用字段，精确值需给出不受影响的阶段与扰动点"
+            },
+            "recovery_cost": "recovered",
+            "expectation_met": true,
+            "expectation_detail": "结论=correct_completion，任务 run 数=2（期望 2），操作者动作=1（期望 1），产品决定=0",
+            "hit_evidence": "attempted→published rev 5（recovered）、绑定失效停放 stale=[\"contracts: input binding stale; return to scope owner: contracts\"]；重发 exit=0",
+            "recorded_at": "2026-10-01T08:34:25.692Z",
+            "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二、批三 t5 前半与 t6）"
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "metrics_9c3d7e1a": {
+    "note": "plan 9c3d7e1a 批二：只含本批新增的 S14（3 支）与 S15（5 支）共 8 个任务的六项指标（scripts/reliability-metrics.mjs --scenario-results）；既有 13 个场景本批未复跑，全量口径由收口时统一复跑给出。既有字段（baseline / baseline_p1 / baseline_p4 / baseline_p5 / note）原样保留。",
+    "recorded_at": "2026-09-30T13:39:34.782Z",
+    "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二）",
+    "tasks": 8,
+    "correct_autonomous_completion": {
+      "numerator": 6,
+      "denominator": 8,
+      "unknown": 0
+    },
+    "auto_recovery": {
+      "numerator": 2,
+      "denominator": 2,
+      "unknown": 0
+    },
+    "rescues": {
+      "confirmed": 7,
+      "product_decisions": 4,
+      "tasks_unknown": 0
+    },
+    "observed_wrong_completions": 0,
+    "recovery_cost": [
+      {
+        "task_id": "S14/in-run-reconcile",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 8862,
+        "active_ms": 8862,
+        "agent_invocations": 1
+      },
+      {
+        "task_id": "S14/counter-own-skipped",
+        "status": "unrecovered",
+        "measured_to": "task_end",
+        "wall_ms": 8,
+        "active_ms": 8,
+        "agent_invocations": 0
+      },
+      {
+        "task_id": "S14/counter-sibling-skipped",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 8701,
+        "active_ms": 8701,
+        "agent_invocations": 1
+      },
+      {
+        "task_id": "S15/b1-rejoin",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 10565,
+        "active_ms": 7792,
+        "agent_invocations": 1
+      },
+      {
+        "task_id": "S15/counter-unrepaired",
+        "status": "unrecovered",
+        "measured_to": "task_end",
+        "wall_ms": 5,
+        "active_ms": 5,
+        "agent_invocations": 0
+      },
+      {
+        "task_id": "S15/b1-stale-successor",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 50160,
+        "active_ms": 30231,
+        "agent_invocations": 4
+      },
+      {
+        "task_id": "S15/supervisor-stale-successor",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 52923,
+        "active_ms": 29922,
+        "agent_invocations": 4
+      },
+      {
+        "task_id": "S15/b2-authority",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 10139,
+        "active_ms": 7753,
+        "agent_invocations": 1
+      }
+    ],
+    "repeat_stability": {
+      "S14/in-run-reconcile": "未测",
+      "S14/counter-own-skipped": "未测",
+      "S14/counter-sibling-skipped": "未测",
+      "S15/b1-rejoin": "未测",
+      "S15/counter-unrepaired": "未测",
+      "S15/b1-stale-successor": "未测",
+      "S15/supervisor-stale-successor": "未测",
+      "S15/b2-authority": "未测"
+    }
+  },
+  "metrics_9c3d7e1a_t6": {
+    "note": "plan 9c3d7e1a 批三 t6：只含本批新增的 S16（4 支）共 4 个任务的六项指标（scripts/reliability-metrics.mjs --scenario-results）；既有场景未复跑，既有字段（含 metrics_9c3d7e1a）原样保留。恢复成本的已知低估：无人值守修复的两次链外调用（编写 + 独立质询）发生在本轮 phase_verdict 事件之前，采集器从 verdict 起计，所以每个派发过的任务少计 2 次调用和这两次调用的耗时（替身调用各约 1–2 秒，真实 agent 会是分钟级）。",
+    "recorded_at": "2026-10-01T08:34:25.692Z",
+    "recorded_at_commit": "cc4d5139（工作区未提交：plan 9c3d7e1a 批一、批二、批三 t5 前半与 t6）",
+    "tasks": 4,
+    "correct_autonomous_completion": {
+      "numerator": 3,
+      "denominator": 4,
+      "unknown": 0
+    },
+    "auto_recovery": {
+      "numerator": 2,
+      "denominator": 3,
+      "unknown": 0
+    },
+    "rescues": {
+      "confirmed": 1,
+      "product_decisions": 0,
+      "tasks_unknown": 0
+    },
+    "observed_wrong_completions": 0,
+    "recovery_cost": [
+      {
+        "task_id": "S16/b1-auto-repair",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 7946,
+        "active_ms": 7946,
+        "agent_invocations": 1
+      },
+      {
+        "task_id": "S16/counter-no-preauth",
+        "status": "unrecovered",
+        "measured_to": "task_end",
+        "wall_ms": 7,
+        "active_ms": 7,
+        "agent_invocations": 0
+      },
+      {
+        "task_id": "S16/stale-supervisor",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 69031,
+        "active_ms": 38829,
+        "agent_invocations": 6
+      },
+      {
+        "task_id": "S16/stale-resend",
+        "status": "recovered",
+        "measured_to": "endpoint",
+        "wall_ms": 60940,
+        "active_ms": 36812,
+        "agent_invocations": 6
+      }
+    ],
+    "repeat_stability": {
+      "S16/b1-auto-repair": "未测",
+      "S16/counter-no-preauth": "未测",
+      "S16/stale-supervisor": "未测",
+      "S16/stale-resend": "未测"
+    }
+  }
 }

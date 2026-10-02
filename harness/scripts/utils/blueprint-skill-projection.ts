@@ -9,11 +9,11 @@ import { resolveExecutionScope, findSubtractedRequiredObligations, type Executio
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
-import { resolveComponentBlueprintRef } from './component-blueprint-path';
-import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from './change-unit-path';
+import { componentBlueprintPath, resolveComponentBlueprintRef } from './component-blueprint-path';
+import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact, changeUnitPath, BLUEPRINT_REF_STALE_ISSUE } from './change-unit-path';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
-import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
+import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { resolveContractFileReferences, findUnauthorizedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot } from './project-relative-path';
@@ -25,10 +25,23 @@ import type { ResolutionDependency } from './capability-resolution';
 import { resolveCheckDisposition } from './check-disposition';
 
 export type BlueprintProjectionKind = 'acceptance' | 'contracts';
+/** plan 9c3d7e1a §3：invalid 的结构化原因——取自 validateChangeUnit 的 issue code，不解析 detail 文本。 */
+export type DesignAuthorityInvalidReason = 'blueprint_ref_stale' | 'other';
+/**
+ * B1 原因码在蓝图里的位置：哪份蓝图、哪个 design_ref 目标、目标下的哪个字段（点分路径）。
+ * `authority_content_not_machine_structure` → acceptance / contracts / use_cases；`authority_cu_mapping_stale` → contracts.change_unit.change_unit_ref。
+ */
+export interface DesignAuthorityLocation { blueprint_id: string; target: { kind: string; view_id?: string; id: string }; field: string }
 export interface BlueprintSkillProjection {
   state: 'resolved' | 'absent' | 'invalid';
   dependencies: ResolutionDependency[];
   detail?: string;
+  /** 仅 invalid：BLOCKER 只有 `change_unit_blueprint_ref_stale` 时为 'blueprint_ref_stale'，其余 'other'。 */
+  reason?: DesignAuthorityInvalidReason;
+  /** 仅 invalid（plan 9c3d7e1a §5.0）：失败处的 issue code——验证器 / 解析器 / 设计门的既有 code，或投影自身抛错点的 code；分类表按它判 B1 / B2。 */
+  codes?: string[];
+  /** 仅 invalid（plan 9c3d7e1a t6 codex 第五轮）：B1 原因码在蓝图里的位置——修复只许改这些位置。 */
+  locations?: DesignAuthorityLocation[];
   value?: AcceptanceSpec | ContractsSpec;
   artifacts?: Record<string, unknown>;
 }
@@ -165,6 +178,25 @@ function projectionRowIdentity(row: unknown): string | undefined {
 }
 
 /**
+ * 蓝图任意深度的 `source_ref`（需求的 current-scope 来源、契约与事实的 provenance、选型证据……）指向的项目内现存文件
+ *（绝对路径，按出现顺序去重）。投影的依赖记录与无人值守修复的保护集合共用这一份解析。
+ */
+export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown): string[] {
+  const files: string[] = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'source_ref' && typeof child === 'string') {
+        const file = path.resolve(projectRoot, child.split('#')[0]);
+        if (!files.includes(file) && isInsideProjectRoot(projectRoot, file) && fs.existsSync(file) && fs.statSync(file).isFile()) files.push(file);
+      } else visit(child);
+    }
+  };
+  visit(blueprint);
+  return files;
+}
+
+/**
  * Copy only explicit machine content selected by the canonical CU; never infer from refs/touches.
  * `refresh === 'pure'`（plan c4e7a9b2 §3.1 纯投影读取）：只跳过「既有 use-cases.yaml 与投影冲突」一处——
  * 那是拿待比较的手写产物反向校验权威；CU 映射来源 stale、投影门与规范化照跑。
@@ -175,44 +207,52 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     if (!dependencies.some(dep => dep.path === file)) dependencies.push({ path: file, exists: fs.existsSync(file), sha256: fs.existsSync(file) ? digest(file) : null, role: 'artifact' });
   };
   if (!feature.startsWith('cu-')) return { state: 'absent', dependencies, detail: 'blueprint projection requires canonical CU context' };
+  let reason: DesignAuthorityInvalidReason = 'other';
+  let codes: string[] = [];
+  let locations: DesignAuthorityLocation[] = [];
+  const fail: (failed: string | string[], message: string, at?: DesignAuthorityLocation[]) => never = (failed, message, at = []) => { codes = [failed].flat(); locations = at; throw new Error(message); };
   try {
     const identity = parseChangeUnitFeatureId(feature);
     const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
     depend(loaded.canonicalPath);
     const cu = asChangeUnitArtifact(loaded.changeUnit);
     const cuIssues = validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath }).filter(issue => issue.severity === 'BLOCKER');
-    if (cuIssues.length) throw new Error('component-design: ' + cuIssues.map(issue => issue.message).join('; '));
+    if (cuIssues.length) {
+      if (cuIssues.every(issue => issue.id === BLUEPRINT_REF_STALE_ISSUE)) reason = 'blueprint_ref_stale';
+      fail(cuIssues.map(issue => issue.id), 'component-design: ' + cuIssues.map(issue => issue.message).join('; '));
+    }
     const parent = resolveComponentBlueprintRef(projectRoot, cu.component_blueprint_ref);
     depend(parent.canonicalPath);
-    const collectSources = (value: unknown): void => {
-      if (!value || typeof value !== 'object') return;
-      for (const [key, child] of Object.entries(value)) {
-        if (key === 'source_ref' && typeof child === 'string') {
-          const file = path.resolve(projectRoot, child.split('#')[0]);
-          if (isInsideProjectRoot(projectRoot, file) && fs.existsSync(file) && fs.statSync(file).isFile()) depend(file);
-        } else collectSources(child);
-      }
-    };
-    collectSources(parent.blueprint);
+    for (const file of blueprintSourceRefFiles(projectRoot, parent.blueprint)) depend(file);
     const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
-    if (design.verdict !== 'constructable') throw new Error(`component-design: ${design.issues.map(i => i.message).join('; ')}`);
+    if (design.verdict !== 'constructable') fail(design.issues.map(i => i.id), `component-design: ${design.issues.map(i => i.message).join('; ')}`);
     const selected = cu.design_refs.map(ref => {
       const resolved = resolveComponentBlueprintRef(projectRoot, ref); depend(resolved.canonicalPath);
       const target = asRecord(resolved.target);
-      if (!target || ((target[kind] !== undefined || target.use_cases !== undefined) && asRecord(target.provenance)?.evidence_strength !== 'authoritative')) throw new Error(`component-design: ${ref.target.id} 缺获准来源`);
+      if (!target || ((target[kind] !== undefined || target.use_cases !== undefined) && asRecord(target.provenance)?.evidence_strength !== 'authoritative')) fail('authority_target_provenance_missing', `component-design: ${ref.target.id} 缺获准来源`);
       const content = structuredClone(target);
       if (ref.target.kind === 'flow') for (const state of asRecords(asRecord(content.contracts)?.state_management)) {
         if (state.design_ref === undefined) state.design_ref = ref;
       }
       return { ref, target: content };
     });
+    const locate = (field: string, hit: (target: BlueprintRecord) => boolean): DesignAuthorityLocation[] => selected.filter(({ target }) => hit(target)).map(({ ref }) => ({
+      blueprint_id: ref.blueprint_id, target: { kind: ref.target.kind, ...(ref.target.view_id !== undefined ? { view_id: ref.target.view_id } : {}), id: ref.target.id }, field,
+    }));
+    // 写成文字的位置：本 CU 所选目标里三个机器内容字段中所有写成文字的（同一类缺陷、同一原文依据，一次修完）。
+    const proseLocations = (): DesignAuthorityLocation[] => (['acceptance', 'contracts', 'use_cases'] as const)
+      .flatMap(field => locate(field, target => typeof target[field] === 'string' && !!(target[field] as string).trim()));
     const merge = (field: string): BlueprintRecord | undefined => {
       const parts = selected.flatMap(({ target }) => target[field] === undefined ? [] : [target[field]]);
       if (!parts.length) return undefined;
       const result: BlueprintRecord = {};
       for (const part of parts) {
         const record = asRecord(part);
-        if (!record) throw new Error(`${field} 必须是机器结构；文本需交责任 Skill 澄清`);
+        // 写成了一段文字 = 有原文可依、改回机器结构即可；null / 数字 / 空串 / 数组等没有可恢复的内容，是缺内容。
+        if (!record) {
+          const prose = typeof part === 'string' && !!part.trim();
+          fail(prose ? 'authority_content_not_machine_structure' : 'authority_content_missing', `${field} 必须是机器结构；文本需交责任 Skill 澄清`, prose ? proseLocations() : []);
+        }
         for (const [key, value] of Object.entries(record)) {
           if (!(key in result)) result[key] = structuredClone(value);
           else if (Array.isArray(result[key]) && Array.isArray(value)) {
@@ -220,10 +260,10 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
               const rows = result[key] as unknown[];
               if (rows.some(old => canonical(old) === canonical(item))) continue;
               const id = projectionRowIdentity(item);
-              if (id && rows.some(old => projectionRowIdentity(old) === id)) throw new Error(`component-design/外部 owner: ${field}.${key} 同一标识内容冲突`);
+              if (id && rows.some(old => projectionRowIdentity(old) === id)) fail('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 同一标识内容冲突`);
               rows.push(structuredClone(item));
             }
-          } else if (canonical(result[key]) !== canonical(value)) throw new Error(`component-design/外部 owner: ${field}.${key} 存在冲突`);
+          } else if (canonical(result[key]) !== canonical(value)) fail('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 存在冲突`);
         }
       }
       return result;
@@ -237,9 +277,15 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     raw.feature = feature; raw.source = source;
     if (construction) {
       const mappings = asRecord(construction.change_unit);
-      if (!mappings) throw new Error('plan: 缺获准 CU 施工/测试 ID 映射，不能从 touches 或 verification_refs 猜造');
+      if (!mappings) fail('authority_cu_mapping_missing', 'plan: 缺获准 CU 施工/测试 ID 映射，不能从 touches 或 verification_refs 猜造');
       const currentRef = { artifact: cu.artifact, component_id: cu.component_id, blueprint_id: cu.blueprint_id, change_unit_id: cu.change_unit_id, revision: cu.revision, artifact_sha256: loaded.artifactSha256 };
-      if (mappings.change_unit_ref && canonical(mappings.change_unit_ref) !== canonical(currentRef)) throw new Error('plan: CU 映射来源 stale');
+      if (mappings.change_unit_ref && canonical(mappings.change_unit_ref) !== canonical(currentRef)) {
+        // 同一个 CU 的旧 revision / 旧字节 = 身份过期，删掉这条可省略的引用即可；指向别的 CU（或形状不对）是归属冲突，要裁决。
+        const mapped = asRecord(mappings.change_unit_ref);
+        const sameUnit = !!mapped && (['artifact', 'component_id', 'blueprint_id', 'change_unit_id'] as const).every(key => mapped[key] === currentRef[key]);
+        fail(sameUnit ? 'authority_cu_mapping_stale' : 'authority_cu_mapping_conflict', 'plan: CU 映射来源 stale',
+          sameUnit ? locate('contracts.change_unit.change_unit_ref', target => asRecord(asRecord(target.contracts)?.change_unit)?.change_unit_ref !== undefined) : []);
+      }
       mappings.change_unit_ref = currentRef;
       for (const mapping of asRecords(mappings.design_ref_mappings)) {
         const reference = cu.design_refs.find(ref => canonical(ref.target) === canonical(mapping.design_ref));
@@ -249,27 +295,27 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     if (useCases) useCases.source = `derive.blueprint-contracts:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const artifacts: Record<string, unknown> = { ...(acceptance ? { 'acceptance@1': acceptance } : {}), ...(construction ? { 'contracts@1': construction } : {}), ...(useCases ? { 'use-cases@1': useCases } : {}) };
     const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, { context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] }, phase: 'plan', values: {}, artifacts });
-    if (parsed.shape_issues?.length) throw new Error(parsed.shape_issues.join('; '));
+    if (parsed.shape_issues?.length) fail('authority_projection_shape_invalid', parsed.shape_issues.join('; '));
     if (parsed.acceptance) {
       const ctx = { projectRoot, feature, featureSpec: parsed } as CheckContext;
       const content = checkAcceptanceContent(ctx);
-      if (content.some(check => check.status === 'FAIL')) throw new Error('spec: ' + content.map(check => check.details).join('; '));
+      if (content.some(check => check.status === 'FAIL')) fail('authority_acceptance_content_invalid', 'spec: ' + content.map(check => check.details).join('; '));
       const covered = new Set([...parsed.acceptance.criteria, ...(parsed.acceptance.boundaries ?? [])].map(item => item.id.toUpperCase()));
       const unmapped = cu.target_predicates.filter(predicate => !predicate.verification_refs.flatMap(extractAcceptanceIdRefs).some(id => covered.has(id)));
-      if (unmapped.length) throw new Error('spec: CU predicate 缺明确验收 ID 映射：' + unmapped.map(predicate => predicate.predicate_id).join(', '));
+      if (unmapped.length) fail('authority_predicate_acceptance_unmapped', 'spec: CU predicate 缺明确验收 ID 映射：' + unmapped.map(predicate => predicate.predicate_id).join(', '));
       const failures = [...checkAcceptanceUtLayerComplete(ctx, (_c, _s, id) => id), ...checkAcceptanceDeviceFocusPresent(ctx, (_c, _s, id) => id), ...checkAcceptanceLinkedUseCases(ctx), ...evaluateAcceptanceFlowStructure(projectRoot, feature, parsed.acceptance)].filter(check => check.status === 'FAIL');
-      if (failures.length) throw new Error('spec: ' + failures.map(check => check.details).join('; '));
+      if (failures.length) fail('authority_acceptance_content_invalid', 'spec: ' + failures.map(check => check.details).join('; '));
     }
     if (kind === 'contracts') {
       const contracts = parsed.contracts!;
       const contentIssues = checkTypedConstructionContent({ projectRoot, feature, featureSpec: parsed, phaseRule: {} } as CheckContext).filter(check => check.status === 'FAIL');
-      if (contentIssues.length) throw new Error('plan: ' + contentIssues.map(check => check.details).join('; '));
-      if (!contracts.files?.length) throw new Error('plan: contracts.files 缺少明确授权文件；touches 不构成授权');
+      if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));
+      if (!contracts.files?.length) fail('authority_contract_files_missing', 'plan: contracts.files 缺少明确授权文件；touches 不构成授权');
       const closure = resolveContractFileReferences(projectRoot, contracts);
       const violations = findUnauthorizedContractFileReferences(closure);
-      if (closure.invalid_paths.length || violations.length) throw new Error('plan: contracts.files 写集未闭合：' + [...closure.invalid_paths.map(i => i.message), ...violations.map(i => i.path)].join('; '));
+      if (closure.invalid_paths.length || violations.length) fail('authority_contract_write_set_open', 'plan: contracts.files 写集未闭合：' + [...closure.invalid_paths.map(i => i.message), ...violations.map(i => i.path)].join('; '));
       const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan');
-      if (projection.issues.length) throw new Error('plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
+      if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
     const normalized = { ...(parsed.acceptance ? { 'acceptance@1': parsed.acceptance } : {}), ...(parsed.contracts ? { 'contracts@1': parsed.contracts } : {}), ...(parsed.useCases ? { 'use-cases@1': parsed.useCases } : {}) };
     if (parsed.useCases) {
@@ -277,11 +323,15 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       if (existing.exists) {
         depend(existing.actualPath);
         // 刷新模式由唯一 writer 在覆盖前核对同一文件的来源戳（hasPreBumpStamp），此处不重复判；纯投影读取不拿手写产物校验权威。
-        if (!refresh &&canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) throw new Error('plan: 既有 use-cases.yaml 与获准投影冲突');
+        if (!refresh &&canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) fail('authority_use_cases_conflict', 'plan: 既有 use-cases.yaml 与获准投影冲突');
       }
     }
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
-  } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
+  } catch (error) {
+    // 解析器错误（ChangeUnitResolutionError / ComponentBlueprintResolutionError / FeatureIdentityError）自带 code；未编码的抛错留空（分类默认 B2）。
+    const thrown = (error as { code?: unknown }).code;
+    return { state: 'invalid', dependencies, detail: String(error), reason, codes: codes.length ? codes : typeof thrown === 'string' ? [thrown] : [], ...(locations.length ? { locations } : {}) };
+  }
 }
 
 export interface AuthoritativeDriftItem { id: string; field: string; expected: unknown; actual: unknown }
@@ -289,7 +339,7 @@ export type AuthoritativeContentDrift =
   | { state: 'aligned' }
   | { state: 'not_applicable' }
   | { state: 'drift'; items: AuthoritativeDriftItem[] }
-  | { state: 'invalid'; detail: string };
+  | { state: 'invalid'; detail: string; reason: DesignAuthorityInvalidReason; codes: string[]; locations?: DesignAuthorityLocation[] };
 /**
  * 集合语义字段；其余数组一律有序。contracts 内的列表型文件引用字段名取自统一解析边界登记
  * （`CONTRACT_FILE_REFERENCE_FIELDS` 中 `schemaField` 以 `[]` 结尾者），本地只补边界外的 contracts.files /
@@ -352,7 +402,7 @@ export function authoritativeContentDrift(projectRoot: string, feature: string, 
   if (!record || String(record.source ?? '').startsWith('derive.blueprint-')) return { state: 'not_applicable' };
   const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, 'pure');
   if (projected.state === 'absent') return { state: 'not_applicable' };
-  if (projected.state === 'invalid') return { state: 'invalid', detail: projected.detail ?? 'blueprint projection invalid' };
+  if (projected.state === 'invalid') return { state: 'invalid', detail: projected.detail ?? 'blueprint projection invalid', reason: projected.reason ?? 'other', codes: projected.codes ?? [], ...(projected.locations ? { locations: projected.locations } : {}) };
   const items: AuthoritativeDriftItem[] = [];
   for (const [key, value] of Object.entries(asRecord(projected.artifacts?.[`${kind}@1`]) ?? {})) {
     if (!UNCOMPARED_TOP_LEVEL.has(key)) alignNode(value, record[key], key, '', key, items);
@@ -377,7 +427,7 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
   const base = { id: 'authoritative_content_aligned', category: 'traceability' as const, severity: 'BLOCKER' as const, description: `手写 ${file} 与当前设计权威按稳定 ID 逐字段对齐`, affected_files: [featureFilePath(ctx.projectRoot, ctx.feature, file)] };
   if (drift.state === 'aligned') return [{ ...base, status: 'PASS', details: `${file} 与当前规范化投影对齐（补充内容不判）` }];
   // 无效分支责任在链外的设计 owner（plan f7045213 最终评审返修二）：既有字段 repair_owner='external' 让 goal 首次即停交设计 owner；漂移分支不标。
-  if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', repair_owner: 'external', details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
+  if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', repair_owner: 'external', structured: { kind: 'design_authority', reason: drift.reason, codes: drift.codes, ...(drift.locations ? { locations: drift.locations } : {}) }, details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
   const details = drift.items.map(item => `${driftLabel(item)}: 期望=${JSON.stringify(item.expected)} 实际=${JSON.stringify(item.actual)}`).join('\n');
   return [{ ...base, status: 'FAIL', details, suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
 }
@@ -427,4 +477,139 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
     throw error;
   }
   return writes.map(write => write.file);
+}
+
+// ---------------------------------------------------------------------------
+// plan 9c3d7e1a §5.0：设计 owner 阻断的 B1 / B2 分类——唯一一张表。goal 运行时的停机说明、探针
+// design_authority_projectable 与无人值守 B1 接手（§5.5）共用；不解析 detail 文本，只按 issue code 判。
+//   B1 = 在既有授权内、依据明确：code 本身就证明有原内容或唯一的替代目标可依，改正不需要新的设计决定。
+//   B2 = 需要新的产品选择、扩大范围或缺少事实；混合原因码（形状错误本身不证明可依据既有权威恢复）一律归 B2。
+// 未列入的 code 默认 B2。`needs` 是停机说明里"缺什么"的那句话。
+// ---------------------------------------------------------------------------
+export type DesignRepairClass = 'B1' | 'B2';
+type DesignArtifactKind = 'blueprint' | 'change_unit';
+const DESIGN_AUTHORITY_CLASS_ROWS: ReadonlyArray<readonly [DesignRepairClass, DesignArtifactKind, string, readonly string[]]> = [
+  // ---- B1 ----
+  ['B1', 'blueprint', '蓝图里的机器内容被写成了一段文字：按原文含义改回机器结构（不新增决定）', ['authority_content_not_machine_structure']],
+  // 不能"改指当前 CU"：发布新 revision 后调和会把 CU 再升一版，引用立即又过期（蓝图字节含 CU 的 sha、CU 字节含蓝图的 sha）。
+  ['B1', 'blueprint', '蓝图 contracts.change_unit.change_unit_ref 指向的是本 CU 的旧 revision：删掉这条可省略的引用（投影按当前 canonical CU 填入），其余映射保留', ['authority_cu_mapping_stale']],
+  // ---- B2：投影自身的抛错点（取证清单 §1 #6–#12）----
+  ['B2', 'blueprint', '蓝图里该处的机器内容为空或不是可恢复的内容（null、数字等）：缺内容，需要设计 owner 给出', ['authority_content_missing']],
+  ['B2', 'blueprint', '投影规范化报形状问题（含缺必填路径、路径越界等没有确定替代值的情形）：需要设计 owner 判断怎么补', ['authority_projection_shape_invalid']],
+  ['B2', 'blueprint', '蓝图 contracts.change_unit.change_unit_ref 指向另一个 CU：归属冲突，需要有权者裁决', ['authority_cu_mapping_conflict']],
+  ['B2', 'blueprint', 'design_ref 目标带验收 / 契约 / 用例却缺权威来源：需要取得权威来源', ['authority_target_provenance_missing']],
+  ['B2', 'blueprint', '多个 design_ref 目标的同一内容互相冲突：需要有权者裁决保留哪一份', ['authority_content_conflict', 'authority_use_cases_conflict']],
+  ['B2', 'blueprint', '蓝图缺获准的 CU 施工 / 测试 ID 映射：需要设计 owner 给出映射（不能从 touches 猜）', ['authority_cu_mapping_missing']],
+  ['B2', 'blueprint', '蓝图验收内容未过内容门或 CU predicate 缺验收映射：需要补全验收定义', ['authority_acceptance_content_invalid', 'authority_predicate_acceptance_unmapped']],
+  ['B2', 'blueprint', '蓝图施工契约不完整（类型签名 / 授权写集 / 写集闭合）：需要设计 owner 补写集与契约', ['authority_construction_content_incomplete', 'authority_contract_files_missing', 'authority_contract_write_set_open']],
+  // ---- B2：canonical CU 的加载与解析（§1 #1–#2；change-unit-path）----
+  ['B2', 'change_unit', 'canonical CU 缺失、无法解析或身份与路径不符：需要恢复或确认 CU 定义', [
+    'change_unit_id_reserved', 'change_unit_missing', 'change_unit_yaml_invalid', 'change_unit_root_invalid', 'change_unit_identity_mismatch',
+    'change_unit_ref_invalid', 'change_unit_invalid', 'change_unit_feature_binding_conflict', 'change_unit_ref_unresolvable', 'change_unit_feature_identity_invalid']],
+  // ---- B2：validateChangeUnit（§1 #3a–#3c；change-unit-validator）----
+  ['B2', 'change_unit', 'CU 指针指向旧蓝图 revision：框架已尝试原位升版未完成，原因见说明（竞争退出时不需要改设计内容）', ['change_unit_blueprint_ref_stale']],
+  ['B2', 'change_unit', 'CU 的 owner 蓝图不可解析：需要修蓝图或确认 CU 指向', ['change_unit_provenance_owner_unresolvable', 'change_unit_blueprint_ref_invalid']],
+  ['B2', 'change_unit', 'canonical CU 未过 schema / 语义门：形状错误本身不证明能依据既有权威恢复，需要设计 owner 判断（契约变化走新 change_unit_id + supersedes）', [
+    'change_unit_schema_invalid', 'change_unit_artifact_invalid', 'change_unit_forbidden_authority_field', 'change_unit_path_identity_mismatch',
+    'change_unit_blueprint_mismatch', 'change_unit_blueprint_owner_invalid', 'change_unit_blueprint_owner_mismatch', 'change_unit_blueprint_identity_mismatch',
+    'change_unit_provenance_context_missing', 'change_unit_provenance_source_unrecognized', 'change_unit_provenance_authority_invalid', 'change_unit_provenance_time_invalid',
+    'change_unit_purpose_missing', 'change_unit_provides_missing', 'change_unit_design_refs_missing', 'change_unit_touches_missing', 'change_unit_invariants_missing',
+    'change_unit_predicates_missing', 'change_unit_verification_missing', 'change_unit_provide_id_duplicate', 'change_unit_predicate_id_duplicate',
+    'change_unit_invariant_id_duplicate', 'change_unit_require_id_duplicate', 'change_unit_blocker_id_duplicate', 'change_unit_touch_blueprint_mismatch',
+    'change_unit_touch_not_in_design_refs', 'change_unit_touch_write_refs_missing', 'change_unit_predicate_provide_invalid', 'change_unit_predicate_verification_missing',
+    'change_unit_invariant_evidence_missing', 'change_unit_self_dependency', 'change_unit_safe_intermediate_state_invalid', 'change_unit_blocker_self_resolved',
+    'change_unit_blocker_probe_missing', 'change_unit_blocker_authority_missing', 'component_closure']],
+  // ---- B2：蓝图引用解析（§1 #4；component-blueprint-path）----
+  ['B2', 'blueprint', '蓝图缺失、无法解析、身份与引用不符或未过准入：需要修蓝图并重新准入', [
+    'blueprint_id_invalid', 'component_id_invalid', 'component_blueprint_ref_invalid', 'component_blueprint_missing', 'component_blueprint_yaml_invalid',
+    'component_blueprint_root_invalid', 'component_blueprint_identity_mismatch', 'component_blueprint_invalid']],
+  // ---- B2：设计门（§1 #5、§2；change-unit-design-gate）----
+  ['B2', 'blueprint', 'CU 的 owner 蓝图或某条 design_ref 在当前蓝图解析不到：缺明确的替代目标，需要设计 owner 给出', ['change_unit_blueprint_unresolvable', 'change_unit_design_ref_unresolvable']],
+  ['B2', 'blueprint', 'CU 设计闭包缺稳定地址或 touch 未指向 development 视图节点：需要设计 owner 补设计闭包', ['change_unit_design_closure_incomplete', 'change_unit_touch_development_owner_missing']],
+  ['B2', 'blueprint', '设计闭包内有未决决策、blocker 或 unknown：需要有权者裁决', ['change_unit_current_design_unresolved']],
+  ['B2', 'blueprint', '闭包里的 contract 缺权威来源：需要取得权威来源', ['change_unit_contract_not_admitted']],
+  ['B2', 'blueprint', '施工事实推翻了蓝图：需要回设计 owner 调和蓝图', ['change_unit_blueprint_reconciliation_required']],
+  // ---- B2：CU 施工投影的 reconcile 路线（§2；change-unit-feature-projection）----
+  ['B2', 'blueprint', '施工范围越出蓝图 touches 派生的可修改模块：扩大范围需要设计 owner 决定', ['cu_scope_matches_blueprint']],
+  ['B2', 'blueprint', '相关架构影响未经权威裁决，或与架构 DSL 冲突：需要有权者裁决（DSL 改动走 framework-init 获准路径）', ['cu_architecture_impact_not_effective']],
+];
+const DESIGN_AUTHORITY_CODE_TABLE = new Map(DESIGN_AUTHORITY_CLASS_ROWS.flatMap(([cls, artifact, needs, codes]) => codes.map(code => [code, { class: cls, artifact, needs }] as const)));
+const UNLISTED_DESIGN_CODE = { class: 'B2' as const, artifact: 'blueprint' as const, needs: '原因码未登记在分类表里，按需要有权者判断处理' };
+
+/** 一组原因码的分类：全部是 B1 才算 B1；空集、未登记、任一 B2 → B2。 */
+export function classifyDesignAuthorityCodes(codes: readonly string[]): { class: DesignRepairClass; artifacts: DesignArtifactKind[]; needs: string[] } {
+  const rows = (codes.length ? codes : ['']).map(code => DESIGN_AUTHORITY_CODE_TABLE.get(code) ?? UNLISTED_DESIGN_CODE);
+  return {
+    class: codes.length > 0 && rows.every(row => row.class === 'B1') ? 'B1' : 'B2',
+    artifacts: [...new Set(rows.map(row => row.artifact))],
+    needs: [...new Set(rows.map(row => row.needs))],
+  };
+}
+
+/** 修复简报的一条：哪条检查、哪个产物、原因码与分类、依据（检查原文）、缺什么。 */
+export interface DesignAuthorityFinding {
+  check: string;
+  codes: string[];
+  class: DesignRepairClass;
+  /** 要修的设计产物（工程相对路径）。 */
+  artifacts: string[];
+  basis: string;
+  needs: string[];
+  /** B1 原因码的位置（投影抛错点经检查的 structured 通道带出）；无人值守修复只许改这些位置。 */
+  locations?: DesignAuthorityLocation[];
+}
+
+/** 重跑结果：`unevaluable` 非空 = 这道门此刻重评不了（输入解析失败 / 门的对象不在），调用方不得据此认为阻断已消除。 */
+export interface DesignAuthorityDiagnosis { findings: DesignAuthorityFinding[]; unevaluable?: string }
+
+/**
+ * 只读重跑某阶段的设计权威门（spec → A1 验收；其余阶段 → CU 施工投影，plan 另含 A1 契约），返回其中责任在设计 owner 的阻断
+ *（`repair_owner='external'` 且带 `structured.kind='design_authority'`）。停机说明的分类 / 简报与探针共用。
+ * 输入走生产检查同一条解析路径（harness-runner：`resolveCapabilityResolutionEntryInput` → `resolveCapabilityInputs` →
+ * `SpecLoader.loadFeatureSpec(feature, inputs)`），所以只来自派生输入的施工契约也看得到。只有一处不同：不带 run 冻结的期望绑定
+ *——这里问的是"按当前输入这道门还拦不拦"，冻结绑定是否仍有效由 `staleFrozenBindings` 另判。
+ */
+export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: string, feature: string, phase: string, runId?: string): DesignAuthorityDiagnosis {
+  const cuGate = ['plan', 'change', 'coding', 'review', 'ut'].includes(phase);
+  if (phase !== 'spec' && !cuGate) return { findings: [] };
+  let featureSpec: CheckContext['featureSpec'];
+  try {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const { resolveCapabilityResolutionEntryInput } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+    const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const { resolveFeatureTrack } = require('./runtime-policy') as typeof import('./runtime-policy');
+    const { loadFeatureTrackDecl } = require('./feature-track') as typeof import('./feature-track');
+    const { relFeaturesDir } = require('../../config') as typeof import('../../config');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+    const entry = resolveCapabilityResolutionEntryInput({ frameworkRoot, projectRoot, feature, phase, featuresDir: relFeaturesDir(projectRoot), ...(runId ? { goalRunId: runId } : {}) });
+    const { expected_bindings: _frozen, ...inputContext } = entry.inputContext ?? ({} as NonNullable<typeof entry.inputContext>);
+    const resolution = resolveCapabilityInputs({
+      frameworkRoot, projectRoot, feature, phase, track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
+      ...entry, ...(entry.inputContext ? { inputContext } : {}),
+    });
+    featureSpec = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, resolution.inputs);
+  } catch (error) {
+    return { findings: [], unevaluable: `${phase} 的输入按生产路径解析失败：${(error as Error).message}` };
+  }
+  // 门的对象不在（解析不出 acceptance / contracts）时，门会按"不适用"空转——那不是阻断消除了，是重评不了。
+  if (phase === 'spec' ? !featureSpec.acceptance : feature.startsWith('cu-') && !featureSpec.contracts) {
+    return { findings: [], unevaluable: `${phase} 的 ${phase === 'spec' ? 'acceptance' : 'contracts'} 按当前输入解析不出来，设计权威门无法重评` };
+  }
+  const ctx = { projectRoot, frameworkRoot, feature, phase, phaseRule: {}, featureSpec } as unknown as CheckContext;
+  const checks = phase === 'spec' ? checkAuthoritativeContentAligned(ctx, 'acceptance') : checkChangeUnitFeatureProjection(ctx, phase as 'plan');
+  const rel = (file: string): string => path.relative(projectRoot, file).replace(/\\/g, '/');
+  const paths = (() => {
+    try {
+      const identity = parseChangeUnitFeatureId(feature);
+      return { blueprint: rel(componentBlueprintPath(projectRoot, identity.blueprintId)), change_unit: rel(changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId)) };
+    } catch { return { blueprint: '(canonical 蓝图)', change_unit: '(canonical Change Unit)' }; }
+  })();
+  return { findings: checks.flatMap(check => {
+    const structured = asRecord(check.structured);
+    if (check.status !== 'FAIL' || check.repair_owner !== 'external' || structured?.kind !== 'design_authority') return [];
+    const codes = Array.isArray(structured.codes) ? structured.codes.map(String) : [];
+    const verdict = classifyDesignAuthorityCodes(codes);
+    const locations = Array.isArray(structured.locations) ? structured.locations as DesignAuthorityLocation[] : undefined;
+    return [{ check: check.id, codes, class: verdict.class, artifacts: verdict.artifacts.map(kind => paths[kind]), basis: check.details, needs: verdict.needs, ...(locations ? { locations } : {}) }];
+  }) };
 }

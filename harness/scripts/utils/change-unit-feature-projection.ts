@@ -21,6 +21,7 @@ import {
   sameBlueprintTarget,
 } from './change-unit-model';
 import {
+  BLUEPRINT_REF_STALE_ISSUE,
   ChangeUnitResolutionError,
   asChangeUnitArtifact,
   deriveChangeUnitFeatureId,
@@ -48,6 +49,10 @@ export interface ChangeUnitProjectionIssue {
   id: string;
   message: string;
   route: 'repair_feature_mapping' | 'repair_change_unit' | 'reconcile_blueprint';
+  /** plan 9c3d7e1a §3：reconcile_blueprint 路线的结构化原因（缺省 'other'）；取自验证器 issue code。 */
+  reason?: 'blueprint_ref_stale';
+  /** plan 9c3d7e1a §5.0：canonical CU 未过门时验证器的原始 issue code（分类表按它判）；缺省即本条 issue 的 id。 */
+  codes?: string[];
 }
 
 export interface ChangeUnitProjectionResult {
@@ -627,7 +632,14 @@ export function validateChangeUnitFeatureProjection(
       cu = asChangeUnitArtifact(loaded.changeUnit);
     } catch (error) {
       const code = error instanceof ChangeUnitResolutionError ? error.code : 'change_unit_ref_unresolvable';
-      issues.push(issue(code, (error as Error).message, code.includes('blueprint') ? 'reconcile_blueprint' : 'repair_feature_mapping'));
+      // 路线直接取验证器 issue 的 route：canonical CU 的 BLOCKER 全是 reconcile_blueprint（指针过期）才回设计 owner，其余仍是映射修复。
+      const blockers = error instanceof ChangeUnitResolutionError ? error.issues ?? [] : [];
+      const reconcile = blockers.length > 0 && blockers.every(item => item.route === 'reconcile_blueprint');
+      issues.push({
+        ...issue(code, (error as Error).message, reconcile ? 'reconcile_blueprint' : 'repair_feature_mapping'),
+        ...(reconcile && blockers.every(item => item.id === BLUEPRINT_REF_STALE_ISSUE) ? { reason: 'blueprint_ref_stale' as const } : {}),
+        ...(blockers.length ? { codes: blockers.map(item => item.id) } : {}),
+      });
       return { applicable: true, issues, useCasesRequired: false, dagRequired: false };
     }
   }
@@ -716,7 +728,7 @@ export function checkChangeUnitFeatureProjection(
       status: 'FAIL' as const,
       details: item.message,
       // route=reconcile_blueprint 的责任在链外设计 owner：与 authoritative_content_aligned 无效分支同一字段，goal 首次即停交设计 owner。
-      ...(item.route === 'reconcile_blueprint' ? { repair_owner: 'external' as const } : {}),
+      ...(item.route === 'reconcile_blueprint' ? { repair_owner: 'external' as const, structured: { kind: 'design_authority', reason: item.reason ?? 'other', codes: item.codes ?? [item.id] } } : {}),
       suggestion: item.route === 'reconcile_blueprint'
         ? '停止 Feature 补模，返回 P1 调和 canonical blueprint。'
         : item.route === 'repair_change_unit'

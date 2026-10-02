@@ -27,6 +27,7 @@ import { featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../c
 import type { ExecutionScope } from './execution-scope';
 import { executionScopeFingerprint } from './execution-scope';
 import { reduceRunState } from './run-state-reducer';
+import { externalWaitingProbe } from './goal-supervisor';
 import { loadReviewClosureAttestation } from './closure-attestation';
 
 /**
@@ -604,8 +605,12 @@ export interface ContinuationCallFacts {
   attended?: boolean;
 }
 
-/** "存在变化"只认这六种可核验事实（plan §7.2）。 */
+/**
+ * "存在变化"只认这些可核验事实（plan 4e6fb3b6 §7.2 的六种 + plan 9c3d7e1a §5.3 的第七种）。
+ * `external_condition_ready`：最新未终局 run 停在带探针的外部等待上，且探针现在就绪——通用，不只为设计权威。
+ */
 export type ContinuationChange =
+  | 'external_condition_ready'
   | 'requirement_source_changed'
   | 'related_repair_changed'
   | 'requirement_increment'
@@ -666,6 +671,49 @@ export function successorBoundsRefusal(reason: string, conflicts: readonly strin
     + '后继的阶段链由出生范围按当前输入重新解析，不支持按本次起止缩窄；去掉 --start/--end（或原样沿用原请求的起止）后重发。';
 }
 
+/**
+ * plan 9c3d7e1a §5.3：外部等待修好之后"原 run 继续还是起后继"的**唯一判断**——普通重发、显式 `--resume`（含 supervisor 拉起）、
+ * 进程内探针唤醒都消费它。返回 run 有效范围里读不回来、且链内没有责任阶段能重签的输入绑定（`input_id: 原因`）：
+ * 空 = 重新接入同一 run；非空 = 同一 run 无法重签（解析器会把该输入置为 invalid），从它起后继、出生时按当前输入重新解析。
+ * 用既有 `readBoundInput` 只读核对，不放宽指纹；不核的两类：没有解析值的源码观察（`derive.codebase` 等，run 自己会写源码），
+ * 以及从停机阶段起仍由 spec / plan 持有改写权的 artifact（与阶段输入解析同一谓词 `phaseOwnsDesignOutput`，链内改写后经范围修订重签）。
+ */
+export function staleFrozenBindings(projectRoot: string, feature: string, runId: string, haltedPhase?: string): string[] {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { readBoundInput, bindingHasParsedValue } = require('./capability-resolution') as typeof import('./capability-resolution');
+  const { phaseOwnsDesignOutput } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+  const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+  const { inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+  const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+  if (!scope) return [];
+  const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);
+  const requirement = loadGoalManifestFromRun(projectRoot, runId, { feature }).requirement?.trim();
+  const chain = scope.phase_chain.map(String);
+  const remaining = chain.slice(Math.max(haltedPhase ? chain.indexOf(haltedPhase) : 0, 0));
+  const contracts = phaseContractIndex(loadFeatureContracts(frameworkRoot));
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
+  const stale = new Set<string>();
+  for (const obligation of scope.obligations) {
+    for (const ref of [...obligation.basis, ...(obligation.satisfied_by ?? [])]) {
+      if (!('input_id' in ref) || !bindingHasParsedValue(ref)) continue;
+      if (remaining.some(phase => phaseOwnsDesignOutput(contracts.get(phase)?.phase.produces ?? [], scope, phase, ref))) continue;
+      const isRequirement = ref.source.kind === 'derive' && ref.source.provider_id === 'derive.requirement';
+      if (isRequirement && !requirement) continue;
+      try {
+        readBoundInput({
+          projectRoot, frameworkRoot, feature, phase: obligation.owner_phase, track: 'full',
+          ...(isRequirement ? { requirement, inputContext: { schema_version: '1.1' as const, subject: { feature }, obligations: {}, required_outputs: [] } } : {}),
+        }, ref, legacyRoot);
+      } catch (error) {
+        stale.add(`${ref.input_id}: ${(error as Error).message}`);
+      }
+    }
+  }
+  return [...stale].sort();
+}
+
 /** 与恢复守卫（checkTerminalResumeGuard）同一个冷却长度；冷却只在"没有任何变化"时生效（plan §7.3）。 */
 export const CONTINUATION_COOLDOWN_MINUTES = 5;
 
@@ -720,6 +768,8 @@ export function decideRunContinuation(input: {
   call: ContinuationCallFacts;
   nowMs?: number;
   cooldownMinutes?: number;
+  /** 停机所挂探针的执行者（缺省 = 共享的真实探针 `runConditionProbe`）；嵌入调用方与进程内等待用同一个。 */
+  runProbe?: (reportDir: string, probe: string, phase?: string) => { ready: boolean; reason?: string };
 }): RunContinuationDecision {
   const { call } = input;
   if (call.resume?.trim()) return { kind: 'rejoin', explicit: true, runId: call.resume.trim(), started: true, reason: '显式 --resume' };
@@ -781,6 +831,18 @@ export function decideRunContinuation(input: {
   }
 
   const changes = changesAgainst(latest);
+  // plan 9c3d7e1a §5.3 第七种变化：最新未终局 run 停在带探针的外部等待上，且探针现在就绪。探针取法与 supervisor 同一个提取。
+  const waiting = isStructurallyTerminal(latest) ? null : externalWaitingProbe(latest.events);
+  if (waiting) {
+    const reportDir = path.relative(input.projectRoot, latest.runDir).replace(/\\/g, '/');
+    let ready = false;
+    try {
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const probe = input.runProbe ?? ((dir: string, name: string, phase?: string) => (require('./condition-wait') as typeof import('./condition-wait')).runConditionProbe(input.projectRoot, dir, name, phase));
+      ready = probe(reportDir, waiting.probe, waiting.phase).ready === true;
+    } catch { ready = false; /* 探针自身失败 = 未就绪，冷却照常 */ }
+    if (ready) changes.push('external_condition_ready');
+  }
 
   const successor = (change: ContinuationChange): RunContinuationDecision => {
     const holder = scopeHolder();
@@ -813,6 +875,15 @@ export function decideRunContinuation(input: {
   }
   const identityChange = changes.find(change => change === 'model_changed' || change === 'requirement_increment');
   if (identityChange) return successor(identityChange);
+  // plan 9c3d7e1a §5.3：外部条件已就绪——原 run 继续还是起后继，由 staleFrozenBindings 这一处判断。
+  if (changes.includes('external_condition_ready')) {
+    let stale: string[];
+    try { stale = staleFrozenBindings(input.projectRoot, input.feature, latest.runId, waiting?.phase); } catch (error) { stale = [`范围不可读：${(error as Error).message}`]; }
+    if (stale.length) {
+      const decided = successor('external_condition_ready');
+      return { ...decided, reason: `${decided.reason}；停机所挂探针已就绪，但 run 冻结的输入绑定已失效、同一 run 无法重签（${stale.join('；')}）` };
+    }
+  }
   const cooldownMs = (input.cooldownMinutes ?? CONTINUATION_COOLDOWN_MINUTES) * 60_000;
   const elapsed = (input.nowMs ?? Date.now()) - latest.ts;
   // 冷却与原恢复守卫同一范围：只对有正式开始的 run（原先 --resume 的路径）；启动即失败的 run 原先走附着/新开，从无冷却。

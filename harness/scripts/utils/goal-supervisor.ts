@@ -53,7 +53,7 @@ export type SupervisorDecision =
 export interface SupervisorInput {
   /** run 的 events（authoritative 顺序）——只用于折叠 disposition 投影 */
   events: readonly unknown[];
-  /** 本 run 已由 supervisor 重启过几次（从 events 的 supervisor_restart 计数） */
+  /** 已由 supervisor 重启过几次（events 的 supervisor_restart 计数；后继 run 另加同一交付周期内被承接 run 的次数——上限不因起后继重置） */
   restartsSoFar: number;
   beaconStale: boolean;
   /** Same-source condition probe recorded on a machine-observable WAITING halt. */
@@ -91,6 +91,12 @@ function currentExternalWaitingProbe(
     probe: event.probe.trim(),
     ...(typeof phase === 'string' && phase.trim() ? { phase: phase.trim() } : {}),
   };
+}
+
+/** run 当前有效的「带探针的 WAITING(external)」：supervisor 唤醒与接续决策（plan 9c3d7e1a §5.3）共用这一个提取，不各写一份。 */
+export function externalWaitingProbe(events: readonly unknown[]): { probe: string; phase?: string } | null {
+  const state = reduceRunState(events);
+  return state.run_disposition === 'WAITING' ? currentExternalWaitingProbe(events, state.source_event_index) : null;
 }
 
 /**
@@ -166,6 +172,8 @@ export function superviseRun(args: {
   events: readonly unknown[];
   probe?: ProcessProbe;
   conditionProbe?: (probe: string, phase?: string) => { ready: boolean; reason?: string };
+  /** plan 9c3d7e1a §5.2：被本 run 承接的、同一交付周期内未完成 run 上已记的重启次数（起后继不重置上限）。 */
+  inheritedRestarts?: number;
 }): SupervisorDecision {
   const beacon = readLivenessBeacon(args.projectRoot, args.reportDir);
   const verdict = assessLivenessBeacon({ beacon, runId: args.runId, probe: args.probe });
@@ -173,7 +181,7 @@ export function superviseRun(args: {
   const waitingProbe = currentExternalWaitingProbe(args.events, state.source_event_index);
   return decideSupervision({
     events: args.events,
-    restartsSoFar: countSupervisorRestarts(args.events),
+    restartsSoFar: countSupervisorRestarts(args.events) + (args.inheritedRestarts ?? 0),
     beaconStale: isBeaconStale(verdict),
     condition: (() => {
       if (!waitingProbe || !args.conditionProbe) return undefined;

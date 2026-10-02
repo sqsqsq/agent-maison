@@ -358,12 +358,28 @@ function sha256Buffer(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
-/** Capture all controlled feature/source/config bytes immediately around an agent process. */
+/**
+ * Capture all controlled feature/source/config bytes immediately around an agent process.
+ * 链外设计修复调用（plan 9c3d7e1a §5.5 第 2 步）另给两组工程相对路径前缀：
+ *  · `ownedPrefixes`：本任务自己的工作区（蓝图工作区，含本 run 与祖先 run 的事件、manifest、run-control）——
+ *    其下不套用按目录名排除运行时路径的通用规则，判重、预算与授权输入照查；
+ *  · `runtimeExcluded`：调用期间运行时自己会写的路径（草稿、调用日志、进度、beacon、本 feature 锁心跳），一律排除；
+ *  · `includeFiles`：本任务实际引用的输入文件（蓝图 source_ref 指向的项目内文件）——即使位于通常排除的目录（context / reports 等）也逐个核对。
+ * 其余位置（别的 feature 的 run）仍按通用规则排除运行时输出；依赖、缓存、构建目录的排除不变。都不给 = 阶段调用的原行为。
+ */
 export function capturePhaseInvocationSnapshot(
-  resolution: PhaseWriteBoundaryResolution,
+  resolution: Pick<PhaseWriteBoundaryResolution, 'projectRoot' | 'protectedRoots'>,
+  options: { ownedPrefixes?: readonly string[]; runtimeExcluded?: readonly string[]; includeFiles?: readonly string[] } = {},
 ): PhaseInvocationSnapshot {
   const entries: PhaseInvocationSnapshotEntry[] = [];
   const seen = new Set<string>();
+  const normalizeAll = (prefixes: readonly string[] | undefined): string[] =>
+    (prefixes ?? []).map((prefix) => normalizeRelative(resolution.projectRoot, prefix));
+  const runtimeExcluded = normalizeAll(options.runtimeExcluded);
+  const ownedPrefixes = normalizeAll(options.ownedPrefixes);
+  const included = new Set(normalizeAll(options.includeFiles));
+  const excludedByRuntime = (rel: string): boolean => runtimeExcluded.some((prefix) => prefixMatches(rel, prefix))
+    || (!included.has(rel) && !ownedPrefixes.some((prefix) => prefixMatches(rel, prefix)) && isRunnerOwnedOrSharedPath(rel));
   const visit = (abs: string, requiredRoot: boolean): string | null => {
     let stat: fs.Stats;
     try {
@@ -374,7 +390,7 @@ export function capturePhaseInvocationSnapshot(
     }
     const rel = normalizeRelative(resolution.projectRoot, abs);
     if (rel.split('/').some((segment) => SNAPSHOT_EXCLUDED_SEGMENTS.has(segment))) return null;
-    if (isRunnerOwnedOrSharedPath(rel)) return null;
+    if (excludedByRuntime(rel)) return null;
     if (stat.isSymbolicLink()) {
       try {
         if (!seen.has(rel)) {
@@ -413,6 +429,11 @@ export function capturePhaseInvocationSnapshot(
 
   for (const root of resolution.protectedRoots) {
     const failure = visit(path.join(resolution.projectRoot, root), true);
+    if (failure) return snapshotFailure(failure);
+  }
+  // 实际引用的输入：所在目录按通用规则不遍历时单独核（不存在 = 不记，前后都不存在即无变化）。
+  for (const rel of included) {
+    const failure = visit(path.join(resolution.projectRoot, rel), false);
     if (failure) return snapshotFailure(failure);
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));

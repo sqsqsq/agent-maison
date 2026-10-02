@@ -15,18 +15,21 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as path from 'path';
 import * as YAML from 'yaml';
-import { resolveFeatureArtifact } from '../../config';
+import { featureFilePath, resolveFeatureArtifact } from '../../config';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import {
   LoadedChangeUnit,
   asChangeUnitArtifact,
+  changeUnitDirectory,
   deriveChangeUnitFeatureId,
   enumerateCanonicalChangeUnits,
   loadCanonicalChangeUnit,
   parseChangeUnitFeatureId,
   resolveChangeUnitRef,
 } from './change-unit-path';
+import { FEATURE_LOCK_NAME, readLockRecord, releaseLock, tryAcquireLock } from './goal-run-lock';
 import { stableStringify } from './phase-evidence-manifest';
 import {
   BLUEPRINT_PROJECTION_FILES,
@@ -153,7 +156,15 @@ export function acceptChangeUnitDecomposition(
 export interface BlueprintRefReconciliation {
   bumped: Array<{ change_unit_id: string; revision: number; blueprint_revision: number }>;
   skipped: Array<{ change_unit_id: string; reasons: string[] }>;
+  /** 竞争退出（plan 9c3d7e1a §4.2）：蓝图锁或某个待写 feature 的锁被另一执行者持有——一个字节未写，bumped / skipped 为空。 */
+  busy?: string;
 }
+
+/** 调用方已持有的 feature 锁（goal 运行时对本 feature）：借给调和器，调和器不再取（`tryAcquireLock` 不支持同 owner 重入）也不释放。 */
+export interface HeldFeatureLock { path: string; ownerId: string }
+/** 蓝图级调和锁：放在该蓝图的工作区根下，只在一次调和（枚举 → 校验 → 写出 / 回滚）期间存在。 */
+export const BLUEPRINT_RECONCILE_LOCK_NAME = '.blueprint-reconcile.lock';
+export const RECONCILE_BUSY_HINT = '另一执行者正在写入，竞争解除后重发同一请求即可，不需要改设计内容';
 
 /** CU 内全部蓝图身份指针：component_blueprint_ref、design_refs[]、touches[].design_ref。 */
 function blueprintIdentityPointers(cu: ChangeUnitRecord): Array<Record<string, unknown> | undefined> {
@@ -165,6 +176,11 @@ function blueprintIdentityPointers(cu: ChangeUnitRecord): Array<Record<string, u
 }
 
 const IDENTITY_KEYS = ['revision', 'source_fingerprint', 'artifact_sha256'] as const;
+const currentBlueprintIdentity = (current: ReturnType<typeof loadCanonicalBlueprint>) => ({
+  revision: Number(current.blueprint.revision),
+  source_fingerprint: String(current.blueprint.source_fingerprint),
+  artifact_sha256: current.artifactSha256,
+});
 
 /**
  * plan c4e7a9b2 §3.4 B2：「已证明业务内容相同」的唯一等价判据。登记的引用换成它经精确解析器解析到的
@@ -317,7 +333,99 @@ function repointHandWrittenContracts(
 export function reconcileChangeUnitBlueprintRefs(
   projectRoot: string,
   blueprintId: string,
+  options: { heldFeatureLocks?: readonly HeldFeatureLock[] } = {},
 ): BlueprintRefReconciliation {
+  // 写入所有权边界（plan 9c3d7e1a §4.2）：调和器的写集是整个蓝图下的 CU 与各 feature 的投影 / contracts.yaml。
+  // ① 蓝图级锁串行化调和器本身；② 对本批可能写到的每个 feature 取它既有的 feature 锁——与 goal 运行时的阶段写入
+  // 共享同一个互斥边界。任一取不到即竞争退出，一个字节不写。自身的原子替换与回滚不作为并发安全的依据。
+  if (!fs.existsSync(changeUnitDirectory(projectRoot, blueprintId))) return { bumped: [], skipped: [] };
+  const taken = acquireBlueprintWriteLocks(projectRoot, blueprintId, staleOwnerChangeUnitIds(projectRoot, blueprintId), options.heldFeatureLocks);
+  if ('busy' in taken) return { bumped: [], skipped: [], busy: taken.busy };
+  try {
+    return reconcileHeldBlueprintRefs(projectRoot, blueprintId, taken);
+  } finally {
+    taken.release();
+  }
+}
+
+/** 一次取到的两层锁：`lockedChangeUnitIds` = 实际持有（含借来的）feature 锁的 CU；`release` 只放自己取的，借来的不放。 */
+export interface BlueprintWriteLocks { lockedChangeUnitIds: ReadonlySet<string>; release: () => void }
+
+/**
+ * 两层锁的唯一取锁段（plan 9c3d7e1a §4.2 / §5.5）：蓝图锁 + `changeUnitIds` 各自 feature 的既有 feature 锁。调用方已持有的
+ * feature 锁经 `heldFeatureLocks` 借入（路径相同且盘上记录的 ownerId 相同才算），不再取也不释放。任一取不到即返回 `busy`，
+ * 已取的锁当场放掉。调和入口与无人值守修复尝试都经这里。
+ */
+export function acquireBlueprintWriteLocks(
+  projectRoot: string,
+  blueprintId: string,
+  changeUnitIds: readonly string[],
+  heldFeatureLocks: readonly HeldFeatureLock[] = [],
+): BlueprintWriteLocks | { busy: string } {
+  const workspace = changeUnitDirectory(projectRoot, blueprintId);
+  const acquired: Array<{ lockPath: string; ownerId: string; createdDir?: string }> = [];
+  const release = (): void => {
+    for (const item of acquired.splice(0).reverse()) {
+      releaseLock(item.lockPath, item.ownerId);
+      // 只为取锁而建的空 goal-runs 目录不留在宿主里（非空则 rmdir 失败，保持原样）。
+      if (item.createdDir) { try { fs.rmdirSync(item.createdDir); } catch { /* 非空或已不在 */ } }
+    }
+  };
+  const take = (lockPath: string): boolean => {
+    const dir = path.dirname(lockPath);
+    const createdDir = !fs.existsSync(dir);
+    let record: ReturnType<typeof tryAcquireLock>;
+    try {
+      record = tryAcquireLock(lockPath, {});
+    } catch (error) {
+      if (createdDir) { try { fs.rmdirSync(dir); } catch { /* 非空或不在 */ } }
+      throw error;
+    }
+    if (record) acquired.push({ lockPath, ownerId: record.ownerId, ...(createdDir ? { createdDir: dir } : {}) });
+    return !!record;
+  };
+  const busy = (what: string): { busy: string } => { release(); return { busy: `${RECONCILE_BUSY_HINT}（${what}）` }; };
+  // 取锁中途抛错（EACCES 等）：先放掉本次已取得的锁再抛原异常——同机活 pid 的锁永不过期，留下就会挡住自己的重试。借来的锁不放。
+  try {
+    if (!take(path.join(workspace, BLUEPRINT_RECONCILE_LOCK_NAME))) return busy(`蓝图 ${blueprintId} 正在被另一次调和处理`);
+    const locked = new Set<string>();
+    for (const changeUnitId of changeUnitIds) {
+      const lockPath = featureFilePath(projectRoot, deriveChangeUnitFeatureId(blueprintId, changeUnitId), path.join('goal-runs', FEATURE_LOCK_NAME));
+      const lent = heldFeatureLocks.some(held => path.resolve(held.path) === path.resolve(lockPath) && readLockRecord(lockPath)?.ownerId === held.ownerId);
+      if (!lent && !take(lockPath)) return busy(`${blueprintId}/${changeUnitId} 的 feature 锁被另一执行者持有`);
+      locked.add(changeUnitId);
+    }
+    return { lockedChangeUnitIds: locked, release };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+/**
+ * 锁内调和：消费实际取得的锁集合。取锁范围来自取锁那次读取；写集由这里的读取重新确定（蓝图可能在两次读取之间又升版）。
+ * 写集里出现未持锁的 CU 即竞争退出——写出只发生在已持锁的 feature 上。
+ */
+export function reconcileHeldBlueprintRefs(projectRoot: string, blueprintId: string, locks: BlueprintWriteLocks): BlueprintRefReconciliation {
+  const outside: string[] = [];
+  const result = reconcileUnderLocks(projectRoot, blueprintId, pending => {
+    outside.push(...pending.filter(changeUnitId => !locks.lockedChangeUnitIds.has(changeUnitId)));
+    return outside.length === 0;
+  });
+  return result ?? { bumped: [], skipped: [], busy: `${RECONCILE_BUSY_HINT}（取锁之后蓝图或 CU 又有变化，${blueprintId}/${outside.join('、')} 不在已持锁范围内）` };
+}
+
+/** 本批可能被写到的 CU：owner 指针身份不等于当前蓝图身份的（含随后会被跳过的——取锁宁多勿少）。蓝图不可加载时调和器不写任何东西。 */
+function staleOwnerChangeUnitIds(projectRoot: string, blueprintId: string): string[] {
+  let identity: string;
+  try { identity = identityKey(currentBlueprintIdentity(loadCanonicalBlueprint(projectRoot, blueprintId))); } catch { return []; }
+  return enumerateCanonicalChangeUnits(projectRoot, blueprintId)
+    .filter(loaded => identityKey(blueprintIdentityPointers(loaded.changeUnit)[0]) !== identity)
+    .map(loaded => String(loaded.changeUnit.change_unit_id));
+}
+
+/** `mayWrite` 在写集确定之后、任何写出之前调用一次；返回 false 则一个字节不写、返回 null。 */
+function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite: (pendingChangeUnitIds: string[]) => boolean): BlueprintRefReconciliation | null {
   const result: BlueprintRefReconciliation = { bumped: [], skipped: [] };
   const units = enumerateCanonicalChangeUnits(projectRoot, blueprintId);
   let current: ReturnType<typeof loadCanonicalBlueprint>;
@@ -329,11 +437,7 @@ export function reconcileChangeUnitBlueprintRefs(
     }
     return result;
   }
-  const identity = {
-    revision: Number(current.blueprint.revision),
-    source_fingerprint: String(current.blueprint.source_fingerprint),
-    artifact_sha256: current.artifactSha256,
-  };
+  const identity = currentBlueprintIdentity(current);
   const pending: Array<{ loaded: LoadedChangeUnit; next: ChangeUnitRecord; feature: string; refresh?: ProjectionRefresh; contracts?: { file: string; bytes: Buffer; text?: string } }> = [];
   for (const loaded of units) {
     const cu = loaded.changeUnit;
@@ -391,6 +495,7 @@ export function reconcileChangeUnitBlueprintRefs(
       pinned = true;
     }
   }
+  if (!mayWrite(pending.map(item => String(item.loaded.changeUnit.change_unit_id)))) return null;
   const pendingById = new Map(pending.map(item => [String(item.loaded.changeUnit.change_unit_id), item]));
   const bumpedSha = new Map<string, string>();
   // 精确引用不可能成环（互相包含对方字节哈希），递归必然终止。
@@ -509,6 +614,8 @@ export function deriveDesignPreparationReadiness(
   blueprintId: string,
 ): DesignPreparationReadiness {
   const blueprintRefs = reconcileChangeUnitBlueprintRefs(projectRoot, blueprintId);
+  // 竞争退出：没有调和就不派生 readiness（按旧指针算出的结论不可用）——报忙，由调用方稍后重试。
+  if (blueprintRefs.busy) return { ready: false, blueprintRefs, changeUnitIds: [], perUnit: [], entersConstruction: false, nextEntry: 'component-design' };
   // 只对活动 CU 要求可施工：被精确 supersede 的历史 CU 已退役，不重新施工（与 closure 同一退役判定）。
   const retired = retiredChangeUnitIds(projectRoot, blueprintId);
   const units = enumerateCanonicalChangeUnits(projectRoot, blueprintId)
