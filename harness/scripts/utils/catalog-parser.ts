@@ -229,8 +229,7 @@ export function findModulesByTerm(catalog: ModuleCatalog, term: string): TermLoo
 
     for (const ec of m.easily_confused_with) {
       if (
-        ec.disambiguation.includes(trimmed) ||
-        terms.some(t => ec.disambiguation.includes(t))
+        ec.disambiguation.includes(trimmed) || ec.module === trimmed
       ) {
         confusedHits.push({ fromModule: m.name, entry: ec });
       }

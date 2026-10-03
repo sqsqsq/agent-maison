@@ -127,7 +127,9 @@ export function componentReviewContext(root: string): Array<{ label: string; con
   const index = readComponentIndex(root);
   if (!index) return [];
   const catalog = readComponentCatalog(root);
+  const curated = new Map(catalog.components.map(card => [card.id, card]));
   const calls = new Map(index.components.map(c => [c.id, [] as string[]]));
+  const sourceFiles = new Set(index.components.map(component => component.file));
   const modules = loadCatalog(root);
   const visit = (rel: string) => {
     const dir = path.join(root, validateProjectRelativePath(root, rel, 'component live usage'));
@@ -143,14 +145,18 @@ export function componentReviewContext(root: string): Array<{ label: string; con
         if (asset.file === file) continue;
         const hits = calls.get(asset.id)!;
         const pattern = new RegExp(`\\b${asset.symbol.replace(/[$]/g, '\\$')}\\s*\\(`);
-        for (let i = 0; i < lines.length && hits.length < 3; i++) if (pattern.test(lines[i])) hits.push(`${file}:${i + 1}: ${lines[i].trim()}`);
+        for (let i = 0; i < lines.length && hits.length < 3; i++) if (pattern.test(lines[i])) {
+          hits.push(`${file}:${i + 1}: ${lines[i].trim()}`);
+          sourceFiles.add(file);
+        }
       }
     }
   };
   if (modules.ok) for (const module of modules.catalog.modules) visit(`${module.layer}/${module.name}`);
   return [
-    { label: relComponentIndex(root), content: JSON.stringify(index) },
+    { label: relComponentIndex(root), content: JSON.stringify({ ...index, components: index.components.map(component => ({ ...component, curation: curated.get(component.id) ?? null })) }) },
     { label: relComponentCatalog(root), content: JSON.stringify(catalog) },
-    { label: '组件候选 live 调用点（每组件最多 3 个样本，非引用总数）', content: [...calls].map(([id, hits]) => `${id}\n${hits.length ? hits.join('\n') : '未检出调用样本（不代表无调用，别名可能漏采）'} `).join('\n\n') },
+    { label: '(组件候选 live 调用点)', content: '每组件最多 3 个样本，非引用总数\n' + [...calls].map(([id, hits]) => `${id}\n${hits.length ? hits.join('\n') : '未检出调用样本（不代表无调用，别名可能漏采）'} `).join('\n\n') },
+    ...[...sourceFiles].sort().map(file => ({ label: file, content: '组件定义 / live 样本原文；按路径打开核对。' })),
   ];
 }

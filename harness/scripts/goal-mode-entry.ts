@@ -48,6 +48,8 @@ import { relFeaturesDir } from '../config';
 import { executionCompletionPhases, executionScopeFingerprint } from './utils/execution-scope';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl, prepareFeatureScopeCandidate, featureScopePhaseHealth } from './utils/feature-track';
+import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
+import { readBoundInput } from './utils/capability-resolution';
 import { resolveBirthExecutionScope, registerFeatureScopeTransfer, resolveSuccessorExecutionScope } from './utils/feature-execution-scope';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -581,15 +583,33 @@ async function main(): Promise<void> {
         : {}),
       overwrite: Boolean(argv.overwrite),
     });
+    const knowledgeContracts = prepared.scope.obligations.flatMap(obligation => obligation.basis).find(binding => binding.input_id === 'contracts');
+    let contracts: import('./utils/types').ContractsSpec | undefined;
+    let knowledgeBindingError: string | undefined;
+    try {
+      if (knowledgeContracts) contracts = readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'plan', track: 'full' }, knowledgeContracts) as import('./utils/types').ContractsSpec;
+    } catch (error) {
+      knowledgeBindingError = `知识装配的契约绑定读取失败：${(error as Error).message}；候选${prepared.written ? '已写入' : '未改写'}，本次准备未通过。修正来源后重新运行 --prepare-scope；以下仅提供无契约的知识索引。`;
+      console.error(knowledgeBindingError);
+      process.exitCode = 1;
+    }
+    const requirement = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot }).text;
+    const knowledge = prepared.scope.phase_chain.map(phase => {
+      const view = assembleKnowledge({ projectRoot, frameworkRoot, phase, subject: 'feature', role: 'author',
+        requirement, contracts });
+      if (knowledgeBindingError) view.notices.unshift(knowledgeBindingError);
+      return { phase, ...view, instructions: renderKnowledge(view) };
+    });
     console.log(JSON.stringify({
       type: 'scope_candidate_prepared',
+      knowledge,
       state: prepared.state,
       written: prepared.written,
       candidate: path.relative(projectRoot, prepared.path).replace(/\\/g, '/'),
       phase_chain: prepared.scope.phase_chain,
       obligations: prepared.scope.obligations.map(obligation => ({ id: obligation.id, applicability: obligation.applicability, reason: obligation.reason })),
       unresolved: prepared.scope.unresolved,
-      explanation: prepared.explanation,
+      explanation: knowledgeBindingError ? prepared.explanation + '\n' + knowledgeBindingError : prepared.explanation,
     }, null, 2));
     if (prepared.state === 'differs') {
       console.error('候选已存在且与本次生成不一致——不静默覆盖。差异字段：');

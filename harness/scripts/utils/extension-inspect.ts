@@ -12,6 +12,7 @@ import {
   scanExtensionSkills,
 } from './instance-skill-bridge';
 import { inspectExtensionProduce } from './extension-runtime';
+import { extensionKnowledgeRoutes } from './knowledge-context';
 
 export type ExtensionStrength = 'available' | 'scheduled' | 'evidenced';
 
@@ -104,14 +105,13 @@ export function inspectInstanceExtensions(
     });
   }
 
-  for (const knowledge of bundle.knowledge) {
-    const routed = bundle.manifestVersion === '1.1';
+  for (const { entry: knowledge, path: source, routed, audience } of extensionKnowledgeRoutes(bundle, projectRoot)) {
     rows.push({
-      type: 'knowledge', source: rel(projectRoot, knowledge.absPath),
+      type: 'knowledge', source,
       timing: routed
-        ? knowledge.audience === 'global' ? 'AGENTS.md 渲染时' : `Feature phases: ${(knowledge.audience as string[]).join(', ') || '全部'}`
+        ? knowledge.audience === 'global' ? 'AGENTS.md / CLAUDE.md 渲染时' : `Feature phases: ${audience.join(', ')}`
         : '当前零消费（manifest 1.0）',
-      consumer: routed ? knowledge.audience === 'global' ? '全局 agent 指令' : '对应 phase ai-prompt.md' : '无（1.0 兼容）',
+      consumer: routed ? knowledge.audience === 'global' ? '全局 agent 指令' : '对应 phase 作者 / prepare / verifier；AGENTS 静态路由' : '无（1.0 兼容）',
       state: routed ? 'scheduled' : 'available', status: routed ? 'routed' : 'declared-unconsumed',
     });
   }
@@ -128,7 +128,9 @@ export function inspectInstanceExtensions(
   for (const [skillId, assets] of Object.entries(bundle.skillAssetAbsPaths)) {
     for (const [assetKey, file] of Object.entries(assets)) rows.push({
       type: 'skill_asset', source: rel(projectRoot, file), timing: `/${skillId} 执行时`,
-      consumer: `/${skillId}`, state: 'scheduled', status: assetKey,
+      consumer: skillId === 'component-design' && assetKey === 'knowledge'
+        ? 'assembleKnowledge → component-design/SKILL.md · P1 discovery 前读取' : `/${skillId} 的已声明 asset 消费者`,
+      state: skillId === 'component-design' && assetKey !== 'knowledge' ? 'available' : 'scheduled', status: assetKey,
     });
   }
   for (const [phase, file] of Object.entries(bundle.phaseRuleOverlayPaths)) rows.push({

@@ -6,6 +6,8 @@
 
 ## 索引
 
+重扫派生与长期策展分开：默认相关 run 收口后、P3 前在原写入授权内刷新；若当前门禁需要本次新增导出的 index，应先由既有权责链明确写集再执行，不能等收口来绕过本次检查。具体时点和归位职责见[知识读取与维护](skill-contracts.md#知识读取与维护)。
+
 默认 `doc/component-index.yaml`；文件存在即主动启用，git 入库，勿手编。在消费者 `framework/harness` 执行 `npm run bootstrap:component-index -- --project-root <宿主根>`。没有文件时 Feature 校验跳过，初始化/更新不创建文件，UPDATE 不回填配置键。
 
 根字段 `schema_version: '1.0'`、`components: []`。条目字段：`id`、`module`、`file`、`symbol`、`kind`（component|builder）、`props`（参数名数组）、`deprecated`、`source_fingerprint`（文件原始字节 SHA-256）、`static_checks`。ID 为 `<module>/<模块内相对文件>#<源码符号>`，file 为项目相对路径。按 ID 排序；禁止时间戳、绝对路径、引用计数或调用点样本。改文件名/符号得到新 ID。

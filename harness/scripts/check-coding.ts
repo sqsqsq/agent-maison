@@ -320,7 +320,7 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
   );
 }
 
-function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
+export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   if (ctx.resolvedInputs) {
     const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现须符合已绑定施工契约的模块与写集', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '回 plan/蓝图责任方补齐或重签设计；不要在 coding 扩大 contracts.files。' } : {}) }];
     const runId = process.env.MAISON_GOAL_RUN_ID?.trim();

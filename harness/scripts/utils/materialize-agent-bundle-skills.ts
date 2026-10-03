@@ -53,6 +53,7 @@ export function renderBridgeSkillStubMarkdown(
     `完整 Skill 定义请阅读：**[${skillMdRepoRelPosix}](${relFromStub})**`,
     '',
   );
+  if (skillId === 'component-design') lines.push('先读项目根 AGENTS.md（Claude 为 CLAUDE.md）的「component-design 设计前知识」；随后按根 Skill 从当前配置读取原文，投影不代替真源。', '');
   return lines.join('\n');
 }
 

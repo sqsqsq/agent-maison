@@ -27,7 +27,7 @@ import { clearFrameworkConfigCache } from '../../config';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const READ_INSTRUCTION =
-  "Before writing this phase's artifacts, read the instance extension inputs below that apply to this phase.";
+  "Before writing this phase's artifacts, read the knowledge inputs below that apply to this phase.";
 
 const MINIMAL_MANIFEST: GoalManifest = {
   schema_version: '1.0',
@@ -168,6 +168,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         'doc/extensions/manifest.yaml':
           'schema_version: "1.1"\nname: ext-author-inputs\nprovides:\n  knowledge:\n    - { path: knowledge/spec-author.md, summary: spec 作者要求, audience: [spec] }\n',
         'doc/extensions/knowledge/spec-author.md': '# spec 作者要求\n- 写 spec 前必读\n',
+        'doc/glossary.yaml': 'schema_version: "1.0"\nterms:\n  - term: 作者前置输入\n    canonical_module: Demo\n    aliases: [送达测试]\n    easily_confused_with: [{ term: 后置核对, module: Review, disambiguation: 动笔之前发现，不等价于完成审查 }]\n',
       });
       try {
         assert(r.prompts.length > 0, `spec 阶段的正式 invoke 必须发生（作者被调用），exit=${r.exitCode}`);
@@ -175,6 +176,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert(p.includes(READ_INSTRUCTION), '读取指令句须在作者实收 prompt 中');
         assert(p.includes('## Instance extension inputs') && p.includes('### Knowledge index'), '主干同款标题');
         assert(p.includes('- `doc/extensions/knowledge/spec-author.md`'), '相对路径须在作者实收 prompt 中');
+        assert(p.includes('canonical_module') && p.includes('动笔之前发现，不等价于完成审查'), '原生术语候选与消歧也必须送达实际作者');
         assert(!r.warns.some(w => w.includes('作者前置输入未注入')), '合法 manifest 不得 warn');
         // 辅助断言：落盘 prompt.md 同内容
         const runsDir = path.join(r.root, 'doc', 'features', feature, 'goal-runs');
@@ -209,7 +211,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     },
   },
   {
-    name: 't5 extensionInputsForPhase 三态顺序：无 manifest 静默空；errors 出声（先于 manifestPath）；正常渲染',
+    name: 't5 extensionInputsForPhase 三态顺序：无 manifest 保留原生知识且静默；errors 出声（先于 manifestPath）；正常渲染',
     run: async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'a7c3e9d2-'));
       fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
@@ -221,7 +223,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const warn = captureWarn();
       try {
         clearFrameworkConfigCache();
-        assert.strictEqual(extensionInputsForPhase(root, 'spec'), '');
+        assert(!extensionInputsForPhase(root, 'spec').includes('Instance extension inputs'));
         assert.strictEqual(warn.warns.length, 0, '无 manifest 不出声');
 
         const ext = path.join(root, 'doc', 'extensions');
@@ -229,7 +231,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         fs.writeFileSync(path.join(ext, 'manifest.yaml'),
           'schema_version: "1.1"\nname: x\nprovides:\n  knowledge:\n    - { path: knowledge/missing.md, summary: 缺文件, audience: [spec] }\n');
         clearFrameworkConfigCache();
-        assert.strictEqual(extensionInputsForPhase(root, 'spec'), '');
+        assert(!extensionInputsForPhase(root, 'spec').includes('Instance extension inputs'));
         assert(warn.warns.some(w => w.includes('knowledge_missing') && w.includes('作者前置输入未注入')), 'errors 须出声');
 
         fs.writeFileSync(path.join(ext, 'knowledge', 'plan-author.md'), '# plan\n');
@@ -237,7 +239,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           'schema_version: "1.1"\nname: x\nprovides:\n  knowledge:\n    - { path: knowledge/plan-author.md, summary: plan 作者要求, audience: [plan] }\n');
         clearFrameworkConfigCache();
         const out = extensionInputsForPhase(root, 'plan');
-        assert(out.startsWith('## Instance extension inputs'), `正常渲染，实际=${out.slice(0, 60)}`);
+        assert(out.includes('## Instance extension inputs'), `正常渲染，实际=${out.slice(0, 60)}`);
         assert(out.includes('- `doc/extensions/knowledge/plan-author.md`'));
       } finally {
         warn.restore();

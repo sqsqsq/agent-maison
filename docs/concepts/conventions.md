@@ -2,7 +2,7 @@
 
 > 本文是 AgentMaison 消费者工程惯例资产的**格式与职责唯一 SSOT**。运行时路径由
 > `framework.config.json > paths.conventions` 指定，缺失时默认 `doc/conventions.md`；
-> 文件存在即启用，文件只能由用户显式运行 `/conventions-bootstrap` 后逐条确认写入。
+> 文件存在即启用，写入由 `/conventions-bootstrap` 按具体条目的真实确认完成；同一已确认决定不重复询问，临时推测不自动入库。
 
 ## 1. 它解决什么问题
 
@@ -83,5 +83,4 @@ gate_ref: coding/inter_module_dependency
 
 ## 6. 明确不做
 
-不建立索引/resolver、结构化 applicability、内容 hash/drift、ADR 目录、owner/waiver schema、
-自动生成或自动入库。出现真实的“全文读不完或经常漏选”证据后，再另行设计检索机制。
+不建立惯例专用索引/resolver、结构化 applicability、内容 drift、ADR 目录、owner/waiver schema、自动策展入库。统一知识装配只提供当前原文与范例路径，保留全文阅读；实际 verifier 材料沿既有 fingerprint，不建立惯例状态系统。

@@ -2,6 +2,14 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：知识统一送达与维护
+
+现有 goal 作者 prompt、`--prepare-scope` / `--prepare-request` 输出新增知识候选和原文路径；typed verifier 与 legacy 一样读取适用惯例、组件资产和架构材料。实际审查材料变化会改变原 subject，已有 prior-review 沿用政策不变。
+
+更新发布件后经原 framework-init UPDATE 或 extension materialize 刷新 AGENTS/CLAUDE 与已物化入口。manifest **1.0 不会自动获得 1.1 路由**；需要自动送达时，由宿主显式改为 1.1，把知识条目声明为 `{ path: knowledge/example.md, summary: 用途, audience: [review] }`（或 `global`）。1.1 字符串继续面向全部 Feature phase。设计前资料用可选 `provides.skill_assets.component-design.knowledge: knowledge/design.md`，extension 根相对安全解析并优先于 profile 同 key；未声明合法，不需要制造空文件。所有原资产目录保持。
+
+维护时点见[知识读取与维护](docs/concepts/skill-contracts.md#知识读取与维护)：派生刷新默认相关 run 收口后、P3 前且在原授权内；run 内写图仍须 contracts.files。此更新不授权修改活跃宿主 run 的资料或升级其 manifest。
+
 ## 3.1.0：按义务执行与旧运行恢复
 
 新请求默认使用 obligation-driven workflow 1.2。完整实现先有设计交接（admitted blueprint + ready CU），再由主 Agent 用 `goal-mode-entry --prepare-scope` 按实际输入、目标和义务建立 Feature 候选——该入口**只生成候选、不冻结范围**；随后两个载体二选一：交互路径直接逐阶段跑 harness，**首次阶段调用**由机器把范围冻结进 `doc/features/<feature>/execution-scope.json`；需要无人值守或 run 级预算/恢复时用现有 prepare-run/attach 产生真实运行身份（有 run 时以 run 为权威）。不选择轨道、不为了流水线补齐叙述文档。仅审查、UT、设备请求使用独立 request CLI，项目维护保持原生入口和请求终点。

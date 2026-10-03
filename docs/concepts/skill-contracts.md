@@ -172,6 +172,16 @@ Capability report 是进入质量轴的唯一桥接：
 
 Goal manifest 可选提供稀疏的 `minimum_assurance`：`{ phase: degraded|full }`。它只会给 `assess@1` 增加 `insufficient_assurance` gap，绝不成为 release 或 closure waiver。满足 floor 的 `pruned` 会列入 `observed.degradations`，不另造 gap；但若带 producer 指针的上游裁剪令下游 `on_missing: fail` capability 变为 `blocked`，assess 会产生 `pruned` gap 并把回补定向到该 producer phase。
 
+## 知识读取与维护
+
+`assembleKnowledge` 从原知识源现算候选、原路径和读取要求，供 goal、现有 prepare 输出、设计入口与 verifier 使用；它不增加 InputBinding、裁决权或已读记录。画像/术语候选须结合易混项和反例消歧，CodeGraph 按目标导航并回查源码，core 只高亮。conventions 保持全文阅读，review 独立选择适用条目；组件 index/catalog 按 id 联读并反查定义/live 样本。背景资料读取当前 framework/profile 版本。原文过大则分批打开，预算不能豁免必读材料。
+
+读取、刷新派生和写长期规范是三件事。派生图谱/index 默认在相关 Feature/CU run 收口后、P3 前，由原维护入口按**已经获得的写入授权**刷新；收口不产生新授权，同模块仍有受影响活跃 run 时不在其工作树写。run 内确需更新图文件，须由既有权责链先把路径纳入 `contracts.files`；作者不能因为代码变动就 bootstrap，verifier 不写资产。不新增运行检测、锁或状态。graph nodes/core hash 不是可随意刷新的 derived 数据，原 drift/UT 义务保留。
+
+catalog/glossary、conventions 和组件策展仍由原 bootstrap writer 负责。已有明确确认覆盖相同条目/决定时直接复用，不重复询问；新增或变化的语义、规则和推荐项仍按原确认点，临时推测不升格长期规范。P1 owner 登记真实 `discovery.inputs.knowledge_assets` 与精确 `decision.knowledge_refs`；实现后才成立的结论先由 writer 归位，再经 P1 reconciliation 和 design preparation 升 CU 指针，最后 closure 校验。缺归位沿此责任链修复，不泛化成找用户重审。框架/profile 资料随发布维护，消费者只维护自己已获授权的资产。
+
+verifier 的 typed/legacy 装配共用适用知识和目标源码；正文及实际引用源影响既有 material fingerprint。材料变化不能复用 same-material PASS，允许的 prior-review 沿用仍明确披露未重审差异；不作全局知识版本或所有 run 失效。
+
 ## 维护清单
 
 1. 更新 contract schema 与七个 feature contracts。

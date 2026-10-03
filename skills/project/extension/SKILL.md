@@ -12,7 +12,7 @@ description: 管理实例侧 doc/extensions：初始化、检视、添加声明�
 | phase_rules_overlays | phase 规则合并时 | harness 强制 |
 | capabilities | 能力裁决 / 降级时 | harness 强制 |
 | skill_assets | 对应 Skill 消费时 | harness 强制 |
-| knowledge（audience 路由） | phase → verifier ai-prompt 索引与 goal 作者 prompt 索引；global → AGENTS.md | 文本指令 + inspect 证据 |
+| knowledge（audience 路由） | phase → 作者/prepare/verifier；AGENTS/CLAUDE 展示 global 与 phase 静态路由 | 文本指令 + inspect 证据 |
 | phase_bindings 三槽位 | Feature phase 动笔前 / 校验前 / 校验后关环前 | 文本指令或既有 check / receipt 门禁 |
 | mcp_actions | 绑定槽位内由 agent 调用，produces 落项目内 | 产物校验进入既有 CheckResult |
 | story 类接入（M7 三接缝） | `/component-design` 前产出 materialization，之后消费 publication / 产出 feedback | `check:component-blueprint --materialization/--feedback` fail-closed |
@@ -44,7 +44,7 @@ npx ts-node scripts/extension.ts --project-root <宿主工程根> --action <init
 3. 新增 Skill 时同时创建 `skills/<id>/SKILL.md` 并在 `provides.skills[]` 声明；1.1 起未声明目录不物化。
 4. `phase_bindings` 只管 Feature phases，只有 `before_phase_work`、`before_phase_verify`、`after_phase_verify_before_close`；没有 `before_component_design`。设计前置输入由扩展 Skill 自身流程承载。
    phase 名必须来自 active workflow 的 Feature scope（full/lite 并集）；global phase 与拼错的 slug 都会失败。
-5. 绑定 唯一设计入口 `/component-design` 的知识使用现有 `skill_assets`，不发明 audience。
+5. `/component-design` 前的可选知识用 `provides.skill_assets.component-design.knowledge: knowledge/<文件>.md`，由共享装配和根 Skill 在 P1 discovery 前真实读取；extension 优先于 profile 同 key，两处都未声明合法，不发明 audience。资料正文可引用已有项目内权威源，不复制契约。
 6. 每次编辑后 `verify`，通过后再 `materialize` 并复查 `inspect`。
 
 ## MCP 与 M7 红线

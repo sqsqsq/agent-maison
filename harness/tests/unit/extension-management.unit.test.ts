@@ -129,7 +129,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!fs.existsSync(path.join(root, '.cursor/skills/unlisted/SKILL.md')), '1.1 must be manifest-driven');
       assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('| `customer` |'));
       assert(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8').includes('| `customer` |'));
-      assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('实例全局知识'));
+      const agents = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+      assert(agents.includes('实例知识路由') && agents.includes('knowledge/global.md') && agents.includes('| global |'));
+      assert(agents.includes('knowledge/spec.md') && agents.includes('| spec |'), 'phase audience 无需额外 binding 即进入静态路由');
       assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('`spec` 动笔前'));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();

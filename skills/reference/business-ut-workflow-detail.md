@@ -112,7 +112,7 @@ sign-skip 分支只在 `failedAt=hap_not_found` 且 `unsignedPresent` / `signSki
 
 ## Step 8.0 Core 节点闭环闸门
 
-harness 全绿后评估改动是否触及模块 Code Graph 的 `core: true` 节点：读相关模块 Code Graph，对比 contracts.yaml/diff 触及文件与 core anchor。**触及 core**→启动可行性探测，更新图谱节点，同步 characterization 或 spec-driven UT，flow DAG 可归档至 `test/dag/`。**未触及**→flow DAG 保持 ephemeral，用完即弃。
+harness 全绿后评估改动是否触及模块 Code Graph 的 `core: true` 节点：读相关模块 CodeGraph，对比 contracts.yaml/diff 触及文件与 core anchor。**触及 core**→启动可行性探测，同步 characterization 或 spec-driven UT；图谱更新由原 writer 按授权完成，默认相关 run 收口后、P3 前，run 内确需写图须先明确纳入 `contracts.files`。不能为刷绿擅自更新 core hash，原 drift 与 UT 义务不豁免；缺设计授权回既有 owner。flow DAG 只在获准路径归档至 `test/dag/`。**未触及**→flow DAG 保持 ephemeral，用完即弃。
 
 ## 约束#12：HARD STOP 禁止修改业务源码（不可绕过）
 

@@ -1,10 +1,8 @@
 import * as fs from 'fs';
-import * as path from 'path';
 
 import type {
   CheckResult,
   ExtensionBundle,
-  ExtensionKnowledgeEntry,
   ExtensionMcpAction,
   ExtensionPhaseBindingSlot,
 } from './types';
@@ -15,71 +13,7 @@ import {
 } from '../check-component-blueprint';
 import { MATERIALIZATION_ARTIFACT, REVIEW_FEEDBACK_ARTIFACT } from './blueprint-host-seams';
 
-function rel(projectRoot: string, target: string): string {
-  return path.relative(projectRoot, target).replace(/\\/g, '/');
-}
-
-function phaseInputsActive(bundle: ExtensionBundle | undefined, phase: string): bundle is ExtensionBundle {
-  return Boolean(bundle && bundle.manifestVersion === '1.1' && bundle.errors.length === 0 && bundle.featurePhases.includes(phase));
-}
-
-/**
- * 该 phase 的 knowledge 条目：audience 命中（含 legacy 字符串）；`includeBound` 时并入本 phase
- * phase_bindings 里 `kind: knowledge` 引用的条目（loader 只查引用存在、不要求 audience 命中，
- * 而 prompt 照样渲染该绑定行）。formatter 用前者做索引，verifier 审前材料用并集。
- */
-export function extensionPhaseKnowledge(
-  bundle: ExtensionBundle | undefined,
-  phase: string,
-  opts?: { includeBound?: boolean },
-): ExtensionKnowledgeEntry[] {
-  if (!phaseInputsActive(bundle, phase)) return [];
-  const out = bundle.knowledge.filter(item => item.legacy
-    || (Array.isArray(item.audience) && item.audience.includes(phase)));
-  if (!opts?.includeBound) return out;
-  const seen = new Set(out.map(item => item.path));
-  for (const items of Object.values(bundle.phaseBindings[phase] ?? {})) {
-    for (const binding of items ?? []) {
-      if (binding.kind !== 'knowledge' || seen.has(binding.ref)) continue;
-      const entry = bundle.knowledge.find(item => item.path === binding.ref);
-      if (entry) { out.push(entry); seen.add(entry.path); }
-    }
-  }
-  return out;
-}
-
-export function formatExtensionPhasePrompt(
-  bundle: ExtensionBundle | undefined,
-  phase: string,
-  projectRoot: string,
-): string {
-  if (!phaseInputsActive(bundle, phase)) return '';
-  const knowledge = extensionPhaseKnowledge(bundle, phase);
-  const slots = bundle.phaseBindings[phase] ?? {};
-  if (knowledge.length === 0 && Object.keys(slots).length === 0) return '';
-  const lines = ['## Instance extension inputs', ''];
-  if (knowledge.length > 0) {
-    lines.push('### Knowledge index', '');
-    for (const item of knowledge) {
-      lines.push('- `' + rel(projectRoot, item.absPath) + '`' + (item.summary ? ` — ${item.summary}` : ''));
-    }
-    lines.push('');
-  }
-  for (const slot of ['before_phase_work', 'before_phase_verify', 'after_phase_verify_before_close'] as const) {
-    const items = slots[slot];
-    if (!items?.length) continue;
-    lines.push(`### ${slot}`, '');
-    for (const item of items) {
-      const action = item.kind === 'mcp' ? bundle.mcpActions[item.ref] : undefined;
-      lines.push(action
-        ? '- mcp `' + item.ref + '` → tool `' + action.tool + '`; ' + action.usage
-          + '; produces: ' + action.produces.map(value => '`' + value + '`').join(', ')
-        : `- ${item.kind} ` + '`' + item.ref + '`');
-    }
-    lines.push('');
-  }
-  return lines.join('\n').trimEnd();
-}
+export { selectExtensionPhaseKnowledge as extensionPhaseKnowledge, renderExtensionPhaseInputs as formatExtensionPhasePrompt } from './knowledge-context';
 
 export function checkExtensionManifest(bundle: ExtensionBundle | undefined): CheckResult[] {
   if (!bundle || bundle.errors.length === 0) return [];

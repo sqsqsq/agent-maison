@@ -1050,6 +1050,9 @@ function buildRenderEnv(
     module_catalog_path: vars.MODULE_CATALOG_PATH,
     glossary_path: vars.GLOSSARY_PATH,
     conventions_path: vars.CONVENTIONS_PATH,
+    component_index_path: vars.COMPONENT_INDEX_PATH,
+    component_catalog_path: vars.COMPONENT_CATALOG_PATH,
+    component_design_knowledge: vars.COMPONENT_DESIGN_KNOWLEDGE,
     features_dir: vars.FEATURES_DIR,
     module_inner_layers_csv: Array.isArray(arch?.module_inner_layers)
       ? (arch.module_inner_layers as string[]).join(' / ')

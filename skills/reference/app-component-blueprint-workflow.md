@@ -33,9 +33,13 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 
 ### 1. 发现与权威分位
 
+先消费 component-design 入口给出的原生路径与可选 design knowledge，实际打开原文；六个静态 provider 是职责与校验接缝，不是自动执行器。catalog/glossary/CodeGraph 进入 current-facts-discovery，惯例与组件仍走各自专业 reader；lens 和独立质询不充当事实源。按本次实际读取登记 `discovery.inputs.knowledge_assets`，不复制为统一知识库。
+
 先按 `blueprint_id` 读取已有 canonical 蓝图，遵循 `/component-design` 的请求范围：只读不写 canonical，草稿从未完成的设计/质询继续，已有 admitted 蓝图不因重入自动调和。
 
 - 当前事实优先引用代码/schema/接口/配置/测试；知识资产提供稳定背景，不覆盖本次事实。当前范围的 requirement/goal/invariant/high-risk 必须在 `discovery.inputs.current_scope_items` 形成带稳定 id、可解析 source ref、provenance 和项目内来源实际原始字节 hash 的闭集；revision 可附加但不能替代 hash，并由 `discovery.requirement_traceability` 双向一一映射到真实蓝图稳定地址。
+- `requirement-source-materialization@1` 只处理正式需求来源；接口契约继续逐段消费原 `source_ref`，直接人工/inline/本地来源保留。同一原文可被多个消费者引用，不扩大其 authority。
+- 稳定权威决定引用实际承载结论的已有资产，将精确 `文件#模块名/术语/组件id/节点id/标题` 写入 `decision.knowledge_refs`，文件同时在 `discovery.inputs.knowledge_assets`。未来目标不提前写成当前画像。实现后才成立的结论，在相关 run 收口后按原写入授权由 catalog/glossary、CodeGraph、conventions、组件或 extension writer 归位，再由 P1 owner 经 reconciliation 补引用/所需 revision，随后 design preparation 升 CU 指针后 closure。相同已确认决定不重问，未变引用不重复升版；具体授权/刷新边界见[知识读取与维护](../../docs/concepts/skill-contracts.md#知识读取与维护)。
 - 惯例文件存在时完整读取，只把适用条目写入 `discovery.facts`：`provenance.source_kind: convention`、`source_ref: <配置路径>#<id>`、`evidence_strength: authoritative`。视图节点与 decision 继续用既有 `provenance` / `verification_refs` 引用同一 source ref；禁止新增 conventions 专用字段。
 - **术语事实**（替代 CU-bound spec 的二次术语确认）：从当前范围抽出的业务名词逐条写入 `discovery.facts`：`subject: term:<原始术语>`，`value: {canonical_module, confidence: high|medium|low, easily_confused_with: []}`，`provenance.source_kind: glossary|catalog`。`canonical_module` 须为获准模块（catalog ∪ 本蓝图 add_module / move_module / retire_module 声明）；`high` 只能由 glossary 精确命中且模块一致时直确认；`medium|low` 须按 `spec.terminology`（[用户确认 UX](./user-confirmation-ux.md) §3.4）当场确认并记 `extraction_method: user_confirmed`，headless 自动继续记 `headless_assumed`（WARN、入 must-review、不得记 `user_confirmed`、不回写 glossary，见 §9.2）。未确认且只被远期切片使用的术语，可登记 `open_decision` gap（`needed_by` = 远期切片，`verification_refs` 含该 `term:` subject）停放；同一术语仍被当前切片需要（有当前切片或 `status: blocker` 的 gap 引用）时不得停放。检查 id `terminology_facts_confirmed`。`user_confirmed` 事实 admitted 后按 spec Step 1.5 第 6 条回写 glossary。
 - 同一语义冲突时保留双方 source ref 与 owner，禁止 last-write-wins。

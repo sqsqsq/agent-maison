@@ -63,6 +63,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },
   { id: 'execution-scope', modulePath: './unit/execution-scope.unit.test' },
   { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
+  { id: 'knowledge-context', modulePath: './unit/knowledge-context.unit.test' },
   { id: 'conventions', modulePath: './unit/conventions.unit.test' },
   { id: 'component-blueprint', modulePath: './unit/component-blueprint.unit.test' },
   { id: 'change-unit-progression', modulePath: './unit/change-unit-progression.unit.test' },

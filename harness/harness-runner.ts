@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
 import { SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
-import { componentReviewContext } from './scripts/utils/component-selection-check';
+import { assembleKnowledge, knowledgeContextFiles, renderKnowledge, type KnowledgeAssembly } from './scripts/utils/knowledge-context';
 import {
   generateScriptReport,
   assembleAIPrompt,
@@ -111,13 +111,8 @@ import {
   resolveFeatureArtifact,
   catalogPath,
   glossaryPath,
-  architectureMdPath,
-  conventionsPath,
-  componentIndexPath,
-  relConventions,
   relCatalog,
   relGlossary,
-  relArchitectureMd,
   statefilePath,
   loadFrameworkConfig,
   relFeaturePhaseReportsDir,
@@ -223,7 +218,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
-import { checkExtensionBindingProduces, checkExtensionManifest, extensionPhaseKnowledge, formatExtensionPhasePrompt } from './scripts/utils/extension-runtime';
+import { checkExtensionBindingProduces, checkExtensionManifest } from './scripts/utils/extension-runtime';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
@@ -1375,7 +1370,13 @@ async function main(): Promise<void> {
       if (process.env.HARNESS_FORCE_STEP4_FAIL) {
         throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
       }
+      const knowledge = assembleKnowledge({ projectRoot, frameworkRoot: resolvedFrameworkRoot, phase,
+        subject: phaseIsGlobal ? 'global' : 'feature', role: 'verifier', contracts: featureSpec.contracts,
+        requirement: context.resolvedInputs?.values.requirement?.state === 'resolved'
+          ? String(context.resolvedInputs.values.requirement.value) : undefined,
+        extensionBundle: resolvedProfile.extensionBundle });
       const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
+        knowledge,
         resolvedInputs: context.resolvedInputs,
         factsContext: context.factsContext,
         adapterMultimodal: context.adapterMultimodal,
@@ -1384,9 +1385,7 @@ async function main(): Promise<void> {
       });
       const specContent = YAML.stringify(phaseRule);
       // 实例扩展输入（manifest 1.1）同时进 verifier prompt 与审前材料：改 knowledge / audience / 绑定 → 换 subject。
-      const extensionInstructions = formatExtensionPhasePrompt(resolvedProfile.extensionBundle, phase, projectRoot);
-      const extensionKnowledgeFiles: import('./scripts/utils/types').ContextFileEntry[] = extensionPhaseKnowledge(resolvedProfile.extensionBundle, phase, { includeBound: true })
-        .map(item => ({ label: path.relative(projectRoot, item.absPath).replace(/\\/g, '/'), kind: 'path', content: item.summary }));
+      const extensionInstructions = knowledge.extensionInstructions;
       // 已解析输入里已有需求正文时简报不重复它（§3.2 装配去重）。
       const goalBriefText = goalBrief
         ? renderGoalBrief(goalBrief, { requirementInContext: resolvedInputsCarryRequirement(context.resolvedInputs) })
@@ -1430,7 +1429,7 @@ async function main(): Promise<void> {
         phaseRuleText: specContent,
         templateText: loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, verifierPlan.verifier_prompt ?? undefined),
         checks: scriptReport.checks,
-        contextFiles: [...contextFiles, ...extensionKnowledgeFiles],
+        contextFiles,
         lifecycleFragments: lifecycleFragments,
         extensionInstructions,
         goalBriefText,
@@ -3397,6 +3396,7 @@ export function collectContextFiles(
   feature: string,
   featureSpec: import('./scripts/utils/types').FeatureSpec,
   opts?: {
+    knowledge?: KnowledgeAssembly;
     resolvedInputs?: CheckContext['resolvedInputs'];
     factsContext?: CheckContext['factsContext'];
     adapterMultimodal?: boolean;
@@ -3405,7 +3405,20 @@ export function collectContextFiles(
   },
 ): import('./scripts/utils/types').ContextFileEntry[] {
   const { projectRoot } = layout;
-  const files: import('./scripts/utils/types').ContextFileEntry[] = [];
+  const knowledge = opts?.knowledge ?? assembleKnowledge({ projectRoot, frameworkRoot: layout.frameworkRoot, phase,
+    subject: feature === GLOBAL_FEATURE_SENTINEL ? 'global' : 'feature', role: 'verifier', contracts: featureSpec.contracts });
+  const files: import('./scripts/utils/types').ContextFileEntry[] = knowledgeContextFiles(knowledge);
+  if (knowledge.entries.length || knowledge.notices.length) files.push({ label: '(knowledge navigation)',
+    content: renderKnowledge({ ...knowledge, extensionInstructions: '' }, false) });
+  if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
+    const fullSource = phase === 'review' && knowledge.entries.some(entry => entry.available && ['conventions', 'component-index'].includes(entry.kind));
+    // collectSourceFiles 只读 contracts.files 的明确目标，不扫全模块/全仓；不按数量截断这些已声明目标。
+    for (const [filePath, content] of specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, fullSource ? undefined : '.ets')) {
+      const existing = files.find(file => file.label === filePath);
+      if (existing && fullSource) { existing.kind = 'text'; existing.content = content; }
+      else if (!existing) files.push({ label: filePath, kind: fullSource ? 'text' : 'path', content: fullSource ? content : `${Buffer.byteLength(content, 'utf8')} 字节；按路径核对目标源码` });
+    }
+  }
 
   if (opts?.resolvedInputs) {
     for (const [id, value] of Object.entries(opts.resolvedInputs.values)) {
@@ -3572,34 +3585,7 @@ export function collectContextFiles(
     }
   }
 
-  if (phase === 'plan') {
-    const archPath = architectureMdPath(projectRoot);
-    if (fs.existsSync(archPath)) {
-      files.push({ label: relArchitectureMd(projectRoot), content: fs.readFileSync(archPath, 'utf-8') });
-    }
-  }
-
-  if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
-    // e4/b9：惯例/组件评审需要 verifier 读目标源码全文；其余场景源码不内联（07a41ec6）：给路径清单，需要核对时 Read。
-    const conventionsReview = phase === 'review' && (fs.existsSync(conventionsPath(projectRoot)) || fs.existsSync(componentIndexPath(projectRoot)));
-    const sourceFiles = specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, conventionsReview ? undefined : '.ets');
-    let count = 0;
-    for (const [filePath, content] of sourceFiles) {
-      if (!conventionsReview && count >= 200) {
-        files.push({ label: '(truncated)', kind: 'path', content: `... 还有 ${sourceFiles.size - count} 个源文件未列出` });
-        break;
-      }
-      files.push(conventionsReview ? { label: filePath, content } : pathEntry(filePath, content));
-      count++;
-    }
-  }
-
   if (phase === 'review') {
-    files.push(...componentReviewContext(projectRoot));
-    const conventions = conventionsPath(projectRoot);
-    if (fs.existsSync(conventions)) {
-      files.push({ label: relConventions(projectRoot), content: fs.readFileSync(conventions, 'utf-8') });
-    }
     const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
     if (reviewReport) {
       files.push({ label: relFeatureArtifact(projectRoot, feature, 'review-report.md'), content: reviewReport });

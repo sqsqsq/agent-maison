@@ -1,5 +1,7 @@
 # Code Graph、flow DAG 与 Repo Map（三层术语）
 
+派生刷新、策展与 core 更新分别遵守[知识读取与维护](skill-contracts.md#知识读取与维护)的授权和时点：默认相关 run 收口后、P3 前，run 内图文件须明确进入 contracts.files；不因代码变化擅自 bootstrap，不改变 drift/UT 义务。
+
 > 本文是 AgentMaison **模块级功能索引**与 **需求级 UT 场景流** 的规范术语 SSOT。
 > OpenSpec capability：`code-graph`（`openspec/changes/define-code-graph-concepts`）。
 > 运行时门禁 SSOT 仍在 `specs/`、`harness/`、`skills/`；本文不替代代码。

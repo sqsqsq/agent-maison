@@ -343,7 +343,7 @@ extension Skill
 - manifest 只写 `tool / required / severity / produces / usage`，不写 server、URL、token、command
   或登录配置；工具执行与凭据均归宿主，Maison 只验证仓内产物。
 - `phase_bindings` 只管 Feature phases，**没有** `before_component_design`；设计前置动作由扩展 Skill
-  自身流程承载。绑定到 `/component-design` 的知识继续用 `skill_assets`。
+  自身流程承载。设计前知识使用可选 `provides.skill_assets.component-design.knowledge`（如 `knowledge/design-background.md`，相对扩展根安全解析）；`assembleKnowledge` 与根 component-design Skill 在 P1 discovery 前读取。extension 优先于 profile 的 `assets.component-design.knowledge`；均未声明合法，已声明却不可读不静默回退，不新增 audience。
 - `/extension inspect` 只在产物实际 `artifact` 被识别且通过既有 validator 后，才把 materialization /
   feedback 标成 `evidenced` 并显示 `/component-design` 与接缝名；`usage` 文本不参与判断。工具可见性
   只标 `agent_self_report`，不冒充完成证据。

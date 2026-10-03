@@ -10,8 +10,7 @@ description: Create or continue a component design from the user's request and e
 > —— 正式性判定信息不足时以该确认点提问并停等（选项文案从 confirmation-registry.yaml 逐字引用）；
 > 其余步骤沿用被调用 Skill 各自的确认点。
 
-**每一项正式需求都要先经过这里。** 组织侧把这个活动称为 **Story Design**；Maison 侧唯一
-canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint）。
+**每一项正式需求都要先经过这里。** 组织侧把这个活动称为 **Story Design**；Maison 侧唯一 canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint）。
 
 本 Skill 只编排 P1 蓝图内部工作流与 P2 设计准备段，自身不直接写 canonical CU、不启动 Goal Mode。
 
@@ -23,9 +22,7 @@ canonical 设计产物是**部件演进蓝图**（Component Evolution Blueprint�
 
 ## 先读请求与已有产物
 
-设计用户入口统一为 `/component-design`。按 `blueprint_id` 和配置的 `paths.features_dir` 读取同一
-演进工作区的 canonical 蓝图、已有 CU 及其引用；复用既有 resolver，不另建登记或模式字段。
-先明确用户本次需要的结果，再从尚未完成的步骤继续：
+设计用户入口统一为 `/component-design`。按 `blueprint_id` 和配置的 `paths.features_dir` 读取同一演进工作区的 canonical 蓝图、已有 CU 及其引用；复用既有 resolver，不另建登记或模式字段。先明确用户本次需要的结果，再从尚未完成的步骤继续：
 
 - 新建正式需求：完成下方正式性判定与来源处理，再走蓝图、首次分解与 readiness 的完整交接链。
 - 已有草稿未 admitted：继续尚未完成的发现、设计与独立质询；用户只要求局部操作时到此结束。
@@ -85,11 +82,14 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 
 ### 2. 蓝图发现 / 设计 / 质询 / 调和 → admitted
 
+先读项目根 AGENTS.md（Claude 为 CLAUDE.md）的「component-design 设计前知识」，按配置路径打开 catalog、glossary、architecture 及相关模块 CodeGraph；无图回源码。由需求原文 term/alias 发现的候选须带易混项、反例和关联画像，字面命中不代替消歧，无命中继续探索完整索引。大文件按原路径分批读，未读完如实说明。
+
+**可选设计知识**：先查当前 `paths.extension_dir` 下 manifest 的 `provides.skill_assets.component-design.knowledge`；存在则按扩展根相对路径安全解析并打开（沿 extension loader 的 safeResolve，禁止逃出扩展根）。未声明才查当前 profile `skills/skill-assets.yaml` 的 `assets.component-design.knowledge`，按 [asset 协议](../../README.md#profile-skill-asset-protocol) 解析。两处均未声明＝合法无此资产，如实说明；已声明不可读须披露，不静默回退。直接调用本 Skill 也执行此步骤，不能只依赖先前物化的 AGENTS 导航。原生知识、此文件及其引用原文仍走既有事实/权威链，不另存契约副本。
+
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。
-小正式需求形成薄蓝图，未触发义务按合法空集/不适用表达，不凑空章节。
+内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求形成薄蓝图，未触发义务按合法空集/不适用表达，不凑空章节。
 
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 

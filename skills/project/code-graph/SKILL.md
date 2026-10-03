@@ -46,6 +46,8 @@
 
 ### Step 2. 刷新派生层（bootstrap）
 
+先核对写入授权与时点：默认相关 Feature/CU run 收口后、P3 前通过本入口刷新；收口不是新授权，同模块仍有受影响活跃 run 时不在其工作树写。run 内确需写图，须先经原权责链明确纳入 `contracts.files`；未授权时仅 dry-run/读源码，不因代码变化自动写图。原 core/drift/UT 义务保留。
+
 在宿主工程根（`framework/` 已挂载）：
 
 ```bash
@@ -58,7 +60,7 @@ npm run bootstrap:code-graph -- --project-root <宿主根> --module <ModuleName>
 - 非 hmos profile 或无 GraphExtractor：脚本会清晰报错退出；可仅跑 Step 5 的 drift 门禁。
 - **`--package-path` 覆盖**：生成与校验传同一模块和路径；两者共用解析器。没有 catalog 不使用 `--seed-from-catalog`。
 
-**停等 `code-graph.derive_confirm`**：向用户展示 dry-run 或写入摘要（签名数、import/call 边、nodes 数），确认后再正式写盘（若已 `--dry-run` 预览则确认后去掉该 flag 重跑）。
+**`code-graph.derive_confirm`**：已有明确授权覆盖本次模块与派生刷新时直接执行，不重复确认；否则先展示 dry-run 摘要（签名数、import/call 边、nodes 数），确认后再正式写盘。策展 nodes/core hash 不包含在 derived-only 授权内。
 
 ### Step 3. 策展 core 节点（仅本次要求策展时）
 

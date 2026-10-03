@@ -55,13 +55,15 @@ profile-skill-asset:<skill-id>/<asset_key>
 含义：**不要**在根 SKILL 写死某个具体 `framework/profiles/<固定 profile 名>/...` 物理路径；按下列顺序解析为仓库内真实路径后再打开文件（`asset_key` 对应清单字段名，使用下划线命名，与当前 profile 的 `skills/skill-assets.yaml` 中 `assets` 表一致）：
 
 1. 读取实例根 `framework.config.json > project_profile.name`（未声明时以 harness 加载时的兼容默认为准，见 [`framework/harness/config.ts`](../harness/config.ts)）。
-2. 读取 `framework/profiles/<project_profile.name>/skills/skill-assets.yaml`。
-3. 在 `assets.<skill-id>.<asset_key>` 取声明的路径：
+2. 先读取 `paths.extension_dir`（默认 `doc/extensions`）下 manifest；若 `provides.skill_assets.<skill-id>.<asset_key>` 已声明，按 extension 根相对路径安全解析（与 extension loader 的 safeResolve 相同，不得逃出扩展根），该文件优先于 profile。已声明却不可读不能静默回退。
+3. extension 未声明时，读取 `framework/profiles/<project_profile.name>/skills/skill-assets.yaml`，在 `assets.<skill-id>.<asset_key>` 取声明的路径：
    - 若以 `framework/` 开头 → 相对仓库根；
    - 否则 → 相对 `framework/profiles/<project_profile.name>/skills/<skill-id>/`。
 4. 目标可以是文件或目录；打开前应用 `fs` / IDE 在该路径上解析。
 
-> **解析失败兜底（弱模型 / 工具读超时必读）**：若无法按上述步骤解析（例如读 `skill-assets.yaml` 超时或工具报错），直接手算：`framework/profiles/<project_profile.name>/skills/<skill-id>/<清单声明的相对路径>`，典型如 `framework/profiles/<profile>/skills/spec/templates/spec-template.md`。
+> **解析失败**：如实报告具体清单/路径与读取错误；不能因工具超时猜测不存在，不能越过 extension 覆盖去读同名 profile 文件。可选的 component-design knowledge 使用根 Skill 的条件式文字协议：两份清单均未声明才是合法无资产，不在根 Skill 写必填占位引用。
+>
+> **解析失败兜底（弱模型 / 工具读超时）**：先明确确认 extension **没有声明这个 key**；若已取得 profile 清单声明的路径，但工具解析或读取超时，可手算 `framework/profiles/<project_profile.name>/skills/<skill-id>/<清单声明的相对路径>` 后直接打开；以 `framework/` 开头的声明仍相对仓库根。未取得声明不能猜路径，extension 已声明但损坏/不可读不能用此兜底静默回退 profile。
 >
 > **反模式（禁止）**：**不要**因为根 skill 树里恰好有同名 `templates/` 目录（如 `framework/skills/feature/spec/templates/` 下只有通用 `feature-card.md`），就去那里找 profile 资产——profile 模板/示例**只在** `framework/profiles/<profile>/skills/<skill-id>/` 下；根 skill 树的 `templates/` 仅放与 profile 无关的通用骨架（部分目录留有 `_PROFILE-ASSETS-NOT-HERE.md` 面包屑提示）。
 

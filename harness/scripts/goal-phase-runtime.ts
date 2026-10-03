@@ -64,7 +64,8 @@ import {
 import { assessLivenessBeacon, readLivenessBeacon, writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
-import { formatExtensionPhasePrompt } from './utils/extension-runtime';
+import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
+import { readRunBoundContracts } from './utils/capability-resolution';
 import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
@@ -3739,24 +3740,26 @@ function buildPhaseWriteRecoveryContextBlock(ctx: PhaseWriteRecoveryPromptContex
 }
 
 /**
- * plan a7c3e9d2：作者动笔前的实例扩展输入——goal 模式是框架唯一给作者组 prompt 的位置。
- * 判断顺序固定：无 bundle → 空；errors 非空 → warn 后空（不把"取不到"伪装成"没有"）；
- * 无 manifest / 无目录（manifestPath === null）→ 空且不出声；否则渲染。
- * errors 必须先于 manifestPath 判断：主干 loader 在 paths.extension_dir 非法时返回 manifestPath: null 且带 errors。
- * 不新增 goal 事件、状态、门禁——manifest 合法性由全局 `--phase extensions` 门禁负责。
+ * 作者前置知识：原生索引、任务候选与 extension 同源装配，保留旧导出名供调用者兼容。
+ * extension 非法仍警示且不注入其条目；原生知识继续可读，不新增 goal 门禁。
  */
-export function extensionInputsForPhase(projectRoot: string, phase: string): string {
-  const bundle = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)).extensionBundle;
-  if (!bundle) return '';
-  if (bundle.errors.length > 0) {
+export function extensionInputsForPhase(projectRoot: string, phase: string,
+  context?: { frameworkRoot: string; feature: string; runId?: string; requirement?: string }): string {
+  const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), context?.frameworkRoot);
+  const bundle = profile.extensionBundle;
+  if (bundle && bundle.errors.length > 0) {
     const brief = bundle.errors.slice(0, 3).map(e => `${e.code}: ${e.message}`).join('；');
     console.warn(
       `[goal-runner] ⚠ extension manifest 非法，作者前置输入未注入：${brief}；运行 harness-runner.ts --phase extensions 修复。`,
     );
-    return '';
   }
-  if (bundle.manifestPath === null) return '';
-  return formatExtensionPhasePrompt(bundle, phase, projectRoot);
+  let contracts: import('./utils/types').ContractsSpec | undefined;
+  if (context) {
+    try { contracts = readRunBoundContracts(projectRoot, context.frameworkRoot, context.feature, context.runId); }
+    catch { /* 未有施工契约的作者仍从需求和原生索引发现；原输入门禁负责契约缺失。 */ }
+  }
+  return renderKnowledge(assembleKnowledge({ projectRoot, frameworkRoot: context?.frameworkRoot ?? path.resolve(profile.profileDir, '../..'), phase,
+    subject: 'feature', role: 'author', requirement: context?.requirement, contracts, extensionBundle: bundle }));
 }
 
 export function buildPhasePrompt(
@@ -3783,7 +3786,7 @@ export function buildPhasePrompt(
   /** 本 phase 此前 attempt 的累计消耗（plan P0-1.6"已耗时"，复审补）。 */
   phasePrior?: { attempts: number; elapsedMs: number },
   phaseWriteBoundary?: PhaseWriteBoundaryResolution,
-  /** plan a7c3e9d2：实例扩展的作者前置输入段（extensionInputsForPhase 产出；空串 / 缺省 = 不注入）。 */
+  /** 共享作者前置知识段（extensionInputsForPhase 产出；空串 / 缺省 = 不注入）。 */
   extensionInputs?: string,
   /**
    * plan 5e1c7a93 D4：本轮是否 attended（session owner 在场）。true = 不注入无人值守模式段，
@@ -3817,7 +3820,7 @@ export function buildPhasePrompt(
     `Skill absolute path: ${skillAbs}`,
     // plan a7c3e9d2：作者动笔前的实例扩展输入（d8f4b7e2 自陈的"通用注入"由此落地）；读取指令放这里，formatter 只负责索引与绑定块。
     ...(extensionInputs
-      ? ['', "Before writing this phase's artifacts, read the instance extension inputs below that apply to this phase.", '', extensionInputs]
+      ? ['', "Before writing this phase's artifacts, read the knowledge inputs below that apply to this phase.", '', extensionInputs]
       : []),
     // plan f4c8d2b7 t6：仅 ut 阶段注入两产物格式契约与 SSOT 解析后的模板真实路径——
     // headless agent 拿不到 profile-skill-asset 多跳指针后面的 OUTPUT CONTRACT（宿主
@@ -7606,7 +7609,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
             : undefined,
           phaseWriteBoundary ?? undefined,
-          extensionInputsForPhase(projectRoot, String(phase)),
+          extensionInputsForPhase(projectRoot, String(phase), { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement }),
           // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
           // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
           executorMode === 'attended',

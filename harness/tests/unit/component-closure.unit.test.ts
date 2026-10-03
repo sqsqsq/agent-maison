@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { featureFilePath, featuresDirPath } from '../../config';
 import * as closureEvidenceChecks from '../fixtures/component-blueprint/valid/test/ledger/closure.test';
-import { BlueprintRecord, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
+import { BlueprintRecord, asRecord, asRecords, asStrings } from '../../scripts/utils/component-blueprint-model';
 import { blueprintRefAddress } from '../../scripts/utils/change-unit-model';
 import {
   asChangeUnitArtifact,
@@ -37,6 +37,7 @@ import { clearSkillsIndexCache, resolveSkillPath } from '../../scripts/utils/res
 import { checkCanonicalComponentClosure, writeCanonicalComponentClosure } from '../../scripts/check-component-closure';
 import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
+import { assembleKnowledge, renderKnowledge } from '../../scripts/utils/knowledge-context';
 
 interface UnitCaseResult { name: string; ok: boolean; error?: string }
 
@@ -297,6 +298,33 @@ function mutateFeatureContracts(
   const contracts = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
   mutate(contracts);
   fs.writeFileSync(file, YAML.stringify(contracts), 'utf8');
+}
+
+/** 复用生产 closure 现场；可独立运行知识归位返修，不重跑无关 closure 用例。 */
+export function knowledgePlacementRoundtrip(): void {
+    withProject(projectRoot => {
+      const asset = path.join(projectRoot, 'doc', 'architecture.yaml');
+      const original = fs.readFileSync(asset, 'utf8');
+      fs.rmSync(asset);
+      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      expectIssue(evaluated.issues, 'component_closure_knowledge_unresolved');
+      assert(evaluated.closure.verdict === 'FAIL', '缺失知识真源意外放行');
+      // writer 恢复真实结论，再由 P1 owner 补精确引用；不让 closure 写上游。
+      fs.writeFileSync(asset, original + '\nplaced_conclusion: decision:knowledge-placed\n', 'utf8');
+      bumpClosureBlueprint(projectRoot, blueprint => {
+        const decision = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).find(item => item.status === 'decided_with_authority')!;
+        decision.knowledge_refs = [...asStrings(decision.knowledge_refs), 'doc/architecture.yaml#decision:knowledge-placed'];
+      });
+      const preparation = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
+      assert(preparation.bumped.length > 0, JSON.stringify(preparation));
+      const placed = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      assert(!placed.issues.some(item => item.id.startsWith('component_closure_knowledge_')), placed.issues.map(item => item.id).join(','));
+      const configFile = path.join(projectRoot, 'framework.config.json');
+      const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {};
+      config.paths = { ...config.paths, architecture_md: 'doc/architecture.yaml' }; fs.writeFileSync(configFile, JSON.stringify(config));
+      const { clearFrameworkConfigCache } = require('../../config') as typeof import('../../config'); clearFrameworkConfigCache();
+      assert(renderKnowledge(assembleKnowledge({ projectRoot, frameworkRoot: path.resolve(__dirname, '../../..'), phase: 'plan' })).includes('decision:knowledge-placed'), '新任务未读取归位后的原文');
+    });
 }
 
 export function runAll(): UnitCaseResult[] {
@@ -860,14 +888,7 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
-  results.push(test('unresolved stable knowledge placement remains a blocker', () => {
-    withProject(projectRoot => {
-      fs.rmSync(path.join(projectRoot, 'doc', 'architecture.yaml'));
-      const evaluated = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
-      expectIssue(evaluated.issues, 'component_closure_knowledge_unresolved');
-      assert(evaluated.closure.verdict === 'FAIL', '缺失知识真源意外放行');
-    });
-  }));
+  results.push(test('unresolved stable knowledge placement remains a blocker and recovers through writers', knowledgePlacementRoundtrip));
 
   results.push(test('existing knowledge file without the exact stable conclusion identity cannot pass writeback', () => {
     withProject(projectRoot => {

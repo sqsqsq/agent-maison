@@ -13,6 +13,7 @@ import {
   scanExtensionSkills,
 } from './instance-skill-bridge';
 import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../../extension-loader';
+import { assembleKnowledge, renderKnowledge, renderExtensionKnowledgeRoutes } from './knowledge-context';
 
 export type TemplateVars = Record<string, string>;
 
@@ -114,37 +115,8 @@ export interface BuildAgentsTemplateVarsOptions {
     glossary?: string;
     features_dir?: string;
     extension_dir?: string;
+    module_graphs_dir?: string;
   };
-}
-
-function formatExtensionEntrySection(
-  base: string,
-  bundle: ReturnType<typeof loadInstanceExtensions>,
-  projectRoot: string,
-): string {
-  if (bundle.manifestVersion !== '1.1' || bundle.errors.length > 0) return base;
-  const lines = [base.trimEnd()];
-  const global = bundle.knowledge.filter(item => item.audience === 'global');
-  if (global.length > 0) {
-    lines.push('', '### 实例全局知识', '', '| 路径 | 摘要 |', '|---|---|');
-    for (const item of global) {
-      const source = path.relative(projectRoot, item.absPath).replace(/\\/g, '/');
-      lines.push(`| [${source}](${source}) | ${item.summary || '—'} |`);
-    }
-  }
-  const phases = Object.entries(bundle.phaseBindings)
-    .filter(([, slots]) => (slots.before_phase_work?.length ?? 0) > 0);
-  if (phases.length > 0) {
-    lines.push('', '### 实例阶段前置绑定', '');
-    const manifest = bundle.manifestPath
-      ? path.relative(projectRoot, bundle.manifestPath).replace(/\\/g, '/')
-      : 'doc/extensions/manifest.yaml';
-    for (const [phase, slots] of phases) {
-      const refs = slots.before_phase_work!.map(item => `${item.kind}:${item.ref}`).join('、');
-      lines.push('- `' + phase + '` 动笔前：先按 `' + manifest + '` 处理 ' + refs + '；运行 `/extension inspect` 查看路径、usage 与消费者。');
-    }
-  }
-  return `${lines.filter((line, index) => index > 0 || line.length > 0).join('\n')}\n`;
 }
 
 /**
@@ -225,9 +197,11 @@ export function buildAgentsTemplateVars(
     COMPONENT_INDEX_PATH: String(paths.component_index ?? cfgPaths.component_index ?? DEFAULT_PATHS.component_index),
     COMPONENT_CATALOG_PATH: String(paths.component_catalog ?? cfgPaths.component_catalog ?? DEFAULT_PATHS.component_catalog),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
-    EXTENSION_SKILL_SECTION: formatExtensionEntrySection(
-      formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'), bundle, opts.projectRoot,
-    ),
+    EXTENSION_SKILL_SECTION: [formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'),
+      renderExtensionKnowledgeRoutes(bundle, opts.projectRoot)].filter(Boolean).join('\n\n'),
+    COMPONENT_DESIGN_KNOWLEDGE: renderKnowledge(assembleKnowledge({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot,
+      skill: 'component-design', subject: 'component-design', role: 'author', staticOnly: true,
+      paths: { ...cfgPaths, ...paths }, profileName, extensionBundle: bundle })).replace('## Knowledge inputs', '### component-design 设计前知识'),
   };
 }
 
@@ -253,6 +227,7 @@ export interface LegacyRenderEnv {
   profile_agent_ssot_rows: string;
   profile_agent_guardrails: string;
   extension_skill_section?: string;
+  component_design_knowledge?: string;
 }
 
 export function legacyRenderEnvToTemplateVars(env: LegacyRenderEnv): TemplateVars {
@@ -275,6 +250,7 @@ export function legacyRenderEnvToTemplateVars(env: LegacyRenderEnv): TemplateVar
     COMPONENT_CATALOG_PATH: env.component_catalog_path ?? DEFAULT_PATHS.component_catalog!,
     FEATURES_DIR: env.features_dir,
     EXTENSION_SKILL_SECTION: env.extension_skill_section ?? '',
+    COMPONENT_DESIGN_KNOWLEDGE: env.component_design_knowledge ?? '',
     MODULE_INNER_LAYERS_CSV: env.module_inner_layers_csv,
     CROSS_MODULE_EXPORTS_FILE: env.cross_module_exports_file,
   };

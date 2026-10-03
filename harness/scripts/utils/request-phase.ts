@@ -7,6 +7,7 @@ import { prepareExplicitRequest, requestProtectedPaths, type PreparedRequest } f
 import * as crypto from 'crypto';
 import { resolveRequestInputs, readBoundInput } from './capability-resolution';
 import { SpecLoader } from './spec-loader';
+import { assembleKnowledge, renderKnowledge } from './knowledge-context';
 import { checkFactsArtifact } from './context-facts';
 import { generateRequestScriptReport } from './report-generator';
 import type { CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckContext } from './types';
@@ -213,7 +214,11 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
     const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
     if (args['prepare-request']) {
       const { sourceContents: _contents, ...output } = prepared;
-      console.log(JSON.stringify({ ...output, gaps: [...output.gaps, ...requestCapabilityGaps(profile, options.projectRoot, prepared)] }, null, 2)); return 0;
+      const knowledge = assembleKnowledge({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot,
+        phase: prepared.phase, subject: 'request', role: 'author', requirement: prepared.requested_result,
+        targetFiles: [...prepared.targets.files, ...prepared.targets.tests], extensionBundle: profile.extensionBundle });
+      console.log(JSON.stringify({ ...output, knowledge: { ...knowledge, instructions: renderKnowledge(knowledge) },
+        gaps: [...output.gaps, ...requestCapabilityGaps(profile, options.projectRoot, prepared)] }, null, 2)); return 0;
     }
     const loader = new SpecLoader(options.projectRoot, undefined, undefined, options.frameworkRoot);
     const rulePath = artifact.rule ? path.resolve(options.frameworkRoot, 'specs', artifact.rule) : undefined;

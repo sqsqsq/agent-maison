@@ -29,6 +29,7 @@ Use this Skill only after P1 admission and P2 Change Unit execution facts exist 
 2. Derive the complete obligation set from current sources, applicable 4+1 design, runtime flows, contracts/NFRs, CU predicates/invariants/dependencies/safe states and Feature construction mappings.
 3. Recompute every coverage row's CU or combination owner, deterministic Feature, exact mapping, evidence level/identity and observation. Never accept an authored owner, evidence swap, checkbox or aggregate completion count.
 4. Recheck cross-view consumption, conditional runtime propagation, exact dependencies, migration/temporary assets, stable knowledge and only the authoritative `establish_seam` host evolution decisions.
+   知识未归位的 `resolve_authority_or_risk` 去向是：原资产 writer 按现有授权归位 → P1 owner reconciliation 补真实 knowledge_refs → 既有 design preparation 原位升 CU 蓝图指针 → 重跑 closure。相关 run 收口不产生新写权限；真正缺语义授权才走原确认点，不泛化成再次问人。closure 自己不写资产或 P1。
 5. Aggregate only `PASS|PASS_WITH_DEGRADATION|FAIL`; emit deterministic gaps with one repair route. A single Provider cannot select inputs, remove obligations or set the verdict.
 6. Run `npm run check:component-closure -- --project-root <root> --blueprint <blueprint-id> --write` to evaluate, atomically materialize canonical YAML, hash it, derive Markdown, and revalidate both artifacts. Later read-only checks MAY omit `--write`.
 
