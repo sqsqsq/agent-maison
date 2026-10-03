@@ -2,10 +2,16 @@
 //
 // 宿主 = 上一版快照（host-snapshot-3.1.0）+ git 基线；run 经 goal-runner 公开入口出生，阶段门由真 harness 产出，
 // 测试只替代 agent 的产出（lifecycle-evolution 的作者材料）与宿主侧的蓝图升版，不手写事件、不注入 verdict。
+//
+// plan b0e0621c §3.3：S14–S16 主流程（A2 主线与两个反例、S15 四支、S16 主线与两个绑定失效支、S16-c1）的驱动与断言
+// 在本文件导出的流程函数里，注册用例只在 reliability-scenarios 的 S14 / S15 / S16 里——单跑本套件不覆盖它们，
+// 本地验证这几条要跑：RELIABILITY_SCENARIOS_ONLY=S14,S15,S16 + `--filter reliability-scenarios`。
+// 共用前缀（handWrittenCompletion / derivedContractsCompletion）经 lifecycle-evolution 的同路径缓存，进程内首跑真跑。
 
 import assert from 'assert';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
@@ -26,6 +32,7 @@ import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track'
 import { decideRunContinuation, loadEffectiveExecutionScope, staleFrozenBindings } from '../../scripts/utils/goal-run-creation';
 import { runConditionProbe } from '../../scripts/utils/condition-wait';
 import * as supervise from '../../scripts/goal-supervise';
+import { __testing_setLockHeartbeatMs, lockHeartbeatIntervalMs } from '../../scripts/goal-phase-runtime';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { publishVerifier, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
@@ -36,7 +43,7 @@ import type { CheckContext } from '../../scripts/utils/types';
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { handWriteProjections } from './component-design-handoff.unit.test';
 import {
-  BLUEPRINT_ID, assess, authorHooks, brief, bumpBlueprint, commit, handWrittenCompletion, project, specFirstCuHooks, successorChain, withHost, withSnapshot,
+  BLUEPRINT_ID, assess, authorHooks, brief, bumpBlueprint, cachedPrefix, commit, handWrittenCompletion, project, specFirstCuHooks, successorChain, withHost, withSnapshot,
 } from './lifecycle-evolution.unit.test';
 import { NEW_EXPECTED_RESULT, changeProjectedAcceptance, readJson, runFile, runIds, supersede } from './successor-exit.unit.test';
 import type { UnitCaseResult } from '../run-unit';
@@ -173,9 +180,70 @@ function s14Injection(s: Snapshot, key: S14Key): (() => void) | undefined {
   };
   return undefined;
 }
-export function s14Run(s: Snapshot, key: S14Key, extra: Omit<NonNullable<Parameters<typeof runWithStalePointerAtPlan>[1]>, 'atInjection'> = {}): Promise<StaleRun> {
+/**
+ * S14 三支的驱动与机制断言（plan b0e0621c §3.3：原 A2 主线与两个反例的注册用例并入这里，只在 reliability-scenarios 里跑）。
+ *  · in-run-reconcile（原 A2 主线）：plan 首轮窗口内另一会话的 readiness 竞争退出；同一 run 内调和、plan 原地重评、任务完成；
+ *  · counter-own-skipped（原 A2 反例一）：本 CU 被调和器跳过 → 不重评，落回设计 owner 停机，说明含跳过原因，不宣称完成；
+ *  · counter-sibling-skipped（原 A2 反例二）：兄弟 CU 被跳过（三处指针不一致）→ 本 run 续跑并完成，跳过只在事件里披露。
+ */
+export async function s14Run(s: Snapshot, key: S14Key): Promise<StaleRun> {
+  const feature = SNAPSHOT_CU_FEATURE;
   const atInjection = s14Injection(s, key);
-  return runWithStalePointerAtPlan(s, { ...extra, ...(atInjection ? { atInjection } : {}) });
+  let interleave: { busy?: string; ready: boolean; unchanged: boolean } | undefined;
+  const run = await runWithStalePointerAtPlan(s, {
+    ...(atInjection ? { atInjection } : {}),
+    // A4 交错反例：run 正持本 feature 的锁跑 plan——另一会话的 readiness 调和必须竞争退出，不得按旧快照写。
+    ...(key === 'in-run-reconcile' ? { onFirstPlan: () => {
+      const before = cuBytes(s);
+      const contracts = fs.readFileSync(featureFilePath(s.root, feature, 'contracts.yaml'));
+      const readiness = deriveDesignPreparationReadiness(s.root, BLUEPRINT_ID);
+      interleave = {
+        busy: readiness.blueprintRefs.busy, ready: readiness.ready,
+        unchanged: JSON.stringify(cuBytes(s)) === JSON.stringify(before) && fs.readFileSync(featureFilePath(s.root, feature, 'contracts.yaml')).equals(contracts),
+      };
+    } } : {}),
+  });
+  console.log(`[design-authority-repair] S14/${key} ${describeRun(run)} interleave=${JSON.stringify(interleave)}`);
+  const [repair, ...rest] = repairs(run);
+  if (key === 'counter-own-skipped') {
+    assert(repair && repair.outcome === 'not_reconciled' && repair.skipped.some((x: Ev) => x.change_unit_id === CU) && !repair.bumped.length, describeRun(run));
+    assert.strictEqual(run.planInvokes, 1, '本 CU 被跳过时不得重评');
+    const halt = lastHalt(run);
+    assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.phase === 'plan', describeRun(run));
+    assert(/本 CU 被调和器跳过/.test(String(halt!.halt_guidance)) && /ledger-domain/.test(String(halt!.halt_guidance)), `说明须含跳过原因：${halt!.halt_guidance}`);
+    assert(!pointsAtCurrentBlueprint(s, CU), '被跳过的 CU 不得被改写');
+    const final = assess(s, feature);
+    assert(!final.complete && !(final.record.state !== 'absent' && final.record.run_id === run.successor), `不得宣称完成：${brief(final)}`);
+    return run;
+  }
+  if (key === 'counter-sibling-skipped') {
+    assert(repair && repair.outcome === 'reconciled' && repair.bumped.some((b: Ev) => b.change_unit_id === CU)
+      && repair.skipped.some((x: Ev) => x.change_unit_id === SIBLING && /blueprint_ref_identity_inconsistent/.test(x.reasons.join(' '))), describeRun(run));
+    assert(!run.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved'), describeRun(run));
+    const final = assess(s, feature);
+    assert(final.complete && final.record.state !== 'absent' && final.record.run_id === run.successor, `兄弟 CU 的跳过不得让本 run 停下：${brief(final)}\n${describeRun(run)}`);
+    return run;
+  }
+  assert(run.injected, '前提：升版已在 spec 之后注入');
+  assert(interleave?.busy?.includes(RECONCILE_BUSY_HINT) && interleave.ready === false && interleave.unchanged, `run 持锁期间 readiness 应报忙且零写入：${JSON.stringify(interleave)}`);
+  assert(repair && !rest.length && repair.phase === 'plan' && repair.action === 'pointer_reconcile' && repair.outcome === 'reconciled'
+    && repair.blueprint_id === BLUEPRINT_ID && repair.bumped.some((b: Ev) => b.change_unit_id === CU), describeRun(run));
+  // plan 只有一轮 FAIL（指针过期），调和后原地重评即 PASS；其后的 PASS:retry 是既有的闭环补轮，与本修复无关。
+  assert.deepStrictEqual(run.events.filter(e => e.type === 'phase_verdict' && e.phase === 'plan').map(e => `${e.verdict}:${e.action}`),
+    ['FAIL:retry', 'PASS:retry', 'PASS:advance'], `plan 应原地重评一次：${describeRun(run)}`);
+  assert(!run.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved'), `不得停机等设计 owner：${describeRun(run)}`);
+  assert(!run.error, `run 应正常结束：${describeRun(run)}`);
+  // 写边界记账如实：调和是框架动作，发生在两次 agent 调用之间——canonical CU 不得被记成任何一次 agent 调用的写入。
+  const attributed = run.events.filter(e => e.type === 'phase_write_observed' || e.type === 'phase_write_violation')
+    .flatMap(e => [...(e.owned ?? []), ...(e.observations ?? []), ...(e.violations ?? [])] as Ev[]).map(row => String(row.path));
+  assert(!attributed.some(p => p.endsWith('change-unit.yaml')), `CU 指针升版不得归因给 agent：${JSON.stringify(attributed)}`);
+  const report = fs.readFileSync(runFile(s.root, feature, run.successor, 'goal-report.md'), 'utf8');
+  assert(/设计侧修复.*pointer_reconcile.*本 CU 指针已原位升版/.test(report), 'goal 报告应渲染设计侧修复事件');
+  assert(pointsAtCurrentBlueprint(s, CU), 'CU 指针应已指向当前蓝图');
+  const final = assess(s, feature);
+  assert(final.complete && final.record.state !== 'absent' && final.record.run_id === run.successor, `任务应在同一 run 完成：${brief(final)}\n${describeRun(run)}`);
+  assert.deepStrictEqual(boundInputs(s, feature, run.successor).stale.filter(x => !x.startsWith('codebase:')), [], '同一 run 的设计类绑定在调和后仍有效');
+  return run;
 }
 
 const repairs = (run: StaleRun): Ev[] => run.events.filter(e => e.type === 'design_authority_repair');
@@ -227,21 +295,23 @@ const originalRequest = (s: Snapshot, feature: string, completed: string): Pick<
 
 /** 宿主原始完成的替身（派生施工契约形状）：acceptance 去掉来源戳成为手写文件，contracts / use-cases 不落盘。 */
 async function derivedContractsCompletion(s: Snapshot): Promise<string> {
-  const feature = SNAPSHOT_CU_FEATURE;
-  const file = featureFilePath(s.root, feature, 'acceptance.yaml');
-  const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
-  delete doc.source;
-  fs.writeFileSync(file, YAML.stringify(doc));
-  for (const name of ['contracts.yaml', 'use-cases.yaml']) fs.rmSync(featureFilePath(s.root, feature, name));
-  commit(s, 'spec wrote acceptance by hand; construction contract stays derived from the blueprint');
-  const [snapshotRun] = runIds(s.root, feature);
-  const original = await supersede(s, feature, snapshotRun, successorChain(s, feature, snapshotRun), {
-    ...authorHooks(project(s, feature), { coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials }), noAutoForce: true,
+  return cachedPrefix(s, 'derivedContractsCompletion', async () => {
+    const feature = SNAPSHOT_CU_FEATURE;
+    const file = featureFilePath(s.root, feature, 'acceptance.yaml');
+    const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
+    delete doc.source;
+    fs.writeFileSync(file, YAML.stringify(doc));
+    for (const name of ['contracts.yaml', 'use-cases.yaml']) fs.rmSync(featureFilePath(s.root, feature, name));
+    commit(s, 'spec wrote acceptance by hand; construction contract stays derived from the blueprint');
+    const [snapshotRun] = runIds(s.root, feature);
+    const original = await supersede(s, feature, snapshotRun, successorChain(s, feature, snapshotRun), {
+      ...authorHooks(project(s, feature), { coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials }), noAutoForce: true,
+    });
+    assert(original.successor && assess(s, feature).complete, `前提：派生施工契约形状下的完成记录：${original.error} ${brief(assess(s, feature))}`);
+    const contracts = boundSources(s, feature, original.successor!).find(x => x.startsWith('contracts<-'));
+    assert.strictEqual(contracts, 'contracts<-derive.blueprint-contracts', '前提：施工契约绑定来自蓝图派生');
+    return original.successor!;
   });
-  assert(original.successor && assess(s, feature).complete, `前提：派生施工契约形状下的完成记录：${original.error} ${brief(assess(s, feature))}`);
-  const contracts = boundSources(s, feature, original.successor!).find(x => x.startsWith('contracts<-'));
-  assert.strictEqual(contracts, 'contracts<-derive.blueprint-contracts', '前提：施工契约绑定来自蓝图派生');
-  return original.successor!;
 }
 const boundSources = (s: Snapshot, feature: string, runId: string): string[] => {
   clearFrameworkConfigCache();
@@ -863,6 +933,8 @@ function replayedBudget(s: Snapshot, b: S16Born): Record<'resume' | 'successor',
 export async function s16NoPreauthFlow(s: Snapshot): Promise<RepairFlow & { events: Ev[]; runId: string }> {
   const b = await s16Born(s, { preauth: false });
   assertNotDispatched(b, '无预授权');
+  // 原注册用例 S16-c1 的外层断言（plan b0e0621c §3.3 并入）。
+  assert.strictEqual(haltOf(b.events)?.design_authority?.class, 'B1', '前提：停机分类为 B1');
   const haltIndex = b.events.map(e => e.type).lastIndexOf('phase_halt');
   return { feature: b.feature, runs: [b.runId], halted: b.runId, haltIndex, haltClass: String(b.events[haltIndex]?.design_authority?.class), interventions: [],
     evidence: `停机=${String(b.events[haltIndex]?.halt_reason)} 分类=${String(b.events[haltIndex]?.design_authority?.class)} 无预授权、content_repair 事件 0、链外调用 0`, events: b.events, runId: b.runId };
@@ -878,6 +950,35 @@ function assertNotPublished(s: Snapshot, b: S16Born, step: string, label: string
   assert(!fs.existsSync(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair')), `${label}：草稿应已丢弃`);
   assertAttemptCleanedUp(s);
   return failed!;
+}
+
+// ---- 两处真实时间等待的测试缝（plan b0e0621c §3.2）---------------------------------------------------
+// 冷却：只在目标调用期间包装既有恢复守卫 checkTerminalResumeGuard、传短冷却，finally 还原；不加全局冷却配置。
+// 心跳：运行时 __testing_setLockHeartbeatMs 只缩短真实心跳定时器的间隔（回调不变），由目标调用之前安装，
+//       驱动层 finally 的 __testing_resetGoalRunnerSeams 复位（前缀真跑的复位清不到它：它装在前缀之后）。
+
+/** 用例里起的空转子进程：结束后等它真正退出再离开用例，不漏到下一例（plan b0e0621c §3.1 状态核对表）。 */
+const childExited = (child: import('child_process').ChildProcess): Promise<void> =>
+  child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('exit', () => resolve()));
+
+const SHORT_RESUME_COOLDOWN_MS = 3_000;
+const TEST_LOCK_HEARTBEAT_MS = 1_000;
+/** goal-phase-runtime.ts 的 LOCK_HEARTBEAT_MS（生产缺省，未导出）。 */
+const PRODUCTION_LOCK_HEARTBEAT_MS = 60_000;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const runnerPhase = require('../../scripts/utils/goal-runner-phase') as Pick<typeof import('../../scripts/utils/goal-runner-phase'), 'checkTerminalResumeGuard'>;
+/** 模块加载时的原守卫（V5：未安装 = 这个函数、生产传的 5 分钟冷却）。 */
+const productionResumeGuard = runnerPhase.checkTerminalResumeGuard;
+
+async function withResumeCooldown<T>(cooldownMs: number, call: () => Promise<T>): Promise<{ value: T; guardCalls: number }> {
+  const real = runnerPhase.checkTerminalResumeGuard;
+  let guardCalls = 0;
+  runnerPhase.checkTerminalResumeGuard = input => { guardCalls += 1; return real({ ...input, cooldownMinutes: cooldownMs / 60_000 }); };
+  try {
+    return { value: await call(), guardCalls };
+  } finally {
+    runnerPhase.checkTerminalResumeGuard = real;
+  }
 }
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
@@ -1039,77 +1140,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(YAML.parse(fs.readFileSync(contractsFile, 'utf8')).files.includes('src/ledger/PlanAddedDuringReconcile.ets'), '重试后 plan 的新增内容仍在');
     }),
   },
-  {
-    name: 'A2 S14：run 真实出生并冻结绑定之后蓝图升版（未调和）→ plan 的真实门报指针过期 → 框架在同一 run 内调和、plan 原地重评 → 任务完成，操作者动作 0；plan 窗口内另一会话的 readiness 竞争退出',
-    run: () => withHost(async s => {
-      const feature = SNAPSHOT_CU_FEATURE;
-      let interleave: { busy?: string; ready: boolean; unchanged: boolean } | undefined;
-      const run = await s14Run(s, 'in-run-reconcile', {
-        // A4 交错反例：run 正持本 feature 的锁跑 plan——另一会话的 readiness 调和必须竞争退出，不得按旧快照写。
-        onFirstPlan: () => {
-          const before = cuBytes(s);
-          const contracts = fs.readFileSync(featureFilePath(s.root, feature, 'contracts.yaml'));
-          const readiness = deriveDesignPreparationReadiness(s.root, BLUEPRINT_ID);
-          interleave = {
-            busy: readiness.blueprintRefs.busy, ready: readiness.ready,
-            unchanged: JSON.stringify(cuBytes(s)) === JSON.stringify(before) && fs.readFileSync(featureFilePath(s.root, feature, 'contracts.yaml')).equals(contracts),
-          };
-        },
-      });
-      console.log(`[design-authority-repair] A2 ${describeRun(run)} interleave=${JSON.stringify(interleave)}`);
-      assert(run.injected, '前提：升版已在 spec 之后注入');
-      assert(interleave?.busy?.includes(RECONCILE_BUSY_HINT) && interleave.ready === false && interleave.unchanged, `run 持锁期间 readiness 应报忙且零写入：${JSON.stringify(interleave)}`);
-      const [repair, ...rest] = repairs(run);
-      assert(repair && !rest.length && repair.phase === 'plan' && repair.action === 'pointer_reconcile' && repair.outcome === 'reconciled'
-        && repair.blueprint_id === BLUEPRINT_ID && repair.bumped.some((b: Ev) => b.change_unit_id === CU), describeRun(run));
-      // plan 只有一轮 FAIL（指针过期），调和后原地重评即 PASS；其后的 PASS:retry 是既有的闭环补轮，与本修复无关。
-      assert.deepStrictEqual(run.events.filter(e => e.type === 'phase_verdict' && e.phase === 'plan').map(e => `${e.verdict}:${e.action}`),
-        ['FAIL:retry', 'PASS:retry', 'PASS:advance'], `plan 应原地重评一次：${describeRun(run)}`);
-      assert(!run.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved'), `不得停机等设计 owner：${describeRun(run)}`);
-      assert(!run.error, `run 应正常结束：${describeRun(run)}`);
-      // 写边界记账如实：调和是框架动作，发生在两次 agent 调用之间——canonical CU 不得被记成任何一次 agent 调用的写入。
-      const attributed = run.events.filter(e => e.type === 'phase_write_observed' || e.type === 'phase_write_violation')
-        .flatMap(e => [...(e.owned ?? []), ...(e.observations ?? []), ...(e.violations ?? [])] as Ev[]).map(row => String(row.path));
-      assert(!attributed.some(p => p.endsWith('change-unit.yaml')), `CU 指针升版不得归因给 agent：${JSON.stringify(attributed)}`);
-      const report = fs.readFileSync(runFile(s.root, feature, run.successor, 'goal-report.md'), 'utf8');
-      assert(/设计侧修复.*pointer_reconcile.*本 CU 指针已原位升版/.test(report), 'goal 报告应渲染设计侧修复事件');
-      assert(pointsAtCurrentBlueprint(s, CU), 'CU 指针应已指向当前蓝图');
-      const final = assess(s, feature);
-      assert(final.complete && final.record.state !== 'absent' && final.record.run_id === run.successor, `任务应在同一 run 完成：${brief(final)}\n${describeRun(run)}`);
-      assert.deepStrictEqual(boundInputs(s, feature, run.successor).stale.filter(x => !x.startsWith('codebase:')), [], '同一 run 的设计类绑定在调和后仍有效');
-    }),
-  },
-  {
-    name: 'A2 反例一：同上，但新蓝图里本 CU 的设计闭包有未决项（调和器 carry-forward 不过、跳过本 CU）→ 落回设计 owner 停机，说明含跳过原因，不宣称完成',
-    run: () => withHost(async s => {
-      const feature = SNAPSHOT_CU_FEATURE;
-      const run = await s14Run(s, 'counter-own-skipped');
-      console.log(`[design-authority-repair] A2-c1 ${describeRun(run)}`);
-      const [repair] = repairs(run);
-      assert(repair && repair.outcome === 'not_reconciled' && repair.skipped.some((x: Ev) => x.change_unit_id === CU) && !repair.bumped.length, describeRun(run));
-      assert.strictEqual(run.planInvokes, 1, '本 CU 被跳过时不得重评');
-      const halt = lastHalt(run);
-      assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.phase === 'plan', describeRun(run));
-      assert(/本 CU 被调和器跳过/.test(String(halt!.halt_guidance)) && /ledger-domain/.test(String(halt!.halt_guidance)), `说明须含跳过原因：${halt!.halt_guidance}`);
-      assert(!pointsAtCurrentBlueprint(s, CU), '被跳过的 CU 不得被改写');
-      const final = assess(s, feature);
-      assert(!final.complete && !(final.record.state !== 'absent' && final.record.run_id === run.successor), `不得宣称完成：${brief(final)}`);
-    }),
-  },
-  {
-    name: 'A2 反例二：同上，本 CU 升版成功、同蓝图下兄弟 CU 被跳过（三处指针不一致）→ 本 run 续跑并完成，兄弟 CU 的跳过只在事件里披露',
-    run: () => withHost(async s => {
-      const feature = SNAPSHOT_CU_FEATURE;
-      const run = await s14Run(s, 'counter-sibling-skipped');
-      console.log(`[design-authority-repair] A2-c2 ${describeRun(run)}`);
-      const [repair] = repairs(run);
-      assert(repair && repair.outcome === 'reconciled' && repair.bumped.some((b: Ev) => b.change_unit_id === CU)
-        && repair.skipped.some((x: Ev) => x.change_unit_id === SIBLING && /blueprint_ref_identity_inconsistent/.test(x.reasons.join(' '))), describeRun(run));
-      assert(!run.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved'), describeRun(run));
-      const final = assess(s, feature);
-      assert(final.complete && final.record.state !== 'absent' && final.record.run_id === run.successor, `兄弟 CU 的跳过不得让本 run 停下：${brief(final)}\n${describeRun(run)}`);
-    }),
-  },
+  // A2 主线与两个反例：只在 reliability-scenarios 的 S14 里跑（plan b0e0621c §3.3，断言并入 s14Run）。
   {
     name: 'A4 兄弟 feature 反例（真实 run）：run 内调和遇到兄弟 feature 被另一 run 持锁 → 竞争退出、不写任何 CU，落回停机并说明"竞争解除后重发即可，不需要改设计内容"',
     run: () => withHost(async s => {
@@ -1310,41 +1341,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(!/external_condition_ready/.test(JSON.stringify(decide({ runProbe: () => ({ ready: false }) }))), '同一现场、探针未就绪时不算这种变化');
     }),
   },
-  {
-    name: 'S15-rejoin B1 修后续跑（绑定仍有效）+ 反例未修就重发：现有无效例停机（分类 B1、锁已释放、探针只读）→ 未修重发保持停止 → 设计 owner 经真实 readiness 修 → 冷却期内不带旗标重发 → 重新接入同一 run，spec 按新权威重评、链内改写后完成',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s15RejoinFlow(s))}`); }),
-  },
-  {
-    name: 'S15-successor B1 修后续跑（派生绑定已 stale）：run 出生后蓝图被写坏 → run 内调和后因内容无效停机 → 修复改了派生施工契约依赖的蓝图内容 → 冷却期内重发 → 运行时判定绑定失效，自动从停机 run 起后继并完成',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s15StaleFlow(s, 'resend'))}`); }),
-  },
-  {
-    name: 'S15-supervisor 分支（绑定已 stale）：停放后未修时生产 supervisor 不拉起；修好后探针就绪即拉起 --resume；runner 的恢复入口判定绑定失效 → 改为起后继；验到后继完成；重启次数不因起后继清零',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s15StaleFlow(s, 'supervisor'))}`); }),
-  },
-  {
-    name: 'S15-authority B2：设计闭包内出现未决项 → 停机分类 B2、说明写清缺什么 → 有权者裁决并经 readiness 调和 → 重发同一请求 → 正确完成',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s15AuthorityFlow(s))}`); }),
-  },
-  {
-    name: 'S16 无人值守 B1 自动接手（绑定仍有效）：预授权 + B1 停机 → 两层锁内派编写与独立质询两次链外调用 → 草稿旧质询作废后准入派生未过、质询重生成后派生 pass → 真实校验、发布、调和、探针 → 同一 run 原地重评并完成，操作者动作 0',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s16MainFlow(s))}`); }),
-  },
-  {
-    name: 'S16-stale-supervisor 绑定失效支：修复发布并恢复但派生施工契约绑定失效 → 停放（探针就绪）→ 生产 supervisor 实际拉起 → 恢复入口起后继并完成，操作者动作 0',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s16StaleFlow(s, 'supervisor'))}`); }),
-  },
-  {
-    name: 'S16-stale-resend 绑定失效支（未经 supervisor）：同上，停放后需重发同一请求才起后继——如实计一次人工动作',
-    run: () => withHost(async s => { console.log(`[design-authority-repair] ${JSON.stringify(await s16StaleFlow(s, 'resend'))}`); }),
-  },
-  {
-    name: 'S16-c1 无预授权：B1 停机照旧停等，不派发（没有 content_repair 事件、没有链外调用）',
-    run: () => withHost(async s => {
-      const b = await s16NoPreauthFlow(s);
-      assert.strictEqual(b.haltClass, 'B1', '前提：停机分类为 B1');
-    }),
-  },
+  // S15 四支、S16 主线与两个绑定失效支、S16-c1 无预授权：只在 reliability-scenarios 的 S15 / S16 里跑（plan b0e0621c §3.3，断言在共享流程函数里）。
   {
     name: 'S16-c1c 有人在场（会话 owner，host bridge）+ 预授权 + B1 → 不派发，交会话里的设计 owner',
     run: () => withHost(async s => {
@@ -1443,12 +1440,15 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assertNotPublished(s, b, 'questioning', '质询不可用');
       const halt = haltOf(b.events);
       assert(halt?.halt_reason === 'execution_scope_unresolved' && /尝试失败（步骤 questioning）/.test(String(halt.halt_guidance)) && /唯一一次自动修复机会/.test(String(halt.halt_guidance)), `停等并披露：${JSON.stringify(halt?.halt_guidance)}`);
-      // c5 同一签名第二次停机（同一 run）：显式 --resume 对 HALTED run 有 5 分钟冷却（--force 也不越过），等冷却过去再由操作者
+      // c5 同一签名第二次停机（同一 run）：显式 --resume 对 HALTED run 有冷却（生产 5 分钟，--force 也不越过），等冷却过去再由操作者
       // 显式 --resume --force-resume——同一 run 重评同一阶段、再次停在同一签名，按本 run 的事件回放读到 attempted → 不再派发。
+      // plan b0e0621c §3.2：只在这一次调用期间包装既有恢复守卫、传短冷却（生产缺省值不变），等的仍是真实冷却。
       const endTs = Date.parse(String(endOf(b.events)?.ts));
-      const waitMs = endTs + 5 * 60_000 + 2_000 - Date.now();
+      const waitMs = endTs + SHORT_RESUME_COOLDOWN_MS + 2_000 - Date.now();
       if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs));
-      const resumed = await runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: b.feature, resume: b.runId, forceResume: true, noAutoForce: true, ...authorsForContinuation(s, b.feature) });
+      const { value: resumed, guardCalls } = await withResumeCooldown(SHORT_RESUME_COOLDOWN_MS, () =>
+        runGoalRuntimeChain(s.root, { frameworkRoot: s.frameworkRoot, featureId: b.feature, resume: b.runId, forceResume: true, noAutoForce: true, ...authorsForContinuation(s, b.feature) }));
+      assert.strictEqual(guardCalls, 1, '显式 resume 经过恢复守卫一次（短冷却已生效）');
       const sameRun = eventsOf(s, b.feature, b.runId);
       console.log(`[design-authority-repair] S16-c5 resume exit=${resumed.exitCode} ${describeS16({ events: sameRun })}`);
       assert(sameRun.filter(e => e.type === 'run_start').length === 2, `前提：resume 确实重评了同一阶段：${describeS16({ events: sameRun })}`);
@@ -1699,28 +1699,49 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const otherLock = path.join(featureFilePath(s.root, 'demo-card', ''), 'goal-runs', FEATURE_LOCK_NAME);
       const before = { events: sha(path.join(otherRunDir, 'events.jsonl')), beacon: sha(path.join(otherRunDir, 'liveness.json')) };
       let heartbeatsDuringAuthor = 0;
-      const b = await s16Born(s, { adapter: { author: async (_doc, draft) => {
-        // 另一 feature 的 run 正常运行：取它自己的 feature 锁并刷新、追加心跳事件、写 beacon 与进度、刷新阶段状态。
-        const lock = tryAcquireLock(otherLock, { run_id: '20260925T043142Z-233c9c' });
-        assert(lock, '前提：另一 feature 的锁可取');
-        const ownEvents = path.join(path.dirname(path.dirname(draft)), 'events.jsonl');
-        const ownBefore = fs.readFileSync(ownEvents, 'utf8').split('\n').filter(Boolean).length;
-        // 等本 run 的真实心跳定时器（60 秒）至少走一次。
-        await new Promise(resolve => setTimeout(resolve, 62_000));
-        touchLock(otherLock, lock!.ownerId);
-        fs.appendFileSync(path.join(otherRunDir, 'events.jsonl'), `${JSON.stringify({ ts: new Date().toISOString(), type: 'heartbeat', phase: 'testing' })}\n`);
-        writeLivenessBeacon({ projectRoot: s.root, reportDir: path.relative(s.root, otherRunDir).replace(/\\/g, '/'), runId: '20260925T043142Z-233c9c' });
-        fs.writeFileSync(path.join(otherRunDir, 'progress.json'), `${JSON.stringify({ heartbeat: Date.now() })}\n`);
-        fs.writeFileSync(featureFilePath(s.root, 'demo-card', 'next.json'), `${JSON.stringify({ phase: 'testing', at: Date.now() })}\n`);
-        releaseLock(otherLock, lock!.ownerId);
-        heartbeatsDuringAuthor = fs.readFileSync(ownEvents, 'utf8').split('\n').filter(Boolean).slice(ownBefore).map(line => JSON.parse(line) as Ev).filter(e => e.type === 'heartbeat').length;
-      } } });
-      console.log(`[design-authority-repair] S16-r3 heartbeats=${heartbeatsDuringAuthor} ${describeS16(b)}`);
-      assert(heartbeatsDuringAuthor >= 1, '前提：编写调用进行中本 run 的真实心跳追加过事件');
-      assert(sha(path.join(otherRunDir, 'events.jsonl')) !== before.events && sha(path.join(otherRunDir, 'liveness.json')) !== before.beacon, '前提：另一 run 的运行时输出确实变了');
-      const published = contentRepairs(b.events).find(e => e.stage === 'published');
-      assert(published?.outcome === 'recovered' && !b.events.some(e => e.type === 'phase_write_violation'), `正常心跳不得判越界：${describeS16(b)}`);
-      assertCompletedBy(s, b.feature, b.runId, 'S16-r3');
+      let ownUpdated: Record<string, boolean> = {};
+      try {
+        const b = await s16Born(s, {
+          // plan b0e0621c §3.2：本 run 出生前缩短真实心跳定时器的间隔（回调不变）；驱动层 finally 复位，用例 finally 兜底。
+          beforeBirth: async () => { __testing_setLockHeartbeatMs(TEST_LOCK_HEARTBEAT_MS); },
+          adapter: { author: async (_doc, draft) => {
+            // 另一 feature 的 run 正常运行：取它自己的 feature 锁并刷新、追加心跳事件、写 beacon 与进度、刷新阶段状态。
+            const lock = tryAcquireLock(otherLock, { run_id: '20260925T043142Z-233c9c' });
+            assert(lock, '前提：另一 feature 的锁可取');
+            const runDir = path.dirname(path.dirname(draft));
+            const ownEvents = path.join(runDir, 'events.jsonl');
+            const ownBefore = fs.readFileSync(ownEvents, 'utf8').split('\n').filter(Boolean).length;
+            // 等本 run 的真实心跳定时器实际走过：心跳事件、本 feature 锁、beacon、progress.json 都已更新（进度快照有 4 秒节流）。
+            const watched: Record<string, string> = {
+              lock: featureLockPath(s, CU), beacon: livenessBeaconPath(s.root, path.relative(s.root, runDir).replace(/\\/g, '/')), progress: path.join(runDir, 'progress.json'),
+            };
+            const digest = (file: string): string => (fs.existsSync(file) ? sha(file) : '');
+            const start = Object.fromEntries(Object.entries(watched).map(([k, file]) => [k, digest(file)]));
+            const heartbeats = (): number => fs.readFileSync(ownEvents, 'utf8').split('\n').filter(Boolean).slice(ownBefore).map(line => JSON.parse(line) as Ev).filter(e => e.type === 'heartbeat').length;
+            for (const deadline = Date.now() + 30_000; ;) {
+              ownUpdated = { heartbeat: heartbeats() > 0, ...Object.fromEntries(Object.entries(watched).map(([k, file]) => [k, digest(file) !== start[k]])) };
+              if (Object.values(ownUpdated).every(Boolean) || Date.now() > deadline) break;
+              await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            touchLock(otherLock, lock!.ownerId);
+            fs.appendFileSync(path.join(otherRunDir, 'events.jsonl'), `${JSON.stringify({ ts: new Date().toISOString(), type: 'heartbeat', phase: 'testing' })}\n`);
+            writeLivenessBeacon({ projectRoot: s.root, reportDir: path.relative(s.root, otherRunDir).replace(/\\/g, '/'), runId: '20260925T043142Z-233c9c' });
+            fs.writeFileSync(path.join(otherRunDir, 'progress.json'), `${JSON.stringify({ heartbeat: Date.now() })}\n`);
+            fs.writeFileSync(featureFilePath(s.root, 'demo-card', 'next.json'), `${JSON.stringify({ phase: 'testing', at: Date.now() })}\n`);
+            releaseLock(otherLock, lock!.ownerId);
+            heartbeatsDuringAuthor = heartbeats();
+          } },
+        });
+        console.log(`[design-authority-repair] S16-r3 heartbeats=${heartbeatsDuringAuthor} updated=${JSON.stringify(ownUpdated)} ${describeS16(b)}`);
+        assert(heartbeatsDuringAuthor >= 1 && Object.values(ownUpdated).every(Boolean), `前提：编写调用进行中本 run 的真实心跳更新了心跳事件、锁、beacon、progress.json：${JSON.stringify(ownUpdated)}`);
+        assert(sha(path.join(otherRunDir, 'events.jsonl')) !== before.events && sha(path.join(otherRunDir, 'liveness.json')) !== before.beacon, '前提：另一 run 的运行时输出确实变了');
+        const published = contentRepairs(b.events).find(e => e.stage === 'published');
+        assert(published?.outcome === 'recovered' && !b.events.some(e => e.type === 'phase_write_violation'), `正常心跳不得判越界：${describeS16(b)}`);
+        assertCompletedBy(s, b.feature, b.runId, 'S16-r3');
+        assert.strictEqual(lockHeartbeatIntervalMs(), PRODUCTION_LOCK_HEARTBEAT_MS, '目标调用结束后心跳间隔已复位为生产缺省值');
+      } finally {
+        __testing_setLockHeartbeatMs(null);
+      }
     }),
   },
   {
@@ -1821,6 +1842,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       } finally {
         cp.spawnSync = spawnSync;
         try { dummy.kill(); } catch { /* 已不在 */ }
+        await childExited(dummy);
       }
     }),
   },
@@ -1841,6 +1863,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert(dummy.exitCode !== null || dummy.signalCode !== null || !(() => { try { process.kill(dummy.pid!, 0); return true; } catch { return false; } })(), '子进程已被结束');
       } finally {
         try { dummy.kill(); } catch { /* 已不在 */ }
+        await childExited(dummy);
       }
     }),
   },
@@ -1973,6 +1996,34 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(eventsOf(s, feature, born[0]).some(e => e.type === 'supersede' && e.target_run_id === runId), '后继须审计承接停放的 run');
       assertCompletedBy(s, feature, born[0], 'S15 显式 --resume 改起后继');
     }),
+  },
+  {
+    name: 'T2-cooldown 冷却测试缝（plan b0e0621c §3.2 / V5）：不安装时恢复守卫即原函数、按生产 5 分钟冷却拒绝；安装只在目标调用期间生效；调用异常退出后已还原',
+    run: async () => {
+      const recent = { priorStatus: 'HALTED', lastRunEndTs: new Date(Date.now() - 10_000).toISOString(), forceResume: true, cooldownMinutes: 5 };
+      assert.strictEqual(runnerPhase.checkTerminalResumeGuard, productionResumeGuard, '未安装：模块导出即原守卫');
+      assert(!runnerPhase.checkTerminalResumeGuard(recent).allowed, '未安装：生产冷却（5 分钟）内拒绝');
+      await assert.rejects(withResumeCooldown(SHORT_RESUME_COOLDOWN_MS, async () => {
+        assert(runnerPhase.checkTerminalResumeGuard(recent).allowed, '安装期间：短冷却已过即放行');
+        throw new Error('目标调用异常退出');
+      }), /目标调用异常退出/);
+      assert.strictEqual(runnerPhase.checkTerminalResumeGuard, productionResumeGuard, '异常退出后已还原为原守卫');
+      assert(!runnerPhase.checkTerminalResumeGuard(recent).allowed, '还原后仍按生产冷却拒绝');
+    },
+  },
+  {
+    name: 'T2-heartbeat 心跳测试缝（plan b0e0621c §3.2 / V5）：不安装时取生产缺省 60 秒；安装后目标调用异常退出，驱动层复位回缺省值',
+    run: async () => {
+      assert.strictEqual(lockHeartbeatIntervalMs(), PRODUCTION_LOCK_HEARTBEAT_MS, '未安装：生产缺省值');
+      __testing_setLockHeartbeatMs(TEST_LOCK_HEARTBEAT_MS);
+      try {
+        assert.strictEqual(lockHeartbeatIntervalMs(), TEST_LOCK_HEARTBEAT_MS, '安装后生效');
+        await assert.rejects(runGoalRuntimeChain(path.join(os.tmpdir(), `maison-absent-host-${process.pid}`), {}), '目标调用应异常退出（宿主根不存在）');
+        assert.strictEqual(lockHeartbeatIntervalMs(), PRODUCTION_LOCK_HEARTBEAT_MS, '目标调用异常退出后已复位为生产缺省值');
+      } finally {
+        __testing_setLockHeartbeatMs(null);
+      }
+    },
   },
 ];
 

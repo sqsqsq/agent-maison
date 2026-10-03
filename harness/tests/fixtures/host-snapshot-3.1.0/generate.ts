@@ -94,8 +94,10 @@ async function main(): Promise<void> {
  * 「上一版产物 + 本版代码」：把快照复制到仓外 tmp 根（仓内位置会让 git 类检查解析到本仓），
  * 再在其下 provision **当前**框架（同 real-chain，含合成的 test-chain profile）。
  */
-export function loadHostSnapshot(): { root: string; frameworkRoot: string; harnessDir: string } {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'host-snapshot-')));
+export function loadHostSnapshot(into?: string): { root: string; frameworkRoot: string; harnessDir: string } {
+  // `into`：调用方指定的空目录（同路径前缀缓存要求宿主根在进程内固定，plan b0e0621c §3.1）；缺省新建临时根。
+  if (into) fs.mkdirSync(into, { recursive: true });
+  const root = fs.realpathSync(into ?? fs.mkdtempSync(path.join(os.tmpdir(), 'host-snapshot-')));
   copyTree(OUT, root, true);
   const { frameworkRoot, harnessDir } = provisionFrameworkUnder(root);
   synthesizeTestChainProfile(frameworkRoot);

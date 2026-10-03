@@ -1235,8 +1235,22 @@ export function __testing_setInvokeCapabilityGate(fn: InvokeCapabilityGateFn | n
   injectedCapabilityGate = fn;
 }
 
+/**
+ * plan b0e0621c §3.2：运行时 owner 心跳定时器的间隔（测试用；null = 生产缺省 LOCK_HEARTBEAT_MS）。
+ * 只改间隔，定时器回调（刷新锁、心跳事件、beacon、进度快照）不变；生产代码不调用本缝。
+ */
+let injectedLockHeartbeatMs: number | null = null;
+export function __testing_setLockHeartbeatMs(ms: number | null): void {
+  injectedLockHeartbeatMs = ms;
+}
+/** 运行时 owner 的心跳间隔：测试缝未安装时即生产缺省 LOCK_HEARTBEAT_MS。 */
+export function lockHeartbeatIntervalMs(): number {
+  return injectedLockHeartbeatMs ?? LOCK_HEARTBEAT_MS;
+}
+
 /** 一次性清空所有测试注入（测试 finally 调用，防串味） */
 export function __testing_resetGoalRunnerSeams(): void {
+  injectedLockHeartbeatMs = null;
   injectedValidateReceipt = null;
   injectedInvokeAgent = null;
   injectedRunHarness = null;
@@ -4183,7 +4197,7 @@ function acquireGoalLocks(
   runControl = { dir: runDir, token: acquiredControl.token };
   const heartbeatMs = ownerKind === 'session'
     ? Math.max(250, Math.min(LOCK_HEARTBEAT_MS, Math.trunc(leaseMs / 3)))
-    : LOCK_HEARTBEAT_MS;
+    : lockHeartbeatIntervalMs();
   featureLock = {
     path: featureLockPath,
     ownerId: fRecord.ownerId,

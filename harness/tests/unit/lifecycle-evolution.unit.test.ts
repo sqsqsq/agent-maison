@@ -12,6 +12,7 @@ import assert from 'assert';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
@@ -67,59 +68,163 @@ export const brief = (a: FeatureAssessment): string =>
   JSON.stringify({ record: a.record, uncovered: a.obligations.filter(o => o.status === 'uncovered'), blocking: a.blocking });
 const blueprintDirs = (s: Snapshot): string[] => fs.readdirSync(featureFilePath(s.root, BLUEPRINT_ID, '')).sort();
 
-/** 快照原样加载（★1 基线用）。 */
-export async function withSnapshot(run: (s: Snapshot) => Promise<void> | void): Promise<void> {
-  const s = loadHostSnapshot();
+/** 快照原样加载（★1 基线用）。`root` 缺省新建临时根；给定时先清空再装入（同路径前缀缓存用）。 */
+export async function withSnapshot(run: (s: Snapshot) => Promise<void> | void, root?: string): Promise<void> {
+  if (root) fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  const s = loadHostSnapshot(root);
   try {
     clearFrameworkConfigCache();
     await run(s);
   } finally {
     clearFrameworkConfigCache();
-    fs.rmSync(s.root, { recursive: true, force: true });
+    fs.rmSync(s.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
+}
+
+// ---- 共用前缀的同路径缓存（plan b0e0621c §3.1）------------------------------------------------------
+//
+// withHost 的宿主根在本进程内是同一个路径，前缀写出的 run 记录、绑定里的绝对路径因此原样有效、不重定位。
+// 某段前缀首次真跑后把整个根目录（含 .git、trust-cp、指向源仓的 junction）存一份，后续用例在同一路径恢复；
+// 恢复后目录哈希与存档时不同、或复制失败，一律重建宿主并回落真跑。缓存只在本进程临时目录里，进程退出即删。
+// 缓存键 = 前缀名 + 快照夹具版本；约定进程内源码、夹具与相关环境不变（反向变异一律在新进程里跑）。
+
+const HOST_ROOT = path.join(os.tmpdir(), `maison-host-${process.pid}`);
+const PREFIX_CACHE_ROOT = path.join(os.tmpdir(), `maison-prefix-cache-${process.pid}`);
+const SNAPSHOT_FIXTURE = 'host-snapshot-3.1.0';
+const prefixCache = new Map<string, { dir: string; hash: string; value: string }>();
+
+/** 整树复制：junction / symlink 按链接本身复制（不跟随），文件与目录保留 mtime。 */
+function copyTreeExact(src: string, dst: string): void {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const name of fs.readdirSync(src)) {
+    const from = path.join(src, name);
+    const to = path.join(dst, name);
+    const st = fs.lstatSync(from);
+    if (st.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to, process.platform === 'win32' ? 'junction' : undefined);
+    else if (st.isDirectory()) copyTreeExact(from, to);
+    else { fs.copyFileSync(from, to); fs.utimesSync(to, st.atime, st.mtime); }
+  }
+  const st = fs.statSync(src);
+  fs.utimesSync(dst, st.atime, st.mtime);
+}
+
+/** 目录哈希：相对路径 + 文件内容；链接按链接目标字符串计、不跟随。不含 mtime 等属性（见 plan 记录）。 */
+export function hostTreeHash(root: string): string {
+  const h = crypto.createHash('sha256');
+  const walk = (dir: string, rel: string): void => {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const abs = path.join(dir, name);
+      const r = rel ? `${rel}/${name}` : name;
+      const st = fs.lstatSync(abs);
+      if (st.isSymbolicLink()) h.update(`L ${r} ${fs.readlinkSync(abs)}\n`);
+      else if (st.isDirectory()) { h.update(`D ${r}\n`); walk(abs, r); }
+      else h.update(`F ${r} ${crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex')}\n`);
+    }
+  };
+  walk(root, '');
+  return h.digest('hex');
+}
+
+/** 快照装入后的真宿主基线（git 基线 + 假 DevEco）。 */
+function baselineHost(s: Snapshot): void {
+  const deveco = path.join(s.root, 'fake-deveco');
+  const hvigorBin = path.join(deveco, 'tools', 'hvigor', 'bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw');
+  fs.mkdirSync(path.dirname(hvigorBin), { recursive: true });
+  fs.writeFileSync(hvigorBin, '');
+  const localFile = path.join(s.root, 'framework.local.json');
+  const local = readJson<{ toolchain: { devEcoStudio: { installPath: string } } }>(localFile);
+  local.toolchain.devEcoStudio.installPath = deveco.split(path.sep).join('/');
+  fs.writeFileSync(localFile, JSON.stringify(local, null, 2));
+  git(s.root, ['init', '-q', '-b', 'main']);
+  git(s.root, ['config', 'user.email', 'lifecycle@test']);
+  git(s.root, ['config', 'user.name', 'lifecycle']);
+  git(s.root, ['config', 'commit.gpgsign', 'false']);
+  // 快照不含 .git（README 排除项），源 run 的出生基线 commit 在这里不可达，而后继按 lineage 继承它作 diff 基线
+  //（goal-run-creation `successor run_base_sha`；不可达时 coding 的 diff_within_scope 正确地 fail-closed）。
+  // 宿主上历史俱在、它可达。近似：每个 Feature 的 lineage 基线 = 快照去掉**该 Feature 自己**的 UT 测试源
+  //（源链里它们都是链上写的；另一 Feature 的文件在宿主基线里本就存在），完整快照作二者的合并提交；
+  // 用 git replace ref 把源 run 的基线 commit 指到对应近似提交。生产路径与命令不变；
+  // 放弃的准确性（基线内容不是源 run 出生前的原树）见 plan t4b 记录。
+  const gitOut = (args: string[], env?: NodeJS.ProcessEnv): string =>
+    execFileSync('git', args, { cwd: s.root, encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+  git(s.root, ['add', '-A']);
+  const full = gitOut(['write-tree']);
+  const bases = [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE].map(feature => {
+    const index = { GIT_INDEX_FILE: path.join(s.root, '.git', `lineage-${feature.length}.index`) };
+    gitOut(['read-tree', full], index);
+    gitOut(['rm', '-r', '-q', '--cached', '--', `${project(s, feature).modulePath}/src/ohosTest`], index);
+    const commitId = gitOut(['commit-tree', gitOut(['write-tree'], index), '-m', `lineage base of ${feature} (approximation)`]);
+    const base = resolveGoalRunBaseline(s.root, feature, runIds(s.root, feature)[0]);
+    assert(base.available, `源 run 基线不可解析：${JSON.stringify(base)}`);
+    git(s.root, ['update-ref', `refs/replace/${base.baseSha}`, commitId]);
+    return commitId;
+  });
+  git(s.root, ['update-ref', 'refs/heads/main', gitOut(['commit-tree', full, ...bases.flatMap(b => ['-p', b]), '-m', 'snapshot baseline'])]);
 }
 
 /**
  * 真宿主形态：快照 + git 基线（真 harness 按提交核闭环与写集）。父进程 preflight 的假 DevEco 在基线前补齐，
- * 与 successor-exit `supersede()` 的写法逐字节相同，使后继起跑时工作树干净。
+ * 与 successor-exit `supersede()` 的写法逐字节相同，使后继起跑时工作树干净。宿主根是本进程固定路径（前缀缓存用）。
  */
 export async function withHost(run: (s: Snapshot) => Promise<void>): Promise<void> {
   await withSnapshot(async s => {
-    const deveco = path.join(s.root, 'fake-deveco');
-    const hvigorBin = path.join(deveco, 'tools', 'hvigor', 'bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw');
-    fs.mkdirSync(path.dirname(hvigorBin), { recursive: true });
-    fs.writeFileSync(hvigorBin, '');
-    const localFile = path.join(s.root, 'framework.local.json');
-    const local = readJson<{ toolchain: { devEcoStudio: { installPath: string } } }>(localFile);
-    local.toolchain.devEcoStudio.installPath = deveco.split(path.sep).join('/');
-    fs.writeFileSync(localFile, JSON.stringify(local, null, 2));
-    git(s.root, ['init', '-q', '-b', 'main']);
-    git(s.root, ['config', 'user.email', 'lifecycle@test']);
-    git(s.root, ['config', 'user.name', 'lifecycle']);
-    git(s.root, ['config', 'commit.gpgsign', 'false']);
-    // 快照不含 .git（README 排除项），源 run 的出生基线 commit 在这里不可达，而后继按 lineage 继承它作 diff 基线
-    //（goal-run-creation `successor run_base_sha`；不可达时 coding 的 diff_within_scope 正确地 fail-closed）。
-    // 宿主上历史俱在、它可达。近似：每个 Feature 的 lineage 基线 = 快照去掉**该 Feature 自己**的 UT 测试源
-    //（源链里它们都是链上写的；另一 Feature 的文件在宿主基线里本就存在），完整快照作二者的合并提交；
-    // 用 git replace ref 把源 run 的基线 commit 指到对应近似提交。生产路径与命令不变；
-    // 放弃的准确性（基线内容不是源 run 出生前的原树）见 plan t4b 记录。
-    const gitOut = (args: string[], env?: NodeJS.ProcessEnv): string =>
-      execFileSync('git', args, { cwd: s.root, encoding: 'utf8', env: { ...process.env, ...env } }).trim();
-    git(s.root, ['add', '-A']);
-    const full = gitOut(['write-tree']);
-    const bases = [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE].map(feature => {
-      const index = { GIT_INDEX_FILE: path.join(s.root, '.git', `lineage-${feature.length}.index`) };
-      gitOut(['read-tree', full], index);
-      gitOut(['rm', '-r', '-q', '--cached', '--', `${project(s, feature).modulePath}/src/ohosTest`], index);
-      const commitId = gitOut(['commit-tree', gitOut(['write-tree'], index), '-m', `lineage base of ${feature} (approximation)`]);
-      const base = resolveGoalRunBaseline(s.root, feature, runIds(s.root, feature)[0]);
-      assert(base.available, `源 run 基线不可解析：${JSON.stringify(base)}`);
-      git(s.root, ['update-ref', `refs/replace/${base.baseSha}`, commitId]);
-      return commitId;
-    });
-    git(s.root, ['update-ref', 'refs/heads/main', gitOut(['commit-tree', full, ...bases.flatMap(b => ['-p', b]), '-m', 'snapshot baseline'])]);
+    baselineHost(s);
     await run(s);
-  });
+  }, HOST_ROOT);
+}
+
+/**
+ * 共用前缀：首次真跑 `real` 并整目录存档；之后同名前缀在同一路径恢复并核对目录哈希，返回存档时的结果。
+ * 必须是用例拿到宿主后的第一件事（存档的起点 = 刚建好的真宿主）。
+ */
+export async function cachedPrefix(s: Snapshot, name: string, real: () => Promise<string>): Promise<string> {
+  if (!fs.existsSync(HOST_ROOT) || path.resolve(s.root) !== fs.realpathSync(HOST_ROOT)) return real();
+  const key = `${name}@${SNAPSHOT_FIXTURE}`;
+  const gitText = (args: string[]): string => execFileSync('git', args, { cwd: s.root, encoding: 'utf8' }).trim();
+  if (gitText(['log', '-1', '--format=%s']) !== 'snapshot baseline' || gitText(['status', '--porcelain']) !== '') {
+    console.log(`[prefix-cache] ${key} 起点不是刚建好的真宿主，不走缓存`);
+    return real();
+  }
+  const hit = prefixCache.get(key);
+  if (hit) {
+    // 恢复要删掉并重建宿主根，而 Windows 不许删进程的当前目录（如 S16-c6 先 chdir 进宿主根）：先切到根外，恢复或重建后切回。
+    const cwd = process.cwd();
+    const rel = path.relative(s.root, cwd);
+    const inside = !rel.startsWith('..') && !path.isAbsolute(rel);
+    if (inside) process.chdir(path.dirname(s.root));
+    try {
+      let reason: string;
+      try {
+        fs.rmSync(s.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+        copyTreeExact(hit.dir, s.root);
+        const got = hostTreeHash(s.root);
+        if (got === hit.hash) {
+          clearFrameworkConfigCache();
+          console.log(`[prefix-cache] ${key} 恢复（目录哈希 ${got.slice(0, 12)} 一致）`);
+          return hit.value;
+        }
+        reason = `恢复后目录哈希 ${got.slice(0, 12)} ≠ 存档 ${hit.hash.slice(0, 12)}`;
+      } catch (e) { reason = `恢复失败：${(e as Error).message}`; }
+      console.log(`[prefix-cache] ${key} 回落真跑：${reason}`);
+      prefixCache.delete(key);
+      fs.rmSync(s.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      loadHostSnapshot(s.root);
+      baselineHost(s);
+      clearFrameworkConfigCache();
+    } finally {
+      if (inside) process.chdir(cwd);
+    }
+  }
+  const value = await real();
+  try {
+    const dir = path.join(PREFIX_CACHE_ROOT, name);
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (!prefixCache.size) process.once('exit', () => fs.rmSync(PREFIX_CACHE_ROOT, { recursive: true, force: true }));
+    copyTreeExact(s.root, dir);
+    prefixCache.set(key, { dir, hash: hostTreeHash(s.root), value });
+    console.log(`[prefix-cache] ${key} 真跑后存档（目录哈希 ${prefixCache.get(key)!.hash.slice(0, 12)}）`);
+  } catch (e) { console.log(`[prefix-cache] ${key} 存档失败，不缓存：${(e as Error).message}`); }
+  return value;
 }
 export function commit(s: Snapshot, message: string): void {
   git(s.root, ['add', '-A']);
@@ -346,7 +451,7 @@ function dropFirstDevelopmentModule(bp: Record<string, unknown>): string {
 
 /**
  * L1b / L1c 共用前半段：plan 阶段 agent 手写三份派生文件（无来源戳）→ 真 harness 跑一条后继，让完成记录绑定这些手写文件
- *（宿主原始完成的替身）。返回该完成 run 与出生链预判函数。
+ *（宿主原始完成的替身）。返回该完成 run 与出生链预判函数。前缀经 `cachedPrefix` 同路径缓存（进程内首跑真跑）。
  */
 export async function handWrittenCompletion(s: Snapshot): Promise<{ completed: string; predict: (source: string) => string[] }> {
   const feature = SNAPSHOT_CU_FEATURE;
@@ -357,12 +462,15 @@ export async function handWrittenCompletion(s: Snapshot): Promise<{ completed: s
     const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement(source), source)!;
     return uncoveredOwnerPhases(assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot, scope: born }));
   };
-  const [snapshotRun] = runIds(s.root, feature);
-  handWriteProjections(s.root);
-  commit(s, 'plan-phase agent wrote the derived files by hand');
-  const original = await supersede(s, feature, snapshotRun, predict(snapshotRun), authorHooks(p, CU_WRITERS));
-  assert(original.successor && assess(s, feature).complete, `前提：手写文件下的完成记录（宿主原始完成替身）：${original.error} ${brief(assess(s, feature))}`);
-  return { completed: original.successor!, predict };
+  const completed = await cachedPrefix(s, 'handWrittenCompletion', async () => {
+    const [snapshotRun] = runIds(s.root, feature);
+    handWriteProjections(s.root);
+    commit(s, 'plan-phase agent wrote the derived files by hand');
+    const original = await supersede(s, feature, snapshotRun, predict(snapshotRun), authorHooks(p, CU_WRITERS));
+    assert(original.successor && assess(s, feature).complete, `前提：手写文件下的完成记录（宿主原始完成替身）：${original.error} ${brief(assess(s, feature))}`);
+    return original.successor!;
+  });
+  return { completed, predict };
 }
 /**
  * CU 源链首为 coding（facts `established_by: coding`）；后继链首变成 spec 时，spec 是本 run 的事实建立阶段：
