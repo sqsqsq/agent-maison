@@ -2,6 +2,7 @@ import {
   buildUtInstallBlockingCheckDetails,
   mapInstallBlockingToUtCheckFields,
 } from './device-install-diag';
+import * as path from 'path';
 import type { HvigorRunResult } from './hvigor-runner';
 
 export type UtHvigorTestFailureKind =
@@ -15,6 +16,53 @@ export type UtHvigorTestFailureKind =
 export interface UtHvigorTestFailureModule {
   module: string;
   result: HvigorRunResult;
+  /** 模块源码路径（contracts.modules[].package_path，工程根相对）；缺席时 affected_files 保留占位写法 */
+  packagePath?: string;
+}
+
+/** plan 31063a73 §3.1：模块 ohosTest 源码目录（工程根相对 POSIX）；拿不到模块路径返回 null。 */
+export function ohosTestDirOf(packagePath: string | undefined): string | null {
+  const raw = (packagePath ?? '').trim().replace(/\\/g, '/');
+  if (!raw || path.posix.isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) return null;
+  const dir = path.posix.join(raw, 'src/ohosTest');
+  return dir.startsWith('../') ? null : dir;
+}
+
+/**
+ * plan 31063a73 §3.1：UT blocker 的 affected_files = 解析出的源文件 + 各模块 ohosTest 源码目录（均工程根相对）。
+ * 拿不到模块源码路径的模块保留占位写法 `<module>@ohosTest`（与改前相同），模块名进 unresolved 供 details 写明。
+ */
+export function utAffectedFiles(
+  entries: ReadonlyArray<{ module: string; packagePath?: string; files?: readonly string[] }>,
+): { files: string[]; unresolved: string[] } {
+  const files = new Set<string>();
+  const unresolved: string[] = [];
+  for (const entry of entries) {
+    for (const file of entry.files ?? []) files.add(file);
+    const dir = ohosTestDirOf(entry.packagePath);
+    if (dir) files.add(dir);
+    else {
+      files.add(`${entry.module}@ohosTest`);
+      unresolved.push(entry.module);
+    }
+  }
+  return { files: [...files], unresolved: [...new Set(unresolved)] };
+}
+
+/** 未能解析模块源码路径时写进 details 的一行（两个 UT blocker 共用） */
+export function unresolvedModulePathNote(modules: readonly string[]): string[] {
+  return modules.length > 0
+    ? [`未能解析模块源码路径：${modules.join(', ')}（affected_files 保留占位写法 <module>@ohosTest）`]
+    : [];
+}
+
+/** 失败用例堆栈里点名的 ohosTest 源文件（宿主堆栈形如 `entry_test|entry|1.0.0|src/ohosTest/ets/test/X.test.ets:12:5`），按模块路径拼成工程根相对路径 */
+function failureStackFiles(item: UtHvigorTestFailureModule): string[] {
+  const dir = ohosTestDirOf(item.packagePath);
+  if (!dir) return [];
+  return (item.result.testResult?.failures ?? []).flatMap(failure =>
+    (failure.message.replace(/\\/g, '/').match(/src\/ohosTest\/[^\s:()'"|]+\.(?:ets|ts)/g) ?? [])
+      .map(rel => path.posix.join(dir, rel.slice('src/ohosTest/'.length))));
 }
 
 export interface UtHvigorTestFailDetails {
@@ -279,12 +327,16 @@ export function buildUtHvigorTestFailDetails(
   const onlyInstallBlocking = bad.length === 1 ? bad[0].result.installBlocking : undefined;
   if (onlyInstallBlocking?.kind && onlyInstallBlocking.kind !== 'clear') {
     const meta = mapInstallBlockingToUtCheckFields(onlyInstallBlocking);
+    const affected = utAffectedFiles([bad[0]]);
     return {
-      lines: buildUtInstallBlockingCheckDetails(onlyInstallBlocking).split(/\r?\n/),
+      lines: [
+        ...buildUtInstallBlockingCheckDetails(onlyInstallBlocking).split(/\r?\n/),
+        ...unresolvedModulePathNote(affected.unresolved),
+      ],
       blockingClass: meta.blocking_class,
       failureKind: meta.failure_kind,
       suggestion: meta.suggestion,
-      affectedFiles: [bad[0].module + '@ohosTest'],
+      affectedFiles: affected.files,
     };
   }
   const items = bad.map(classifyFailure);
@@ -341,11 +393,13 @@ export function buildUtHvigorTestFailDetails(
       : items.length > 1
         ? items.map(item => `${item.module}：${actionFor(item)}`).join('；')
         : actionFor(items[0]);
+  const affected = utAffectedFiles(bad.map(item => ({ ...item, files: failureStackFiles(item) })));
+  lines.push(...unresolvedModulePathNote(affected.unresolved));
   return {
     lines,
     blockingClass,
     failureKind,
     suggestion,
-    affectedFiles: [...new Set(bad.map(item => `${item.module}@ohosTest`))],
+    affectedFiles: affected.files,
   };
 }

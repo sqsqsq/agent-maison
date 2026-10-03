@@ -53,8 +53,8 @@ const ROOT_CONFIG_PATHS: readonly string[] = [
   'AppScope',
 ];
 
-/** 输出/依赖目录：改它们不代表源码变化，排除以免快照恒变 */
-const EXCLUDED_SEGMENTS: ReadonlySet<string> = new Set([
+/** 输出/依赖目录：改它们不代表源码变化，排除以免快照恒变（plan 31063a73：UT 受影响文件与目录摘要同用这一份） */
+export const EXCLUDED_SEGMENTS: ReadonlySet<string> = new Set([
   'build', 'dist', 'node_modules', 'oh_modules', '.hvigor', '.idea', '.git',
 ]);
 
@@ -76,6 +76,10 @@ export interface ProductSourceSnapshotDetail {
   /** 哨兵时的人读原因（正常快照为 null） */
   failureReason: string | null;
 }
+
+/** 链接目标读不出时 collectRoot 记录的占位目标（invocation 快照沿用它继续求摘要） */
+const UNREADABLE_LINK_TARGET = '<unreadable-link>';
+const UNREADABLE_LINK_SHA256 = crypto.createHash('sha256').update(UNREADABLE_LINK_TARGET, 'utf-8').digest('hex');
 
 interface CollectFailure {
   reason: string;
@@ -102,8 +106,10 @@ function collectRoot(
   projectRoot: string,
   rootAbs: string,
   out: Array<{ path: string; kind: SnapshotEntryKind; sha256: string }>,
+  maxEntries = Infinity,
 ): CollectFailure | null {
   const walk = (abs: string): CollectFailure | null => {
+    if (out.length > maxEntries) return { reason: `条目超过上限 ${maxEntries}` };
     let st: fs.Stats;
     try {
       st = fs.lstatSync(abs);
@@ -119,7 +125,7 @@ function collectRoot(
         try {
           target = fs.readlinkSync(abs);
         } catch {
-          target = '<unreadable-link>';
+          target = UNREADABLE_LINK_TARGET;
         }
         out.push({
           path: rel,
@@ -238,6 +244,21 @@ export function computeProductSourceSnapshotSha256(
   feature?: string,
 ): string {
   return computeProductSourceSnapshotDetail(projectRoot, layerDirs, feature).sha256;
+}
+
+/**
+ * plan 31063a73 §3.2：单个目录树的内容摘要（无进展守卫的产物快照对目录条目用它）。
+ * 与上面的 invocation 快照同一走树（lstat、不跟随链接、同一排除段、同一条目哈希）；
+ * 条目超过上限或任一读取失败（含链接目标读不出）→ null，由调用方按"本轮不可比"处理，不给假摘要。
+ */
+export function digestDirectoryTree(projectRoot: string, dirAbs: string, maxEntries: number): string | null {
+  const entries: Array<{ path: string; kind: SnapshotEntryKind; sha256: string }> = [];
+  if (collectRoot(projectRoot, dirAbs, entries, maxEntries) || entries.length > maxEntries) return null;
+  if (entries.some(e => e.kind === 'dir-symlink' && e.sha256 === UNREADABLE_LINK_SHA256)) return null;
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const h = crypto.createHash('sha256');
+  for (const e of entries) h.update(`${e.path}\n${e.kind}\n${e.sha256}\n`, 'utf-8');
+  return h.digest('hex');
 }
 
 export function isUsableSnapshot(sha: string): boolean {

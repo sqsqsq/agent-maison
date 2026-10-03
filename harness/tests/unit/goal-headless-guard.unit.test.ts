@@ -24,6 +24,7 @@ import {
   ADVANCE_BLOCKED_HALT_THRESHOLD,
 } from '../../scripts/utils/goal-failure-classifier';
 import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
+import { __testing_setSnapshotReadFile } from '../../scripts/utils/product-source-snapshot';
 import type { CheckResult, ScriptReport } from '../../scripts/utils/types';
 import { failScriptReportWithFatalError, fatalFailureKindForStage } from '../../scripts/utils/report-generator';
 import {
@@ -2871,6 +2872,170 @@ export function runAll(): UnitCaseResult[] {
         assert(/身份漂移检查拒绝/.test(g), `须写明不带授权会被身份漂移检查拒绝：${g}`);
         assert(/整体授权/.test(g) && /只应改超时字段/.test(g), `须写明整体授权、这次只应改超时字段：${g}`);
         assert(!/phase_timeout_ms/.test(g), `不得出现不存在的 manifest 字段 phase_timeout_ms：${g}`);
+      },
+    },
+    // ------------------------------------------------------------------
+    // plan 31063a73 §3.2：产物快照支持目录（UT blocker 给的模块 ohosTest 源码目录）
+    // ------------------------------------------------------------------
+    {
+      name: '31063a73 U2 目录快照：改内容 / 新增 / 删除 / 重命名 → 摘要变；只改 mtime、在排除目录里写入、改链接目标 → 不变',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jdg-u2-'));
+        try {
+          const dir = '02-Feature/Card/src/ohosTest';
+          const at = (rel: string): string => path.join(tmp, dir, rel);
+          const put = (abs: string, body: string): void => {
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, body, 'utf-8');
+          };
+          put(at('ets/test/Card.test.ets'), 'it("adds")');
+          put(at('ets/test/helpers/Spy.ets'), 'export const spy = 1;');
+          const outside = path.join(tmp, 'outside');
+          put(path.join(outside, 'Shared.ets'), 'shared-v1');
+          fs.symlinkSync(outside, at('ets/linked'), 'junction');
+          let prior = snapshotArtifacts(tmp, [dir]);
+          assert(prior[dir]?.exists === true && /^[0-9a-f]{64}$/.test(prior[dir].contentHash),
+            `目录条目须按目录树求摘要，键为工程根相对路径：${JSON.stringify(prior)}`);
+          const step = (label: string, mutate: () => void, expectChange: boolean): void => {
+            mutate();
+            const current = snapshotArtifacts(tmp, [dir]);
+            assert(artifactsProgressed(prior, current) === expectChange,
+              `${label}：期望${expectChange ? '' : '不'}算进展，实得 ${prior[dir]?.contentHash} → ${current[dir]?.contentHash}`);
+            prior = current;
+          };
+          step('只改 mtime', () => fs.utimesSync(at('ets/test/Card.test.ets'), new Date(Date.now() + 60_000), new Date(Date.now() + 60_000)), false);
+          step('排除目录里写入', () => {
+            put(at('build/default/cache.ets'), 'generated');
+            put(at('ets/oh_modules/dep/index.ets'), 'dependency');
+          }, false);
+          step('链接目标变化（不跟随链接）', () => put(path.join(outside, 'Shared.ets'), 'shared-v2'), false);
+          step('改内容', () => put(at('ets/test/Card.test.ets'), 'it("adds") // fixed'), true);
+          step('新增', () => put(at('ets/test/helpers/Stub.ets'), 'export const stub = 1;'), true);
+          step('删除', () => fs.rmSync(at('ets/test/helpers/Stub.ets')), true);
+          step('重命名（内容不变）', () => fs.renameSync(at('ets/test/helpers/Spy.ets'), at('ets/test/helpers/SpyRenamed.ets')), true);
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: '31063a73 U2b 目录超限 / 读取失败 → 本轮整份快照为空：经实际守卫既不判零进展停机，也不误判有进展',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jdg-u2b-'));
+        try {
+          const dir = '02-Feature/Card/src/ohosTest';
+          const testFile = path.join(tmp, dir, 'ets/test/Card.test.ets');
+          const bulk = path.join(tmp, dir, 'ets/bulk');
+          fs.mkdirSync(path.dirname(testFile), { recursive: true });
+          fs.writeFileSync(testFile, 'v1', 'utf-8');
+          // 另一条普通文件条目：整份快照为空意味着它也不进本轮快照
+          const other = '02-Feature/Card/src/main/ets/Card.ets';
+          fs.mkdirSync(path.join(tmp, path.dirname(other)), { recursive: true });
+          fs.writeFileSync(path.join(tmp, other), 'card', 'utf-8');
+          const related = [dir, other];
+          const sig = 'ut_hvigor_build';
+          const guard = (prior: Record<string, unknown>, current: Record<string, unknown>): boolean => shouldHaltNoProgress({
+            failureKind: 'code_regression',
+            priorBlockerSignature: sig,
+            currentBlockerSignature: sig,
+            priorArtifactSnapshot: prior as never,
+            currentArtifactSnapshot: current as never,
+            relevantEvidenceKnown: true,
+          });
+          const normal1 = snapshotArtifacts(tmp, related);
+          assert(Object.keys(normal1).length === 2, `前提：正常轮两条条目都在：${JSON.stringify(normal1)}`);
+          fs.mkdirSync(bulk, { recursive: true });
+          for (let i = 0; i <= 5000; i++) fs.writeFileSync(path.join(bulk, `f${i}.ets`), '');
+          const over1 = snapshotArtifacts(tmp, related);
+          assert(!artifactsProgressed(normal1, over1) && !guard(normal1, over1), '正常 → 超限：不误判有进展、也不停机');
+          fs.writeFileSync(testFile, 'v2', 'utf-8');
+          const over2 = snapshotArtifacts(tmp, related);
+          assert(!guard(over1, over2), '两轮都超限且源码变化：不得判零进展（走有界重试）');
+          fs.rmSync(bulk, { recursive: true, force: true });
+          fs.writeFileSync(testFile, 'v1', 'utf-8');
+          const normal2 = snapshotArtifacts(tmp, related);
+          assert(normal2[dir]?.contentHash === normal1[dir]?.contentHash, '前提：恢复后摘要与首轮相同');
+          assert(!artifactsProgressed(over2, normal2) && !guard(over2, normal2), '超限 → 正常：不误判有进展、也不停机');
+          __testing_setSnapshotReadFile(() => { throw new Error('EACCES: injected read failure'); });
+          let failed1: Record<string, unknown>;
+          let failed2: Record<string, unknown>;
+          try {
+            failed1 = snapshotArtifacts(tmp, related);
+            fs.writeFileSync(testFile, 'v3', 'utf-8');
+            failed2 = snapshotArtifacts(tmp, related);
+          } finally {
+            __testing_setSnapshotReadFile(null);
+          }
+          assert(!artifactsProgressed(normal2, failed1 as never) && !guard(normal2, failed1), '正常 → 读取失败：不误判有进展、也不停机');
+          assert(!guard(failed1, failed2), '两轮都读取失败且源码变化：不得判零进展');
+          const normal3 = snapshotArtifacts(tmp, related);
+          assert(!artifactsProgressed(failed2 as never, normal3) && !guard(failed2, normal3), '读取失败 → 正常：不误判有进展、也不停机');
+          // 形状：超限 / 读取失败的那一轮整份快照为空（不是给目录条目一个空哈希）
+          // （入口 lstat 失败、目录内链接目标读不出两个故障入口见下一条用例）
+          for (const [label, snap] of [['超限', over1], ['超限', over2], ['读取失败', failed1], ['读取失败', failed2]] as const) {
+            assert(Object.keys(snap).length === 0, `${label} → 本轮整份快照为空：${Object.keys(snap).join(',')}`);
+          }
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+    },
+    {
+      name: '31063a73 U2b 返修 入口 lstat 失败 / 目录内链接目标读不出 → 本轮整份快照为空：经实际守卫既不停机，也不误判有进展',
+      run: () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jdg-u2c-'));
+        // 故障注入在 fs 模块对象上（生产代码按属性调用 fs.lstatSync / fs.readlinkSync）；只对目标路径抛 EIO
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const fsModule = require('fs') as Record<'lstatSync' | 'readlinkSync', (...args: unknown[]) => unknown>;
+        try {
+          const dir = '02-Feature/Card/src/ohosTest';
+          const testFile = path.join(tmp, dir, 'ets/test/Card.test.ets');
+          fs.mkdirSync(path.dirname(testFile), { recursive: true });
+          fs.writeFileSync(testFile, 'v1', 'utf-8');
+          const outside = path.join(tmp, 'outside');
+          fs.mkdirSync(outside, { recursive: true });
+          const linkAbs = path.join(tmp, dir, 'ets/linked');
+          fs.symlinkSync(outside, linkAbs, 'junction');
+          const other = '02-Feature/Card/src/main/ets/Card.ets';
+          fs.mkdirSync(path.join(tmp, path.dirname(other)), { recursive: true });
+          fs.writeFileSync(path.join(tmp, other), 'card', 'utf-8');
+          const related = [dir, other];
+          const sig = 'ut_hvigor_test';
+          const guard = (prior: Record<string, unknown>, current: Record<string, unknown>): boolean => shouldHaltNoProgress({
+            failureKind: 'code_regression',
+            priorBlockerSignature: sig,
+            currentBlockerSignature: sig,
+            priorArtifactSnapshot: prior as never,
+            currentArtifactSnapshot: current as never,
+            relevantEvidenceKnown: true,
+          });
+          const withFault = <T>(fn: 'lstatSync' | 'readlinkSync', targetAbs: string, body: () => T): T => {
+            const original = fsModule[fn];
+            fsModule[fn] = function (this: unknown, p: unknown, ...rest: unknown[]) {
+              if (path.resolve(String(p)) === path.resolve(targetAbs)) {
+                throw Object.assign(new Error(`EIO: injected ${fn} failure`), { code: 'EIO' });
+              }
+              return original.call(this, p, ...rest);
+            };
+            try { return body(); } finally { fsModule[fn] = original; }
+          };
+          for (const [fn, target] of [['lstatSync', path.join(tmp, dir)], ['readlinkSync', linkAbs]] as const) {
+            const normal1 = snapshotArtifacts(tmp, related);
+            assert(Object.keys(normal1).length === 2, `${fn}：前提，正常轮两条条目都在`);
+            const [failed1, failed2] = withFault(fn, target, () => {
+              const first = snapshotArtifacts(tmp, related);
+              fs.writeFileSync(testFile, `changed under ${fn}`, 'utf-8');
+              return [first, snapshotArtifacts(tmp, related)];
+            });
+            const normal2 = snapshotArtifacts(tmp, related);
+            assert(!artifactsProgressed(normal1, failed1) && !guard(normal1, failed1), `${fn}：正常 → 故障，不误判有进展、也不停机`);
+            assert(!guard(failed1, failed2), `${fn}：两轮故障且源码变化，不得判零进展`);
+            assert(!artifactsProgressed(failed2, normal2) && !guard(failed2, normal2), `${fn}：故障 → 正常，不误判有进展、也不停机`);
+            assert(Object.keys(failed1).length === 0 && Object.keys(failed2).length === 0, `${fn}：故障轮整份快照为空`);
+          }
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        }
       },
     },
 

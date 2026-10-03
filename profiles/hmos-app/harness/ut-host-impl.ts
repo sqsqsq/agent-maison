@@ -60,8 +60,11 @@ import {
 } from './product-selection';
 import {
   buildUtHvigorTestFailDetails,
+  unresolvedModulePathNote,
+  utAffectedFiles,
   type UtHvigorTestFailureModule,
 } from './ut-hvigor-test-failure';
+import { EXCLUDED_SEGMENTS } from '../../../harness/scripts/utils/product-source-snapshot';
 import {
   evaluateSuiteRatchet,
   suiteFailureKey,
@@ -401,6 +404,37 @@ export function utBuildCollectorKey(projectRoot: string, moduleName: string, pro
   });
 }
 
+/**
+ * plan 31063a73 §3.1：编译错误里的文件 → 工程根相对 POSIX 路径。
+ * hvigor 日志的路径可能是工程根相对、带盘符 / UNC 根的绝对路径、或被解析正则截掉盘符的绝对路径（`/x/proj/…`）。
+ * 带根的先比根：盘符 / UNC 根与工程根不同直接 null；只有输入本身已无根（以 / 开头）才按与工程根同根兼容处理。
+ * 工程根外、或落在构建产物 / 依赖目录（与产物快照目录摘要同一排除段）的返回 null。
+ */
+export function projectRelativeSourceFile(projectRoot: string, file: string | undefined): string | null {
+  if (!file?.trim()) return null;
+  const slash = (p: string): string => p.replace(/\\/g, '/');
+  const rootOf = (p: string): string => /^(?:[A-Za-z]:|\/\/[^/]+\/[^/]+)/.exec(p)?.[0] ?? '';
+  const fold = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const projectAbs = slash(path.resolve(projectRoot));
+  const projectPrefix = rootOf(projectAbs);
+  const projectRest = path.posix.normalize(projectAbs.slice(projectPrefix.length) || '/').replace(/\/+$/, '');
+  const raw = slash(file.trim());
+  const filePrefix = rootOf(raw);
+  let rest: string;
+  if (filePrefix) {
+    if (fold(filePrefix) !== fold(projectPrefix)) return null;
+    rest = raw.slice(filePrefix.length);
+  } else if (raw.startsWith('/')) {
+    rest = raw; // 输入本身已丢盘符：兼容为与工程根同根
+  } else {
+    rest = slash(path.resolve(projectRoot, raw)).slice(projectPrefix.length);
+  }
+  rest = path.posix.normalize(rest);
+  if (!fold(rest).startsWith(`${fold(projectRest)}/`)) return null;
+  const rel = rest.slice(projectRest.length + 1);
+  return rel.split('/').some(seg => EXCLUDED_SEGMENTS.has(seg)) ? null : rel;
+}
+
 export function checkUtHvigorBuild(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
@@ -472,7 +506,7 @@ export function checkUtHvigorBuild(
     ];
   }
 
-  const perModule: Array<{ module: string; result: any; taskNotFound?: { task: string } }> = [];
+  const perModule: Array<{ module: string; packagePath: string; result: any; taskNotFound?: { task: string } }> = [];
   for (const mod of mods) {
     const res = dispatchUtCompile(ctx, {
       projectRoot: ctx.projectRoot,
@@ -484,8 +518,9 @@ export function checkUtHvigorBuild(
       skipEnvVar: 'HARNESS_SKIP_HVIGOR',
       product: selection.product ?? undefined,
     });
-    const entry: { module: string; result: any; taskNotFound?: { task: string } } = {
+    const entry: { module: string; packagePath: string; result: any; taskNotFound?: { task: string } } = {
       module: mod.name,
+      packagePath: mod.package_path,
       result: res,
     };
     if (res.executed && res.exitCode !== 0) {
@@ -592,6 +627,12 @@ export function checkUtHvigorBuild(
     lines.push('日志尾部（最多 8 KB）：');
     lines.push(first.logExcerpt);
   }
+  const affected = utAffectedFiles(bad.map(x => ({
+    module: x.module,
+    packagePath: x.packagePath,
+    files: (x.result.errors ?? []).flatMap((e: { file?: string }) => projectRelativeSourceFile(ctx.projectRoot, e.file) ?? []),
+  })));
+  lines.push(...unresolvedModulePathNote(affected.unresolved));
 
   return [
     {
@@ -601,7 +642,7 @@ export function checkUtHvigorBuild(
       severity: 'BLOCKER',
       status: 'FAIL',
       details: lines.join('\n'),
-      affected_files: bad.map(x => `${x.module}@ohosTest`),
+      affected_files: affected.files,
       failure_kind: failureClass.kind,
       blocking_class:
         failureClass.kind === 'external_project_build_blocker'
@@ -1102,7 +1143,7 @@ export function checkUtHvigorTest(
     // 复用轮：回填逐模块冻结件后按盘重建结果，**不调 dispatchUtRun、不发一条装机/执行 hdc**。
     restoreFrozenRunArtifacts(reusedRun.runDir, reportsBase, utArtifacts);
     for (const mod of mods) {
-      perModule.push({ module: mod.name, result: readUtModuleResult(reportsBase, mod.name) });
+      perModule.push({ module: mod.name, packagePath: mod.package_path, result: readUtModuleResult(reportsBase, mod.name) });
     }
   } else {
   for (const mod of mods) {
@@ -1117,7 +1158,7 @@ export function checkUtHvigorTest(
       // D1：本次调用内已出过的同参数包直接下传，runHvigorTest 据此跳过内建出包。
       prebuild: builds?.get(utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined)),
     });
-    perModule.push({ module: mod.name, result: res });
+    perModule.push({ module: mod.name, packagePath: mod.package_path, result: res });
     const caseLevelFailure = res.executed && !!res.testResult && (res.testResult.total ?? 0) > 0;
     if (res.toolMissing || (!caseLevelFailure && (!res.executed || res.exitCode !== 0))) {
       break;

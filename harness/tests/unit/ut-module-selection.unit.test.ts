@@ -16,6 +16,7 @@ import {
   selectUtModulesToCompile,
   utBuildCollectorKey,
 } from '../../../profiles/hmos-app/harness/ut-host-impl';
+import { buildUtHvigorTestFailDetails } from '../../../profiles/hmos-app/harness/ut-hvigor-test-failure';
 
 export interface UnitCaseResult {
   name: string;
@@ -190,7 +191,7 @@ function readDirTexts(dir: string): string[] {
  * 合成「编译」：产物字节由该模块 ohosTest 源码内容决定——源码变 → 重新出包 → HAP 摘要变
  * → 整轮键变 → 真跑。真实 hvigor 的增量语义留 B06 宿主窗口，这里只保证链路可被观察。
  */
-function writeSignedHap(fx: UtFixture, moduleName: string): void {
+function writeSignedHap(fx: Pick<UtFixture, 'root' | 'modules'>, moduleName: string): void {
   const crypto = require('crypto') as typeof import('crypto');
   const mod = fx.modules.find(m => m.name === moduleName);
   if (!mod) return;
@@ -203,9 +204,16 @@ function writeSignedHap(fx: UtFixture, moduleName: string): void {
   fs.writeFileSync(path.join(dir, `${moduleName}-ohosTest-signed.hap`), `hap:${moduleName}:${digest}`);
 }
 
-function installToolBoundary(
-  fx: UtFixture,
-  opts: { aa?: AaMode; buildFailModules?: string[] } = {},
+export function installToolBoundary(
+  fx: Pick<UtFixture, 'root' | 'modules'>,
+  opts: {
+    aa?: AaMode;
+    buildFailModules?: string[];
+    /** plan 31063a73：失败出包写进 hvigor 日志 fd 的正文（真实 runner 从日志文件解析 errors） */
+    buildFailLog?: string;
+    /** plan 31063a73：aa 'fail' 时追加的 Hypium 逐用例状态行（class/test/stack） */
+    aaFailStatus?: string;
+  } = {},
 ): { spawns: ToolSpawns; restore: () => void } {
   const cp = require('child_process') as { spawnSync: (...a: unknown[]) => unknown };
   const original = cp.spawnSync;
@@ -223,7 +231,11 @@ function installToolBoundary(
     if (/^(where|which)(\.exe)?$/i.test(String(file))) return ret(1);
     if (/genOnDeviceTestHap/.test(command)) {
       const mod = /module=([^@\s"]+)@ohosTest/.exec(command)?.[1] ?? '';
-      if (buildFail.has(mod)) return ret(1, 'BUILD FAILED');
+      if (buildFail.has(mod)) {
+        const fd = (rest[0] as { stdio?: unknown[] } | undefined)?.stdio?.[1];
+        if (opts.buildFailLog && typeof fd === 'number') fs.writeSync(fd, `${opts.buildFailLog}\nBUILD FAILED\n`);
+        return ret(1, 'BUILD FAILED');
+      }
       spawns.hvigor.push(command);
       if (mod) writeSignedHap(fx, mod);
       return ret(0, 'BUILD SUCCESSFUL');
@@ -246,7 +258,8 @@ function installToolBoundary(
         const summary = aa === 'fail'
           ? 'Tests run: 1, Failure: 1, Error: 0, Pass: 0'
           : 'Tests run: 1, Failure: 0, Error: 0, Pass: 1';
-        return ret(0, `OHOS_REPORT_RESULT: stream=${summary}\nOHOS_REPORT_STATUS_CODE: 0`);
+        const status = aa === 'fail' && opts.aaFailStatus ? `${opts.aaFailStatus}\n` : '';
+        return ret(0, `${status}OHOS_REPORT_RESULT: stream=${summary}\nOHOS_REPORT_STATUS_CODE: 0`);
       }
       spawns.probe.push(command);
       return ret(0, argv.includes('targets') ? 'B03FAKE\n' : '');
@@ -732,8 +745,161 @@ function testV6bThrownRoundLeavesNonSuccessRecord(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// plan 31063a73 U1：两个 UT blocker 的 affected_files 由真实生产者给出真实路径——
+// 编译 / 测试错误里解析出的工程内源文件（生成物、工程外不进）+ 模块 ohosTest 源码目录。
+// ---------------------------------------------------------------------------
+
+/** hvigor 真实形态的编译失败日志（ArkTS 错误带绝对路径 + tsc 形态的相对路径 + 生成物 + 工程外 SDK 文件） */
+export function utCompileFailureLog(root: string, packagePath: string): string {
+  const abs = (rel: string): string => path.join(root, rel).replace(/\\/g, '/');
+  const outside = path.join(path.dirname(root), 'sdk-outside', 'api', 'Base.ets').replace(/\\/g, '/');
+  return [
+    `> hvigor ERROR: ArkTS:ERROR File: ${abs(`${packagePath}/src/ohosTest/ets/test/List.test.ets`)}:12:5`,
+    " Property 'spyOn' does not exist on type 'Mocker'.",
+    `> hvigor ERROR: ArkTS:ERROR File: ${abs(`${packagePath}/build/default/generated/r/ResourceTable.ets`)}:3:1`,
+    " Cannot find name 'ResourceTable'.",
+    `> hvigor ERROR: ArkTS:ERROR File: ${outside}:1:1`,
+    ' SDK declaration mismatch.',
+    `${packagePath}/src/main/ets/Calc.ets(7,3): error TS2322: Type 'string' is not assignable to type 'number'.`,
+  ].join('\n');
+}
+
+/** Hypium 逐用例状态行：堆栈按宿主真实形态写模块内相对路径 */
+export const UT_ASSERTION_FAILURE_STATUS = [
+  'OHOS_REPORT_STATUS: class=ListTest',
+  'OHOS_REPORT_STATUS: test=itAdds',
+  'OHOS_REPORT_STATUS: stack=Error: expect 2 equal 3 at anonymous (entry_test|entry|1.0.0|src/ohosTest/ets/test/List.test.ets:3:5)',
+  'OHOS_REPORT_STATUS_CODE: -2',
+].join('\n');
+
+/**
+ * plan 31063a73 U3/U4：在既有宿主上按 check-ut 的编排跑一轮真实 UT 生产者（build；build 未失败才 test），
+ * provider 取真实 hmos-app profile，合成结果只注入在 spawnSync 进程边界（同本文件 V1）。
+ */
+export function runUtGateInPlace(
+  root: string,
+  feature: string,
+  modules: UtModuleSpec[],
+  opts: Parameters<typeof installToolBoundary>[1] = {},
+): import('../../scripts/utils/types').CheckResult[] {
+  const ctx = {
+    projectRoot: root,
+    feature,
+    frameworkRoot: FRAMEWORK_ROOT,
+    phase: 'ut',
+    phaseRule: { structure_checks: { ut_hvigor_build: { description: 'b' }, ut_hvigor_test: { description: 't' } } },
+    featureSpec: { contracts: { modules } },
+    resolvedProfile: {
+      name: 'hmos-app', profileDir: path.join(FRAMEWORK_ROOT, 'profiles', 'hmos-app'), yaml: {}, phasesDisabled: [], personalPrerequisites: [],
+      capabilities: {
+        'ut.compile': { provider: 'hvigor_ohostest', severity: 'BLOCKER' },
+        'ut.run': { provider: 'hvigor_hypium', severity: 'BLOCKER' },
+      },
+    },
+  } as unknown as import('../../scripts/utils/types').CheckContext;
+  const boundary = installToolBoundary({ root, modules }, opts);
+  try {
+    return withFakeDevice(() => {
+      const builds = new Map<string, unknown>();
+      const build = checkUtHvigorBuild(ctx, [], [], builds);
+      if (build.some(r => r.id === 'ut_hvigor_build' && r.status === 'FAIL')) return build;
+      return [...build, ...checkUtHvigorTest(ctx, [], [], builds)];
+    });
+  } finally {
+    boundary.restore();
+  }
+}
+
+function sortedFiles(files: string[] | undefined): string {
+  return [...(files ?? [])].sort().join(',');
+}
+
+function testU1CompileFailureRealPaths(): void {
+  const fx = makeUtOrchestrationFixture([{ name: 'Alpha', package_path: '02-Feature/Alpha' }]);
+  // 返修：tsc 形态保留盘符。异盘同后缀（E:/… 对 D:/…）是工程外，不得被收成工程内相对路径；
+  // 同盘只差大小写（Windows 路径不分大小写）仍在工程内。ArkTS 行被解析正则截掉盘符，是"截盘符工程内路径"正例。
+  const rootSlash = fx.root.replace(/\\/g, '/');
+  const drive = /^[A-Za-z]:/.exec(rootSlash)?.[0] ?? '';
+  const otherDrive = /^[Ee]:$/.test(drive) ? 'F:' : 'E:';
+  const swapCase = (s: string): string => s.replace(/[A-Za-z]/g, c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+  const extraLines = [
+    `${otherDrive}${rootSlash.slice(drive.length)}/02-Feature/Alpha/src/main/ets/OtherDrive.ets(3,1): error TS2304: Cannot find name 'x'.`,
+    ...(process.platform === 'win32'
+      ? [`${swapCase(rootSlash)}/02-Feature/Alpha/src/main/ets/CaseRoot.ets(1,1): error TS2304: Cannot find name 'y'.`]
+      : []),
+  ];
+  const boundary = installToolBoundary(fx, {
+    buildFailModules: ['Alpha'],
+    buildFailLog: [utCompileFailureLog(fx.root, '02-Feature/Alpha'), ...extraLines].join('\n'),
+  });
+  try {
+    const build = checkUtHvigorBuild(fx.ctx, [], [], new Map()).find(r => r.id === 'ut_hvigor_build');
+    assert(build?.status === 'FAIL', `编译失败出口应 FAIL：${build?.details}`);
+    const expected = [
+      '02-Feature/Alpha/src/main/ets/Calc.ets',
+      ...(process.platform === 'win32' ? ['02-Feature/Alpha/src/main/ets/CaseRoot.ets'] : []),
+      '02-Feature/Alpha/src/ohosTest',
+      '02-Feature/Alpha/src/ohosTest/ets/test/List.test.ets',
+    ].join(',');
+    assert(sortedFiles(build!.affected_files) === expected,
+      `affected_files 须为解析出的工程内源文件 + 模块 ohosTest 目录（生成物与工程外不进、无占位）：${JSON.stringify(build!.affected_files)}`);
+    assert(!/未能解析模块源码路径/.test(build!.details ?? ''), '能解析模块路径时不得写"未能解析"');
+  } finally {
+    boundary.restore();
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+}
+
+function testU1AssertionFailureMultiModule(): void {
+  const fx = makeUtOrchestrationFixture([
+    { name: 'Alpha', package_path: '02-Feature/Alpha' },
+    { name: 'Beta', package_path: '02-Feature/Beta' },
+  ]);
+  try {
+    withFakeDevice(() => {
+      const boundary = installToolBoundary(fx, { aa: 'fail', aaFailStatus: UT_ASSERTION_FAILURE_STATUS });
+      try {
+        const builds = new Map<string, unknown>();
+        assert(checkUtHvigorBuild(fx.ctx, [], [], builds)[0]?.status === 'PASS', '前提：编译通过');
+        const test = checkUtHvigorTest(fx.ctx, [], [], builds).find(r => r.id === 'ut_hvigor_test');
+        assert(test?.status === 'FAIL' && test.failure_kind === 'code_regression',
+          `纯断言失败出口应 FAIL 且归 code_regression：${test?.failure_kind} ${test?.details}`);
+        const expected = [
+          '02-Feature/Alpha/src/ohosTest',
+          '02-Feature/Alpha/src/ohosTest/ets/test/List.test.ets',
+          '02-Feature/Beta/src/ohosTest',
+          '02-Feature/Beta/src/ohosTest/ets/test/List.test.ets',
+        ].join(',');
+        assert(sortedFiles(test!.affected_files) === expected,
+          `多模块聚合：各模块堆栈点名的用例文件 + 各模块 ohosTest 目录：${JSON.stringify(test!.affected_files)}`);
+      } finally {
+        boundary.restore();
+      }
+    });
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+}
+
+function testU1UnresolvedModulePathKeepsPlaceholder(): void {
+  const formatted = buildUtHvigorTestFailDetails([{
+    module: 'Alpha',
+    result: {
+      executed: true, exitCode: 0, durationMs: 1, logExcerpt: '', errors: [],
+      testResult: { total: 1, passed: 0, failed: 1, skipped: 0, failures: [{ suite: 'S', test: 't', message: 'at src/ohosTest/ets/test/A.test.ets:1:1' }] },
+    },
+  }]);
+  assert(JSON.stringify(formatted.affectedFiles) === JSON.stringify(['Alpha@ohosTest']),
+    `拿不到模块源码路径时保留占位写法（不更差）：${JSON.stringify(formatted.affectedFiles)}`);
+  assert(formatted.lines.some(l => l.includes('未能解析模块源码路径：Alpha')), `details 须写明原因：${formatted.lines.join('\n')}`);
+}
+
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
+    { name: 'U1 编译失败出口：affected_files = 工程内源文件 + 模块 ohosTest 目录（31063a73）', fn: testU1CompileFailureRealPaths },
+    { name: 'U1 纯断言失败出口：多模块聚合堆栈用例文件 + 各模块 ohosTest 目录（31063a73）', fn: testU1AssertionFailureMultiModule },
+    { name: 'U1 解析不到模块路径：保留占位并写明原因（31063a73）', fn: testU1UnresolvedModulePathKeepsPlaceholder },
     { name: 'ut build collector key identity (5e1c7a93 D1)', fn: testBuildCollectorKeyIdentity },
     { name: 'V1 真实 provider/runner：genOnDeviceTestHap 恰 2 次、编译日志与 meta 不被覆盖', fn: testV1CollectorWiring },
     { name: 'V3a HARNESS_SKIP_HVIGOR=1 正式编排：ut.run 零 dispatch、hvigor/hdc 零 spawn', fn: testV3aSkipEnvShortCircuit },

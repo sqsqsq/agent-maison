@@ -485,12 +485,15 @@ function findChangedRelatedRepair(projectRoot: string, prior: SiblingRun): strin
     }
   }
   if (!related.size) return null;
+  // plan 31063a73 §3.1：目录条目（如 UT blocker 的模块 ohosTest 源码目录）筛选基线里位于其下的后代文件，再逐文件比哈希；
+  // 不新增目录基线——没有可信基线的文件照旧不能证明修复。
+  const isRelated = (rel: string): boolean => related.has(rel) || [...related].some(dir => rel.startsWith(`${dir}/`));
 
   const baseline = new Map<string, string | null>();
   const attestation = loadReviewClosureAttestation(projectRoot, prior.manifest.feature);
   for (const entry of attestation?.inventory.files ?? []) {
     const rel = normalizeRelatedPath(projectRoot, entry.path);
-    if (rel && related.has(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
+    if (rel && isRelated(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
   }
   for (const event of prior.events) {
     if (event.type !== 'phase_write_observed') continue;
@@ -500,15 +503,15 @@ function findChangedRelatedRepair(projectRoot: string, prior: SiblingRun): strin
       if (!raw || typeof raw !== 'object') continue;
       const observation = raw as { path?: unknown; post_sha256?: unknown };
       const rel = normalizeRelatedPath(projectRoot, observation.path);
-      if (!rel || !related.has(rel)) continue;
+      if (!rel || !isRelated(rel)) continue;
       if (observation.post_sha256 === null) baseline.set(rel, null);
       else if (typeof observation.post_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(observation.post_sha256)) {
         baseline.set(rel, observation.post_sha256.toLowerCase());
       }
     }
   }
-  for (const rel of [...related].sort()) {
-    if (baseline.has(rel) && currentFileHash(projectRoot, rel) !== baseline.get(rel)) return rel;
+  for (const rel of [...baseline.keys()].sort()) {
+    if (currentFileHash(projectRoot, rel) !== baseline.get(rel)) return rel;
   }
   return null;
 }

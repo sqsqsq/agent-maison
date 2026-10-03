@@ -12,6 +12,7 @@ import {
   DEFAULT_DEPENDENCY_POLICY,
 } from './phase-transition-policy';
 import { AGGREGATE_RUN_STATUS_CHECK_IDS, resultBasisOwner } from './check-disposition';
+import { digestDirectoryTree } from './product-source-snapshot';
 
 export type FailureKind =
   | 'deterministic_gate_or_artifact_missing'
@@ -735,6 +736,9 @@ export function extractDeterministicAffectedFiles(
   return [...out];
 }
 
+/** 目录摘要的条目上限：UT 的 ohosTest 源码目录通常很小，上限只兜异常大的目录。 */
+const DIRECTORY_SNAPSHOT_MAX_ENTRIES = 5000;
+
 function hashFileContent(absPath: string): string {
   const buf = fs.readFileSync(absPath);
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -757,6 +761,20 @@ export function snapshotArtifacts(
     const norm = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : abs).replace(/\\/g, '/');
     if (!fs.existsSync(abs)) {
       snap[norm] = { exists: false, contentHash: '' };
+      continue;
+    }
+    let isDirectory: boolean;
+    try {
+      isDirectory = fs.lstatSync(abs).isDirectory();
+    } catch {
+      return {}; // plan 31063a73 §3.2 返修：入口检查失败（EIO/EACCES 等）同样整份快照为空，不冒到 runtime
+    }
+    if (isDirectory) {
+      // plan 31063a73 §3.2：目录条目按目录树内容求摘要（如 UT blocker 给的模块 ohosTest 源码目录）。
+      // 超限或读取失败时本轮整份快照为空——走既有"缺少可比基线"分支；空哈希在比较器里没有"不可比"语义。
+      const digest = digestDirectoryTree(projectRoot, abs, DIRECTORY_SNAPSHOT_MAX_ENTRIES);
+      if (digest === null) return {};
+      snap[norm] = { exists: true, contentHash: digest };
     } else {
       try {
         snap[norm] = { exists: true, contentHash: hashFileContent(abs) };

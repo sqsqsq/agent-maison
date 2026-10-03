@@ -105,6 +105,8 @@ import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-execut
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
+import { decideRunContinuation } from '../../scripts/utils/goal-run-creation';
+import { runUtGateInPlace, UT_ASSERTION_FAILURE_STATUS, utCompileFailureLog } from './ut-module-selection.unit.test';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 export const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
@@ -4646,6 +4648,112 @@ test('R1-2b「相关目标未知」说明里的恢复办法经实际入口可用
 });
 
 // ---------------------------------------------------------------------------
+// plan 31063a73 U3/U4：UT 编译 / 测试失败的受影响文件是真实路径（含模块 ohosTest 源码目录）时，
+// runtime 认得出"agent 这一轮改过 UT 源码"。gate 结论来自真实生产者（checkUtHvigorBuild /
+// checkUtHvigorTest，进程边界合成 hvigor / hdc 输出），summary 走真实 writer。
+// ---------------------------------------------------------------------------
+const UT_MODULE = { name: 'FinancialCard', package_path: '02-Feature/FinancialCard' };
+const UT_DIR = '02-Feature/FinancialCard/src/ohosTest';
+const UT_HELPER = `${UT_DIR}/ets/test/helpers/SpyHelper.ets`;
+
+function seedUtModule(root: string): void {
+  writeFile(root, `${UT_DIR}/module.json5`, JSON.stringify({ module: { name: 'FinancialCard_test', type: 'feature' } }));
+  writeFile(root, `${UT_DIR}/ets/test/List.test.ets`, '// ut list\n');
+  writeFile(root, 'AppScope/app.json5', JSON.stringify({ app: { bundleName: 'com.it.opencard', versionCode: 1, versionName: '1.0.0' } }));
+  for (const wrapper of ['hvigorw', 'hvigorw.bat']) writeFile(root, wrapper, '@echo off\n');
+}
+
+type UtGateOpts = Parameters<typeof runUtGateInPlace>[3];
+
+async function runUtFailureChain(gate: (root: string) => UtGateOpts, onUt?: (ctx: AgentCtx) => void): Promise<{
+  probe: RunProbe; gateChecks: CheckResult[][];
+}> {
+  const { root } = setupHost();
+  seedUtModule(root);
+  const gateChecks: CheckResult[][] = [];
+  const probe = await runChain(root, {
+    freshEndPhase: 'ut',
+    onUt,
+    onHarnessSummary: ({ phase }) => {
+      if (phase !== 'ut') return null;
+      const checks = runUtGateInPlace(root, FEATURE, [UT_MODULE], gate(root));
+      gateChecks.push(checks);
+      return { checks };
+    },
+  });
+  return { probe, gateChecks };
+}
+
+const UT_EXITS: Array<{ label: string; id: string; gate: (root: string) => UtGateOpts }> = [
+  {
+    label: '编译失败出口',
+    id: 'ut_hvigor_build',
+    gate: root => ({ buildFailModules: [UT_MODULE.name], buildFailLog: utCompileFailureLog(root, UT_MODULE.package_path) }),
+  },
+  { label: '测试断言失败出口', id: 'ut_hvigor_test', gate: () => ({ aa: 'fail', aaFailStatus: UT_ASSERTION_FAILURE_STATUS }) },
+];
+
+for (const exit of UT_EXITS) {
+  test(`31063a73 U3 ${exit.label}：agent 改了错误列表没点名的 helper 但仍失败 → 不判零进展，在内容重试预算内收口`, async () => {
+    const { probe, gateChecks } = await runUtFailureChain(exit.gate, ({ root: r, attempt }) => {
+      if (attempt > 1) writeFile(r, UT_HELPER, `export const spyCalls = ${attempt};\n`);
+    });
+    const reasons = haltReasons(probe.events);
+    assert(!reasons.includes('no_progress_guard'), `改过 UT 源码不得判零进展：${reasons.join(',')}`);
+    assert(String(lastRunEnd(probe.events)?.halt_reason) === 'content_retry_exhausted',
+      `须在内容重试预算内收口：${JSON.stringify(lastRunEnd(probe.events))}`);
+    const manifest = loadGoalManifestFromRun(probe.root, path.basename(probe.reportDir), { feature: FEATURE });
+    const utInvokes = probe.invokedPhases.filter(p => p === 'ut').length;
+    assert(utInvokes === manifest.budget.max_retries_per_phase + 1,
+      `ut 调用次数须等于既有阶段预算（max_retries_per_phase=${manifest.budget.max_retries_per_phase}）+1，实得 ${utInvokes}`);
+    // 前提（放在行为断言之后，反向变异时先看到行为层面的红）：真实生产者给出模块 ohosTest 目录、且没点名 helper
+    const blocker = gateChecks[0]?.find(c => c.id === exit.id);
+    assert(blocker?.status === 'FAIL' && (blocker.affected_files ?? []).includes(UT_DIR)
+      && !(blocker.affected_files ?? []).includes(UT_HELPER),
+    `前提：真实生产者给出模块 ohosTest 目录、且没点名 helper：${JSON.stringify(blocker?.affected_files)}`);
+  });
+
+  test(`31063a73 U3 ${exit.label} 对照：agent 一字不改 → 第二轮以 no_progress_guard 停`, async () => {
+    const { probe } = await runUtFailureChain(exit.gate);
+    const halt = String(lastRunEnd(probe.events)?.halt_reason);
+    assert(halt === 'no_progress_guard', `一字未改须第二轮即停：${halt} / ${haltReasons(probe.events).join(',')}`);
+    const utInvokes = probe.invokedPhases.filter(p => p === 'ut').length;
+    assert(utInvokes === 2, `第二轮即停（ut 调用 2 次），实得 ${utInvokes}：${probe.invokedPhases.join('→')}`);
+  });
+}
+
+test('31063a73 U4 接续决策：生产者只给 ohosTest 目录 + runtime 的 UT 写后基线 → 停机后改该文件重发即"相关修复已变化"；未改 / 无基线 / 只改目录外均不成立', async () => {
+  const written = `${UT_DIR}/ets/test/OpenCardFlow.test.ets`;
+  const noFileStatus = UT_ASSERTION_FAILURE_STATUS.replace(/ at anonymous \([^)]*\)/, '');
+  const { probe, gateChecks } = await runUtFailureChain(
+    () => ({ aa: 'fail', aaFailStatus: noFileStatus }),
+    ({ root: r, attempt }) => { if (attempt === 1) writeFile(r, written, 'it("opens card")\n'); },
+  );
+  const r = probe.root;
+  const blocker = gateChecks[0]?.find(c => c.id === 'ut_hvigor_test');
+  assert(JSON.stringify(blocker?.affected_files) === JSON.stringify([UT_DIR]),
+    `前提：堆栈没点名文件时生产者只给模块 ohosTest 目录：${JSON.stringify(blocker?.affected_files)}`);
+  assert(String(lastRunEnd(probe.events)?.halt_reason) === 'no_progress_guard', '前提：以无进展守卫停下');
+  const owned = probe.events.filter(e => e.type === 'phase_write_observed' && e.phase === 'ut')
+    .flatMap(e => ((e as { owned?: Array<{ path?: string }> }).owned ?? []).map(o => o.path));
+  assert(owned.includes(written), `前提：runtime 留下 UT 写后基线：${JSON.stringify(owned)}`);
+  const decide = () => decideRunContinuation({ projectRoot: r, feature: FEATURE, call: { requirement: '真机测试银行卡开卡流程' } });
+  const notRepair = (label: string): void => {
+    const d = decide();
+    assert(!/related_repair_changed/.test(d.reason), `${label}不得算相关修复：${JSON.stringify(d)}`);
+  };
+  notRepair('未改');
+  writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("outside ut dir") } }');
+  notRepair('只改目录外文件');
+  writeFile(r, `${UT_DIR}/ets/test/List.test.ets`, '// ut list changed\n');
+  notRepair('改目录内没有基线的文件');
+  writeFile(r, written, 'it("opens card") // fixed\n');
+  const after = decide();
+  assert(after.kind === 'rejoin' && /related_repair_changed/.test(after.reason),
+    `改了有基线的目录内文件须成立"相关修复已变化"：${JSON.stringify(after)}`);
+});
+
+// ---------------------------------------------------------------------------
 // plan 6279fcd7 T1：attended 执行者自检回到 agent 侧角色（宿主 run 20260920T100035Z-f829b8
 // 问题三）。真实 host bridge 签发身份 → bindAttendedGoalContext → 真实 summary writer：
 // 三次不同状态自检只写 journal proposal；runtime 自己重放收编（三个 intermediate 事件）→ gate
@@ -5840,8 +5948,10 @@ for (const entry of ['foreground', 'detach'] as const) {
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> {
+  // 按用例名前缀单跑（逗号分隔；同 DESIGN_AUTHORITY_REPAIR_ONLY），未设置时跑全部
+  const only = process.env.TESTING_INTEGRITY_ONLY;
   const results: UnitCaseResult[] = [];
-  for (const c of cases) {
+  for (const c of cases.filter(item => !only || only.split(',').some(prefix => item.name.startsWith(prefix)))) {
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
