@@ -54,6 +54,7 @@ import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
+  hasGoalExecutionSignal,
   resolveRunOwnerKind,
   syncPhaseStateOnReceiptPassStrict,
   type FeaturePhase,
@@ -228,7 +229,7 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
   --project-root <abs-path>   显式指定仓库根（默认从 __dirname 向上推导）
   --skip-state-sync          内部用：校验通过但不写 .current-phase.json（harness-runner tryValidateReceipt）
 
-说明：回执是 harness 的只读投影（schema 2.1），本命令先重新生成再校验；通过即 finalize closure。
+说明：回执是 harness 的只读投影（schema 2.1）；独立入口通过后 finalize closure，goal CLI 只校验并交 runtime 正式收口。
 `);
 }
 
@@ -237,7 +238,8 @@ check-receipt.ts — 阶段完成回执校验（Layer 2 凭证）
 // --------------------------------------------------------------------------
 
 function main(): void {
-  const { feature, phase, projectRoot, skipStateSync } = parseArgs();
+  const { feature, phase, projectRoot, skipStateSync: requestedSkipStateSync } = parseArgs();
+  const skipStateSync = requestedSkipStateSync || hasGoalExecutionSignal();
   const frameworkRoot = path.resolve(__dirname, '..', '..');
 
   /**
@@ -249,8 +251,7 @@ function main(): void {
    * slim 凭证的 run 绑定不校验、assumptions ledger 不校验、assess 投影成 manual。
    * **门禁被静默跳过比门禁判错更难发现**，所以这里一次算准、全文件复用。
    *
-   * 并集是严格超集：gate harness（runner 直接 spawn，带 MAISON_GOAL_GATE_HARNESS=1）
-   * 由 orchestration 位命中；agent 侧由 isAgentSideGoalHarness() 命中。
+   * 全部 goal CLI 使用相同检查/proposal 职责；任一既有 goal 信号均命中。
    */
   const inGoalReceiptContext = isGoalOrchestrationEnv() || isAgentSideGoalHarness();
 

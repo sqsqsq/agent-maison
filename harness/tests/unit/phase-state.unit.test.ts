@@ -12,10 +12,12 @@ import {
   patchSummaryClosureStatus,
   syncPhaseStateOnReceiptPass,
   tryValidateReceipt,
+  readGoalGateDeadlineMs,
 } from '../../scripts/utils/phase-state';
 import { statefilePath } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { DEFAULT_LAYOUT } from '../utils/layout-test-helper';
+import { deleteEnvKeyCaseInsensitive } from '../../scripts/utils/process-integrity';
 
 export interface UnitCaseResult {
   name: string;
@@ -437,7 +439,19 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  return cases.map(c => {
+  return [{ name: 'gate deadline env 缺失/非法回落；仅有限正数携带剩余时间', run: () => {
+    for (const raw of [undefined, '', 'NaN', 'Infinity', '0', '-1', '1e999']) {
+      assert(readGoalGateDeadlineMs({ MAISON_GOAL_GATE_DEADLINE_MS: raw }) === undefined, `非法值${raw}不授时间`);
+    }
+    assert(readGoalGateDeadlineMs({ MAISON_GOAL_GATE_DEADLINE_MS: ' 1800000000000 ' }) === 1800000000000, '有效epoch读取');
+    const env = { MAISON_GOAL_GATE_DEADLINE_MS: '1', maison_goal_gate_deadline_ms: '2', Maison_Goal_Gate_Deadline_Ms: '3' } as NodeJS.ProcessEnv;
+    deleteEnvKeyCaseInsensitive(env, 'MAISON_GOAL_GATE_DEADLINE_MS');
+    assert(Object.keys(env).length === 0, '缺deadline时所有Windows同名残留须清理');
+    env.MAISON_GOAL_GATE_DEADLINE_MS = '1800000000000';
+    assert(Object.keys(env).length === 1 && readGoalGateDeadlineMs(env) === 1800000000000, '写唯一canonical数据键');
+    const runtime = fs.readFileSync(path.resolve(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf8');
+    assert(runtime.includes("deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_DEADLINE_MS')"), '真实sender必须调用已验证的清洗器');
+  } }, ...cases].map(c => {
     try {
       c.run();
       return { name: c.name, ok: true };

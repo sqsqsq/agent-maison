@@ -407,6 +407,7 @@ function rebuildFactsContext(
       phase: opts.phase,
       featuresDir: relFeaturesDir(opts.projectRoot),
       ...(runId ? { goalRunId: runId } : {}),
+      ...(opts.goalAttemptId ? { goalAttemptId: opts.goalAttemptId } : {}),
     }).factsContext;
   } catch (error) {
     console.warn(`⚠ 闭环归属上下文重建失败（按无归属继续）：${(error as Error).message}`);

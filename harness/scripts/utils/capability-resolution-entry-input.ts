@@ -3,12 +3,13 @@
 // ============================================================================
 
 import type { PhaseInputContext } from './capability-resolution';
-import { isExecutionSourceBasis } from './execution-scope';
+import { isExecutionSourceBasis, executionCompletionPhases } from './execution-scope';
 import type { FactsInvocationContext } from './context-facts';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveEffectiveScopeSource } from './goal-run-creation';
+import { resolveEffectiveScopeSource, eventsWithScopeRevocations } from './goal-run-creation';
+import { loadAuthoritativeEvents } from './goal-runner-phase';
 import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
@@ -26,6 +27,9 @@ import { diffChangedFilesWithStatus } from './git-diff';
 import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadDiffExcludeTestPathRegexes, tryLoadProfileCodingHost, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { SpecLoader } from './spec-loader';
+import { computeRequirementShaFromText } from './fidelity-shared';
+import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
+import { resolvePhaseWriteBoundary, resolvePhasePathOwnership } from './phase-write-boundary';
 
 /** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
 const REVISION_TRIGGER_KINDS = new Set(['design-decision', 'acceptance-definition']);
@@ -196,6 +200,7 @@ export interface CapabilityResolutionEntryInputOptions {
   phase: string;
   featuresDir: string;
   goalRunId?: string;
+  goalAttemptId?: string;
   frameworkRoot?: string;
   explicitAdhocCases?: string;
   requirement?: string;
@@ -203,7 +208,145 @@ export interface CapabilityResolutionEntryInputOptions {
   invocation?: { inputContext: PhaseInputContext; factsContext: FactsInvocationContext; requirement?: string; codeTargets?: string[]; testTargets?: string[] };
 }
 
+/** Same-attempt runtime admission, never reconstructed from authored facts or a label invocation. */
+export function loadFactsInvocationContext(options: {
+  projectRoot: string; feature: string; phase: string; runId: string; attemptId?: string; featuresDir?: string;
+}): FactsInvocationContext | undefined {
+  if (!options.attemptId) return undefined;
+  const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature, featuresDir: options.featuresDir });
+  const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+  if (!scope?.phase_chain.includes(options.phase)) return undefined;
+  const events = eventsWithScopeRevocations(manifest.execution_scope,
+    loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl')));
+  const index = events.map((event, i) => event.type === 'agent_invoke_start' && event.phase === options.phase
+    && event.invoke_id === `${options.phase}-${options.attemptId}` ? i : -1).filter(i => i >= 0).pop();
+  if (index === undefined || events.slice(index + 1).some(event =>
+    (event.type === 'phase_invalidated' && event.phase === options.phase)
+    || (event.type === 'phase_backtrack_requested' && Array.isArray((event as { invalidated_phases?: string[] }).invalidated_phases)
+      && (event as { invalidated_phases: string[] }).invalidated_phases.includes(options.phase)))) return undefined;
+  const context = events[index].facts_context;
+  if (!context || !('run_id' in context.subject) || context.subject.feature !== options.feature || context.subject.run_id !== options.runId
+    || context.first_phase !== scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
+  return structuredClone(context);
+}
+
+/** Existing source ownership and write authorization, shared by admission and the final facts check. */
+export function resolveFactsPhaseOwnedSources(options: {
+  projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId?: string;
+}, context: FactsInvocationContext): Set<string> {
+  try {
+    const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+    if (!scope?.phase_chain.includes(options.phase)) return new Set();
+    const config = loadFrameworkConfig(options.projectRoot);
+    const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
+    const boundary = resolvePhaseWriteBoundary({ ...options, phaseOrder: executionCompletionPhases(scope), track: 'full',
+      profileDir: profile.profileDir, productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
+      resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
+    if (boundary.unresolvedSourcePhases.includes(options.phase)) return new Set();
+    return new Set(Object.entries(context.source_owners ?? {}).filter(([source, owner]) => {
+      const granted = resolvePhasePathOwnership(boundary, source);
+      return owner === options.phase && granted.owner === options.phase && granted.roles.some(role => role.kind === 'source');
+    }).map(([source]) => source));
+  } catch { return new Set(); }
+}
+
+/** Re-admit completed writes or an interrupted phase window, preserving the original admission hashes. */
+function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string): FactsInvocationContext | undefined {
+  if (!/^i\d+$/.test(options.goalAttemptId ?? '')) return undefined;
+  const manifest = loadGoalManifestFromRun(options.projectRoot, runId, { feature: options.feature, featuresDir: options.featuresDir });
+  const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope;
+  if (!scope?.phase_chain.includes(options.phase)) return undefined;
+  const events = eventsWithScopeRevocations(manifest.execution_scope,
+    loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl')));
+  // An existing exact start belongs to the original admission/resume path, including legacy records.
+  if (events.some(e => e.type === 'agent_invoke_start' && e.invoke_id === `${options.phase}-${options.goalAttemptId}`)) return undefined;
+  let fence = -1;
+  for (let i = 0; i < events.length; i++) if ((events[i].type === 'phase_invalidated' && events[i].phase === options.phase)
+    || (events[i].type === 'phase_backtrack_requested' && (events[i].to_phase === options.phase
+      || ((events[i] as { invalidated_phases?: string[] }).invalidated_phases ?? []).includes(options.phase)))) fence = i;
+  const starts = events.map((e, i) => i > fence && e.type === 'agent_invoke_start' && e.phase === options.phase
+    && typeof e.invoke_id === 'string' && new RegExp(`^${options.phase}-i\\d+$`).test(e.invoke_id) ? i : -1).filter(i => i >= 0);
+  if (!starts.length) return undefined;
+  const first = starts[0];
+  const context = events[first].facts_context;
+  if (!context?.baseline || !Array.isArray(context.baseline.dependencies) || !('run_id' in context.subject) || context.subject.run_id !== runId || context.subject.feature !== options.feature
+    || context.first_phase !== scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
+  const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
+  if (!fs.existsSync(factsPath) || factsBaselineFingerprint(fs.readFileSync(factsPath, 'utf8')) !== context.baseline.fingerprint) return undefined;
+  const ownedSources = resolveFactsPhaseOwnedSources({ ...options, frameworkRoot, runId }, context);
+  const isOwnedSource = (source: string): boolean => ownedSources.has(source);
+  const initial = new Map<string, string | null>();
+  for (const dep of context.baseline.dependencies) {
+    if (!dep || typeof dep.path !== 'string' || typeof dep.exists !== 'boolean'
+      || !(dep.sha256 === null || typeof dep.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(dep.sha256))
+      || !isInsideProjectRoot(options.projectRoot, dep.path)) return undefined;
+    initial.set(path.relative(options.projectRoot, dep.path).replace(/\\/g, '/'), dep.sha256);
+  }
+  const chain = new Map(initial);
+  const written = new Set<string>();
+  let interrupted: FactsInvocationContext | undefined;
+  const phaseAdvanced = events.slice(first + 1).some(event => event.type === 'phase_verdict' && event.phase === options.phase && event.action === 'advance');
+  const openBounds = new Set(findUnclosedGuardianBounds(events).map(bound => bound.invoke_id));
+  for (let n = 0; n < starts.length; n++) {
+    const start = events[starts[n]];
+    const endIndex = n + 1 < starts.length ? starts[n + 1] : events.length;
+    const segment = events.slice(starts[n] + 1, endIndex);
+    const prior = start.facts_context;
+    const ended = segment.findIndex(e => e.type === 'agent_invoke_end' && e.invoke_id === start.invoke_id);
+    if (!prior?.baseline || stableStringify(prior.baseline) !== stableStringify(context.baseline)
+      || !('run_id' in prior.subject) || prior.subject.run_id !== runId || prior.subject.feature !== options.feature
+      || prior.first_phase !== context.first_phase || openBounds.has(start.invoke_id!)
+      || segment.some(e => e.type === 'phase_write_violation' && e.invoke_id === start.invoke_id)) return undefined;
+    if (ended < 0) {
+      if (phaseAdvanced) return undefined;
+      interrupted = prior;
+      for (const [source, owner] of Object.entries(prior.source_owners ?? {})) if (owner === options.phase) written.delete(source);
+      continue;
+    }
+    for (const event of segment.slice(ended + 1)) {
+      if (event.type !== 'phase_write_observed' || event.phase !== options.phase || event.invoke_id !== start.invoke_id) continue;
+      const owned = (event as { owned?: unknown }).owned;
+      if (!Array.isArray(owned)) continue;
+      for (const row of owned) {
+        if (!row || typeof row.path !== 'string') return undefined;
+        let source: string;
+        try { source = path.posix.normalize(validateProjectRelativePath(options.projectRoot, row.path, 'facts write source')); } catch { return undefined; }
+        if (!isOwnedSource(source)) continue;
+        if (prior.source_owners?.[source] !== options.phase || typeof row.post_sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(row.post_sha256)
+          || !(row.pre_sha256 === null || typeof row.pre_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(row.pre_sha256))) return undefined;
+        // A later real observation may bridge the write lost by the interrupted
+        // invocation. Once observed, its post hash is strict again.
+        if (chain.has(source) && chain.get(source) !== row.pre_sha256
+          && (interrupted?.source_owners?.[source] !== options.phase || written.has(source))) return undefined;
+        chain.set(source, row.post_sha256); written.add(source);
+      }
+    }
+  }
+  const changed = new Set<string>();
+  for (const dep of context.baseline.dependencies) {
+    const source = path.relative(options.projectRoot, dep.path).replace(/\\/g, '/');
+    const current = sha256File(dep.path);
+    if (current === dep.sha256 && fs.existsSync(dep.path) === dep.exists) continue;
+    if (!isOwnedSource(source) || !current) return undefined;
+    if ((interrupted?.source_owners?.[source] !== options.phase || written.has(source)) && (!written.has(source) || chain.get(source) !== current)) return undefined;
+    changed.add(source);
+  }
+  for (const source of written) if (sha256File(path.join(options.projectRoot, source)) !== chain.get(source)) return undefined;
+  if (!changed.size && !interrupted) return undefined;
+  const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
+  const requirement = options.requirement ?? manifest.requirement;
+  const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot,
+    pendingOwnerPaths: [...changed],
+    ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
+  if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict) || freshness.receipt_changed
+    || freshness.propagated_from || freshness.integrity_errors?.length
+    || freshness.changed_paths.some(source => !changed.has(source))) return undefined;
+  return structuredClone(context);
+}
+
 export interface CapabilityResolutionEntryInput {
+  /** Admission found no reusable facts; the responsible phase must read these current sources and establish facts. */
+  factsRebuildReason?: string;
   goalRunId?: string;
   inputContext?: PhaseInputContext;
   factsContext?: FactsInvocationContext;
@@ -293,38 +436,76 @@ export function resolveCapabilityResolutionEntryInput(
         first_phase: scope.phase_chain[0],
         source_paths: sourcePaths, required_input_snippets: [],
       };
+      const admitted = goalRunId ? loadFactsInvocationContext({ projectRoot: options.projectRoot, feature: options.feature,
+        phase: options.phase, runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir })
+        ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
+      if (admitted) {
+        Object.assign(factsContext, admitted);
+        for (const source of admitted.source_paths) if (!sourcePaths.includes(source)) sourcePaths.push(source);
+      }
       const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
-      if (fs.existsSync(factsPath)) {
+      let factsRebuildReason: string | undefined;
+      if (!admitted && fs.existsSync(factsPath)) {
+        try {
         const raw = fs.readFileSync(factsPath, 'utf8');
         const { fm, error } = parseContextExploration(raw);
         if (error) throw new Error(`facts input invalid: ${error}`);
         if (fm.feature !== options.feature) throw new Error('facts input identity mismatch: feature');
+        const record = fm as Record<string, unknown>;
+        if (record.request_sha256 !== undefined || (goalRunId && record.frozen_scope_fingerprint !== undefined)) throw new Error('facts input identity mismatch: subject');
         const establishing = (fm as Record<string, unknown>).established_by;
-        if (establishing === options.phase && options.phase === scope.phase_chain[0] && fm.schema_version !== '1.1') {
-          throw new Error('facts input invalid: current establishing facts require schema 1.1');
+        const currentResearch = establishing === options.phase && options.phase === scope.phase_chain[0]
+          && (goalRunId ? record.run_id === goalRunId : record.frozen_scope_fingerprint === executionScopeFingerprint(scope));
+        if (currentResearch) {
+          // Current first-phase Research may exist before its first closure manifest; it is not a reusable predecessor baseline.
+          const declared = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
+          const normalized = declared.map(source => path.posix.normalize(validateProjectRelativePath(options.projectRoot, source, 'facts source')));
+          if (new Set(normalized).size !== normalized.length) throw new Error('facts source paths contain duplicates');
+          for (const source of normalized) {
+            assertFactsSourceReadable(options.projectRoot, source);
+            if (!sourcePaths.includes(source)) sourcePaths.push(source);
+          }
         }
-        if (typeof establishing === 'string' && establishing !== options.phase) {
+        if (typeof establishing === 'string') {
           const evidenceChain = [establishing, ...scope.phase_chain.filter(phase => phase !== establishing)];
-          const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { frameworkRoot, pendingOwnerPhase: options.phase })
-            .find(result => result.phase === establishing);
           const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, establishing);
+          // Independent feature entry retains its existing in-progress source semantics. Only
+          // current owned source paths within the existing write boundary can be pending.
+          const pendingOwnerPaths = !goalRunId && evidence?.integrityOk
+            ? [...resolveFactsPhaseOwnedSources({ ...options, frameworkRoot }, { ...factsContext,
+              source_owners: Object.fromEntries([...evidence.manifest.inputs, ...evidence.manifest.outputs]
+                .filter(entry => entry.owner_phase === options.phase && entry.exists && sha256File(path.join(options.projectRoot, entry.path)))
+                .map(entry => [entry.path, options.phase])) })] : [];
+          const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { frameworkRoot,
+            ...(pendingOwnerPaths.length ? { pendingOwnerPaths } : {}),
+            ...(requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })
+            .find(result => result.phase === establishing);
           if (fresh?.verdict !== 'fresh' || !evidence?.integrityOk) {
-            if (options.phase !== scope.phase_chain[0]) throw new Error(`facts baseline stale: return to ${scope.phase_chain[0]} to establish current facts`);
+            if (evidence || !currentResearch) {
+              factsRebuildReason = `facts baseline stale: return to ${scope.phase_chain[0]} to establish current facts; changed sources: ${(fresh?.changed_paths ?? []).join(', ') || fresh?.verdict || 'missing'}`;
+              if (options.phase !== scope.phase_chain[0]) throw new Error(factsRebuildReason);
+            }
           } else {
             const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
-            factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...evidence.manifest.inputs, ...evidence.manifest.outputs].filter(entry => paths.includes(entry.path)).map(entry => {
-              const ownedNow = entry.owner_phase === options.phase;
-              const owner = !ownedNow && entry.owner_phase
-                ? loadPhaseEvidenceManifest(options.projectRoot, options.feature, entry.owner_phase)?.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase)
-                : undefined;
+            factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...evidence.manifest.inputs, ...evidence.manifest.outputs].filter(entry => entry.facts_phase === undefined
+              && (paths.includes(entry.path) || (entry.role === 'input' && entry.owner_phase !== options.phase))).map(entry => {
+              const ownerEvidence = entry.owner_phase && entry.owner_phase !== establishing
+                ? loadPhaseEvidenceManifest(options.projectRoot, options.feature, entry.owner_phase) : null;
+              const owner = ownerEvidence?.integrityOk && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [entry.owner_phase!], { frameworkRoot })[0]?.verdict === 'fresh'
+                ? ownerEvidence.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase) : undefined;
               const abs = path.join(options.projectRoot, entry.path);
               // plan c4e7a9b2 B2：身份中立条目存的是摘要；等价成立时基线依赖按当前字节登记（下游按字节核对）。
               const recorded = owner ?? entry;
               const neutralCurrent = recorded.identity_neutral !== undefined && evidenceEntryMatchesCurrentFile(options.projectRoot, recorded, options.feature);
-              return ownedNow || neutralCurrent
+              return neutralCurrent
                 ? { path: abs, exists: fs.existsSync(abs), sha256: sha256File(abs), role: 'derive' }
                 : { path: abs, exists: owner?.exists ?? entry.exists, sha256: owner?.sha256 ?? entry.sha256, role: 'derive' };
             }) };
+            const configPath = path.join(options.projectRoot, 'framework.config.json');
+            if (!factsContext.baseline.dependencies.some(dep => path.resolve(dep.path) === path.resolve(configPath))) {
+              factsContext.baseline.dependencies.push({ path: configPath, exists: evidence.manifest.environment.framework_config_sha256 !== null,
+                sha256: evidence.manifest.environment.framework_config_sha256, role: 'derive' });
+            }
             for (const source of paths) {
               const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
               const abs = path.join(options.projectRoot, safe);
@@ -342,19 +523,20 @@ export function resolveCapabilityResolutionEntryInput(
               if (!sourcePaths.includes(safe)) sourcePaths.push(safe);
             }
           }
-        } else if (establishing === options.phase && options.phase === scope.phase_chain[0]) {
-          const record = fm as Record<string, unknown>;
-          if (goalRunId ? record.run_id !== goalRunId : record.frozen_scope_fingerprint !== executionScopeFingerprint(scope)) {
-            throw new Error('facts input identity mismatch: invocation');
-          }
-          const declared = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
-          const normalized = declared.map(source => path.posix.normalize(validateProjectRelativePath(options.projectRoot, source, 'facts source')));
-          if (new Set(normalized).size !== normalized.length) throw new Error('facts source paths contain duplicates');
-          for (const source of normalized) {
-            assertFactsSourceReadable(options.projectRoot, source);
-            if (!sourcePaths.includes(source)) sourcePaths.push(source);
-          }
         }
+        } catch (error) {
+          const reason = (error as Error).message;
+          if (options.phase !== scope.phase_chain[0]) throw new Error(reason.startsWith('facts ') ? reason : `facts input invalid: ${reason}`);
+          factsRebuildReason = `Establish current facts from the actual source files: ${reason}`;
+          delete factsContext.baseline;
+        }
+      }
+      if (factsRebuildReason && goalRunId && options.goalAttemptId && !admitted) {
+        const manifest = loadGoalManifestFromRun(options.projectRoot, goalRunId, { feature: options.feature, featuresDir: options.featuresDir });
+        const alreadyInvoked = loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl'))
+          .some(event => event.type === 'agent_invoke_start' && event.phase === options.phase && event.invoke_id === `${options.phase}-${options.goalAttemptId}`);
+        // A validation-only legacy window cannot establish facts without a new responsible executor.
+        if (alreadyInvoked) throw new Error(factsRebuildReason.startsWith('facts ') ? factsRebuildReason : `facts baseline stale: ${factsRebuildReason}`);
       }
       let contractFiles: string[] = [];
       let contractModules: Array<{ name: string; package_path: string }> = [];
@@ -458,6 +640,19 @@ export function resolveCapabilityResolutionEntryInput(
         ...(consumes('derive.codebase') ? codeTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
         ...(consumes('derive.test-targets') ? testTargets : []).filter(file => fs.existsSync(path.resolve(options.projectRoot, file))),
       ])];
+      if (admitted && !admitted.baseline && factsContext.first_phase === options.phase && fs.existsSync(factsPath)) {
+        const { fm, error } = parseContextExploration(fs.readFileSync(factsPath, 'utf8'));
+        const record = fm as Record<string, unknown>;
+        if (!error && fm.feature === options.feature && record.run_id === goalRunId && record.established_by === options.phase
+          && fm.schema_version === '1.1' && record.request_sha256 === undefined && record.frozen_scope_fingerprint === undefined) {
+          for (const source of Array.isArray(fm.source_code_paths) ? fm.source_code_paths : []) {
+            const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
+            assertFactsSourceReadable(options.projectRoot, safe);
+            if (!factsContext.source_paths.includes(safe)) factsContext.source_paths.push(safe);
+            if (!sourcePaths.includes(safe)) sourcePaths.push(safe);
+          }
+        }
+      }
       const historical = new Set(sourcePaths);
       const owners: Array<readonly [string, string]> = [];
       // 集合与紧邻的测试分支同形（`contractFiles ∪ sourcePaths`）：spec 跑在 contracts 产出之前，
@@ -475,7 +670,20 @@ export function resolveCapabilityResolutionEntryInput(
         if (testOwner === options.phase || historical.has(file)) owners.push([file, testOwner]);
       }
       factsContext.source_owners = Object.fromEntries(owners);
-      return { requirement, requirementSourceFiles, codeTargets, testTargets, factsContext,
+      if (admitted) {
+        for (const [source, owner] of Object.entries(factsContext.source_owners)) {
+          if (owner === options.phase && admitted.source_owners?.[source] !== owner) delete factsContext.source_owners[source];
+        }
+      }
+      if (!admitted && factsContext.baseline) {
+        const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, factsContext.baseline.established_by);
+        if (evidence?.integrityOk) for (const source of factsContext.source_paths) {
+          if (factsContext.source_owners[source] !== options.phase || factsContext.baseline.dependencies.some(dep => path.resolve(dep.path) === path.resolve(options.projectRoot, source))) continue;
+          const recorded = [...evidence.manifest.inputs, ...evidence.manifest.outputs].find(entry => entry.path === source && entry.owner_phase === options.phase && entry.exists && entry.sha256);
+          if (recorded) factsContext.baseline.dependencies.push({ path: path.resolve(options.projectRoot, source), exists: recorded.exists, sha256: recorded.sha256, role: 'derive' });
+        }
+      }
+      return { requirement, requirementSourceFiles, codeTargets, testTargets, factsContext, ...(factsRebuildReason ? { factsRebuildReason } : {}),
         inputContext: { schema_version: '1.1', subject: { feature: options.feature },
           obligations,
           expected_bindings: expectedBindings.map(binding => options.phase === 'testing' && binding.input_id === 'acceptance' ? { ...binding, input_id: 'cases' } : binding).filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),

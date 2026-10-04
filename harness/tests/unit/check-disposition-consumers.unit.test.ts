@@ -530,7 +530,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '第二批 披露：探索账本两条经真实 CLI review——结论与退出码改变；facts_schema_version 在链首被 capability_resolution_contract 拦住',
+    name: '第二批 披露：探索账本两条经真实 CLI review——结论与退出码改变；无有效baseline的旧facts schema须真实重建',
     run: () => {
       const ledger = runReviewCli(REVIEW_REPORT_CLEAN, {
         searches_performed_estimate: 1, touches_layers: ['src', 'data', 'domain'], exploration_mode: 'subagent', subagents_used: 'not_available',
@@ -546,7 +546,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const version = runReviewCli(REVIEW_REPORT_CLEAN, { schema_version: '1.0' });
       try {
         assert.notStrictEqual(version.cli.status, 0, '链首建立阶段仍被拦住');
-        assert(version.cli.out.includes('capability_resolution_contract'), `拦住它的是链首预检：\n${version.cli.out}`);
+        assert(version.cli.out.includes('context_exploration_facts_input_context'), `按事实调用契约拒收，不能误导为修改capability contract：\n${version.cli.out}`);
       } finally { version.cleanup(); }
     },
   },

@@ -22,6 +22,7 @@ import {
   validateScreenIdentity,
   type NavConfig,
   type NavConfigV2,
+  type NavScreenIdentity,
 } from '../../visual-diff-nav';
 import { captureVisualDiff, mergeVisualDiffReports } from '../../visual-diff-capture';
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
@@ -39,6 +40,42 @@ export function runAll(): UnitCaseResult[] {
       results.push({ name, ok: false, error: (e as Error).message });
     }
   };
+
+  run('短信稳定页锚与缺按钮分开；旧all_of不可自动放行，真正错页/锁屏不落正式截图', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-sms-'));
+    try {
+      const stable = { all_of: [{ id: 'sms_root' }], any_of: [{ text: '短信验证' }], none_of: [{ id: 'selection_root' }] };
+      const doc = { screens: [{ id: 'sms', priority: 'P0', ref_id: 'sms-ref', must_have_elements: ['sms_next'],
+        root: { id: 'sms_root', type: 'navigation_frame', order: 0, children: [{ id: 'sms_next', type: 'interactive', order: 0 }] } }], tokens: {}, assets: [] } as unknown as UiSpecDoc;
+      for (const scenario of ['stable-missing-button', 'old-button-identity', 'wrong-page', 'lock-screen']) {
+        const identity = scenario === 'old-button-identity' ? { ...stable, all_of: [...stable.all_of, { id: 'sms_next' }] } : stable;
+        const before = JSON.stringify(identity);
+        const id = scenario === 'wrong-page' ? 'selection_root' : scenario === 'lock-screen' ? 'system_lock' : 'sms_root';
+        const dump = { tree: { attributes: { id, text: scenario === 'wrong-page' ? '选择银行卡' : scenario === 'lock-screen' ? '上滑解锁' : '短信验证' } } };
+        let canonicalShots = 0;
+        const result = captureVisualDiff({ projectRoot: root, feature: scenario, uiDoc: doc, currentBuildFingerprint: null,
+          screenIdentity: new Map<string, NavScreenIdentity>([['sms', identity], ['selection', { all_of: [{ id: 'selection_root' }] }]]),
+          screenshotFn: args => {
+            if (!args.destAbs.includes('_mismatch')) canonicalShots++;
+            fs.mkdirSync(path.dirname(args.destAbs), { recursive: true }); fs.writeFileSync(args.destAbs, 'png'); return { ok: true };
+          },
+          layoutDumpFn: args => {
+            fs.mkdirSync(path.dirname(args.destAbs), { recursive: true }); fs.writeFileSync(args.destAbs, JSON.stringify(dump)); return { ok: true };
+          },
+        });
+        if (JSON.stringify(identity) !== before) throw Error('不能删掉失败all_of成员');
+        if (scenario === 'stable-missing-button') {
+          if (canonicalShots !== 1 || (result.p0CaptureFailures ?? []).length) throw Error('稳定目标页可采集');
+          if (extractLayoutDumpFacets(dump).ids.includes('sms_next')) throw Error('夹具须保留真实缺按钮');
+          if (!doc.screens[0].must_have_elements?.includes('sms_next')) throw Error('业务required不能被身份修正删除');
+        } else {
+          if (canonicalShots !== 0 || !(result.p0CaptureFailures ?? []).includes('sms')) throw Error('未匹配/系统页不得正式采信');
+          if (scenario === 'old-button-identity' && !result.errors.join('\n').includes('不能据此断言必然是其它页')) throw Error('诊断需区分规则失配和真正错页');
+          if (scenario === 'old-button-identity' && !result.errors.join('\n').includes('sms_next')) throw Error('原失败成员须留在诊断');
+        }
+      }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  });
 
   run('canonicalOverlayBase / isOverlayId', () => {
     if (canonicalOverlayBase('manage_non_local__overlay__0') !== 'manage_non_local') throw new Error('overlay 基名');

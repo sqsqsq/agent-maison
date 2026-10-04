@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 
 import {
   evaluateHylyreNativeEvidenceGate,
@@ -29,12 +30,21 @@ import {
 import { lintDerivedPlanSelectorContract } from '../../../profiles/hmos-app/harness/selector-contract';
 import { collectFailureRoutesV1 } from '../../scripts/utils/hylyre-failure-routing-v1';
 import { dispatchHylyreResult, requireV1ForGate, type TraceV1 } from '../../scripts/utils/hylyre-result-protocol';
-import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { buildSummaryRepairCandidates, formatRepairEvidenceRefs, loadRepairDeclineState,
+  restoreBacktrackCandidatesFromEvents, serializeBacktrackRepairCandidate, validateRepairCandidatesShape } from '../../scripts/utils/repair-candidates';
+import { writeRunSummaryBase } from '../../harness-runner';
+import { extractContentRelatedFiles, shouldHaltNoProgress } from '../../scripts/utils/goal-failure-classifier';
+import { validateLiteSchema } from '../../scripts/utils/lite-json-schema';
 import {
   __testing_checkHylyreCaseExecutionCompleteness,
   __testing_checkHylyreV1RequiredGates,
   __testing_checkHylyreFailureRouting,
+  __testing_checkP0RuntimeStepEvidenceGate,
+  writeDeviceTestEvidenceIfEligible,
 } from '../../scripts/check-testing';
+import { commitGateDeviceEvidenceProposal } from '../../scripts/goal-phase-runtime';
+import { deviceTestEvidencePath } from '../../scripts/utils/device-test-evidence-shared';
+import { resolvePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { validateNativeTraceArtifactBinding } from '../../scripts/utils/native-trace-binding';
 import {
   buildCanonicalSelectorIndex,
@@ -464,6 +474,63 @@ test('native artifact binding: trace.artifacts.plan、plan/trace SHA 与 StepRes
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('native 同 gate holder→manifest preview→runtime 正式提交；旧盘证据不参与，改图/plan 不洗绿', () => {
+  const root = projectRoot();
+  const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'HARNESS_HDC_TARGET',
+    'MAISON_DEVICE_TARGET_KIND', 'MAISON_DEVICE_SESSION_ID'] as const;
+  const saved = keys.map(key => process.env[key]);
+  try {
+    const startMs = Date.now() - 1000;
+    ['run-native', 'i1', 'dev-native', 'physical', 'sess-native'].forEach((value, i) => { process.env[keys[i]] = value; });
+    const reportsDir = path.join(root, 'doc', 'features', FEATURE, 'testing', 'reports');
+    const tracePath = path.join(reportsDir, '20260830T000000Z', 'hylyre', 'trace.json');
+    const derivedPlanPath = path.join(path.dirname(tracePath), 'test-plan.hylyre.md');
+    const testPlanPath = path.join(root, 'doc', 'features', FEATURE, 'testing', 'test-plan.md');
+    const raw = traceObject({ artifacts: { plan: derivedPlanPath.replace(/\\/g, '/') } });
+    write(root, path.relative(root, tracePath), `${JSON.stringify(raw)}\n`);
+    const binding = validateNativeTraceArtifactBinding({ trace: parseHylyreTrace(tracePath), tracePath, testPlanPath, derivedPlanPath });
+    assert.ok(binding.ok && binding.binding, JSON.stringify(binding));
+    const hapPath = write(root, 'app.hap', 'native-hap');
+    const hapSha = createHash('sha256').update(fs.readFileSync(hapPath)).digest('hex');
+    const stat = fs.statSync(hapPath);
+    write(root, path.relative(root, path.join(reportsDir, 'device-test-install.meta.json')), JSON.stringify({
+      hapPath, hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size, hapSha256: hapSha.slice(0, 12),
+    }));
+    write(root, path.relative(root, path.join(reportsDir, 'device-test-run.meta.json')), JSON.stringify({
+      run_started_at: new Date(startMs + 100).toISOString(), run_ended_at: new Date().toISOString(),
+    }));
+    const ctx = { projectRoot: root, feature: FEATURE, phase: 'testing', frameworkRoot: path.resolve(__dirname, '..', '..', '..') } as any;
+    const holder = { hapPath, hapSha256Full: hapSha, installExecuted: true, installOk: true,
+      deviceTestRunExecuted: true, hylyreTracePath: tracePath, hylyreEvidenceGate: gate(raw), nativeArtifactBinding: binding.binding } as any;
+    const checks = writeDeviceTestEvidenceIfEligible(ctx, holder);
+    assert.strictEqual(checks[0].status, 'PASS', checks[0].details);
+    assert.strictEqual(holder.deviceTestEvidence, ctx.deviceTestEvidence, '同一个 composed doc');
+    assert.ok(!fs.existsSync(deviceTestEvidencePath(reportsDir)), 'CLI 不能写正式证据');
+    const preview = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'testing',
+      frameworkRoot: ctx.frameworkRoot, deviceTestEvidence: ctx.deviceTestEvidence });
+    assert.ok(preview.outputs.some(item => path.resolve(root, item.path) === tracePath), 'verifier preview 从 holder 绑定当前 trace');
+    assert.strictEqual(__testing_checkP0RuntimeStepEvidenceGate(ctx, [], holder)[0].status, 'PASS', '同 gate 不自锁读盘');
+    const original = holder.deviceTestEvidence;
+    holder.deviceTestEvidence = { ...original, attempt_id: 'old' };
+    assert.strictEqual(__testing_checkP0RuntimeStepEvidenceGate(ctx, [], holder)[0].status, 'FAIL', '旧身份不能通过');
+    holder.deviceTestEvidence = original;
+    write(root, path.relative(root, path.join(reportsDir, 'script-report.json')), JSON.stringify({ feature: FEATURE, phase: 'testing', checks }));
+    const commit = () => commitGateDeviceEvidenceProposal(root, FEATURE, 'run-native', {
+      attemptId: 'i1', expectedTarget: { serial: 'dev-native', target_kind: 'physical', session_id: 'sess-native' },
+      harnessWindow: { startMs, endMs: Date.now() + 1000 }, reportsDir, projectRoot: root,
+    });
+    assert.strictEqual(commit(), null, '当前 runtime gate 提交');
+    assert.ok(fs.existsSync(deviceTestEvidencePath(reportsDir)), 'runtime 正式文件在后续读取前落盘');
+    fs.unlinkSync(deviceTestEvidencePath(reportsDir));
+    fs.appendFileSync(derivedPlanPath, '\nchanged');
+    assert.strictEqual(commit(), '提交前 native trace/plan binding 已变化', '不能让模型改 hash 假修');
+    assert.ok(!fs.existsSync(deviceTestEvidencePath(reportsDir)));
+  } finally {
+    keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('native artifact binding: expected_check 只能是唯一尾部 StepResult；非尾部/重复均拒绝', () => {
   const root = projectRoot();
   try {
@@ -757,6 +824,103 @@ test('缺陷身份稳定：route/disposition 的 check id 与 repair 指纹不�
     const f2 = fingerprintOf(oneCase);
     assert.ok(f1 && f2, `两轮都应产出候选：${String(f1)} / ${String(f2)}`);
     assert.strictEqual(f1, f2, '同一缺陷跨轮 item_fingerprint 必须稳定（防震荡记账的键）');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('T1 native 证据从实际路由→summary→事件恢复→prompt，旧 fp/目标/拒修/无进展语义不变', () => {
+  const root = projectRoot();
+  try {
+    const ctx = { projectRoot: root, feature: FEATURE, phase: 'testing', frameworkRoot: root } as any;
+    const shot = 'native-failure-shot';
+    const sha = createHash('sha256').update(shot).digest('hex');
+    const produce = (stamp: string, caseIds = ['TC-A', 'TC-B']) => {
+      const base = `doc/features/${FEATURE}/testing/reports/${stamp}/hylyre`;
+      const tracePath = path.join(root, base, 'trace.json');
+      const derivedPath = write(root, `${base}/test-plan.hylyre.md`, '# 原派生\n');
+      write(root, `${base}/failures/failure.png`, shot);
+      const failedCase = (id: string) => {
+        const item = failingTraceObject().cases[0];
+        item.id = id;
+        item.evidence = 'complete';
+        item.steps[1].extensions = {};
+        item.steps[1].artifacts = [{ kind: 'screenshot', path: 'failures/failure.png', sha256: sha }];
+        return item;
+      };
+      const raw = traceObject({ outcome: 'failed', cases: caseIds.map(failedCase) });
+      write(root, `${base}/trace.json`, JSON.stringify(raw));
+      const parsed = parseHylyreTrace(tracePath)!;
+      assert.strictEqual(requireV1ForGate(parsed, { frameworkRoot: root }).ok, true, '构造前提：实际 schema/跨行协议通过');
+      const before = __testing_checkHylyreFailureRouting(ctx, parsed, gate(raw), derivedPath);
+      const after = __testing_checkHylyreFailureRouting(ctx, parsed, gate(raw), derivedPath, tracePath);
+      const assemble = (checks: any[]) => buildSummaryRepairCandidates({ phase: 'testing', checks,
+        reportValidity: 'PASS', reviewReportText: null, verifierReportText: null });
+      return { raw, before: assemble(before), after: assemble(after), checks: after };
+    };
+    const first = produce('first', ['tc-A', 'Tc-b']);
+    const second = produce('second', ['tC-a', 'tc-B']);
+    const uppercase = produce('uppercase');
+    assert.strictEqual(first.after.length, 2, '两个实际失败步骤各一候选');
+    assert.deepStrictEqual(first.after.map(({ evidence_refs, ...identity }) => identity), first.before, '补证据不得改旧 id/files/summary/fp');
+    assert.deepStrictEqual(first.after.map(({ evidence_refs, ...identity }) => identity),
+      uppercase.after.map(({ evidence_refs, ...identity }) => identity), '大小写接线只改证据，旧 route id/details/fp 保持归一行为');
+    assert.deepStrictEqual(first.after.map(candidate => candidate.item_fingerprint), second.after.map(candidate => candidate.item_fingerprint), '换时间戳证据目录不换缺陷身份');
+    assert.deepStrictEqual(extractContentRelatedFiles({ repair_candidates: first.after }), [], '只读证据不得充当源码进展目标');
+    assert.strictEqual(shouldHaltNoProgress({ failureKind: 'code_regression', priorBlockerSignature: 'same',
+      currentBlockerSignature: 'same', priorArtifactSnapshot: {}, currentArtifactSnapshot: {}, relevantEvidenceKnown: false }), true);
+    const candidate = first.after[0];
+    assert.deepStrictEqual(candidate.files, [], '原 native 无源码定位，仍为空');
+    const ref = candidate.evidence_refs![0];
+    assert.strictEqual(ref.case_id, 'tc-A', '交接引用须保留 trace 原始 case id');
+    assert.strictEqual(second.after[0].evidence_refs?.[0].case_id, 'tC-a');
+    assert.strictEqual(ref.step_index, 1);
+    assert.strictEqual(ref.artifact_paths?.length, 1, '大小写不应丢掉失败边界 artifact');
+    assert.ok(fs.existsSync(path.join(root, ref.trace_path)) && ref.artifact_paths?.every(p => fs.existsSync(path.join(root, p))), '引用真正可读');
+    const source = JSON.parse(fs.readFileSync(path.join(root, ref.trace_path), 'utf8'));
+    const originalStep = source.cases.find((item: any) => item.id === ref.case_id).steps[ref.step_index];
+    assert.strictEqual(originalStep.selector.request.value, 'success_title');
+    assert.deepStrictEqual((first.checks[0].structured as any).selector, originalStep.selector, 'request/resolution 从原 StepResult 保留');
+    assert.deepStrictEqual((first.checks[0].structured as any).outcome, originalStep.outcome);
+    const summary = writeRunSummaryBase(root, { phase: 'testing', feature: FEATURE, project_root: root,
+      timestamp: new Date().toISOString(), checks: first.checks, assurance: 'full', capability_resolutions: [],
+      capability_resolution_contract_fingerprint: null,
+      summary: { total: first.checks.length, pass: 0, fail: first.checks.length, warn: 0, skip: 0,
+        blockers: first.checks.length, verdict: 'FAIL' },
+    }, path.resolve(__dirname, '../../..'), { verifierPlan: { mode: 'disabled', reason: 'policy_off', verifier_prompt: null, message: 'test' } });
+    assert.deepStrictEqual(summary.repair_candidates, first.after, '真正 summary writer 落同一候选引用');
+    const persisted = JSON.parse(fs.readFileSync(path.join(root, `doc/features/${FEATURE}/testing/reports/summary.json`), 'utf8'));
+    const restored = restoreBacktrackCandidatesFromEvents(JSON.parse(JSON.stringify([{ type: 'phase_backtrack_requested',
+      candidates: persisted.repair_candidates.map(serializeBacktrackRepairCandidate) }])));
+    assert.deepStrictEqual(restored, first.after, '事件序列化/恢复保留全部可选引用');
+    const prompt = formatRepairEvidenceRefs(restored[0]).join('\n');
+    assert.ok(prompt.includes('case=tc-A step=1') && prompt.includes(ref.trace_path) && prompt.includes('selector request/resolution') && prompt.includes('不是修复目标'), prompt);
+    const schema = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../schemas/summary.schema.json'), 'utf8'));
+    assert.deepStrictEqual(validateLiteSchema(candidate, schema.properties.repair_candidates.items), []);
+    assert.deepStrictEqual(validateRepairCandidatesShape(first.after), []);
+    assert.deepStrictEqual(validateRepairCandidatesShape(first.before), [], '旧记录缺新字段仍合法');
+    for (const bad of [{ ...ref, trace_path: '../outside/trace.json' }, { ...ref, step_index: '1' }, { ...ref, arbitrary: true }]) {
+      assert.ok(validateLiteSchema({ ...candidate, evidence_refs: [bad] }, schema.properties.repair_candidates.items).length > 0, 'schema 拒收坏引用');
+      assert.ok(validateRepairCandidatesShape([{ ...candidate, evidence_refs: [bad] }]).length > 0, '写侧形状检查同样拒收坏引用');
+    }
+
+    const runId = 'native-decline-t1';
+    const runDir = `doc/features/${FEATURE}/goal-runs/${runId}`;
+    write(root, `${runDir}/manifest.json`, JSON.stringify({ requirement: '本次不做 NFC 卡' }));
+    write(root, `${runDir}/events.jsonl`, [
+      { type: 'run_start', ts: '2026-01-01T00:00:00.000Z' },
+      { type: 'phase_backtrack_requested', ts: '2026-01-01T00:00:01.000Z', to_phase: 'coding', invalidated_phases: ['coding', 'testing'], candidates: first.before },
+    ].map(event => JSON.stringify(event)).join('\n') + '\n');
+    write(root, `doc/features/${FEATURE}/coding/headless-assumptions.jsonl`, JSON.stringify({ decision_id: 'native-d1',
+      run_id: runId, phase: 'coding', gate_id: `repair_candidate:${candidate.item_fingerprint}`, class: 'goal_conflict',
+      decision: 'declined: 需求写明「本次不做 NFC 卡」', must_review: true, source: 'agent', ts: '2026-01-01T00:00:02.000Z' }) + '\n');
+    assert.strictEqual(loadRepairDeclineState(root, FEATURE, runId).get(second.after[0].item_fingerprint)?.declined_rounds, 1, '升级补证据仍读到旧 native 拒修');
+    const withBlocked = JSON.parse(JSON.stringify(first.raw));
+    withBlocked.cases[0].steps.push({ index: 3, kind: 'wait_for', role: 'assertion', duration_ms: 0,
+      device_session: true, outcome: { status: 'blocked', cause: { type: 'prior_step', step_index: 1 } },
+      selector: null, artifacts: [], diagnostic: null, extensions: {} });
+    withBlocked.tool_calls = projectToolCalls(withBlocked.cases);
+    const blockedChecks = __testing_checkHylyreFailureRouting(ctx, withBlocked as HylyreTrace, gate(withBlocked));
+    assert.strictEqual(buildSummaryRepairCandidates({ phase: 'testing', checks: blockedChecks,
+      reportValidity: 'PASS', reviewReportText: null, verifierReportText: null }).length, 2, 'blocked 后继不放大候选');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

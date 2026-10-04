@@ -184,6 +184,11 @@ doc/features/<feature>/
 - `verdict` / 退出码 / `blocker_count`：阶段结论只算一次（脚本阻断、报告合法性、质量轴与能力解析取更严一侧），控制台、合并报告与进程退出码都用它；`blockers` 与 `blocker_count` 是同一个有效阻断集合（聚合的运行状态项在源失败已列出时不重复计入）。
 - `disclosed_failures`：失败但按处置表只披露、不阻断的检查（账本与形状类，如 `schema_version_present`）；条数计入完成缺口，完成标签为 `COMPLETE_WITH_GAPS`。
 - `next_action`：给 agent / Stop hook 的下一步建议；同会话未闭环时，Stop hook 会把最近一次 `summary.json.next_action` 带入阻断文案。
+- `repair_candidates[].evidence_refs`：可选的只读 native 交接定位（trace_path/case_id/step_index，以及派生/失败边界路径）；
+  `files`/`affected_files` 仍仅是修复目标。补证据不会改变 native 旧指纹、拒修或无进展判定；旧候选缺此字段仍可读。
+- `readiness_signals` 中 `id=verifier_repair_diagnosis`：点明 review 的具体漏行/冲突/错绑定，以及当前 request 资格。
+  已签发当前 request 才走 `run_verifier_for_repair`；carried/disabled/混合失败不虚构 request，先修可合法修复的资格原因。
+  合法 refuted/unclear 不按格式坏重投，旧负面结论与拒修依据保留，产品 FAIL/open 不被诊断或人签洗绿。
 - `closure_status`：`open` | `closed`；`closed` 当且仅当 `check-receipt.ts` 会通过（与 `receipt_status=passed` 对齐）。closed 时 `next_action=phase_closed_wait_user`。
 - **跨会话恢复**：`cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase <phase> --feature <feature>` 或单独跑 `check-receipt.ts`（PASS 时也会回写 `.current-phase.json`）。见 `AGENTS.md` §5.2。
 
@@ -582,3 +587,9 @@ cat framework/harness/state/.current-phase.json
       last_seen_session_id / last_seen_at 字段（向后兼容：缺失即按"未盖章"处理）；
     - 与全局入口 §5.1.1 协同。
 -->
+
+### Goal 检查与正式收口
+
+goal 执行者自检与外层 gate CLI 都只产检查事实和 proposal；PASS/open 表示当前检查通过、等待 runtime 正式 gate 与 finalizer。check-receipt 和 --sync-closure 在 goal 中只校验，不能抢先提交阶段或 Feature completion。独立无 goal 入口保留原闭环。自检 PASS/closed 不触发 invocation 结束，四个内置 adapter 按终态或自然退出走已有 grace/管道有界收尾。
+
+goal 的全部 visual rounds 写现有 journal，runtime 在 gate 前后顺序、幂等收编。device evidence 先组装同一个 holder/doc供同 gate native/legacy 检查与 verifier preview 消费，再由 runtime 核 gate 窗口、attempt/device/HAP/trace 后提交正式文件。legacy checkpoint 仍 WARN；绑定或提交失败保持 FAIL/open。旧 gate flag 不授予正式写入职责。

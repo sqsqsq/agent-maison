@@ -25,6 +25,9 @@
 // ============================================================================
 
 /** 单行分类结果。'other' = 与终态收口无关（含 item 级错误、thread.started、turn.started…）。 */
+import { classifyResultEnvelope, parseEnvelopeLine } from './claude-envelope';
+import { isClaudeKernelAdapter } from './types';
+
 export type CodexTerminalLineKind = 'completed' | 'failed' | 'error' | 'other';
 
 export interface CodexTerminalLineClassification {
@@ -124,6 +127,7 @@ export interface CodexTerminalScanner {
  */
 export function createCodexTerminalScanner(
   handlers: CodexTerminalScannerHandlers = {},
+  parser: TerminalEventParser = 'codex_turn_jsonl',
 ): CodexTerminalScanner {
   let buffer = '';
   const state: CodexTerminalState = {
@@ -134,7 +138,11 @@ export function createCodexTerminalScanner(
 
   const consumeLine = (line: string): void => {
     if (!line.trim()) return;
-    const c = classifyCodexTerminalLine(line);
+    const record = parser === 'codex_turn_jsonl' ? null : parseEnvelopeLine(line);
+    const c: CodexTerminalLineClassification = parser === 'codex_turn_jsonl' ? classifyCodexTerminalLine(line)
+      : record ? { kind: classifyResultEnvelope(record, parser === 'cursor_result_jsonl'),
+        ...(record.is_error === true ? { excerpt: excerptOf(record.result ?? record.errors, 'result failed') } : {}) }
+        : { kind: 'other' };
     if (c.kind === 'completed') {
       // 结构化防御：若异常流同时出现两个终态，failed 优先；scanner 自身也不输出双真。
       if (state.completionObserved || state.terminalFailureObserved) return;
@@ -181,13 +189,15 @@ export function createCodexTerminalScanner(
 }
 
 /**
- * adapter → terminal 解析器选择。**只有 codex** 有已实证的 terminal JSONL 契约；
+ * adapter → terminal 解析器选择。Codex 用 turn JSONL，Claude/CodeAgent/Cursor 用各自 result 契约；
  * 其余 adapter 一律 none——无契约的 FAIL 诚实接受 hard timeout 兜底，不造假信号。
  */
-export type TerminalEventParser = 'none' | 'codex_turn_jsonl';
+export type TerminalEventParser = 'none' | 'codex_turn_jsonl' | 'claude_result_jsonl' | 'cursor_result_jsonl';
 
 export function resolveTerminalEventParser(adapterName?: string): TerminalEventParser {
-  return adapterName === 'codex' ? 'codex_turn_jsonl' : 'none';
+  if (adapterName === 'codex') return 'codex_turn_jsonl';
+  if (adapterName && isClaudeKernelAdapter(adapterName)) return 'claude_result_jsonl';
+  return adapterName === 'cursor' ? 'cursor_result_jsonl' : 'none';
 }
 
 /**

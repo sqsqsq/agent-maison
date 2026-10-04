@@ -19,6 +19,7 @@ import type { InSessionPhaseRequestContext } from '../../scripts/utils/goal-in-s
 import { casAcquireRunOwner, readRunControl } from '../../scripts/utils/goal-run-control';
 import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { runSyncClosureDetailed } from '../../scripts/utils/phase-state';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -305,7 +306,7 @@ const cases: Case[] = [
           '--goal-owner-id', context.ownerId,
           '--goal-owner-epoch', String(context.ownerEpoch),
         ];
-        await runGoalModeHostBridge({
+        const bridge = await runGoalModeHostBridge({
           projectRoot: root,
           frameworkRoot: path.join(root, 'framework'),
           feature: 'demo',
@@ -317,6 +318,8 @@ const cases: Case[] = [
           executePhase: async (phase, _recommendation, context) => {
             captured.value = context;
             assert(phase === 'spec' && context.phase === phase, 'bridge phase context mismatch');
+            const phaseStatePath = path.join(harnessDir, 'state', '.current-phase.json');
+            const phaseStateBefore = fs.existsSync(phaseStatePath) ? fs.readFileSync(phaseStatePath, 'utf8') : null;
             const init = run(harnessDir, 'fidelity-intent-init.ts', [
               '--feature', 'demo', '--goal-phase', phase, ...contextFlags(context),
             ], root);
@@ -337,26 +340,33 @@ const cases: Case[] = [
               '--sync-closure', '--phase', phase, '--feature', 'demo', ...contextFlags(context),
             ], root);
             assert(sync.status === 0, `attended sync-closure 失败：${sync.stderr}\n${sync.stdout}`);
-            const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
-            assert(closed.receipt_status === 'passed' && closed.closure_status === 'closed',
-              `attended closure 未闭合：${JSON.stringify(closed)}`);
-            // plan 6279fcd7 T3（D1）：attended harness 不再带 GATE 标（与 detached agent 侧同角色、
-            // 自己试验回执），同一组参数的 sync-closure 仍按签发 attempt 收口——回执声明的
-            // attempt 须经 check-receipt 同阶段等值校验，closure_commit 指向该回执。
-            const commit = closed.closure_commit as { receipt_path?: string } | undefined;
-            assert(typeof commit?.receipt_path === 'string' && commit.receipt_path.endsWith('spec/phase-completion-receipt.md'),
-              `closure_commit 须绑定本阶段回执：${JSON.stringify(commit)}`);
+            const checked = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+            assert(checked.verdict === 'PASS' && checked.closure_status === 'open',
+              `attended 自检应 PASS/open 等待 runtime：${JSON.stringify(checked)}`);
+            assert(!('closure_commit' in checked), 'executor 不得提交正式闭环');
             assert(fs.readFileSync(path.join(root, 'doc/features/demo/spec/phase-completion-receipt.md'), 'utf-8')
               .includes(`claimed_attempt_id: "${context.attemptId}"`), 'closure 身份须是签发 attempt');
-            assert(!fs.existsSync(path.join(harnessDir, 'state', '.current-phase.json')),
-              'attended harness 不得产生 .current-phase.json');
+            const phaseStateAfter = fs.existsSync(phaseStatePath) ? fs.readFileSync(phaseStatePath, 'utf8') : null;
+            assert(phaseStateAfter === phaseStateBefore, 'attended 自检不得改写已有 runtime/复制的 .current-phase.json');
             assert(crypto.createHash('sha256').update(fs.readFileSync(ssotPath)).digest('hex') === fidelityHash,
               'harness/sync closure 改写了 fidelity SSOT');
             return { status: 'passed' as const, phase };
           },
         });
         if (!captured.value) throw new Error('bridge 未发出 phase request');
+        const terminalEvents = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8')
+          .split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line))
+          .filter(event => event.type === 'run_end' || event.type === 'phase_halt');
+        assert(bridge.status === 'reconciled' && bridge.outcome?.status === 'passed',
+          `bridge 必须实际完成，不能把 INTERRUPTED 当通过：${JSON.stringify({ bridge, terminalEvents })}`);
         const oldContext = captured.value;
+        // callback 交回后由真实 runtime gate/finalizer 提交，不能把 INTERRUPTED 误当完成。
+        const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(closed.verdict === 'PASS' && closed.receipt_status === 'passed' && closed.closure_status === 'closed',
+          `runtime 必须实际提交 attended 闭环：${JSON.stringify(closed)}`);
+        const commit = closed.closure_commit as { receipt_path?: string } | undefined;
+        assert(typeof commit?.receipt_path === 'string' && commit.receipt_path.endsWith('spec/phase-completion-receipt.md'),
+          `runtime closure_commit 须绑定本阶段回执：${JSON.stringify(commit)}`);
         const control = readRunControl(prepared.runDir, runId);
         assert(control?.owner?.state === 'released', 'bridge 返回后 session owner 应 released');
         const next = casAcquireRunOwner(prepared.runDir, runId, control!.current_epoch, {
@@ -467,13 +477,20 @@ const cases: Case[] = [
         assert(fs.existsSync(reportAbs), `报告必须落在 summary 指针处：${reportRel}`);
         fs.writeFileSync(path.join(root, 'doc/features/demo/spec/reports/trace.json'), '{"trace": []}', 'utf-8');
 
-        // ④ 闭环达成：全程 goal 身份，不再有 verifier_evidence_report_missing / closure_wall_repeated。
+        // ④ CLI 只校验；同一 goal 身份下由 runtime 所用 finalizer 入口真正收口。
         const rc = run(harnessDir, 'check-receipt.ts', [
           '--feature', 'demo', '--phase', 'spec', '--project-root', root,
         ], root, goalEnv);
         const out = `${rc.stdout}\n${rc.stderr}`;
         assert(rc.status === 0, `headless 全程 goal 身份下闭环应 exit 0，实得 ${rc.status}：${out}`);
         assert(!out.includes('verifier_evidence_report_missing'), `不得再报证据缺失：${out}`);
+        const checked = readJson(root, 'doc/features/demo/spec/reports/summary.json');
+        assert(checked.verdict === 'PASS' && checked.closure_status === 'open', 'goal check-receipt 只校验，不能抢 runtime 收口');
+        assert(!('closure_commit' in checked), 'goal CLI 不得提交闭环');
+        const sync = runSyncClosureDetailed(harnessDir, root, 'demo', 'spec', path.join(root, 'framework'), {
+          goalIdentity: { runId, attemptId, attemptPhase: 'spec' },
+        });
+        assert(sync.exitCode === 0, `runtime 正式收口失败：${sync.finalizationError}`);
         const closed = readJson(root, 'doc/features/demo/spec/reports/summary.json');
         assert(closed.closure_status === 'closed', `headless 下必须真正 closed，实得 ${closed.closure_status}`);
       } finally {
@@ -624,14 +641,14 @@ ${rv.stdout}`);
         assert(first.status === 0, `初始 harness 失败：${first.stdout}`);
         writeValidSpecReceipt(root, readJson(root, 'doc/features/demo/spec/reports/summary.json'));
 
-        // 事故边界：goal gate 子进程即使看见有效回执，也只能产 open base；不得自己校验/关环。
+        // goal orchestration 信号下，CLI 即使看见有效回执也只能产 open base。
         const gated = runHarness(
           harnessDir,
           ['--phase', 'spec', '--feature', 'demo', '--summary'],
           root,
           {
             MAISON_GOAL_GATE_HARNESS: '1',
-            MAISON_GOAL_RUNNER: undefined,
+            MAISON_GOAL_RUNNER: '1',
             MAISON_GOAL_HEADLESS: undefined,
             MAISON_GOAL_RUN_ID: undefined,
             MAISON_GOAL_ATTEMPT: undefined,
@@ -648,7 +665,7 @@ ${rv.stdout}`);
         assert(gatedNext.run_status_candidate !== 'CHAIN_SLICE_COMPLETED',
           `open gate 不得投影完成态：${JSON.stringify(gatedNext)}`);
 
-        // 非 goal 的 standalone 行为保持原样：同一有效回执由真实入口正常校验并关环。
+        // 无 goal 信号的 standalone 即使自设旧 flag 也正常关环，旧 flag 不授予角色。
         //
         // plan a9d4e7c2：subject 按**实际审查材料**寻址，而 ai-prompt.md 内嵌 `{timestamp}`
         // 与整份 script-report——每跑一次 harness 材料就变一次，subject 随之换代（这是
@@ -661,7 +678,7 @@ ${rv.stdout}`);
           harnessDir,
           ['--sync-closure', '--phase', 'spec', '--feature', 'demo'],
           root,
-          { MAISON_GOAL_GATE_HARNESS: undefined },
+          { MAISON_GOAL_GATE_HARNESS: '1' },
         );
         assert(standalone.status === 0, `standalone 闭环失败：${standalone.stdout}\n${standalone.stderr}`);
         const closedSummary = readJson(root, 'doc/features/demo/spec/reports/summary.json');

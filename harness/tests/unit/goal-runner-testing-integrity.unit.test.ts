@@ -42,6 +42,12 @@ import {
   replayAttemptedSignalIdentities,
 } from '../../scripts/goal-runner';
 import type { GoalPhaseRuntimeLaunchOptions } from '../../scripts/goal-phase-runtime';
+import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { checkFactsArtifact } from '../../scripts/utils/context-facts';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
+import { frameworkDeclaringTsSources, removeShimFramework } from './standalone-coding-review.unit.test';
 import {
   declineAttemptExemption,
   isRebuttalAppearance,
@@ -54,7 +60,7 @@ import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evide
 import { assembleGoalBrief, renderGoalBrief } from '../../scripts/utils/goal-brief';
 import { runVisualProviderReview } from '../../../profiles/hmos-app/harness/visual-provider-review';
 import { inferRepoLayout } from '../../repo-layout';
-import { clearFrameworkConfigCache, featureFilePath } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import {
   resolvePhaseEvidenceManifest,
@@ -107,6 +113,7 @@ import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
 import { decideRunContinuation } from '../../scripts/utils/goal-run-creation';
 import { runUtGateInPlace, UT_ASSERTION_FAILURE_STATUS, utCompileFailureLog } from './ut-module-selection.unit.test';
+import { __testing_setPidProbeExecutor, findUnclosedGuardianBounds } from '../../scripts/utils/goal-containment-reconcile';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 export const PRODUCT_FILE = '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets';
@@ -644,6 +651,7 @@ export async function runGoalRuntimeChain(
       let failOverride = opts.onHarnessSummary?.({ phase: String(ph), attempt: harnessAttempt });
       // plan 2f8a6d40：本轮真实 gate 的 CheckResult（PASS 出口交给真实 writer 用）。
       let specGateChecks: CheckResult[] | null = null;
+      let passOverrideChecks: CheckResult[] | undefined;
       // plan 8d2b4f60 §6：真实 gate 在 runtime 内决定推进/重跑（不是事后补一次直调）。
       if (!failOverride && opts.realSpecFidelityGate && String(ph) === 'spec') {
         const specMdAbs = featureFilePath(pr, feat, 'spec/spec.md');
@@ -683,6 +691,10 @@ export async function runGoalRuntimeChain(
         }
         specGateChecks = gateChecks;
         if (gateChecks.some(c => c.status === 'FAIL')) failOverride = { checks: gateChecks };
+      }
+      if (failOverride && 'checks' in failOverride && !failOverride.checks.some(check => check.status === 'FAIL')) {
+        passOverrideChecks = failOverride.checks;
+        failOverride = null;
       }
       if (failOverride) {
         const failDir = featureFilePath(pr, feat, String(ph) + '/reports');
@@ -805,19 +817,19 @@ export async function runGoalRuntimeChain(
       // CheckResult 组 ScriptReport 交给生产 `writeRunSummaryBase`（与 FAIL 出口同一实现），
       // summary 的 verdict/lattice/blockers/next_action 全部由 writer 派生后落盘，runner
       // 读回即真实 `decisionSummary`。V1 的归因断言必须站在这条支路上。
-      if (opts.realPassSummaryWriter && specGateChecks && specGateChecks.length > 0) {
+      if (passOverrideChecks || (opts.realPassSummaryWriter && specGateChecks && specGateChecks.length > 0)) {
         // `ui_spec_fidelity_gate` 走 `ui_spec_` 前缀落 **visual** 轴（quality-axes.ts:109）；
         // functional 轴零执行会被如实判 UNVERIFIED → 整份 summary 投影成 INCOMPLETE，
         // 造不出 V1 要的 PASS 轮。补一条真实 spec 门禁本就会产出的 functional PASS
         //（`spec_file_exists`，check-spec.ts:1486）作为该轴的执行事实——不是伪造结论，
         // 是把 fake harness 的 check 集补到"能让真实 writer 正常投影"的最小形状。
-        const passChecks: CheckResult[] = [
+        const passChecks: CheckResult[] = passOverrideChecks ?? [
           {
             id: 'spec_file_exists', category: 'structure',
             description: 'spec 文件存在', severity: 'BLOCKER', status: 'PASS',
             details: 'fake harness：spec.md 在场',
           },
-          ...specGateChecks,
+          ...(specGateChecks ?? []),
         ];
         const passReport: ScriptReport = {
           phase: String(ph) as Phase,
@@ -1240,6 +1252,231 @@ test('corrupt phase-boundary handoff mailbox is quarantined and headless run rea
   assert(fs.readdirSync(probe.reportDir).some(name => /^handoff-request\.invalid-.*\.json$/.test(name)),
     'quarantine file must remain in the same run directory');
 });
+
+for (const guardian of ['gone', 'unknown'] as const) {
+  test(`b1b2 Windows startup guardian ${guardian}: real reconciliation reaches non-first UT facts admission`, async () => {
+    if (process.platform !== 'win32') return;
+    const { root } = setupHost();
+    const fw = frameworkDeclaringTsSources();
+    try {
+      fs.writeFileSync(path.join(fw, 'profiles/hmos-app/harness/coding-host-rules.js'), `exports.profileCodingHost={...require(${JSON.stringify(path.join(REPO_ROOT, 'profiles/hmos-app/harness/coding-host-rules.ts').replace(/\\/g, '/'))}).profileCodingHost,sourceFileSuffixes:['.ets']};\n`);
+      const cfg = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+      cfg.project_profile = { name: 'hmos-app', sub_variant: 'app' }; cfg.active_workflow = 'obligation-driven';
+      writeFile(root, 'framework.config.json', JSON.stringify(cfg)); clearFrameworkConfigCache();
+      const testSource = '02-Feature/FinancialCard/src/ohosTest/ets/test/Value.test.ets';
+      writeFile(root, PRODUCT_FILE, 'export const value = 1;\n');
+      writeFile(root, testSource, 'export const test = true;\n');
+      writeFile(root, `doc/features/${FEATURE}/contracts.yaml`, JSON.stringify({ feature: FEATURE, source: 'approved design', version: '1',
+        modules: [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }], files: [PRODUCT_FILE, testSource],
+        module_dependencies: {}, data_models: [], interfaces: [], components: [], prd_to_code_traceability: [{ prd_id: 'AC-1', key_files: [PRODUCT_FILE] }] }));
+      writeFile(root, `doc/features/${FEATURE}/acceptance.yaml`, JSON.stringify({ feature: FEATURE, source: 'approved behavior', version: '1',
+        criteria: [{ id: 'AC-1', description: 'internal value42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: ['value42'] }], boundaries: [] }));
+      const requirement = 'change internal value to42 and verify UT without UI';
+      prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, completionTarget: 'request', requestedResults: ['internal value42 and UT'],
+        requestedPhases: ['coding', 'ut'], requirement, overwrite: true });
+      ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: fw, feature: FEATURE });
+      const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, runId: `b1b2-guardian-${guardian}`, adapter: 'cursor', requirement, forceFresh: true });
+      assert(prepared.manifest.phase_chain!.indexOf('ut') > 0, JSON.stringify(prepared.manifest.phase_chain));
+      const factsPath = `doc/features/${FEATURE}/context/facts.md`;
+      const sources = [PRODUCT_FILE, testSource, 'framework.config.json', `doc/features/${FEATURE}/contracts.yaml`, `doc/features/${FEATURE}/acceptance.yaml`, `doc/features/${FEATURE}/spec/spec.md`, 'build-profile.json5'];
+      writeFile(root, factsPath, ['---', 'schema_version: "1.1"', `feature: ${FEATURE}`, 'run_id: old-spec-run', 'established_by: spec', 'ready_to_produce: true',
+        'has_blocker_coverage_risk: false', 'exploration_mode: sequential', 'files_inspected_count: 7', 'searches_performed_estimate: 4', 'decisions_unlocked: ["current sources read"]',
+        'source_code_paths:', ...sources.map(source => `  - ${source}`), 'key_inputs_read:', ...sources.map(source => `  - ${source}`), '---', '## Code Facts',
+        '| 路径 | 事实 | 影响 |', '|---|---|---|', ...sources.map(source => `| ${source} | current file read | scoped implementation |`), ''].join('\n'));
+      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, phase: 'spec',
+        requirementSha: computeRunRequirementSha(root, FEATURE, prepared.manifest.run_id),
+        factsContext: { subject: { feature: FEATURE, run_id: 'old-spec-run' }, first_phase: 'spec', source_paths: sources,
+          source_owners: { [PRODUCT_FILE]: 'coding', [testSource]: 'ut' }, required_input_snippets: [] } }));
+      let cut = false;
+      let cutInvokeId = '';
+      let gateChecks: CheckResult[] = [];
+      const runOpts = { frameworkRoot: fw, freshRequirement: requirement, runId: prepared.manifest.run_id,
+        onCoding: () => { writeFile(root, PRODUCT_FILE, 'export const value = 42;\n'); fs.appendFileSync(path.join(root, factsPath), '\n## phase_delta: coding\nUpdated the owned implementation.\n'); },
+        onReview: () => fs.appendFileSync(path.join(root, factsPath), '\n## phase_delta: review\nnone\n'),
+        onUt: (ctx: AgentCtx) => {
+          if (cut) return;
+          cutInvokeId = `ut-${ctx.goalAttemptId}`;
+          const start = readEvents(prepared.runDir).find(event => event.type === 'agent_invoke_start' && event.invoke_id === `ut-${ctx.goalAttemptId}`)!;
+          assert(!!start?.facts_context, 'the production runtime must admit UT before the cut');
+          assert((start.facts_context as import('../../scripts/utils/context-facts').FactsInvocationContext).source_owners?.[testSource] === 'ut', 'the production admission must grant the real profile UT source');
+          writeFile(root, testSource, 'export const test = false;\n');
+          fs.appendFileSync(path.join(root, factsPath), '\n## phase_delta: ut\nUpdated the owned test.\n');
+          fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_process_bound', phase: 'ut', run_id: ctx.runId,
+            invoke_id: `ut-${ctx.goalAttemptId}`, pid: 99999999, started_at_ms: Date.now() - 1000, executable: process.execPath,
+            token: `${ctx.runId}/ut-${ctx.goalAttemptId}`, ts: new Date().toISOString() }) + '\n');
+          cut = true;
+          throw Error('b1b2 simulated runtime cut after owned UT write');
+        },
+        onHarnessSummary: ({ phase }: { phase: string; attempt: number }) => {
+          if (!['coding', 'ut'].includes(phase)) return null;
+          const gate = readEvents(prepared.runDir).filter(event => event.type === 'harness_start' && event.phase === phase).slice(-1)[0];
+          const attemptId = String(gate.invoke_id).slice(phase.length + 1);
+          try {
+            const entry = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, phase, featuresDir: 'doc/features', goalRunId: prepared.manifest.run_id, goalAttemptId: attemptId });
+            const inputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, phase, track: 'full', ...entry }).inputs!;
+            gateChecks = [...checkFactsArtifact(root, FEATURE, phase, { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: inputs, goalAttemptId: attemptId }),
+              { id: 'file_completeness', category: 'structure', description: 'contract sources exist', severity: 'BLOCKER', status: sources.every(source => fs.existsSync(path.join(root, source))) ? 'PASS' : 'FAIL', details: testSource }];
+          } catch (error) {
+            gateChecks = [{ id: 'context_exploration_facts_source_stale', category: 'structure', description: 'entry rejects unverified recovery', severity: 'BLOCKER', status: 'FAIL', details: String(error) }];
+          }
+          return { checks: gateChecks };
+        },
+      };
+      const interrupted = await runChain(root, { ...runOpts, launchArgs: ['--attach-created', prepared.manifest.run_id] });
+      assert(cut && interrupted.events.some(event => event.type === 'agent_process_bound' && event.invoke_id === cutInvokeId), 'cut must leave a real admitted UT start and an open Windows binding');
+      assert(!interrupted.events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === cutInvokeId), 'the cut precedes end and owned observation');
+      if (guardian === 'unknown') __testing_setPidProbeExecutor(() => ({ status: 0, stdout: 'PRESENT:99999999' }));
+      const resumed = await runChain(root, { ...runOpts, resume: prepared.manifest.run_id, forceResume: true, skipLegacySeal: true });
+      const reclaimed = resumed.events.filter(event => event.type === 'orphan_reclaimed' && event.invoke_id === cutInvokeId);
+      if (guardian === 'gone') {
+        assert(reclaimed.length === 1 && reclaimed[0].method === 'guardian_gone', 'the actual Windows startup producer must close a binding confirmed absent');
+        assert(findUnclosedGuardianBounds(resumed.events).length === 0, 'the real emitted event must reach the admission consumer');
+        assert(resumed.exitCode === 0 && !gateChecks.some(check => check.status === 'FAIL'), JSON.stringify({ exit: resumed.exitCode, gateChecks }));
+        assert(gateChecks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), 'owned source registration remains advisory after real startup recovery');
+      } else {
+        assert(reclaimed.length === 0 && findUnclosedGuardianBounds(resumed.events).length === 1, 'an unverifiable live PID must not receive a fabricated close event');
+        assert(resumed.exitCode !== 0 && gateChecks.some(check => check.status === 'FAIL'), JSON.stringify({ exit: resumed.exitCode, gateChecks }));
+      }
+    } finally { __testing_setPidProbeExecutor(null); removeShimFramework(fw); clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+for (const mode of ['research', 'delta', 'legacy', 'carry2', 'carry3'] as const) {
+  const inherited = mode !== 'research';
+  const legacy = mode === 'legacy';
+  const carryInvokes = mode === 'carry2' ? 2 : mode === 'carry3' ? 3 : 0;
+  test(`t5 runtime原attempt恢复：${carryInvokes ? `同phase${carryInvokes} invoke承接` : legacy ? '旧context缺失须真实重建' : inherited ? '授权delta' : '新Research配置来源'} gate与finalizer同源且旧调用不重计`, async () => {
+    const { root } = setupHost();
+    const fw = frameworkDeclaringTsSources();
+    try {
+      const generic = path.join(fw, 'profiles/generic');
+      fs.mkdirSync(path.join(generic, 'harness'), { recursive: true });
+      fs.copyFileSync(path.join(REPO_ROOT, 'profiles/generic/profile.yaml'), path.join(generic, 'profile.yaml'));
+      fs.writeFileSync(path.join(generic, 'harness/coding-host-rules.js'), `exports.profileCodingHost={...require(${JSON.stringify(path.join(REPO_ROOT, 'profiles/hmos-app/harness/coding-host-rules.ts').replace(/\\/g, '/'))}).profileCodingHost,sourceFileSuffixes:['.ets']};\n`);
+      const cfg = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+      cfg.project_profile = { name: 'generic' }; cfg.active_workflow = 'obligation-driven';
+      writeFile(root, 'framework.config.json', JSON.stringify(cfg)); clearFrameworkConfigCache();
+      writeFile(root, PRODUCT_FILE, 'export const value = 1;');
+      writeFile(root, `doc/features/${FEATURE}/contracts.yaml`, JSON.stringify({ feature: FEATURE, source: 'approved design', version: '1',
+        modules: [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }], files: [PRODUCT_FILE],
+        module_dependencies: {}, data_models: [], interfaces: [], components: [], prd_to_code_traceability: [{ prd_id: 'AC-1', key_files: [PRODUCT_FILE] }] }));
+      writeFile(root, `doc/features/${FEATURE}/acceptance.yaml`, JSON.stringify({ feature: FEATURE, source: 'approved behavior', version: '1',
+        criteria: [{ id: 'AC-1', description: 'internal value42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: ['value42'] }], boundaries: [] }));
+      writeFile(root, 'build-profile.json5', '{}');
+      const requirement = 'change internal value to42 without UI';
+      prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, completionTarget: 'request',
+        requestedResults: ['internal value42'], requestedPhases: ['coding'], requirement, overwrite: true });
+      ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: fw, feature: FEATURE });
+      const prepared = prepareGoalModeRun({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, runId: inherited ? 't5-delta-resume' : 't5-research-resume',
+        adapter: 'cursor', requirement, forceFresh: true });
+      assert(prepared.manifest.phase_chain?.join(',') === 'coding', JSON.stringify(prepared.manifest.phase_chain));
+      const factsPath = `doc/features/${FEATURE}/context/facts.md`;
+      const sources = [PRODUCT_FILE, 'framework.config.json', `doc/features/${FEATURE}/contracts.yaml`, `doc/features/${FEATURE}/acceptance.yaml`, `doc/features/${FEATURE}/spec/spec.md`, 'build-profile.json5'];
+      const facts = (phase: string, runId: string) => ['---', 'schema_version: "1.1"', `feature: ${FEATURE}`, `run_id: ${runId}`, `established_by: ${phase}`,
+        'ready_to_produce: true', 'has_blocker_coverage_risk: false', 'exploration_mode: sequential', 'files_inspected_count: 6', 'searches_performed_estimate: 4',
+        'decisions_unlocked: ["current sources read"]', 'source_code_paths:', ...sources.map(source => `  - ${source}`), 'key_inputs_read:', ...sources.map(source => `  - ${source}`),
+        '---', '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', ...sources.map(source => `| ${source} | current file read | scoped implementation |`), ''].join('\n');
+      if (inherited) {
+        writeFile(root, factsPath, facts('spec', 'old-spec-run'));
+        writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, phase: 'spec',
+          requirementSha: computeRunRequirementSha(root, FEATURE, prepared.manifest.run_id),
+          factsContext: { subject: { feature: FEATURE, run_id: 'old-spec-run' }, first_phase: 'spec', source_paths: sources,
+            source_owners: { [PRODUCT_FILE]: 'coding' }, required_input_snippets: [] } }));
+      }
+      let crashed = false;
+      let gateChecks: CheckResult[] = [];
+      let activeAttempt = 'i1';
+      let legacyRejected = false;
+      const runOpts = { frameworkRoot: fw, freshStartPhase: 'coding' as const, freshEndPhase: 'coding' as const,
+        freshRequirement: requirement, runId: prepared.manifest.run_id,
+        onCoding: (ctx: AgentCtx) => {
+          activeAttempt = ctx.goalAttemptId ?? 'i1';
+          // Existing post-agent fixture condition: the target was invalidated before this actual invocation.
+          // Keep it within run_start's authoritative session, before the real start/context, so recovery sees the window.
+          const eventsPath = path.join(prepared.runDir, 'events.jsonl');
+          if (activeAttempt === 'i1' && !carryInvokes) {
+            const events = readEvents(prepared.runDir);
+            const index = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === 'coding-i1');
+            events.splice(index, 0, { type: 'phase_backtrack_requested', phase: 'testing', to_phase: 'coding',
+              invalidated_phases: ['coding'], backtracks_used: 1, ts: events[index].ts });
+            fs.writeFileSync(eventsPath, events.map(event => JSON.stringify(event)).join('\n') + '\n');
+          }
+          const value = carryInvokes === 3 && ctx.attempt === 2 ? 41 : 42;
+          writeFile(root, PRODUCT_FILE, `export const value = ${value};${carryInvokes ? ` // actual invoke ${ctx.attempt}` : ''}`);
+          for (const source of sources) fs.readFileSync(path.join(root, source));
+          if (inherited && !(legacy && activeAttempt !== 'i1')) {
+            const delta = `\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${PRODUCT_FILE} | value now${value} | current source |\n`;
+            if (carryInvokes) fs.writeFileSync(path.join(root, factsPath), fs.readFileSync(path.join(root, factsPath), 'utf8').split(/^## phase_delta: coding/m)[0].trimEnd() + delta);
+            else fs.appendFileSync(path.join(root, factsPath), delta);
+          }
+          else writeFile(root, factsPath, facts('coding', ctx.runId));
+        },
+        onHarnessSummary: ({ phase }: { phase: string; attempt: number }) => {
+          if (phase !== 'coding') return null;
+          try {
+          const entry = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, phase, featuresDir: 'doc/features',
+            goalRunId: prepared.manifest.run_id, goalAttemptId: activeAttempt });
+          const inputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot: fw, feature: FEATURE, phase, track: 'full', ...entry }).inputs!;
+          gateChecks = [...checkFactsArtifact(root, FEATURE, phase, { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: inputs, goalAttemptId: activeAttempt }),
+            { id: 'file_completeness', category: 'structure', description: 'contract source exists', severity: 'BLOCKER',
+              status: fs.existsSync(path.join(root, PRODUCT_FILE)) && (!carryInvokes || /value = 42/.test(fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8'))) ? 'PASS' : 'FAIL', details: PRODUCT_FILE }];
+          return { checks: gateChecks };
+          } catch (error) {
+            legacyRejected = true;
+            gateChecks = [{ id: 'context_exploration_facts_source_stale', category: 'structure', description: '旧事实不能当新建立',
+              severity: 'BLOCKER', status: 'FAIL', details: String(error), affected_files: [factsPath] }];
+            return { checks: gateChecks };
+          }
+        },
+      };
+      if (carryInvokes) {
+        const before = fs.readFileSync(path.join(root, factsPath), 'utf8').split(/^## phase_delta:/m)[0].trimEnd();
+        const completed = await runChain(root, { ...runOpts, launchArgs: ['--attach-created', prepared.manifest.run_id],
+          failReceiptFor: (attempt, phase) => phase === 'coding' && attempt === 'i1' ? 'missing' : false,
+          afterHarnessPass: ({ attemptId }) => {
+            if (Number(attemptId.slice(1)) < carryInvokes) fs.rmSync(path.join(featurePhaseReportsDir(root, FEATURE, 'coding'), 'phase-evidence-manifest.json'), { force: true });
+          } });
+        const starts = completed.events.filter(e => e.type === 'agent_invoke_start' && e.phase === 'coding');
+        assert(completed.exitCode === 0 && starts.length === carryInvokes, `normal PASS/open closure retry: ${JSON.stringify({ exit: completed.exitCode, starts: starts.length, end: completed.events.filter(e => e.type === 'run_end'), checks: gateChecks })}`);
+        const originalBaseline = (starts[0].facts_context as import('../../scripts/utils/context-facts').FactsInvocationContext)?.baseline;
+        assert(originalBaseline?.established_by === 'spec', 'the inherited original baseline must actually be present');
+        assert(starts.every(e => JSON.stringify((e.facts_context as import('../../scripts/utils/context-facts').FactsInvocationContext)?.baseline) === JSON.stringify(originalBaseline)), 'each current start must retain the original baseline and dependency hashes');
+        assert(fs.readFileSync(path.join(root, factsPath), 'utf8').split(/^## phase_delta:/m)[0].trimEnd() === before, 'valid facts baseline body and old source identity stay unchanged');
+        assert(completed.events.filter(e => e.type === 'phase_write_observed' && e.phase === 'coding').every(e =>
+          ((e.owned as any[]) ?? []).filter(row => row.path === PRODUCT_FILE).every(row => row.pre_sha256 && row.post_sha256 && row.roles?.some((role: any) => role.kind === 'source'))), 'source chains are real runtime pre/post observations with original roles');
+        const closed = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, FEATURE, 'coding'), 'summary.json'), 'utf8'));
+        assert(closed.closure_status === 'closed' && closed.closure_commit?.schema_version === '1.0', 'formal runtime closure must still be committed');
+        const progress = JSON.parse(fs.readFileSync(path.join(completed.reportDir, 'progress.json'), 'utf8'));
+        assert(progress.budget.turns_used === carryInvokes, 'each new invoke consumes its original hard budget');
+        return;
+      }
+      const interrupted = await runChain(root, { ...runOpts, launchArgs: ['--attach-created', prepared.manifest.run_id], afterHarnessPass: () => {
+        crashed = true;
+        if (legacy) {
+          const events = readEvents(prepared.runDir);
+          for (const event of events) if (event.type === 'agent_invoke_start') delete event.facts_context;
+          fs.writeFileSync(path.join(prepared.runDir, 'events.jsonl'), events.map(event => JSON.stringify(event)).join('\n') + '\n');
+        }
+        throw Error('t5 after gate before finalizer');
+      } });
+      assert(crashed && !gateChecks.some(check => check.status === 'FAIL'), JSON.stringify(gateChecks));
+      const originalStart = interrupted.events.find(event => event.type === 'agent_invoke_start' && event.phase === 'coding')!;
+      assert((legacy ? !originalStart.facts_context : !!originalStart.facts_context) && originalStart.invoke_id === 'coding-i1', '现代runtime已签入场context，旧记录夹具仅缺context');
+      assert(interrupted.events.some(event => event.type === 'agent_process_settled' && event.phase === 'coding'), '已有settled恢复条件：' + JSON.stringify(interrupted.events.map(event => [event.type, event.phase, event.invoke_id])));
+      const count = interrupted.events.filter(event => event.type === 'agent_invoke_start').length;
+      const resumed = await runChain(root, { ...runOpts, resume: prepared.manifest.run_id, forceResume: true });
+      assert(resumed.invokedPhases.length === (legacy ? 1 : 0) && resumed.events.filter(event => event.type === 'agent_invoke_start').length === count + (legacy ? 1 : 0), '旧调用不重计；缺context仅为真实重建新增调用');
+      if (legacy) assert(legacyRejected && activeAttempt === 'i2', '旧i1 gate真实拒收，继而按原预算执行新i2重建');
+      assert(!gateChecks.some(check => check.status === 'FAIL'), JSON.stringify(gateChecks));
+      assert(resumed.events.some(event => event.type === 'resume' && Array.isArray(event.post_agent_phases) && event.post_agent_phases.includes('coding')), '恢复实际消费原attempt');
+      const manifestPath = path.join(root, `doc/features/${FEATURE}/coding/reports/phase-evidence-manifest.json`);
+      const evidence = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      assert([...evidence.inputs, ...evidence.outputs].some(entry => entry.path === 'framework.config.json'), 'finalizer保留实际已检查的新非源码Research');
+      const progress = JSON.parse(fs.readFileSync(path.join(resumed.reportDir, 'progress.json'), 'utf8'));
+      assert(progress.budget?.turns_used === (legacy ? 2 : 1), '旧已settle调用只计一次、新真实重建按原预算计：' + JSON.stringify(progress));
+    } finally { removeShimFramework(fw); clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 test('E2E-1 pre-existing dirty 合法：invoke 前已有未提交 acceptance/源码改动，testing 不写 → 正常放行', async () => {
   const { root } = setupHost();
@@ -5437,6 +5674,118 @@ test('A11+A13 其余候选：反驳轮再次拒修 → 整轮指纹不再排除 
   assert(String(halt!.halt_guidance).includes('执行者拒修依据') && String(halt!.halt_guidance).includes(MUST_FIX_TEXT.slice(0, 12)),
     `停机说明须并列双方原文：${String(halt!.halt_guidance)}`);
 });
+
+const relatedNativeFailure = (): CheckResult[] => [{ id: 'testing_failure_routing_TC-001_s0', category: 'structure',
+  description: 'native executed assertion', severity: 'BLOCKER', status: 'FAIL',
+  failure_kind: 'assertion', failure_code: 'assertion_mismatch', coding_candidate: true,
+  repair_owner: 'coding', affected_files: [PRODUCT_FILE], details: 'TC-001 step0 断言仍失败' }];
+
+for (const mode of ['related-change', 'unchanged', 'notes-only', 'unrelated-source'] as const) {
+  test(`t4 真实testing→coding回退：${mode}只按原相关SHA判重复，修了仍失败不写成功`, async () => {
+    const { root } = setupHost();
+    try {
+      const probe = await runChain(root, {
+        onCoding: ({ root: r, attempt }) => {
+          if (attempt < 2) return;
+          if (mode === 'related-change') writeFile(r, PRODUCT_FILE, `changed attempt ${attempt}`);
+          if (mode === 'notes-only') writeFile(r, `doc/features/${FEATURE}/coding/notes.md`, `notes ${attempt}`);
+          if (mode === 'unrelated-source') writeFile(r, '02-Feature/Other/src/main/ets/Unrelated.ets', `unrelated ${attempt}`);
+        },
+        testingGateChecks: relatedNativeFailure,
+      });
+      const backtracks = probe.events.filter(e => e.type === 'phase_backtrack_requested');
+      assert(backtracks.length === (mode === 'related-change' ? 2 : 1), `实际回退次数：${JSON.stringify(haltsOf(probe.events))}`);
+      const first = backtracks[0] as { related_input_snapshot?: Record<string, { contentHash: string }> };
+      assert(/^[0-9a-f]{64}$/.test(first.related_input_snapshot?.[PRODUCT_FILE]?.contentHash ?? ''), '原事件真实SHA落盘');
+      assert(!Object.keys(first.related_input_snapshot ?? {}).some(p => /notes|reports|trace/.test(p)), '证据与notes不是源码进展');
+      if (mode !== 'related-change') assert(haltsOf(probe.events).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '可比未变及时停止');
+      else {
+        assert(probe.invokedPhases.filter(p => p === 'testing').length >= 2, '实际再验证发生');
+        assert(backtracks[1].backtracks_used === 2, '原回退额度仍2，不新增额度');
+      }
+      assert(runEndStatus(probe.events) === 'HALTED', '同效果失败不能写成功');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+for (const entry of ['resume', 'successor'] as const) for (const changed of [false, true]) {
+  test(`t4 真实${entry}恢复：${changed ? '相关输入已改' : '相关输入未变'}共用旧事件且不重置回退额度`, async () => {
+    const { root } = setupHost();
+    try {
+      const seed = await runChain(root, {
+        onCoding: ({ root: r, attempt }) => {
+          if (attempt === 2 && changed) writeFile(r, PRODUCT_FILE, 'actual authorized attempt before interruption');
+        },
+        testingGateChecks: relatedNativeFailure,
+        invokeResultFor: (phase, attempt) => phase === 'testing' && attempt === 2
+          ? { exitCode: 3221225786, signal: 'SIGINT', stderr: 'injected operator interruption' } : null,
+      });
+      const runId = path.basename(seed.reportDir);
+      const originals = seed.events.filter(e => e.type === 'phase_backtrack_requested');
+      assert(originals.length === 1 && seed.events.some(e => e.type === 'phase_verdict' && e.halt_reason === 'operator_interrupt'),
+        `在一次真实回退后的第二次验证中断：${JSON.stringify(seed.events.filter(e => e.type === 'phase_verdict'))}`);
+      const oldSnapshot = originals[0].related_input_snapshot;
+      if (entry === 'resume') {
+        // 沿现有resume夹具模拟十分钟后的重新接入，不跳过生产冷却，也不改原快照或预算。
+        const eventsPath = path.join(seed.reportDir, 'events.jsonl');
+        fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map(line => {
+          if (!line.trim()) return line;
+          const event = JSON.parse(line);
+          if (event.type === 'run_end') event.ts = new Date(Date.parse(event.ts) - 10 * 60 * 1000).toISOString();
+          return JSON.stringify(event);
+        }).join('\n'), 'utf8');
+      }
+      const beforeBytes = fs.readFileSync(path.join(seed.reportDir, 'events.jsonl'), 'utf8');
+      const next = await runChain(root, {
+        ...(entry === 'resume' ? { resume: runId, forceResume: true } : { supersede: [runId] }),
+        testingGateChecks: relatedNativeFailure,
+      });
+      const later = entry === 'resume' ? next.events.slice(seed.events.length) : next.events;
+      const backtracks = later.filter(e => e.type === 'phase_backtrack_requested');
+      assert(backtracks.length === (changed ? 1 : 0), `旧SHA控制实际恢复回退：${JSON.stringify(haltsOf(later))}`);
+      if (changed) assert(backtracks[0].backtracks_used === 2 && backtracks[0].backtracks_limit === 2, '祖先/同run额度继续计数，不能从1重开');
+      else assert(haltsOf(later).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '可比未变复用旧结论');
+      assert(runEndStatus(next.events) === 'HALTED', '失败复验未被写成功');
+      const sourceEvents = readEvents(seed.reportDir);
+      assert(JSON.stringify(sourceEvents.find(e => e.type === 'phase_backtrack_requested')!.related_input_snapshot) === JSON.stringify(oldSnapshot), '旧基线字节语义不改');
+      if (entry === 'successor') assert(fs.readFileSync(path.join(seed.reportDir, 'events.jsonl'), 'utf8').startsWith(beforeBytes), '不改写祖先账本');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+for (const entry of ['resume', 'successor'] as const) {
+  test(`t4 真实${entry}恢复：原历史30/30轮次与2/2回退耗尽，相关内容已改也不得启动`, async () => {
+    const { root } = setupHost();
+    try {
+      const seed = await runChain(root, {
+        onCoding: ({ root: r, attempt }) => { if (attempt > 1) writeFile(r, PRODUCT_FILE, `still failing attempt ${attempt}`); },
+        testingGateChecks: relatedNativeFailure,
+      });
+      const source = path.basename(seed.reportDir);
+      const events = readEvents(seed.reportDir);
+      assert(events.filter(e => e.type === 'phase_backtrack_requested').length === 2, '先实际执行原2次回退');
+      const observed = events.find(e => e.type === 'agent_invoke_start')!;
+      const used = events.filter(e => e.type === 'agent_invoke_start').length;
+      // 补一段已用轮次的历史夹具；恢复消费真实账本，不调用比较器或修改预算。
+      const extra = Array.from({ length: 30 - used }, (_, i) => ({ ...observed, invoke_id: `historical-spent-${i}` }));
+      const terminal = events.findIndex(e => e.type === 'run_end');
+      events.splice(terminal, 0, ...extra);
+      assert(events.filter(e => e.type === 'agent_invoke_start').length === 30, '旧窗口调用记录恰30');
+      fs.writeFileSync(path.join(seed.reportDir, 'events.jsonl'), events.map(e => JSON.stringify(e)).join('\n') + '\n');
+      backdateLastRunEnd(root, source);
+      writeFile(root, PRODUCT_FILE, 'new input after original budgets exhausted');
+      const next = await runChain(root, {
+        ...(entry === 'resume' ? { resume: source, forceResume: true } : { supersede: [source] }),
+        testingGateChecks: relatedNativeFailure,
+      });
+      assert(next.invokedPhases.length === 0 && next.exitCode !== 0, '耗尽后零实际调用，不靠新SHA重置');
+      assert(next.events.some(e => e.halt_reason === 'budget_turns'), `实际硬预算门：${JSON.stringify(next.events.filter(e => e.type === 'run_end' || e.type === 'phase_halt'))}`);
+      assert(runEndStatus(next.events) === 'HALTED', '外部旧现场不因取消单凭重复fp判据而继续');
+      const manifest = JSON.parse(fs.readFileSync(path.join(next.reportDir, 'manifest.json'), 'utf8'));
+      assert(manifest.budget.max_total_turns === 30, '原预算合同不变');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 test('A12 回放：完成后重启 / settled 与完成之间中断 / 一次拒修后 supersede —— 状态函数输出相同', async () => {
   const { root } = setupHost();

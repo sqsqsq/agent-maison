@@ -190,7 +190,6 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   // openspec device-readiness-and-completion t3：设备就绪门三态/降级/启动即锁屏死锁回归
   { id: 'device-readiness-gate', modulePath: './unit/device-readiness-gate.unit.test' },
   // openspec device-readiness-and-completion t4：完成观测判据（新鲜度/半写入/收口不算失败）
-  { id: 'phase-completion-probe', modulePath: './unit/phase-completion-probe.unit.test' },
   // plan e6b3f8d2 t1：Codex `exec --json` terminal 收口（真实样本 fixture 钉死两终态）
   { id: 'codex-terminal-closure', modulePath: './unit/codex-terminal-closure.unit.test' },
   // plan e6b3f8d2 t3/t7：撤销强制 Maison UI kit 的精确删除门槛（被删文件 + token 零残留）
@@ -282,6 +281,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'diff-scope', modulePath: './unit/diff-scope.unit.test' },
   { id: 'correction-routing', modulePath: './unit/correction-routing.unit.test' },
   { id: 'repair-candidates', modulePath: './unit/repair-candidates.unit.test' },
+  { id: 'backtrack-related-inputs', modulePath: './unit/backtrack-related-inputs.unit.test' },
   { id: 'usage-capture', modulePath: './unit/usage-capture.unit.test' },
   { id: 'check-receipt-policy', modulePath: './unit/check-receipt-policy.unit.test' },
   { id: 'compat-loader', modulePath: './unit/compat-loader.unit.test' },

@@ -191,6 +191,13 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  /** Facts admitted before this exact phase invocation; source ownership is runtime-derived. */
+  facts_context?: import('./context-facts').FactsInvocationContext;
+  /** 原回退窗口的相关输入实值；不参与候选/round身份或预算。 */
+  related_input_snapshot?: import('./goal-failure-classifier').ArtifactSnapshot;
+  round_fingerprint?: string;
+  from_phase?: string;
+  to_phase?: string;
   ts?: string;
   type?: string;
   phase?: string;

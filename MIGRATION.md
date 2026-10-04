@@ -27,6 +27,14 @@
 
 入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
 
+## 3.1.0：派生输入基线与 goal 正式收口
+
+- 当前阶段写边界内、归本阶段负责且属于当前解析目标的源码新增/修改，建议在 `context/facts.md` 的 `## phase_delta: <phase>`「路径 | 事实 | 影响」表登记；缺少精确行、只有散文或 `none` 以原 check id 的 MAJOR/WARN 披露，不阻断阶段。工程相对路径、绝对路径、反斜杠和 `./` 等价写法会归一，同名增量节会合并识别；既有阶段 manifest 的 facts 摘要口径保持。入场前已有且未调研、未修改的目标仍按原覆盖规则处理，需求、contracts、配置、不可读或越界来源及未授权源码漂移仍严格拒收。
+- 中断调用只有 start、没有 end/owned 时，后继可承接该未撤销 start 的已核 facts context，并再次核当前源码写边界与非源码依赖；旧 start 缺 context、撤销/回退或非源码变化不享受承接。无 run 的独立 Feature 阶段保留授权内源码施工行为，入口与最终 facts 检查共同核既有 source_owners/写边界，不生成假的 admission，不替换原基线 SHA。无需迁移旧 facts 或历史事件。
+- hint 仅在真实 TC/导航执行约束、步骤/等待/selector 机器语法或 reset 身份变化时更新并令旧派生过期；纯框架版本升级、说明/诊断/缓存候选变化不一律要求重派生。完整可解释的旧 schema 4 缺辅助字段继续兼容，缺真正源快照或执行语义则沿原派生出口重建。真实变化后须实际重派生并验证，不能只刷新 hint 或改时间自证。
+- 最新 coverage/lint/选中与拒绝路径/原 mtime/suggested_fix 在本轮 `script-report.json` 的 `device_test_run.structured.derive_hint`；canonical hint 保存源语义基线，残留诊断不是本轮结果。CLI stdout/独立 `--out <另一文件>` 提供当前完整辅助信息；`--out` 指向 canonical 仍按语义幂等写入并返回完整 stdout。
+- goal 执行者中间自检 PASS/open 正常；施工完成后由 runtime gate/finalizer 提交正式收口。旧 `MAISON_GOAL_GATE_HARNESS` flag 不授予正式视觉账本或设备证据写者职责。独立非 goal 阶段保留原收口入口与质量、授权、预算要求。
+
 ## 3.1.0：阶段结论与退出码同源，失败检查按保护对象处置（行为变化，plan f7045213）
 
 **先讲后果**：harness 的退出码、控制台结论、合并报告的"裁定"与 `summary.json` 的 `verdict` 现在是同一个结论。
@@ -41,7 +49,7 @@
 - **六个检查从阻断改为披露**（检查照常产出原始 FAIL，只是不再挡阶段通过）：
   - `context_exploration_searches_min`：探索记录自报的"估计搜索次数"偏低；
   - `context_exploration_subagents_used`：深度探索声明了 subagent 模式却没写用了哪些子 agent；
-  - `context_exploration_facts_schema_version`：facts 版本标签写错（链首建立阶段仍会在入口被 `capability_resolution_contract` 拦下）；
+  - `context_exploration_facts_schema_version`：facts 版本标签写错（新建 facts 必须为 1.1；旧 1.0 仅经有效来源 baseline 承接，需重建或来源失效时由 facts 专属出口回责任阶段）；
   - `ut_mock_plan_typed`：mock-plan 预设缺粗类型标注或缺 returns / throws 表达式（独立预校验 `validate:ut-artifact` 仍按原规则报错）；
   - `it_name_has_ac_or_branch_tag`：`it()` 名不以追溯标签开头，需求模式下禁止 `[REG-*]` 的限制一并解除（覆盖仍由 AC 覆盖门裁决）；
   - `schema_version_present`：catalog / glossary 的版本标签为空串。

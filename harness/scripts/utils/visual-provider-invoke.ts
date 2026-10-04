@@ -401,6 +401,7 @@ export interface VisualProviderInvokeInput {
   /** 证据落盘目录（`<report_dir>/visual-review/<invoke_id>/`）；缺省=不落盘 */
   evidenceDir?: string;
   timeoutMs?: number;
+  deadlineMs?: number;
   dryRun?: boolean;
   /**
    * **仅单测注入缝**：替换统一执行器，用来确定性地演练 timeout / terminal failure /
@@ -529,12 +530,16 @@ export async function invokeVisualProvider(
   }
 
   const before = snapshotWorkspaceDirtiness(input.projectRoot);
+  const timeoutMs = Math.min(input.timeoutMs ?? VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
+    Number.isFinite(input.deadlineMs) && input.deadlineMs! > 0 ? input.deadlineMs! - Date.now() : Infinity);
+  if (!(timeoutMs > 0)) return fail('invalid', 'provider 共享 deadline 已耗尽，未启动调用');
 
   // 生命周期全部交给既有执行器：spawn / timeout / tree-kill / terminal 仲裁 / usage 回填。
   // terminalEventParser 不显式传——由 plan.adapterName 经既有 resolveTerminalEventParser 解析。
   const result = await (input.invokeAgent ?? invokeAgentHeadless)(built.plan, input.projectRoot, {
     ...(input.dryRun ? { dryRun: true } : {}),
-    timeoutMs: input.timeoutMs ?? VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
+    timeoutMs,
+    ...(input.deadlineMs !== undefined ? { deadlineMs: input.deadlineMs } : {}),
     ...(outputLogPath ? { outputLogPath } : {}),
     // 三文件分流：agent-events.jsonl 只收纯 stdout（receipt 证据流绑定它，不绑混合人读日志）。
     toolEventCapture: 'structured_events',
@@ -690,6 +695,7 @@ export interface VisualProviderInvokeEvent {
   events_path?: string;
   /** 验读证据等级（如实披露，非门槛） */
   input_provenance: 'verified' | 'unverified';
+  usage?: AgentInvokeUsage;
 }
 
 /**
@@ -727,6 +733,7 @@ export function buildVisualProviderInvokeEvent(
     duration_ms: inv.duration_ms,
     invoke_id: inv.invoke_id,
     input_provenance: inv.input_provenance,
+    ...(inv.usage ? { usage: inv.usage } : {}),
     ...(inv.workspace_dirtied ? { workspace_dirtied: true } : {}),
     ...(inv.reason ? { reason: inv.reason } : {}),
     ...(inv.events_path ? { events_path: inv.events_path } : {}),

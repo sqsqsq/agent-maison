@@ -46,6 +46,22 @@ function decide(file: string, structured = true) {
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'Cursor canary 正文投影使用 result 信封；缺 is_error=false 不猜成功',
+    run: () => {
+      const stdout = read('canary-valid.ndjson');
+      const decideCursor = (raw: string) => resolveCanaryCacheDecision({ stdout: raw, exitCode: 0, structured_stdout: true,
+        structured_stdout_format: 'cursor_stream_json' }, FIXTURE_KEY);
+      if (decideCursor(stdout).kind !== 'valid') throw new Error('合法 Cursor result 答卷应可判卷');
+      const incomplete = stdout.split(/\r?\n/).map(line => {
+        const doc = parseEnvelopeLine(line);
+        if (!doc || doc.type !== 'result') return line;
+        delete doc.is_error;
+        return JSON.stringify(doc);
+      }).join('\n');
+      if (decideCursor(incomplete).kind !== 'invalid_answer') throw new Error('Cursor 成功须显式 is_error=false');
+    },
+  },
+  {
     name: 'envelope: valid stream-json 答卷 → 判卷通过（valid）',
     run: () => {
       const d = decide('canary-valid.ndjson');
@@ -145,8 +161,8 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'planUsesClaudeStreamJson: 与 claudeArgv 注入条件同构',
     run: () => {
       if (!planUsesClaudeStreamJson('claude', 'structured_events')) throw new Error('claude+structured 应 true');
-      if (planUsesClaudeStreamJson('claude', 'none')) throw new Error('claude+none 应 false');
-      if (planUsesClaudeStreamJson('cursor', 'structured_events')) throw new Error('cursor 应 false（无 stream-json 注入）');
+      if (!planUsesClaudeStreamJson('claude', 'none')) throw new Error('claude+none 的终态仍为 stream-json');
+      if (planUsesClaudeStreamJson('cursor', 'structured_events')) throw new Error('Cursor 使用自己的 result 方言');
     },
   },
 ];

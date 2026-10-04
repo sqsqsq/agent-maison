@@ -303,7 +303,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.strictEqual(codeagentPlan.label, 'codeagentcli -p …');
       // provenance 未声明时不得注入 stream-json（与 claude 同构）
       const bare = defaultHeadlessInvokePlan('codeagent', unattended, 'probe');
-      assert(!bare.argv.includes('stream-json'), bare.argv.join(' '));
+      assert(bare.argv.includes('stream-json'), bare.argv.join(' '));
     },
   },
   {
@@ -332,7 +332,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(!isClaudeKernelAdapter(undefined));
       assert.deepStrictEqual([...CLAUDE_KERNEL_ADAPTERS].sort(), ['claude', 'codeagent']);
       assert(planUsesClaudeStreamJson('codeagent', 'structured_events'));
-      assert(!planUsesClaudeStreamJson('codeagent', 'none'));
+      assert(planUsesClaudeStreamJson('codeagent', 'none'));
       assert(!planUsesClaudeStreamJson('codex', 'structured_events'));
     },
   },

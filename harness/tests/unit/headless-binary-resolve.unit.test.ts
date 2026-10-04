@@ -43,6 +43,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         '-p',
         '--force',
         '--trust',
+        '--output-format',
+        'stream-json',
       ]);
     },
   },
@@ -52,7 +54,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 'cursorHeadlessPlan: 恒 --force --trust（无 approval_mode 旋钮）',
     run: () => {
       const plan = cursorHeadlessPlan('x', { path: '/usr/bin/agent', kind: 'bare' });
-      assert.deepStrictEqual(plan.argv, ['/usr/bin/agent', '-p', '--force', '--trust']);
+      assert.deepStrictEqual(plan.argv, ['/usr/bin/agent', '-p', '--force', '--trust', '--output-format', 'stream-json']);
       assert.strictEqual(plan.stdin, 'x');
     },
   },

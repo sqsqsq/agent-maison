@@ -589,6 +589,22 @@ export function runAll(): UnitCaseResult[] {
     reportValidityBlocked: false,
   };
 
+  run(results, 'review 文件行号是定位信息：confirmed 候选与裸路径等价，不影响责任归属和指纹', () => {
+    const verifierReportText = verifierFresh([
+      { id: CR1.id, verdict: 'confirmed', evidence: `SelectBankCardPage.ets | ${CR1.fix}` },
+    ]);
+    const collect = (files: string) => collectReviewRepairCandidates({
+      ...fullTrust, verifierReportText,
+      reportText: reviewReport({ verdict: '不通过', rows: [{ ...CR1, files }] }),
+    });
+    const plain = collect(CR1.files);
+    assert(plain.length === 1, '裸路径须产出候选');
+    for (const file of [`${CR1.files}:42`, `${CR1.files}:42-57`, `${CR1.files.replace(/\//g, '\\')}:42-57`]) {
+      const located = collect(file);
+      assert(JSON.stringify(located) === JSON.stringify(plain), `文件定位不得丢失候选或改变指纹：${file}`);
+    }
+  });
+
   run(results, 'review 正例：有条件通过+open MAJOR+逐条 confirmed → 三条 coding 候选', () => {
     const out = collectReviewRepairCandidates({
       ...fullTrust,

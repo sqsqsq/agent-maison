@@ -423,7 +423,7 @@ function supersededRunIds(siblings: readonly SiblingRun[], requireTerminalSucces
   return out;
 }
 
-function normalizeRelatedPath(projectRoot: string, value: unknown): string | null {
+export function normalizeRelatedPath(projectRoot: string, value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   let rel = value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
   // 生产检查给的 affected_files 可能是绝对路径（如 featureFilePath 拼出的产物路径）：在工程根之内就换成工程根下的相对路径照常处理，
@@ -448,6 +448,45 @@ export function currentFileHash(projectRoot: string, rel: string): string | null
   } catch {
     return null;
   }
+}
+
+/** 现有来源读取共用；回退消费者可限定旧窗口，绝不以当前覆盖的attestation替代。 */
+export function readRecordedRelatedHashes(
+  projectRoot: string, feature: string, related: ReadonlySet<string>, events: readonly GoalRunEvent[],
+  window?: { startMs?: number; endMs: number; runId: string },
+): Map<string, string | null> {
+  const isRelated = (rel: string): boolean => related.has(rel) || [...related].some(dir => rel.startsWith(`${dir}/`));
+  const baseline = new Map<string, string | null>();
+  const attestation = loadReviewClosureAttestation(projectRoot, feature);
+  const at = Date.parse(attestation?.generated_at ?? '');
+  if (!window || (Number.isFinite(at) && at >= (window.startMs ?? -Infinity) && at <= window.endMs && attestation?.run_identity?.run_id === window.runId)) {
+    for (const entry of attestation?.inventory.files ?? []) {
+      const rel = normalizeRelatedPath(projectRoot, entry.path);
+      if (rel && isRelated(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
+    }
+  }
+  for (const event of events) {
+    if (event.type !== 'phase_write_observed') continue;
+    const ts = Date.parse(event.ts ?? '');
+    if (window && (!Number.isFinite(ts) || ts < (window.startMs ?? -Infinity) || ts > window.endMs)) continue;
+    const { observations, owned } = event as GoalRunEvent & { observations?: unknown; owned?: unknown };
+    const priorOwned = (Array.isArray(owned) ? owned : []).filter(raw => {
+      if (event.phase !== 'coding' || !raw || typeof raw !== 'object') return true;
+      const roles = (raw as { roles?: unknown }).roles;
+      if (!Array.isArray(roles) || !roles.length || !roles.every(role => role && typeof role === 'object'
+        && ['source', 'artifact', 'phase_workspace'].includes(role.kind) && typeof role.source === 'string')) return true;
+      return !roles.some(role => role.kind === 'source') || roles.some(role => role.kind === 'artifact');
+    });
+    for (const raw of [...priorOwned, ...(Array.isArray(observations) ? observations : [])]) {
+      if (!raw || typeof raw !== 'object') continue;
+      const observation = raw as { path?: unknown; post_sha256?: unknown };
+      const rel = normalizeRelatedPath(projectRoot, observation.path);
+      if (!rel || !isRelated(rel)) continue;
+      if (observation.post_sha256 === null) baseline.set(rel, null);
+      else if (typeof observation.post_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(observation.post_sha256)) baseline.set(rel, observation.post_sha256.toLowerCase());
+    }
+  }
+  return baseline;
 }
 
 /** Prove a repair with existing terminal summary + an already-recorded source hash. */
@@ -487,29 +526,7 @@ function findChangedRelatedRepair(projectRoot: string, prior: SiblingRun): strin
   if (!related.size) return null;
   // plan 31063a73 §3.1：目录条目（如 UT blocker 的模块 ohosTest 源码目录）筛选基线里位于其下的后代文件，再逐文件比哈希；
   // 不新增目录基线——没有可信基线的文件照旧不能证明修复。
-  const isRelated = (rel: string): boolean => related.has(rel) || [...related].some(dir => rel.startsWith(`${dir}/`));
-
-  const baseline = new Map<string, string | null>();
-  const attestation = loadReviewClosureAttestation(projectRoot, prior.manifest.feature);
-  for (const entry of attestation?.inventory.files ?? []) {
-    const rel = normalizeRelatedPath(projectRoot, entry.path);
-    if (rel && isRelated(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
-  }
-  for (const event of prior.events) {
-    if (event.type !== 'phase_write_observed') continue;
-    // 最终评审返修 R1：阶段写自己正式产物的写后哈希记在 owned（runtime 同一事件），与 observations 一样作基线
-    const { observations, owned } = event as GoalRunEvent & { observations?: unknown; owned?: unknown };
-    for (const raw of [...(Array.isArray(owned) ? owned : []), ...(Array.isArray(observations) ? observations : [])]) {
-      if (!raw || typeof raw !== 'object') continue;
-      const observation = raw as { path?: unknown; post_sha256?: unknown };
-      const rel = normalizeRelatedPath(projectRoot, observation.path);
-      if (!rel || !isRelated(rel)) continue;
-      if (observation.post_sha256 === null) baseline.set(rel, null);
-      else if (typeof observation.post_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(observation.post_sha256)) {
-        baseline.set(rel, observation.post_sha256.toLowerCase());
-      }
-    }
-  }
+  const baseline = readRecordedRelatedHashes(projectRoot, prior.manifest.feature, related, prior.events);
   for (const rel of [...baseline.keys()].sort()) {
     if (currentFileHash(projectRoot, rel) !== baseline.get(rel)) return rel;
   }

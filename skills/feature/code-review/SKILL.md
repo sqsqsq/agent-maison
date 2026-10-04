@@ -102,11 +102,16 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 ## 阶段闭环判定（全局入口 §5.1）
 
+负面审查的逐条验证须覆盖每个未关闭 BLOCKER/MAJOR。缺行、重复冲突、非法 verdict 或 evidence 与当前行不符时，
+按 `readiness_signals` 中 `id=verifier_repair_diagnosis` 的精确问题修报告：只有本轮实际签发了 request 才投给该 verifier。
+合法 refuted/unclear 保留原判断，不因为零候选强制改成 confirmed。carried/disabled 或混合资格不足时不补造 request，
+先修当前阶段能合法修的资格原因；用户禁用配置不自动更改。拒修在案的旧 subject 无法重确认，真实 FAIL/open 不由人签放行。
+
 **closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
 1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 coding → code-review。
 
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落，不自行推导或补写跨阶段建议；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
 
@@ -136,10 +141,6 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 | 审查报告模板 | [templates/review-report-template.md](templates/review-report-template.md) |
 | 审查检查清单 | `` `profile-skill-asset:code-review/review_checklist` `` |
 | Trace | `<features_dir>/<feature>/review/reports/<timestamp>/<model>-review/trace.json`（phase=review）+ 同目录 `gap-notes.md` |
-
-## 收尾
-
-阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
 
 ## 组件资产审查（若启用）
 

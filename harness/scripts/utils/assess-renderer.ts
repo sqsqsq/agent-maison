@@ -96,7 +96,7 @@ export function assessAndRenderNextStep(options: AssessRenderOptions): AssessRes
     const runId = options.runId ?? (process.env.MAISON_GOAL_RUN_ID?.trim() || undefined);
     let goalEnd = options.goalEnd;
     let minimumAssurance = options.minimumAssurance;
-    if (runId && (options.mode === 'goal_mode' || process.env.MAISON_GOAL_GATE_HARNESS === '1') && (!goalEnd || !minimumAssurance)) {
+    if (runId && (!goalEnd || !minimumAssurance)) {
       const manifest = loadGoalManifestFromRun(options.projectRoot, runId, {
         feature: options.feature,
       });

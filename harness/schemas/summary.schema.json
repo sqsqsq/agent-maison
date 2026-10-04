@@ -154,7 +154,23 @@
             "enum": ["signal@1"],
             "description": "adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记——仅 testing 结构化视觉信号候选携带（identity = sha256(computeDefectFingerprint(screen, defect))）；无字段 = legacy check-domain 候选（可诊断/路由，不入累计 one-shot 收敛与 no-op 判定）。可选、向后兼容。"
           },
-          "source_phase": { "type": "string", "minLength": 1 }
+          "source_phase": { "type": "string", "minLength": 1 },
+          "evidence_refs": {
+            "type": "array",
+            "description": "只读 native StepResult 交接定位，不参与修复目标、指纹或进展判定；旧候选可缺席。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trace_path", "case_id", "step_index"],
+              "properties": {
+                "trace_path": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$" },
+                "case_id": { "type": "string", "minLength": 1 },
+                "step_index": { "type": "integer", "minimum": 0 },
+                "derived_plan_path": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$" },
+                "artifact_paths": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$" } }
+              }
+            }
+          }
         }
       }
     },

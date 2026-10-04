@@ -34,16 +34,20 @@ export function parseEnvelopeLine(line: string): Record<string, unknown> | null 
  * 白名单：type=result && subtype='success' && is_error!==true && typeof result==='string'。
  * 多个 result → 最后一个合法者胜出；无合法终态 → null（fail-closed 交调用方）。
  */
-export function extractClaudeFinalResultText(raw: string): string | null {
+export function classifyResultEnvelope(record: Record<string, unknown>, requireErrorFalse = false): 'completed' | 'failed' | 'other' {
+  if (record.type !== 'result') return 'other';
+  if (record.is_error === true) return 'failed';
+  return record.subtype === 'success' && typeof record.result === 'string'
+    && (!requireErrorFalse || record.is_error === false) ? 'completed' : 'other';
+}
+
+export function extractClaudeFinalResultText(raw: string, requireErrorFalse = false): string | null {
   let last: string | null = null;
   for (const line of raw.split(/\r?\n/)) {
     const obj = parseEnvelopeLine(line);
     if (!obj) continue;
-    if (obj.type !== 'result') continue;
-    if (obj.subtype !== 'success') continue;
-    if (obj.is_error === true) continue;
-    if (typeof obj.result !== 'string') continue;
-    last = obj.result;
+    if (classifyResultEnvelope(obj, requireErrorFalse) !== 'completed') continue;
+    last = obj.result as string;
   }
   return last;
 }
@@ -102,8 +106,8 @@ export function collectClaudeImageReadPaths(eventsJsonl: string): string[] {
 
 /**
  * 该 adapter 的本次 invoke stdout 是否为 claude stream-json 信封流。
- * 与 agent-invoke.claudeArgv 的注入条件严格同构（adapter=claude 且声明 structured_events
- * 才加 --output-format stream-json）——判卷侧据此决定是否先归一投影。
+ * 与 agent-invoke.claudeArgv 同源：Claude/CodeAgent 内核恒使用 stream-json，
+ * 与工具审计能力无关；判卷侧据此决定是否先归一投影。
  */
 export function planUsesClaudeStreamJson(
   adapterName: string,
@@ -111,5 +115,5 @@ export function planUsesClaudeStreamJson(
 ): boolean {
   // 家族谓词（plan c7a9e2f4）：codeagent=Claude Code 内核 fork，stream-json 信封
   // 逐字段同构（2026-07-29 宿主实证），与 claudeArgv 注入条件保持同构。
-  return isClaudeKernelAdapter(adapterName) && toolEventProvenance === 'structured_events';
+  return isClaudeKernelAdapter(adapterName);
 }

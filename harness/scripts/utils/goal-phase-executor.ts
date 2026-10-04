@@ -17,6 +17,7 @@ export interface PhaseExecutionContext {
   readonly reportDir: string;
   readonly adapter: string;
   readonly adapterModel?: string;
+  readonly factsContext?: import('./context-facts').FactsInvocationContext;
   /** Runtime-built phase instruction. Executors transport it; they do not interpret policy. */
   readonly instruction?: string;
   readonly runtimeFacts: Readonly<{
@@ -70,6 +71,7 @@ function deepFreezeContext(input: PhaseExecutionContext): PhaseExecutionContext 
     owner: Object.freeze({ ...input.owner }),
     runtimeFacts: Object.freeze({ ...input.runtimeFacts }),
     childEnv: Object.freeze(childEnv),
+    ...(input.factsContext ? { factsContext: Object.freeze(structuredClone(input.factsContext)) } : {}),
   };
   return Object.freeze(context);
 }

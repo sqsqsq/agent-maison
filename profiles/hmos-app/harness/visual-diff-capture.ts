@@ -598,11 +598,11 @@ export function mergeCapturedScreenEntry(
  *   | dump / 截图 / 解析失败                      | false |
  *   | 缺屏中任一为 probe_failed（锁屏/桌面/系统态或 dump 能力缺失） | false（整轮） |
  *   | 缺屏无对应 screenEvidence（导航失败/采集失败等环境阻断）      | false（整轮） |
- *   | 所有 P0 缺屏均确证 mismatched（应用页面树在场但非目标页）      | true（进 missing_screen） |
+ *   | 所有 P0 缺屏均确证 mismatched（应用页面树在场但identity规则未匹配）      | true（进 missing_screen） |
  *   | 当前截图成功且存在视觉缺陷                   | true（既有 defects 通道） |
  *
  * t3 收口（2026-08-13 宿主校准）：mismatched 现为**确定性**内容正证据——身份不中 +
- * 页面组件前缀在场，即应用页面树在场但渲染了非目标页；锁屏/桌面系统态 dump
+ * 页面组件前缀在场，只证明应用页面树在场，仍须对照目标页规则；锁屏/桌面系统态 dump
  * （含仅宿主 bundle 图标的桌面 dump）前缀为 0，落入 probe_failed。本判据随 t3 已验证。
  */
 export interface VisualFuseEligibility {
@@ -624,7 +624,7 @@ export const CAPTURE_NOT_RUN_ELIGIBILITY: VisualFuseEligibility = {
  * 按上表裁决本轮资格（纯函数；真实生产链由 captureVisualDiff 调用）。
  *
  * 判据（t3/t4 收口，2026-08-13）：**只有被 identity gate 确证为 mismatched 的缺屏**
- * （身份不中 + dump 含页面组件前缀 = 应用页面树在场但渲染了错页）才具备熔断资格——
+ * （身份不中 + dump 含页面组件前缀 = 应用页面树在场但identity规则未匹配）才具备熔断资格——
  * 设备活性由 dump 证据自身携带，属内容问题，可进 missing_screen 指纹。
  * 其余缺屏一律整轮 ineligible：probe_failed（锁屏/桌面/系统态、dump 能力缺失、
  * dump 失败/不可解析）与无 screenEvidence 的缺屏（导航失败、golden 失败、截图失败等
@@ -647,7 +647,7 @@ export function resolveVisualFuseEligibility(input: {
       eligible: true,
       actionableMissingIds: failures,
       reason:
-        `${failures.length} 个 P0 缺屏均经 identity gate 确证为应用页面树在场但非目标页（mismatched）` +
+        `${failures.length} 个 P0 缺屏的应用页面树在场，但当前 identity 规则未匹配（mismatched；须结合本页稳定锚点与其它页特征诊断）` +
         `——内容可行动，进 missing_screen 指纹`,
     };
   }
@@ -932,7 +932,7 @@ function runScreenIdentityGate(
     // 231 节点 dump 中应用页面组件 id 均为 0 命中——系统态拿不到应用页面 id；桌面 dump
     // 虽出现 `com.example.simulatedwallet`（AppIcon 图标 id），但属**宿主 bundle 命中**
     // 而非声明的页面组件 id，不会被当作所有权证据。
-    // 结论：有已确认 id + 身份不中 ⇒ 应用页面树在场但非目标页（mismatched，确定性）；
+    // 结论：有已确认 id只证明应用树在场；身份不中记mismatched，不推导必然是其它页。
     //       无任何已确认 id ⇒ probe_failed（锁屏/桌面/系统态，页面一无所知）。
     //
     // 曾试图把 `none_of` 命中也当所有权证明（为纯文本锚工程兜底）——**已证伪**：
@@ -943,14 +943,14 @@ function runScreenIdentityGate(
     // 记法遵循 openspec `visual-diff` 契约：身份规则不通过一律记 `screen_identity_mismatch`
     // （证据图归档 _mismatch/、正式目录零写入、该屏按缺证据处理）。
     const cause = appRendered
-      ? 'dump 含已声明屏的正向 identity id（应用页面树在场）但非目标页'
+      ? 'dump 含已声明屏的正向 identity id，证明应用页面树在场；当前 identity 规则未匹配，不能据此断言必然是其它页。请对照本页稳定 root/route/title 与其它页特征；若把验收按钮放入 all_of，由 testing 修正原 nav 后重新判页，不得删失败成员自动放行或隐藏键盘掩盖内容缺陷'
       : 'dump 无任何已声明 identity id（锁屏/桌面/系统态，或工程只声明了 text/route）';
     return {
       ok: false,
       status: appRendered ? 'mismatched' : 'probe_failed',
       detail:
         `screen_identity_mismatch — ${ev.detail}（${cause}）` +
-        `（证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
+        `（原 identity=${JSON.stringify(identity)}；dump=_identity/layout-${slug}.json；证据图 _mismatch/shot-${slug}.png；正式目录零写入）`,
     };
   }
   return { ok: true, status: 'matched' };
@@ -1220,7 +1220,7 @@ export function captureVisualDiff(opts: VisualDiffCaptureOptions): VisualDiffCap
       p0CaptureFailures.push(screen.id);
       if (idGate.status !== 'matched') screenEvidence.set(screen.id, idGate.status);
       // t3（plan f3a8c6d2）：**确定性 mismatched 才瞬时失效旧裁决**——identity gate
-      // 已确证"应用页面树在场但渲染了非目标页"（页面组件前缀 + 锚缺失），该屏旧条目
+      // 已确证"应用页面树在场但identity规则未匹配"（页面组件前缀 + 锚缺失），该屏旧条目
       // （score/verdict，含 0.997 型错页高分）不得继续被消费；merge 时按
       // invalidateScreenIds 剔除。probe_failed（锁屏/桌面/系统态、dump 能力缺失、
       // dump 失败/不可解析）**绝不删除**——证据不足时旧条目及 inert legacy 字段原样保留；

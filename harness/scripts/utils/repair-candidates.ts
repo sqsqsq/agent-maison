@@ -32,6 +32,15 @@ import { isBlockingCheck, resultBasisOwner } from './check-disposition';
 /** 可产回退候选的责任类别（verification 无回退语义） */
 export type RepairOwnerCategory = Exclude<CorrectionCategory, 'verification'>;
 
+/** 只读交接定位，不参与归属、指纹或修复进展；原 StepResult 仍是结果真源。 */
+export interface RepairEvidenceRef {
+  trace_path: string;
+  case_id: string;
+  step_index: number;
+  derived_plan_path?: string;
+  artifact_paths?: string[];
+}
+
 export interface RepairCandidate {
   /** 缺陷编号（review 表 ID 列，如 CR-001）或机器 check id */
   id: string;
@@ -45,6 +54,7 @@ export interface RepairCandidate {
   item_fingerprint: string;
   /** 生产阶段（审计与注入定位；不参与归属判定） */
   source_phase: string;
+  evidence_refs?: RepairEvidenceRef[];
   /**
    * adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记。
    * 仅 testing 视觉信号候选携带 `'signal@1'`（identity = sha256(computeDefectFingerprint)）；
@@ -64,6 +74,12 @@ function sha256Hex(text: string): string {
 
 function normalizeFiles(files: readonly string[]): string[] {
   return [...new Set(files.map(f => f.trim().replace(/\\/g, '/')).filter(Boolean))].sort();
+}
+
+/** review 定位中的行号不属于文件身份；历史别名回放与当前问题表共用。 */
+function normalizeReviewFiles(files: readonly string[]): string[] {
+  return normalizeFiles(files.map(file => file.replace(/`/g, '').trim().replace(/:\d+(?:-\d+)?$/, ''))
+    .filter(file => file && file !== '-'));
 }
 
 function normalizeSummary(text: string): string {
@@ -126,6 +142,8 @@ export interface IssueVerificationEntry {
    * 缺失=旧格式=不采信（fail-closed），不新增 receipt/key/registry/ledger。
    */
   evidence?: string;
+  /** 非法原始 verdict 不等同于合法 unclear，仅供同源诊断。 */
+  invalid_reason?: string;
 }
 
 const ISSUE_FENCE_RE = new RegExp(
@@ -174,6 +192,7 @@ export function parseIssueVerificationBlock(text: string): {
       issue: issueMatch[1].trim(),
       verdict: raw === 'confirmed' || raw === 'refuted' ? raw : 'unclear',
       ...(evidence ? { evidence } : {}),
+      ...(['confirmed', 'refuted', 'unclear'].includes(raw) ? {} : { invalid_reason: `非法 verdict=${raw}` }),
     });
   }
   if (entries.length === 0) return { ok: false, entries: [], reason: '逐条验证块无合法条目' };
@@ -198,6 +217,8 @@ export interface ReviewCandidateInput {
    * 与 verifierSubjectCurrent=false 合取时该行不成立——沿用的历史评审没看过拒修依据。
    */
   declinedFingerprints?: ReadonlySet<string>;
+  /** 历史原料不全时只要求当前审查，不据此宣称指纹等价。来源仍是共享拒修回放。 */
+  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
   /** verifier 正文是否属于本轮签发的 subject（false = 沿用历史 subject）；缺省视为 true */
   verifierSubjectCurrent?: boolean;
 }
@@ -228,10 +249,9 @@ function parseIssueRows(reportText: string): IssueRow[] {
     id: (row[iId] ?? '').trim(),
     severity: (row[iSev] ?? '').trim(),
     state: iState >= 0 ? (row[iState] ?? '').trim() : '',
-    files: (row[iFiles] ?? '')
+    files: normalizeReviewFiles((row[iFiles] ?? '')
       .split(/[,，;；\s]+/)
-      .map(f => f.replace(/`/g, '').trim())
-      .filter(f => f.length > 0 && f !== '-'),
+      .filter(Boolean)),
     summary: normalizeSummary(
       (iFix >= 0 ? row[iFix] : undefined) || (iDesc >= 0 ? row[iDesc] : undefined) || '',
     ),
@@ -268,6 +288,39 @@ function isVerificationEvidenceCurrent(
   return ev.includes(current);
 }
 
+function openReviewIssues(reportText: string): IssueRow[] {
+  return parseIssueRows(reportText).filter(row => (row.severity === 'BLOCKER' || row.severity === 'MAJOR')
+    && !/已关闭|已修复|closed|fixed/i.test(row.state));
+}
+
+export interface ReviewDiagnosisContext {
+  reportText: string;
+  declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
+  verifierSubjectCurrent?: boolean;
+}
+
+/** 候选生产与失败诊断同一判据；合法 refuted/unclear 不因 verdict 本身被重投。 */
+function reviewIssueDiagnosis(
+  row: IssueRow,
+  entries: readonly IssueVerificationEntry[],
+  context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent'>,
+): string | null {
+  const matches = entries.filter(entry => entry.issue === row.id);
+  if (matches.length === 0) return `${row.id}：缺逐条验证条目`;
+  if (matches.length !== 1) return `${row.id}：逐条验证条目重复/冲突`;
+  const verified = matches[0];
+  if (verified.invalid_reason) return `${row.id}：${verified.invalid_reason}`;
+  if (!verified.evidence?.trim()) return `${row.id}：缺 evidence 绑定`;
+  if (!isVerificationEvidenceCurrent(verified.evidence, row)) return `${row.id}：evidence 与当前文件/问题摘要不一致`;
+  if (context.verifierSubjectCurrent === false
+    && (context.declinedFingerprints?.has(itemFingerprintOf(row.id, row.files, row.summary))
+      || context.declinedIssues?.some(issue => issue.id === row.id && normalizeSummary(issue.summary) === row.summary))) {
+    return `${row.id}：拒修在案，沿用的旧 subject 无法作当前逐条确认`;
+  }
+  return null;
+}
+
 /**
  * review 侧候选组装（信任合取，缺一不产）：
  * · 结论 ∈ {有条件通过, 不通过}（负面裁决两分支都覆盖）；
@@ -284,24 +337,14 @@ export function collectReviewRepairCandidates(input: ReviewCandidateInput): Repa
   if (verdict !== '有条件通过' && verdict !== '不通过') return [];
   const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
   if (!verification.ok) return [];
-  const confirmed = new Map(
-    verification.entries.filter(e => e.verdict === 'confirmed').map(e => [e.issue, e]),
-  );
   const out: RepairCandidate[] = [];
-  for (const row of parseIssueRows(input.reportText)) {
-    if (row.severity !== 'BLOCKER' && row.severity !== 'MAJOR') continue;
-    if (/已关闭|已修复|closed|fixed/i.test(row.state)) continue;
-    const verified = confirmed.get(row.id); // 未验证/refuted/unclear 一律留在 review
-    if (!verified) continue;
-    // 证据新鲜度（codex 冻结项⑥）：验证条目须绑定**当前**该 CR 的内容——同 ID 复用但
-    // 内容已变（上一轮 verifier 产物残留）时不采信，留在 review 重新验证。
-    if (!isVerificationEvidenceCurrent(verified.evidence, row)) continue;
+  for (const row of openReviewIssues(input.reportText)) {
+    if (reviewIssueDiagnosis(row, verification.entries, input)) continue;
+    if (verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'confirmed') continue;
     const category = deriveCategoryFromFiles(row.files);
     if (category === null) continue; // 归属推导不出——宁缺毋滥
     const files = normalizeFiles(row.files);
     const itemFingerprint = itemFingerprintOf(row.id, files, row.summary);
-    // §4.5：拒修在案的候选只能由当前 subject 的 verifier 证据确认
-    if (input.verifierSubjectCurrent === false && input.declinedFingerprints?.has(itemFingerprint)) continue;
     out.push({
       id: row.id,
       category,
@@ -462,6 +505,7 @@ export function parseVerifierCheckStatus(
 export function findUnreadableDiagnosisChecks(
   phase: string,
   verifierReportText: string | null,
+  review?: ReviewDiagnosisContext,
 ): string[] {
   if (!verifierReportText || !verifierReportText.trim()) return [];
   if (phase === 'ut') {
@@ -470,7 +514,10 @@ export function findUnreadableDiagnosisChecks(
     );
   }
   if (phase === 'review') {
-    return parseIssueVerificationBlock(verifierReportText).ok ? [] : [ISSUE_VERIFICATION_FENCE];
+    const verification = parseIssueVerificationBlock(verifierReportText);
+    if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
+    return review ? openReviewIssues(review.reportText)
+      .flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, review); return reason ? [reason] : []; }) : [];
   }
   return [];
 }
@@ -492,6 +539,7 @@ export interface PhaseCandidateInput {
   conditionalReceiptValid?: boolean;
   /** §4.5：见 ReviewCandidateInput 同名字段 */
   declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
   verifierSubjectCurrent?: boolean;
   /** 本轮 checks（机器 check id 归属的生产点消费） */
   checks: ReadonlyArray<{
@@ -505,6 +553,7 @@ export interface PhaseCandidateInput {
     repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
     coding_candidate?: boolean;
     affected_files?: readonly string[];
+    structured?: unknown;
   }>;
 }
 
@@ -529,6 +578,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸
       reportValidityBlocked: input.reportValidity !== 'PASS',
       declinedFingerprints: input.declinedFingerprints,
+      declinedIssues: input.declinedIssues,
       verifierSubjectCurrent: input.verifierSubjectCurrent,
     }));
   }
@@ -618,6 +668,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       const summary = normalizeSummary(
         failure.details ?? '已执行 StepResult assertion_mismatch——默认回 coding/product 修复',
       );
+      const ref = (failure.structured as { repair_evidence?: unknown } | null)?.repair_evidence;
       out.push({
         id: failure.id,
         category: 'coding',
@@ -625,6 +676,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
         summary,
         item_fingerprint: itemFingerprintOf(failure.id, files, summary),
         source_phase: 'testing',
+        ...(ref && validateRepairEvidenceRef(ref).length === 0 ? { evidence_refs: [ref as RepairEvidenceRef] } : {}),
       });
     }
   }
@@ -669,6 +721,7 @@ export interface RepairCandidateCheckInput {
   repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
   coding_candidate?: boolean;
   affected_files?: string[];
+  structured?: unknown;
 }
 
 export interface SummaryRepairCandidatesInput {
@@ -683,6 +736,7 @@ export interface SummaryRepairCandidatesInput {
   parseClassificationFromDetails?: (details: string) => string | undefined;
   /** §4.5：见 ReviewCandidateInput 同名字段 */
   declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
   verifierSubjectCurrent?: boolean;
 }
 
@@ -700,6 +754,7 @@ export function buildSummaryRepairCandidates(
     verifierReportText: input.verifierReportText,
     reportValidity: input.reportValidity,
     declinedFingerprints: input.declinedFingerprints,
+    declinedIssues: input.declinedIssues,
     verifierSubjectCurrent: input.verifierSubjectCurrent,
     checks: input.checks.map((c) => ({
       id: c.id,
@@ -714,15 +769,23 @@ export function buildSummaryRepairCandidates(
       repair_owner: c.repair_owner,
       coding_candidate: c.coding_candidate,
       affected_files: c.affected_files,
+      structured: c.structured,
     })),
   });
 }
 
-/**
- * 回退交接上下文的事件回放恢复**唯一实现**（goal-runner resume 与测试共用）：
- * 每条 `phase_backtrack_requested` 都**无条件覆盖**——非 repair 回退（无 candidates）
- * 自动清空，旧候选不泄漏到后续 prompt（codex 冻结项④）。
- */
+/** runtime 的有界候选事件投影，证据与原身份同时保留。 */
+export function serializeBacktrackRepairCandidate(candidate: RepairCandidate): RepairCandidate {
+  return {
+    id: candidate.id, category: candidate.category, files: candidate.files.slice(0, 10),
+    summary: candidate.summary.length > 400 ? `${candidate.summary.slice(0, 400)}…` : candidate.summary,
+    item_fingerprint: candidate.item_fingerprint, source_phase: candidate.source_phase,
+    ...(candidate.identity_schema ? { identity_schema: candidate.identity_schema } : {}),
+    ...(candidate.evidence_refs ? { evidence_refs: candidate.evidence_refs } : {}),
+  };
+}
+
+/** 最后一条回退覆盖原候选；非 repair 回退自动清空，旧证据不泄漏到后续 prompt。 */
 export function restoreBacktrackCandidatesFromEvents(
   events: ReadonlyArray<{ type?: string; candidates?: unknown }>,
 ): RepairCandidate[] {
@@ -792,6 +855,7 @@ export function resolveRepairDeclineState(input: {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
   const rounds: Array<RepairDeclineRound & { end: number; candidates: Array<{ fp: string; id: string; summary: string; owner: string }> }> = [];
+  const canonicalFingerprints = new Map<string, string>();
   for (const run of input.runs) {
     const bts = run.events.filter(e => e.type === 'phase_backtrack_requested' && typeof e.ts === 'string');
     // 窗口上界：同 run 下一条回修事件；没有时取 resolveEffectiveRunEnd（没被其后 run_start/resume 取代的
@@ -806,7 +870,16 @@ export function resolveRepairDeclineState(input: {
       const candidates = (Array.isArray(e.candidates) ? e.candidates : [])
         .map(c => c as Record<string, unknown>)
         .filter(c => c && typeof c.item_fingerprint === 'string')
-        .map(c => ({ fp: String(c.item_fingerprint), id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, phases) }))
+        .map(c => {
+          const fp = String(c.item_fingerprint);
+          // 只由原事件完整身份原料证明别名。截断/缺字段不能倒推旧 fp，native 原身份不变。
+          if (c.source_phase === 'review' && typeof c.id === 'string' && typeof c.summary === 'string'
+            && Array.isArray(c.files) && c.files.every(file => typeof file === 'string')
+            && itemFingerprintOf(c.id, c.files, c.summary) === fp) {
+            canonicalFingerprints.set(fp, itemFingerprintOf(c.id, normalizeReviewFiles(c.files), c.summary));
+          }
+          return { fp, id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, phases) };
+        })
         .filter((c): c is { fp: string; id: string; summary: string; owner: string } => c.owner !== null);
       const next = bts[i + 1]?.ts;
       rounds.push({ run_id: run.run_id, ts: e.ts!, end: next ? Date.parse(next) : runEnded, candidates });
@@ -816,19 +889,29 @@ export function resolveRepairDeclineState(input: {
   const out = new Map<string, RepairDeclineState>();
   for (const round of rounds) {
     const start = Date.parse(round.ts);
-    for (const c of round.candidates) {
+    const candidates = new Map<string, typeof round.candidates[number] & { originalFps: Set<string> }>();
+    for (const candidate of round.candidates) {
+      const fp = canonicalFingerprints.get(candidate.fp) ?? candidate.fp;
+      const key = `${candidate.owner}:${fp}`;
+      const grouped = candidates.get(key);
+      if (grouped) grouped.originalFps.add(candidate.fp);
+      else candidates.set(key, { ...candidate, fp, originalFps: new Set([candidate.fp]) });
+    }
+    for (const c of candidates.values()) {
       const lines = input.ledgers[c.owner] ?? [];
       let st = out.get(c.fp);
       if (!st) {
         st = { id: c.id, summary: c.summary, declined_rounds: 0, rebuttal_used: false, basis: null, first_declined_round: null };
         out.set(c.fp, st);
       }
+      for (const fp of c.originalFps) out.set(fp, st);
       if (st.declined_rounds > 0) st.rebuttal_used = true;
       st.id = c.id;
       st.summary = c.summary;
       let latest: { text: string; at: number } | null = null;
       for (const line of lines) {
-        if (line.gate_id !== `${REPAIR_DECLINE_GATE_PREFIX}${c.fp}` || line.run_id !== round.run_id) continue;
+        if (!c.originalFps.has(line.gate_id.slice(REPAIR_DECLINE_GATE_PREFIX.length))
+          || !line.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) || line.run_id !== round.run_id) continue;
         const at = Date.parse(line.ts);
         if (!(at >= start && at < round.end)) continue;
         const text = verifiedDeclineBasis(line.decision, input.requirementText);
@@ -1024,6 +1107,38 @@ export function resolveInvalidatablePhases(input: {
 
 const OWNER_CATEGORIES: ReadonlySet<string> = new Set(['spec', 'plan', 'coding']);
 
+function evidencePathValid(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0 && !/^[\\/]|^[A-Za-z]:|\\|\0/.test(value)
+    && !value.split('/').includes('..');
+}
+
+function validateRepairEvidenceRef(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ['证据引用非对象'];
+  const ref = value as Record<string, unknown>;
+  const errors: string[] = [];
+  if (Object.keys(ref).some(key => !['trace_path', 'case_id', 'step_index', 'derived_plan_path', 'artifact_paths'].includes(key))) errors.push('证据引用含未知字段');
+  if (!evidencePathValid(ref.trace_path)) errors.push('trace_path 须为工程相对路径');
+  if (typeof ref.case_id !== 'string' || !ref.case_id.trim()) errors.push('case_id 缺失/空');
+  if (!Number.isInteger(ref.step_index) || Number(ref.step_index) < 0) errors.push('step_index 非非负整数');
+  if (ref.derived_plan_path !== undefined && !evidencePathValid(ref.derived_plan_path)) errors.push('derived_plan_path 须为工程相对路径');
+  if (ref.artifact_paths !== undefined && (!Array.isArray(ref.artifact_paths) || !ref.artifact_paths.every(evidencePathValid))) errors.push('artifact_paths 须为工程相对路径数组');
+  return errors;
+}
+
+/** executor prompt 的证据段；修复目标仍只来自 candidate.files。 */
+export function formatRepairEvidenceRefs(candidate: Pick<RepairCandidate, 'evidence_refs' | 'files'>): string[] {
+  const refs = Array.isArray(candidate.evidence_refs)
+    ? candidate.evidence_refs.filter(ref => validateRepairEvidenceRef(ref).length === 0) : [];
+  if (refs.length === 0) return [];
+  return [
+    ...refs.map(ref => `  只读证据：${ref.trace_path} → case=${ref.case_id} step=${ref.step_index}`
+      + (ref.derived_plan_path ? `；派生计划=${ref.derived_plan_path}` : '')
+      + (ref.artifact_paths?.length ? `；失败边界=${ref.artifact_paths.join('、')}` : '')),
+    '  读取原 StepResult 的 selector request/resolution、outcome 与 diagnostic；证据路径不是修复目标或范围授权。',
+    ...(candidate.files.length === 0 ? ['  产品源码尚未机器定位；在当前已授权范围内调查，不能把 trace/截图当作源码修改。'] : []),
+  ];
+}
+
 export function validateRepairCandidatesShape(value: unknown): string[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) return ['repair_candidates 非数组'];
@@ -1036,6 +1151,11 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
       errors.push(`repair_candidates[${i}].category 非法（${String(r.category)}）`);
     }
     if (!Array.isArray(r.files)) errors.push(`repair_candidates[${i}].files 非数组`);
+    if (r.evidence_refs !== undefined) {
+      if (!Array.isArray(r.evidence_refs)) errors.push(`repair_candidates[${i}].evidence_refs 非数组`);
+      else r.evidence_refs.forEach((ref, index) => errors.push(...validateRepairEvidenceRef(ref)
+        .map(error => `repair_candidates[${i}].evidence_refs[${index}] ${error}`)));
+    }
     if (typeof r.item_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(r.item_fingerprint)) {
       errors.push(`repair_candidates[${i}].item_fingerprint 非 sha256`);
     }

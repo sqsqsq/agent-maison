@@ -289,15 +289,15 @@ const cases: Array<{ name: string; run: () => void }> = [
       for (const knowledgeKey of ['allowed_step_roots', 'step_shape_catalog', 'canonical_format', 'hylyre_planned_step_fields_ref']) {
         assert(knowledgeKey in base, `基座应含知识键：${knowledgeKey}`);
       }
-      // 两入口同源：check-testing 与 CLI 都必须经 buildStandardHylyreDerivePayloadBase 组装。
+      // 两入口通过同一个 canonical builder 消费知识与复位身份。
       const fs2 = require('fs') as typeof import('fs');
       const path2 = require('path') as typeof import('path');
       for (const rel of ['harness/scripts/check-testing.ts', 'harness/scripts/derive-hylyre-plan-hint.ts']) {
         const src = fs2.readFileSync(path2.join(FRAMEWORK_ROOT, rel), 'utf-8');
-        assert(src.includes('buildStandardHylyreDerivePayloadBase('), `${rel} 应消费统一基座`);
-        // plan b3d7e5a1 T4：两入口的复位身份同源——都经 resolveHylyreResetIdentity 注入，不各自拼 bundle/page_name。
-        assert(src.includes('resolveHylyreResetIdentity('), `${rel} 应经 resolveHylyreResetIdentity 注入 reset_preamble 身份`);
+        assert(src.includes('buildCanonicalDeriveHintPayload('), `${rel} 应消费统一 canonical builder`);
       }
+      const shared = fs2.readFileSync(path2.join(FRAMEWORK_ROOT, 'harness/scripts/utils/test-plan-derive-hint.ts'), 'utf8');
+      assert(shared.includes('buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(projectRoot))'), 'canonical builder 应消费统一知识与复位身份');
     },
   },
   {

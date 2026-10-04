@@ -5,6 +5,16 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import assert from 'assert';
+import { spawnSync } from 'child_process';
+import { clearFrameworkConfigCache, loadFrameworkConfig, resolveFeatureArtifact, featurePhaseReportsDir } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
+import { __testing_checkDeviceTestRunGateBeforeInstall } from '../../scripts/check-testing';
+import { buildStandardHylyreDerivePayloadBase, resolveHylyreResetIdentity } from '../../scripts/utils/hylyre-standard-derive-knowledge';
+import { attachNavigationHints, extractTopPlanTestCasesForDeriveHint } from '../../scripts/utils/test-plan-derive-hint';
+import { appSnapshotCacheAbsFor } from '../../scripts/utils/app-snapshot-cache-hint';
+import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
+import type { CheckContext } from '../../scripts/utils/types';
 import {
   isPlaceholderDerivedPlan,
   evaluateDerivedCoverage,
@@ -57,7 +67,202 @@ interface Case {
   run: () => void;
 }
 
+function withHintGateFixture(run: (fixture: {
+  root: string; top: string; topPath: string; hint: string; derivedPath: string;
+  write: (file: string, text: string) => void;
+  derive: (steps: string) => void;
+  gate: () => ReturnType<typeof __testing_checkDeviceTestRunGateBeforeInstall>;
+  cli: (out?: string) => any;
+  baseline: () => { bytes: string; mtime: number };
+}) => void): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-hint-semantic-'));
+  const framework = path.resolve(__dirname, '../../..');
+  const write = (file: string, text: string): void => {
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, 'utf8');
+  };
+  try {
+    write(path.join(root, 'framework.config.json'), JSON.stringify({
+      schema_version: '1.1', project_name: 'hint', active_workflow: 'spec-driven', agent_adapter: 'generic',
+      project_profile: { name: 'hmos-app', sub_variant: 'app' },
+      architecture: { outer_layers: [{ id: 'app', can_depend_on: [], intra_layer_deps: 'forbid' }],
+        module_inner_layers: ['content'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ts' },
+      paths: { features_dir: 'doc/features', reports_dir_pattern: 'doc/features/<feature>/<phase>/reports' },
+    }));
+    write(path.join(root, 'AppScope/app.json5'), '{"app":{"bundleName":"com.demo.wallet","versionCode":1,"versionName":"1.0"}}');
+    write(path.join(root, 'entry/src/main/module.json5'), '{"module":{"type":"entry","name":"entry","mainElement":"EntryAbility"}}');
+    clearFrameworkConfigCache();
+    const top = [
+      '# Test plan', '', '## 测试用例清单', '',
+      '| 用例编号 | 用例名称 | 前置条件 | 测试步骤 | 预期结果 | 优先级 | 关联 AC | 执行通道 |',
+      '|---|---|---|---|---|---|---|---|',
+      '| TC-001 | 打开卡包 | 已启动 | 点击卡包 | 卡包可见 | P0 | AC-1 | hylyre |',
+    ].join('\n');
+    const topPath = resolveFeatureArtifact(root, 'demo', 'test-plan.md').canonicalPath;
+    write(topPath, top);
+    const reports = featurePhaseReportsDir(root, 'demo', 'testing');
+    const hint = path.join(reports, 'derive-hint-from-plan.json');
+    const derivedPath = path.join(reports, 'current/hylyre/test-plan.hylyre.md');
+    const ctx = {
+      phase: 'testing', feature: 'demo', projectRoot: root, frameworkRoot: framework, frameworkRel: '',
+      harnessRoot: path.join(framework, 'harness'), layoutKind: 'standalone',
+      phaseRule: { phase: 'testing', structure_checks: {}, semantic_checks: {}, traceability_checks: {} },
+      featureSpec: {}, resolvedProfile: loadResolvedProfile(root, loadFrameworkConfig(root)),
+    } as unknown as CheckContext;
+    run({ root, top, topPath, hint, derivedPath, write,
+      derive: steps => write(derivedPath, fs.readFileSync(topPath, 'utf8')
+        .replace(' | 执行通道 |', ' |').replace('|---|---|---|---|---|---|---|---|', '|---|---|---|---|---|---|---|')
+        .replace(/\| TC-001 \| 打开卡包 \| 已启动 \| [^|]+ \|/, `| TC-001 | 打开卡包 | 已启动 | ${steps} |`)
+        .replace(' | hylyre |', ' |')),
+      gate: () => __testing_checkDeviceTestRunGateBeforeInstall(ctx),
+      baseline: () => ({ bytes: fs.readFileSync(hint, 'utf8'), mtime: fs.statSync(hint).mtimeMs }),
+      cli: out => {
+        const result = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
+          path.join(framework, 'harness/scripts/derive-hylyre-plan-hint.ts'), '--project-root', root, '--feature', 'demo',
+          ...(out ? ['--out', out] : [])], { cwd: path.join(framework, 'harness'), encoding: 'utf8' });
+        assert.strictEqual(result.status, 0, result.stderr);
+        return result.stdout ? JSON.parse(result.stdout) : null;
+      },
+    });
+  } finally {
+    clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const cases: Case[] = [
+  {
+    name: '真实双入口：重复/交替、标题与 lint 诊断变动保持源基线，最新诊断保留完整字段',
+    run: () => withHintGateFixture(f => {
+      const first = f.gate()[0];
+      const absent = (first.structured as any).derive_hint;
+      assert.strictEqual(absent.coverage_reason, 'no_derived');
+      assert.deepStrictEqual(absent.top_tc_ids, ['TC-001']);
+      const before = f.baseline();
+      f.gate(); f.cli(); f.gate(); f.cli();
+      assert.deepStrictEqual(f.baseline(), before, '自动→CLI→自动以及CLI→自动→CLI不得重写');
+      f.derive('{"tap":{"by_id":"pack"}}');
+      const bad = f.gate()[0];
+      assert.ok(bad.details.includes('STEP-001'), bad.details);
+      const diag = (bad.structured as any).derive_hint;
+      assert.strictEqual(diag.coverage_reason, 'invalid_derived_step_rules');
+      assert.deepStrictEqual(diag.top_tc_ids, ['TC-001']);
+      assert.deepStrictEqual(diag.derived_tc_ids, ['TC-001']);
+      assert.deepStrictEqual(diag.missing_tc_ids, []);
+      assert.deepStrictEqual(diag.extra_tc_ids, []);
+      assert.deepStrictEqual(diag.rejected_placeholder_paths, []);
+      assert.strictEqual(diag.selected_derived_path, path.relative(f.root, f.derivedPath).replace(/\\/g, '/'));
+      assert.strictEqual(diag.source_plan_mtime_iso, new Date(fs.statSync(f.topPath).mtimeMs).toISOString());
+      assert.strictEqual(diag.selected_derived_mtime_iso, new Date(fs.statSync(f.derivedPath).mtimeMs).toISOString());
+      assert.ok(diag.lint_violations.every((v: any) => v.rule_id && v.tc_id && v.message && v.suggested_fix));
+      assert.ok(f.gate()[0].details.includes('STEP-001'), '重复检查不能误变 stale');
+      f.write(f.topPath, f.top.replace('# Test plan', '# New title\n\n表外说明已更新'));
+      const afterTitle = f.gate()[0];
+      assert.ok(afterTitle.details.includes('STEP-001'), afterTitle.details);
+      assert.deepStrictEqual(f.baseline(), before);
+      f.derive('{"touch":{"by_id":"pack"}}');
+      assert.strictEqual(f.gate()[0].status, 'SKIP', '当前静态门通过、install未执行');
+      assert.deepStrictEqual(f.baseline(), before);
+      f.write(f.derivedPath, fs.readFileSync(f.derivedPath, 'utf8') + '\n| TC-999 | 多出的用例 | 已启动 | {"touch":{"by_id":"extra"}} | 可见 | P0 | AC-9 |');
+      const extra = (f.gate()[0].structured as any).derive_hint;
+      assert.strictEqual(extra.coverage_reason, 'extra_in_derived');
+      assert.deepStrictEqual(extra.extra_tc_ids, ['TC-999']);
+      assert.deepStrictEqual(f.baseline(), before, 'coverage诊断改变不能重写输入');
+      f.derive('{"touch":{"by_id":"pack"}}');
+      f.write(f.topPath, f.top + '\n| TC-002 | 打开添加 | 已启动 | 点击添加 | 添加可见 | P0 | AC-2 | hylyre |');
+      const missing = (f.gate()[0].structured as any).derive_hint;
+      assert.strictEqual(missing.coverage_reason, 'incomplete');
+      assert.deepStrictEqual(missing.missing_tc_ids, ['TC-002']);
+      assert.deepStrictEqual(missing.top_tc_ids, ['TC-001', 'TC-002']);
+      assert.deepStrictEqual(missing.derived_tc_ids, ['TC-001']);
+    }),
+  },
+  {
+    name: '真实CLI三类出口与旧schema4：辅助字段不全不写基线；当前stdout/独立导出完整，缺源快照仍 stale',
+    run: () => withHintGateFixture(f => {
+      const legacy: Record<string, any> = {
+        ...buildStandardHylyreDerivePayloadBase(resolveHylyreResetIdentity(f.root)),
+        feature: 'demo', phase: 'testing', source_relative: path.relative(f.root, f.topPath).replace(/\\/g, '/'),
+        test_cases: attachNavigationHints(extractTopPlanTestCasesForDeriveHint(f.top)),
+        coverage_reason: 'no_derived',
+      };
+      f.write(f.hint, JSON.stringify(legacy, null, 2) + '\n');
+      f.derive('{"touch":{"by_id":"pack"}}');
+      const before = f.baseline();
+      const current = f.cli();
+      assert.strictEqual(current.generated_at, legacy.generated_at);
+      assert.ok(Array.isArray(current.selector_contract.entries));
+      assert.ok(Array.isArray(current.available_pages));
+      assert.deepStrictEqual(f.baseline(), before);
+      assert.strictEqual(f.gate()[0].status, 'SKIP');
+      const exported = path.join(f.root, 'explicit-export.json');
+      f.cli(exported);
+      assert.ok(JSON.parse(fs.readFileSync(exported, 'utf8')).selector_contract);
+      assert.deepStrictEqual(f.baseline(), before);
+      assert.deepStrictEqual(f.cli(f.hint).selector_contract.match_modes, ['exact', 'contains']);
+      assert.deepStrictEqual(f.baseline(), before);
+      if (process.platform === 'win32') {
+        assert.ok(f.cli(f.hint.toUpperCase()).selector_contract);
+        assert.deepStrictEqual(f.baseline(), before, 'Windows同路径大小写不授强制写盘');
+      }
+      f.write(f.hint, JSON.stringify({ ...legacy, test_cases: undefined }));
+      assert.strictEqual((f.gate()[0].structured as any).derive_hint.coverage_reason, 'stale');
+    }),
+  },
+  {
+    name: '真实gate：TC行为、reset身份与机器selector语法变化不能只刷新hint洗绿旧派生',
+    run: () => withHintGateFixture(f => {
+      f.cli(); f.derive('{"touch":{"by_id":"pack"}}');
+      assert.strictEqual(f.gate()[0].status, 'SKIP');
+      const changed = f.top.replace('点击卡包', '点击添加');
+      f.write(f.topPath, changed);
+      f.cli();
+      assert.strictEqual((f.gate()[0].structured as any).derive_hint.coverage_reason, 'stale');
+      assert.strictEqual((f.gate()[0].structured as any).derive_hint.coverage_reason, 'stale', '反复刷新无权洗绿');
+      f.derive('{"touch":{"by_id":"add"}}');
+      assert.strictEqual(f.gate()[0].status, 'SKIP', '实际新派生并经静态验证恢复');
+      f.write(path.join(f.root, 'entry/src/main/module.json5'), '{"module":{"type":"entry","name":"entry","mainElement":"NewAbility"}}');
+      assert.strictEqual((f.gate()[0].structured as any).derive_hint.coverage_reason, 'stale');
+      f.cli();
+      assert.strictEqual((f.gate()[0].structured as any).derive_hint.coverage_reason, 'stale');
+      f.derive('{"touch":{"by_id":"add"}}');
+      assert.strictEqual(f.gate()[0].status, 'SKIP');
+      const oldGrammar = JSON.parse(fs.readFileSync(f.hint, 'utf8'));
+      oldGrammar.selector_contract.match_modes = ['exact'];
+      f.write(f.hint, JSON.stringify(oldGrammar));
+      f.derive('{"touch":{"by_id":"add"}}');
+      assert.strictEqual((f.gate()[0].structured as any).derive_hint.coverage_reason, 'stale', '旧可执行语法必须重派生');
+    }),
+  },
+  {
+    name: '真实CLI→gate：缓存/无关selector候选不stale，当前确定同屏多映射仍拒绝执行',
+    run: () => withHintGateFixture(f => {
+      const ui = { schema_version: '1.0', tokens: {}, assets: [], screens: [{ id: 'home', root: {
+        id: 'root', type: 'Column', children: [{ id: 'pack', type: 'Text', text: '卡包' }],
+      } }] };
+      const uiPath = uiSpecAbsPath(f.root, 'demo');
+      f.write(uiPath, JSON.stringify(ui));
+      f.cli(); f.derive('{"touch":{"by_text":"卡包","match":"exact"}}');
+      assert.strictEqual(f.gate()[0].status, 'SKIP');
+      const before = f.baseline();
+      f.write(path.join(appSnapshotCacheAbsFor(f.root), 'com.demo.wallet/pages/home.json'), '{"text":"首页"}');
+      ui.screens[0].root.children.push({ id: 'unrelated', type: 'Text', text: '无关节点' });
+      f.write(uiPath, JSON.stringify(ui));
+      const now = f.cli();
+      assert.ok(now.available_pages.includes('home'));
+      assert.ok(now.selector_contract.entries.some((e: any) => e.node_id === 'unrelated'));
+      assert.deepStrictEqual(f.baseline(), before);
+      assert.strictEqual(f.gate()[0].status, 'SKIP');
+      const out = path.join(f.root, 'current-context.json');
+      f.cli(out);
+      assert.ok(JSON.parse(fs.readFileSync(out, 'utf8')).available_pages.includes('home'));
+      ui.screens[0].root.children.push({ id: 'another_pack', type: 'Text', text: '卡包' });
+      f.write(uiPath, JSON.stringify(ui)); f.cli();
+      const blocked = f.gate()[0];
+      assert.strictEqual(blocked.status, 'FAIL');
+      assert.strictEqual(blocked.source, 'derived_selector_contract');
+      assert.ok(blocked.details.includes('TC-001 step 0'), blocked.details);
+      assert.deepStrictEqual(f.baseline(), before);
+    }),
+  },
   {
     name: 'validateFormalByTextSelectors: match 必须显式且仅 exact/contains',
     run: () => {

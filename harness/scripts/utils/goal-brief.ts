@@ -66,7 +66,7 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
     brief.permissions = { write_mode: u.write_mode, approval_mode: u.approval_mode };
     // §4.6：本交付周期内来源核验通过的拒修——与四处运行时判定同一个状态函数，不另读账本
     try {
-      brief.resolved_conflicts = [...loadRepairDeclineState(projectRoot, feature, source.runId).values()]
+      brief.resolved_conflicts = [...new Set(loadRepairDeclineState(projectRoot, feature, source.runId).values())]
         .flatMap(s => (s.basis ? [{ s, b: s.basis }] : []))
         .sort((x, y) => Date.parse(x.b.round.ts) - Date.parse(y.b.round.ts) || x.s.id.localeCompare(y.s.id))
         .map(({ s, b }) => ({ candidate: `${s.id}（${s.summary}）`, basis: b.text, run_id: b.run_id }));

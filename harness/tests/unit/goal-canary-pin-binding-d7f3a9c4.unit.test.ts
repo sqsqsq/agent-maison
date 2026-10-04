@@ -312,7 +312,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const withPin = baseManifest({ adapter: 'claude', adapter_model_pin: { adapter: 'claude', value: 'gpt-4o' } });
         const r1 = await runVisionCanaryProbe({
           projectRoot: root, frameworkRoot: fw, manifest: withPin,
-          invokeFn: (async () => ({ exitCode: 0, stdout: FULL_ANSWER, stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
+          invokeFn: (async () => ({ exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: FULL_ANSWER }) + '\n', stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
           answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r1.outcome, 'valid_cached', JSON.stringify(r1));
@@ -323,7 +323,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const noPin = baseManifest({ adapter: 'claude' });
         const r2 = await runVisionCanaryProbe({
           projectRoot: root, frameworkRoot: fw, manifest: noPin,
-          invokeFn: (async () => ({ exitCode: 0, stdout: FULL_ANSWER, stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
+          invokeFn: (async () => ({ exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: FULL_ANSWER }) + '\n', stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
           answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r2.outcome, 'valid_cached', JSON.stringify(r2));

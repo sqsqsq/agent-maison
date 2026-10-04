@@ -20,6 +20,7 @@ import {
   writePhaseEvidenceManifest,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { probeHylyreEvidenceCapability } from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import { __testing_checkP0RuntimeStepEvidenceGate } from '../../scripts/check-testing';
 import type { UnitCaseResult } from '../run-unit';
 
 const FEATURE = 'runtime-demo';
@@ -235,6 +236,35 @@ function materializeDoc(f: Fixture): DeviceTestEvidenceDoc {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'goal legacy 同 gate holder 在正式文件缺失时可消费，但仍 WARN；坏绑定仍 FAIL',
+    run: () => {
+      const f = fixture();
+      const saved = [process.env.MAISON_GOAL_RUN_ID, process.env.MAISON_GOAL_ATTEMPT];
+      try {
+        const doc = materializeDoc(f);
+        fs.unlinkSync(deviceTestEvidencePath(f.reportsDir));
+        process.env.MAISON_GOAL_RUN_ID = RUN_ID;
+        process.env.MAISON_GOAL_ATTEMPT = ATTEMPT_ID;
+        const ctx = { projectRoot: f.root, feature: FEATURE, phase: 'testing', frameworkRoot: path.resolve(__dirname, '..', '..', '..') } as any;
+        const holder = { hylyreEvidenceGate: { mode: 'legacy', native: false, reasons: ['legacy'] }, deviceTestEvidence: doc } as any;
+        const check = () => __testing_checkP0RuntimeStepEvidenceGate(ctx, [], holder)[0];
+        assert(check().status === 'WARN', JSON.stringify(check()));
+        holder.deviceTestEvidence = { ...doc, attempt_id: 'old' };
+        assert(check().status === 'FAIL', '旧 attempt 的 holder 不得洗成 WARN/PASS');
+        delete process.env.MAISON_GOAL_RUN_ID;
+        delete process.env.MAISON_GOAL_ATTEMPT;
+        materializeDoc(f);
+        assert(check().status === 'WARN', '独立非 goal 路径继续读盘上合法 legacy evidence');
+      } finally {
+        ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT'].forEach((key, i) => {
+          if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i];
+        });
+        fs.rmSync(f.root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
   {
     name: '跨语言 step hash：整数形小数、普通小数与指数文本均绑定同一计划字节',
     run: () => {

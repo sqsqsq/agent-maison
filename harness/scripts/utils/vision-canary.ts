@@ -291,12 +291,12 @@ export interface CanaryInvocationFacts {
 }
 
 /** 判卷前需要投影的 stdout 信封方言（plan e6b3f8d2 t1）。 */
-export type CanaryStdoutEnvelope = 'claude_stream_json' | 'codex_turn_jsonl';
+export type CanaryStdoutEnvelope = 'claude_stream_json' | 'codex_turn_jsonl' | 'cursor_stream_json';
 
 /**
  * adapter → 判卷 stdout 信封方言（'none' = 纯文本，直接扫）。
  * 与各自的 argv 注入条件**严格同构**：
- *   · claude 家族：`--output-format stream-json` 仅在 tool_event_provenance=structured_events 时注入；
+ *   · Claude 家族与 Cursor：`--output-format stream-json` 恒由 adapter argv 注入，独立于工具审计能力；
  *   · codex：`--json` 由 codexArgv **无条件**追加（plan e6b3f8d2 t1），故恒为 JSONL。
  */
 export function resolveCanaryStdoutEnvelope(
@@ -304,6 +304,7 @@ export function resolveCanaryStdoutEnvelope(
   toolEventProvenance?: string,
 ): 'none' | CanaryStdoutEnvelope {
   if (adapterName === 'codex') return 'codex_turn_jsonl';
+  if (adapterName === 'cursor') return 'cursor_stream_json';
   return planUsesClaudeStreamJson(adapterName, toolEventProvenance as never) ? 'claude_stream_json' : 'none';
 }
 
@@ -353,7 +354,7 @@ export function parseCanaryAnswer(
     const projected =
       invocation.structured_stdout_format === 'codex_turn_jsonl'
         ? extractCodexAgentMessageText(invocation.stdout)
-        : extractClaudeFinalResultText(invocation.stdout);
+        : extractClaudeFinalResultText(invocation.stdout, invocation.structured_stdout_format === 'cursor_stream_json');
     if (projected === null) {
       structuredProjectedNull = true;
       raw = '';

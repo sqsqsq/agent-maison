@@ -29,8 +29,8 @@ export const STANDARD_DERIVE_HINT_SCHEMA = 4;
 
 /**
  * 统一 payload 基座（v2，post-impl review）：schema + 生成时刻 + 机器知识块——
- * CLI derive-hylyre-plan-hint 与 check-testing 自动 hint 的**共同前缀**；各入口只追加
- * 自身特有字段（快照信息 / 覆盖对账），schema 与知识块永不分叉。
+ * 共享 canonical builder 的知识前缀；CLI 与 check-testing 自动 hint 均由该 builder
+ * 组装完整上下文。覆盖/lint/路径诊断归原 check，schema 与知识块永不分叉。
  */
 export function buildStandardHylyreDerivePayloadBase(reset?: ResolvedHylyreResetIdentity): Record<string, unknown> {
   return {

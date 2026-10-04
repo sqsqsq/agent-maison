@@ -11,6 +11,7 @@ import {
   journalRowsToLogicalHistory,
   readJournalProposals,
   replayJournalIntoLedger,
+  intermediateRoundsJournalPath,
 } from '../../scripts/utils/intermediate-rounds-journal';
 import {
   appendVisualRound,
@@ -19,7 +20,9 @@ import {
   readVisualRoundsLedger,
   reconcileLedgerWithEvents,
   type VisualRoundInput,
+  visualRoundsLedgerPath,
 } from '../../scripts/utils/visual-rounds-ledger';
+import { consumeVisualRoundPayload } from '../../harness-runner';
 import type { UnitCaseResult } from '../run-unit';
 
 const cases: Array<{ name: string; run: () => void }> = [];
@@ -248,6 +251,40 @@ function productionShapeRound(
     at: writeAtOverride ?? ev.row.at,
   });
 }
+
+test('真实 goal CLI 自检与 gate 均 journal；runtime 前后 replay 幂等且保留 fuse；独立 CLI 直写', () => {
+  withTmp(root => {
+    const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_GATE_HARNESS'];
+    const saved = keys.map(key => process.env[key]);
+    try {
+      process.env.MAISON_GOAL_RUN_ID = 'r1';
+      process.env.MAISON_GOAL_ATTEMPT = 'i9';
+      const ledger = visualRoundsLedgerPath(root, 'demo');
+      const journal = intermediateRoundsJournalPath(root, 'demo', 'r1');
+      const report = (round: ReturnType<typeof evaluateVisualRound>) => ({ feature: 'demo', phase: 'testing',
+        checks: [{ structured: { kind: 'visual_diff', round } }] } as any);
+      const first = evaluateVisualRound(ledger, { ...INPUT(), now: () => '2026-07-24T06:10:00.000Z' });
+      assert(consumeVisualRoundPayload(root, report(first))?.disposition === 'journaled', '自检只提案');
+      assert(!fs.existsSync(ledger), '自检未写正式 ledger');
+      const before = replayJournalIntoLedger({ ledgerPath: ledger, journalPath: journal, attemptId: 'i9', runId: 'r1' });
+      assert(before.ok && before.replayed === 1, 'gate 前收编');
+      process.env.MAISON_GOAL_GATE_HARNESS = '1';
+      const extraRows = journalRowsToLogicalHistory(readJournalProposals(journal).rows, 'i9');
+      const duplicate = evaluateVisualRound(ledger, { ...INPUT(), now: () => '2026-07-24T06:20:00.000Z' }, { extraRows });
+      assert(duplicate.disposition === 'duplicate' && duplicate.decision.fused === first.decision.fused, '逻辑历史不重复覆盖原 decision');
+      const next = evaluateVisualRound(ledger, { ...INPUT({ buildFingerprint: 'bf2' }), now: () => '2026-07-24T06:30:00.000Z' }, { extraRows });
+      const receipt = consumeVisualRoundPayload(root, report(next));
+      assert(receipt?.disposition === 'journaled' && receipt.decision?.fused === true, '旧 flag 不授予写者且回传裁决');
+      assert(readVisualRoundsLedger(ledger).rows.length === 1, 'gate CLI 也不直写');
+      const after = replayJournalIntoLedger({ ledgerPath: ledger, journalPath: journal, attemptId: 'i9', runId: 'r1' });
+      assert(after.ok && after.replayed === 1 && readVisualRoundsLedger(ledger).rows.length === 2, 'gate 后顺序收编');
+      assert(replayJournalIntoLedger({ ledgerPath: ledger, journalPath: journal, attemptId: 'i9', runId: 'r1' }).replayed === 0, '恢复幂等');
+      keys.forEach(key => { delete process.env[key]; });
+      const ordinary = evaluateVisualRound(ledger, { ...INPUT({ loopId: 'interactive', goalRunId: null, attemptId: null }) });
+      assert(consumeVisualRoundPayload(root, report(ordinary))?.disposition === 'appended', '独立 CLI 原直写路径');
+    } finally { keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; }); }
+  });
+});
 
 test('T2 生产调用形态：评估时刻随 row 回传 → 多轮收编全通过（不再误判篡改）', () => {
   withTmp(dir => {

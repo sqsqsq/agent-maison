@@ -1,4 +1,5 @@
 #!/usr/bin/env ts-node
+import type { GoalRunEvent } from './utils/goal-runner-phase';
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
@@ -66,10 +67,12 @@ import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
 import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
 import { readRunBoundContracts } from './utils/capability-resolution';
+import { resolveCapabilityResolutionEntryInput } from './utils/capability-resolution-entry-input';
+import { SpecLoader } from './utils/spec-loader';
 import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
-import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
+import type { CheckResult, HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
 import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig, resolveApprovedModels, resolveUnattendedB1Repair } from './utils/framework-local-config';
@@ -131,7 +134,7 @@ import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completi
 import { parseChangeUnitFeatureId, pointerStaleCandidate } from './utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, type BlueprintRefReconciliation, type HeldFeatureLock } from './utils/change-unit-design-preparation';
 import { classifyDesignAuthorityCodes, diagnoseDesignAuthority, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
-import { resolveFeatureTrack } from './utils/runtime-policy';
+import { resolveFeatureTrack, LEGACY_FEATURE_PHASE_ORDER } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, isP0DeviceInteractive } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { mergeUsageIntoTraceFile } from './utils/usage-capture';
@@ -179,6 +182,8 @@ import {
   resolveActualGoalPhaseChainAtBirth,
   resolveGoalRunHeadSha,
   validateRebaselineRequest,
+  normalizeRelatedPath,
+  readRecordedRelatedHashes,
   type ContinuationCallFacts,
   type GoalRunCreationResult,
   type RunContinuationDecision,
@@ -222,7 +227,6 @@ import {
   writeDeviceSession,
   type DeviceTargetKind,
 } from './utils/device-session';
-import { createCompletionProbe } from './utils/phase-completion-probe';
 import { tryCloseUpstreamPhase } from './utils/upstream-closure';
 import {
   deriveResumeInspection,
@@ -360,6 +364,8 @@ import {
   REPAIR_DECLINE_GATE_PREFIX,
   resolveInvalidatablePhases,
   restoreBacktrackCandidatesFromEvents,
+  formatRepairEvidenceRefs,
+  serializeBacktrackRepairCandidate,
   roundFingerprintOfCandidates,
   type RepairCandidate,
 } from './utils/repair-candidates';
@@ -454,6 +460,7 @@ import {
 import {
   aggregateBlockerActionability,
   artifactsProgressed,
+  compareRelatedInputSnapshots,
   buildEffectiveBlockerSignature,
   classifyFailureKind,
   classifyTimedOutWithFreshBlockers,
@@ -516,6 +523,121 @@ function productLayerDirsOf(projectRoot: string): string[] {
   } catch {
     return [];
   }
+}
+
+interface BacktrackProcessLocations {
+  feature: string; frameworkRoot?: string; phaseOrder?: readonly string[]; targetPhase?: string;
+}
+
+function createBacktrackProcessPredicate(projectRoot: string, locations?: BacktrackProcessLocations): (rel: string) => boolean {
+  if (!locations) return () => false;
+  const { feature, frameworkRoot, targetPhase } = locations;
+  const phases = locations.phaseOrder?.length ? locations.phaseOrder : LEGACY_FEATURE_PHASE_ORDER;
+  const reportRoots = [...new Set(phases.map(phase => path.resolve(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot))))];
+  const runtimeRoots = [path.join(featureDir(projectRoot, feature), 'goal-runs'),
+    path.join(featureDir(projectRoot, feature), 'device-testing', 'device-screenshots')].map(root => path.resolve(root));
+  const notes = new Set(phases.map(phase => path.resolve(receiptDirPath(projectRoot, feature, phase), 'notes.md')));
+  const within = (abs: string, root: string): boolean => abs === root || abs.startsWith(`${root}${path.sep}`);
+  const testingReports = targetPhase === 'testing' ? path.resolve(featurePhaseReportsDir(projectRoot, feature, 'testing', frameworkRoot)) : null;
+  return rel => {
+    const abs = path.resolve(projectRoot, rel);
+    // 待修派生计划是既有testing输入；只有实际testing报告位置下的该产物例外。
+    if (testingReports && within(abs, testingReports) && path.basename(abs) === 'test-plan.hylyre.md') return false;
+    return notes.has(abs) || [...reportRoots, ...runtimeRoots].some(root => within(abs, root));
+  };
+}
+
+/** 仅回退进展的目录摘要排除过程输出；通用快照及其它熔断保留原语义。 */
+export function snapshotBacktrackRelatedInputs(projectRoot: string, paths: string[], locations?: BacktrackProcessLocations): ArtifactSnapshot {
+  return snapshotArtifacts(projectRoot, paths, createBacktrackProcessPredicate(projectRoot, locations));
+}
+
+/** 只读进展输入；不补进候选files、不改变既有fp或证据引用。 */
+export function resolveBacktrackRelatedInputs(input: {
+  projectRoot: string; frameworkRoot: string; feature: string; runId?: string;
+  candidates: readonly RepairCandidate[]; targetPhase: string; track?: 'full' | 'lite'; boundary: PhaseWriteBoundaryResolution | null;
+}): string[] {
+  const isProcessPath = createBacktrackProcessPredicate(input.projectRoot, { feature: input.feature,
+    frameworkRoot: input.frameworkRoot, phaseOrder: input.boundary?.phaseOrder, targetPhase: input.targetPhase });
+  const normalize = (value: unknown): string | null => {
+    const rel = normalizeRelatedPath(input.projectRoot, value);
+    if (!rel || isProcessPath(rel)) return null;
+    return rel;
+  };
+  if (!input.candidates.length) return [];
+  const related = new Set<string>();
+  let contractFiles: string[] | null = null;
+  for (const candidate of input.candidates) {
+    if (candidate.files.length) {
+      if (candidate.files.some(file => !normalizeRelatedPath(input.projectRoot, file))) return [];
+      const explicit = candidate.files.map(normalize);
+      // 历史files里的已知过程引用不改身份，过滤后无真实目标时仍走原owner scope。
+      for (const file of explicit) if (file) related.add(file);
+      if (explicit.some(file => !!file)) continue;
+    }
+    // 每个无源码映射的候选各自走原owner scope，不把组内其它候选的A当成它的B。
+    const ownerPhase = mapCategoryToChainPhase(candidate.category, input.boundary?.phaseOrder ?? [], input.track ?? 'full') ?? input.targetPhase;
+    if (!input.boundary || input.boundary.unresolvedSourcePhases.includes(String(ownerPhase))) return [];
+    try {
+      if (contractFiles === null) {
+        const contracts = input.runId
+          ? readRunBoundContracts(input.projectRoot, input.frameworkRoot, input.feature, input.runId)
+          : new SpecLoader(input.projectRoot, undefined, undefined, input.frameworkRoot).loadFeatureSpec(input.feature).contracts;
+        contractFiles = contracts?.files ?? [];
+      }
+      const fallback = contractFiles.map(normalize).filter((p): p is string => !!p).filter(p => {
+        const owner = resolvePhasePathOwnership(input.boundary!, p);
+        return owner.owner === ownerPhase && owner.roles.some(role => role.kind === 'source');
+      });
+      if (!fallback.length) return [];
+      for (const file of fallback) related.add(file);
+    } catch { return []; }
+  }
+  return [...related].sort();
+}
+
+export function compareBacktrackRelatedInputs(input: {
+  projectRoot: string; feature: string; runId: string; events: readonly GoalRunEvent[];
+  previous: GoalRunEvent | undefined; current: ArtifactSnapshot;
+}): 'changed' | 'unchanged' | 'unknown' {
+  if (!input.previous) return 'unknown';
+  const direct = compareRelatedInputSnapshots(input.previous.related_input_snapshot, input.current);
+  if (direct !== 'unknown') return direct;
+  const endMs = Date.parse(input.previous.ts ?? '');
+  if (!Number.isFinite(endMs) || Object.keys(input.current).length === 0) return 'unknown';
+  const raw = input.previous.related_input_snapshot;
+  const currentKeys = Object.keys(input.current).sort();
+  const candidateRows = (input.previous as { candidates?: unknown }).candidates;
+  if (candidateRows !== undefined && !Array.isArray(candidateRows)) return 'unknown';
+  const priorCandidates = (candidateRows ?? []) as Array<{ files?: unknown }>;
+  const hasOriginalKeys = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length;
+  if (!hasOriginalKeys && priorCandidates.some(candidate => !candidate || !Array.isArray(candidate.files) || !candidate.files.length)) return 'unknown';
+  const oldKeys = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length
+    ? Object.keys(raw).sort()
+    : [...new Set([
+      ...priorCandidates
+        .flatMap(candidate => Array.isArray(candidate.files) ? candidate.files : []),
+      ...(Array.isArray((input.previous as { files?: unknown }).files) ? (input.previous as { files: unknown[] }).files : []),
+    ].map(file => normalizeRelatedPath(input.projectRoot, file)).filter((key): key is string => !!key))].sort();
+  // 已有原集合不能用本轮新增/删减的key重构；旧记录无集合也不能从当前集合猜。
+  if (!oldKeys.length || oldKeys.join('\0') !== currentKeys.join('\0')) return 'unknown';
+  const start = [...input.events].reverse().find(event => event.type === 'phase_start'
+    && event.phase === input.previous!.to_phase && Date.parse(event.ts ?? '') <= endMs);
+  const startMs = Date.parse(start?.ts ?? '');
+  if (!Number.isFinite(startMs)) return 'unknown';
+  const baseline = readRecordedRelatedHashes(input.projectRoot, input.feature, new Set(Object.keys(input.current)), input.events,
+    { startMs, endMs, runId: input.runId });
+  const supplemented: ArtifactSnapshot = {};
+  for (const key of Object.keys(input.current)) {
+    const entry = raw?.[key];
+    if (entry && compareRelatedInputSnapshots({ [key]: entry }, { [key]: input.current[key] }) !== 'unknown') {
+      supplemented[key] = entry;
+    } else if (baseline.has(key)) {
+      const sha = baseline.get(key);
+      supplemented[key] = { exists: sha !== null, contentHash: sha ?? '' };
+    }
+  }
+  return compareRelatedInputSnapshots(supplemented, input.current);
 }
 
 function phaseSkillPath(frameworkRoot: string, phase: FeaturePhase): string {
@@ -1299,6 +1421,8 @@ async function runHarnessPhase(
   // 残留会与注入键并存，Windows 子进程读取哪个是未定义行为——GATE_HARNESS 单键处理的
   // 既有教训推广到轮次身份与设备/冻结配置全部注入键）。
   const gateInjectedEnv: Record<string, string> = {
+    ...(typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? { MAISON_GOAL_GATE_DEADLINE_MS: String(Date.now() + timeoutMs) } : {}),
     // t1（f7a3d9c2）：外层脚本闸门与 agent 自跑共用同一轮次身份（round_key 去重/重放）
     ...(roundIdentity
       ? {
@@ -1323,6 +1447,7 @@ async function runHarnessPhase(
   // 成对写、成对清；无 pin 时只清不写（gate 侧取不到即按未配置处理，落 blind）。
   applyGoalVisualProviderEnv(childEnv, manifest?.visual_provider_pin);
   deleteEnvKeyCaseInsensitive(childEnv, 'HARNESS_DIFF_BASE_REF');
+  deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_DEADLINE_MS');
   for (const [k, v] of Object.entries(gateInjectedEnv)) {
     deleteEnvKeyCaseInsensitive(childEnv, k);
     childEnv[k] = v;
@@ -1332,7 +1457,6 @@ async function runHarnessPhase(
   // b7e4d2a9 Todo3：先清大小写变体再设唯一大写=1（父环境残留 mixed-case 键会与之并存，
   // Windows 子进程读取哪个是未定义行为）。
   deleteEnvKeyCaseInsensitive(childEnv, 'MAISON_GOAL_GATE_HARNESS');
-  childEnv.MAISON_GOAL_GATE_HARNESS = '1';
   // MAISON_GOAL_ALLOWED_TOOLS 注入已退役（plan a8e5c3f9 t1）：allowed_tools 是审批清单，
   // headless 全权限下不存在审批面，也不再参与多模态能力判断。
   const child = spawn(
@@ -1385,7 +1509,7 @@ async function runHarnessPhase(
             // 上面的 force-settle 也保证 promise 在 FORCE_SETTLE 窗口内 resolve。
             void killProcessTree(child.pid);
           }
-        }, timeoutMs)
+        }, Math.max(0, Number(gateInjectedEnv.MAISON_GOAL_GATE_DEADLINE_MS) - Date.now()))
       : null;
 
   try {
@@ -2499,6 +2623,43 @@ export function validateDeviceTestEvidenceBinding(
     return 'device-test-run.meta.json 缺失或不可读（run 窗口无法核验）';
   }
   return null;
+}
+
+/** 仅 runtime 的当前 gate 窗口提交；自检 proposal 不能替代正式装机/run 事实。 */
+export function commitGateDeviceEvidenceProposal(
+  projectRoot: string,
+  feature: string,
+  runId: string,
+  ctx: DeviceTestCollectContext,
+): string | null {
+  try {
+    const reportPath = path.join(ctx.reportsDir, 'script-report.json');
+    if (!fs.existsSync(reportPath) || fs.statSync(reportPath).mtimeMs < ctx.harnessWindow.startMs) return null;
+    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8')) as { feature?: string; phase?: string; checks?: CheckResult[] };
+    const check = report.checks?.find(item => item.id === 'device_test_evidence');
+    if (!check || check.status !== 'PASS') return null;
+    if (report.feature !== feature || report.phase !== 'testing') return '当前 gate 的 device evidence report 归属不一致';
+    const proposal = check.structured as { kind?: string; doc?: DeviceTestEvidenceDoc } | undefined;
+    if (proposal?.kind !== 'device_test_evidence' || !proposal.doc) return '当前 gate 的 device evidence proposal 缺失';
+    const doc = proposal.doc;
+    const currentHap = resolveCurrentHapSha256Full(projectRoot, ctx.reportsDir);
+    if (!currentHap || currentHap !== doc.hap_sha256_full) return '提交前 HAP 摘要不可核验或已变化';
+    const issue = validateDeviceTestEvidenceBinding(doc, runId, { ...ctx, currentHapSha256Full: currentHap });
+    if (issue) return issue;
+    if (doc.artifact_binding) {
+      const binding = doc.artifact_binding;
+      for (const [file, expected] of [[binding.test_plan_path, binding.test_plan_sha256],
+        [binding.derived_plan_path, binding.derived_plan_sha256], [binding.trace_path, binding.trace_sha256]]) {
+        if (!file || !expected || sha256FileFull(file) !== expected) return '提交前 native trace/plan binding 已变化';
+      }
+    }
+    const target = deviceTestEvidencePath(ctx.reportsDir);
+    const temporary = `${target}.runtime-${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(doc, null, 2) + '\n', 'utf8');
+    try { fs.renameSync(temporary, target); }
+    finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+    return null;
+  } catch (error) { return `device evidence 提交失败：${(error as Error).message}`; }
 }
 
 /**
@@ -6820,6 +6981,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       } else if (reconcile.kind === 'outcomes') {
         for (const item of reconcile.items) {
           if (item.kind === 'guardian_gone') {
+            goalEvents.emit({
+              type: 'orphan_reclaimed',
+              run_id: manifest.run_id,
+              invoke_id: item.bound.invoke_id,
+              pid: item.bound.pid,
+              method: 'guardian_gone',
+            });
             console.log(
               `[goal-runner] 接管对账：guardian(pid=${item.bound.pid}) 已不存在——`
               + '依唯一持柄契约判定 Job 已关闭，无需回收',
@@ -7583,6 +7751,37 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.warn(`[goal-runner] ⚠ 本阶段源码域无法解析（${detail}）——不做写归因；范围违规仍由 check-coding 判定。`);
         }
 
+        const visualAttemptId = resumePostAgent
+          ? (() => {
+              const reuse = resumePostAgentAttemptIds[phase];
+              if (reuse) {
+                const m = /^[a-z-]+-i(\d+)$/.exec(reuse);
+                return m ? `i${m[1]}` : reuse;
+              }
+              return `i${totalTurns}`;
+            })()
+          : `i${totalTurns}`;
+        const invokeId = `${phase}-${visualAttemptId}`;
+        let phaseFactsContext: import('./utils/context-facts').FactsInvocationContext | undefined;
+        let factsAdmissionError: string | undefined;
+        let factsRebuildReason: string | undefined;
+        if (!dryRun && manifest.execution_scope) {
+          try {
+            const entry = resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature: manifest.feature,
+              phase: String(phase), featuresDir, goalRunId: manifest.run_id, goalAttemptId: visualAttemptId });
+            phaseFactsContext = entry.factsContext;
+            factsRebuildReason = entry.factsRebuildReason;
+            if (phaseFactsContext) for (const [source, owner] of Object.entries(phaseFactsContext.source_owners ?? {})) {
+              if (owner !== phase) continue;
+              const ownership = phaseWriteBoundary ? resolvePhasePathOwnership(phaseWriteBoundary, source) : null;
+              if (ownership?.owner !== phase || !ownership.roles.some(role => role.kind === 'source')) delete phaseFactsContext.source_owners![source];
+            }
+          } catch (error) { factsAdmissionError = (error as Error).message; }
+        }
+        // An upstream facts gap goes directly to the ordinary harness/owner recovery, without granting a new executor window.
+        const skipExecutor = resumePostAgent || !!factsAdmissionError;
+        if (factsAdmissionError && !resumePostAgent) totalTurns--;
+
         // 批二确认轮遗留：提示词里写给执行者的时限取调用前的最终值——门禁里若等过、时限被再钳制，下方重渲染同一份提示词。
         const renderPrompt = (promptTimeoutMs: number): string => buildPhasePrompt(
           // The prompt must describe the chain and obligations that are actually in force now:
@@ -7613,7 +7812,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
           // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
           executorMode === 'attended',
-        ) +
+        ) + (factsRebuildReason ? `\n## Facts admission / actual source reconstruction\n${factsRebuildReason}\nRead the current sources and rebuild canonical facts; changing run_id alone is not reconstruction.\n` : phaseFactsContext?.baseline
+          ? `\n## Validated facts baseline\nPreserve the baseline body and its original identity. For current owned source targets within this phase's write boundary, registering each changed or newly created source in a path | fact | impact table in ## phase_delta: ${phase} is recommended; missing exact rows disclose weaker traceability and do not block the phase. Prefer project-relative paths; equivalent absolute paths, backslashes, ./ and repeated same-phase sections are recognized. Existing unexplored targets and requirement/contracts/config or unauthorized-source drift remain strict. Do not rewrite the baseline, even when this run starts at or backtracks to ${phase}.\n` : '') +
           // v23 F1：回退后 coding 注入缺陷必做段——闭环最后一段电线（没有它，coding
           // 回去了也不知道修什么 → 原样重跑 → 熔断）
           (phase === 'coding' && backtrackCodingContext.length > 0
@@ -7646,6 +7846,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 const basis = prior && prior.round.ts !== currentRoundTs ? prior : null;
                 return [
                   `- ${c.id}: ${c.summary}${c.files.length > 0 ? `（涉及：${c.files.slice(0, 5).join('、')}）` : ''}（item_fingerprint: ${c.item_fingerprint}）`,
+                  ...formatRepairEvidenceRefs(c),
                   ...(basis
                     ? [`  反驳轮：上一轮以此依据拒修（run ${basis.run_id}）：${basis.text}——裁判在看过该依据后仍然提出。对照目标与实测证据再判一次。`]
                     : []),
@@ -7761,20 +7962,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 撞旧 round_key）。adjudicated-repair-loop：resumePostAgent（已 settled 的验证边界
         // 恢复）**复用原 settled invocation 的 attempt 身份**——不从 events 取新序数、不产生
         // 幽灵 attempt（无 start 的 invoke_end）。
-        const visualAttemptId = resumePostAgent
-          ? (() => {
-              // 复用 reducer 从既有 events 派生的原 settled invoke_id（postAgentAttemptIds——
-              // 与 postAgent 判定同一判据；精确身份缺失时不应到本分支，兜底不用全局历史猜）
-              const reuse = resumePostAgentAttemptIds[phase];
-              if (reuse) {
-                const m = /^[a-z-]+-i(\d+)$/.exec(reuse);
-                if (m) return `i${m[1]}`;
-                return reuse;
-              }
-              return `i${totalTurns}`;
-            })()
-          : `i${totalTurns}`;
-        const invokeId = `${phase}-${visualAttemptId}`;
 
         // testing-stepresult-evidence：P0 native CaseResult.steps[] 能力在 testing agent
         // 启动前静态预检。未准备好时不烧 agent/content attempt，直接走 capability defer；
@@ -8048,7 +8235,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // Every real phase invocation is bracketed by the same filesystem/hash
         // snapshot.  The comparison is pre/post invocation, never against HEAD,
         // so a pre-existing dirty file is not blamed on this phase.
-        const capturedPreInvokeSnap = !dryRun && !resumePostAgent && phaseWriteBoundary
+        const capturedPreInvokeSnap = !dryRun && !skipExecutor && phaseWriteBoundary
           ? capturePhaseInvocationSnapshot(phaseWriteBoundary)
           : null;
         // A snapshot the storage layer could not produce leaves this invocation
@@ -8066,7 +8253,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // plan 07a41ec6 T4：receipt 不再是 invoke/closure 前置物；closed summary 提交后才 best-effort 投影。
         // adjudicated-repair-loop（review 修复，续）：伪造 invoke 对象仅承载「已完成」
         // 语义；settled 事件由 containmentCtx=null 天然不重复（此分支不发）。
-        if (!resumePostAgent) {
+        if (!skipExecutor) {
           goalEvents.emit({
             type: 'agent_invoke_start',
             phase,
@@ -8075,6 +8262,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // P0-4：timeout 单一事实源——progress/status/dead-man 优先读本字段判 liveness
             // （升档后 manifest 静态解析会把合法运行 attempt 误报 STALLED，脑裂实锤）。
             effective_timeout_ms: effectiveAgentTimeoutMs,
+            ...(phaseFactsContext ? { facts_context: phaseFactsContext } : {}),
           });
           flushProgress();
         } else {
@@ -8090,29 +8278,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             `[goal-runner] BUG: effectiveAgentTimeoutMs=${effectiveAgentTimeoutMs} 不得 ≤0 到达 adapter（zero-budget 应已在启动判据拦截）`,
           );
         }
-        // t4：完成观测探针。invoke **之前**建基线——只认本次调用内"不完整→完整"的跃迁，
-        // 否则 retry 遗留的上一轮 receipt 会被当作本轮完成。基线已完整时不做观测
-        // （该情形应由上层判为"无需再调 agent"，而不是启动后立刻杀）。
-        // f9c2e6b4 t1：跃迁之外再叠**本 attempt 新鲜度**（openspec/specs/goal-runner/spec.md:75
-        // 本就要求）。立项事故：上一轮回执被原样复写 → 跃迁成立 → attempt 2/3 各活 35.3 秒
-        // 就被 tree-kill，重试预算 90 秒烧光。身份用 run+phase+attempt 三元组（phase 已在
-        // 采集侧校验），**不带 invoke_id**——它是 `${phase}-${attemptId}` 的派生值。
-        const completion = dryRun
-          ? null
-          : createCompletionProbe({
-              projectRoot,
-              feature: manifest.feature,
-              phase,
-              invocation: {
-                runId: manifest.run_id,
-                attemptId: visualAttemptId,
-                startedAtMs: Date.now(),
-              },
-            });
-        // 【skip 机制已删除 · codex 收尾】runner 在 invoke 前对每轮 force 重建未完成
-        // 骨架（上方单点写入），完成基线结构上恒不完整——"证据齐全即跳过"整链
-        // （跳过判定、跳过观测事件、伪造 invoke 结果）成为不可达死代码，一并删除。
-        // completion probe 保留唯一职责：观察本轮 agent 把骨架从未完成填成完整。
+        // 自检 PASS/closed 不代表施工结束；收尾只认 adapter 终态或自然退出。
         assertGoalBoundary('phase_invoke');
         // t2（plan c6a9e4d2）：Windows containment 上下文——非 dry-run 的真实 headless
         // invoke 在 win32 上恒经 guardian（KILL_ON_JOB_CLOSE Job）启动（headless 即
@@ -8128,6 +8294,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let guardianBoundError: string | null = null;
         let guardianStillAlive = false;
         let guardianPidForCheck = 0;
+        const phaseChildEnv: Record<string, string> = {
+          MAISON_GOAL_RUN_ID: manifest.run_id,
+          MAISON_GOAL_ATTEMPT: visualAttemptId,
+          MAISON_GOAL_ATTEMPT_PHASE: String(phase),
+          ...(manifest.adapter_model_pin
+            ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value }
+            : {}),
+          ...deviceEnv,
+        };
+        // 执行者内的自检与正式 gate 消费同一份冻结 provider 身份。
+        applyGoalVisualProviderEnv(phaseChildEnv, manifest.visual_provider_pin);
         const phaseExecutionContext = createPhaseExecutionContext({
           runId: manifest.run_id,
           feature: manifest.feature,
@@ -8145,6 +8322,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           reportDir: manifest.report_dir,
           adapter: manifest.adapter ?? 'generic',
           adapterModel: manifest.adapter_model_pin?.value,
+          factsContext: phaseFactsContext,
           instruction: prompt,
           runtimeFacts: {
             // A2: same resolver as the diff baseline — birth value, or the one frozen by the first
@@ -8154,22 +8332,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             resume: Boolean(argv.resume),
             successor: typeof manifest.successor_of === 'string',
           },
-          childEnv: {
-            MAISON_GOAL_RUN_ID: manifest.run_id,
-            MAISON_GOAL_ATTEMPT: visualAttemptId,
-            MAISON_GOAL_ATTEMPT_PHASE: String(phase),
-            ...(manifest.adapter_model_pin
-              ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value }
-              : {}),
-            ...deviceEnv,
-          },
+          childEnv: phaseChildEnv,
         });
         // 主干 attended runtime truth（b05d3dc7）：attended 每次 attempt 由运行时按当前 owner
         // fence 签发 phase_start（driver=session, attempt_id/owner_id/owner_epoch），harness 侧
         // attended-goal-context 以其为正证据精确核对 phase/attempt——invented phase/attempt
         // 不能借用活 fence。它是 driver 级签发记录，不进 canonical lifecycle 投影
         //（goal-canonical-lifecycle 按 driver=session 跳过），detached 零变化。
-        if (attendedExecutor && runControl && !resumePostAgent) {
+        if (attendedExecutor && runControl && !skipExecutor) {
           goalEvents.emit({
             type: 'phase_start',
             phase: String(phase),
@@ -8180,7 +8350,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             attempt: retries + 1,
           });
         }
-        let invoke = resumePostAgent
+        let invoke = skipExecutor
           ? ({
               exitCode: 0,
               timed_out: false,
@@ -8204,7 +8374,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           outputLogPath,
           // t4：确定性完成观测（与 settle/hard timeout/silent race）。判据注入自 runner，
           // 通用进程层不依赖 receipt schema。
-          completionProbe: completion ? completion.probe : undefined,
           deadlineMs: Date.now() + effectiveAgentTimeoutMs,
           // t1（f7a3d9c2）：轮次身份注入——agent 会话内自跑 harness 与外层 gate 同轮
           // t3（device-readiness）：设备目标经 extraEnv 注入子进程，**不写全局 process.env**
@@ -8259,7 +8428,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ),
             );
 
-        if (!resumePostAgent && 'status' in invoke && invoke.status === 'waiting') {
+        if (!skipExecutor && 'status' in invoke && invoke.status === 'waiting') {
           const waitingDetail = invoke.details ?? 'attended executor is waiting for external input';
           goalEvents.emit({
             type: 'phase_halt',
@@ -8324,7 +8493,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         // adjudicated-repair-loop：resumePostAgent（验证边界恢复）不发 invoke_end——
         // 原 settled invocation 的 invoke_end 已在盘上，伪造 invoke 不得再落一条。
-        if (!resumePostAgent) {
+        if (!skipExecutor) {
           goalEvents.emit({
             type: 'agent_invoke_end',
           phase,
@@ -8368,7 +8537,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 时不得声称已收纳（上方已 halt 阻断，本分支不可达；此处条件为结构保障）。
         // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不重复 emit
         // settled——原 settled invocation 的事件已在盘上，伪造 invoke 不得再落一个。
-        if (containmentCtx && !guardianBoundError && !resumePostAgent) {
+        if (containmentCtx && !guardianBoundError && !skipExecutor) {
           goalEvents.emit({
             type: 'agent_process_settled',
             phase,
@@ -8389,7 +8558,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // agent 根本没有执行任务——缺产物只是症状：不得用 harness 的 spec_file_exists
         // 覆盖真实原因，也不得消耗内容 retry。incident 登记为 external。
         // 普通 agent 内容失败（含无 guardian 诊断的 exit 2）保持既有 harness/retry。
-        if (!dryRun && !resumePostAgent) {
+        if (!dryRun && !skipExecutor) {
           const hardCliFacts = {
             exitCode: invoke.exitCode,
             timed_out: invoke.timed_out,
@@ -8535,9 +8704,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // truncated tail would hide the very rewrite that voids such a fact.
             // plan 4e6fb3b6 最终评审返修 R1：任何阶段写自己带 artifact 角色的正式产物也记进 owned（写后哈希）——
             // 这是接续决策"上一轮确实修过"（findChangedRelatedRepair）唯一能读到的产物基线；失败的阶段没有闭环证据可用。
-            // 其它 allowed 写入不记（coding 的源码写入由 review closure attestation 承接）。
+            // Coding source observations also bind the next invoke's facts admission;
+            // their original roles keep other recovery consumers on the old baseline.
             const ownedWrites = classifiedWrites.allowed.filter((write) => write.roles.some((role) =>
-              role.kind === 'artifact' || (phase === 'ut' && role.kind === 'source')));
+              role.kind === 'artifact' || ((phase === 'ut' || phase === 'coding') && role.kind === 'source')));
             if (classifiedWrites.observed.length > 0 || ownedWrites.length > 0) {
               // Attribution without adjudication: unresolved ownership is a gap in the
               // artifact registry (which describes skill narratives only), and a
@@ -8553,6 +8723,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     how: write.how,
                     pre_sha256: write.preSha256,
                     post_sha256: write.postSha256,
+                    ...(phase === 'coding' && !write.roles.some(role => role.kind === 'artifact')
+                      ? { roles: write.roles } : {}),
                   })),
                 } : {}),
                 observations: classifiedWrites.observed.map((observation) => ({
@@ -8806,53 +8978,57 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // spawn 之前，把本 attempt 的 journal 中间轮**顺序重放重算**收编进正式 ledger
         // （时序保证中间轮行落在 gate 行之前——fuse"最后一有效行"语义正确）。
         // 重放不一致 → halt visual_ledger_integrity（journal 篡改/评估器漂移不得静默收编）。
-        let journalReplayHalt = false;
-        // T4：污染轮次不收编——journal proposal 留在 run 目录内作 audit，不进正式账本
-        if (!dryRun && phase === 'testing') {
-          try {
-            const replay = replayJournalIntoLedger({
-              ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
-              journalPath: intermediateRoundsJournalPath(projectRoot, manifest.feature, manifest.run_id),
-              attemptId: visualAttemptId,
-              runId: manifest.run_id,
-            });
-            for (const row of replay.committed) {
-              goalEvents.emit({
-                type: 'visual_round',
-                phase,
-                invoke_id: invokeId,
-                loop_id: row.loop_id,
-                visual_attempt: row.attempt_id,
-                row_hash: row.row_hash,
-                disposition: 'appended',
-                intermediate: true,
-                fused: row.decision.fused,
+        const replayCurrentVisualJournal = (intermediate: boolean): boolean => {
+          let journalReplayHalt = false;
+          // T4：污染轮次不收编——journal proposal 留在 run 目录内作 audit，不进正式账本
+          if (!dryRun && phase === 'testing') {
+            assertGoalBoundary('visual_journal_commit');
+            try {
+              const replay = replayJournalIntoLedger({
+                ledgerPath: visualRoundsLedgerPath(projectRoot, manifest.feature),
+                journalPath: intermediateRoundsJournalPath(projectRoot, manifest.feature, manifest.run_id),
+                attemptId: visualAttemptId,
+                runId: manifest.run_id,
               });
-            }
-            if (!replay.ok) {
-              console.error(
-                `\n===== visual_ledger_integrity =====\n中间轮 journal 收编重放失败（不得静默收编，须人工核查）：\n${replay.mismatches.map(m => `  - ${m}`).join('\n')}\n`,
-              );
+              for (const row of replay.committed) {
+                goalEvents.emit({
+                  type: 'visual_round',
+                  phase,
+                  invoke_id: invokeId,
+                  loop_id: row.loop_id,
+                  visual_attempt: row.attempt_id,
+                  row_hash: row.row_hash,
+                  disposition: 'appended',
+                  intermediate,
+                  fused: row.decision.fused,
+                });
+              }
+              if (!replay.ok) {
+                console.error(
+                  `\n===== visual_ledger_integrity =====\n中间轮 journal 收编重放失败（不得静默收编，须人工核查）：\n${replay.mismatches.map(m => `  - ${m}`).join('\n')}\n`,
+                );
+                journalReplayHalt = true;
+              } else if (replay.replayed > 0) {
+                console.log(`[S5] journal 中间轮收编：${replay.replayed} 行重放入正式账本（events 已记）`);
+              }
+            } catch (e) {
+              console.error(`[S5] journal 收编异常（不静默——按完整性失败处理）：${(e as Error).message}`);
               journalReplayHalt = true;
-            } else if (replay.replayed > 0) {
-              console.log(`[S5] journal 中间轮收编：${replay.replayed} 行重放入正式账本（events 已记）`);
             }
-          } catch (e) {
-            console.error(`[S5] journal 收编异常（不静默——按完整性失败处理）：${(e as Error).message}`);
-            journalReplayHalt = true;
           }
-          if (journalReplayHalt) {
-            halted = true;
-            goalEvents.emit({
-              type: 'phase_halt',
-              phase,
-              halt_reason: 'visual_ledger_integrity',
-              verdict: 'FAIL',
-            });
-            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'visual_ledger_integrity' });
-            phaseDone = true;
-            continue;
-          }
+          return journalReplayHalt;
+        };
+        if (replayCurrentVisualJournal(true)) {
+          halted = true;
+          goalEvents.emit({
+            type: 'phase_halt',
+            phase,
+            halt_reason: 'visual_ledger_integrity',
+            verdict: 'FAIL',
+          });
+          outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'visual_ledger_integrity' });
+          phaseDone = true;
+          continue;
         }
 
         // 【pass snapshot 冻结差异判定已退役】closure 轮改产物的硬约束由完整 harness
@@ -8999,6 +9175,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
           break;
         }
 
+        let closureFinalizationError: string | null = null;
+        if (!dryRun && phase === 'testing') {
+          assertGoalBoundary('gate_evidence_commit');
+          if (replayCurrentVisualJournal(false)) {
+            halted = true;
+            goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'visual_ledger_integrity', verdict: 'FAIL' });
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'visual_ledger_integrity' });
+            phaseDone = true;
+            break;
+          }
+          closureFinalizationError = commitGateDeviceEvidenceProposal(projectRoot, manifest.feature, manifest.run_id, {
+            projectRoot, attemptId: visualAttemptId,
+            expectedTarget: { serial: deviceEnv.HARNESS_HDC_TARGET ?? null,
+              target_kind: deviceEnv.MAISON_DEVICE_TARGET_KIND ?? null, session_id: deviceEnv.MAISON_DEVICE_SESSION_ID ?? null },
+            harnessWindow: { startMs: harnessStartedAtMs, endMs: harnessEndedAtMs },
+            reportsDir: featurePhaseReportsDir(projectRoot, manifest.feature, String(phase), frameworkRoot),
+          });
+        }
+
         // P2：本次 attempt 结束后，runner 对"盘上现实"派生 checkpoint.json（观测 + 跨进程 resume）。
         if (!dryRun) {
           deriveAndWriteCheckpoint({
@@ -9135,9 +9330,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
         // 复用本次控制流已取得的 receiptValidation，不重复 spawn（codex 五轮）。
         let inFlowReceiptValidation: ReturnType<typeof tryValidateReceipt> | null = null;
-        let closureFinalizationError: string | null = null;
         let phaseClosureCommitted = false;
-        if (!dryRun && freshSummary && summary?.verdict === 'PASS') {
+        if (!dryRun && !closureFinalizationError && freshSummary && summary?.verdict === 'PASS') {
           const harnessRoot = path.join(frameworkRoot, 'harness');
           const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
             harnessRoot,
@@ -9221,7 +9415,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               loop_id: string;
               attempt?: string;
               row_hash?: string;
-              disposition: 'appended' | 'duplicate' | 'append_failed';
+              disposition: 'appended' | 'duplicate' | 'append_failed' | 'journaled';
               decision?: { fused: boolean };
             };
           } | null
@@ -9427,7 +9621,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 不能驱动改码）也不 advance（must_fix 在场不能装干净）——testing 内 retry 引导
         // 重采/补身份，耗尽 halt。
         const unverifiableOnly =
-          phase === 'testing' && !envBlocked && !hasActionable && actionableResult.unverified.length > 0;
+          !closureFinalizationError && phase === 'testing' && !envBlocked && !hasActionable && actionableResult.unverified.length > 0;
 
         // adjudicated-repair-loop M1（review 修复）：累计收敛状态**在 assess/唯一 boundary
         // 之前**一次性计算——halt 交由 guard 前置（boundary 发布一致的 halt verdict），不再
@@ -10760,9 +10954,28 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const repeatCandidates = gapDriven
             ? []
             : summaryRepairCandidates.filter(c => !isRebuttalAppearance(repairDeclines.get(c.item_fingerprint)));
+          const relatedPaths = gapDriven ? [] : resolveBacktrackRelatedInputs({
+            projectRoot, frameworkRoot, feature: manifest.feature,
+            runId: manifest.execution_scope ? manifest.run_id : undefined,
+            candidates: eligibleForBacktrack, targetPhase: String(targetPhaseBt), track: goalTrack, boundary: phaseWriteBoundary,
+          });
+          const relatedInputSnapshot = relatedPaths.length ? snapshotBacktrackRelatedInputs(projectRoot, relatedPaths, {
+            feature: manifest.feature, frameworkRoot, phaseOrder: phaseWriteBoundary?.phaseOrder, targetPhase: String(targetPhaseBt),
+          }) : {};
+          const repeatFingerprint = repeatCandidates.length ? roundFingerprintOfCandidates(repeatCandidates) : '';
+          // 原事件为同进程/resume/successor唯一旧值来源，不在恢复时重算旧快照。
+          const relatedEvents = [...ancestorBudgetEvents, ...loadAuthoritativeEvents(eventsPath)];
+          const previousRelated = [...relatedEvents].reverse().find(event => event.type === 'phase_backtrack_requested'
+            && event.round_fingerprint === repeatFingerprint && event.to_phase === targetPhaseBt
+            && (event.from_phase ?? event.phase) === phase);
+          const relatedProgress = compareBacktrackRelatedInputs({ projectRoot, feature: manifest.feature,
+            runId: manifest.run_id, events: relatedEvents, previous: previousRelated, current: relatedInputSnapshot });
           const roundRepeated = gapDriven
             ? seenRoundFingerprints.has(roundFp)
-            : repeatCandidates.length > 0 && seenRoundFingerprints.has(roundFingerprintOfCandidates(repeatCandidates));
+            : repeatCandidates.length > 0 && seenRoundFingerprints.has(repeatFingerprint) && relatedProgress === 'unchanged';
+          const repeatGuidance = gapDriven
+            ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转，进入收敛熔断。`
+            : `整轮 repair candidates 集合与上次回退相同，且完整可比的相关修复输入内容未变（roundFingerprint=${roundFp.slice(0, 12)}…）——进入收敛熔断。`;
           // adjudicated-repair-loop M1（review 修复）：eligible 状态已在 assess 前一次性
           // 计算（见 driverGuardAction 链上方 eligibleForBacktrack）——allRepairExhausted
           // 由 guard 前置 halt（唯一裁决面，boundary 发布一致 verdict），本分支只负责：
@@ -10782,7 +10995,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : disputeLines.length > 0
                 ? [
                     haltReason === 'backtrack_fingerprint_repeat'
-                      ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转，进入收敛熔断。`
+                      ? repeatGuidance
                       : `回退预算已耗尽（本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））——本 run 诚实终止，可由新 correction/successor 输入继续。`,
                     ...disputeLines,
                     '',
@@ -10813,7 +11026,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             console.error(
               `\n===== ${haltReason} =====\n`
               + (backtrackHaltGuidance ?? (haltReason === 'backtrack_fingerprint_repeat'
-                ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转，进入收敛熔断。\n`
+                ? `${repeatGuidance}\n`
                 : haltReason === 'backtrack_limit'
                   ? `回退预算已耗尽（本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））——本 run 诚实终止，可由新 correction/successor 输入继续。\n`
                   : '')),
@@ -10842,16 +11055,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               authorized: false,
               round_fingerprint: roundFp,
               // 整组事实（含非目标阶段的分组）——链重走时按阶段过滤注入，不丢 mixed-owner
-              candidates: backtrackRepairCandidates.map(c => ({
-                id: c.id,
-                category: c.category,
-                files: c.files.slice(0, 10),
-                summary: c.summary.length > 400 ? `${c.summary.slice(0, 400)}…` : c.summary,
-                item_fingerprint: c.item_fingerprint,
-                source_phase: c.source_phase,
-                // M1：signal@1 标记随事件持久化——attempted 回放据此识别信号级候选
-                ...(c.identity_schema ? { identity_schema: c.identity_schema } : {}),
-              })),
+              candidates: backtrackRepairCandidates.map(serializeBacktrackRepairCandidate),
+              ...(!gapDriven ? { related_input_snapshot: relatedInputSnapshot } : {}),
               defect_count: summaryRepairCandidates.length,
               files: [...new Set(summaryRepairCandidates.flatMap(c => c.files))].slice(0, 20),
               fingerprint: roundFp,

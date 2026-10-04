@@ -96,6 +96,7 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
 }
 
 export interface BuildVerifierMaterialInput {
+  deviceTestEvidence?: { trace_path?: unknown };
   resolvedInputs?: ResolvedPhaseInputs;
   factsContext?: FactsInvocationContext;
   projectRoot: string;
@@ -132,6 +133,7 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
       feature,
       phase: phase as Phase,
       frameworkRoot: input.frameworkRoot,
+      deviceTestEvidence: input.deviceTestEvidence,
     });
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
       if (isRuntimeArtifact(entry.path)) continue;

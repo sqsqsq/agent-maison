@@ -214,6 +214,10 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
     {
       const declared = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
       declared.files = [codeRel];
+      if (['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode)) {
+        // These modes exercise real authorized source edits, so the existing owner resolver needs the actual module location.
+        declared.modules = [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }];
+      }
       fs.writeFileSync(contractsFile, YAML.stringify(declared));
     }
     const contractsAtBirth = fs.readFileSync(contractsFile);
@@ -3105,6 +3109,7 @@ cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the 
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  for (const test of cases) { try { await test.run(); results.push({ name: test.name, ok: true }); } catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); } }
+  const only = process.env.EXECUTION_SCOPE_ONLY;
+  for (const test of cases.filter(test => !only || only.split(',').some(name => test.name === name))) { try { await test.run(); results.push({ name: test.name, ok: true }); } catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); } }
   return results;
 }

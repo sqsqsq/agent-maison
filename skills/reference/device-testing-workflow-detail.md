@@ -18,9 +18,9 @@
 
 若 `device_test.run` 为 BLOCKER 且未 SKIP，须在跑一次 `testing` harness 之前，从顶层 `test-plan.md`（自然语言步骤表）生成 Hylyre 可消费的派生计划。具体 JSON 形态/宿主 CLI/`HYLYRE_APP_STORE_DIR`/即席落盘约定见 profile addendum「真机自动化」与模板 `` `profile-skill-asset:device-testing/test_plan_hylyre_template` ``。
 
-**首次派生入口**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`。CLI 默认将同一份 stdout JSON 写到 checker 读取的 canonical testing reports 下 `derive-hint-from-plan.json`（尊重 `reports_dir_pattern`）；生成成功后才写 `test-plan.hylyre.md`，不需要先让 harness 失败一次。正式流程使用默认输出路径，不将 `--out` 改到其它位置。
+**首次派生入口**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，读本次 stdout 的完整上下文，再写 `test-plan.hylyre.md`，不需要先让 harness 失败一次。canonical testing reports 下的 `derive-hint-from-plan.json`（尊重 `reports_dir_pattern`）是源语义基线：真实 TC/执行语法/reset 输入未变时保持字节、generated_at 和 mtime；stdout 仍含当前缓存/selector 候选并沿用原 generated_at。需要完整当前上下文文件可用 `--out <另一文件>`，该导出不更新或替代 canonical 基线；`--out` 指向 canonical 与默认写入同样幂等。
 
-**门禁提示**：`device_test.run` 未 SKIP 时，脚本以顶层 `test-plan.md` 为 SSOT 校验 Hylyre 派生覆盖：派生表 TC 须与顶层 `execution_channel=hylyre` 的**精确集合相等**（缺一条 missing、多一条 extra 均 BLOCKER），并更新 `derive-hint-from-plan.json`（含 `missing_tc_ids`/`rejected_placeholder_paths`）。**正式派生计划登记 `explicit_skip_tc_ids` 本身即 BLOCKER**，skip 也不减除任何缺口。含烟测占位标记的派生文件无效；多目录并存按 `test-plan.hylyre.md` 的 mtime 选最新有效派生。CLI：`cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`。
+**门禁提示**：`device_test.run` 未 SKIP 时，脚本以顶层 `test-plan.md` 为 SSOT 校验 Hylyre 派生覆盖：派生表 TC 须与顶层 `execution_channel=hylyre` 的**精确集合相等**（缺一条 missing、多一条 extra 均 BLOCKER）。最新 coverage_reason、top/derived/missing/extra TC、选中/拒绝路径、源与派生原 mtime 及完整 lint/suggested_fix 在本轮 `script-report.json` 的 `device_test_run.structured.derive_hint`，NEXT 指向该原报告；不要读不再逐轮改写的 canonical hint 作当前诊断。**正式派生计划登记 `explicit_skip_tc_ids` 本身即 BLOCKER**，skip 也不减除任何缺口。含烟测占位标记的派生文件无效；多目录并存按 `test-plan.hylyre.md` 的 mtime 选最新有效派生。TC/真实派生上下文变化会更新源基线，旧派生仍须晚于基线且通过当前静态与 native 验证；只刷新 hint 或改时间不能证明修好。
 
 **4.5.1 解析 TC 表**：打开 `<features_dir>/<feature>/testing/test-plan.md`，定位「测试用例清单」章节；读取第一条用例行表（列须覆盖用例编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC/**执行通道**）；每行建立工作项 TC-xxx。**执行通道是编译期分派的唯一真源**：值域冻结为 `hylyre|visual|manual:<gap_class>|provider:<capability-id>`，由测试计划作者声明并经 review。裸 `manual` / 未知 gap、未登记 provider、active 但无 per-TC producer 都是跑机前 `invalid_test`；固定已知 `manual:<gap_class>` 与 inactive/SKIP provider 才是 `unsupported_gap`。派生器**只编译 `channel=hylyre` 的全集**，不得新增、删除或改写通道，也不得产出 `explicit_skip_tc_ids`；缺列/缺值/非法值是一次性迁移要求（BLOCKER），harness 不按用例名、优先级或步骤散文替你猜通道。
 
@@ -153,3 +153,7 @@
 **测试报告自检**（8 项）：必需章节（测试概览/执行结果/通过率统计/结论）齐全；执行结果表含用例编号和执行状态；状态值仅通过/失败/阻塞/跳过；各优先级与总体通过率计算正确；结论与通过率数据匹配；失败用例都有对应缺陷记录；缺陷关联用例编号在用例清单中存在；报告用例编号与计划一一对应。
 
 不通过项定位后自动修正重新自检，直到全部通过。
+
+**页面身份与内容验收分工**：复用 visual-diff-nav 的 identity.all_of/any_of/none_of；用稳定 screen/root、route、标题等区分页面，sms_next 这类待验收按钮留在 ui-spec required 与原生业务断言。目标页身份通过但按钮被键盘遮挡/缺失，仍是内容失败，不能隐藏键盘或删业务断言来满足身份。旧 nav 把按钮放 all_of 时，读取原配置和 _identity dump，由 testing 修自己的导航规则后重新判页；gate 不自动删除失败成员。真错页或锁屏不落目标页正式截图；命中其它应用组件 id 只证明应用树在场，不能断言一定是其它页。
+
+**视觉 provider 局部纠错**：同 gate 调用成功而 payload 不合法时，harness 把原body及精确屏/字段/索引错误回给同一冻结provider，最多纠正一次；两次共用原provider timeout与gate剩余deadline的较早截止，独立留原输出/usage/诊断，check structured与NEXT指向诊断。执行者不手改provider证据、hash或region verdict。原图/来源图/导航/目标/HAP变化回原采集/装机/trace路径；局部纠格式不重跑native或capture，也不能洗绿同gate已有native FAIL。IO只重试原提交事务，不让provider重判产品；第二次仍非法或预算不足保留invalid/清场状态，下一整轮真实产品复验仍走原契约。

@@ -89,21 +89,19 @@ goal-runner MUST 在 capability preflight 之后、`agent_invoke_start` 之前�
 
 ### Requirement: In-invocation completion observation
 
-goal-runner MUST 在 agent 等待期间运行完成观测，与进程 settle / hard timeout / silent watchdog 竞争。判据 MUST 为纯只读 receipt validator（MUST NOT 启动会写盘的 CLI）叠加**本 attempt 新鲜度**：invoke 前记录证据基线，只认本次调用后"不完整→完整"的跃迁；若调用前证据已完整，MUST 跳过本次调用而非启动后立即终止。
+Invocation completion MUST follow the adapter terminal contract or natural process exit. Codex SHALL consume turn.completed/turn.failed; Claude and CodeAgent SHALL consume their shared result envelope; Cursor SHALL request stream-json and require type=result/subtype=success/is_error=false with string result for success. Error result envelopes and non-zero natural exits MUST remain failures. Missing, partial or illegal events, mid-turn retries, silence, and summary PASS/closed MUST NOT establish completion.
 
-分层约束：通用进程层只负责 timer/race/kill，完成判据 MUST 由 goal-runner 以 `completionProbe` 回调与绝对 `deadlineMs` 注入，通用进程层 MUST NOT 依赖 receipt schema。
+A terminal event SHALL enter the existing bounded grace/kill settlement without exceeding the original absolute deadline. Natural process exit with inherited descendant pipes MUST settle through the existing bounded pipe cleanup. Cleanup MUST target only this invocation and MUST NOT terminate a runtime-managed emulator. Terminal parsing MUST NOT upgrade tool-event provenance, usage or image-read qualification.
 
-收口动作：证据完成后 MUST 等待最多 5 秒自然退出，仍存活则 tree-kill 本次 agent invocation。该结局 MUST 记为 `completion_observed=true`、`timed_out=false`，且 MUST NOT 归为 `agent_failed`。收口 MUST NOT 终止 runner 托管的模拟器。
+Enforcement: harness/scripts/utils/agent-invoke.ts, harness/scripts/utils/codex-terminal-events.ts, harness/scripts/utils/claude-envelope.ts
 
-validator 遇半写入/解析错误 MUST 视为本轮未完成并在下轮重试，MUST NOT 转判 completion、MUST NOT 终止 agent。
+#### Scenario: Work continues after a passing self-check
+- **WHEN** an executor writes PASS/closed during a self-check and then edits the product
+- **THEN** invocation SHALL continue until its terminal event or natural exit, preserving the later edit
 
-#### Scenario: 证据完成即收口
-- **WHEN** receipt 四条件在本 attempt 内由不完整变为完整，而 agent 进程仍未退出
-- **THEN** 等待自然退出至多 5 秒后终止该 invocation，记 `completion_observed`，phase 走既有 gate 流程
-
-#### Scenario: 旧 attempt 遗留证据不误判
-- **WHEN** invoke 前证据已完整（retry 遗留）
-- **THEN** 跳过本次 agent 调用，不产生"启动后立即终止"
+#### Scenario: Agent ended but descendant retains its pipe
+- **WHEN** terminal occurs or the agent naturally exits while an invocation descendant retains stdout
+- **THEN** bounded cleanup SHALL settle the invocation without waiting for the long hard timeout or killing a runtime-managed emulator
 
 ### Requirement: Managed emulator session lifecycle
 
@@ -984,8 +982,8 @@ timeout: hitting completion SHALL cancel the hard timeout). A `failed` terminal 
 distinct `terminal_failure_observed` fact, SHALL NOT set `completion_observed`, SHALL NOT cancel the
 hard wall-clock backstop, and SHALL normalize a zero exit code to non-zero so that
 `agentFailed = exitCode !== 0 && completionObserved !== true` still reports failure.
-Terminal failure SHALL take precedence over a completion probe in either arrival order: after a
-failure, the probe cannot establish completion; if failure arrives after the probe canceled the hard
+Terminal failure SHALL take precedence over a completed terminal in either arrival order: after a
+failure, completion cannot be established; if failure arrives after completion canceled the hard
 timeout, the invoke layer SHALL revoke completion and restore the backstop at its original deadline.
 The final invoke result SHALL never report both closure facts as true.
 
@@ -1012,18 +1010,18 @@ Enforcement: `harness/scripts/utils/codex-terminal-events.ts`, `harness/scripts/
   `completed` event with `completion_observed`, and SHALL record the error only as an
   `agent_invoke_end` diagnostic excerpt
 
-#### Scenario: completion probe fires before the failure terminal event
+#### Scenario: completed terminal fires before the failure terminal event
 
-- **WHEN** the completion probe first establishes completion and the same invocation later emits
+- **WHEN** the completed terminal first establishes completion and the same invocation later emits
   its `failed` terminal event
-- **THEN** terminal failure SHALL revoke probe completion, restore the hard timeout at its original
+- **THEN** terminal failure SHALL revoke completion, restore the hard timeout at its original
   deadline, and the phase verdict SHALL report `agent_failed=true`
 
-#### Scenario: failure terminal event arrives before a completion probe match
+#### Scenario: failure terminal event arrives before a completed terminal match
 
-- **WHEN** the invocation emits its `failed` terminal event and the completion probe later matches
+- **WHEN** the invocation emits its `failed` terminal event and the completed terminal later matches
   during settlement grace
-- **THEN** the probe SHALL NOT establish completion, and the phase verdict SHALL report
+- **THEN** the completed terminal SHALL NOT establish completion, and the phase verdict SHALL report
   `agent_failed=true`
 
 #### Scenario: an adapter with no terminal contract produces the same stream
@@ -1038,8 +1036,8 @@ Enforcement: `harness/scripts/utils/codex-terminal-events.ts`, `harness/scripts/
 Consuming an adapter's terminal event stream SHALL NOT change that adapter's
 `tool_event_provenance`. A structured terminal/usage stream on stdout is evidence that a turn ended
 and how many tokens it consumed — it is **not** evidence that a tool call happened or that an image
-input was injected. The adapter SHALL remain absent from the critic image-read parser registry and
-SHALL NOT be issued a verified critic receipt on the strength of terminal events, and no new adapter
+input was injected. An adapter whose existing provenance is none SHALL remain absent from the critic
+image-read parser registry and SHALL NOT be issued a verified receipt on the strength of terminal events. Existing independently verified tool parsers SHALL retain their qualification, and no new adapter
 capability field SHALL be introduced for terminal parsing (per-adapter argv plus parser suffices).
 
 Enforcement: `agents/codex/adapter.yaml`, `harness/scripts/utils/agent-invoke.ts`,
@@ -1051,25 +1049,21 @@ Enforcement: `agents/codex/adapter.yaml`, `harness/scripts/utils/agent-invoke.ts
 - **THEN** `tool_event_provenance` SHALL remain `none`, the critic parser registry SHALL NOT gain the
   adapter, and no verified receipt SHALL be produced for it
 
-### Requirement: The completion probe is a PASS-shaped closure accelerator, not a FAIL closer
+### Requirement: Goal runtime owns formal closure and writes
 
-The phase completion probe SHALL keep its four evidence conditions (receipt structure, summary
-identity, receipt status passed, closure closed) **unchanged**. Because a genuine FAIL receipt is by
-design a skeleton, the probe is structurally unable to fire on FAIL turns; this is correct behavior
-and SHALL NOT be relaxed — relaxing it would both close out half-finished work and kill agents that
-are still self-correcting within the attempt. Closure for FAIL turns is the responsibility of the
-adapter terminal contract. The probe SHALL continue to answer two separate questions that SHALL NOT
-be merged: whether the evidence is complete, and whether that complete evidence belongs to the
-current invocation.
+Every goal-bound harness/check-receipt/sync-closure CLI SHALL produce check facts and proposals without finalizing phase or Feature completion. Successful intermediate checks SHALL leave closure open and identify runtime as formal closer. After executor settlement, runtime SHALL run the formal gate, validate its receipt, and call the existing finalizer. Independent non-goal phase entries SHALL retain their existing closure behavior.
 
-Enforcement: `harness/scripts/utils/phase-completion-probe.ts`
+All goal visual rounds SHALL enter the existing journal. Runtime SHALL replay before and after the formal gate using its current owner fence; replay SHALL be ordered and idempotent and preserve round decisions. Device evidence SHALL be composed once into the current pipeline holder and check proposal, consumed by native/legacy checks and verifier preview in the same gate, then committed by runtime before formal manifest/finalizer/collector reads. Current attempt/device/HAP/trace/window bindings SHALL be validated before commit. A legacy checkpoint SHALL remain WARN and SHALL NOT become native PASS. The old gate environment flag SHALL grant no formal writer or closure role.
 
-#### Scenario: a FAIL turn finishes with a skeleton receipt
+Enforcement: harness/harness-runner.ts, harness/scripts/check-receipt.ts, harness/scripts/goal-phase-runtime.ts, harness/scripts/utils/phase-state.ts
 
-- **WHEN** an attempt ends with a genuine FAIL and the phase receipt is still the runner-written
-  skeleton
-- **THEN** the probe SHALL NOT fire, and closure SHALL come from the adapter terminal contract or
-  the hard timeout — not from a loosened evidence condition
+#### Scenario: Self-set gate flag cannot grant formal writes
+- **WHEN** a goal executor sets the former gate marker and runs passing checks
+- **THEN** only proposals SHALL be produced; runtime SHALL own formal ledger/device evidence/closure commits
+
+#### Scenario: Gate holder does not depend on a pre-deleted formal file
+- **WHEN** prior formal evidence is deleted before a native or legacy gate
+- **THEN** checks SHALL consume the current holder and runtime SHALL commit it before formal readers; invalid binding or commit failure SHALL remain failed/open
 
 ### Requirement: Liveness separates the work plane from the control plane
 
@@ -1239,6 +1233,19 @@ Enforcement: `harness/scripts/utils/repair-candidates.ts`, `harness/harness-runn
 - **WHEN** current item-level evidence verifies open MAJOR findings and a legacy conditional authorization exists
 - **THEN** the findings SHALL remain repair candidates and route to their responsible phase
 
+#### Scenario: Review reference normalization preserves historical declines
+
+- **WHEN** an original review backtrack candidate and its valid owner ledger use a fingerprint containing a file line suffix, and the current report normalizes that suffix
+- **THEN** event replay SHALL derive the equivalent fingerprint only from complete original id/files/summary, match the original ledger key, and expose one shared decline state under both references
+- **AND** aliases in one backtrack round SHALL count once, the goal brief SHALL display the basis once, and the rebuttal/attempt exemption SHALL preserve the original round and budget without rewriting historical records
+
+#### Scenario: Native repair evidence remains separate from identity and targets
+
+- **WHEN** an executed native failed step produces a repair candidate
+- **THEN** optional evidence_refs SHALL carry its project-relative trace path, exact case id and step index, with available derived-plan and verified artifact paths, through summary, backtrack event replay and executor prompt
+- **AND** the original id/files/summary/item_fingerprint SHALL remain unchanged; evidence references SHALL grant no write authority and SHALL NOT enter affected_files or source-progress snapshots
+- **AND** legacy candidates without the optional references SHALL remain readable and blocked/skipped successor steps SHALL produce no extra coding candidates
+
 ### Requirement: Assess routes repair candidates to the responsible phase via strict workflow mapping
 
 Assess SHALL map repair-candidate ownership through the current resolved workflow/track, returning no phantom phase and no chain-head fallback. Multiple owners target the most-upstream real phase while retaining the grouped facts. Goal and unattended batch execution SHALL automatically authorize any in-chain earlier target through the single `backtrack_to_phase` branch, existing invalidation transaction, budget, and fingerprint fuse. Manual UI MAY display the routing but MUST NOT require confirmation to preserve quality. A target absent from the actual chain remains `backtrack_target_absent`. Old phase-specific execution branches and dead recommendation actions MUST NOT coexist.
@@ -1249,6 +1256,60 @@ Enforcement: `harness/scripts/utils/assess.ts`, `harness/scripts/utils/correctio
 
 - **WHEN** testing emits a trusted plan-owned candidate and plan is earlier in the actual chain
 - **THEN** assess/driver/runner SHALL execute one `backtrack_to_phase:plan` transaction without human authorization
+
+### Requirement: Candidate round repetition requires unchanged comparable repair inputs
+
+The repair-candidate `backtrack_to_phase` branch SHALL retain the existing item/round fingerprints and budgets. A repeated candidate round SHALL halt as `backtrack_fingerprint_repeat` only when the relevant repair/verification inputs have a complete comparable content snapshot and remain unchanged. Each candidate SHALL contribute its explicit repair targets or its existing contracts/owner source scope; a mixed group SHALL NOT discard an empty-files native candidate's owner scope because another candidate has explicit files. Evidence references and actual process outputs (trace/screenshots, phase notes/logs/reports at their configured or resolved runtime locations), mtime, HEAD and summary prose SHALL NOT count as repair progress, including actual process outputs nested inside a relevant directory. The same location predicate SHALL govern explicit targets and directory digests; product files that merely share these directory/file names SHALL count by content. The general artifact/directory snapshot consumers SHALL retain their existing defaults.
+
+Before target construction and before emitting `phase_backtrack_requested`, the runtime SHALL collect the relevant inputs through the existing artifact/directory snapshot and retain them in the optional `related_input_snapshot` on that event. The original event SHALL be the shared baseline for same-process, resume and successor comparison; it SHALL NOT be recomputed from current content. The field SHALL NOT alter candidate identity, budgets or create another ledger. Current input keys SHALL match the original complete required set; additions/deletions, empty snapshots or entries without valid content hashes SHALL be unknown. Missing/bad entries or legacy records MAY use attestation/write observations only when the original input set and original window are established; current hashes or overwritten later attestations SHALL NOT replace the baseline.
+
+Unknown inputs SHALL prove neither zero change nor a completed repair: they only retain the existing bounded recovery path. Changed inputs SHALL permit another attempt within remaining original budgets, while only fresh verification establishes success. Decline/rebuttal exemptions and all other fuse families SHALL retain their existing semantics.
+
+#### Scenario: Same defect after a real source edit gets fresh verification
+
+- **WHEN** testing produces the same candidate fingerprint after the relevant source content changed
+- **THEN** the existing remaining backtrack budget SHALL allow the responsible phase and new verification
+- **AND** a still-failing verification SHALL remain failure without added budget
+
+#### Scenario: Notes and unrelated edits do not disguise a comparable repeated round
+
+- **WHEN** only notes/logs/process outputs or unrelated source change and all required repair inputs remain unchanged
+- **THEN** the candidate round SHALL halt as `backtrack_fingerprint_repeat`
+
+#### Scenario: Recovery reads the original snapshot and preserves limits
+
+- **WHEN** resume or a successor replays an earlier backtrack event
+- **THEN** it SHALL compare with that event's original related input snapshot and inherit the original used budgets
+- **AND** an exhausted turn/backtrack budget SHALL still stop despite a new fingerprint or source edit
+
+### Requirement: Facts admission and within-attempt source changes use one entry
+
+Before authorizing a phase executor, the runtime SHALL strictly validate existing facts through `resolveCapabilityResolutionEntryInput`, without pending-owner exemptions or replacing recorded source hashes with current bytes. A valid predecessor MAY have the same establishing phase and a different run identity; inheritance SHALL preserve its actual `established_by`, original facts provenance and baseline fingerprint/dependencies. Original closed-owner evidence must be valid before it is used. Missing source registration remains the existing automatic registration/WARN diagnosis; it SHALL NOT weaken an already recorded stale source or become a new provenance-only hard gate.
+
+The existing `agent_invoke_start` SHALL retain the admitted `FactsInvocationContext`; `source_owners` for the current phase SHALL also satisfy its existing source write boundary. Executors receive that context through `PhaseExecutionContext`. CLI and finalizer consumers SHALL recover the exact run/phase/attempt event and the same scope revocation window, excluding out-of-chain labels and invalidated contexts. Granted source content changes SHALL require readable current targets and verified entry provenance. Registering an exact source row in the current phase delta SHOULD improve traceability; missing rows, including newly created or modified owned targets missing from the original declarations, SHALL disclose MAJOR/WARN with the existing check id rather than block the phase. An existing untouched target absent from Research SHALL retain the original coverage failure. Registration recognition SHALL normalize equivalent project-relative/absolute, slash and ./ paths and merge same-phase sections without changing existing manifest facts fingerprint semantics. Unrelated/unauthorized sources and non-source requirement/contracts/config dependencies SHALL retain strict original hash/exists checks. The original baseline SHALL NOT be rewritten to current hashes.
+
+Current first-phase Research may exist before its first manifest. A stale/malformed baseline SHALL lead to actual source reconstruction at the first responsible phase; diagnostics SHALL identify facts and changed sources, rather than direct the actor to edit a capability contract. New establishing facts require schema 1.1; schema 1.0 inheritance requires an explicitly valid baseline. The finalizer SHALL re-enter the same admitted invocation to include newly established and gate-checked Research sources, while preserving its original baseline dependencies.
+
+A new invoke in the same run and phase MAY re-admit its original validated baseline using completed `agent_invoke_start` contexts and real `phase_write_observed.owned` pre/post chains. Each completed authorized source transition SHALL connect from the original recorded hash through intervening observed writes to current bytes; original baseline hashes, fingerprint and provenance SHALL remain unchanged. An interrupted start without end/owned MAY instead carry its already validated, unrevoked facts context until the phase formally advances, when every changed dependency remains a readable current owned source within the existing write boundary and original evidence/environment/requirement integrity remains valid. A subsequent normal invocation end without new writes SHALL preserve this basis for remaining verifier work. A later real owned observation MAY bridge the interrupted write gap; once a source has an observed post hash, unobserved between-invoke drift SHALL again be rejected. Freshness recomputation MAY carry only those current-phase source paths already explained by this validated window, including through closed predecessors that consumed the pending source; it SHALL NOT apply a global owner exemption. A start label and current owner alone SHALL NOT establish admission. Current write authority SHALL be resolved again. Normal invocation end plus absence of an unclosed existing guardian binding establishes completion across platforms; product PASS/closed SHALL NOT be a prerequisite. Windows startup reconciliation SHALL close a bound guardian confirmed absent by emitting the existing `orphan_reclaimed` event with the actual run/invoke/pid and `guardian_gone` method; unverifiable or still-live bindings SHALL remain strict. Missing contexts, broken completed-write chains, revoked/backtracked windows, unrelated source drift, and any original environment/requirement/manifest-integrity failure SHALL retain the strict path. Current in-invoke self-checks SHALL still use the exact current start, without requiring a future post event. Independent entries without a run SHALL preserve their existing in-progress source behavior using entry-provided source owners and the existing write boundary in both admission and the final facts check, without synthesizing admission events or replacing recorded SHA values.
+
+New coding source-only owned rows SHALL retain their original classification roles. `readRecordedRelatedHashes` SHALL exclude only those new coding rows with valid source/no-artifact roles, preserving the existing fresh continuation and legacy backtrack baseline semantics. Old rows without roles, coding artifact/mixed roles, UT source rows and observations SHALL keep their original consumers.
+
+#### Scenario: A normal open phase continues without rebuilding its valid Research
+
+- **WHEN** an invoke has ended after legitimate source edits and the next same-phase invoke completes review evidence or continues authorized work
+- **THEN** the new exact start SHALL retain the original baseline after complete pre/post verification, including three or more writes
+- **AND** unrelated between-invoke drift and missing/broken/invalidated evidence SHALL remain rejected, while budgets and current product checks remain effective
+
+#### Scenario: Same-phase successor inherits valid facts
+
+- **WHEN** coding starts in a successor with unchanged valid source/scope/environment evidence
+- **THEN** it SHALL preserve the old canonical facts and original provenance, appending only current delta
+
+#### Scenario: A legacy validation-only window cannot establish facts by implication
+
+- **WHEN** `resumePostAgent` reuses a settled invocation whose start lacks a verifiable facts context and strict admission finds a stale baseline
+- **THEN** its gate SHALL retain the existing facts-stale failure and require actual responsible reconstruction
+- **AND** it SHALL NOT emit another start or recount the settled invocation; a later necessary real executor call SHALL consume the original remaining budget normally
 
 ### Requirement: Receipt identity fields are runner-owned
 
@@ -1341,7 +1402,7 @@ Enforcement: `harness/scripts/utils/scope-replan.ts`（`checkPlanAuthority`）, 
 
 The per-run PASS frozen-snapshot mechanism (take/diff/restore/discard, trusted-context loading, epoch/head/journal, memory anchors, the `pass_snapshot_unavailable` / snapshot-flavored `pre_invoke_snapshot_failed` halt family, and the responsibility-rerun pending state) SHALL be removed and MUST NOT be reintroduced as workflow state, authorization, or start eligibility. PASS-artifact tamper protection SHALL rest on the facts that already exist: a closure attempt that breaks an artifact fails the next full harness re-verification; an edit that still passes re-earns every gate on the current bytes; and the phase closure manifest always binds the current bytes — the closure-only prompt keeps its "do not rewrite artifacts" instruction as guidance. Invalidation (backtrack/replan) SHALL be complete with the atomic `phase_backtrack_requested` event alone — no cache demotion side effects. The retained resident of the trust-state namespace is per-run trust-state GC (`deleteRunTrustState`, which also sweeps legacy snapshot and coding-base directories from older runs); new goal runs store their baseline only in `manifest.run_base_sha` and MUST NOT produce `coding-base.json`. Read-side incident mappings and strictly era-isolated legacy coding-base readers MAY remain for historical runs. Independent mechanisms that share similar names SHALL NOT be removed: review closure source attestation, UT product-source immutability, testing invoke-boundary source write-protection (`product-source-snapshot`), and the device readiness gate.
 
-Enforcement: `harness/scripts/utils/pass-snapshot.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/scope-replan.ts`, `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/utils/phase-completion-probe.ts`
+Enforcement: `harness/scripts/utils/pass-snapshot.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/scope-replan.ts`, `harness/scripts/utils/goal-runner-phase.ts`
 
 #### Scenario: a legitimate UT PASS with no optional artifacts no longer trips an invariant
 

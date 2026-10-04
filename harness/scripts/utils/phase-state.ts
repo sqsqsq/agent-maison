@@ -160,8 +160,7 @@ export function isGoalHeadlessEnv(): boolean {
  * visual-rounds journal 分流都必须消费本函数，不得各自造判定）。
  * 信号取并集：adapter 工具子进程实测会丢部分 env（2026-07-27 宿主实锤：cursor 丢
  * MAISON_GOAL_HEADLESS 留 MAISON_GOAL_RUN_ID——单一信号判定必翻车）；任一 goal 信号
- * 在场而无 gate authority（MAISON_GOAL_GATE_HARNESS=1，runner 直接 spawn 的 gate
- * harness 独有、agent env 构造时按信任锚剥离）即视为 agent 侧。
+ * 在场即为 goal CLI；自检与外层 gate 均只产 proposal，正式写者是 runtime。
  */
 export function hasGoalExecutionSignal(): boolean {
   return (
@@ -174,6 +173,11 @@ export function hasGoalExecutionSignal(): boolean {
   );
 }
 
+export function readGoalGateDeadlineMs(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const value = Number(env.MAISON_GOAL_GATE_DEADLINE_MS?.trim());
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 /** Direct harness runs may opt into a committed diff base; every goal context ignores it. */
 export function resolveHarnessDiffBaseRef(): string | undefined {
   if (hasGoalExecutionSignal()) return undefined;
@@ -182,7 +186,7 @@ export function resolveHarnessDiffBaseRef(): string | undefined {
 }
 
 export function isAgentSideGoalHarness(): boolean {
-  return hasGoalExecutionSignal() && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+  return hasGoalExecutionSignal();
 }
 
 /**
@@ -519,6 +523,10 @@ export function runSyncClosureDetailed(
   }
 
   if (receiptValidation.status === 'passed') {
+    if (hasGoalExecutionSignal() && !opts?.goalIdentity) {
+      console.log('✅ sync-closure: 当前检查通过；goal 阶段闭环由 runtime 在正式 gate 后提交。');
+      return { exitCode: 0 };
+    }
     let finalized;
     try {
       finalized = finalizePhaseClosure({

@@ -111,10 +111,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 't1 cursor 带 pin：-p --force --trust --model <v>',
+    name: 't1 cursor 带 pin：force/trust + stream-json + 精确 --model <v>',
     run: () => {
       const argv = planArgv('cursor', 'gpt-4o');
-      assert.deepStrictEqual(argv.slice(-3), ['--trust', '--model', 'gpt-4o']);
+      assert.deepStrictEqual(argv, ['-p', '--force', '--trust', '--output-format', 'stream-json', '--model', 'gpt-4o']);
       assert.strictEqual(argv[0], '-p');
       assert.strictEqual(argv[1], '--force');
     },

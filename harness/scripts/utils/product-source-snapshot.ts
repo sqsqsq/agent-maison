@@ -107,16 +107,18 @@ function collectRoot(
   rootAbs: string,
   out: Array<{ path: string; kind: SnapshotEntryKind; sha256: string }>,
   maxEntries = Infinity,
+  excludePath?: (relativePath: string) => boolean,
 ): CollectFailure | null {
   const walk = (abs: string): CollectFailure | null => {
     if (out.length > maxEntries) return { reason: `条目超过上限 ${maxEntries}` };
+    const rel = path.relative(projectRoot, abs).split(path.sep).join('/');
+    if (excludePath?.(rel)) return null;
     let st: fs.Stats;
     try {
       st = fs.lstatSync(abs);
     } catch (e) {
       return { reason: `lstat 失败：${path.relative(projectRoot, abs)}（${(e as Error).message}）` };
     }
-    const rel = path.relative(projectRoot, abs).split(path.sep).join('/');
     if (rel.split('/').some(seg => EXCLUDED_SEGMENTS.has(seg))) return null;
     try {
       if (st.isSymbolicLink()) {
@@ -251,9 +253,10 @@ export function computeProductSourceSnapshotSha256(
  * 与上面的 invocation 快照同一走树（lstat、不跟随链接、同一排除段、同一条目哈希）；
  * 条目超过上限或任一读取失败（含链接目标读不出）→ null，由调用方按"本轮不可比"处理，不给假摘要。
  */
-export function digestDirectoryTree(projectRoot: string, dirAbs: string, maxEntries: number): string | null {
+export function digestDirectoryTree(projectRoot: string, dirAbs: string, maxEntries: number,
+  excludePath?: (relativePath: string) => boolean): string | null {
   const entries: Array<{ path: string; kind: SnapshotEntryKind; sha256: string }> = [];
-  if (collectRoot(projectRoot, dirAbs, entries, maxEntries) || entries.length > maxEntries) return null;
+  if (collectRoot(projectRoot, dirAbs, entries, maxEntries, excludePath) || entries.length > maxEntries) return null;
   if (entries.some(e => e.kind === 'dir-symlink' && e.sha256 === UNREADABLE_LINK_SHA256)) return null;
   entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const h = crypto.createHash('sha256');

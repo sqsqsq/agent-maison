@@ -118,6 +118,7 @@ export interface ContextExplorationFrontmatter {
 }
 
 export interface ContextExplorationCheckOptions {
+  goalAttemptId?: string;
   request?: import('./capability-resolution-entry-input').PreparedRequest;
   factsContext?: import('./context-facts').FactsInvocationContext;
   resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;

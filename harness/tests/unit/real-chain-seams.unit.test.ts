@@ -1153,6 +1153,9 @@ function writeRc9bService(p: RealChainProject, fixed: boolean): void {
   const [from, to] = fixed ? [RC9B_SERVICE_DEFECT, RC9B_SERVICE_OK] : [RC9B_SERVICE_OK, RC9B_SERVICE_DEFECT];
   assert(src.includes(from) || src.includes(to), `BankService 形状已变，RC-9b 的缺陷注入点失效：${src}`);
   fs.writeFileSync(abs, src.replace(from, to), 'utf-8');
+  const factsPath = featureFilePath(p.root, p.feature, 'context/facts.md');
+  const facts = fs.readFileSync(factsPath, 'utf-8');
+  fs.writeFileSync(factsPath, `${facts.trimEnd()}\n| ${REAL_CHAIN_SERVICE} | openCard 当前返回 ${fixed ? '!!id' : 'true'} | 用真实产品断言复验服务行为 |\n`, 'utf-8');
 }
 
 /** verify-ut.md 诊断口径的 verifier 报告：测试真在驱动业务、断言有业务价值。 */

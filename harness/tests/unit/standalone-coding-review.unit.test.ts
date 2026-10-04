@@ -7,7 +7,7 @@ import { createHash } from 'crypto';
 import { execFileSync, spawnSync } from 'child_process';
 import { clearFrameworkConfigCache, resolveFeatureArtifact, featurePhaseReportsDir, resolveReceiptFilePath } from '../../config';
 import { resolveCapabilityInputs, readRunBoundContracts } from '../../scripts/utils/capability-resolution';
-import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityResolutionEntryInput, loadFactsInvocationContext } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveExecutionScope, executionScopeFingerprint, type ExecutionScope, type ExecutionScopeInput } from '../../scripts/utils/execution-scope';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import { buildSummaryRepairCandidates, checkOwnedCandidate, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
@@ -15,7 +15,7 @@ import { collectResolvedScopeFacts, readScopeAcceptance, prepareFeatureScopeCand
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { buildGoalManifestFromInput, SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
-import { resolvePhaseWriteBoundary, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
+import { resolvePhaseWriteBoundary, resolvePhasePathOwnership, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
 import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { runSyncClosureDetailed } from '../../scripts/utils/phase-state';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
@@ -23,10 +23,11 @@ import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
 import { runCorrectionInit } from '../../scripts/utils/correction-commands';
 import { assessFeature } from '../../scripts/utils/assess';
 import { formatAssessNextStep } from '../../scripts/utils/assess-renderer';
-import { checkFactsArtifact } from '../../scripts/utils/context-facts';
+import { checkFactsArtifact, factsPhaseFingerprint } from '../../scripts/utils/context-facts';
 import { checkUpstreamVerdictGate } from '../../scripts/utils/upstream-verdict-gate';
 import { collectCleanPassIssues, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
-import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, resolvePhaseEvidenceManifest as resolvePhaseEvidenceManifestActual, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { computeRunRequirementSha, computeRequirementShaFromText } from '../../scripts/utils/fidelity-shared';
 import coding from '../../scripts/check-coding';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
@@ -41,6 +42,13 @@ import { writePhaseSummary } from '../utils/completion-chain-seed';
 import { withRunDisposition } from '../../scripts/utils/adjudication';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
+/** Fixture closures bind the actual invoking run's requirement, as the production finalizer does. */
+function resolvePhaseEvidenceManifest(options: Parameters<typeof resolvePhaseEvidenceManifestActual>[0]) {
+  const subject = options.factsContext?.subject;
+  const runId = subject && 'run_id' in subject ? subject.run_id : process.env.MAISON_GOAL_RUN_ID;
+  return resolvePhaseEvidenceManifestActual({ ...options,
+    ...(options.requirementSha === undefined && runId ? { requirementSha: computeRunRequirementSha(options.projectRoot, options.feature, runId) } : {}) });
+}
 const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p4', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], artifacts: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
 /**
  * 造一个**只改 profile 源码后缀声明**的 framework 根：除 `profiles/` 外全部 junction 回仓，
@@ -49,7 +57,7 @@ const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p4', auto_chain: 
  * `profile-path-conventions`（UT 源根 / 测试路径约定）整份转发。
  * 只服务于"本夹具写的是 .ts 源码"这一件事，生产 profile 一个字不动。
  */
-function frameworkDeclaringTsSources(): string {
+export function frameworkDeclaringTsSources(): string {
   const fw = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p4-fw-ts-')));
   for (const entry of fs.readdirSync(frameworkRoot, { withFileTypes: true })) {
     if (entry.name === 'profiles') continue;
@@ -78,7 +86,7 @@ function frameworkDeclaringTsSources(): string {
  * 但先把链接单独摘掉最稳，也保证任何一步失败都不可能误删仓内的真目标。
  * 清理自身的失败一律吞掉：它不能盖过用例本身的结论。
  */
-function removeShimFramework(fw: string): void {
+export function removeShimFramework(fw: string): void {
   try {
     for (const entry of fs.readdirSync(fw, { withFileTypes: true })) {
       const abs = path.join(fw, entry.name);
@@ -132,7 +140,8 @@ function fixture(newFile = false, baselineTest = false) {
   write('test-profile/harness/profile-path-conventions.js', "exports.resolveUtSourceRoots=(root,modules)=>modules.map(m=>require('path').join(root,m.package_path,'src','ohosTest'));\n");
   write('test-profile/harness/coding-host-rules.js', `const cp=require('child_process'); exports.profileCodingHost={sourceFileSuffixes:['.ts'],runStructureChecks:()=>[],runTraceabilityChecks:()=>[],checkCodingCompile:ctx=>{let details='TypeScript compilation completed',status='PASS';try{cp.execFileSync(process.execPath,[${JSON.stringify(require.resolve('typescript/bin/tsc'))},'--noEmit','--skipLibCheck','--target','ES2022',...ctx.featureSpec.contracts.files],{cwd:ctx.projectRoot,stdio:'pipe'});}catch(e){status='FAIL';details=String(e.stdout||e);}return [{id:'coding_compile',category:'structure',severity:'BLOCKER',status,description:'native TypeScript compile',details}];}};`);
   const context = (phase: 'coding' | 'review', goalRunId = manifest.run_id): CheckContext => {
-    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId });
+    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature: 'demo', phase, featuresDir: 'doc/features', goalRunId,
+      ...(goalRunId ? {} : { requirement: options.requirement }) });
     const resolved = resolveCapabilityInputs({ ...options, ...bridge, phase });
     assert.notEqual(resolved.report.assurance, 'blocked', JSON.stringify(resolved.report));
     const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
@@ -171,6 +180,23 @@ function appendRunEvent(f: ReturnType<typeof fixture>, event: Record<string, unk
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.appendFileSync(target, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
 }
+
+/** Production admission + write boundary, persisted in the existing invocation event before mutation. */
+function beginFactsInvocation(f: ReturnType<typeof fixture>, fw: string, phase: string, runId: string, attemptId: string) {
+  const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase,
+    featuresDir: 'doc/features', goalRunId: runId });
+  const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', runId,
+    phaseOrder: workflow.auto_chain!, track: 'full', profileDir: path.join(fw, 'profiles/hmos-app'), productLayerDirs: ['src'],
+    resolveUtSourceRoots: tryLoadUtSourceRootResolver(path.join(fw, 'profiles/hmos-app')) ?? undefined });
+  for (const [source, owner] of Object.entries(entry.factsContext?.source_owners ?? {})) {
+    if (owner !== phase) continue;
+    const granted = resolvePhasePathOwnership(boundary, source);
+    if (granted.owner !== phase || !granted.roles.some(role => role.kind === 'source')) delete entry.factsContext!.source_owners![source];
+  }
+  const eventsPath = path.join(f.root, `doc/features/demo/goal-runs/${runId}/events.jsonl`);
+  appendRunEvent(f, { type: 'agent_invoke_start', phase, invoke_id: `${phase}-${attemptId}`, facts_context: entry.factsContext }, eventsPath);
+  return entry;
+}
 async function scopeCheck(f: ReturnType<typeof fixture>) {
   const check = (await coding.check(f.context('coding'))).find(item => item.id === 'diff_within_scope');
   assert(check, 'diff_within_scope missing');
@@ -178,6 +204,339 @@ async function scopeCheck(f: ReturnType<typeof fixture>) {
 }
 
 const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  ...(['new', 'modified', 'untouched'] as const).map(mode => ({ name: `b1b2 owned source coverage ${mode}: only actual phase writes downgrade missing research`, newFile: true, run(f: ReturnType<typeof fixture>) {
+    const fw = frameworkDeclaringTsSources();
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      if (mode !== 'new') f.write('src/demo/new.ts', 'export const added = 1;\n');
+      f.facts();
+      f.write('src/demo/Legacy.ets', 'struct Legacy {}\n'); f.write('build-profile.json5', '{}\n');
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace('key_inputs_read:\n  - src/demo/value.ts', 'key_inputs_read:\n  - src/demo/value.ts\n  - src/demo/Legacy.ets\n  - build-profile.json5'));
+      const first = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+      const initialInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...first });
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', factsContext: first.factsContext, resolvedInputs: initialInputs.inputs }));
+      beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1');
+      if (mode !== 'untouched') f.write('src/demo/new.ts', 'export const added = 42;\n');
+      fs.appendFileSync(path.join(f.root, 'doc/features/demo/context/facts.md'), '\n## phase_delta: coding\nImplemented the planned behavior.\n');
+      const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i1' });
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...entry });
+      const checks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: resolved.inputs, goalAttemptId: 'i1' });
+      const missing = checks.filter(check => check.id === 'context_exploration_facts_scope_coverage' && check.details.includes('src/demo/new.ts'));
+      assert(missing.some(check => check.status === (mode === 'untouched' ? 'FAIL' : 'WARN')), JSON.stringify(checks));
+      assert.equal(generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, checks, fw, resolved.report).summary.verdict,
+        mode === 'untouched' ? 'FAIL' : 'PASS', JSON.stringify(checks));
+    } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
+  } })),
+  { name: 'b1b2 interrupted non-first UT resumes its validated start through the final facts verdict', baselineTest: true, run(f) {
+    const fw = frameworkDeclaringTsSources();
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      assert(f.manifest.phase_chain!.indexOf('ut') > 0, JSON.stringify(f.manifest.phase_chain));
+      f.facts();
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8')
+        .replace('source_code_paths:\n  - src/demo/value.ts', `source_code_paths:\n  - src/demo/value.ts\n  - ${UT_BASELINE_TEST}`)
+        .replace('key_inputs_read:\n  - src/demo/value.ts', `key_inputs_read:\n  - src/demo/value.ts\n  - ${UT_BASELINE_TEST}`)
+        + `\n| ${UT_BASELINE_TEST} | existing UT | verify behavior |\n`);
+      const establishing = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+      const initialInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...establishing });
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', factsContext: establishing.factsContext, resolvedInputs: initialInputs.inputs }));
+      fs.appendFileSync(factsPath, '\n## phase_delta: ut\nnone\n');
+      const original = beginFactsInvocation(f, fw, 'ut', f.manifest.run_id, 'i1');
+      assert(original.factsContext?.baseline && original.factsContext.source_owners?.[UT_BASELINE_TEST] === 'ut');
+      f.write(UT_BASELINE_TEST, 'export default function baseTest() { return true; }\n');
+      fs.appendFileSync(factsPath, '\n## phase_delta: ut\nUpdated the existing behavior test.\n');
+      // A killed executor leaves only its validated start: no end and no owned observation.
+      const eventsPath = path.join(f.root, f.manifest.report_dir, 'events.jsonl');
+      const recorded = fs.readFileSync(eventsPath, 'utf8');
+      const resume = () => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i2' });
+      for (const revoke of [
+        (events: any[]) => { delete events.find(event => event.type === 'agent_invoke_start').facts_context; },
+        (events: any[]) => events.push({ type: 'phase_invalidated', phase: 'ut' }),
+        (events: any[]) => events.push({ type: 'phase_backtrack_requested', to_phase: 'ut', invalidated_phases: ['ut'] }),
+      ]) {
+        const events = recorded.trim().split('\n').map(line => JSON.parse(line)); revoke(events);
+        fs.writeFileSync(eventsPath, events.map(event => JSON.stringify(event)).join('\n') + '\n');
+        assert.throws(resume, /facts baseline stale/);
+        fs.writeFileSync(eventsPath, recorded);
+      }
+      for (const relative of ['doc/features/demo/acceptance.yaml', 'doc/features/demo/contracts.yaml', 'framework.config.json', 'src/demo/value.ts']) {
+        const absolute = path.join(f.root, relative); const originalBytes = fs.readFileSync(absolute);
+        fs.appendFileSync(absolute, relative.endsWith('.json') ? ' ' : '\n# source outside UT ownership\n'); clearFrameworkConfigCache();
+        assert.throws(resume, /facts baseline stale/, relative);
+        fs.writeFileSync(absolute, originalBytes); clearFrameworkConfigCache();
+      }
+      const entry = resume();
+      assert.deepStrictEqual(entry.factsContext?.baseline, original.factsContext.baseline, 'resume preserves the real entry hashes');
+      appendRunEvent(f, { type: 'agent_invoke_start', phase: 'ut', invoke_id: 'ut-i2', facts_context: entry.factsContext });
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'ut', track: 'full', ...entry });
+      assert.notEqual(resolved.report.assurance, 'blocked', JSON.stringify(resolved.report));
+      const checks = checkFactsArtifact(f.root, 'demo', 'ut', { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: resolved.inputs, goalAttemptId: 'i2' });
+      const report = generateScriptReport(path.join(fw, 'harness'), 'ut', 'demo', f.root, checks, fw, resolved.report);
+      assert.equal(report.summary.verdict, 'PASS', JSON.stringify(report.checks));
+      assert(checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), JSON.stringify(checks));
+      const interruptedAgain = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i3' });
+      assert.deepStrictEqual(interruptedAgain.factsContext?.baseline, original.factsContext.baseline, 'another interrupted resume still preserves the first validated admission');
+      appendRunEvent(f, { type: 'agent_invoke_end', phase: 'ut', invoke_id: 'ut-i2', exit_code: 0 });
+      const afterNormalEnd = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i3' });
+      assert.deepStrictEqual(afterNormalEnd.factsContext?.baseline, original.factsContext.baseline, 'normal end without new source writes must allow remaining verifier work');
+      appendRunEvent(f, { type: 'agent_invoke_start', phase: 'ut', invoke_id: 'ut-i3', facts_context: afterNormalEnd.factsContext });
+      const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', runId: f.manifest.run_id,
+        phaseOrder: workflow.auto_chain!, track: 'full', profileDir: path.join(fw, 'profiles/hmos-app'), productLayerDirs: ['src'],
+        resolveUtSourceRoots: tryLoadUtSourceRootResolver(path.join(fw, 'profiles/hmos-app')) ?? undefined });
+      const pre = capturePhaseInvocationSnapshot(boundary);
+      f.write(UT_BASELINE_TEST, 'export default function baseTest() { return false; }\n');
+      const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+      assert.equal(diff.kind, 'changed'); if (diff.kind !== 'changed') return;
+      const owned = classifyPhaseInvocationChanges(boundary, 'ut', diff.changes).allowed.filter(write => write.roles.some(role => role.kind === 'source'))
+        .map(write => ({ path: write.path, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles }));
+      appendRunEvent(f, { type: 'agent_invoke_end', phase: 'ut', invoke_id: 'ut-i3', exit_code: 0 });
+      appendRunEvent(f, { type: 'phase_write_observed', phase: 'ut', invoke_id: 'ut-i3', owned });
+      const afterWrite = () => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i4' });
+      assert.deepStrictEqual(afterWrite().factsContext?.baseline, original.factsContext.baseline, 'a real subsequent write bridges the interrupted gap without replacing the original SHA');
+      const observedBytes = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST));
+      f.write(UT_BASELINE_TEST, 'export default function baseTest() { return 43; }\n');
+      assert.throws(afterWrite, /facts baseline stale/, 'once a post hash is observed, between-invoke source drift stays strict');
+      fs.writeFileSync(path.join(f.root, UT_BASELINE_TEST), observedBytes);
+      appendRunEvent(f, { type: 'phase_verdict', phase: 'ut', verdict: 'PASS', action: 'advance' });
+      assert.throws(afterWrite, /facts baseline stale/, 'a formally completed phase cannot revive its historical unfinished start');
+    } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
+  } },
+  { name: 'b1b2 independent full coding keeps its owned edits through the final facts verdict without run admission', newFile: true, async run(f) {
+    const fw = frameworkDeclaringTsSources();
+    const priorRun = process.env.MAISON_GOAL_RUN_ID;
+    try {
+      delete process.env.MAISON_GOAL_RUN_ID;
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      f.write('doc/features/demo/plan/plan.md', '# Plan\n## Scope\n```yaml\nin_scope_modules: [demo]\nout_of_scope_modules: []\nrationale: approved value change\n```\n');
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', completionTarget: 'feature', requestedResults: ['delivery'], requestedPhases: ['spec', 'coding', 'ut'], requirement: 'make value 42', overwrite: true });
+      const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo' });
+      assert(!frozen.checks.some(check => check.status === 'FAIL'), JSON.stringify(frozen));
+      assert(prepared.scope.phase_chain.includes('coding'), JSON.stringify(prepared.scope.phase_chain));
+      f.facts();
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+      f.write('src/demo/researched.ts', 'export const researched = true;\n');
+      f.write('src/demo/Legacy.ets', 'struct Legacy {}\n'); f.write('build-profile.json5', '{}\n');
+      f.git('add', 'src/demo/researched.ts', 'src/demo/Legacy.ets', 'build-profile.json5');
+      f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'research baseline');
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8')
+        .replace('source_code_paths:\n  - src/demo/value.ts', 'source_code_paths:\n  - src/demo/value.ts\n  - src/demo/researched.ts\n  - src/demo/Legacy.ets')
+        .replace('key_inputs_read:\n  - src/demo/value.ts', 'key_inputs_read:\n  - src/demo/value.ts\n  - build-profile.json5\n  - src/demo/Legacy.ets'));
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace(`run_id: ${f.manifest.run_id}`, `frozen_scope_fingerprint: ${executionScopeFingerprint(prepared.scope)}`).replace('established_by: coding', 'established_by: spec'));
+      const first = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', requirement: 'make value 42' });
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'spec', factsContext: first.factsContext,
+        requirementSha: computeRequirementShaFromText(f.root, 'demo', 'make value 42', 'doc/features') }));
+      const before = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', requirement: 'make value 42' });
+      assert(before.factsContext?.baseline, JSON.stringify(before));
+      fs.appendFileSync(factsPath, '\n## phase_delta: coding\nnone\n');
+      const controlInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...before });
+      const controlChecks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: before.factsContext, resolvedInputs: controlInputs.inputs });
+      assert.equal(generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, controlChecks, fw, controlInputs.report).summary.verdict, 'PASS', JSON.stringify(controlChecks));
+      f.write('src/demo/value.ts', 'export const value: number = 42;\n');
+      f.write('src/demo/new.ts', 'export const added = 42;\n');
+      fs.appendFileSync(factsPath, '\n## phase_delta: coding\nUpdated value to the requested behavior.\n');
+      const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', requirement: 'make value 42' });
+      if (entry.factsRebuildReason) assert(entry.factsRebuildReason.includes('src/demo/value.ts'), entry.factsRebuildReason);
+      const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...entry });
+      assert.notEqual(resolved.report.assurance, 'blocked', JSON.stringify(resolved.report));
+      const checks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: resolved.inputs });
+      const report = generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, checks, fw, resolved.report);
+      assert.equal(report.summary.verdict, 'PASS', JSON.stringify(report.checks));
+      assert.deepStrictEqual(entry.factsContext?.baseline, before.factsContext.baseline, 'independent entry does not replace old SHA with current bytes');
+      assert(checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), JSON.stringify(checks));
+      assert(checks.some(check => check.id === 'context_exploration_facts_scope_coverage' && check.status === 'WARN' && check.details.includes('src/demo/new.ts')), JSON.stringify(checks));
+      const actualContext = { ...f.context('coding', ''), frameworkRoot: fw, resolvedInputs: resolved.inputs, factsContext: entry.factsContext,
+        featureSpec: new SpecLoader(f.root, undefined, undefined, fw).loadFeatureSpec('demo', resolved.inputs) };
+      const actual = await coding.check(actualContext);
+      assert.equal(generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, actual, fw, resolved.report).summary.verdict, 'PASS', JSON.stringify(actual.filter(check => check.status === 'FAIL')));
+    } finally { if (priorRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRun; removeShimFramework(fw); clearFrameworkConfigCache(); }
+  } },
+  { name: 't5 completed source chain re-admits a new invoke; drift, missing context, broken observation and revoked windows stay strict', run(f) {
+    const fw = frameworkDeclaringTsSources();
+    try {
+      const cfg = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      cfg.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(cfg)); clearFrameworkConfigCache();
+      f.facts();
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+      f.write('src/demo/Legacy.ets', 'struct Legacy {}'); f.write('build-profile.json5', '{}');
+      fs.readFileSync(path.join(f.root, 'src/demo/Legacy.ets')); fs.readFileSync(path.join(f.root, 'build-profile.json5'));
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace('established_by: coding', 'established_by: spec')
+        .replace('source_code_paths:\n  - src/demo/value.ts', 'source_code_paths:\n  - src/demo/value.ts\n  - src/demo/Legacy.ets')
+        .replace('key_inputs_read:\n  - src/demo/value.ts', 'key_inputs_read:\n  - src/demo/value.ts\n  - src/demo/Legacy.ets\n  - build-profile.json5'));
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'spec',
+        requirementSha: computeRunRequirementSha(f.root, 'demo', f.manifest.run_id),
+        factsContext: { subject: { feature: 'demo', run_id: f.manifest.run_id }, first_phase: 'spec', source_paths: ['src/demo/value.ts', 'src/demo/Legacy.ets', 'build-profile.json5'], source_owners: { 'src/demo/value.ts': 'coding' }, required_input_snippets: [] } }));
+      const original = beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1');
+      const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', runId: f.manifest.run_id,
+        phaseOrder: workflow.auto_chain!, track: 'full', profileDir: path.join(fw, 'profiles/hmos-app'), productLayerDirs: ['src'] });
+      const pre = capturePhaseInvocationSnapshot(boundary);
+      f.write('src/demo/value.ts', 'export const value = 42;\n');
+      fs.appendFileSync(factsPath, '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | value42 | current source |\n');
+      const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+      assert.equal(diff.kind, 'changed'); if (diff.kind !== 'changed') return;
+      const classified = classifyPhaseInvocationChanges(boundary, 'coding', diff.changes);
+      const owned = classified.allowed.filter(write => write.roles.some(role => role.kind === 'source')).map(write => ({
+        path: write.path, pre_sha256: write.preSha256, post_sha256: write.postSha256, roles: write.roles,
+      }));
+      assert(owned.some(write => write.path === 'src/demo/value.ts'), 'real source snapshot and current write classification must supply the observation');
+      appendRunEvent(f, { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i1', exit_code: 0 });
+      appendRunEvent(f, { type: 'phase_write_observed', phase: 'coding', invoke_id: 'coding-i1', owned });
+      const eventsPath = path.join(f.root, f.manifest.report_dir, 'events.jsonl');
+      const recorded = fs.readFileSync(eventsPath, 'utf8');
+      const entry = () => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i2' });
+      const accepted = entry();
+      assert.deepStrictEqual(accepted.factsContext?.baseline, original.factsContext?.baseline, 'the original baseline hashes must remain frozen');
+      assert(accepted.factsContext?.baseline, 'normal end without a Windows bound is a completed invocation');
+      assert(!resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'self-check-label' }).factsContext?.baseline, 'a label invocation cannot carry completed source writes');
+      const reject = (label: string, mutate: (events: any[]) => void = () => {}) => {
+        const events = recorded.trim().split('\n').map(line => JSON.parse(line)); mutate(events);
+        fs.writeFileSync(eventsPath, events.map(event => JSON.stringify(event)).join('\n') + '\n');
+        assert(!entry().factsContext?.baseline, label);
+        fs.writeFileSync(eventsPath, recorded);
+      };
+      f.write('src/demo/value.ts', 'export const value = 43;'); reject('unattributed source drift between invokes'); f.write('src/demo/value.ts', 'export const value = 42;\n');
+      f.write('framework.config.json', JSON.stringify({ ...cfg, project_name: 'external drift' })); clearFrameworkConfigCache(); reject('configuration drift is never source drift');
+      f.write('framework.config.json', JSON.stringify(cfg)); clearFrameworkConfigCache();
+      reject('missing write observation', events => { events.splice(events.findIndex(e => e.type === 'phase_write_observed'), 1); });
+      reject('broken pre hash', events => { events.find(e => e.type === 'phase_write_observed').owned[0].pre_sha256 = '0'.repeat(64); });
+      reject('unreadable post hash', events => { events.find(e => e.type === 'phase_write_observed').owned[0].post_sha256 = null; });
+      reject('old start without context', events => { delete events.find(e => e.type === 'agent_invoke_start').facts_context; });
+      const interruptedEvents = recorded.trim().split('\n').map(line => JSON.parse(line))
+        .filter(event => !['agent_invoke_end', 'phase_write_observed'].includes(event.type));
+      fs.writeFileSync(eventsPath, interruptedEvents.map(event => JSON.stringify(event)).join('\n') + '\n');
+      assert.deepStrictEqual(entry().factsContext?.baseline, original.factsContext?.baseline, 'an interrupted validated start preserves its original admission');
+      fs.writeFileSync(eventsPath, recorded);
+      reject('unclosed existing guardian bound', events => { events.push({ type: 'agent_process_bound', run_id: f.manifest.run_id, phase: 'coding', invoke_id: 'coding-i1', pid: 123, started_at_ms: 1 }); });
+      reject('revocation does not revive an older start', events => { events.push({ type: 'phase_invalidated', phase: 'coding' }); });
+      reject('backtrack starts a new window', events => { events.push({ type: 'phase_backtrack_requested', to_phase: 'coding', invalidated_phases: ['coding'] }); });
+      // A degraded boundary has no source observation; do not substitute current SHA for that missing evidence.
+      reject('degraded write boundary cannot carry', events => { events.splice(events.findIndex(e => e.type === 'phase_write_observed'), 1); events.push({ type: 'phase_write_boundary_degraded', phase: 'coding' }); });
+      const evidencePath = path.join(f.root, 'doc/features/demo/spec/reports/phase-evidence-manifest.json');
+      const evidenceText = fs.readFileSync(evidencePath, 'utf8');
+      const badEvidence = JSON.parse(evidenceText); badEvidence.inputs[0].sha256 = '0'.repeat(64);
+      fs.writeFileSync(evidencePath, JSON.stringify(badEvidence)); reject('a valid source chain does not waive manifest integrity');
+      fs.writeFileSync(evidencePath, evidenceText);
+      appendRunEvent(f, { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i2', facts_context: accepted.factsContext });
+      const current = entry();
+      const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...current }).inputs!;
+      const checks = checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: current.factsContext, resolvedInputs: inputs, goalAttemptId: 'i2' });
+      assert(!checks.some(check => check.status === 'FAIL'), 'the actual gate must consume the new exact current start: ' + JSON.stringify(checks));
+    } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
+  } },
+  { name: 't5 same-coding successor keeps the validated original baseline and rebuilds actual pre-entry drift', run(f) {
+    f.facts();
+    const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+    const original = fs.readFileSync(factsPath, 'utf8');
+    const initial = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', factsContext: initial.factsContext }));
+    const successor = buildGoalManifestFromInput({ ...f.manifest, run_id: 't5-same-coding', report_dir: 'doc/features/demo/goal-runs/t5-same-coding' }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, manifest: successor, chain: successor.phase_chain!, forceFresh: true });
+    const input = () => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: successor.run_id });
+    const inherited = input();
+    assert(inherited.factsContext?.baseline, JSON.stringify(inherited));
+    assert.equal(inherited.factsContext.baseline.established_by, 'coding');
+    assert.equal(fs.readFileSync(factsPath, 'utf8'), original, '有效继承不改原run/原文');
+    const oldSha = inherited.factsContext.baseline.dependencies.find(dep => dep.path.endsWith('value.ts'))!.sha256;
+    f.write('src/demo/value.ts', 'export const value: number = 42;\n');
+    const rebuild = input();
+    assert(!rebuild.factsContext?.baseline && rebuild.factsRebuildReason?.includes('src/demo/value.ts'), JSON.stringify(rebuild));
+    assert.equal(inherited.factsContext.baseline.dependencies.find(dep => dep.path.endsWith('value.ts'))!.sha256, oldSha, '旧依赖不换新SHA');
+    // 责任阶段实际读源再写canonical facts，不能把旧baseline的run_id洗成当前来源。
+    const observed = fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8');
+    f.write('doc/features/demo/context/facts.md', original.replace(f.manifest.run_id, successor.run_id).replace('value has number type', `current source read: ${observed.trim()}`));
+    const rebuilt = input();
+    assert(!rebuilt.factsContext?.baseline, '重新建立仍是当前责任阶段，不冒称旧基线有效');
+    assert(fs.readFileSync(factsPath, 'utf8').includes('current source read: export const value: number = 42;'));
+  } },
+  { name: 't5 exact invocation owns granted source delta; missing registration warns, config drift, label and old events cannot grant', run(f) {
+    const fw = frameworkDeclaringTsSources();
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      config.materialized_adapters = ['generic'];
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      f.write('AGENTS.md', '# test project instructions\n');
+      const deveco = path.join(f.root, 'fake-deveco');
+      f.write(path.relative(f.root, path.join(deveco, 'tools/hvigor/bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw')), '');
+      f.write('framework.local.json', JSON.stringify({ schema_version: '1.0', agent_adapter: 'generic', toolchain: { devEcoStudio: { installPath: deveco } } }));
+      f.facts();
+      const outside = 'src/other/research.ts';
+      f.write(outside, 'export const research = 1;');
+      f.write('build-profile.json5', '{}'); f.write('src/demo/legacy.ets', 'struct Legacy {}');
+      fs.readFileSync(path.join(f.root, 'build-profile.json5')); fs.readFileSync(path.join(f.root, 'src/demo/legacy.ets'));
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace('source_code_paths:\n  - src/demo/value.ts', `source_code_paths:\n  - src/demo/value.ts\n  - ${outside}\n  - src/demo/legacy.ets`)
+        .replace('key_inputs_read:\n  - src/demo/value.ts', 'key_inputs_read:\n  - src/demo/value.ts\n  - build-profile.json5\n  - src/demo/legacy.ets'));
+      const initial = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+      delete initial.factsContext!.source_owners![outside]; // Research read is permitted; the unrelated module is not this actor's write scope.
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', factsContext: initial.factsContext }));
+      const admitted = beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1');
+      assert.equal(admitted.factsContext?.source_owners?.['src/demo/value.ts'], 'coding');
+      const originalSha = admitted.factsContext!.baseline!.dependencies.find(dep => dep.path.endsWith('value.ts'))!.sha256;
+      f.write('src/demo/value.ts', 'export const value = 42;\n');
+      const original = fs.readFileSync(factsPath, 'utf8');
+      const gate = (attempt = 'i1') => {
+        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: attempt });
+        const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...entry }).inputs!;
+        return { entry, checks: checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: inputs, goalAttemptId: attempt }) };
+      };
+      const missingDelta = gate();
+      assert(missingDelta.checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'));
+      assert.equal(generateScriptReport(path.join(fw, 'harness'), 'coding', 'demo', f.root, missingDelta.checks, fw).summary.verdict, 'PASS', JSON.stringify(missingDelta.checks));
+      fs.writeFileSync(factsPath, original + '\n## phase_delta: coding\nnone\n');
+      assert(gate().checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), 'none未登记变更源，只披露');
+      const firstDelta = original + '\n## phase_delta: coding\nnone\n';
+      for (const source of [path.join(f.root, 'src/demo/value.ts'), 'src\\demo\\value.ts', './src/demo/value.ts']) {
+        const repeated = firstDelta + `\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| \`${source}\` | value now 42 | current source |\n`;
+        fs.writeFileSync(factsPath, repeated);
+        assert(!gate().checks.some(check => check.id === 'context_exploration_facts_source_stale'), JSON.stringify(gate().checks));
+        assert.equal(factsPhaseFingerprint(repeated, 'coding'), factsPhaseFingerprint(firstDelta, 'coding'), 'registration merging must preserve existing manifest fingerprint semantics');
+      }
+      fs.writeFileSync(factsPath, original + '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | value now 42 | current source |\n');
+      const valid = gate();
+      assert(!valid.checks.some(check => check.status === 'FAIL'), JSON.stringify(valid.checks));
+      assert.equal(valid.entry.factsContext!.baseline!.dependencies.find(dep => dep.path.endsWith('value.ts'))!.sha256, originalSha);
+      f.write(outside, 'export const research = 2;');
+      fs.appendFileSync(factsPath, `| ${outside} | research now2 | inspected source |\n`);
+      assert(gate().checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'FAIL' && check.details.includes('research.ts')), '精确delta也不能授予未授权源码');
+      f.write(outside, 'export const research = 1;');
+      f.write('framework.config.json', JSON.stringify({ ...config, project_name: 'changed during invocation' })); clearFrameworkConfigCache();
+      assert(gate().checks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'FAIL' && check.details.includes('framework.config.json')), '非源码环境无owner豁免');
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      const lookup = (phase: string, attemptId: string) => loadFactsInvocationContext({ projectRoot: f.root, feature: 'demo', phase, runId: f.manifest.run_id, attemptId });
+      appendRunEvent(f, { type: 'agent_invoke_start', phase: 'design-repair-coding', invoke_id: 'coding-i2', facts_context: admitted.factsContext });
+      assert.equal(lookup('coding', 'i2'), undefined, '链外label不能冒充coding');
+      appendRunEvent(f, { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i3' });
+      assert.equal(lookup('coding', 'i3'), undefined, '旧start缺context不新造原入场事实');
+      fs.writeFileSync(factsPath, original); // No delta; all three actual Research sources satisfy the quantitative threshold.
+      assert.throws(() => gate('i3'), /facts baseline stale/, '旧验证窗口必须拒收stale，不能由无baseline冒充刚重建');
+      fs.symlinkSync(fw, path.join(f.root, 'framework'), process.platform === 'win32' ? 'junction' : 'dir');
+      const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(frameworkRoot, 'harness/harness-runner.ts'),
+        '--phase', 'coding', '--feature', 'demo', '--project-root', f.root, '--framework-root', fw], {
+        cwd: f.root, encoding: 'utf8', timeout: 120000, env: { ...process.env, TS_NODE_PROJECT: path.join(frameworkRoot, 'harness/tsconfig.json'),
+          MAISON_GOAL_RUN_ID: f.manifest.run_id, MAISON_GOAL_ATTEMPT: 'i3', MAISON_GOAL_ATTEMPT_PHASE: 'coding' },
+      });
+      assert.notEqual(cli.status, 0, '真实harness不得把旧无context窗口洗绿');
+      assert((cli.stdout + cli.stderr).includes('context_exploration_facts_source_stale'), cli.stdout + cli.stderr);
+      assert(lookup('coding', 'i1'), '同attempt原事件可用于post-agent');
+      appendRunEvent(f, { type: 'phase_invalidated', phase: 'coding', reason: 'scope_revised' });
+      assert.equal(lookup('coding', 'i1'), undefined, '已失效窗口不得继续owned承接');
+      fs.rmSync(path.join(f.root, 'src/demo/value.ts'));
+      const missing = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+      assert(!missing.factsContext?.baseline && missing.factsRebuildReason, '删除来源走责任重建，不伪造missing-source hash');
+      fs.writeFileSync(factsPath, '{broken facts');
+      const broken = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+      assert(!broken.factsContext?.baseline && broken.factsRebuildReason?.includes('frontmatter'), '坏baseline有自动重建出口');
+    } finally { removeShimFramework(fw); }
+  } },
   /**
    * plan e7a2c4f1 §3.4（G01）：facts 声明的来源没进建立阶段的证据登记，是**账本类**缺口——
    * 旧行为是整轮 `facts baseline does not bind source` 抛错（宿主一晚 24 次、约 90 分钟）。
@@ -200,38 +559,30 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
       searches_performed_estimate: 4, decisions_unlocked: ['value is 42'], exploration_mode: 'sequential',
     }).trimEnd(), '---', '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|',
       ...declared.map(p => `| ${p} | readable current input | verification |`), ''].join('\n'));
-    // 已绑定那条由**上游 plan** 拥有并登记（owner_phase=plan）。先落 plan 登记，再改它的字节，
-    // 这样"账本里的摘要"与"盘上的字节"确定性地不同——只有这样"不重新哈希"才锁得住：
-    // 若实现改成 `sha256File(abs)`，断言立刻看见的是新字节。
-    const ownersToPlan = { [boundRel]: 'plan' };
-    writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({
-      projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'plan',
-      factsContext: { subject: { feature: 'demo', run_id: f.manifest.run_id }, first_phase: 'coding', source_paths: [boundRel], source_owners: ownersToPlan, required_input_snippets: [] },
-    }));
-    const planLedger = loadPhaseEvidenceManifest(f.root, 'demo', 'plan')!.manifest;
-    const ledgerSha = planLedger.outputs.find(entry => entry.path === boundRel && entry.owner_phase === 'plan')?.sha256;
-    assert(ledgerSha, '前提：plan 必须真的把该来源登记成自己的产出');
-    f.write(boundRel, 'export const value: number = 43;\n');
-    const diskSha = createHash('sha256').update(fs.readFileSync(path.join(f.root, boundRel))).digest('hex');
-    assert.notEqual(ledgerSha, diskSha, '前提：账本摘要必须与盘上字节不同，否则本用例锁不住任何东西');
+    // 严格入场先验证真正闭环的coding来源；入场后再改字节，旧基线不得被当前SHA洗掉。
+    const ownersToCoding = { [boundRel]: 'coding' };
     // 建立阶段（coding）的证据登记**只登记了其中一条**：另一条是 facts 自述的探索来源，
     // 从未成为该阶段解析出的 code target——这正是宿主现场的形态。
     writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({
       projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding',
-      factsContext: { subject: { feature: 'demo', run_id: f.manifest.run_id }, first_phase: 'coding', source_paths: [boundRel], source_owners: ownersToPlan, required_input_snippets: [] },
+      factsContext: { subject: { feature: 'demo', run_id: f.manifest.run_id }, first_phase: 'coding', source_paths: [boundRel], source_owners: ownersToCoding, required_input_snippets: [] },
     }));
     const ledger = loadPhaseEvidenceManifest(f.root, 'demo', 'coding')!.manifest;
     const ledgerBound = [...ledger.inputs, ...ledger.outputs].find(entry => entry.path === boundRel);
     assert(ledgerBound?.sha256, '前提：建立阶段必须真的登记了第一条来源');
+    const ledgerSha = ledgerBound.sha256;
     assert(![...ledger.inputs, ...ledger.outputs].some(entry => entry.path === extraRel), '前提：第二条来源必须未被登记');
 
     const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
     const deps = bridge.factsContext!.baseline!.dependencies;
+    f.write(boundRel, 'export const value: number = 43;\n');
+    const diskSha = createHash('sha256').update(fs.readFileSync(path.join(f.root, boundRel))).digest('hex');
+    assert.notEqual(ledgerSha, diskSha, '原入场后的变更不能刷新成旧基线');
     const norm = (p: string) => p.replace(/\\/g, '/');
     const added = deps.find(dep => norm(dep.path).endsWith(extraRel));
     assert(added?.exists && /^[0-9a-f]{64}$/.test(String(added.sha256)), `可读的声明来源必须被补登记：${JSON.stringify(deps.map(d => norm(d.path)))}`);
     assert.equal(added!.role, 'derive', '补登记须沿既有 dependency 形状');
-    // 只加登记、不改已绑定内容：原有那条仍用**账本里的**摘要（plan 登记的旧字节），
+    // 只加登记、不改已绑定内容：原有那条仍用**账本里的**摘要（coding 登记的旧字节），
     // 既不被重新哈希成盘上的新字节，也不被重复登记。
     const kept = deps.filter(dep => norm(dep.path).endsWith(boundRel));
     assert.equal(kept.length, 1, `已绑定来源不得被重复登记：${JSON.stringify(kept)}`);
@@ -245,6 +596,8 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
     assert(!ledgerItems.some(c => c.details.includes(extraRel)), `补登记后不该再为该来源报账本项：${JSON.stringify(ledgerItems)}`);
     assert(!ledgerItems.some(c => c.details.includes('基线未绑定原有来源')), `可补登记的来源不该落到 WARN 披露：${JSON.stringify(ledgerItems)}`);
     assert(ledgerItems.some(c => c.status === 'FAIL' && norm(c.details).includes(boundRel)), `已绑定来源字节真变了仍须 BLOCKER：${JSON.stringify(ledgerItems)}`);
+    assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id }), /facts baseline stale/);
+    f.write(boundRel, 'export const value: number = 42;\n');
     // 反例：来源不可读（文件没了）→ 不补登记、也不抛错，由检查侧 WARN 披露，不阻断阶段。
     fs.rmSync(path.join(f.root, extraRel));
     const missing = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
@@ -817,13 +1170,20 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
     assert(utBridge.codeTargets!.includes('framework.config.json'), JSON.stringify(utBridge));
 
     writeFacts('wrong-run', ['src/demo/value.ts']);
-    assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id }), /identity mismatch/);
+    const reject = (message: RegExp) => {
+      const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert(!entry.factsContext?.baseline, '坏首阶段事实不能被当有效旧baseline');
+      const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...entry }).inputs!;
+      const checks = checkFactsArtifact(f.root, 'demo', 'review', { frameworkRoot, factsContext: entry.factsContext, resolvedInputs: inputs });
+      assert(checks.some(check => check.status === 'FAIL' && message.test(check.details)), '实际facts gate仍拒收坏事实，直到责任阶段真正重建: ' + JSON.stringify(checks));
+    };
+    reject(/run_id/);
     writeFacts(manifest.run_id, ['../outside.ts']);
-    assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id }), /facts source/);
+    reject(/outside\.ts/);
     writeFacts(manifest.run_id, ['missing.ts']);
-    assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id }));
+    reject(/missing\.ts/);
     writeFacts(manifest.run_id, ['src/demo/value.ts', './src/demo/value.ts']);
-    assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id }), /duplicates/);
+    reject(/duplicates/);
   } },
   { name: 'P1-T1/T2 verification-only UT and runless review resolve code without implementation or impact', run(f) {
     const ut = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'demo', completionTarget: 'request',
@@ -929,15 +1289,16 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
       fs.appendFileSync(born.eventsPath, JSON.stringify({ ts: new Date().toISOString(), type: 'scope_revised', revision_index: 1,
         previous_scope_fingerprint: executionScopeFingerprint(prepared.scope), execution_scope: revised!.scope, revision_input: proposal,
         trigger: { phase: 'plan', check_id: check!.id }, allowed_fields: [...SCOPE_REVISION_FIELDS] }) + '\n');
+      beginFactsInvocation(f, frameworkRoot, 'coding', manifest.run_id, 'i1');
       fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value = 2;\n');
       fs.writeFileSync(path.join(f.root, 'src/demo/NewPage.ts'), 'export const page = true;\n');
-      fs.appendFileSync(factsPath, '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/NewPage.ts | planned page created | implementation output |\n\nbuild-profile inspected: not applicable to this fixture\n');
-      const codingBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      fs.appendFileSync(factsPath, '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | value now 2 | current implementation |\n| src/demo/NewPage.ts | planned page created | implementation output |\n\nbuild-profile inspected: not applicable to this fixture\n');
+      const codingBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id, goalAttemptId: 'i1' });
       assert.deepStrictEqual(codingBridge.codeTargets, ['src/demo/value.ts', 'src/demo/NewPage.ts']);
       assert.deepStrictEqual(codingBridge.testTargets, []);
       assert(codingBridge.factsContext!.baseline!.dependencies.some(dep => dep.path.replace(/\\/g, '/').endsWith('src/demo/value.ts')), 'coding 必须承接 plan 的真实 Research dependency');
       const codingInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...codingBridge }).inputs!;
-      const codingFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: codingBridge.factsContext, resolvedInputs: codingInputs, frameworkRoot });
+      const codingFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: codingBridge.factsContext, resolvedInputs: codingInputs, frameworkRoot, goalAttemptId: 'i1' });
       assert(!codingFactsChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 facts gate 不得要求旧源码 hash: ' + JSON.stringify(codingFactsChecks.filter(check => check.status === 'FAIL')));
       assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'), 'coding 改动后的 upstream gate 不得要求预先存在 coding manifest');
       assert.doesNotThrow(() => writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: codingInputs, factsContext: codingBridge.factsContext })), '责任阶段须能按真实 gate 顺序收口自己刚写的新字节');
@@ -949,8 +1310,10 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', resolvedInputs: reviewInputs, factsContext: reviewBridge.factsContext }));
       const beforeUtFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding', 'review', 'ut'], { frameworkRoot });
       assert.deepStrictEqual(beforeUtFreshness.slice(0, 3).map(item => item.verdict), ['fresh', 'fresh', 'fresh'], JSON.stringify(beforeUtFreshness));
+      beginFactsInvocation(f, frameworkRoot, 'ut', manifest.run_id, 'i2');
       fs.writeFileSync(path.join(f.root, testRel), 'export const test = false;\n');
-      const utBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      fs.appendFileSync(factsPath, `\n## phase_delta: ut\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${testRel} | test now false | current UT target |\n`);
+      const utBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id, goalAttemptId: 'i2' });
       assert(utBridge.codeTargets!.includes('src/demo/NewPage.ts') && !utBridge.codeTargets!.includes(testRel), JSON.stringify(utBridge));
       assert.deepStrictEqual(utBridge.testTargets, [testRel]);
       const utInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', track: 'full', ...utBridge });
@@ -960,13 +1323,14 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
       const reviewFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['coding', 'review'], { frameworkRoot });
       assert.deepStrictEqual(reviewFreshness.map(item => item.verdict), ['fresh', 'fresh'], JSON.stringify(reviewFreshness));
       assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan'], { frameworkRoot })[0].verdict, 'fresh', '单阶段消费也必须承接 UT owner output');
+      beginFactsInvocation(f, frameworkRoot, 'coding', manifest.run_id, 'i3');
       fs.writeFileSync(path.join(f.root, 'src/demo/value.ts'), 'export const value = 3;\n');
       const pendingPlan = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan'], { frameworkRoot, pendingOwnerPhase: 'coding' });
       assert.equal(pendingPlan[0].verdict, 'fresh', JSON.stringify(pendingPlan));
-      const repairBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      const repairBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: manifest.run_id, goalAttemptId: 'i3' });
       assert(repairBridge.factsContext!.baseline, JSON.stringify(repairBridge));
       const repairInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...repairBridge }).inputs!;
-      const repairFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: repairBridge.factsContext, resolvedInputs: repairInputs, frameworkRoot });
+      const repairFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: repairBridge.factsContext, resolvedInputs: repairInputs, frameworkRoot, goalAttemptId: 'i3' });
       assert(!repairFactsChecks.some(check => check.status === 'FAIL'), JSON.stringify(repairFactsChecks.filter(check => check.status === 'FAIL')));
       assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'));
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: repairInputs, factsContext: repairBridge.factsContext }));
@@ -1182,12 +1546,17 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
   { name: 'P3 全量回归评审返修：框架与工程分开放时，合法的阶段证据在后继复用核验与完成检查里保持可复用', run(f) {
     // 阶段证据按调用方的框架根记下环境（gate 指纹、框架版本）；重算时若按工程根推断框架根，
     // 推断失败得到空身份 → environment_changed → 合法复用被撤销、后继多重跑阶段。
+    const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'demo', completionTarget: 'request',
+      requestedResults: ['review existing implementation'], requestedPhases: ['review'], requirement: 'review existing implementation', overwrite: true });
+    const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p3-review-evidence', requirement: 'review existing implementation',
+      execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+    createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
     fs.mkdirSync(path.join(f.root, 'doc/features/demo/context'), { recursive: true });
-    fs.writeFileSync(path.join(f.root, 'doc/features/demo/context/facts.md'), ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: f.manifest.run_id,
+    fs.writeFileSync(path.join(f.root, 'doc/features/demo/context/facts.md'), ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: manifest.run_id,
       established_by: 'review', ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts'], key_inputs_read: ['src/demo/value.ts'],
       files_inspected_count: 1, searches_performed_estimate: 1, decisions_unlocked: ['verified existing behavior'], exploration_mode: 'sequential' }).trimEnd(), '---',
       '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', '| src/demo/value.ts | readable current input | verification |', ''].join('\n'));
-    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+    const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', featuresDir: 'doc/features', goalRunId: manifest.run_id });
     const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...bridge }).inputs!;
     writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', resolvedInputs: inputs, factsContext: bridge.factsContext }));
     const aggregate = loadPhaseEvidenceManifest(f.root, 'demo', 'review')!.manifest.aggregate_sha256;
@@ -1492,10 +1861,11 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   const prior = process.env.MAISON_GOAL_RUN_ID;
-  for (const test of cases) {
+  const only = process.env.STANDALONE_CODING_REVIEW_ONLY;
+  for (const test of cases.filter(test => !only || only.split(',').some(prefix => test.name.startsWith(prefix)))) {
     let f: ReturnType<typeof fixture> | undefined;
     try { f = fixture(test.newFile, test.baselineTest); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
+    catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
     finally { if (prior === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prior; clearFrameworkConfigCache(); if (f) fs.rmSync(f.root, { recursive: true, force: true }); }
   }
   return results;

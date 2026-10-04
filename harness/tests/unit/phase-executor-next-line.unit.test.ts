@@ -38,6 +38,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       const multi = buildNextLine({ verdict: 'FAIL', script_report: 'r.json', blockers: [{ id: 'a', suggestion: '改 A' }, { id: 'b', suggestion: '改 B' }] }, 'ut', 'f');
       assert.ok(/全部 2 个 blocker：a（改 A）；b（改 B）/.test(multi), multi);
       assert.ok(/--phase coding --feature f/.test(fail), fail);
+      const derive = buildNextLine({ verdict: 'FAIL', script_report: 'testing-script-report.json', blockers: [{ id: 'device_test_run', details_excerpt: '派生步骤非法' }] }, 'testing', 'f');
+      assert.ok(derive.includes('testing-script-report.json') && derive.includes('device_test_run.structured.derive_hint') && derive.includes('hint 文件只保存源语义基线'), derive);
       const verifier = buildNextLine({ verdict: 'PASS', next_action: 'run_verifier_then_receipt', verifier_request: 'doc/features/f/coding/reports/verifier.request.abc.json' }, 'coding', 'f');
       assert.ok(/整段投给 subagent_type=verifier/.test(verifier) && /verifier\.request\.abc\.json/.test(verifier), verifier);
       const closed = buildNextLine({ verdict: 'PASS', next_action: 'phase_closed_wait_user' }, 'coding', 'f');

@@ -401,40 +401,25 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/utils/quality-axes.ts
 
 goal 模式 testing 的外层 gate harness 内，device_test.install MUST 在`HARNESS_DEVICE_TEST_FORCE_INSTALL`（既有开关，仅由 runner 注入 gate harness 子进程 env）在场时跳过复用、真实执行 `hdc install -r`。install provider MUST 在调用 hdc install 之前计算完整 64 hex 的 HAP sha256 并随结果回传（12 hex 截断指纹的既有消费者 MUST NOT 受影响）。
 
-`device-test-evidence.json` MUST 由 check-testing 协调层在 build→install→run 全部完成后
-统一写入（run provider 与 install provider 均 MUST NOT 各自写入）。写入门槛全部满足才写：
-`MAISON_GOAL_GATE_HARNESS === '1'`；goal run/attempt 身份完整；install executed 且 ok；
-device_test.run 已执行且本轮 hylyre trace 路径非空；写前复算当前 HAP 完整 sha 与装机前
-一致。trace_path MUST 直取本轮 pipeline holder 的 trace 路径（writer MUST NOT 自行调用
-authoritative resolver 寻找 trace）。schema MUST 含 `written_at`（写入时刻，供 collector
-作唯一时间裁决字段）与 device_target{serial, target_kind, session_id}（取 gate 进程 env
-中就绪门冻结注入的设备身份）。
+device-test-evidence.json 的正式写者 MUST 为 goal runtime。check-testing 协调层在已知装机与 run 完成后纯组装同一 doc 放入 pipeline holder/check structured proposal；native/legacy 同 gate 检查与 verifier preview MUST 消费此 doc，MUST NOT 依赖旧正式文件。proposal 要求 run/attempt、设备元组、装机前后完整 HAP sha 与本轮 holder trace 路径一致；旧 gate flag 不切换职责。
 
-真实安装与 device_test.run 都已成功而 evidence 未能写出（compose 失败——含写前复算 HAP
-sha 与装机前不一致——或写盘异常）时，check-testing MUST 产出 `device_test_evidence`
-BLOCKER FAIL 并进入 results（MUST NOT 静默吞——否则 collector 把缺文件当无信号，旧包/
-被改写 HAP 的结果可能被误当有效放行）。上游 install/run 本身失败时本步 MUST 返回空
-（由既有 install/run 门禁裁决，不重复报）。
-
-普通模式（无 flag、无 goal 身份）的 install 复用策略与既有行为 MUST 保持零变化。
+runtime MUST 在当前正式 gate 完成后、collector/正式 phase manifest/Feature completion 读取前，验证 gate 窗口、attempt/device/HAP/trace 与已有 native artifact binding，再原子提交正式文件。compose 失败 MUST 由 check-testing 产出 device_test_evidence BLOCKER FAIL；正式提交失败 MUST 沿既有 closure_finalization_failed 路径保持 open。上游 install/run 失败继续由原门禁负责。独立非 goal CLI 的装机复用和 evidence 行为不变。
 
 #### Scenario: 正式 gate 强装并产出 evidence
-- **WHEN** goal testing gate harness 完成 build→install→run 且门槛全部满足
-- **THEN** 覆盖式写入 device-test-evidence.json，含身份/设备元组/full sha/written_at/cases
+- **WHEN** goal gate 强装与 run 完成，当前 proposal 绑定有效
+- **THEN** 同 gate 检查从 holder 消费，runtime 在正式读盘前提交 identity/HAP/trace evidence
 
-#### Scenario: 安装成功但 run 未产出 trace 不写 evidence
-- **WHEN** install ok 但 device_test.run 未执行或本轮 trace 缺失
-- **THEN** 不写 evidence（防误用历史 trace）；run gate 本身 FAIL，collector 不产生
-  device_test 信号
+#### Scenario: 缺 trace 或绑定漂移不提交
+- **WHEN** run 未产 trace，或提交前 HAP/native plan/trace 已变化
+- **THEN** 不用旧证据替代，原检查/事务失败路径保持 FAIL/open
 
-#### Scenario: 真实安装与 run 已成功但 evidence 写不出
-- **WHEN** 强装与 device_test.run 均成功，但 compose 失败（如 HAP 装机后被并发改写）或
-  evidence 写盘异常
-- **THEN** check-testing 产出 device_test_evidence BLOCKER FAIL（不静默）
+#### Scenario: legacy checkpoint 不提升 native 资格
+- **WHEN** 同 gate holder 包含合法 legacy runtime fidelity evidence
+- **THEN** legacy 检查仍 WARN，不把 case status 提升成 verification=passed
 
 #### Scenario: 普通模式行为不变
-- **WHEN** 普通模式跑 check-testing（无 gate flag、无 goal 身份）
-- **THEN** install 复用策略与既有一致，不写 evidence
+- **WHEN** 无 goal 信号的独立 CLI 跑 check-testing
+- **THEN** install 复用策略与既有一致，不因本次职责收编新增 evidence 写入
 
 ### Requirement: Device-test defect cases carry machine-derived classification
 
@@ -957,7 +942,7 @@ Enforcement: `harness/scripts/check-review.ts`, `harness/scripts/utils/repair-ca
 
 ### Requirement: Attended phase entry validates explicit goal context
 
-An attended `phase_execute_request` SHALL carry its authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}`. The spec Skill SHALL pass that exact context explicitly to `fidelity-intent-init`, the phase `harness-runner`, and `harness-runner --sync-closure`. All entries MUST use one shared validator before side effects to resolve the exact manifest/run-control, assert the captured owner fence, and verify matching feature, current `session/active` owner, and unexpired lease. The validator SHALL also load the latest existing fenced `phase_start` issued by the session driver for that exact `{owner_id, owner_epoch}` and require its `phase` and `attempt_id` to equal the request; a merely non-empty caller-supplied value is not an issuance proof. Validation failure MUST exit as a BLOCKER before SSOT write, closure write, or goal environment injection. After validation, the harness SHALL inject the existing run/attempt/phase orchestration environment and SHALL NOT set `MAISON_GOAL_GATE_HARNESS` (any inherited variant is cleared): the attended executor's harness run is executor-side, the same role as a detached agent-side run. The only formal writer is the gate harness the goal runtime spawns itself after the executor returns; executor self-checks write intermediate-round journal proposals that the runtime replays into the formal ledger before that gate. Attended closure SHALL finish through the explicit sync-closure entry without a detached runner replay.
+An attended `phase_execute_request` SHALL carry its authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}`. The spec Skill SHALL pass that exact context explicitly to `fidelity-intent-init`, the phase `harness-runner`, and `harness-runner --sync-closure`. All entries MUST use one shared validator before side effects to resolve the exact manifest/run-control, assert the captured owner fence, and verify matching feature, current `session/active` owner, and unexpired lease. The validator SHALL also load the latest existing fenced `phase_start` issued by the session driver for that exact `{owner_id, owner_epoch}` and require its `phase` and `attempt_id` to equal the request; a merely non-empty caller-supplied value is not an issuance proof. Validation failure MUST exit as a BLOCKER before SSOT write, closure write, or goal environment injection. After validation, the harness SHALL inject the existing run/attempt/phase orchestration environment and SHALL NOT set `MAISON_GOAL_GATE_HARNESS` (any inherited variant is cleared): the attended executor's harness run is executor-side, the same role as a detached agent-side run. Both executor self-checks and outer gate CLI SHALL produce proposals. Runtime SHALL replay visual journals before and after the gate, commit device evidence, and finalize closure. Explicit sync-closure SHALL validate attended executor work; a passed callback SHALL return control to runtime for formal gate/closure.
 
 Enforcement: `skills/feature/spec/SKILL.md`, `harness/scripts/fidelity-intent-init.ts`, `harness/harness-runner.ts`, `harness/scripts/utils/attended-goal-context.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-run-control.ts`
 
@@ -1457,6 +1442,25 @@ Enforcement: `harness/scripts/utils/test-plan-derive-hint.ts`, `harness/scripts/
 
 - **WHEN** a channel value differs between the reviewed top-level plan and the artifact consumed at execution or report reconciliation
 - **THEN** the run SHALL FAIL closed rather than silently adopting the rewritten channel
+
+### Requirement: Canonical derive hints update only when source behavior changes
+
+The automatic testing writer and `derive-hylyre-plan-hint` CLI SHALL share one canonical payload builder and semantic write function. The persisted hint SHALL compare the existing source TC fields, machine navigation constraints, executable step grammar and wait timing, reset identity/order, execution-channel domain and compilable set, and selector match/disambiguation syntax. Generated timestamps, source mtime, table-external prose, coverage/lint/path diagnostics, snapshot pages and selector discovery entries SHALL NOT version this source baseline. Equal inputs SHALL preserve its bytes, generated_at and mtime. A genuine change SHALL atomically update it; the existing derived-after-hint rule, current selector/navigation/step checks and native result truth SHALL remain effective.
+
+Latest coverage_reason, top/derived/missing/extra TC ids, selected/rejected paths, original source/derived mtimes and complete lint/suggested_fix SHALL remain in the original `device_test_run` check's `structured.derive_hint`, with NEXT and authoring instructions pointing to that script-report. Default CLI stdout SHALL always contain complete current auxiliary context, retaining the baseline generated_at when semantics are equal. A separate `--out` file SHALL export current context without modifying or replacing the canonical baseline. `--out` resolving to canonical SHALL use the same idempotent rule and emit current stdout. Legacy schema 4 source aliases and implicit fixed syntax MAY be normalized from that recorded schema; missing auxiliary fields SHALL NOT force a rewrite, and current TC data SHALL NOT fill a missing old source snapshot.
+
+Enforcement: `harness/scripts/utils/test-plan-derive-hint.ts`, `harness/scripts/derive-hylyre-plan-hint.ts`, `harness/scripts/check-testing.ts`, `harness/harness-runner.ts`
+
+#### Scenario: Repeated writers and auxiliary changes preserve valid derivations
+
+- **WHEN** CLI and automatic gates alternate with unchanged source behavior, including new titles, diagnostics, cache pages or unrelated selector entries
+- **THEN** the canonical bytes and mtime SHALL remain unchanged, current stdout/explicit exports SHALL retain fresh auxiliary context, and current check diagnostics SHALL remain complete
+
+#### Scenario: True source changes cannot be washed away by hint refresh
+
+- **WHEN** TC behavior or executable reset/grammar inputs change while the derived plan remains old
+- **THEN** refreshing the hint alone SHALL NOT make it fresh; actual new derivation and verification SHALL be required
+- **AND** a currently definite same-screen selector ambiguity SHALL still fail the existing static gate even when the canonical hint is unchanged
 
 ### Requirement: Non-Hylyre channel cases carry a machine evidence obligation
 
@@ -2442,6 +2446,18 @@ Enforcement: `harness/harness-runner.ts`, `harness/scripts/goal-runner.ts`, `age
 - **WHEN** the verifier's reply has been written verbatim for the current subject and the harness runs again over unchanged material
 - **THEN** the subject SHALL be unchanged, the per-issue confirmations SHALL produce owner-routed repair candidates, `next_action` SHALL no longer be `run_verifier_for_repair`, and the product SHALL remain FAIL with `closure_status=open`
 
+#### Scenario: A parseable review block still has unreadable issue rows
+
+- **WHEN** a current diagnosis request exists but an open BLOCKER/MAJOR issue is missing, duplicated/conflicting, has an invalid verdict, or lacks evidence bound to that current issue
+- **THEN** the shared row predicate SHALL withhold that candidate and name the precise issue and reason through the existing readiness signal and NEXT line; run_verifier_for_repair SHALL remain reachable for that actual request
+- **AND** valid refuted or unclear entries SHALL retain their verdict and SHALL NOT be reissued merely to turn them into confirmed
+
+#### Scenario: A carried subject cannot re-confirm a declined issue
+
+- **WHEN** the historical decline state is present but the only verifier body belongs to a carried subject, or the verifier is disabled or request eligibility is blocked by mixed failures
+- **THEN** no current request SHALL be invented, the declined issue SHALL not become a trusted review candidate, and NEXT SHALL disclose the actual request/eligibility gap while keeping the negative verdict and open closure
+- **AND** locally repairable eligibility gaps SHALL follow the existing phase checks, disabled user configuration SHALL NOT be changed automatically, and human sign-off SHALL NOT convert a real product FAIL into PASS
+
 ### Requirement: A refused visual sign-off names which of four states applies
 
 The sign-off verifier SHALL label every failure with exactly one of `unreachable`, `not_probed`,
@@ -2695,4 +2711,3 @@ When a CU-bound Feature (identity derived with the `cu-` prefix) runs the narrat
 - **THEN** the original terminology, scope and architecture impact checks SHALL run unchanged
 
 > **Enforced by:** `harness/scripts/check-spec.ts`, `harness/scripts/check-plan.ts`, `harness/scripts/utils/change-unit-feature-projection.ts`, `skills/reference/confirmation-registry.yaml`, `skills/reference/plan-workflow-detail.md`, `harness/tests/unit/change-unit-progression.unit.test.ts`, `harness/tests/unit/real-chain.unit.test.ts`
-

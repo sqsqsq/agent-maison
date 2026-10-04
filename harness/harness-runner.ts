@@ -162,6 +162,8 @@ import { readRunControl } from './scripts/utils/goal-run-control';
 import {
   isAgentSideGoalHarness,
   isGoalOrchestrationEnv,
+  hasGoalExecutionSignal,
+  readGoalGateDeadlineMs,
   MAISON_GOAL_RUNNER_ENV,
   applyGoalVisualProviderEnv,
   MAISON_GOAL_MODEL_PIN_ENV,
@@ -401,9 +403,8 @@ export function bindAttendedGoalContext(input: {
   env.MAISON_GOAL_ATTEMPT = attemptId;
   env.MAISON_GOAL_ATTEMPT_PHASE = context.identity.phase;
   // plan 6279fcd7 修法一：attended 执行者自检与 detached agent 侧同一角色——**不置**
-  // MAISON_GOAL_GATE_HARNESS（上面只清父环境残留）。正式写者只有 runtime 自己 spawn 的
-  // gate（goal-phase-runtime.ts 的 runHarnessPhase 置标，不经本函数）；自检写 journal
-  // proposal，由 runtime 在 gate 前顺序收编进正式账本。
+  // MAISON_GOAL_GATE_HARNESS（上面只清父环境残留）。全部 goal CLI 只产 proposal，
+  // 正式写者为 runtime，由它在 gate 前后顺序收编进正式账本。
   // plan ab072691 t5①（返修）：attended 也必须注入 **manifest 冻结的** provider 身份。
   // 少了这一步，attended gate 会回落去读 framework.local.json——run 中途改个人配置就能
   // 换掉本 run 的视觉 endpoint，manifest 冻结形同虚设。与 detached runner 共用同一执行器
@@ -648,7 +649,7 @@ async function main(): Promise<void> {
     const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
     // D1 §6.5 出口②：同一条三步顺序。晚到候选（§5.1.2 ②）正是在这条路上才成立，
     // 所以这里**同样要先应用修订再判完成**，不能只接生成函数。
-    if (exitCode === 0) {
+    if (exitCode === 0 && !hasGoalExecutionSignal()) {
       try {
         const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
           projectRoot,
@@ -1016,6 +1017,7 @@ async function main(): Promise<void> {
         phase,
         featuresDir: featuresRel,
         goalRunId: process.env.MAISON_GOAL_RUN_ID,
+        goalAttemptId: process.env.MAISON_GOAL_ATTEMPT,
         explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
         ...(runlessRequirement?.text ? { requirement: runlessRequirement.text, requirementSourceFiles: runlessRequirement.sources } : {}),
       });
@@ -1033,14 +1035,16 @@ async function main(): Promise<void> {
         factsContext = capabilityInput.factsContext;
       }
     } catch (error) {
+      const factsFailure = /^facts /i.test((error as Error).message);
       capabilityInputChecks.push({
-        id: 'capability_resolution_contract',
+        id: factsFailure ? 'context_exploration_facts_source_stale' : 'capability_resolution_contract',
         category: 'structure',
-        description: 'feature capability contract resolves before checker execution',
+        description: factsFailure ? 'facts 来源与入场基线须有效' : 'feature capability contract resolves before checker execution',
         severity: 'BLOCKER',
         status: 'FAIL',
         details: (error as Error).message,
-        suggestion: '修复 contract.yaml 的 capability/input source 声明后重跑。',
+        suggestion: factsFailure ? '按实际变化来源回首个责任阶段读源并重建 canonical facts，不只改 run_id。' : '修复 contract.yaml 的 capability/input source 声明后重跑。',
+        ...(factsFailure ? { affected_files: [resolveFactsAbsPath(projectRoot, feature)] } : {}),
       });
     }
   }
@@ -1173,6 +1177,7 @@ async function main(): Promise<void> {
     phaseIsGlobal,
   });
   const context: CheckContext = {
+    gateDeadlineMs: readGoalGateDeadlineMs(),
     module: args.module, term: args.term, packagePath: args['package-path'], docPath: args.path,
     resolvedInputs,
     factsContext,
@@ -1419,6 +1424,7 @@ async function main(): Promise<void> {
       );
       console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
       verifierMaterial = buildVerifierMaterialView({
+        deviceTestEvidence: context.deviceTestEvidence,
         resolvedInputs,
         factsContext,
         projectRoot,
@@ -1482,7 +1488,7 @@ async function main(): Promise<void> {
   const deferFullClosureToGoalRunner =
     !phaseIsGlobal &&
     closureTrack === 'full' &&
-    process.env.MAISON_GOAL_GATE_HARNESS === '1';
+    hasGoalExecutionSignal();
   const receiptValidation =
     phaseIsGlobal || deferFullClosureToGoalRunner
       ? null
@@ -1558,7 +1564,7 @@ async function main(): Promise<void> {
   // 有 run 身份时整段是 no-op（run 有自己的 runtime 收尾）。三步顺序与判据与 `--sync-closure`
   // 出口**同一个函数**，不复制。
   let featureScopeClosingFailure: Error | undefined;
-  if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL) {
+  if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL && !hasGoalExecutionSignal()) {
     try {
       const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
         projectRoot,
@@ -1602,9 +1608,7 @@ async function main(): Promise<void> {
       feature,
       phase,
       // b3e8d4c7 t3：判的是"在不在 goal run 里"，**不是**"是不是 agent 侧"。
-      // isAgentSideGoalHarness 是 vision 账本的**单写者**谓词，刻意排除
-      // MAISON_GOAL_GATE_HARNESS=1——于是权威 gate harness 反而按 manual 渲染并写投影
-      //（宿主实锤 run 20260804T033834Z-99c0a1：NEXT_STEP mode=manual policy=manual）。
+      // 自检与外层 gate 均为 goal CLI；正式收口由 runtime 负责。
       // 用既有并集，不新造谓词。
       mode: isGoalOrchestrationEnv() || isAgentSideGoalHarness() ? 'goal_mode' : 'manual',
       status: `${runSummary.verdict}/${runSummary.closure_status ?? 'open'}`,
@@ -1662,20 +1666,21 @@ async function main(): Promise<void> {
  * disposition=duplicate：不追加，但**同样回传重放后的 decision**（rev5：agent 自跑首检
  * fuse 后，外层 gate 必须仍能看到 no_progress_fuse）。
  */
-function consumeVisualRoundPayload(
+export function consumeVisualRoundPayload(
   projectRoot: string,
   report: ScriptReport,
 ): HarnessRunSummary['visual_round'] | undefined {
   for (const c of report.checks) {
     const s = c.structured as { kind?: string; round?: VisualRoundEvaluation } | undefined;
     if (!s || s.kind !== 'visual_diff' || !s.round) continue;
-    // S5（visual-capability-truth 单写者）：goal 态 **agent 自跑** harness（有 goal 轮次
-    // 身份但无 MAISON_GOAL_GATE_HARNESS 标）不直写正式 ledger——写 journal proposal，
-    // 由 goal-runner 在 invocation 结束后顺序重放收编（20260718 孤儿行误熔断的根治）。
-    // gate harness（runner 直接 spawn，带标）与交互态维持直写。
+    // goal 自检与外层 gate CLI 均写 journal；runtime 在 gate 前后顺序收编。
+    // 独立无 goal CLI 保留直写，旧 gate flag 不再授予正式写者职责。
     // b7e4d2a9 Todo3：判定统一走共享谓词（对现状是超集收紧——HEADLESS/ATTEMPT-only
     // 形态也走 journal，语义一致；check-spec attestation 同谓词，永不再分叉）。
     const isGoalAgentSide = isAgentSideGoalHarness();
+    if (isGoalAgentSide && s.round.disposition === 'appended' && !s.round.row.attempt_id) {
+      return { loop_id: s.round.row.loop_id, disposition: 'append_failed' } as HarnessRunSummary['visual_round'];
+    }
     if (isGoalAgentSide && s.round.disposition === 'appended' && s.round.row.attempt_id) {
       try {
         const row = s.round.row;
@@ -1719,6 +1724,7 @@ function consumeVisualRoundPayload(
           attempt: row.attempt_id,
           row_hash: row.row_hash,
           disposition: 'journaled',
+          decision: s.round.decision,
         } as HarnessRunSummary['visual_round'];
       } catch (e) {
         console.warn(`   ⚠ [visual-rounds] journal 写入失败（${(e as Error).message}）——按 append_failed 上报`);
@@ -2199,20 +2205,42 @@ export function writeRunSummaryBase(
     report.phase,
     { frameworkRoot, subjectId: anchoredSubjectId },
   );
+  const reviewReportText = report.phase === 'review'
+    ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md') : null;
+  const repairDeclines = report.phase === 'review' && carriedVerifierSubjectId !== null && process.env.MAISON_GOAL_RUN_ID?.trim()
+    ? loadRepairDeclineState(projectRoot, report.feature, process.env.MAISON_GOAL_RUN_ID.trim()) : undefined;
+  const declinedFingerprints = repairDeclines ? new Set([...repairDeclines]
+    .filter(([, state]) => state.declined_rounds > 0).map(([fp]) => fp)) : undefined;
+  const declinedIssues = repairDeclines ? [...new Set(repairDeclines.values())]
+    .filter(state => state.declined_rounds > 0).map(({ id, summary }) => ({ id, summary })) : undefined;
   // D3/D4（codex 一轮 medium）：终态自洽 ≠ 正文可采信。诊断轮的必需检查项读不出来
   // （表格/YAML 缺项、冲突、占位）时**不得**落回"先修原始 blocker"——那条路让重复
   // harness 反复复用同一份坏正文、恒零候选。仍走 run_verifier_for_repair（NEXT 在该
   // 分支里给出"先按原始回复重写报告"的出口），不新增动作字符串/状态机。
   const unreadableDiagnosisChecks =
-    eligibility.kind === 'repair_diagnosis' && verifierReportText
-      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText)
+    (eligibility.kind === 'repair_diagnosis' || carriedVerifierSubjectId !== null) && verifierReportText
+      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText, reviewReportText === null ? undefined : {
+        reportText: reviewReportText, declinedFingerprints, declinedIssues, verifierSubjectCurrent: carriedVerifierSubjectId === null,
+      })
       : [];
   if (unreadableDiagnosisChecks.length > 0) {
     console.warn(
       `   ⚠ [verifier-report] 诊断轮正文读不出必需检查项（${unreadableDiagnosisChecks.join('、')}）——` +
-        '按报告格式修复处理：先用 verifier 的原始回复重写报告，不要改产品。',
+        (verifierIssued ? '按当前 request 的原始回复修正报告转录，不要因此改产品。'
+          : '当前 request 未签发，保留旧结论，按当前资格说明处理；不能改写旧 subject 洗绿。'),
     );
   }
+  const diagnosisSignal = unreadableDiagnosisChecks.length > 0
+    || (report.phase === 'review' && effectiveVerdict === 'FAIL' && !verifierIssued && !carriedVerifierSubjectId) ? {
+      id: 'verifier_repair_diagnosis', status: 'incomplete' as const,
+      message: [
+        ...(unreadableDiagnosisChecks.length > 0 ? [`逐条诊断：${unreadableDiagnosisChecks.join('；')}`] : []),
+        verifierIssued ? '已签发当前 request：按原回复修正转录，确无有效回复才重投当前 verifier。'
+          : `当前 verifier request 未签发：${eligibility.reason} `
+            + (carriedVerifierSubjectId ? `沿用 subject=${carriedVerifierSubjectId}，保留旧负面结论与拒修依据。` : '')
+            + '先修当前阶段可合法修复的资格缺口；若能力已禁用，不自动改配置，需新的逐条判断时用既有配置入口启用。真实 FAIL/open 不由人签放行。',
+      ].join('；'),
+    } : null;
   if (mismatch) {
     // 文案按 pre 说话（review：mismatch=pre!==legacy，post 可能 ===legacy，写「投影≠legacy」是假话）。
     console.warn(
@@ -2300,6 +2328,8 @@ export function writeRunSummaryBase(
     ...(process.env.MAISON_GOAL_RUN_ID?.trim() ? { run_id: process.env.MAISON_GOAL_RUN_ID.trim() } : {}),
     ...(visualRound ? { visual_round: visualRound } : {}),
   };
+  // 诊断披露不作为 readiness 动作选择的输入，保持原资格/失败路由。
+  if (diagnosisSignal) summary.readiness_signals.push(diagnosisSignal);
   const compileFirstError = extractCompileFirstError(report);
   if (compileFirstError) {
     summary.compile_first_error = compileFirstError;
@@ -2321,10 +2351,7 @@ export function writeRunSummaryBase(
       phase: report.phase,
       checks: report.checks,
       reportValidity: lattice.report_validity,
-      reviewReportText:
-        report.phase === 'review'
-          ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md')
-          : null,
+      reviewReportText,
       // 上面已按本轮 subject 读出（不传 subjectId 的话 loader 会读磁盘 summary 现值——
       // 而此刻它还是**上一轮**的）。本轮没签发凭证（disabled/脚本非 PASS/签发失败）
       // → null = 零候选。
@@ -2332,12 +2359,7 @@ export function writeRunSummaryBase(
       parseClassificationFromDetails: extractFailureClassification,
       // plan 33784ed1 §4.5：沿用的历史 subject 没看过拒修依据，确认不了拒修在案的 review 候选。
       verifierSubjectCurrent: carriedVerifierSubjectId === null,
-      ...(report.phase === 'review' && carriedVerifierSubjectId !== null && process.env.MAISON_GOAL_RUN_ID?.trim()
-        ? {
-            declinedFingerprints: new Set([...loadRepairDeclineState(projectRoot, report.feature, process.env.MAISON_GOAL_RUN_ID.trim())]
-              .filter(([, s]) => s.declined_rounds > 0).map(([fp]) => fp)),
-          }
-        : {}),
+      ...(declinedFingerprints ? { declinedFingerprints, declinedIssues } : {}),
     });
     if (repairCandidates.length > 0) summary.repair_candidates = repairCandidates;
   } catch (e) {
@@ -2743,6 +2765,7 @@ export function buildNextLine(
     script_report?: string;
     verifier_request?: string;
     blockers?: ReadonlyArray<{ id: string; details_excerpt?: string; suggestion?: string }>;
+    readiness_signals?: ReadonlyArray<{ id: string; message: string }>;
   },
   phase: string,
   feature: string,
@@ -2756,6 +2779,14 @@ export function buildNextLine(
 ): string {
   const rerun = `然后重跑：npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
   const firstLine = (s: string | undefined): string => (s ?? '').split(/\r?\n/)[0].trim();
+  if (summary.verdict === 'PASS' && opts?.outerGoalRerun
+    && ['fill_receipt_then_sync_closure', 'phase_closed_wait_user'].includes(summary.next_action ?? '')) {
+    return 'NEXT: 本轮中间检查 PASS；继续完成冻结目标与尚未完成的返修任务。工作完成后回传结果与证据路径，由 goal runtime 正式 gate 和统一收口；自检 PASS 不代表本次工作已经完成。';
+  }
+  const diagnosis = summary.readiness_signals?.find(signal => signal.id === 'verifier_repair_diagnosis')?.message;
+  if (diagnosis && !summary.verifier_request && summary.verdict !== 'PASS') {
+    return `NEXT: ${diagnosis}；具体检查与原报告见 ${summary.script_report ?? 'script-report.json'}；${rerun}。`;
+  }
   // D1/D2：产品 FAIL 但失败可诊断——必须先于"非 PASS 都先修 blocker"的通用分支。
   // 一行里给齐三样：投哪份 request、报告写到哪、写完之后干什么。
   if (summary.next_action === 'run_verifier_for_repair') {
@@ -2770,6 +2801,7 @@ export function buildNextLine(
       // 上面的 warn 已点名是哪几项；重投 request 只是没有原始回复时的兜底。
       '若该报告已存在却读不出必需检查项（缺项/状态冲突/占位符），先按 verifier 的原始回复重写这一份，' +
       '确无有效回复才重投 request——不要因此去改产品。' +
+      (diagnosis ? `${diagnosis}。` : '') +
       '产品 FAIL 与 open 闭环状态不因此改变——先别改产品，等逐条确认。'
     );
   }
@@ -2782,7 +2814,10 @@ export function buildNextLine(
         return `${b.id}${hint ? `（${hint}）` : ''}`;
       });
       const more = blockers.length > 6 ? `…另 ${blockers.length - 6} 条见 ${summary.script_report ?? 'script-report.json'}` : '';
-      return `NEXT: 一轮修完全部 ${blockers.length} 个 blocker：${items.join('；')}${more ? `；${more}` : ''}；${rerun}`;
+      const deriveDiagnosis = phase === 'testing' && blockers.some(b => b.id === 'device_test_run')
+        ? `；最新派生覆盖、路径、mtime 与完整 lint/suggested_fix 见 ${summary.script_report ?? 'script-report.json'} 的 device_test_run.structured.derive_hint；hint 文件只保存源语义基线`
+        : '';
+      return `NEXT: 一轮修完全部 ${blockers.length} 个 blocker：${items.join('；')}${more ? `；${more}` : ''}${deriveDiagnosis}；${rerun}`;
     }
     return `NEXT: 按 ${summary.script_report ?? 'script-report.json'} 的 FAIL/INCOMPLETE 项一轮修完；${rerun}`;
   }

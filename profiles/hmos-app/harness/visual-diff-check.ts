@@ -3128,7 +3128,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       // 第 N 轮，no-progress 熔断语义不随单写者化丢失）；gate harness（正式行已含
       // 收编中间轮）extraRows 自然为空集。
       let extraRows: import('../../../harness/scripts/utils/visual-rounds-ledger').VisualRoundRow[] = [];
-      if (goalRunId && attemptId && process.env.MAISON_GOAL_GATE_HARNESS !== '1') {
+      if (goalRunId && attemptId) {
         try {
           const journal = readJournalProposals(
             intermediateRoundsJournalPath(ctx.projectRoot, ctx.feature, goalRunId),

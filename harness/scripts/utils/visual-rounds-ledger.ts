@@ -3,8 +3,8 @@
  * 熔断的 SSOT 纯逻辑层。
  *
  * 定位：telemetry/标注侧车（非判定文件，不含 verdict/分数/签字——tamper-scan 红线外）。
- * 账本行由 harness-runner 在 check 之后追加（runner 写、check 只读判定；goal 态只有 runtime
- * 自己 spawn 的 gate 直写，执行者自检写 journal 由 runtime 收编——plan 6279fcd7）；goal-runner
+ * 独立 CLI 由 harness-runner 在 check 后追加；goal 下全部 CLI 只写 journal，runtime
+ * 在 gate 前后顺序收编正式账本；goal-runner
  * 在 gate/resume 时反向对账（events.jsonl ↔ ledger 的 row_hash，运行时一致性防护——
  * events 与 ledger 均在 agent 可写工作区，本模块不宣称对协同篡改双文件的密码学防护）。
  *
@@ -185,7 +185,8 @@ export function evaluateVisualRound(
   opts?: { extraRows?: VisualRoundRow[] },
 ): VisualRoundEvaluation {
   const { rows, corruptLines } = readVisualRoundsLedger(ledgerPath);
-  return evaluateVisualRoundOverRows([...rows, ...(opts?.extraRows ?? [])], input, corruptLines);
+  const committed = new Set(rows.map(row => row.row_hash));
+  return evaluateVisualRoundOverRows([...rows, ...(opts?.extraRows ?? []).filter(row => !committed.has(row.row_hash))], input, corruptLines);
 }
 
 /** 纯核：给定完整历史行集（含逻辑历史拼接）评估当前轮——runner 重放收编与单测直用。 */

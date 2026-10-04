@@ -193,6 +193,8 @@ export const PHASE_REPORTS_OUTPUT_FILES = [
 // verifier 条目字节对账照旧生效——校验侧遍历的是 manifest 里已记录的条目，不是本表。
 
 export interface ResolveManifestOptions {
+  /** gate 的同源 compose 预览；正式 finalizer 仍从提交后的 canonical 文件读取。 */
+  deviceTestEvidence?: { trace_path?: unknown };
   resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
   factsContext?: import('./context-facts').FactsInvocationContext;
   projectRoot: string;
@@ -531,7 +533,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   if (String(phase) === 'testing') {
     const deviceEvidence = path.join(reportsDir, 'device-test-evidence.json');
     try {
-      const doc = JSON.parse(fs.readFileSync(deviceEvidence, 'utf-8')) as { trace_path?: unknown };
+      const doc = opts.deviceTestEvidence ?? JSON.parse(fs.readFileSync(deviceEvidence, 'utf-8')) as { trace_path?: unknown };
       if (typeof doc.trace_path === 'string' && path.isAbsolute(doc.trace_path)) {
         const traceAbs = path.resolve(doc.trace_path);
         const reportsRoot = path.resolve(reportsDir);

@@ -175,9 +175,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    // plan 6279fcd7 T2：attended 自检不写 device 证据（唯一写者=runtime gate）；同一身份再加
-    // runtime gate 那一个标（goal-phase-runtime.ts runHarnessPhase 同形 env）仍写。
-    name: 'attended self-check skips the device evidence writer; runtime-gate-shaped env still writes it',
+    name: 'attended self-check and old gate flag both produce proposals without formal writes',
     run: () => withRun(({ root, runId, token, issuePhase }) => {
       const keys = [
         'MAISON_GOAL_RUN_ID', 'MAISON_GOAL_RUNNER', 'MAISON_GOAL_ATTEMPT',
@@ -206,15 +204,15 @@ const cases: Array<{ name: string; run: () => void }> = [
           () => ({ ok: true, doc: { cases: [], goal_run_id: runId } }),
         );
         const selfCheck = write();
-        assert(selfCheck.length === 0, `attended self-check must not write device evidence: ${JSON.stringify(selfCheck)}`);
+        assert(selfCheck.length === 1 && selfCheck[0].status === 'PASS', `attended self-check must produce proposal: ${JSON.stringify(selfCheck)}`);
         assert(!fs.existsSync(path.join(reportsDir, 'device-test-evidence.json')),
           'attended self-check wrote device evidence');
         process.env.MAISON_GOAL_GATE_HARNESS = '1';
         const results = write();
         assert(results.length === 1 && results[0].status === 'PASS',
-          `formal device writer did not run: ${JSON.stringify(results)}`);
-        assert(fs.existsSync(path.join(reportsDir, 'device-test-evidence.json')),
-          'formal device evidence was not written');
+          `old flag must not change proposal production: ${JSON.stringify(results)}`);
+        assert(!fs.existsSync(path.join(reportsDir, 'device-test-evidence.json')),
+          'old flag granted formal device write');
       } finally {
         for (const key of keys) {
           const value = before.get(key);

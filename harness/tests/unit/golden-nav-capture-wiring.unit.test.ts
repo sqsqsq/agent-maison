@@ -22,6 +22,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { buildCanonicalDeriveHintPayload } from '../../scripts/utils/test-plan-derive-hint';
 import { loadResolvedProfile } from '../../profile-loader';
 import { clearFrameworkConfigCache } from '../../config';
 import { runDeviceVisualDiffCapture, __testing_checkDeviceTestRunGate, type DeviceVisualDiffCaptureDevices } from '../../scripts/check-testing';
@@ -514,12 +515,7 @@ function writeReuseGateFixture(c: UnitCtx): { reportsDir: string; holder: Parame
     '| TC-001 | demo | 冷启动 | 点击钱包页并等待成功标题 | 通过 | P0 | AC-001 | hylyre |',
   ].join('\n'));
   const hintPath = path.join(reportsDir, 'derive-hint-from-plan.json');
-  writeFile(root, path.relative(root, hintPath), JSON.stringify({
-    test_cases: [{
-      tc_id: 'TC-001', name: 'demo', precondition: '冷启动', steps_natural_language: '点击钱包页并等待成功标题',
-      expected: '通过', priority: 'P0', ac_ref: 'AC-001', execution_channel: 'hylyre',
-    }],
-  }));
+  writeFile(root, path.relative(root, hintPath), JSON.stringify(buildCanonicalDeriveHintPayload(root, FEATURE)));
   const past = new Date(Date.now() - 60_000);
   fs.utimesSync(hintPath, past, past);
   writeFile(root, `doc/features/${FEATURE}/testing/reports/20260101T000000Z/hylyre/test-plan.hylyre.md`, [

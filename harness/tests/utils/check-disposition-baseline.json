@@ -13,7 +13,7 @@
         "feature_artifact_resolution",
         "feature_spec_shape"
       ],
-      "dynamic_count": 1
+      "dynamic_count": 2
     },
     "harness/scripts/check-catalog.ts": {
       "literal_ids": [

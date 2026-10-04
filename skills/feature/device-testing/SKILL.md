@@ -61,7 +61,7 @@
 2. **Step 1.5 准备打包与装机**（`device_test.build`/`device_test.install` 为 BLOCKER 时，详见 reference）：读宿主 addendum → `testing.packaging` 确认 product/buildMode → 先完成下方测试计划与静态通道/R8 检查，零 BLOCKER 后才经原 provider build/install；不先跑设备再审计划。
 3. **Step 2 生成测试计划**：模板 `templates/test-plan-template.md`，**须含 6 章节**：测试范围/测试环境/测试用例清单(表格：编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC)/测试策略/通过标准/风险与依赖。**用例生成规则**（v2 ut_layer 感知）：每条 device AC → 至少 1 条用例（步骤来自 device_focus）；每条 both AC → 至少 1 条用例，关注点限定 UI 层；`criteria` P0/P1 各生成 1 条、P2 可选；`boundaries` 每个边界场景 1 条；`performance` 仅 device/both 项各生成验证用例，unit 项交 UT、缺层级先澄清；`ut_layer=unit` 不再生成。用例编号 `TC-{NNN}`；步骤须明确可重复；预期结果须可观察可验证；追溯字段另记 `linked_flow`/`linked_branch`/`ut_layer`。
 4. **Step 3 用户确认测试计划**：`testing.plan_confirm`：`1=确认` `2=修改`。
-5. **Step 4 归档**：`<features_dir>/{module-name}/testing/test-plan.md`。正式派生前先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`：默认把源 TC 基线写到配置解析的 testing reports 下 `derive-hint-from-plan.json`，再据此生成派生计划；不要等 harness 失败才生成 hint。
+5. **Step 4 归档**：`<features_dir>/{module-name}/testing/test-plan.md`。正式派生前先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，读取本次 stdout 的完整派生上下文，再生成派生计划。canonical `derive-hint-from-plan.json` 仅在 TC/执行语法/reset 等真实派生输入变化时更新；标题、缓存与诊断变化不刷新基线。最新覆盖、选中/拒绝路径、mtime、逐条 lint/suggested_fix 读取本轮 `script-report.json` 的 `device_test_run.structured.derive_hint`，勿从旧 hint 猜本轮诊断。需要最新缓存/selector 候选的文件时用 `--out <另一文件>` 显式导出；`--out` 指向 canonical 仍按语义幂等写入。不要等 harness 失败才生成 hint。
 6. **Step 4.5 真机自动化派生可执行计划**（`device_test.run` 为 BLOCKER 时，详见 reference）：解析 TC 表并读取每条 TC 的**执行通道**（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`，顶层 test-plan 声明、经 review，缺列/缺值/非法即 BLOCKER 一次性迁移）→ **只编译 `channel=hylyre` 全集**，不得新增/删除/改写通道，也不得写 `explicit_skip_tc_ids` → 按 contracts/plan/snapshot-cache/设备连线四级优先级发现 selector 候选（四级只负责发现；snapshot-cache/设备 dump 不是真值）→ 正式 by_text 必须显式声明 `match: exact|contains` 且由 acceptance 意图决定（禁止字符启发式/运行时 fallback）；feature ui-spec 是开放世界，selector 缺席只 WARN 放行，静态只拦可确定错误 → 译为 Hylyre JSON（裸单行、canonical 直接根键、禁 dump_ui 等 CLI 名作根键；`start_app`/`stop_app` 只允许作为 case **首部**恰好一组复位前奏 `stop_app→start_app`，bundle/page_name 逐字取 hint 的 `reset_preamble`、不得自拟、不得用 `clear_app`，其它位置 STEP-003 BLOCKER），每个 case 首个断言前必须有同 case 的 setup/navigation action → **任一 hylyre case 编译失败即整份计划不启动**，回报该 TC 根因与下一责任阶段（不改成跳过）→ 落盘 `test-plan.hylyre.md` 到 `testing/reports/<timestamp>/hylyre/` → 触发 `harness-runner --phase testing`。**manual/provider 三态**：`manual:<system_settings|perf_sampling|memory_sampling|resource_variant|data_injection|external_precondition>` 且工具确无原语、或 inactive/SKIP provider → `unsupported_gap`（留分母、不算 PASS）；裸/未知 manual、未登记 provider、active 但当前无 per-TC producer 的 provider → 跑机前 `invalid_test`。Hylyre 原语能表达的一律改 `hylyre`；不接受人工确认/receipt 把 gap 洗成 PASS。
 7. **Step 4.B 即席模式**（详见 reference）：Derive hint（不跑机）→ Agent 写 `doc/features/_adhoc/testing/staging/test-steps.json` 并 lint → 执行 `adhoc-device-test`（默认冷重启）→ 观察汇总决策树 → 不写 receipt/verifier，交付 trace.json cases 摘要。
 8. **Step 4.6 视觉 diff 回环**（`ui_change=new_or_changed` 时，详见 reference）：唯一直接像素对图阶段；MVP 覆盖顶层屏+固化 nav 配置到达深层屏/overlay；P0 屏无论 lightweight 与否必须采集评估；执行时先断言屏身份(E3)再双向 diff(正向/反向+G3 样式核对+defects 枚举+**region_attest 逐区域举证**)；采图同时点 dump 布局树(`layout-<screen_id>.json`)供 **T8 几何不变量**消费；产出 `visual-diff.json`(唯一结构化真源)+自动生成 `visual-diff.md`(请勿手改)；`pixel_1to1` 下 T1/T4/T5/P1-C/**T8(布局 hard)/M1(自报退化)/attest 证据/critic 回执**等机器信号任一命中即 BLOCKER（分数字段=reported_* 参考自评、零 gate 权重）；回修由独立 critic 自动迭代至 candidate-pass 或指纹化熔断。当前 attempt/hash/identity 绑定的 deterministic/native/delegated 证据决定 visual 轴；legacy `confirmed_by` 无 gate 权重。确定性 fail 信号必须 verdict=fail+逐条写进 must_fix，不得弃判；testing 禁止写产品源码/需求 SSOT，runner 消费 must_fix 自动回退 coding 修复后重走 review/ut/testing（非硬像素契约下自报样式残差由 gate 降级记视觉债务：不回退、仍阻断发布）。 几何事实用 `harness-runner.ts --measure --feature <feature> [--screen <id>]` 一条命令取得（bounds/间距/重叠/与参考图差值/取色，写 `device-screenshots/measure-<screen>.json`，并把量测事实补进 visual-diff.json 的 defects[].note）；它只测量不裁决，不改 ui-spec，不改 verdict，geometry PASS 不解除 visual/release block；无 delegated 视觉 provider 时不要求 region_attest / critic 回执，agent 看图后给普通视觉判断，content/style 未验证部分如实标 UNKNOWN。
@@ -106,7 +106,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 1. `<features_dir>/<feature>/testing/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后真机测试阶段完成（**最终环**）。
 
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成（含回修起点），执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落，不自行推导或补写跨阶段建议；recommendation 由 `assess@1` 生成（含回修起点），执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 
 ## 输出规范
 
@@ -138,7 +138,6 @@ Markdown 格式，用例清单/执行结果用表格；用例编号 `TC-{NNN}`�
 | 阶段级规约 | `framework/specs/phase-rules/testing-rules.yaml` |
 | 脚本 Harness | `framework/harness/scripts/check-testing.ts` |
 | 派生提示 JSON | `<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json` |
-| 顶层计划结构化抽取 CLI | `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>` |
 | AI Harness Prompt | `framework/harness/prompts/verify-testing.md` |
 | 测试计划/报告模板 | `` `profile-skill-asset:device-testing/test_plan_template` `` / `` `profile-skill-asset:device-testing/test_report_template` `` |
 
@@ -146,4 +145,6 @@ Markdown 格式，用例清单/执行结果用表格；用例编号 `TC-{NNN}`�
 
 通过 `/device-testing` 或等价快捷入口触发时，须在阶段结束时产出 trace 凭证：`<features_dir>/<feature>/testing/reports/<timestamp>/<model>-devtest/trace.json`（Schema：[trace.schema.json](../../../../harness/trace/trace.schema.json)，`phase: testing`）；同目录 `gap-notes.md`（模板 [gap-notes.template.md](../../../../harness/trace/gap-notes.template.md)）。
 
-阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
+**页面身份与内容验收分工**：复用 visual-diff-nav 的 identity.all_of/any_of/none_of；用稳定 screen/root、route、标题等区分页面，sms_next 这类待验收按钮留在 ui-spec required 与原生业务断言。目标页身份通过但按钮被键盘遮挡/缺失，仍是内容失败，不能隐藏键盘或删业务断言来满足身份。旧 nav 把按钮放 all_of 时，读取原配置和 _identity dump，由 testing 修自己的导航规则后重新判页；gate 不自动删除失败成员。真错页或锁屏不落目标页正式截图；命中其它应用组件 id 只证明应用树在场，不能断言一定是其它页。
+
+**视觉 provider 局部纠错**：同 gate 调用成功而 payload 不合法时，harness 把原body及精确屏/字段/索引错误回给同一冻结provider，最多纠正一次；两次共用原provider timeout与gate剩余deadline的较早截止，独立留原输出/usage/诊断，check structured与NEXT指向诊断。执行者不手改provider证据、hash或region verdict。原图/来源图/导航/目标/HAP变化回原采集/装机/trace路径；局部纠格式不重跑native或capture，也不能洗绿同gate已有native FAIL。IO只重试原提交事务，不让provider重判产品；第二次仍非法或预算不足保留invalid/清场状态，下一整轮真实产品复验仍走原契约。

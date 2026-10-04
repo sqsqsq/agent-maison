@@ -71,8 +71,6 @@ export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
 // 读侧兼容保留：AgentInvokeResult 的 `silent_killed?` 字段与历史事件仍可读，
 // 但**写侧不再产生**该事实（源码锚定回归见 goal-runner-hardening.unit.test.ts）。
 
-/** t4 完成观测：探针轮询间隔。2s 足够快（相对 90min 预算），又不至于打爆磁盘 IO。 */
-export const DEFAULT_COMPLETION_POLL_MS = 2_000;
 /**
  * t4 完成观测：命中后等待自然退出的宽限。
  * 给足一个正常收尾的窗口（agent 可能正在写最后一行日志），又不至于把"已完成"拖长——
@@ -327,13 +325,11 @@ function claudeArgv(
   modelPin?: string,
 ): string[] {
   const argv = [binary, '-p', '--dangerously-skip-permissions'];
-  // t3a/f7a3d9c2：adapter 声明 structured_events → stdout 输出 NDJSON 事件流（含
+  // Claude 内核恒输出 NDJSON 终态流；已有 structured_events 工具审计继续消费其中的
   // tool_use/Read 验读记录，t3b runner attestation 的证据源）。2026-07-11 宿主实采样本
   // 确认事件形状；agent-output.log 仍为混合人读投影（三文件分流见 spawnHeadlessAsync），
   // 断流哨兵已适配结构化信封（goal-headless-sentinel parseClaudeStreamJsonApiError）。
-  if (toolEventProvenance === 'structured_events') {
-    argv.push('--output-format', 'stream-json', '--verbose');
-  }
+  argv.push('--output-format', 'stream-json', '--verbose');
   // plan d7f3a9c4 t1：显式模型钉回放（claude 与 codeagent 共用本函数，仅 binary 不同）。
   if (modelPin !== undefined) {
     argv.push('--model', modelPin);
@@ -378,7 +374,7 @@ export function cursorHeadlessPlan(
   modelPin?: string,
 ): HeadlessInvokePlan {
   const binary = resolved?.path ?? 'cursor-agent';
-  const argv = [binary, '-p', '--force', '--trust'];
+  const argv = [binary, '-p', '--force', '--trust', '--output-format', 'stream-json'];
   // plan d7f3a9c4 t1：显式模型钉回放——`--model <v>`。
   if (modelPin !== undefined) {
     argv.push('--model', modelPin);
@@ -977,23 +973,6 @@ export interface AgentInvokeOptions {
    * 身份 token（t3）由 guardian argv 显式携带：`<runId>/<invokeId>`。
    */
   containment?: { runId: string; invokeId: string } | null;
-  /**
-   * openspec device-readiness-and-completion t4：**完成观测探针**。
-   *
-   * 背景（07-28 事故）：agent 的 turn 已 `turn_ended status=success`、receipt 四条件齐全
-   * 在盘，但进程被自己拉起的后台模拟器钉住不退出——框架空等 84 分钟到 hard timeout，
-   * 而超时后 gate harness 只用 13 秒就判了 PASS。判据一直可用，只是没人问。
-   *
-   * **分层**：本模块是通用进程层，只负责 timer/race/kill，**不得依赖 receipt schema**。
-   * 判据由 goal-runner 以回调注入：返回 true = 本 attempt 的完成证据已确定性成立。
-   * 探针须为纯只读（不得启动会写盘的 CLI），异常/半写入一律返回 false 由下轮重试。
-   *
-   * 命中后：等 `completionGraceMs` 让进程自然退出，仍存活则 tree-kill 本次 invocation，
-   * 结果记 `completion_observed`（**不是** timed_out / silent_killed / agent_failed）。
-   */
-  completionProbe?: () => boolean;
-  /** 探针轮询间隔（默认 2s） */
-  completionPollMs?: number;
   /** 命中后等待自然退出的宽限（默认 5s；实际取 min(该值, deadlineMs-now)） */
   completionGraceMs?: number;
   /**
@@ -1234,11 +1213,11 @@ async function spawnHeadlessAsync(
   const terminalParser: TerminalEventParser =
     opts.terminalEventParser ?? resolveTerminalEventParser(plan.adapterName);
   const terminalScanner: CodexTerminalScanner | null =
-    terminalParser === 'codex_turn_jsonl'
+    terminalParser !== 'none'
       ? createCodexTerminalScanner({
           onCompleted: () => terminalHooks.onCompleted?.(),
           onFailed: () => terminalHooks.onFailed?.(),
-        })
+        }, terminalParser)
       : null;
 
   child.stdout?.on('data', (buf: Buffer) => {
@@ -1262,6 +1241,7 @@ async function spawnHeadlessAsync(
 
   let killInFlight: Promise<void> | null = null;
   let killTriggered = false;
+  let completionCleanupTriggered = false;
 
   const settleWaiter = createChildSettleWaiter(child, { outputStream });
   if (splitStreams) {
@@ -1274,6 +1254,7 @@ async function spawnHeadlessAsync(
   const killTree = (reason: 'timeout' | 'signal' | 'completion' | 'terminal_failure'): Promise<void> => {
     if (killTriggered && killInFlight) return killInFlight;
     killTriggered = true;
+    completionCleanupTriggered = reason === 'completion';
     if (reason === 'timeout') timedOut = true;
     // reason='completion' 刻意不置任何失败标记：证据已确定性完成，这不是超时也不是
     // agent 失败——归错类会让上层按失败路径重试一个已经完成的阶段。
@@ -1315,7 +1296,7 @@ async function spawnHeadlessAsync(
   /** R8：completion 命中时取消了 hard timeout —— 用于断言二者互斥 */
   let timeoutCancelledByCompletion = false;
 
-  // hard timeout 的**原到期时刻**。completion probe 可以暂时取消 timer；若随后收到
+  // hard timeout 的**原到期时刻**。terminal completion 可以暂时取消 timer；若随后收到
   // terminal failure，失败优先并按这个原时刻恢复 wall-clock backstop，不能从失败时刻
   // 重新起算一个完整 timeout（那会悄悄放大预算）。
   const timeoutMs = opts.timeoutMs;
@@ -1340,7 +1321,8 @@ async function spawnHeadlessAsync(
    */
   const armSettleGrace = (reason: 'completion' | 'terminal_failure'): void => {
     const graceBudget = opts.completionGraceMs ?? DEFAULT_COMPLETION_GRACE_MS;
-    const untilDeadline = opts.deadlineMs ? opts.deadlineMs - Date.now() : graceBudget;
+    const deadline = Math.min(opts.deadlineMs ?? Infinity, hardTimeoutAtMs ?? Infinity);
+    const untilDeadline = Number.isFinite(deadline) ? deadline - Date.now() : graceBudget;
     const grace = Math.max(0, Math.min(graceBudget, untilDeadline));
     setTimeout(() => {
       if (!settleWaiter.isSettled()) void killTree(reason);
@@ -1348,11 +1330,11 @@ async function spawnHeadlessAsync(
   };
 
   /**
-   * plan e6b3f8d2 t1 review 收口：completion probe 与 adapter terminal 终态的**唯一仲裁入口**。
+   * plan e6b3f8d2 t1 review 收口：adapter terminal 终态的**唯一仲裁入口**。
    * `terminal_failure` 优先于任何 completion：
    *   · completion 命中即取消 hard timeout，避免 deadline/grace 竞争制造双真；
-   *   · failure 已成立后，probe / turn.completed 都不能再置 completion；
-   *   · probe 先成立、随后收到 failure 时，撤销 completion 并按原到期时刻恢复 hard timeout；
+   *   · failure 已成立后，completed terminal 都不能再置 completion；
+   *   · completion 先成立、随后收到 failure 时，撤销 completion 并按原到期时刻恢复 hard timeout；
     *   · 两路仍复用同一 settle/grace 原语，最终结果强制互斥。
    */
   const observeClosure = (observation: Exclude<InvokeClosureObservation, 'none'>): void => {
@@ -1392,22 +1374,6 @@ async function spawnHeadlessAsync(
     if (early?.terminalFailureObserved) observeTerminalFailure();
   }
 
-  const completionTimer = opts.completionProbe
-    ? setInterval(() => {
-        if (closureObservation !== 'none' || killTriggered) return;
-        let hit = false;
-        try {
-          hit = opts.completionProbe!() === true;
-        } catch {
-          // 半写入 / 解析错误 → 本轮视为未完成，下轮重试；**绝不**转判 completion，
-          // 也不终止 agent（探针出错是探针的问题，不是 agent 的）
-          hit = false;
-        }
-        if (!hit) return;
-        observeCompletion();
-      }, opts.completionPollMs ?? DEFAULT_COMPLETION_POLL_MS)
-    : null;
-
   const settled = await settleWaiter.promise;
 
   // 终局补齐：先摘钩子再 flush——进程已 settle，残片里的终态只补事实，不得再 arm
@@ -1429,8 +1395,6 @@ async function spawnHeadlessAsync(
   }
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
-  // t4：settle / timeout / abort 任一命中即取消 observer（不留悬挂 interval）
-  if (completionTimer) clearInterval(completionTimer);
 
   exitCode = settled.exitCode;
   signal = settled.signal;
@@ -1455,14 +1419,15 @@ async function spawnHeadlessAsync(
   // （`turn.failed` 段的 429/5xx 归瞬时重试）。顶层 `error` 段不参与任何判定。
   // stdout 里同一信封是转义形态，命不中；删掉它会让 400 退回门禁误归因。
   const terminalDiagnostics = [
-    ...(terminalState?.failureExcerpt ? [`turn.failed: ${terminalState.failureExcerpt}`] : []),
+    ...(terminalState?.failureExcerpt ? [`${terminalParser === 'codex_turn_jsonl' ? 'turn.failed' : 'result.failed'}: ${terminalState.failureExcerpt}`] : []),
     ...(terminalState?.errorExcerpts ?? []).map((e) => `error: ${e}`),
   ];
   const terminalErrorExcerpt =
     terminalDiagnostics.length > 0 ? terminalDiagnostics.join(' | ').slice(0, 2000) : undefined;
 
   // 唯一仲裁态投影为两个历史结果字段；结构上不可能双真。
-  const completionObserved = closureObservation === 'completion';
+  const completionObserved = closureObservation === 'completion'
+    && (exitCode === 0 || completionCleanupTriggered);
   const terminalFailureObserved = closureObservation === 'terminal_failure';
 
   return {

@@ -753,6 +753,7 @@ function hashFileContent(absPath: string): string {
 export function snapshotArtifacts(
   projectRoot: string,
   paths: string[],
+  excludeDirectoryPath?: (relativePath: string) => boolean,
 ): ArtifactSnapshot {
   const snap: ArtifactSnapshot = {};
   for (const p of paths) {
@@ -772,7 +773,7 @@ export function snapshotArtifacts(
     if (isDirectory) {
       // plan 31063a73 §3.2：目录条目按目录树内容求摘要（如 UT blocker 给的模块 ohosTest 源码目录）。
       // 超限或读取失败时本轮整份快照为空——走既有"缺少可比基线"分支；空哈希在比较器里没有"不可比"语义。
-      const digest = digestDirectoryTree(projectRoot, abs, DIRECTORY_SNAPSHOT_MAX_ENTRIES);
+      const digest = digestDirectoryTree(projectRoot, abs, DIRECTORY_SNAPSHOT_MAX_ENTRIES, excludeDirectoryPath);
       if (digest === null) return {};
       snap[norm] = { exists: true, contentHash: digest };
     } else {
@@ -804,6 +805,23 @@ export function artifactsProgressed(
     if (cur.exists && prev.contentHash !== cur.contentHash) return true;
   }
   return false;
+}
+
+/** 回退重复只接受完整、同key的实际内容基线；失败读取不等于零改动。 */
+export function compareRelatedInputSnapshots(prior: unknown, current: ArtifactSnapshot): 'changed' | 'unchanged' | 'unknown' {
+  if (!prior || typeof prior !== 'object' || Array.isArray(prior)) return 'unknown';
+  const previous = prior as ArtifactSnapshot;
+  const keys = Object.keys(current).sort();
+  if (keys.length === 0 || keys.join('\0') !== Object.keys(previous).sort().join('\0')) return 'unknown';
+  for (const snapshot of [previous, current]) {
+    for (const key of keys) {
+      const entry = snapshot[key];
+      if (!entry || typeof entry !== 'object' || typeof entry.exists !== 'boolean' || typeof entry.contentHash !== 'string'
+        || (entry.exists ? !/^[0-9a-f]{64}$/i.test(entry.contentHash) : entry.contentHash !== '')) return 'unknown';
+    }
+  }
+  return keys.some(key => previous[key].exists !== current[key].exists
+    || previous[key].contentHash.toLowerCase() !== current[key].contentHash.toLowerCase()) ? 'changed' : 'unchanged';
 }
 
 export interface NoProgressGuardInput {

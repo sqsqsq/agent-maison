@@ -113,13 +113,6 @@ function emitFixtureJs(fixtureAbs: string, tail: string): string {
     tail,
   ].join(String.fromCharCode(10));
 }
-function emitFixtureAfterJs(fixtureAbs: string, delayMs: number, tail: string): string {
-  return [
-    "const fs = require('fs');",
-    'const text = fs.readFileSync(' + JSON.stringify(fixtureAbs) + ", 'utf-8');",
-    `setTimeout(() => { process.stdout.write(text); ${tail} }, ${delayMs});`,
-  ].join(String.fromCharCode(10));
-}
 function assertPhaseEventAgentFailed(r: AgentInvokeResult, label: string): void {
   const resolved = resolvePhaseHarnessVerdict({
     dryRun: false,
@@ -281,11 +274,67 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   // --------------------------------------------------------------------
   // 解析器归属与 argv 契约
   // --------------------------------------------------------------------
-  run(results, 'terminal 解析器只归 codex——其余 adapter 恒 none（无契约不造假信号）', () => {
+  run(results, '四个内置 adapter 的终态归属，其余无契约不造假信号', () => {
     assertEq(resolveTerminalEventParser('codex'), 'codex_turn_jsonl', 'codex');
-    for (const a of ['claude', 'codeagent', 'cursor', 'chrys', 'opencode', 'generic', undefined]) {
+    for (const a of ['claude', 'codeagent']) assertEq(resolveTerminalEventParser(a), 'claude_result_jsonl', a);
+    assertEq(resolveTerminalEventParser('cursor'), 'cursor_result_jsonl', 'cursor');
+    for (const a of ['chrys', 'opencode', 'generic', undefined]) {
       assertEq(resolveTerminalEventParser(a), 'none', `adapter=${String(a)}`);
     }
+  });
+
+  for (const adapter of ['claude', 'codeagent', 'cursor']) {
+    run(results, `${adapter} result parser：中间事件/半行不收口，成功与失败互斥`, () => {
+      const scanner = createCodexTerminalScanner({}, resolveTerminalEventParser(adapter));
+      scanner.push('{"type":"system","subtype":"api_retry","error_status":500}\n');
+      scanner.push('{"type":"assistant","message":{"content":"done"}}\n');
+      scanner.push('{"type":"result","subtype":"success","is_error":false,"result":');
+      assertEq(scanner.state().completionObserved, false, '半行不能收口');
+      scanner.push('"done"}\n');
+      assertEq(scanner.state().completionObserved, true, '成功终态');
+      scanner.push('{"type":"result","is_error":true,"result":"failed"}\n');
+      assertEq(scanner.state().terminalFailureObserved, true, '失败优先');
+      assertEq(scanner.state().completionObserved, false, '不得双真');
+    });
+    await runAsync(results, `${adapter} terminal result 后 CLI 存活：原 grace 有界收口而非长 timeout`, async () => {
+      const result = await invokeFake('process.stdout.write(\'{"type":"result","subtype":"success","is_error":false,"result":"done"}\\n\');setInterval(()=>{},1000);',
+        { timeoutMs: 5000, completionGraceMs: 50, deadlineMs: Date.now() + 5000 }, adapter);
+      assertEq(result.completion_observed, true, '真实 stdout→scanner→收尾');
+      assertEq(result.timed_out, undefined, '不冒充超时');
+      assert((result.duration_ms ?? Infinity) < 5000, '不等完整 hard timeout');
+    });
+    await runAsync(results, `${adapter} result failed 自然 exit 0 仍保留失败`, async () => {
+      const result = await invokeFake('process.stdout.write(\'{"type":"result","is_error":true,"result":"failed"}\\n\');process.exit(0);',
+        { timeoutMs: 5000, completionGraceMs: 50, deadlineMs: Date.now() + 5000 }, adapter);
+      assertEq(result.terminal_failure_observed, true, '失败终态');
+      assertEq(result.completion_observed, undefined, '失败不完成');
+      assert(result.exitCode !== 0, '自然 exit 0 不洗绿');
+    });
+    await runAsync(results, `${adapter} 无 result 的非零自然退出仍失败`, async () => {
+      const result = await invokeFake('process.stderr.write("Authentication required"); process.exit(1);', { timeoutMs: 5000 }, adapter);
+      assertEq(result.exitCode, 1, '真实 exit code');
+      assertEq(result.completion_observed, undefined, '不从 stderr 合成成功');
+      assertEq(result.timed_out, undefined, '无需等 hard timeout');
+    });
+  }
+  for (const adapter of ['codex', 'claude', 'codeagent', 'cursor']) {
+    await runAsync(results, `${adapter} 成功终态后 CLI 自然 exit 1 不能被 completion 洗绿`, async () => {
+      const terminal = adapter === 'codex' ? { type: 'turn.completed' }
+        : { type: 'result', subtype: 'success', is_error: false, result: 'done' };
+      const r = await invokeFake(`process.stdout.write(${JSON.stringify(JSON.stringify(terminal) + '\n')});process.exit(1);`,
+        { timeoutMs: 5000 }, adapter);
+      assertEq(r.exitCode, 1, '自然非零退出保留');
+      assertEq(r.completion_observed, undefined, '只有 completion cleanup 非零才可保留完成');
+      assertPhaseEventAgentFailed(r, adapter);
+    });
+  }
+  await runAsync(results, 'terminal completion→failed 撤销成功且恢复原 deadline；缺显式 deadline 不扩 grace', async () => {
+    const r = await invokeFake('process.stdout.write(\'{"type":"turn.completed"}\\n\');setTimeout(()=>process.stdout.write(\'{"type":"turn.failed","error":{"message":"failed"}}\\n\'),50);setInterval(()=>{},1000);',
+      { timeoutMs: 600, completionGraceMs: 5000 });
+    assertEq(r.terminal_failure_observed, true, '失败撤销 completion');
+    assertEq(r.completion_observed, undefined, '互斥');
+    assert((r.duration_ms ?? Infinity) < 5000, '收尾不重置原 timeout');
+    assert(r.exitCode !== 0, '失败不能洗绿');
   });
 
   run(results, 'codex argv 含 --json，且不依赖 tool_event_provenance 触发', () => {
@@ -390,8 +439,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   run(results, '判卷信封方言：codex 恒 codex_turn_jsonl；claude 家族仍随 tool_event_provenance', () => {
     assertEq(resolveCanaryStdoutEnvelope('codex', 'none'), 'codex_turn_jsonl', 'codex 恒 JSONL（--json 无条件追加）');
     assertEq(resolveCanaryStdoutEnvelope('claude', 'structured_events'), 'claude_stream_json', 'claude+structured');
-    assertEq(resolveCanaryStdoutEnvelope('claude', 'none'), 'none', 'claude+none 是纯文本');
-    assertEq(resolveCanaryStdoutEnvelope('cursor', 'structured_events'), 'none', 'cursor 无信封');
+    assertEq(resolveCanaryStdoutEnvelope('claude', 'none'), 'claude_stream_json', 'claude 终态不依赖工具审计资格');
+    assertEq(resolveCanaryStdoutEnvelope('cursor', 'structured_events'), 'cursor_stream_json', 'Cursor 结果信封');
   });
 
   run(results, 'codex 投影：按序拼接 agent_message；无 turn.completed → null（不判卷）', () => {
@@ -458,6 +507,22 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     },
   );
 
+  await runAsync(results, '自检 PASS/closed 后继续实际编辑；只有 adapter 终态才收尾', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-selfcheck-'));
+    try {
+      const editPath = path.join(dir, 'product.txt');
+      const summaryPath = path.join(dir, 'summary.json');
+      const r = await invokeFake([
+        "const fs=require('fs');",
+        `fs.writeFileSync(${JSON.stringify(summaryPath)}, JSON.stringify({verdict:'PASS',closure_status:'closed'}));`,
+        `setTimeout(()=>{fs.writeFileSync(${JSON.stringify(editPath)}, '施工已落盘'); process.stdout.write(JSON.stringify({type:'turn.completed'})+'\\n');}, 500);`,
+      ].join('\n'), { timeoutMs: 5000, completionGraceMs: 50 });
+      assertEq(fs.readFileSync(editPath, 'utf8'), '施工已落盘', '不得提前杀施工');
+      assertEq(r.completion_observed, true, '真实终态已收尾');
+      assertEq(r.timed_out, undefined, '不需长 hard timeout');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   await runAsync(
     results,
     'E2E turn.failed + exit 0 → exitCode 规范化非零、completion 恒 false、诊断留痕',
@@ -508,72 +573,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         !!r.terminal_error_excerpt && r.terminal_error_excerpt.startsWith('error:'),
         'error 须只进诊断：' + r.terminal_error_excerpt,
       );
-    },
-  );
-
-  await runAsync(
-    results,
-    'E2E probe 竞争：回执探针与 terminal 同时命中 → 收口一次，无双重标记',
-    async () => {
-      const r = await invokeFake(
-        emitFixtureJs(path.join(FIXTURES, 'codex-terminal-completed.real.jsonl'), 'setInterval(() => {}, 1000);'),
-        {
-          timeoutMs: 120_000,
-          completionGraceMs: 300,
-          completionPollMs: 10,
-          deadlineMs: Date.now() + 120_000,
-          completionProbe: () => true,
-        },
-      );
-      assertEq(r.completion_observed, true, 'completion_observed');
-      assertEq(r.timed_out, undefined, '不得记超时');
-      assertEq(r.terminal_failure_observed, undefined, '不得记失败终态');
-    },
-  );
-
-  await runAsync(
-    results,
-    'E2E probe→turn.failed：failed 撤销 completion、恢复原 hard timeout，phase event 保持 agent_failed',
-    async () => {
-      const r = await invokeFake(
-        emitFixtureAfterJs(
-          path.join(FIXTURES, 'codex-terminal-failed.real.jsonl'),
-          150,
-          'setInterval(() => {}, 1000);',
-        ),
-        {
-          timeoutMs: 800,
-          completionGraceMs: 5_000,
-          completionPollMs: 10,
-          completionProbe: () => true,
-        },
-      );
-      assertEq(r.terminal_failure_observed, true, 'terminal failure 须夺回仲裁位');
-      assertEq(r.completion_observed, undefined, 'probe completion 须被撤销');
-      assertEq(r.timed_out, true, 'probe 取消的 hard timeout 须按原到期时刻恢复');
-      assert(r.exitCode !== 0, '失败终态须保留非零退出语义');
-      assertPhaseEventAgentFailed(r, 'probe→failed');
-    },
-  );
-
-  await runAsync(
-    results,
-    'E2E turn.failed→probe：failure 后 probe 不得再置 completion，phase event 保持 agent_failed',
-    async () => {
-      const r = await invokeFake(
-        emitFixtureJs(path.join(FIXTURES, 'codex-terminal-failed.real.jsonl'), 'setInterval(() => {}, 1000);'),
-        {
-          timeoutMs: 5_000,
-          completionGraceMs: 300,
-          completionPollMs: 100,
-          completionProbe: () => true,
-        },
-      );
-      assertEq(r.terminal_failure_observed, true, 'terminal failure 须成立');
-      assertEq(r.completion_observed, undefined, 'failure 后 probe 不得置 completion');
-      assertEq(r.timed_out, undefined, 'terminal failure grace 正常收口不冒充超时');
-      assert(r.exitCode !== 0, '失败终态须保留非零退出语义');
-      assertPhaseEventAgentFailed(r, 'failed→probe');
     },
   );
 

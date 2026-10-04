@@ -54,6 +54,7 @@ import {
   validateProviderIdentityEcho,
   resolveSpecObservationBudget,
   VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN,
+  type VisualProviderInvokeInput,
 } from '../../scripts/utils/visual-provider-invoke';
 import {
   isVisualObservationReusable,
@@ -89,7 +90,7 @@ import { buildVisualProviderAdvisory } from '../../scripts/check-personal-setup'
 import { executeInitTask } from '../../scripts/utils/init-task-executor';
 import { probeInitTaskPlan } from '../../scripts/utils/init-task-planner';
 import { clearFrameworkConfigCache } from '../../config';
-import { projectDelegatedVisualProviderFailure } from '../../scripts/check-testing';
+import { projectDelegatedVisualProviderFailure, __testing_checkHylyreFailureRouting } from '../../scripts/check-testing';
 import {
   deriveSummaryVerdictLattice,
   resolveEffectiveVerdict,
@@ -1322,6 +1323,210 @@ function invalidatedScreenProject(
   return { tmp, jsonPath, shotHash: hashImageFile(path.join(shotDir, 'shot.png'))! };
 }
 
+function reviewReply(input: VisualProviderInvokeInput, body: string) {
+  return { invoke_id: input.invokeId, provider: input.provider, purpose: input.purpose,
+    outcome: 'success' as const, duration_ms: 1, image_hashes: input.imagePaths.map(p => hashImageFile(p)!), workspace_dirtied: false,
+    input_provenance: 'unverified' as const, body,
+    usage: { input_tokens: 11, output_tokens: 7, tool_tokens: 0, requests: 1, cost_estimate: null,
+      capture_method: 'stdout_json' as const, confidence: 'measured' as const } };
+}
+
+test('t3 同 gate 非法refs原body与精确索引回实际provider，最多纠正一次；独立留证/usage，共享deadline', async () => {
+  const f = invalidatedScreenProject();
+  try {
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'semantic_layout', gateDeadlineMs: Date.now() + 30_000 } as never;
+    const targets = collectReviewTargets(ctx, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+    const valid = goodPayload(targets);
+    const invalid = valid.replace('"must_fix_refs":[0]', '"must_fix_refs":[9]');
+    const inputs: VisualProviderInvokeInput[] = [];
+    const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'codex', model: 'frozen-m' }, runId: 'R', attemptId: 'A',
+      invoke: async input => {
+        inputs.push(input);
+        return reviewReply(input, inputs.length === 1 ? invalid : valid);
+      },
+    });
+    assert.strictEqual(out.kind, 'applied', JSON.stringify(out));
+    assert.strictEqual(inputs.length, 2);
+    assert.ok(inputs[1].prompt.includes(invalid), '实际产出者收到原body');
+    assert.match(inputs[1].prompt, /screens\[0\]\.defects\[0\]\.must_fix_refs\[0\]=9/);
+    assert.deepStrictEqual(inputs.map(input => input.provider), [{ adapter: 'codex', model: 'frozen-m' }, { adapter: 'codex', model: 'frozen-m' }]);
+    assert.deepStrictEqual(inputs[1].imagePaths, inputs[0].imagePaths);
+    assert.strictEqual(inputs[1].deadlineMs, inputs[0].deadlineMs);
+    assert.ok(inputs[1].timeoutMs! <= inputs[0].timeoutMs! && inputs[0].timeoutMs! <= 30_000);
+    assert.notStrictEqual(inputs[1].evidenceDir, inputs[0].evidenceDir);
+    for (const input of inputs) {
+      const event = JSON.parse(fs.readFileSync(path.join(input.evidenceDir!, 'invoke-event.json'), 'utf8'));
+      assert.deepStrictEqual(event.usage, reviewReply(input, '').usage);
+    }
+    const diagnosis = JSON.parse(fs.readFileSync(path.join(inputs[0].evidenceDir!, 'validation-diagnosis.json'), 'utf8'));
+    assert.strictEqual(diagnosis.body, invalid);
+    assert.strictEqual(diagnosis.provider.model, 'frozen-m');
+    assert.ok(out.kind === 'applied' && out.diagnosticPaths?.length === 1);
+    // 同 gate 当前 native 失败由实际v1路由生产，不因合法视觉格式纠正变成通过。
+    const raw = JSON.parse(fs.readFileSync(path.join(FRAMEWORK_ROOT, 'profiles/hmos-app/vendor/hylyre/src/hylyre/contracts/golden/trace/valid/prior-step-references-an-earlier-root.json'), 'utf8'));
+    const native = __testing_checkHylyreFailureRouting(ctx, raw, { native: true } as never);
+    assert.ok(native.some(check => check.status === 'FAIL'), '保留实际原生失败');
+    const visual: CheckResult = { id: 'visual_diff', category: 'structure', description: '', severity: 'BLOCKER', status: 'PASS', details: '格式已局部纠正' };
+    const lattice = deriveSummaryVerdictLattice([...native, visual], { phase: 'testing', visualApplicable: true, assetApplicable: false });
+    assert.strictEqual(lattice.quality_axes.functional.verdict, 'FAIL', '不能用格式纠正洗绿native');
+  } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
+test('t3 第二次仍非法保留清场与两份诊断；精确路径进入既有check/NEXT建议', async () => {
+  const f = invalidatedScreenProject({ mustHaveElements: ['root', 'sms_next'] });
+  try {
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'pixel_1to1' } as never;
+    const targets = collectReviewTargets(ctx, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+    const bad = goodPayload(targets, { screens: [{ screen_id: 's1', reference_image_hash: targets[0].refHash,
+      evaluated_screenshot_hash: targets[0].shotHash, must_fix: [], defects: [],
+      region_attest: [{ region: 'root', verdict: 'no_diff', method: 'vl_screening' }] }] });
+    let calls = 0;
+    const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A',
+      invoke: async input => { calls++; if (calls === 2) assert.match(input.prompt, /region_attest.*sms_next/); return reviewReply(input, bad); },
+    });
+    assert.strictEqual(calls, 2);
+    assert.ok(out.kind === 'unusable' && out.outcome === 'invalid');
+    if (out.kind !== 'unusable') throw Error('unusable expected');
+    assert.strictEqual(out.diagnosticPaths?.length, 2);
+    const check = projectDelegatedVisualProviderFailure(ctx, out.outcome, out.reason, 'visual', out.diagnosticPaths);
+    assert.deepStrictEqual((check.structured as { diagnostic_paths?: string[] }).diagnostic_paths, out.diagnosticPaths);
+    assert.ok(check.suggestion?.includes(out.diagnosticPaths![0]));
+    const row = JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens[0];
+    assert.strictEqual(row.evaluation_invalidated, true);
+    assert.strictEqual(row.verdict, 'pending');
+    assert.strictEqual(row.evaluated_screenshot_hash, undefined);
+  } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
+test('t3 R1 纠正不可用/空正文不洗掉首轮invalid；必需与非必需投影均FAIL，初始unavailable保持原分类', async () => {
+  for (const required of [true, false]) {
+    for (const secondFailure of ['unavailable', 'empty'] as const) {
+      const f = invalidatedScreenProject();
+      try {
+        const specDir = path.join(f.tmp, 'doc/features/feat/spec'); fs.mkdirSync(specDir, { recursive: true });
+        fs.writeFileSync(path.join(specDir, 'spec.md'), `\`\`\`yaml\nui_change: ${required ? 'new_or_changed' : 'none'}\n\`\`\`\n`);
+        const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: required ? 'pixel_1to1' : 'semantic_layout', acceptanceStrictness: 'best_effort' } as never;
+        const targets = collectReviewTargets(ctx, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+        const bad = goodPayload(targets).replace('"must_fix_refs":[0]', '"must_fix_refs":[9]');
+        let calls = 0;
+        const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+          provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A',
+          invoke: async input => {
+            calls++;
+            if (calls === 1) return reviewReply(input, bad);
+            return { ...reviewReply(input, ''), outcome: secondFailure === 'unavailable' ? 'unavailable' : 'success',
+              body: secondFailure === 'unavailable' ? null : '', reason: '纠正调用超时或无正文' } as never;
+          },
+        });
+        assert.strictEqual(calls, 2);
+        assert.ok(out.kind === 'unusable');
+        if (out.kind !== 'unusable') throw Error('unusable expected');
+        const check = projectDelegatedVisualProviderFailure(ctx, out.outcome, out.reason, 'visual', out.diagnosticPaths);
+        assert.strictEqual(check.status, 'FAIL', `${required}/${secondFailure}: ${JSON.stringify(check)}`);
+        assert.strictEqual(check.failure_kind, 'visual_provider_invalid_evidence');
+        assert.strictEqual(check.blocking_class, undefined, '不能转externalBlocked');
+        assert.ok(out.reason.includes('must_fix_refs') && out.reason.includes('纠正调用超时或无正文'), '两次原因都保留');
+        assert.strictEqual(out.diagnosticPaths?.length, 1);
+        assert.deepStrictEqual((check.structured as { diagnostic_paths?: string[] }).diagnostic_paths, out.diagnosticPaths);
+        const row = JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens[0];
+        assert.strictEqual(row.verdict, 'pending');
+        assert.strictEqual(row.evaluation_invalidated, true);
+        let initialCalls = 0;
+        const initial = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+          provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A',
+          invoke: async input => { initialCalls++; return { ...reviewReply(input, ''), outcome: 'unavailable', body: null, reason: 'initial offline' }; },
+        });
+        assert.strictEqual(initialCalls, 1);
+        assert.ok(initial.kind === 'unusable');
+        if (initial.kind !== 'unusable') throw Error('unusable expected');
+        const control = projectDelegatedVisualProviderFailure(ctx, initial.outcome, initial.reason, 'visual', initial.diagnosticPaths);
+        assert.strictEqual(control.status, required ? 'FAIL' : 'SKIP');
+        assert.strictEqual(control.blocking_class, required ? 'externalBlocked' : undefined);
+        assert.strictEqual(initial.outcome, 'unavailable');
+      } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    }
+  }
+});
+
+test('t3 共享deadline耗尽不调第二次；独立非goal两次也不重新授完整timeout', async () => {
+  const f = invalidatedScreenProject();
+  const originalNow = Date.now;
+  try {
+    let now = originalNow();
+    Date.now = () => now;
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'semantic_layout' } as never;
+    const inputs: VisualProviderInvokeInput[] = [];
+    const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A', reviewDeadlineMs: now + 10,
+      invoke: async input => { inputs.push(input); now += 20; return reviewReply(input, '{}'); },
+    });
+    assert.strictEqual(inputs.length, 1);
+    assert.ok(out.kind === 'unusable' && /deadline 已耗尽/.test(out.reason));
+    inputs.length = 0;
+    const direct = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'codex', model: 'm' },
+      invoke: async input => { inputs.push(input); now += 1000; return reviewReply(input, '{}'); },
+    });
+    assert.strictEqual(direct.kind, 'unusable');
+    assert.strictEqual(inputs.length, 2);
+    assert.strictEqual(inputs[1].deadlineMs, inputs[0].deadlineMs);
+    assert.ok(inputs[1].timeoutMs! <= inputs[0].timeoutMs! - 1000);
+  } finally { Date.now = originalNow; fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
+for (const changed of ['shot', 'ref', 'nav', 'hap'] as const) {
+  test(`t3 ${changed}变化回原采集路径，不给旧图改hash或再调provider`, async () => {
+    const f = invalidatedScreenProject();
+    try {
+      const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'semantic_layout' } as never;
+      const hap = path.join(f.tmp, 'app.hap');
+      fs.writeFileSync(hap, 'original-hap');
+      const reports = path.join(f.tmp, 'doc/features/feat/testing/reports');
+      fs.mkdirSync(reports, { recursive: true });
+      fs.writeFileSync(path.join(reports, 'device-test-install.meta.json'), JSON.stringify({ hapPath: hap }));
+      let calls = 0;
+      const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+        provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A',
+        invoke: async input => {
+          calls++;
+          const changedPath = changed === 'hap' ? hap : changed === 'nav'
+            ? path.join(f.tmp, 'doc/features/feat/device-testing/visual-diff-nav.json')
+            : path.join(path.dirname(f.jsonPath), changed + '.png');
+          fs.writeFileSync(changedPath, 'changed-input');
+          return reviewReply(input, '{}');
+        },
+      });
+      assert.strictEqual(calls, 1);
+      assert.ok(out.kind === 'unusable' && /capture\/装机\/trace/.test(out.reason));
+      assert.strictEqual(JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens[0].evaluation_invalidated, true);
+    } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
+  });
+}
+
+test('t3 IO只重试原critic提交事务，成功时不重新调用provider重判产品', async () => {
+  const f = invalidatedScreenProject();
+  const rawFs = require('fs') as typeof fs;
+  const rename = rawFs.renameSync;
+  try {
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'semantic_layout' } as never;
+    const targets = collectReviewTargets(ctx, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+    let commits = 0, calls = 0;
+    rawFs.renameSync = ((from, to) => {
+      if (String(to).endsWith('critic-receipt.json') && ++commits === 1) throw Error('transient IO');
+      return rename(from, to);
+    }) as typeof rename;
+    const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A',
+      invoke: async input => { calls++; return reviewReply(input, goodPayload(targets)); },
+    });
+    assert.strictEqual(out.kind, 'applied', JSON.stringify(out));
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(commits, 2);
+  } finally { rawFs.renameSync = rename; fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
 test('t5 evaluation_invalidated：合法重评被采信后由 harness 确定性清标记', async () => {
   const { tmp, jsonPath, shotHash } = invalidatedScreenProject();
   try {
@@ -2102,6 +2307,28 @@ test('t3 传输面失败分档：超时 / terminal failure / 非零退出 一律
   }
 });
 
+test('t3 真统一invoke接收剩余timeout与绝对deadline；预处理耗尽不启动agent', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-deadline-'));
+  try {
+    const img = path.join(tmp, 'a.png'); fs.writeFileSync(img, 'img');
+    const deadlineMs = Date.now() + 30_000;
+    let calls = 0;
+    const input = { projectRoot: tmp, frameworkRoot: FRAMEWORK_ROOT, provider: { adapter: 'claude', model: 'm' },
+      purpose: 'review' as const, prompt: 'p', imagePaths: [img], invokeId: 'deadline', timeoutMs: 60_000, deadlineMs,
+      invokeAgent: (async (_plan, _cwd, options) => {
+        calls++;
+        assert.strictEqual(options?.deadlineMs, deadlineMs);
+        assert.ok(options!.timeoutMs! <= 30_000 && options!.timeoutMs! > 0);
+        return { exitCode: 0, stdout: '{"type":"result","subtype":"success","is_error":false,"result":"payload"}\n', stderr: '', command: 'x' };
+      }) as typeof import('../../scripts/utils/agent-invoke').invokeAgentHeadless };
+    assert.strictEqual((await invokeVisualProvider(input)).outcome, 'success');
+    const expired = await invokeVisualProvider({ ...input, deadlineMs: Date.now() - 1 });
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(expired.outcome, 'invalid');
+    assert.match(expired.reason!, /deadline 已耗尽/);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
 test('t3 脏检查：invoke 弄脏工作区 → 丢弃本轮结果且**不**自动 revert', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-dirty-'));
   try {
@@ -2136,7 +2363,7 @@ test('t3 脏检查：invoke 弄脏工作区 → 丢弃本轮结果且**不**自�
   }
 });
 
-test('t3/t5 事件流落盘：成功与失败都留下 invoke-event.json', async () => {
+test('t3/t5 同一 attempt 的自检与正式检查各留调用证据，不因目标屏数相同覆盖', async () => {
   const tmp = mkReviewProject();
   try {
     const jsonPath = path.join(
@@ -2149,23 +2376,31 @@ test('t3/t5 事件流落盘：成功与失败都留下 invoke-event.json', async
       schema_version: '1.1',
       screens: [{ screen_id: 's1', verdict: 'pending', ref_id: 'ref-s1', screenshot_path: rel }],
     }, null, 2));
-    await runVisualProviderReview(
+    const invocations: Array<{ invokeId: string; evidenceDir: string }> = [];
+    const review = () => runVisualProviderReview(
       { projectRoot: tmp.root, feature: tmp.feature, fidelityTarget: 'semantic_layout' } as never,
       {
         frameworkRoot: FRAMEWORK_ROOT, provider: { adapter: 'claude', model: 'm' },
         runId: 'R', attemptId: 'A',
-        invoke: (async () => ({
-          invoke_id: 'review-R-A-1', provider: { adapter: 'claude', model: 'm' }, purpose: 'review',
-          outcome: 'unavailable', reason: 'stub', body: null, duration_ms: 1,
-          image_hashes: [], workspace_dirtied: false, input_provenance: 'unverified',
-        })) as never,
+        invoke: (async (input: { invokeId: string; evidenceDir: string }) => {
+          invocations.push(input);
+          return {
+            invoke_id: input.invokeId, provider: { adapter: 'claude', model: 'm' }, purpose: 'review',
+            outcome: 'unavailable', reason: `stub-${invocations.length}`, body: null, duration_ms: 1,
+            image_hashes: [], workspace_dirtied: false, input_provenance: 'unverified',
+          };
+        }) as never,
       },
     );
-    const evtDir = path.join(
-      tmp.root, 'doc', 'features', tmp.feature, 'device-testing', 'reports', 'visual-review', 'review-R-A-1',
-    );
-    const evtPath = path.join(evtDir, 'invoke-event.json');
+    await review();
+    const evtPath = path.join(invocations[0].evidenceDir, 'invoke-event.json');
     assert.ok(fs.existsSync(evtPath), '失败轮次同样要留下调用事件');
+    const first = fs.readFileSync(evtPath, 'utf-8');
+    await review();
+    assert.notStrictEqual(invocations[0].invokeId, invocations[1].invokeId);
+    assert.notStrictEqual(invocations[0].evidenceDir, invocations[1].evidenceDir);
+    assert.strictEqual(fs.readFileSync(evtPath, 'utf-8'), first, '后一次调用不得覆盖前一次证据');
+    assert.ok(fs.existsSync(path.join(invocations[1].evidenceDir, 'invoke-event.json')));
     const evt = JSON.parse(fs.readFileSync(evtPath, 'utf-8')) as Record<string, unknown>;
     assert.strictEqual(evt.type, 'visual_provider_invoke');
     assert.strictEqual(evt.outcome, 'unavailable');

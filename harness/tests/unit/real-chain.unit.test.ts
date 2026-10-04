@@ -333,6 +333,10 @@ function writeFacts(p: RealChainProject, phase: string): void {
   const deltaRows: Array<[string, string, string]> = fs.existsSync(path.join(p.root, REAL_CHAIN_NEW_SOURCE))
     ? [
         [REAL_CHAIN_NEW_SOURCE, 'coding 新建的列表条目组件', '本阶段按它继续'],
+        ...(phase === 'coding' ? [
+          [REAL_CHAIN_SOURCE, 'coding 已接入银行列表和开卡 sheet 的实现', '按当前验收与返修候选验证页面实现'],
+          [REAL_CHAIN_INDEX, 'coding 已导出新建 BankListItem 组件', '按当前模块导出检查调用面'],
+        ] as Array<[string, string, string]> : []),
         [REAL_CHAIN_PNG_EXISTING, '既有银行标识图（二进制，按路径引用）', '不改'],
         [REAL_CHAIN_PNG_NEW, 'coding 新建的开卡结果图（二进制，按路径引用）', '本阶段按它继续'],
       ]

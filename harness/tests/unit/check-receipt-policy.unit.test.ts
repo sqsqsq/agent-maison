@@ -485,6 +485,35 @@ function phaseOutputRelPath(root: string, phase: string, basename: string): stri
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'goal sync-closure 检查通过仍 open；无 goal 的独立入口照常完成闭环',
+    run: () => {
+      const { root } = buildProject('review', { evidenceProfile: 'balanced',
+        claimedAttemptId: 'i8', goalLedgerRunId: 'run-selfcheck' });
+      const keys = ['MAISON_GOAL_RUN_ID', 'MAISON_GOAL_ATTEMPT', 'MAISON_GOAL_ATTEMPT_PHASE'];
+      const saved = keys.map(key => process.env[key]);
+      try {
+        const summaryPath = path.join(root, 'doc/features/demo/review/reports/summary.json');
+        process.env.MAISON_GOAL_RUN_ID = 'run-selfcheck';
+        process.env.MAISON_GOAL_ATTEMPT = 'i8';
+        process.env.MAISON_GOAL_ATTEMPT_PHASE = 'review';
+        const cli = spawnSync(process.execPath, [path.join(HARNESS_ROOT, 'node_modules/ts-node/dist/bin.js'),
+          path.join(HARNESS_ROOT, 'scripts/check-receipt.ts'), '--feature', 'demo', '--phase', 'review',
+          '--project-root', root], { cwd: HARNESS_ROOT, encoding: 'utf8', env: process.env });
+        assert(cli.status === 0, `goal 真实 check-receipt CLI 检查应通过：${cli.stdout}\n${cli.stderr}`);
+        assert(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status !== 'closed', '真实 CLI 不得提交闭环');
+        const result = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', path.dirname(HARNESS_ROOT));
+        assert(result.exitCode === 0, `检查应通过：${result.finalizationError}`);
+        assert(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status !== 'closed', 'goal CLI 不得提交闭环');
+        keys.forEach(key => { delete process.env[key]; });
+        const ordinary = runSyncClosureDetailed(HARNESS_ROOT, root, 'demo', 'review', path.dirname(HARNESS_ROOT));
+        assert(ordinary.exitCode === 0 && JSON.parse(fs.readFileSync(summaryPath, 'utf8')).closure_status === 'closed', '独立入口仍收口');
+      } finally {
+        keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; });
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 'upgraded receipt probe and real CLI use frozen legacy track; modern scope ignores candidate lite',
     run: () => {
       const { root } = buildProject('review', { omitVerifier: true });

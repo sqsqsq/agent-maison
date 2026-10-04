@@ -60,8 +60,10 @@ function selectorMatch(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
 }
 
+export const PLANNED_SELECTOR_DISAMBIGUATION_FIELDS = ['index', 'scope', 'within', 'all'] as const;
+
 function disambiguatedBy(body: Record<string, unknown>): boolean {
-  return body.index !== undefined || body.scope !== undefined || body.within !== undefined || body.all !== undefined;
+  return PLANNED_SELECTOR_DISAMBIGUATION_FIELDS.some(key => body[key] !== undefined);
 }
 
 function selectorFromRecord(

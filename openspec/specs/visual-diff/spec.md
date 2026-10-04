@@ -112,6 +112,22 @@ Enforcement: `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/visu
 - **WHEN** a same-invocation provider payload passes identity/hash/schema validation and contains an actionable defect
 - **THEN** the harness SHALL commit the provider evidence and materialize a repair candidate without `repair_adjudication_pending`
 
+A successful invocation with an invalid payload SHALL receive at most one corrective provider invocation within the same gate. The corrective prompt SHALL carry the original body and precise screen/field/index validation error to the same frozen provider with the same reference/capture inputs. Both invocations SHALL share the earlier absolute deadline of the original provider timeout and remaining gate budget. Before each actual invoke and settlement, remaining time SHALL be recomputed and the existing absolute-deadline grace clamp SHALL apply. Missing/invalid gate deadline data SHALL fall back to the original provider timeout; the data SHALL grant no writer/closure role and SHALL NOT extend the outer gate hard timeout.
+
+Original reference/capture/target/nav/build bindings SHALL be rechecked before correction and commit. Changed input SHALL return to the existing capture/install/trace path without relabelling an old hash. Each invoke SHALL retain its own original output, validation diagnosis and usage in its existing evidence directory, with diagnostic paths reachable from the existing check. Unavailable, dirty and IO failures SHALL NOT become format correction. IO SHALL retry only the original commit transaction within the same remaining deadline. A second invalid payload or exhausted budget SHALL leave invalid evidence and cleared prior provider state. Correcting format SHALL NOT add a phase invocation, rerun native/capture, or erase a native FAIL.
+
+#### Scenario: malformed references are corrected by their producer
+- **WHEN** the first payload has an out-of-range must_fix_refs index and the current inputs are unchanged
+- **THEN** the same provider SHALL receive the original body and exact index error, invoke at most once more under the same deadline, and only its valid replacement SHALL be committed
+
+#### Scenario: evidence changed or correction budget exhausted
+- **WHEN** original image/HAP/nav bindings change, the remaining deadline expires, or the second payload remains invalid
+- **THEN** the gate SHALL preserve invalid evidence/diagnosis and prior-pass clearance without granting another call or modifying old hashes
+
+#### Scenario: page identity does not replace business required elements
+- **WHEN** stable target-page root/route/title anchors match but a required button is missing
+- **THEN** identity SHALL remain matched while business/native/visual content failure remains; a legacy button in all_of SHALL remain failed until testing repairs its original nav rule, never by automatic member deletion
+
 ### Requirement: An unusable provider yields a skipped visual-diff, not a blocking failure
 
 An unusable delegated provider SHALL preserve deterministic capture/navigation/tamper checks and SHALL classify the provider-dependent visual evidence separately from product failure. If visual evidence is optional for the current phase and release, the provider-dependent `visual_diff` MAY remain SKIP/UNVERIFIED advisory under the existing policy. If a strict or release-required visual axis cannot be evidenced because the provider/profile capability is unsupported or remains unavailable after bounded retry, the run SHALL project `DEFERRED_CAPABILITY_MISSING`; it MUST NOT advance to `FEATURE_COMPLETED`, fail as a product defect, or wait for a human signature. If the provider declared the required capability but emitted invalid/missing/stale evidence, the visual checker SHALL FAIL and retry/fuse as an evidence-production failure rather than capability-missing.

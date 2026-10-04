@@ -76,10 +76,12 @@ test('遗留账本保持原样且不改变反证结论', () => withHost((root) =
 test('agent 子进程仍剥离 runner 权限与场外信任变量', () => {
   const env = buildAgentSpawnEnv({ PATH: process.env.PATH }, {
     MAISON_GOAL_GATE_HARNESS: '1',
+    maison_goal_gate_harness: '1',
+    Maison_Goal_Gate_Harness: '1',
     MAISON_HMAC_GOAL_CHECKPOINT: 'secret',
     MAISON_GOAL_CHECKPOINT_DIR: 'D:/outside',
   });
-  assert(!Object.keys(env).some((key) => key.toUpperCase() === 'MAISON_GOAL_GATE_HARNESS'), '须剥离 gate 权限位');
+  assert(!Object.keys(env).some((key) => key.toUpperCase() === 'MAISON_GOAL_GATE_HARNESS'), '须清理旧 gate flag 的全部大小写残留');
   assert(!Object.keys(env).some((key) => key.toUpperCase().startsWith('MAISON_HMAC_')), '须剥离 HMAC');
   assert(!Object.keys(env).some((key) => key.toUpperCase() === 'MAISON_GOAL_CHECKPOINT_DIR'), '须剥离场外路径');
 });

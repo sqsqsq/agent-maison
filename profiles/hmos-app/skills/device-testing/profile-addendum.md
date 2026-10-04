@@ -135,7 +135,7 @@
 - **Nav 子页回 Tab**：必须用 `{"back":{}}` 或 `{"back":{"mode":"swipe","side":"RIGHT"}}`（Hypium `press_back` / `swipe_to_back`）。**禁止**用无 `area` / `at` / `scroll_target` 的 `swipe RIGHT`/`LEFT` 代替系统/Nav 返回（那是内容区滑动，无法 pop `NavPathStack`）。
 - **进入子页的 TC**：预期含「进入××页」时，若后续仍有要求「已在首页 Tab」的用例，本 TC 末步建议 `{"back":{}}` teardown，或让后续 TC 首步为 `back`。
 - **派生前必读**：`derive-hint-from-plan.json` 中每条 `test_cases[].navigation_hint`（`suggested_preamble_steps` / `forbidden_patterns`）。
-- **Harness 门禁**：`check-testing` 对派生表执行 **NAV-001/002/003** 静态 lint；失败时 `coverage_reason=invalid_derived_steps`，须在新 `testing/reports/<timestamp>/hylyre/` **重新派生**，勿手改旧目录下的 `test-plan.hylyre.md`。
+- **Harness 门禁**：`check-testing` 对派生表执行 **NAV-001/002/003** 静态 lint；本轮 `script-report.json` 的 `device_test_run.structured.derive_hint` 提供 `coverage_reason=invalid_derived_steps` 和完整建议，须在新 `testing/reports/<timestamp>/hylyre/` **重新派生**，勿手改旧目录下的 `test-plan.hylyre.md`。
 
 ### `hylyre dump-ui` 与快照缓存
 
@@ -148,13 +148,13 @@
 
 ### plan 派生缺失时的结构化提示
 
-- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 4）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，以及**机读步骤目录**（`allowed_step_roots` / `step_shape_catalog` / `canonical_format`——翻译步骤以此为准，不依赖已读语法文档），便于下一轮 Agent 派生。
+- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并建立 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 4）源语义基线：顶层用例行、**`navigation_hint`** 与**机读步骤目录**（`allowed_step_roots` / `step_shape_catalog` / `canonical_format`）。输入语义未变不重写；最新 coverage/lint/suggested_fix、选中/拒绝路径、原 mtime 转入本轮 `script-report.json` 的 `device_test_run.structured.derive_hint`，NEXT 指向该报告，勿从旧 hint 读取当前诊断。
 - **SSOT 覆盖门禁（execution_channel）**：顶层 **`test-plan.md`** 为唯一用例清单权威，且每条 TC 声明唯一 **`execution_channel`**（`hylyre | visual | manual:<gap_class> | provider:<capability-id>`）。**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）必须与顶层 `channel=hylyre` 的集合**完全相等**——缺失 missing FAIL、多出 extra FAIL。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。未执行的顶层 TC（包括 P1/P2）不能让 testing 通过；只有机器证明的 known manual gap 或 inactive/SKIP provider 可记 `unsupported_gap`，其余非法写法在任何设备动作前失败。
 - **派生器没有 skip 决策权（BLOCKER）**：正式派生计划**禁止**写 `explicit_skip_tc_ids`（frontmatter 与 `derive-manifest.json` 同禁），登记本身即 BLOCKER。某条 `channel=hylyre` 的 TC 写不成可靠 Hylyre JSON 时，**整份 Hylyre 计划不启动**，回报该 TC 根因与下一责任阶段，交回顶层计划作者改通道或补入口定义——不得降级成跳过。
   - **legacy（只读兼容，禁止复制）**：历史产物里的 `explicit_skip_tc_ids` 仍可被解析，仅用于诊断旧 run；它**不贡献 PASS**、**不产 coding candidate**，等同「未执行」保持 testing FAIL，也不得按 TC 名称或报告散文投 coding。新计划/新派生器一律不写。
 - **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。
-- **新鲜度**：若顶层 **`test-plan.md`** 的 mtime **新于**选中的派生文件，脚本 **BLOCKER**（`coverage_reason=stale`），须重派生或更新派生文件。
-- **派生入口 CLI**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，默认输出 stdout 并把源 TC 基线写到 canonical testing reports 下 `derive-hint-from-plan.json`，然后再生成派生计划；不需要先跑 harness 失败。`--out <path>` 保留给显式导出，正式派生使用默认 canonical 路径。
+- **新鲜度**：对账源 TC 行与执行语法/reset/selector 机器语法；真实变化更新 canonical 基线，派生必须晚于该基线。标题/表外说明、诊断、缓存页或无关 selector 候选变化不误 stale；当前 selector 静态门与 native 真值仍独立执行。只刷新 hint 或改时间不能洗绿旧步骤，须真实重派生并验证。
+- **派生入口 CLI**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，读本次 stdout 的完整派生上下文，然后生成派生计划；不需要先跑 harness 失败。语义不变时 canonical 字节/mtime/generated_at 不变，stdout 仍带最新缓存/selector 候选并保留原 generated_at。`--out <另一文件>` 显式导出当前完整上下文但不替代源基线；指向 canonical 时仍幂等且同时输出 stdout。旧 schema 4 缺辅助字段不强制重派生，不得据当前 TC 补造丢失的旧源快照。
 
 ### 即席模式（`_adhoc`）
 

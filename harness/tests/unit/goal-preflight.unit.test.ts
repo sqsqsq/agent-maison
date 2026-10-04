@@ -829,7 +829,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           manifest: baseManifest('claude'),
           invokeFn: (async () => ({
             exitCode: 0,
-            stdout: 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q',
+            stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q' }) + '\n',
             stderr: '',
             command: 'fake',
           })) as typeof invokeAgentHeadless,
@@ -899,7 +899,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           projectRoot: root,
           frameworkRoot: fw,
           manifest: baseManifest('claude'),
-          invokeFn: (async () => ({ exitCode: 0, stdout, stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
+          invokeFn: (async () => ({ exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: stdout }) + '\n', stderr: '', command: 'fake' })) as typeof invokeAgentHeadless,
           answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));

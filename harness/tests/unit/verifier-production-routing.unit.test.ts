@@ -39,7 +39,12 @@ import {
   parseVerifierRequest,
   renderVerifierRequest,
 } from '../../scripts/utils/verifier-request';
-import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { buildSummaryRepairCandidates, loadRepairDeclineState, itemFingerprintOf, isRebuttalAppearance,
+  declineAttemptExemption, declineDisputeLines } from '../../scripts/utils/repair-candidates';
+import { assembleGoalBrief } from '../../scripts/utils/goal-brief';
+import { resolveResumedBudget, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
+import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
@@ -1396,7 +1401,156 @@ function caseK_materializedUtPromptCountingRule(): void {
   }
 }
 
+function caseT1_legacyDeclineThroughDiskAndSummary(): void {
+  const { root } = makeVerifierProject();
+  const previousRun = process.env.MAISON_GOAL_RUN_ID;
+  try {
+    const runId = 'legacy-decline-t1';
+    process.env.MAISON_GOAL_RUN_ID = runId;
+    const runDir = path.join(featureDir(root, 'demo'), 'goal-runs', runId);
+    const oldFile = '02-Feature/F/src/main/ets/OpenCardFlow.ets:42';
+    const fix = '消费 upsertCard 的 duplicated 字段并提示';
+    const oldFp = itemFingerprintOf('CR-001', [oldFile], fix);
+    const currentFp = itemFingerprintOf('CR-001', [oldFile.replace(':42', '')], fix);
+    const candidate = { id: 'CR-001', category: 'coding', files: [oldFile], summary: fix,
+      item_fingerprint: oldFp, source_phase: 'review' };
+    const canonical = { ...candidate, files: [oldFile.replace(':42', '')], item_fingerprint: currentFp };
+    const bt = { type: 'phase_backtrack_requested', ts: '2026-01-01T00:00:01.000Z', from_phase: 'review',
+      to_phase: 'coding', invalidated_phases: ['coding', 'review', 'ut', 'testing'], candidates: [candidate, canonical] };
+    const eventsPath = path.join(runDir, 'events.jsonl');
+    // 真实旧格式出生、回退事件和责任阶段账本；不是手塞 declined Set。
+    writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({ feature: 'demo', run_id: runId,
+      requirement: '本次不做 NFC 卡', requirement_source_files: [] }));
+    writeFile(eventsPath, [
+      { type: 'run_start', ts: '2026-01-01T00:00:00.000Z', planned_phases: ['coding', 'review', 'ut', 'testing'] }, bt,
+    ].map(event => JSON.stringify(event)).join('\n') + '\n');
+    const ledgerPath = path.join(featureDir(root, 'demo'), 'coding', 'headless-assumptions.jsonl');
+    writeFile(ledgerPath, JSON.stringify({ decision_id: 'd1', run_id: runId, phase: 'coding',
+      gate_id: `repair_candidate:${oldFp}`, class: 'goal_conflict', decision: 'declined: 需求写明「本次不做 NFC 卡」',
+      must_review: true, source: 'agent', ts: '2026-01-01T00:00:02.000Z' }) + '\n');
+    const originalLedger = fs.readFileSync(ledgerPath, 'utf8');
+    const originalEvents = fs.readFileSync(eventsPath, 'utf8');
+    const originalBudget = JSON.stringify(resolveResumedBudget(loadAuthoritativeEvents(eventsPath)));
+    const states = loadRepairDeclineState(root, 'demo', runId);
+    const state = states.get(currentFp);
+    assert(Boolean(state) && state === states.get(oldFp), '历史原 fp 与当前归一 fp 须指同一真实账本状态');
+    assert(state?.declined_rounds === 1 && !state.rebuttal_used, '同一事件的两个别名只计一轮、不给额外反驳');
+    assert(assembleGoalBrief(root, 'demo', { runId }).resolved_conflicts?.length === 1, '简报只展示一次拒修依据');
+    assert(isRebuttalAppearance(state), 'runtime 的唯一反驳轮须认出旧拒修');
+    const exempt = declineAttemptExemption(states, runId);
+    assert(exempt(bt, oldFp) && exempt(bt, currentFp), 'runtime 首次拒修轮豁免同时认两个等价引用');
+    assert(declineDisputeLines([canonical], states).join().includes('本次不做 NFC 卡'), 'runtime 争议输出保留旧依据');
+
+    const dir = reportsDirOf(root, 'demo', 'review');
+    writeFile(path.join(dir, 'ai-prompt.md'), '# current prompt\n');
+    writeFile(path.join(featureDir(root, 'demo'), 'review', 'review-report.md'), REVIEW_REPORT_NEGATIVE.replace('OpenCardFlow.ets`', 'OpenCardFlow.ets:42`'));
+    const report = scriptReportOf('demo', 'review', root, [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL]);
+    const enabled = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: 'prompts/verify-review.md', message: 'test' };
+    const material = buildVerifierMaterialView({ projectRoot: root, feature: 'demo', phase: 'review',
+      frameworkRoot: FRAMEWORK_ROOT, gateFingerprint: computeGateFingerprint(FRAMEWORK_ROOT, 'review'),
+      phaseRuleText: '', templateText: '', checks: report.checks, contextFiles: [] });
+    const issued = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: enabled, verifierMaterial: material });
+    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: 'demo', phase: 'review',
+      subjectId: issued.verifier_subject_id as string, verdict: 'FAIL',
+      reportText: REVIEW_VERIFIER_REPORT.replace('| blocker_threshold | PASS |', '| blocker_threshold | FAIL |'), skipSummaryPatch: true });
+    const current = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: enabled, verifierMaterial: material });
+    assert(current.repair_candidates?.[0]?.item_fingerprint === currentFp, '当前 subject 看过拒修后仍可确认唯一候选');
+    const carried = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, {
+      verifierPlan: { mode: 'disabled', reason: 'policy_off', verifier_prompt: null, message: '用户禁用 verifier' },
+    });
+    assert(carried.verifier_subject_id === issued.verifier_subject_id && !carried.verifier_request, '确实进入 carried，无当前 request');
+    assert((carried.repair_candidates ?? []).length === 0, '旧 subject 不得因行号归一重确认拒修项');
+    const next = buildNextLine(carried, 'review', 'demo');
+    assert(next.includes('CR-001') && next.includes('未签发') && !next.includes('投给 subagent_type=verifier'), `NEXT 须如实保留不可达出口：${next}`);
+    assert(carried.verdict === 'FAIL' && carried.closure_status === 'open', '旧负面结论不能洗绿');
+    assert(fs.readFileSync(ledgerPath, 'utf8') === originalLedger && fs.readFileSync(eventsPath, 'utf8') === originalEvents, '消费不得迁移原账本/事件');
+    assert(JSON.stringify(resolveResumedBudget(loadAuthoritativeEvents(eventsPath))) === originalBudget, '兼容不重置原预算');
+
+    // runtime 原投影最多保存 10 个 files：11 文件的原 fp 不能从截断事件推导别名。
+    const longFiles = Array.from({ length: 11 }, (_, index) => `02-Feature/F/src/main/ets/File${index}.ets:42`);
+    const longFp = itemFingerprintOf('CR-002', longFiles, fix);
+    const longCandidate = { ...candidate, id: 'CR-002', files: longFiles, item_fingerprint: longFp };
+    writeFile(eventsPath, [
+      { type: 'run_start', ts: '2026-01-01T00:00:00.000Z' },
+      { ...bt, candidates: [{ ...longCandidate, files: longFiles.slice(0, 10) }] },
+    ].map(event => JSON.stringify(event)).join('\n') + '\n');
+    fs.appendFileSync(ledgerPath, JSON.stringify({ decision_id: 'd-long', run_id: runId, phase: 'coding',
+      gate_id: `repair_candidate:${longFp}`, class: 'goal_conflict', decision: 'declined: 需求写明「本次不做 NFC 卡」',
+      must_review: true, source: 'agent', ts: '2026-01-01T00:00:02.000Z' }) + '\n');
+    writeFile(path.join(featureDir(root, 'demo'), 'review', 'review-report.md'), REVIEW_REPORT_NEGATIVE
+      .replace('CR-001', 'CR-002').replace('`02-Feature/F/src/main/ets/OpenCardFlow.ets`', longFiles.map(file => `\`${file}\``).join(', ')));
+    const longMaterial = buildVerifierMaterialView({ projectRoot: root, feature: 'demo', phase: 'review',
+      frameworkRoot: FRAMEWORK_ROOT, gateFingerprint: computeGateFingerprint(FRAMEWORK_ROOT, 'review'),
+      phaseRuleText: '', templateText: '', checks: report.checks, contextFiles: [] });
+    const longIssued = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: enabled, verifierMaterial: longMaterial });
+    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: 'demo', phase: 'review',
+      subjectId: longIssued.verifier_subject_id as string, verdict: 'FAIL', reportText: REVIEW_VERIFIER_REPORT
+        .replace(/CR-001/g, 'CR-002').replace('OpenCardFlow.ets |', 'File0.ets:42 |')
+        .replace('| blocker_threshold | PASS |', '| blocker_threshold | FAIL |'), skipSummaryPatch: true });
+    const truncated = loadRepairDeclineState(root, 'demo', runId);
+    assert(!truncated.has(itemFingerprintOf('CR-002', longFiles.map(file => file.replace(':42', '')), fix)), '不足原料不能猜指纹等价');
+    const beforeTruncatedRead = fs.readFileSync(eventsPath, 'utf8') + fs.readFileSync(ledgerPath, 'utf8');
+    const longCarried = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, {
+      verifierPlan: { mode: 'disabled', reason: 'policy_off', verifier_prompt: null, message: '用户禁用 verifier' },
+    });
+    assert(longCarried.verifier_subject_id === longIssued.verifier_subject_id && !longCarried.verifier_request, '截断反例确实走 carried');
+    assert((longCarried.repair_candidates ?? []).length === 0 && buildNextLine(longCarried, 'review', 'demo').includes('CR-002'), '不足原料仍需当前 subject，不重确认旧拒修');
+    assert(loadRepairDeclineState(root, 'demo', runId).get(longFp)?.declined_rounds === 1, '诊断不造别名或清旧状态');
+    assert(fs.readFileSync(eventsPath, 'utf8') + fs.readFileSync(ledgerPath, 'utf8') === beforeTruncatedRead, '原截断记录与账本不被改写');
+    writeFile(eventsPath, originalEvents);
+    writeFile(ledgerPath, originalLedger);
+
+    fs.appendFileSync(eventsPath, JSON.stringify({ ...bt, ts: '2026-01-01T00:00:05.000Z', candidates: [canonical] }) + '\n');
+    fs.appendFileSync(ledgerPath, JSON.stringify({ decision_id: 'd2', run_id: runId, phase: 'coding',
+      gate_id: `repair_candidate:${currentFp}`, class: 'goal_conflict', decision: 'declined: 需求写明「本次不做 NFC 卡」',
+      must_review: true, source: 'agent', ts: '2026-01-01T00:00:06.000Z' }) + '\n');
+    const twice = loadRepairDeclineState(root, 'demo', runId).get(currentFp);
+    assert(twice?.declined_rounds === 2 && twice.rebuttal_used && !isRebuttalAppearance(twice), '第二次真实拒修仍收敛，不因别名重给额度');
+  } finally {
+    if (previousRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = previousRun;
+    rmDir(root);
+  }
+}
+
+function caseT1_reviewRowDiagnosisHasReachableExit(): void {
+  const { root } = makeVerifierProject();
+  try {
+    const dir = reportsDirOf(root, 'demo', 'review');
+    writeFile(path.join(dir, 'ai-prompt.md'), '# row diagnosis prompt\n');
+    writeFile(path.join(featureDir(root, 'demo'), 'review', 'review-report.md'), REVIEW_REPORT_NEGATIVE);
+    const report = scriptReportOf('demo', 'review', root, [REPORT_VALIDITY_OK, NEGATIVE_VERDICT_CLOSURE_FAIL]);
+    const enabled = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: 'prompts/verify-review.md', message: 'test' };
+    const first = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: enabled });
+    for (const [name, body] of [
+      ['missing row', REVIEW_VERIFIER_REPORT.replace(/CR-001/g, 'CR-002')],
+      ['wrong evidence', REVIEW_VERIFIER_REPORT.replace('OpenCardFlow.ets | 消费 upsertCard 的 duplicated 字段并提示', 'Sms.ets | 另一条问题')],
+      ['invalid verdict', REVIEW_VERIFIER_REPORT.replace('verdict: confirmed', 'verdict: yes')],
+      ['duplicate row', REVIEW_VERIFIER_REPORT.replace('```\n', '- issue: CR-001\n  verdict: refuted\n  evidence: OpenCardFlow.ets | 消费 upsertCard 的 duplicated 字段并提示\n```\n')],
+    ]) {
+      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: 'demo', phase: 'review',
+        subjectId: first.verifier_subject_id as string, verdict: 'PASS', reportText: body, skipSummaryPatch: true });
+      const summary = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: enabled });
+      assert(summary.verifier_subject_id === first.verifier_subject_id, `${name}: 材料没有变，诊断不能造新 subject`);
+      assert(summary.next_action === 'run_verifier_for_repair' && (summary.repair_candidates ?? []).length === 0, `${name}: 逐行坏正文必须走当前 request 修复`);
+      assert(buildNextLine(summary, 'review', 'demo').includes('CR-001'), `${name}: NEXT 精确点名行`);
+      assert(summary.verdict === 'FAIL' && summary.closure_status === 'open', `${name}: 诊断不洗产品结论`);
+    }
+    for (const verdict of ['refuted', 'unclear']) {
+      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: dir, feature: 'demo', phase: 'review',
+        subjectId: first.verifier_subject_id as string, verdict: 'PASS',
+        reportText: REVIEW_VERIFIER_REPORT.replace('verdict: confirmed', `verdict: ${verdict}`), skipSummaryPatch: true });
+      const summary = writeRunSummaryBase(root, report, FRAMEWORK_ROOT, { verifierPlan: enabled });
+      assert((summary.repair_candidates ?? []).length === 0 && summary.next_action !== 'run_verifier_for_repair', `${verdict}: 合法判定不伪装成格式坏`);
+    }
+    const mixed = writeRunSummaryBase(root, scriptReportOf('demo', 'review', root, [...report.checks, FAIL_CHECK]), FRAMEWORK_ROOT, { verifierPlan: enabled });
+    assert(!mixed.verifier_request && !buildNextLine(mixed, 'review', 'demo').includes('投给 subagent_type=verifier'), '混合失败不虚构当前 request');
+    assert(buildNextLine(mixed, 'review', 'demo').includes('混合失败'), '混合失败指出实际资格原因');
+  } finally { rmDir(root); }
+}
+
 const CASES: Array<{ name: string; fn: () => void }> = [
+  { name: 'T1 旧行号拒修真实事件/账本 load→summary→runtime 共享状态与原预算', fn: caseT1_legacyDeclineThroughDiskAndSummary },
+  { name: 'T1 review 行级诊断只投已签发当前 request，合法 refuted/unclear 与混合资格分开', fn: caseT1_reviewRowDiagnosisHasReachableExit },
   { name: 'A workflow 声明的 verifier_prompt 决定实际装配的模板；缺文件明确失败、无 fallback', fn: caseA_declaredTemplateIsTheOneAssembled },
   { name: 'B request 解析严格：JSON 内夹带字段 / 可空字段错误类型 / subject 不可外部传入', fn: caseB_requestParsingIsStrict },
   { name: 'C 二态 × 脚本 verdict 的生产分流与 next_action 分流表（无审查员不阻断）', fn: caseC_productionAndNextActionRouting },

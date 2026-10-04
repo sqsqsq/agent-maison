@@ -62,7 +62,9 @@
 
 1. **读取解析施工输入**：消费 P1 resolved requirement、代码、contracts 与 acceptance；蓝图来源须经 P3 校验，CU 使用真实 sidecar/写集。plan.md/spec.md 仅作实际需要的补充，不为补齐名称创建空文档。按 modules/files/data_models/interfaces/components/navigation/resource_keys 输出模块×层实现清单（`coding.module_batch`：`1=下一模块` `2=修改本模块`）。
 2. **确定实现顺序**：双重自底向上——模块间按 `outer_layers`/`intra_layer_deps` 声明（被依赖方先落地）；模块内按 profile 声明的层顺序（常见 shared→data→domain→presentation）。
-3. **Research Sub-Phase**（写第一个源码前完成）：UI 需求先做 Step 2.5a 视觉真源 Read。阅读已解析契约/验收、适用 use-cases、architecture DSL、跨模块出口和实际源码。以运行入口返回的 factsContext 为准：coding 为首个实际阶段且无有效基线时建立 schema 1.1 facts，绑定真实 Feature/run、established_by=coding 与来源；承接有效基线时才追加 `## phase_delta: coding`（无新增写 "none"）。不得先写源码再补造 facts，也不回补 spec/change 产物。量化阈值与 subagent 强制只在实际建立阶段及旧 context-exploration.md 兼容路径生效；delta 不重做数量检查，必要的实际阅读仍须完成。
+3. **Research Sub-Phase**（写第一个源码前完成）：UI 需求先做 Step 2.5a 视觉真源 Read。阅读已解析契约/验收、适用 use-cases、architecture DSL、跨模块出口和实际源码。以运行入口返回的 factsContext 为准：coding 为首个实际阶段且无有效基线时建立 schema 1.1 facts，绑定真实 Feature/run、established_by=coding 与来源；承接有效基线时才追加 `## phase_delta: coding`（无新增写 "none"）。同 phase 下一调用补 verifier 或继续合法修改时，runtime 会核已完成调用的真实写链后提供本次 context；保留基线及精确来源 delta，不自己改 run_id/hash/owner 代替核验。不得先写源码再补造 facts，也不回补 spec/change 产物。量化阈值与 subagent 强制只在实际建立阶段及旧 context-exploration.md 兼容路径生效；delta 不重做数量检查，必要的实际阅读仍须完成。
+
+   同 coding 后继可继承严格核验后的旧基线，保留原建立阶段、run 与原 SHA；不要只改 run_id 假装修复。对本阶段写边界内、归本阶段负责且属于当前解析目标的新增或修改源码，建议在 `## phase_delta: coding` 的「路径 | 事实 | 影响」表逐路径登记实际新事实；散文、`none` 或缺少精确行只降低追溯并披露，不阻断施工。表内建议使用工程相对路径；绝对路径、反斜杠、`./` 及末尾追加的同名小节也会归一合并识别。入场前已存在但未调研的目标仍须补齐实际阅读。中断后可承接未撤销 start 的已核 facts context；独立无 run 入口保留本阶段授权内源码施工语义。需求、contracts、配置及未授权源码没有此承接豁免；入场前来源已变或旧验证窗口无法证明入场时，沿指明的责任阶段实际读源并重建。
 4. **逐模块逐层生成代码**（强制逐文件 Lint 门禁）：开文件前自检（重读易错手册相关条 + 确认路径在 in_scope 内）→ 按 contracts.yaml 强契约生成 → 只写当前一个文件 → 立即 `ReadLints` 零 error 才能开下一文件 → 对照易错手册自校对 → 检查层间依赖 → 展示给用户确认。
 5. **业务编排**（详见 reference，仅 use-cases.yaml 存在时）：三形态（Page 命名方法/协调类/导出命名函数）按复杂度自选，`named_business_handler` 强制校验命名符号、禁匿名 lambda、禁新造 Port。
 6. **模块配置与资源文件**：模块包描述/构建配置/module.json5/根级模块清单/依赖清单；资源文件按 profile 目录布局；路由配置按 profile 约定注册。
@@ -99,6 +101,10 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 **harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
 ## 阶段闭环判定（全局入口 §5.1）
+
+收到 native testing 的返修候选时，`files` 是修复目标；可选 `evidence_refs` 是只读 trace/case/step、派生计划与失败边界引用。
+按精确 case/step 读取原 StepResult 的 selector request/resolution、outcome 与 diagnostic，再在已授权范围内调查源码。
+没有机器定位的源码目标会保持空 `files`；不要把截图、trace 或派生证据路径当作待改源码，也不要改断言或 hash 洗绿。
 
 **closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 

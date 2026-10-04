@@ -772,6 +772,7 @@ export interface HarnessRunSummary {
     summary: string;
     item_fingerprint: string;
     source_phase: string;
+    evidence_refs?: import('./repair-candidates').RepairEvidenceRef[];
     /** adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记；缺省=legacy check-domain。 */
     identity_schema?: 'signal@1';
   }>;
@@ -1009,6 +1010,10 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
 }
 
 export interface FeatureCheckContext {
+  /** 当前 gate 已授予的绝对截止；只传剩余时间，不授予写入/收口职责。 */
+  gateDeadlineMs?: number;
+  /** 同一 pipeline 的未提交 device evidence；仅预览引用，正式件由 runtime 提交。 */
+  deviceTestEvidence?: { trace_path: string };
   /** Native global-phase selection; no Feature birth or persisted request state. */
   module?: string;
   term?: string;

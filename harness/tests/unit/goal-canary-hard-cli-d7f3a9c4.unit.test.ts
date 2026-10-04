@@ -335,10 +335,26 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           invokeFn: (async () => ({ exitCode: 0, stdout: '', stderr: '', command: 'fake' })) as InvokeFnType,
         });
         assert.strictEqual(r.outcome, 'invalid_not_cached', JSON.stringify(r));
-        // 有效答卷 → valid_cached（回归；parseCanaryAnswer 与判卷同源）
+        // 裸答卷/只有 assistant/错误 result/残缺信封即使含全对答案，也不得缓存。
+        for (const stdout of [
+          FULL_ANSWER,
+          JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: FULL_ANSWER }] } }) + '\n',
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: FULL_ANSWER }) + '\n',
+          JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: FULL_ANSWER }).slice(0, -1),
+        ]) {
+          r = await runVisionCanaryProbe({
+            projectRoot: root, frameworkRoot: fw, manifest: baseManifest(),
+            invokeFn: (async () => ({ exitCode: 0, stdout, stderr: '', command: 'fake' })) as InvokeFnType,
+            answerKeyFn: () => FIXTURE_CANARY_KEY,
+          });
+          assert.strictEqual(r.outcome, 'invalid_not_cached', JSON.stringify(r));
+          assert.match(r.error ?? '', /无终态 success result/);
+          assert.strictEqual(loadLocalConfig(root)?.vision?.canary, undefined, '缺合法终态不得写缓存');
+        }
+        // 真实合法 success 信封 → valid_cached（回归；parseCanaryAnswer 与判卷同源）
         r = await runVisionCanaryProbe({
           projectRoot: root, frameworkRoot: fw, manifest: baseManifest(),
-          invokeFn: (async () => ({ exitCode: 0, stdout: FULL_ANSWER, stderr: '', command: 'fake' })) as InvokeFnType,
+          invokeFn: (async () => ({ exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: FULL_ANSWER }) + '\n', stderr: '', command: 'fake' })) as InvokeFnType,
           answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
@@ -376,7 +392,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         r = await runVisionCanaryProbe({
           projectRoot: root, frameworkRoot: fw,
           manifest: baseManifest({ adapter_model_pin: { adapter: 'claude', value: 'gpt-5.5' } }),
-          invokeFn: (async () => ({ exitCode: 0, stdout: FULL_ANSWER, stderr: '', command: 'fake' })) as InvokeFnType,
+          invokeFn: (async () => ({ exitCode: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: FULL_ANSWER }) + '\n', stderr: '', command: 'fake' })) as InvokeFnType,
           answerKeyFn: () => FIXTURE_CANARY_KEY,
         });
         assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
@@ -606,20 +622,24 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         return path.join(runsDir, newest);
       };
 
+      const executorEnvs: Array<Record<string, string>> = [];
       const installSeams = (root: string): void => {
         __testing_setRepoLayout({
           kind: 'standalone', projectRoot: root, frameworkRoot: REPO_ROOT, frameworkRel: '',
         } as ReturnType<typeof inferRepoLayout>);
-        __testing_setInvokeAgent((async () => ({
-          exitCode: 2,
-          stdout: '',
-          stderr: '[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5（t7 smoke）\n',
-          command: 'fake-guardian',
-          spawn_error: {
-            code: 'maison_guardian_containment_failed',
-            message: '[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5',
-          },
-        })) as never);
+        __testing_setInvokeAgent((async (_plan: unknown, _cwd: string, options: { extraEnv?: Record<string, string> }) => {
+          executorEnvs.push({ ...options.extraEnv });
+          return {
+            exitCode: 2,
+            stdout: '',
+            stderr: '[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5（t7 smoke）\n',
+            command: 'fake-guardian',
+            spawn_error: {
+              code: 'maison_guardian_containment_failed',
+              message: '[maison-guardian] CreateProcess(CREATE_SUSPENDED) 失败: 5',
+            },
+          };
+        }) as never);
         __testing_setRunHarnessPhase((async () => {
           throw new Error('t7 startup smoke 不得进入 harness');
         }) as never);
@@ -687,6 +707,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const providerManifest = JSON.parse(fs.readFileSync(path.join(providerDir, 'manifest.json'), 'utf-8')) as Record<string, unknown>;
         assert.strictEqual(providerManifest.allow_blind_visual, undefined, 'provider 路径不应伪造 blind 授权');
         assert.deepStrictEqual(providerManifest.visual_provider_pin, { adapter: 'claude', model: 'smoke-vision-model' });
+        assert.strictEqual(executorEnvs.at(-1)?.MAISON_GOAL_VISUAL_PROVIDER_ADAPTER, 'claude');
+        assert.strictEqual(executorEnvs.at(-1)?.MAISON_GOAL_VISUAL_PROVIDER_MODEL, 'smoke-vision-model',
+          'detached 执行者自检必须继承与正式 gate 相同的 run 冻结 provider');
       } finally {
         __testing_resetGoalRunnerSeams();
         process.argv = prevArgv;

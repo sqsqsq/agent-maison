@@ -588,8 +588,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(src.includes("type: 'legacy_run_override'"), 'legacy force 确认事件缺失');
       const settledIdx = src.indexOf("type: 'agent_process_settled'");
       // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不再重复 emit——
-      // settled 仍受 bound 成功约束（且 resumePostAgent 分支排除）
-      const settledCondIdx = src.indexOf('if (containmentCtx && !guardianBoundError && !resumePostAgent)');
+      // settled 仍受 bound 成功约束；skipExecutor包含post-agent恢复及未获事实入场的零调用。
+      const settledCondIdx = src.indexOf('if (containmentCtx && !guardianBoundError && !skipExecutor)');
+      assert(src.includes('const skipExecutor = resumePostAgent || !!factsAdmissionError;'), '未调用executor不能新发settled');
       const settledCondIdxLegacy = src.indexOf('if (containmentCtx && !guardianBoundError)');
       assert(
         (settledCondIdx >= 0 && settledCondIdx < settledIdx) ||

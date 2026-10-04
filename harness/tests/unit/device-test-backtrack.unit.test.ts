@@ -38,6 +38,7 @@ import {
   writeExecutionKeyRecord,
 } from '../../../profiles/hmos-app/harness/execution-key';
 import { clearFrameworkConfigCache } from '../../config';
+import { commitGateDeviceEvidenceProposal } from '../../scripts/goal-phase-runtime';
 import type { UnitCaseResult } from '../run-unit';
 
 const FEATURE = 'bc-openCard';
@@ -361,7 +362,7 @@ export function runAll(): UnitCaseResult[] {
     assert(tc1.classification === 'unjoinable', `双子句应 unjoinable：${JSON.stringify(tc1)}`);
   });
 
-  t('evidence 写入失败 → BLOCKER（review P1：真实安装+run 已成功时不得静默吞）', () => {
+  t('goal evidence proposal 失败 → BLOCKER；自设 gate flag 不授予正式写盘职责', () => {
     const f = setupFixture();
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { writeDeviceTestEvidenceIfEligible } = require('../../scripts/check-testing') as {
@@ -392,16 +393,20 @@ export function runAll(): UnitCaseResult[] {
       const r1 = writeDeviceTestEvidenceIfEligible(ctx, doneHolder, () => ({ ok: false, reason: 'HAP 被改写' }));
       assert(r1.length === 1 && r1[0].status === 'FAIL' && r1[0].severity === 'BLOCKER',
         `compose 失败须 BLOCKER：${JSON.stringify(r1)}`);
-      // ② compose 成功 → PASS 且文件落盘（写到 reports_dir_pattern 解析出的目录）
+      // ② compose 成功 → PASS proposal，正式文件由 runtime 当前 gate 提交。
       const r2 = writeDeviceTestEvidenceIfEligible(ctx, doneHolder, () => composeOk(f));
       assert(r2.length === 1 && r2[0].status === 'PASS', `成功须 PASS：${JSON.stringify(r2)}`);
+      assert(!fs.existsSync(deviceTestEvidencePath(f.reportsDir)), 'goal CLI 不得写正式 evidence');
       // ③ 上游未完成（install 未真实执行）→ []（上游门禁负责，不重复报）
       const r3 = writeDeviceTestEvidenceIfEligible(ctx, { ...doneHolder, installExecuted: false }, () => composeOk(f));
       assert(r3.length === 0, `上游失败不重复报：${JSON.stringify(r3)}`);
-      // ④ 普通模式（无 gate 标记）→ []
+      // ④ 旧 gate 标记不改变职责；无 goal 身份的独立 CLI 保持原行为。
       delete process.env.MAISON_GOAL_GATE_HARNESS;
       const r4 = writeDeviceTestEvidenceIfEligible(ctx, doneHolder, () => composeOk(f));
-      assert(r4.length === 0, `普通模式零变化：${JSON.stringify(r4)}`);
+      assert(r4.length === 1 && r4[0].status === 'PASS', `旧标记不切换角色：${JSON.stringify(r4)}`);
+      delete process.env.MAISON_GOAL_RUN_ID;
+      delete process.env.MAISON_GOAL_ATTEMPT;
+      assert(writeDeviceTestEvidenceIfEligible(ctx, doneHolder, () => composeOk(f)).length === 0, '独立 CLI 零变化');
     } finally {
       for (const [k, v] of Object.entries(savedEnv)) {
         if (v === undefined) delete process.env[k];
@@ -991,14 +996,56 @@ export function runAll(): UnitCaseResult[] {
   const writeViaProduction = (f: Fixture, holder: Holder): DeviceTestEvidenceDoc => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { writeDeviceTestEvidenceIfEligible } = require('../../scripts/check-testing') as {
-      writeDeviceTestEvidenceIfEligible: (ctx: Record<string, unknown>, holder: Holder, composeFn?: (o: Record<string, unknown>) => unknown) => Array<{ status: string; details: string }>;
+      writeDeviceTestEvidenceIfEligible: (ctx: Record<string, unknown>, holder: Holder, composeFn?: (o: Record<string, unknown>) => unknown) => Array<{ status: string; details: string; structured?: { doc?: DeviceTestEvidenceDoc } }>;
     };
     const ctx = { projectRoot: f.root, feature: FEATURE, phase: 'testing', frameworkRoot: path.resolve(__dirname, '..', '..', '..') };
-    const r = withGateEnv(() => writeDeviceTestEvidenceIfEligible(ctx, holder, () => composeOk(f, { installExecuted: false, installOk: false })));
+    const r = withGateEnv(() => writeDeviceTestEvidenceIfEligible(ctx, holder, () => composeOk(f, {
+      installExecuted: holder.installExecuted === true, installOk: holder.installOk === true,
+    })));
     assert(r.length === 1 && r[0].status === 'PASS', `复用轮须照常写出 evidence：${JSON.stringify(r)}`);
-    return JSON.parse(fs.readFileSync(deviceTestEvidencePath(f.reportsDir), 'utf-8')) as DeviceTestEvidenceDoc;
+    assert(!fs.existsSync(deviceTestEvidencePath(f.reportsDir)), 'proposal producer 不得写正式 evidence');
+    return r[0].structured!.doc!;
   };
   const KEY = 'k'.repeat(64);
+  t('goal proposal→当前 runtime gate 提交→collector；旧窗口/身份/HAP/trace/write 失败不提交', () => {
+    const f = setupFixture();
+    try {
+      const startMs = Date.now() - 1000;
+      const doc = writeViaProduction(f, {
+        hapPath: f.hapPath, hapSha256Full: f.hapSha, installExecuted: true, installOk: true,
+        deviceTestRunExecuted: true, hylyreTracePath: f.tracePath,
+      });
+      writeInstallMeta(f);
+      writeRunMeta(f, 0);
+      const ctx = collectCtx(f, startMs);
+      const reportPath = path.join(f.reportsDir, 'script-report.json');
+      const report = (value: DeviceTestEvidenceDoc) => fs.writeFileSync(reportPath, JSON.stringify({
+        feature: FEATURE, phase: 'testing', checks: [{ id: 'device_test_evidence', status: 'PASS',
+          structured: { kind: 'device_test_evidence', doc: value } }],
+      }), 'utf8');
+      const commit = () => commitGateDeviceEvidenceProposal(f.root, FEATURE, 'run-1', ctx);
+      report(doc);
+      assert(commit() === null && fs.existsSync(deviceTestEvidencePath(f.reportsDir)), '当前 gate 应提交');
+      const consumed = collectActionableDefects(f.root, FEATURE, 'run-1', ctx);
+      assert(consumed.defects.length + consumed.unverified.length > 0
+        && !consumed.unverified.some(item => item.reason_code === 'evidence_binding_invalid'), '提交后 collector 应读正式证据且不丢真实失败');
+      fs.unlinkSync(deviceTestEvidencePath(f.reportsDir));
+      fs.utimesSync(reportPath, new Date(startMs - 1000), new Date(startMs - 1000));
+      assert(commit() === null && !fs.existsSync(deviceTestEvidencePath(f.reportsDir)), '旧自检报告不能提交');
+      for (const bad of [{ ...doc, attempt_id: 'old' }, { ...doc, trace_path: path.join(f.root, 'wrong.json') },
+        { ...doc, hap_sha256_full: 'f'.repeat(64) }]) {
+        report(bad);
+        assert(commit() !== null && !fs.existsSync(deviceTestEvidencePath(f.reportsDir)), '绑定失配不得写盘');
+      }
+      report(doc);
+      fs.mkdirSync(deviceTestEvidencePath(f.reportsDir));
+      assert(commit()?.startsWith('device evidence 提交失败：') === true, '正式写失败须交事务失败路径');
+      assert(!fs.readdirSync(f.reportsDir).some(name => name.includes('.runtime-')), '提交失败不留临时文件');
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+      clearFrameworkConfigCache();
+    }
+  });
   const baseReuseHolder = (f: Fixture): Holder => ({
     hapPath: f.hapPath, installPassed: true, installExecuted: false, installOk: false, installReused: true,
     hapSha256Full: f.hapSha, deviceTestRunExecuted: true, hylyreTracePath: f.tracePath,

@@ -16,6 +16,7 @@ import {
   assertGoalRunAttachable,
   buildSupersedeAuditEvent,
   createGoalRun,
+  evaluateFreshRunContinuation,
   decideRunContinuation,
   inspectGoalRunCreation,
   validateRebaselineRequest,
@@ -266,7 +267,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         process.env.MAISON_GOAL_RUN_ID = 'r1';
         process.env.MAISON_GOAL_GATE_HARNESS = '1';
         assert.strictEqual(hasGoalExecutionSignal(), true);
-        assert.strictEqual(isAgentSideGoalHarness(), false);
+        assert.strictEqual(isAgentSideGoalHarness(), true);
       } finally {
         if (saved.run === undefined) delete process.env.MAISON_GOAL_RUN_ID;
         else process.env.MAISON_GOAL_RUN_ID = saved.run;
@@ -537,6 +538,12 @@ const cases: Array<{ name: string; run: () => void }> = [
           feature: 'demo', run_id: `${old.manifest.run_id}-repair`, start_phase: 'testing', end_phase: 'testing',
           requirement: old.manifest.requirement, unattended,
         }, { projectRoot: old.root });
+        const withoutSourceRow = evaluateFreshRunContinuation({ projectRoot: old.root, manifest: repaired });
+        fs.appendFileSync(oldCreation.eventsPath, JSON.stringify({ ts: '2026-09-20T09:59:45.000Z', type: 'phase_write_observed', phase: 'coding',
+          owned: [{ path: sourceRel, pre_sha256: oldHash, post_sha256: crypto.createHash('sha256').update(fs.readFileSync(sourceAbs)).digest('hex'), roles: [{ kind: 'source', source: 'existing coding contract' }] }] }) + '\n');
+        assert.deepStrictEqual(evaluateFreshRunContinuation({ projectRoot: old.root, manifest: repaired }), withoutSourceRow, 'new coding source-only rows must not overwrite the prior related-repair baseline');
+        fs.writeFileSync(sourceAbs, 'external repair after coding stopped', 'utf8');
+        assert(evaluateFreshRunContinuation({ projectRoot: old.root, manifest: repaired }).allowed, 'real external repair remains a changed related input');
         createGoalRun({ projectRoot: old.root, manifest: repaired, chain: ['testing'] });
         assert(fs.existsSync(path.join(old.root, repaired.report_dir, 'manifest.json')));
       } finally { fs.rmSync(old.root, { recursive: true, force: true }); }
