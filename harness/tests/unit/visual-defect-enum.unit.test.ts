@@ -349,13 +349,13 @@ test('T4: P0 warn 但带非空 must_fix → 不命中（已说清改哪）', () 
   assert.strictEqual(collectWarnP0NoActionable(screens, T4_P0).length, 0);
 });
 
-test('T4 (review#1): P0 warn 仅带 defects/reverse_missing 但 must_fix 空 → 仍命中（证据不替代回修指令）', () => {
+test('T4: minor-only warn is disclosure; reverse_missing still requires actionable repair', () => {
   const screens: VisualDiffScreenEntry[] = [
     { screen_id: 'home_with_card', verdict: 'warn', defects: [{ class: 'shape_mismatch', severity: 'minor', note: 'x' }], reverse_missing: [] },
     { screen_id: 'manage_non_local', verdict: 'warn', defects: [], reverse_missing: ['non_local_title'] },
   ];
   const hit = collectWarnP0NoActionable(screens, T4_P0).map(s => s.screen_id);
-  assert.deepStrictEqual(hit.sort(), ['home_with_card', 'manage_non_local']);
+  assert.deepStrictEqual(hit.sort(), ['manage_non_local']);
 });
 
 test('T4: 非 P0 warn 零信号 → 不命中（只收紧 P0）', () => {

@@ -15,10 +15,10 @@
 //     → plan 重跑并独立裁决 → PASS 后 runner 新签 snapshot → 回 coding
 //
 // **不新增**：注册表 / 签名服务 / 凭据配置 / 新权限系统 / 新预算面 / **额外的防震荡规则**。
-// 收敛**只**由既有 DEFAULT_MAX_BACKTRACKS 负责；耗尽 / chain 不含 plan 时如实返回
+// 硬资源由 runtime 的总调用/活跃时长负责；chain 不含 plan 时如实返回
 // unavailable，由调用方落到**既有**等待机制——本模块不自造 halt 语义。
 //
-// 曾经加过一个「同一组越界文件只 replan 一次」的指纹集，**已删**：全局回退预算本就负责
+// 曾经加过一个「同一组越界文件只 replan 一次」的指纹集，**已删**：总调用/活跃时长本就兜底
 // 收敛，它是重复机制；更糟的是它**削弱自愈**——plan 第一次没扩对时，第二次本还有机会
 // 重新裁决，却被指纹提前拦掉、转去注定无效的 coding retry。
 // 注意这与既有 seenRoundFingerprints / seenDriftFingerprints **不是一回事**：那两个针对
@@ -61,7 +61,7 @@ export type ScopeReplanOutcome =
   /** 不可回退——调用方走**既有**等待机制，不得在此新造 halt 分类 */
   | {
       kind: 'unavailable';
-      reason: 'chain_lacks_plan' | 'backtrack_budget_exhausted';
+      reason: 'chain_lacks_plan';
       detail: string;
     };
 
@@ -92,7 +92,6 @@ export interface ScopeReplanInput {
    */
   phasesWithOutcome: readonly string[] | null;
   backtracksUsed: number;
-  maxBacktracks: number;
   trigger: ScopeReplanTrigger;
   /** 触发点所在阶段（事件 cause_phase）；启动期用链首 */
   causePhase: string;
@@ -123,14 +122,6 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
         + `(b) 用户改需求走既有 correction / successor 签发新 run`,
     };
   }
-  if (input.backtracksUsed >= input.maxBacktracks) {
-    return {
-      kind: 'unavailable',
-      reason: 'backtrack_budget_exhausted',
-      detail: `回退预算已耗尽（${input.backtracksUsed}/${input.maxBacktracks}，与其他回退共用）`,
-    };
-  }
-
   const endIdx = Math.min(input.endPhaseIdx, input.chain.length - 1);
   const span = input.chain.slice(planIdx, endIdx + 1).map(String);
   const invalidatedPhases =

@@ -145,7 +145,7 @@ export function runAll(): UnitCaseResult[] {
     const events: Array<Record<string, unknown>> = [];
     const result = tryScopeReplan({
       projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: ['coding', 'review'],
-      endPhaseIdx: 1, phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2,
+      endPhaseIdx: 1, phasesWithOutcome: null, backtracksUsed: 0,
       trigger: 'ui_scope_violation', causePhase: 'coding', detail: 'x',
       emit: event => events.push(event),
     });
@@ -158,17 +158,17 @@ export function runAll(): UnitCaseResult[] {
     assert(/范围修订/.test(detail) && /correction \/ successor/.test(detail), detail);
   });
 
-  run(results, 'B2 回退预算耗尽 → unavailable 且零事件', () => {
+  run(results, 'B2 third scope replan keeps its ordinal within the runtime resource budget', () => {
     const root = setupHost();
     const events: Array<Record<string, unknown>> = [];
     const result = tryScopeReplan({
       projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
-      endPhaseIdx: 2, phasesWithOutcome: null, backtracksUsed: 2, maxBacktracks: 2,
+      endPhaseIdx: 2, phasesWithOutcome: null, backtracksUsed: 2,
       trigger: 'ui_scope_violation', causePhase: 'coding', detail: 'x',
       emit: event => events.push(event),
     });
-    assert(result.kind === 'unavailable' && result.reason === 'backtrack_budget_exhausted', '应返回预算耗尽');
-    assert(events.length === 0, '不可落副作用事件');
+    assert(result.kind === 'replanned', 'fixed backtrack count is no longer a stop');
+    assert(events.length === 2 && String(events[0].invalidation_tx_id).endsWith('scopebt3'), 'third ordinal remains observable');
   });
 
   run(results, 'B3 正常回退 → 只写一条原子失效请求 + 一条 started', () => {
@@ -176,7 +176,7 @@ export function runAll(): UnitCaseResult[] {
     const events: Array<Record<string, unknown>> = [];
     const result = tryScopeReplan({
       projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
-      endPhaseIdx: 2, phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0, maxBacktracks: 2,
+      endPhaseIdx: 2, phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0,
       trigger: 'ui_scope_violation', causePhase: 'coding', affectedFiles: ['a.ets'], defects: ['d1'],
       fingerprint: 'fp-1', detail: 'scope drift',
       emit: event => events.push(event),
@@ -194,7 +194,7 @@ export function runAll(): UnitCaseResult[] {
     const events: Array<Record<string, unknown>> = [];
     tryScopeReplan({
       projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN, endPhaseIdx: 2,
-      phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0, maxBacktracks: 2,
+      phasesWithOutcome: ['plan', 'coding'], backtracksUsed: 0,
       trigger: 'plan_authority_unverifiable', causePhase: 'coding', detail: 'closure untrusted',
       affectedFiles: ['doc/features/bc-openCard/plan/plan.md'], defects: ['missing'], fingerprint: 'fp-2',
       emit: event => events.push(event),
@@ -208,7 +208,7 @@ export function runAll(): UnitCaseResult[] {
     const events: Array<Record<string, unknown>> = [];
     const result = tryScopeReplan({
       projectRoot: root, feature: FEATURE, runId: RUN_ID, chain: CHAIN,
-      endPhaseIdx: CHAIN.length - 1, phasesWithOutcome: null, backtracksUsed: 0, maxBacktracks: 2,
+      endPhaseIdx: CHAIN.length - 1, phasesWithOutcome: null, backtracksUsed: 0,
       trigger: 'invalidation_journal_untrusted', causePhase: 'spec', detail: 'restart',
       emit: event => events.push(event),
     });

@@ -4,6 +4,7 @@
 
 ## 运行身份（RESOLVED_ADAPTER）解析阶梯
 
+同任务返修优先在原 run 与原 request 窗口完成。timeout/失败终态/未知中断没有目标完成证明时，即使静态 gate PASS 也继续原候选；不要写 requirement increment 以刷新机会。回退次数只作观测，总调用与总活跃时长不因 resume/successor/文本变化清零。旧 backtrack_limit-only 可从公开入口重评；真实完整 attempt 的 one-shot、拒修、无进展、授权和硬预算照常生效。未知相关输入与 legacy/provider/scope 没有其它适用熔断时最坏耗尽剩余总资源。
 返修交接沿 summary 的机器候选：review 行号归一由历史事件/责任阶段账本回放承接，新旧 fp 共享拒修与唯一反驳轮，不改旧账本或重置额度。native 的可选 `evidence_refs` 只定位原 StepResult，不改变旧 id/files/summary/fp，不参与修复进展；证据目录换了不代表源码改过。旧 subject 不能重确认拒修项，是否可投当前 verifier 以实际 request 为准。本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。
 
 运行身份按 **local-first** 解析，**永不硬猜 / 永不默认 claude·cursor**：先不带 `--select-adapter` 执行 personal setup。已有合法 `framework.local.json agent_adapter` 时，直接采用返回的 `activeAdapter`，来源为 `local_config`；不得构造 `requestedAdapter`，也不得重复询问 `setup.adapter`。无 local 且只有一个候选时，允许 `--ensure` 确定性自动选择。无 local 且有多个候选时，才使用 registry **`setup.adapter`**，再由 personal setup 写盘；来源为 `registry`。用户明确要求切换 adapter 时仍走既有永久切换或 `--override-adapter` 契约。

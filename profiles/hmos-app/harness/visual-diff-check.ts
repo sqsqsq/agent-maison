@@ -137,6 +137,17 @@ export function isTierDowngradedResidual(screen: VisualDiffScreenEntry, hardPixe
   return defects.some(d => d.severity === 'major');
 }
 
+/** Only complete structured support can turn raw provider instructions into disclosure. */
+export function visualResidualDisposition(screen: VisualDiffScreenEntry): 'minor' | 'provider_major' | null {
+  const defects = screen.defects ?? [];
+  if (!defects.length || (screen.reverse_missing?.length ?? 0) > 0 ||
+      !(screen.must_fix ?? []).every((_, i) => defects.some(d => d.must_fix_refs?.includes(i)))) return null;
+  if (defects.every(d => d.severity === 'minor')) return 'minor';
+  if (defects.every(d => d.severity === 'minor' ||
+      (d.severity === 'major' && d.source?.producer === 'visual_provider'))) return 'provider_major';
+  return null;
+}
+
 /**
  * plan c4e7a9b2 A2：返修授权的权威范围——只取两个既有 spec 产物。
  * `uiSpecIds` 为 ui-spec 节点 id + must_have_elements（小写，与 uiSpecCoversElementId 同口径）。
@@ -273,7 +284,8 @@ export function effectiveScreens(
     };
     const reverseKept = reverseMissing?.filter(r => reverseScope(r) === 'registered') ?? null;
     const defectsDropped = verdicts.some(v => v === 'excluded' || v === 'scope_unclear');
-    if (!defectsDropped && reverseKept?.length === reverseMissing?.length) {
+    const residual = visualResidualDisposition(s);
+    if (!defectsDropped && reverseKept?.length === reverseMissing?.length && !residual) {
       view.screens.push(s);
       continue;
     }
@@ -306,13 +318,24 @@ export function effectiveScreens(
       : d));
     const unsupported = defectsDropped && (s.verdict === 'fail' || s.verdict === 'warn') &&
       mustFix.length === 0 && !keptDefects.some(d => d?.severity !== 'minor');
-    view.screens.push({
+    const effective = {
       ...s,
       must_fix: mustFix,
       ...(Array.isArray(s.defects) ? { defects: keptDefects } : {}),
       ...(reverseKept ? { reverse_missing: reverseKept } : {}),
       ...(unsupported ? { verdict: 'pass' as const } : {}),
-    });
+    };
+    const disposition = visualResidualDisposition(effective);
+    if (disposition === 'minor') {
+      effective.verdict = 'warn';
+      effective.must_fix = [];
+      effective.defects = keptDefects.map(d => ({ ...d, must_fix_refs: [] }));
+    } else if (disposition === 'provider_major' && effective.verdict === 'fail') {
+      // The provider cannot declare fail; the historical writer inferred it from any must_fix.
+      // Hard-pixel and other deterministic gates still veto the retained major instructions.
+      effective.verdict = 'warn';
+    }
+    view.screens.push(effective);
   }
   return view;
 }
@@ -918,7 +941,8 @@ export function collectWarnP0NoActionable(
 ): VisualDiffScreenEntry[] {
   const p0IdSet = new Set(p0Ids);
   return screens.filter(
-    s => s.verdict === 'warn' && p0IdSet.has(s.screen_id) && (s.must_fix?.length ?? 0) === 0,
+    s => s.verdict === 'warn' && p0IdSet.has(s.screen_id) && (s.must_fix?.length ?? 0) === 0 &&
+      visualResidualDisposition(s) !== 'minor',
   );
 }
 
@@ -1569,6 +1593,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const failScreens = effScreens.filter(s => s.verdict === 'fail');
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');
   const passScreens = rep.screens.filter(s => s.verdict === 'pass');
+  const deterministicScreens = rep.screens.filter(s => s.verdict === 'pass' || visualResidualDisposition(s) === 'minor');
   const skippedScreens = rep.screens.filter(s => s.verdict === 'skipped');
   const pendingScreens = rep.screens.filter(s => s.verdict === 'pending');
   const byScreenId = new Map(rep.screens.map(s => [s.screen_id, s] as const));
@@ -1688,7 +1713,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const downgradedScreens = effScreens.filter(s => downgradedIds.has(s.screen_id));
 
   // --- pass 屏不得登记 blocker/major 渲染缺陷（裁切/重叠/形态/缺渲染）---
-  const blockingDefectPass = effScreens.filter(s => s.verdict === 'pass').filter(s =>
+  const blockingDefectPass = effScreens.filter(s => s.verdict === 'pass' || s.verdict === 'warn').filter(s =>
     !downgradedIds.has(s.screen_id) &&
     (s.defects ?? []).some(d => d.severity === 'blocker' || d.severity === 'major'),
   );
@@ -1957,14 +1982,14 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     });
   }
 
-  // T1（窄）：pixel_1to1 P0 pass 屏声明锚点文本整块缺失 = 疑似 missing-render（高置信窄门禁，对 device≠mockup 鲁棒）。
+  // T1（窄）：pixel_1to1 P0 pass/minor 披露屏的锚点整块缺失 = 疑似 missing-render，不能因 minor 豁免。
   // 两次实测证伪了像素/文本-位置度量；唯一鲁棒的 OCR 信号是文本存在性，故 T1 仅做"整块缺失"。位置/样式/图标类
   // 假 PASS 不靠 T1，靠 T2（pixel_1to1 P0 人确认）+ T7（VL 证据）。
   if (pixel1to1 && uiDoc) {
     // codex 四轮 P1：pass/P0 过滤与 anchors 键全部按基屏归一化（吸收 __overlay__* 后缀），
     // 否则 root-overlay 的 P0 pass 屏（manage_non_local__overlay__0）拿不到 anchors、T1 静默跳过；
-    // "仅 pass 屏受检"的语义改在 screens 入参处过滤（anchors 键已归一化，不能再靠键面隐含过滤）。
-    const passBaseIds = new Set(passScreens.map(s => canonicalOverlayBase(s.screen_id)));
+    // 受检集合在 screens 入参处统一（anchors 键已归一化，不能再靠键面隐含过滤）。
+    const passBaseIds = new Set(deterministicScreens.map(s => canonicalOverlayBase(s.screen_id)));
     const p0BaseIds = new Set(p0Ids.map(canonicalOverlayBase));
     const screenAnchors = new Map<string, string[]>();
     for (const sc of uiDoc.screens ?? []) {
@@ -1989,7 +2014,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     }
     const missingRes = collectGrossMissingAnchorText(
       screenAnchors,
-      comparableScreens.filter(s => s.verdict === 'pass'),
+      comparableScreens.filter(s => deterministicScreens.includes(s)),
       rel => resolveShotPath(ctx.projectRoot, rel),
       // 与文本布局门同一 OCR 注入缝（测试用；缺省仍走真实 ocrImageWords）
       injectedVisualDiffOcrFn ?? undefined,
@@ -2001,7 +2026,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
         severity: ratchet.severity,
         status: ratchet.status,
         line:
-          `pixel_1to1 P0 pass 屏声明锚点文本整块缺失（疑似该区域 missing-render；VL 不应判 pass）：` +
+          `pixel_1to1 P0 pass/minor 披露屏声明锚点文本整块缺失（疑似该区域 missing-render；minor 不能豁免）：` +
           missingRes.violations.map(v => `${v.screen_id}(缺 ${v.missing.length}/${v.declared}: ${v.missing.slice(0, 4).join(',')})`).join('; '),
       });
     }
@@ -2314,14 +2339,14 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       ? p0Ids
           .map(id => resolveP0Entry(id))
           .filter((e): e is VisualDiffScreenEntry => Boolean(e))
-          .filter(e => e.verdict === 'pass' && (e.must_fix?.length ?? 0) === 0)
+          .filter(e => (e.verdict === 'pass' && (e.must_fix?.length ?? 0) === 0) || visualResidualDisposition(e) === 'minor')
       : [];
     const candidatePathActive =
       pixel1to1 &&
       p0Ids.length > 0 &&
       p0Ids.every(id => {
         const e = resolveP0Entry(id);
-        return Boolean(e && e.verdict === 'pass' && (e.must_fix?.length ?? 0) === 0);
+        return Boolean(e && ((e.verdict === 'pass' && (e.must_fix?.length ?? 0) === 0) || visualResidualDisposition(e) === 'minor'));
       });
     if (attestScreens.length > 0 || candidatePathActive) {
       const receiptAbs = path.join(
@@ -2810,7 +2835,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     });
   }
 
-  if (refElementsDoc && pixel1to1 && uiDoc && passScreens.length > 0) {
+  if (refElementsDoc && pixel1to1 && uiDoc && deterministicScreens.length > 0) {
     const nodes = collectAllComponentNodes(uiDoc);
     const nodeIds = new Set(nodes.map(n => n.id).filter((id): id is string => Boolean(id)));
     const mustHave = new Set((uiDoc.screens ?? []).flatMap(s => s.must_have_elements ?? []));
@@ -2841,6 +2866,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   }
 
   const actionableMustFix = effScreens.filter(s => !downgradedIds.has(s.screen_id)).flatMap(s => s.must_fix ?? []);
+  const minorScreens = effScreens.filter(s => visualResidualDisposition(s) === 'minor');
+  if (minorScreens.length) {
+    pushVisualDiffHit(hits, { id: 'visual_diff', severity: 'MAJOR', status: 'WARN',
+      line: `minor 视觉残差仅披露：${minorScreens.map(s => s.screen_id).join(', ')}` });
+  }
   if (failScreens.length > 0 || actionableMustFix.length > 0) {
     const ratchet = pixel1to1
       ? fidelityRatchetFailOrWarn(ctx, false)

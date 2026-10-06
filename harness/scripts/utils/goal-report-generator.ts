@@ -431,7 +431,7 @@ export function generateGoalReportMarkdown(
       `- **Action**: ${r.action}`,
       `- **Current / owner target**: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
       `- **Gap**: ${r.gap_kind ?? '—'}`,
-      `- **Budget**: ${r.backtracks_used ?? '—'} / ${r.backtracks_limit ?? '—'}`,
+      `- **Backtracks observed**: ${r.backtracks_used ?? '—'} (hard limits: total turns and active time)`,
       `- **Fingerprint**: ${r.fingerprint ?? '—'}`,
       '',
     );

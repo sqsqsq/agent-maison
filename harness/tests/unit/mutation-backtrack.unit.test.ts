@@ -110,7 +110,7 @@ test('applyInvalidationsToResume：backtrack 后 settled identity 只复用目�
   const outcomes = [{ phase: 'coding', verdict: 'PASS' }, { phase: 'review', verdict: 'PASS' }] as never[];
   const events = [
     { type: 'phase_backtrack_requested' as const, invalidated_phases: ['coding', 'review'] },
-    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7' },
+    { type: 'agent_process_settled' as const, phase: 'coding', invoke_id: 'coding-i7', exit_code: 0 },
   ];
   const r = applyInvalidationsToResume(chain, outcomes, events);
   assert(r.postAgentPhases.length === 1 && r.postAgentPhases[0] === 'coding', JSON.stringify(r));

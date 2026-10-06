@@ -123,9 +123,8 @@ export interface ClassifyPhaseVerdictInput {
    * 由 runner 从 summary 的结构化缺陷指纹派生——**不看 strictness**。
    */
   deterministic_p0_defects?: boolean;
-  /** 已用回退次数（预算 max_backtracks，默认 2；配合轮次指纹熔断防 ping-pong） */
+  /** 回退次数只供观测；硬资源由总调用/活跃时长约束。 */
   backtracks_used?: number;
-  max_backtracks?: number;
 }
 
 export interface BatchAuthorizationResult {
@@ -394,12 +393,6 @@ export function classifyPhaseAssessment(
     }
   }
 }
-/**
- * 回退预算缺省值（plan d8c5f3a7 T4；与轮次指纹熔断共同防 ping-pong）。
- * 口径 = 本交付周期（plan c4e7a9b2 §3.3：自上次可信完成起，含 supersede 链；见 foldBudgetLineage）。硬常量，无用户配置。
- */
-export const DEFAULT_MAX_BACKTRACKS = 2;
-
 /**
  * Compute final goal run status from per-phase outcomes. Current writers never produce
  * AWAITING_HUMAN_REVIEW; a legacy pending-human signal is reprojected to PARTIAL/revalidation.

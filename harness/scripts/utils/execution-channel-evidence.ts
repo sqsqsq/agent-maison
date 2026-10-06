@@ -53,6 +53,7 @@ import type { CheckResult } from './types';
 import { loadUiSpecFile, uiSpecAbsPath } from './ui-spec-shared';
 import {
   effectiveScreens,
+  visualResidualDisposition,
   isMissingEvaluatedScreenshotHash,
   isStaleVisualDiffVerdict,
   loadRepairAuthorityScope,
@@ -281,7 +282,8 @@ export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScr
     const id = typeof screen.screen_id === 'string' ? screen.screen_id.trim() : '';
     if (!id) continue;
     const verdict = String(screen.verdict ?? '');
-    let usable = verdict === 'pass' || (verdict === 'warn' && downgraded.has(id));
+    let usable = verdict === 'pass' || (verdict === 'warn' &&
+      (downgraded.has(id) || visualResidualDisposition(screen) === 'minor'));
     let reason: string | undefined;
     if (!usable) {
       reason = `verdict=${verdict || '(空)'}`;

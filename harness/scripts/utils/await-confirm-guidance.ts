@@ -130,7 +130,7 @@ export function buildUnauthorizedMutationGuidance(opts: UnauthorizedMutationGuid
   }
   lines.push(
     chainHasCodingReview
-      ? `恢复结构具备时 runner 会自动回 coding 全量重验；若本轮已触发预算/指纹熔断，请新起 coding owner run 并 supersede ${runId}。`
+      ? `恢复结构具备时 runner 会自动回 coding 全量重验；预算耗尽须由有权者沿既有入口调整额度，已用资源不清零；指纹熔断须有真实新输入或既有合法后继资格，不能仅换 run 买机会。`
       : `当前是截断链，无法在本 run 回到 coding owner；请新起 coding 起点 run 并 supersede ${runId}。`,
     `不要靠签名、approved_by、pre_authorized_mutations 或旧 receipt 接受这些字节；owner 门禁通过后才重新取得信任。`,
     `若只是外部并发写入，停止并发写入后再执行：${resumeCmd}`,

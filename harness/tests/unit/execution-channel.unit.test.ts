@@ -446,13 +446,17 @@ test('verifier prompt：TC 一致性按 execution_channel 精确相等，不再�
   assert.ok(text.includes('channel=hylyre'), 'verify-testing.md 未写明派生集合等于 channel=hylyre');
 });
 
-test('verifier prompt：视觉 G3 按档位分支（硬像素契约回退、软档自报样式残差记债务），与 6644ea45 gate 同口径', () => {
+test('verifier prompt：视觉 G3 使用有效档位结论，minor 不豁免独立确定性失败', () => {
   // 生产装配入口（assembleAIPrompt 与审前材料视图共用）读出的模板，不是裸读文件。
   const text = loadVerifierPromptTemplate(path.join(REPO_ROOT, 'harness'), 'testing');
   const g3 = text.slice(text.indexOf('G3 样式/布局逐项核对'), text.indexOf('A/B/C 边界'));
   assert.ok(g3.length > 0, '检查 8 的 G3 条款缺失');
   // 硬档约束
   assert.ok(/硬像素契约[^\n]*pixel_1to1 ∧ hard[^\n]*must_fix/.test(g3), 'G3 缺硬像素契约下写 must_fix 的约束');
+  const hard = g3.split('\n').find(l => l.includes('**硬像素契约**')) ?? '';
+  for (const token of ['major/blocker', 'gate 有效授权结论返修', 'minor-only 只作 WARN 披露', '不产 coding 候选或阻断债务', '不能仅凭 raw fail/非空 must_fix 升级']) {
+    assert.ok(hard.includes(token), `G3 硬档有效裁决缺「${token}」`);
+  }
   // 软档例外：defects[] + must_fix_refs + downgraded_screens + 仍阻断发布
   const soft = g3.split('\n').find(l => l.includes('**软档**')) ?? '';
   for (const token of [
@@ -462,11 +466,12 @@ test('verifier prompt：视觉 G3 按档位分支（硬像素契约回退、软�
   ]) {
     assert.ok(soft.includes(token), `G3 软档例外缺「${token}」`);
   }
-  // 确定性失败两档都不降级（含未锚定 must_fix）；verifier 新发现核心问题记 blocker
-  const both = g3.split('\n').find(l => l.includes('两档都不降级')) ?? '';
-  assert.ok(/T8[^\n]*by_id[^\n]*verdict=fail[^\n]*blocker/.test(both), 'G3 缺确定性失败不降级条款');
-  assert.ok(both.includes('未被 defect 锚定的 must_fix'), 'G3 缺「未锚定 must_fix 不降级」');
-  assert.ok(/你新发现的核心操作走不通[^\n]*（记 blocker）/.test(both), 'G3 缺「verifier 新发现核心问题记 blocker」');
+  // 两档独立失败保留；raw fail 仅由有效披露/降级意见支撑时不能另造拒证。
+  const both = g3.split('\n').find(l => l.includes('两档都保留原阻断/修复规则')) ?? '';
+  for (const token of ['独立确定性失败', 'T8 major/hard 信号', '锚点文本整块缺失', '双向残差', '`by_id` 锚点', 'blocker', '未锚定 legacy 指令', '核心操作走不通/结果错/关键信息缺失或不可读（记 blocker）', 'minor 不豁免这些检查']) {
+    assert.ok(both.includes(token), `G3 两档独立失败约束缺「${token}」`);
+  }
+  assert.ok(both.includes('raw fail 若仅由有效 minor 或既有 soft 降级意见支撑，不能再独立拒证'), 'G3 缺 raw fail 有效minor/soft降级例外的条件约束');
   assert.ok(!/不符须写入对应屏 `must_fix`，pixel_1to1 下视为保真残差/.test(text), '仍残留「一律 must_fix」旧句');
   // 严重等级与汇总表同样按硬像素契约分档
   assert.ok(/\*\*严重等级\*\*: BLOCKER（硬像素契约[^\n]*acceptance_strictness: hard[^\n]*否则 MAJOR/.test(text), '检查 8 严重等级未按硬像素契约分档');

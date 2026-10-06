@@ -315,7 +315,7 @@ async function main(): Promise<number> {
   const decide = () => {
     const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
     const decision = superviseRun({
-      projectRoot, reportDir: run.reportDir, runId: run.runId, events,
+      projectRoot, feature, reportDir: run.reportDir, runId: run.runId, events,
       conditionProbe: (probe, phase) => runConditionProbe(projectRoot, run.reportDir, probe, phase),
       inheritedRestarts: inheritedSupervisorRestarts(run.runDir),
     });

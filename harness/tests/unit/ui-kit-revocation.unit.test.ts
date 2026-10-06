@@ -111,6 +111,7 @@ const SKIP_REL_PREFIXES = [
   'openspec/changes/archive/',   // 归档 change 不回写
   '.cursor/plans/',              // 历史 plan 是决策档案
   'harness/reports/',            // 运行期产物（.gitignore 在案），非源码
+  '.codex/reports/',             // 开发期诊断与备份快照，不是发布源码
   'harness/state/',              // 运行期状态
 ];
 /** 本文件自己就是 token 清单，必然命中——排除。 */
@@ -180,6 +181,14 @@ export function runAll(): UnitCaseResult[] {
       }
     }
     assert(hits.length === 0, `已撤销机制的 token 仍有引用：\n  ${hits.join('\n  ')}`);
+  });
+
+  run(results, '诊断备份不进入 active tree，发布源码仍被扫描', () => {
+    const files = activeTreeFiles();
+    assert(!files.some(rel => rel.startsWith('.codex/reports/')), '开发报告/备份不能充当活跃源码');
+    for (const rel of ['harness/scripts/goal-phase-runtime.ts', 'profiles/hmos-app/harness/visual-diff-check.ts', 'MIGRATION.md']) {
+      assert(files.includes(rel), `发布源码仍必须扫描：${rel}`);
+    }
   });
 
   run(results, 't3 精确删除门槛③：blocks.json 只查原 kit 精确路径（不禁通用文件名）', () => {

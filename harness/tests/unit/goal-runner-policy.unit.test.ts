@@ -255,7 +255,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         changed_paths: [{ path: 'doc/features/demo/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b' }],
       };
       const md = generateGoalReportMarkdown(report);
-      for (const expected of ['phase_write_violation', 'plan / spec', 'stale', '1 / 2', 'acceptance.yaml', 'pre=a post=b']) {
+      for (const expected of ['phase_write_violation', 'plan / spec', 'stale', 'Backtracks observed**: 1', 'total turns and active time', 'acceptance.yaml', 'pre=a post=b']) {
         assert(md.includes(expected), `报告缺恢复诊断 ${expected}: ${md}`);
       }
     },

@@ -142,12 +142,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const used = classifyPhaseVerdict({
         verdict: 'FAIL', phase: 'testing', deterministic_p0_defects: true,
-        backtracks_used: 2, max_backtracks: 2, retries_used: 0,
+        backtracks_used: 2, retries_used: 0,
       });
       assert(used === 'retry', `分类器不看预算（回退预算/指纹熔断在 runner 统一分支），实得 ${used}`);
       const passExhausted = classifyPhaseVerdict({
         verdict: 'PASS', phase: 'testing', deterministic_p0_defects: true,
-        backtracks_used: 2, max_backtracks: 2,
+        backtracks_used: 2,
       });
       assert(passExhausted === 'advance',
         `PASS 在本分类器恒 advance；"PASS+可信缺陷仍回退"由 assess candidates 分支保证，实得 ${passExhausted}`);

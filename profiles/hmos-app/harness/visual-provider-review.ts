@@ -22,7 +22,7 @@ import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { isPixel1to1, loadRefElementsFile, loadSpecMarkdown, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, isHardPixelContract, loadRefElementsFile, loadSpecMarkdown, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
 import { assembleGoalBrief, renderGoalBrief } from '../../../harness/scripts/utils/goal-brief';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { readImageDimensions, resolveCompareReference, splitMustHaveByTopSlice } from './image-toolkit';
@@ -39,6 +39,7 @@ import {
 } from '../../../harness/scripts/utils/visual-provider-invoke';
 import type { ProviderRef } from '../../../harness/scripts/utils/types';
 import {
+  visualResidualDisposition,
   type VisualDiffDefect,
   type VisualDiffScreenEntry,
 } from './visual-diff-check';
@@ -600,7 +601,7 @@ export function discardDistrustedEvaluationArtifacts(entry: VisualDiffScreenEntr
 export function applyProviderReviewToScreen(
   entry: VisualDiffScreenEntry,
   payload: ReviewScreenPayload,
-  ctx: { invokeId: string; provider: ProviderRef; evaluatedScreenshotHash?: string },
+  ctx: { invokeId: string; provider: ProviderRef; evaluatedScreenshotHash?: string; hardPixel?: boolean },
 ): void {
   clearProviderReviewFromScreen(entry);
   const base = entry.must_fix ?? [];
@@ -637,7 +638,10 @@ export function applyProviderReviewToScreen(
   //
   // legacy `confirmed_by` 字节不改，但 gate 不消费；provider 永远不写该字段。
   if (ctx.evaluatedScreenshotHash) entry.evaluated_screenshot_hash = ctx.evaluatedScreenshotHash;
-  entry.verdict = (entry.must_fix?.length ?? 0) > 0 ? 'fail' : 'pass';
+  const residual = visualResidualDisposition(entry);
+  entry.verdict = residual === 'minor' || (residual === 'provider_major' && !ctx.hardPixel)
+    ? 'warn'
+    : (entry.must_fix?.length ?? 0) > 0 ? 'fail' : (entry.defects?.length ?? 0) > 0 ? 'warn' : 'pass';
   // ------------------------------------------------------------------------
   // plan ab072691 t5④（四轮返修）：**harness 确定性清除 `evaluation_invalidated`**。
   //
@@ -916,6 +920,7 @@ export async function runVisualProviderReview(
     applyProviderReviewToScreen(entry, p, {
       invokeId,
       provider,
+      hardPixel: isHardPixelContract(ctx),
       ...(targetById.get(p.screen_id)?.shotHash
         ? { evaluatedScreenshotHash: targetById.get(p.screen_id)!.shotHash }
         : {}),

@@ -2,6 +2,14 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：返修接续、资源预算与视觉裁决
+
+更新 Maison 发布件后，无须迁移或重写宿主旧 run、候选、拒修账本和相关输入快照。中断的返修保留原 request，在同一 run/窗口继续；普通 compile/static PASS 不再代表已完成指定修复。新 `agent_invoke_end` 增加可选 `completion_observed`，旧事件按同一 invoke 的 verdict 回放；正常完成后清理返回非零仍可验证收口。
+
+固定两次产品回退不再是硬停机额度，次数只用于观测和事务序号。总阶段调用与总活跃时长仍跨 resume/successor 累计，可信完成周期边界不变；改 correction 文本或换 run 不刷新总资源，也不扩大授权；signal one-shot 与阶段重试保留基线 per-run 语义。旧 run 若仅因 `backtrack_limit` 终止，且仍属当前交付周期的未完成、未被承接集合并有原硬资源余量，可进入原公开接续入口重评；身份、范围、owner 等其余入口前提仍照常检查，不另加“必须最新一项”的限制。真实预算耗尽、无进展、拒修/反驳及越权边界保留。unknown 相关输入、legacy/provider 候选和 scope replan 没有其它适用熔断时，最坏会耗尽剩余总调用/活跃时长。
+
+结构化且指令完整锚定的 minor 视觉意见只作 WARN 披露，不因旧 `fail/must_fix` 独立拒证、回 coding 或开阻断债务；当前图/build/覆盖/receipt 仍须有效。soft 档合法 provider major 现在落实既定降级策略：记视觉债务并阻断发布，停止旧 blanket fail 带来的 coding 回退。hard major、T8 major、真实 blocker、mixed/未锚定 legacy 指令及缺证均保留原验证与修复/补证路径。provider 不输出 verdict，原意见与证据留存。
+
 ## 3.1.0：知识统一送达与维护
 
 现有 goal 作者 prompt、`--prepare-scope` / `--prepare-request` 输出新增知识候选和原文路径；typed verifier 与 legacy 一样读取适用惯例、组件资产和架构材料。实际审查材料变化会改变原 subject，已有 prior-review 沿用政策不变。

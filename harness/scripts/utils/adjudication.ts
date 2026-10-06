@@ -97,7 +97,7 @@ export interface IncidentFacts {
   detail?: string;
   /** 当前 chain 是否同时含 coding 与 review（回退重验的结构前提）。 */
   chain_has_coding_review?: boolean;
-  /** 剩余回退预算（DEFAULT_MAX_BACKTRACKS - backtracksUsed）。 */
+  /** Legacy optional observation, ignored by current resource adjudication. */
   backtrack_budget_remaining?: number;
   /** 整轮 actionable 集合指纹是否与上次回退完全相同（回退震荡）。 */
   round_fingerprint_repeated?: boolean;
@@ -207,7 +207,8 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   // --- 结构上无法在本 run 继续 ---------------------------------------------
   // 类别留空：链结构前提（截断链），不是故障本身
   authorized_mutation_requires_full_chain: { class: 'recoverable', structurally_terminal: true },
-  backtrack_limit: { class: 'recoverable', structurally_terminal: true, fault_category: 'authority_boundary' },
+  // Historical policy only. Current entry rechecks original hard resources before recovery.
+  backtrack_limit: { class: 'recoverable', recover_action: 'retry_transaction', fault_category: 'authority_boundary' },
   backtrack_fingerprint_repeat: { class: 'recoverable', structurally_terminal: true, fault_category: 'product_failure' },
   // 类别留空：链结构前提（回退目标不在本链）
   backtrack_target_absent: { class: 'recoverable', structurally_terminal: true },
@@ -333,7 +334,7 @@ export const INCIDENT_REGISTRY: Readonly<Record<string, IncidentSpec>> = Object.
   // 类别留空：框架程序异常
   product_selection_probe_failed: { class: 'framework_fault' },
 
-  // --- 预算熔断（本 run 内无从调整——DEFAULT_MAX_BACKTRACKS 是硬常量、
+  // --- 预算熔断（本 run 内无从调整——总调用/活跃时长是硬边界、
   //     budget 字段已入 manifest identity 冻结） ------------------------------
   budget_wall_clock: { class: 'operator', structurally_terminal: true, fault_category: 'authority_boundary' },
   no_progress_fuse: { class: 'operator', structurally_terminal: true, fault_category: 'product_failure' },
@@ -532,7 +533,7 @@ const NEUTRAL_PROJECTION_CONTEXT: ExecutionContext = {
 
 /**
  * **结构敏感 incident**（e5d8a2c4 T1⑤）：`decide()` 的输出依赖 incident id **之外**
- * 的结构 facts（backtrackBlocked 读回退预算/截断链/指纹）。这类事件的投影**必须在事故生产点**用完整
+ * 的结构 facts（backtrackBlocked 读截断链/指纹）。这类事件的投影**必须在事故生产点**用完整
  * facts 计算——写盘层兜底只有 halt_reason，会把 TERMINAL 化妆成 RECOVERY_PENDING
  * （d6b1a8e3 t5④ 的原始反例）。集合由注册表**派生**，不手写第二份清单：
  * `class==='recoverable' && !structurally_terminal`（structurally_terminal 在
@@ -595,13 +596,22 @@ export function dispositionOf(decision: Decision): Disposition {
 /** ut drift 走保守恢复时的决策原因——**不复用授权语义**（不产 matched_receipts）。 */
 export const UNTRUSTED_DRIFT_REASON = 'untrusted_source_drift_revalidation';
 
+/** Re-evaluate only the retired policy in the current stopped session; preserve all other terminals. */
+export function isLegacyBacktrackLimitOnly(events: readonly unknown[]): boolean {
+  const rows = events.filter((e): e is Record<string, unknown> => !!e && typeof e === 'object');
+  if (rows.some(e => e.type === 'testing_write_violation')) return false;
+  const end = [...rows].reverse().find(e => e.type === 'run_end');
+  if (end?.status !== 'HALTED' || (end.halt_reason && end.halt_reason !== 'backtrack_limit')) return false;
+  const sessionStart = rows.map(e => e.type).lastIndexOf('run_start');
+  const session = rows.slice(sessionStart + 1);
+  const halts = session.filter(e => e.type === 'phase_halt');
+  return halts.length > 0 && halts.every(e => e.halt_reason === 'backtrack_limit');
+}
+
 /** 回退的结构前提（任一不满足 → 结构上无法在本 run 恢复）。 */
 function backtrackBlocked(facts: IncidentFacts): string | null {
   if (facts.chain_has_coding_review === false) {
     return '截断链（chain 不含 coding/review）无法回退重验，须新起 coding 起点 run';
-  }
-  if (typeof facts.backtrack_budget_remaining === 'number' && facts.backtrack_budget_remaining <= 0) {
-    return '回退预算已耗尽（DEFAULT_MAX_BACKTRACKS 为硬常量，run 内无从调整）';
   }
   if (facts.round_fingerprint_repeated === true) {
     return '整轮 actionable 集合指纹与上次回退完全相同——继续回退只会空转';

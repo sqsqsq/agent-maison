@@ -25,6 +25,7 @@
 import { reduceRunState, supervisorAction, type SupervisorAction } from './run-state-reducer';
 import { assessLivenessBeacon, isBeaconStale, readLivenessBeacon } from './liveness-beacon';
 import type { ProcessProbe } from './device-session';
+import { canRecheckLegacyBacktrackLimit } from './goal-runner-phase';
 
 /** 单 run 的重启上限——防重启风暴。超过即停手并留痕，绝不无限拉。 */
 export const MAX_SUPERVISED_RESTARTS = 3;
@@ -58,6 +59,8 @@ export interface SupervisorInput {
   beaconStale: boolean;
   /** Same-source condition probe recorded on a machine-observable WAITING halt. */
   condition?: { probe: string; ready: boolean; reason?: string; phase?: string };
+  /** Current policy rechecked against original hard resources at the public entry. */
+  legacyLimitRecheck?: boolean;
 }
 
 function eventAtCurrentProjection(
@@ -105,6 +108,7 @@ export function externalWaitingProbe(events: readonly unknown[]): { probe: strin
  */
 export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   const state = reduceRunState(input.events);
+  if (input.legacyLimitRecheck) state.run_disposition = 'RESUME_READY';
   const waitingProbe = currentExternalWaitingProbe(input.events, state.source_event_index);
   const probeWokeWaiting =
     input.beaconStale &&
@@ -169,6 +173,7 @@ export function superviseRun(args: {
   projectRoot: string;
   reportDir: string;
   runId: string;
+  feature?: string;
   events: readonly unknown[];
   probe?: ProcessProbe;
   conditionProbe?: (probe: string, phase?: string) => { ready: boolean; reason?: string };
@@ -181,6 +186,9 @@ export function superviseRun(args: {
   const waitingProbe = currentExternalWaitingProbe(args.events, state.source_event_index);
   return decideSupervision({
     events: args.events,
+    legacyLimitRecheck: !!args.feature && canRecheckLegacyBacktrackLimit({
+      projectRoot: args.projectRoot, feature: args.feature, runId: args.runId, events: args.events,
+    }),
     restartsSoFar: countSupervisorRestarts(args.events) + (args.inheritedRestarts ?? 0),
     beaconStale: isBeaconStale(verdict),
     condition: (() => {

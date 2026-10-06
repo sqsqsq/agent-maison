@@ -358,9 +358,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       // ③ console banner。detach 停机后宿主只读 events/goal-report，console 早滚走。
       const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
       const snippet = '...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {})';
-      const emitIdx = src.indexOf(snippet);
+      const branchIdx = src.indexOf('if (targetIdxBt < 0 || roundRepeated)');
+      const emitIdx = src.indexOf('halt_guidance: backtrackHaltGuidance', branchIdx);
       const outcomeIdx = src.indexOf(snippet, emitIdx + 1);
-      const consoleIdx = src.indexOf('===== ${haltReason} =====');
+      const consoleIdx = src.indexOf('===== ${haltReason} =====', emitIdx);
       assert(emitIdx >= 0, 'phase_halt 事件须带 halt_guidance（backtrack 家族分支）');
       assert(outcomeIdx >= 0 && outcomeIdx > emitIdx, '结局 outcome 须带 halt_guidance（与事件同源）');
       assert(consoleIdx >= 0, 'console banner 路径保留');

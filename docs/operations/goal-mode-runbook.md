@@ -5,6 +5,10 @@
 
 ## 概述
 
+返修进程结算、当前调用完成和返修窗口完成分开判断。窗口内尚无完整 owner 调用、也无当轮全部成立拒修时，中断保留原候选/输入继续；窗口已完成的事实不因后续重试中断消失，新 request 或相关失效会切开旧事实。普通静态 PASS 不替代未完成返修；实际产品是否修好交后续独立验证，没有另设“目标证明免执行”路径。正常完成的清理非零据 gate 前 completion 恢复，旧日志读取同 invoke verdict；窗口外旧格式仍可先重验 gate，不补造完成。回退次数只观测，总调用/活跃时长继续累计。旧 limit 仅在当前周期未完成、未被承接且有原资源余量时进入接续重评，其余入口前提照查。unknown/legacy/provider/scope 无其它熔断时可能耗尽剩余总资源。
+
+视觉 minor-only 与 soft 可降级 provider major 的 writer 候选为 warn，gate/evidence/候选/debt 同源裁决：minor 只披露；soft major 记债务且阻断发布；真实 blocker 和缺证分别回修/补证，不能因 minor 放过。
+
 `GoalPhaseRuntime` 是 Maison 工具无关的唯一 phase 生命周期：按 workflow 派生 chain，统一负责 owner/epoch、assess、attempt、runtime facts、receipt/gate、verdict、回退与封口。`goal-runner` 只是 detached CLI/process shell；有人在场与无人值守仅在 executor transport（宿主回调 / adapter spawn）上不同。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
 
 ## 3.0 调和模型：一个循环、两个运行方式

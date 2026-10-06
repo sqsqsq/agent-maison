@@ -131,7 +131,7 @@ async function withRunnerBudgetLine<T>(run: () => Promise<T>): Promise<{ result:
   let turns: number | undefined;
   let backtracks: number | undefined;
   console.log = (...args: unknown[]): void => {
-    const m = /(?:run_start|resume) 预算[^:]*: turns (\d+)\/\d+.*回退 (\d+)\//.exec(args.map(String).join(' '));
+    const m = /(?:run_start|resume) 预算[^:]*: turns (\d+)\/\d+.*回退 (\d+) 次/.exec(args.map(String).join(' '));
     if (m) { turns = Number(m[1]); backtracks = Number(m[2]); }
     prev(...args);
   };

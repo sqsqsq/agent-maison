@@ -162,6 +162,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'critic-receipt-producer', modulePath: './unit/critic-receipt-producer.unit.test' },
   { id: 'visual-structure-disorder', modulePath: './unit/visual-structure-disorder.unit.test' },
   { id: 'visual-defect-enum', modulePath: './unit/visual-defect-enum.unit.test' },
+  { id: 'visual-minor-deterministic', modulePath: './unit/visual-minor-deterministic.unit.test' },
   // plan ab072691：只读视觉 provider（支持列表唯一真源 / 三态路由与窄钳制 / 只读 plan golden）
   { id: 'visual-provider', modulePath: './unit/visual-provider.unit.test' },
   { id: 'visual-diff-p0-coverage', modulePath: './unit/visual-diff-p0-coverage.unit.test' },
@@ -275,6 +276,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-handoff-runner-wiring', modulePath: './unit/goal-handoff-runner-wiring.unit.test' },
   { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
   { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
+  { id: 'repair-continuity', modulePath: './unit/repair-continuity.unit.test' },
   { id: 'goal-run-birth-contract', modulePath: './unit/goal-run-birth-contract.unit.test' },
   { id: 'goal-runtime-structural-acceptance', modulePath: './unit/goal-runtime-structural-acceptance.unit.test' },
   { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },

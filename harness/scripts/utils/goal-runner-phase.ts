@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { featureRelativePath } from './feature-identity';
-import { featurePhaseReportsDir, receiptFilePath } from '../../config';
+import { featurePhaseReportsDir, receiptFilePath, relFeaturesDir } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
   FeaturePhase,
@@ -13,6 +13,8 @@ import type {
   PhaseVerdictAction,
 } from './phase-transition-policy';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
+import { isLegacyBacktrackLimitOnly } from './adjudication';
+import { resolveWallClockMs } from './goal-timeout';
 
 const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
 
@@ -26,6 +28,64 @@ export function isSummaryFresh(beforeMtime: number | null, afterMtime: number | 
   if (afterMtime === null) return false;
   if (beforeMtime === null) return true;
   return afterMtime > beforeMtime;
+}
+
+export interface RepairInvocationEvent {
+  type?: string;
+  phase?: unknown;
+  invoke_id?: unknown;
+  exit_code?: unknown;
+  timed_out?: unknown;
+  kill_reason?: unknown;
+  silent_killed?: unknown;
+  terminal_failure_observed?: unknown;
+  completion_observed?: unknown;
+  agent_failed?: unknown;
+  skipped?: unknown;
+  to_phase?: unknown;
+  result?: unknown;
+}
+
+/** Completion belongs to an invocation, not its static gate or process settlement. */
+export function repairInvocationCompleted(
+  events: readonly RepairInvocationEvent[], phase: string, invokeId?: string,
+): boolean {
+  const lastRequest = events.map(e => e.type).lastIndexOf('phase_backtrack_requested');
+  const windowEvents = events.slice(lastRequest + 1);
+  const lastStart = windowEvents.map(e => e.type === 'agent_invoke_start' && e.phase === phase).lastIndexOf(true);
+  const attemptEvents = windowEvents.slice(Math.max(0, lastStart));
+  const execution = attemptEvents.filter(e => e.phase === phase &&
+    ['agent_invoke_start', 'agent_invoke_end', 'agent_process_settled', 'phase_verdict'].includes(e.type ?? ''));
+  const latestId = [...execution].reverse().find(e => typeof e.invoke_id === 'string')?.invoke_id;
+  const id = invokeId ?? latestId;
+  const own = execution.filter(e => id ? e.invoke_id === id : e.invoke_id === undefined);
+  const end = [...own].reverse().find(e => e.type === 'agent_invoke_end');
+  const settled = [...own].reverse().find(e => e.type === 'agent_process_settled');
+  const verdict = [...own].reverse().find(e => e.type === 'phase_verdict');
+  const facts = end ?? settled;
+  if ([end, settled].some(e => e?.timed_out === true || e?.kill_reason === 'agent_timeout' ||
+      e?.terminal_failure_observed === true || e?.silent_killed === true)) return false;
+  if (facts?.completion_observed === true) return true;
+  // Older invoke-end events lack completion; the matching verdict retains that fact.
+  if (end?.completion_observed === undefined && verdict?.completion_observed === true) return true;
+  if (end?.completion_observed === undefined && verdict?.agent_failed === false) return true;
+  if (verdict?.agent_failed === true) return false;
+  if (facts?.skipped === true) return false;
+  if (facts?.exit_code === 0) return true;
+  return false;
+}
+
+/** A later interrupted retry cannot erase a completed owner attempt in this repair window. */
+export function repairWindowCompleted(events: readonly RepairInvocationEvent[], phase: string): boolean {
+  const request = events.map(e => e.type).lastIndexOf('phase_backtrack_requested');
+  if (request >= 0 && events[request].to_phase !== phase) return false;
+  const invalidation = events.map(e => e.type === 'phase_invalidated' && e.phase === phase).lastIndexOf(true);
+  const window = events.slice(Math.max(request, invalidation) + 1);
+  return window.some((event, index) => {
+    if (event.type === 'phase_backtrack_completed' && event.to_phase === phase && event.result === 'declined') return true;
+    return event.phase === phase && ['agent_invoke_end', 'agent_process_settled', 'phase_verdict'].includes(event.type ?? '') &&
+      repairInvocationCompleted(window.slice(0, index + 1), phase, typeof event.invoke_id === 'string' ? event.invoke_id : undefined);
+  });
 }
 
 export interface PhaseVerdictResolveInput {
@@ -246,6 +306,9 @@ export interface GoalRunEvent {
    * 与 completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零。
    */
   terminal_failure_observed?: boolean;
+  /** Invocation completion is persisted before the gate, including non-zero cleanup exits. */
+  completion_observed?: boolean;
+  agent_failed?: boolean;
   /**
    * plan e6b3f8d2 t1（agent_invoke_end）：terminal 摘要（turn.failed 正文 + 顶层 error 事件）。
    * 不进 settle / retry / failure classifier 判据；例外：正式 invoke 与金丝雀的
@@ -644,7 +707,7 @@ export function extractSupersedeTargets(events: GoalRunEvent[]): string[] {
  *
  * 硬约束语义：**supersede 不得刷新任何预算**。预算是 per-run 从各自 events 回放的，
  * 新 run_id 即清零——不折叠的话，"废弃旧 run 开后继"就是绕过
- * DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道（plan 判读 v3 教训原文）。
+ * 总调用与活跃时长熔断的无限循环通道（plan 判读 v3 教训原文）。
  *
  * 边界：
  * - **阶段完成状态不折叠**（resolveResumeState 只吃当前 run——预算跨 run 折叠、
@@ -861,6 +924,27 @@ export function checkRunBudget(
   if (elapsedMs > wallClockMs) return 'wall_clock';
   if (totalTurns >= maxTotalTurns) return 'turns';
   return 'ok';
+}
+
+/** Shared public-entry compatibility: old policy is retired, original resources are not. */
+export function canRecheckLegacyBacktrackLimit(input: {
+  projectRoot: string; feature: string; runId: string; events: readonly unknown[];
+}): boolean {
+  if (!isLegacyBacktrackLimitOnly(input.events)) return false;
+  try {
+    const { deliveryCycleView } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    if (!deliveryCycleView(input.projectRoot, input.feature).unfinished.some(run => run.runId === input.runId)) return false;
+    // Runtime loading avoids adding a second manifest/budget reader or a module-init cycle.
+    const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
+    const manifest = loadGoalManifestFromRun(input.projectRoot, input.runId, { feature: input.feature, featuresDir: relFeaturesDir(input.projectRoot) });
+    const fold = foldBudgetLineage({
+      projectRoot: input.projectRoot, featuresDir: relFeaturesDir(input.projectRoot),
+      feature: input.feature, currentEvents: input.events as GoalRunEvent[],
+    });
+    const budget = resolveResumedBudget(fold.budgetFoldEvents, { nextSessionStartMs: Date.now() });
+    return checkRunBudget(budget.totalTurns, manifest.budget.max_total_turns, budget.priorActiveMs,
+      resolveWallClockMs(manifest, manifest.phase_chain)) === 'ok';
+  } catch { return false; }
 }
 
 /**

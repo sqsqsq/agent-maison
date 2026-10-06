@@ -318,7 +318,7 @@ const PRE_FAULT_CATEGORY_PROJECTION: Readonly<Record<string, string>> = {
   await_human_gate_deferral: 'RECOVERY_PENDING', await_human_p0_skip: 'RECOVERY_PENDING',
   await_human_verification_evidence: 'WAITING/external', await_human_visual_confirm: 'TERMINAL',
   await_operator_toolchain: 'WAITING/external', backtrack_fingerprint_repeat: 'TERMINAL',
-  backtrack_limit: 'TERMINAL', backtrack_target_absent: 'TERMINAL', budget_wall_clock: 'TERMINAL',
+  backtrack_limit: 'RECOVERY_PENDING', backtrack_target_absent: 'TERMINAL', budget_wall_clock: 'TERMINAL',
   canary_cli_hard_failure: 'WAITING/external', capability_tightened_hard_pixel: 'WAITING/external',
   closure_finalization_failed: 'RECOVERY_PENDING', closure_open: 'RECOVERY_PENDING',
   closure_probe_error: 'WAITING/external', closure_state_invariant: 'WAITING/external',
@@ -622,7 +622,7 @@ const metaGateCases: TestCase[] = [
         ['device_target_ambiguous', 'WAITING', 'human'],
         // 结构上无法在本 run 继续
         ['in_session_reconcile_fused', 'TERMINAL', undefined],
-        ['backtrack_limit', 'TERMINAL', undefined],
+        ['backtrack_limit', 'RECOVERY_PENDING', undefined],
         ['testing_write_violation', 'TERMINAL', undefined],
         // 框架缺陷：修复重新发布后继续
         ['in_session_phase_exception', 'WAITING', 'external'],
@@ -752,7 +752,7 @@ const incidentClosureCases: TestCase[] = [
     },
   },
   {
-    name: '事故②边界：截断链 / 预算耗尽 / 同 fingerprint 重现 → terminal（不无限回退）',
+    name: '事故②边界：截断链/重复指纹仍 terminal，旧固定额度不阻止恢复',
     run: () => {
       const base: IncidentFacts = {
         incident: 'unauthorized_source_mutation',
@@ -763,7 +763,7 @@ const incidentClosureCases: TestCase[] = [
       const trunc = decide({ ...base, chain_has_coding_review: false }, NO_AUTHORITY, ctx());
       assert(trunc.kind === 'terminal' && trunc.reason.includes('截断链'), `截断链：${JSON.stringify(trunc)}`);
       const budget = decide({ ...base, backtrack_budget_remaining: 0 }, NO_AUTHORITY, ctx());
-      assert(budget.kind === 'terminal' && budget.reason.includes('预算'), `预算：${JSON.stringify(budget)}`);
+      assert(budget.kind === 'recover', `retired fixed budget must not block: ${JSON.stringify(budget)}`);
       const repeat = decide({ ...base, round_fingerprint_repeated: true }, NO_AUTHORITY, ctx());
       assert(repeat.kind === 'terminal' && repeat.reason.includes('指纹'), `指纹：${JSON.stringify(repeat)}`);
     },
@@ -1041,14 +1041,14 @@ const projectionCases: TestCase[] = [
         'closure_finalization_failed', 'goal_review_closure_baseline_unavailable']) {
         assert(isStructuralFactsIncident(id), `${id} 应属结构敏感（decide 读结构 facts）`);
       }
-      for (const id of ['backtrack_limit', 'backtrack_fingerprint_repeat', 'backtrack_target_absent',
+      for (const id of ['backtrack_fingerprint_repeat', 'backtrack_target_absent',
         'device_not_ready', 'pre_invoke_snapshot_failed']) {
         assert(!isStructuralFactsIncident(id),
           `${id} 不属结构敏感（structurally_terminal 零 facts 或纯 incident 映射）`);
       }
       // 等价性契约：非敏感 incident 的写盘兜底与生产点显式计算是纯函数同输入——逐字段一致。
       // 这个等价是"写盘层保留补算"的全部合法性来源，一旦被打破本格必红。
-      for (const id of ['device_not_ready', 'backtrack_limit', 'budget_wall_clock', 'device_toolchain']) {
+      for (const id of ['device_not_ready', 'budget_wall_clock', 'device_toolchain']) {
         const production = runDispositionFields(
           decide({ incident: id }, NO_AUTHORITY,
             { orchestration: 'goal', owner_kind: 'process', can_prompt_now: false, invocation: 'fresh' }));
@@ -1340,7 +1340,7 @@ const projectionCases: TestCase[] = [
       );
       const real = runDispositionFields(
         decide(
-          { incident: 'unauthorized_source_mutation', backtrack_budget_remaining: 0 },
+          { incident: 'unauthorized_source_mutation', chain_has_coding_review: false },
           NO_AUTHORITY,
           ctx(),
         ),

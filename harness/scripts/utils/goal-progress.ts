@@ -18,6 +18,7 @@ import {
 import { loadFeatureTrackDecl } from './feature-track';
 import {
   countAgentInvokeStarts,
+  canRecheckLegacyBacktrackLimit,
   filterAuthoritativeEvents,
   findLatestEffectiveTimeoutMs,
   foldBudgetLineage,
@@ -921,6 +922,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // d6 t5⓪-b：裁决轴由单一 reducer 给出（total function——空序列/仅 run_start 亦有值）。
   // 与下面的 liveness 轴各算各的，报告侧同时如实展示两轴。
   const runState = reduceRunState(events as unknown[]);
+  if (canRecheckLegacyBacktrackLimit({ projectRoot, feature: manifest.feature, runId: manifest.run_id, events })) {
+    runState.run_disposition = 'RESUME_READY';
+  }
 
   let status: ProgressRunStatus = 'PENDING';
   let statusReason: string | null = null;
@@ -1302,7 +1306,7 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
       `- Action: ${r.action}`,
       `- Current / owner target: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
       `- Gap: ${r.gap_kind ?? '—'}`,
-      `- Budget: ${r.backtracks_used ?? '—'} / ${r.backtracks_limit ?? '—'}`,
+      `- Backtracks observed: ${r.backtracks_used ?? '—'} (hard limits: total turns and active time)`,
       `- Fingerprint: ${r.fingerprint ?? '—'}`,
     );
     for (const item of r.changed_paths.slice(0, 20)) {

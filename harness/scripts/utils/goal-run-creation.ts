@@ -22,7 +22,7 @@ import {
   SCOPE_REVISION_FIELDS,
   type GoalManifest,
 } from './goal-manifest';
-import { collectSupersededAncestorEvents, loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
+import { collectSupersededAncestorEvents, loadEventsJsonlStrict, canRecheckLegacyBacktrackLimit, type GoalRunEvent } from './goal-runner-phase';
 import { featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import type { ExecutionScope } from './execution-scope';
 import { executionScopeFingerprint } from './execution-scope';
@@ -648,7 +648,7 @@ export type RunContinuationDecision =
  * 交付周期的现场：兄弟 run、上一次完成、未终局（非完成、未被承接、不早于上一次完成）的 run（按时间升序）。
  * 接续决策与后继的补承接（批三返修 R2）共用这一份，不各算一遍。`excludeRunId` 用于后继自己不算在内。
  */
-function deliveryCycleView(projectRoot: string, feature: string, excludeRunId?: string): {
+export function deliveryCycleView(projectRoot: string, feature: string, excludeRunId?: string): {
   siblings: SiblingRun[]; lastCompleted: SiblingRun | undefined; unfinished: SiblingRun[];
 } {
   const siblings = scanSiblingRuns(featureFilePath(projectRoot, feature, 'goal-runs'), excludeRunId);
@@ -754,8 +754,9 @@ function budgetEditedSinceBaseline(run: SiblingRun): boolean {
 }
 
 /** 结构终局：统一投影判 TERMINAL（成功封卷不算——那是完成），或曾检出 testing 越权写（该 run 永不允许恢复）。 */
-function isStructurallyTerminal(run: SiblingRun): boolean {
+function isStructurallyTerminal(run: SiblingRun, projectRoot: string): boolean {
   if (run.events.some(event => event.type === 'testing_write_violation')) return true;
+  if (canRecheckLegacyBacktrackLimit({ projectRoot, feature: run.manifest.feature, runId: run.runId, events: run.events })) return false;
   return reduceRunState(run.events).run_disposition === 'TERMINAL' && !COMPLETED_STATUSES.has(run.status);
 }
 
@@ -852,7 +853,8 @@ export function decideRunContinuation(input: {
 
   const changes = changesAgainst(latest);
   // plan 9c3d7e1a §5.3 第七种变化：最新未终局 run 停在带探针的外部等待上，且探针现在就绪。探针取法与 supervisor 同一个提取。
-  const waiting = isStructurallyTerminal(latest) ? null : externalWaitingProbe(latest.events);
+  const legacyLimitRecheck = canRecheckLegacyBacktrackLimit({ projectRoot: input.projectRoot, feature: input.feature, runId: latest.runId, events: latest.events });
+  const waiting = isStructurallyTerminal(latest, input.projectRoot) ? null : externalWaitingProbe(latest.events);
   if (waiting) {
     const reportDir = path.relative(input.projectRoot, latest.runDir).replace(/\\/g, '/');
     let ready = false;
@@ -888,7 +890,7 @@ export function decideRunContinuation(input: {
     ].join('\n'),
   });
 
-  if (isStructurallyTerminal(latest)) {
+  if (isStructurallyTerminal(latest, input.projectRoot)) {
     if (changes.length) return successor(changes[0]);
     return hold('最新的未终局 run 是结构终局且没有任何变化',
       '补上缺的输入后重新发起同一请求即可继续：新的需求内容、相关修复、显式改换的型号，或有权者改过 run 预算后带 --override-manifest 授权。');
@@ -908,7 +910,7 @@ export function decideRunContinuation(input: {
   const elapsed = (input.nowMs ?? Date.now()) - latest.ts;
   // 冷却与原恢复守卫同一范围：只对有正式开始的 run（原先 --resume 的路径）；启动即失败的 run 原先走附着/新开，从无冷却。
   // 调度方 2026-09-29 裁定：有人在场的调用不设冷却（人刚补好授权/确认/环境就重发，直接重新接入，原责任检查照常执行）；无人值守照旧。
-  if (!changes.length && !call.attended && latest.started && (latest.status === 'HALTED' || latest.status === 'DEFERRED') && latest.ts > 0 && elapsed < cooldownMs) {
+  if (!legacyLimitRecheck && !changes.length && !call.attended && latest.started && (latest.status === 'HALTED' || latest.status === 'DEFERRED') && latest.ts > 0 && elapsed < cooldownMs) {
     return hold('仍在冷却期内且没有任何变化',
       `距上次停止不足 ${input.cooldownMinutes ?? CONTINUATION_COOLDOWN_MINUTES} 分钟且没有新变化：补上缺的输入后重新发起同一请求，或约 ${Math.ceil((cooldownMs - elapsed) / 1000)} 秒后再发起。`);
   }

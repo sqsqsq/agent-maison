@@ -26,7 +26,7 @@ import { spawnSync } from 'child_process';
 import { recordHvigorBuildOutcome, resetCapabilityFailedByHumanReprobe } from '../../../profiles/hmos-app/harness/toolchain-probe';
 import { FEATURE_LOCK_NAME, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
-import { foldBudgetLineage, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
+import { foldBudgetLineage, loadAuthoritativeEvents, repairInvocationCompleted, repairWindowCompleted } from '../../scripts/utils/goal-runner-phase';
 import {
   collectActionableDefects,
   __testing_resetGoalRunnerSeams,
@@ -40,6 +40,8 @@ import {
   __testing_setWorkflowResolver,
   main as goalMain,
   replayAttemptedSignalIdentities,
+  applyInvalidationsToResume,
+  deriveHaltValidationOnlyEligibility,
 } from '../../scripts/goal-runner';
 import type { GoalPhaseRuntimeLaunchOptions } from '../../scripts/goal-phase-runtime';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
@@ -251,7 +253,7 @@ export function currentBuildFpOf(root: string): string {
 }
 
 /** 屏条目：verdict/must_fix + 截图/build 双身份（新鲜=③④ 成立）；可按维度打破 */
-function writeVisualDiff(
+export function writeVisualDiff(
   root: string,
   screens: Array<{
     id: string; verdict: string; mustFix: string[];
@@ -2230,9 +2232,9 @@ test('E2E-2b testing 改 spec-owned acceptance → 自动回 spec，不落 displ
   `bc-openCard 诊断须携稳定 reason 与安全 hashes：${JSON.stringify(v)}`);
   const bt = probe.events.find(e => e.type === 'phase_backtrack_requested' && (e as { reason?: string }).reason === 'phase_write_violation') as
     { to_phase?: string; backtracks_used?: number; backtracks_limit?: number; fingerprint?: string } | undefined;
-  assert(bt?.to_phase === 'spec' && bt.backtracks_used === 1 && bt.backtracks_limit === 2
+  assert(bt?.to_phase === 'spec' && bt.backtracks_used === 1 && bt.backtracks_limit === undefined
     && typeof bt.fingerprint === 'string' && bt.fingerprint.length > 0,
-  `须自动回 spec 并投影预算/指纹诊断：${JSON.stringify(bt)}`);
+  `须自动回 spec 并保留次数/指纹，不再写固定硬额度：${JSON.stringify(bt)}`);
   assert(!probe.events.some(e => String((e as { action?: string }).action ?? '').startsWith('rerun_phase:spec')),
     '不得留下 display-only rerun_phase:spec');
   assertRunReachedEnd(probe, 'E2E-2b recovery');
@@ -5260,7 +5262,7 @@ const I11_HOST_SCREENS = [
   { id: 'sms_verification_sheet', close: 'sms_close' },
 ];
 
-function seedI11Host(root: string): void {
+export function seedI11Host(root: string): void {
   writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, ['# spec', '', '```yaml', 'ui_change: new_or_changed', '```', ''].join('\n'));
   fs.writeFileSync(uiSpecAbsPath(root, FEATURE), JSON.stringify({
     schema_version: '1.0', verified: 'unverified', assets: [], tokens: {},
@@ -5274,7 +5276,7 @@ function seedI11Host(root: string): void {
 }
 
 /** testing 执行者写的 visual-diff.json：两屏 warn + 锚定 must_fix + 自报 major shape_mismatch（无 source） */
-function writeI11VisualDiff(root: string, verdictOf: (id: string) => string = () => 'warn'): void {
+export function writeI11VisualDiff(root: string, verdictOf: (id: string) => string = () => 'warn'): void {
   const fp = currentBuildFpOf(root);
   const rows = I11_HOST_SCREENS.map(s => {
     const shotRel = `doc/features/${FEATURE}/device-testing/device-screenshots/shot-${s.id}.png`;
@@ -5680,6 +5682,90 @@ const relatedNativeFailure = (): CheckResult[] => [{ id: 'testing_failure_routin
   failure_kind: 'assertion', failure_code: 'assertion_mismatch', coding_candidate: true,
   repair_owner: 'coding', affected_files: [PRODUCT_FILE], details: 'TC-001 step0 断言仍失败' }];
 
+test('followup-20261006 S1 legacy validation-only outside repair does not invent invocation completion', async () => {
+  const legacy = [
+    { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'old-coding-i1', exit_code: 1 },
+    { type: 'agent_process_settled', phase: 'coding', invoke_id: 'old-coding-i1', exit_code: 1 },
+    { type: 'harness_end', phase: 'coding', invoke_id: 'old-coding-i1' },
+    { type: 'phase_halt', phase: 'coding', run_disposition: 'WAITING' },
+  ];
+  assert(deriveHaltValidationOnlyEligibility(legacy)?.invoke_id === 'old-coding-i1', 'outside-window legacy revalidation must survive');
+  assert(!repairInvocationCompleted(legacy, 'coding', 'old-coding-i1'), 'compatibility must not invent a successful invocation');
+  const outsideRequest = { type: 'phase_backtrack_requested', to_phase: 'plan', invalidated_phases: ['plan', 'coding'] };
+  const plan = [
+    { type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i1', exit_code: 0 },
+    { type: 'phase_verdict', phase: 'plan', invoke_id: 'plan-i1', verdict: 'PASS', action: 'advance', agent_failed: false },
+  ];
+  const validation = applyInvalidationsToResume(['plan', 'coding'], [], [outsideRequest, ...plan, ...legacy]);
+  assert(validation.postAgentAttemptIds.coding === 'old-coding-i1', 'a non-target phase in the latest invalidation window retains legacy gate-only eligibility');
+  const request = { type: 'phase_backtrack_requested', to_phase: 'coding', invalidated_phases: ['coding'] };
+  assert(deriveHaltValidationOnlyEligibility([request, ...legacy]) === null, 'repair unknown must return to its owner');
+  assert(applyInvalidationsToResume(['coding'], [], [request, ...legacy]).postAgentPhases.length === 0, 'repair invalidation uses strict completion');
+  const timeout = legacy.map(event => event.type === 'agent_process_settled' ? { ...event, timed_out: true, kill_reason: 'agent_timeout' } : event);
+  assert(deriveHaltValidationOnlyEligibility(timeout) === null, 'known timeout is never validation-only');
+  assert(deriveHaltValidationOnlyEligibility([...legacy, request]) === null, 'new request supersedes old halt eligibility');
+  assert(deriveHaltValidationOnlyEligibility([...legacy, { type: 'phase_invalidated', phase: 'coding' }]) === null, 'new invalidation supersedes old halt eligibility');
+});
+
+test('followup-20261006 S2 window completion survives later interruption but never crosses a new request or invalidation', async () => {
+  const request = { type: 'phase_backtrack_requested', to_phase: 'coding', invalidated_phases: ['coding', 'review'],
+    candidates: [{ identity_schema: 'signal@1', item_fingerprint: 'a'.repeat(64) }] };
+  const first = [
+    { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'first' },
+    { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'first', exit_code: 0 },
+    { type: 'agent_process_settled', phase: 'coding', invoke_id: 'first', exit_code: 0 },
+    { type: 'phase_backtrack_completed', to_phase: 'coding' },
+    { type: 'phase_verdict', phase: 'coding', invoke_id: 'first', verdict: 'FAIL', action: 'retry', agent_failed: false },
+  ];
+  const second = [
+    { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'second' },
+    { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'second', exit_code: 1, timed_out: true },
+    { type: 'agent_process_settled', phase: 'coding', invoke_id: 'second', exit_code: 1, timed_out: true },
+    { type: 'phase_verdict', phase: 'coding', invoke_id: 'second', verdict: 'PASS', action: 'advance', agent_failed: true },
+  ];
+  const window = [request, ...first, ...second];
+  assert(!repairInvocationCompleted(window, 'coding', 'second'), 'current invocation must remain interrupted');
+  assert(repairWindowCompleted(window, 'coding'), 'the earlier real owner completion remains a window fact');
+  const outcomes = [{ phase: 'coding', verdict: 'PASS', retries: 1 }];
+  assert(applyInvalidationsToResume(['coding', 'review'], outcomes, window).startIndex === 1, 'resume matches same-process owner advancement');
+  assert(replayAttemptedSignalIdentities(window).has('a'.repeat(64)), 'complete attempt still consumes the existing per-run one-shot');
+  for (const boundary of [request, { type: 'phase_invalidated', phase: 'coding' }]) {
+    const cut = [request, ...first, boundary, ...second];
+    assert(!repairWindowCompleted(cut, 'coding'), 'a new boundary cannot borrow old completion');
+    assert(applyInvalidationsToResume(['coding', 'review'], outcomes, cut).startIndex === 0, 'new unfinished work returns to coding');
+  }
+  assert(!repairWindowCompleted([request, ...second], 'coding'), 'host timeout-only window remains unfinished');
+});
+
+test('followup-20261006 S2 real owner completion then failed gate then timeout PASS resumes downstream without re-running owner', async () => {
+  const { root } = setupHost('codex');
+  try {
+    let cut = false;
+    const first = await runChain(root, { adapter: 'codex', runId: 'followup-window-complete',
+      onTesting: ({ root: r }) => writeCleanTesting(r), onCoding: () => {},
+      onHarnessSummary: ({ phase, attempt }) => phase === 'testing' && attempt === 1 ? { checks: [PRODUCT_ASSERTION_CHECK] }
+        : phase === 'coding' && attempt === 2 ? { blockers: [{ id: 'compile', severity: 'BLOCKER', status: 'FAIL', classification: 'code_regression', affected_files: [PRODUCT_FILE], actionability: 'agent_fixable' }] } : null,
+      invokeResultFor: (phase, attempt) => phase === 'coding' && attempt === 3 ? { exitCode: 1, timed_out: true } : null,
+      afterHarnessPass: ({ phase, root: r, runId }) => {
+        if (phase !== 'review') return;
+        const rows = readEvents(path.join(r, `doc/features/${FEATURE}/goal-runs/${runId}`));
+        if (rows.some(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.timed_out === true)) {
+          cut = true; throw new Error('downstream cut after the repair window completed');
+        }
+      },
+    });
+    assert(cut, 'fixture must reach the downstream cut after the second owner interruption');
+    const coding = first.events.filter(event => event.type === 'phase_verdict' && event.phase === 'coding');
+    assert(coding.some(event => event.verdict === 'FAIL') && coding.some(event => event.verdict === 'PASS' && event.agent_failed === true), JSON.stringify(coding));
+    const ownerCalls = first.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'coding').length;
+    const resumed = await runChain(root, { adapter: 'codex', resume: 'followup-window-complete', forceResume: true,
+      onTesting: ({ root: r }) => writeCleanTesting(r) });
+    assert(!resumed.invokedPhases.includes('coding'), JSON.stringify(resumed.invokedPhases));
+    assert(resumed.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'coding').length === ownerCalls, 'resume must not add a redundant coding invocation');
+    assert(resumed.events.filter(event => event.type === 'phase_backtrack_requested').length === 1, 'the original request is retained');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 for (const mode of ['related-change', 'unchanged', 'notes-only', 'unrelated-source'] as const) {
   test(`t4 真实testing→coding回退：${mode}只按原相关SHA判重复，修了仍失败不写成功`, async () => {
     const { root } = setupHost();
@@ -5694,14 +5780,15 @@ for (const mode of ['related-change', 'unchanged', 'notes-only', 'unrelated-sour
         testingGateChecks: relatedNativeFailure,
       });
       const backtracks = probe.events.filter(e => e.type === 'phase_backtrack_requested');
-      assert(backtracks.length === (mode === 'related-change' ? 2 : 1), `实际回退次数：${JSON.stringify(haltsOf(probe.events))}`);
+      assert(mode === 'related-change' ? backtracks.length >= 3 : backtracks.length === 1, `实际回退次数：${JSON.stringify(haltsOf(probe.events))}`);
       const first = backtracks[0] as { related_input_snapshot?: Record<string, { contentHash: string }> };
       assert(/^[0-9a-f]{64}$/.test(first.related_input_snapshot?.[PRODUCT_FILE]?.contentHash ?? ''), '原事件真实SHA落盘');
       assert(!Object.keys(first.related_input_snapshot ?? {}).some(p => /notes|reports|trace/.test(p)), '证据与notes不是源码进展');
       if (mode !== 'related-change') assert(haltsOf(probe.events).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '可比未变及时停止');
       else {
         assert(probe.invokedPhases.filter(p => p === 'testing').length >= 2, '实际再验证发生');
-        assert(backtracks[1].backtracks_used === 2, '原回退额度仍2，不新增额度');
+        assert(backtracks.every((event, index) => event.backtracks_used === index + 1 && event.backtracks_limit === undefined), '观测序号连续，不把次数当硬额度');
+        assert(probe.events.filter(e => e.type === 'agent_invoke_start').length === 30 && haltsOf(probe.events).some(e => e.halt_reason === 'budget_turns'), '持续真实尝试仍由原30调用硬预算停止');
       }
       assert(runEndStatus(probe.events) === 'HALTED', '同效果失败不能写成功');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -5743,7 +5830,7 @@ for (const entry of ['resume', 'successor'] as const) for (const changed of [fal
       const later = entry === 'resume' ? next.events.slice(seed.events.length) : next.events;
       const backtracks = later.filter(e => e.type === 'phase_backtrack_requested');
       assert(backtracks.length === (changed ? 1 : 0), `旧SHA控制实际恢复回退：${JSON.stringify(haltsOf(later))}`);
-      if (changed) assert(backtracks[0].backtracks_used === 2 && backtracks[0].backtracks_limit === 2, '祖先/同run额度继续计数，不能从1重开');
+      if (changed) assert(backtracks[0].backtracks_used === 2 && backtracks[0].backtracks_limit === undefined, '祖先/同run观测计数继续，取消固定额度不从1重开');
       else assert(haltsOf(later).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '可比未变复用旧结论');
       assert(runEndStatus(next.events) === 'HALTED', '失败复验未被写成功');
       const sourceEvents = readEvents(seed.reportDir);
@@ -5754,7 +5841,7 @@ for (const entry of ['resume', 'successor'] as const) for (const changed of [fal
 }
 
 for (const entry of ['resume', 'successor'] as const) {
-  test(`t4 真实${entry}恢复：原历史30/30轮次与2/2回退耗尽，相关内容已改也不得启动`, async () => {
+  test(`t4 真实${entry}恢复：原30/30调用耗尽，取消固定回退额度后相关修改仍不得重置资源`, async () => {
     const { root } = setupHost();
     try {
       const seed = await runChain(root, {
@@ -5763,15 +5850,9 @@ for (const entry of ['resume', 'successor'] as const) {
       });
       const source = path.basename(seed.reportDir);
       const events = readEvents(seed.reportDir);
-      assert(events.filter(e => e.type === 'phase_backtrack_requested').length === 2, '先实际执行原2次回退');
-      const observed = events.find(e => e.type === 'agent_invoke_start')!;
+      assert(events.filter(e => e.type === 'phase_backtrack_requested').length >= 3, '真实有进展回退已超过旧常量');
       const used = events.filter(e => e.type === 'agent_invoke_start').length;
-      // 补一段已用轮次的历史夹具；恢复消费真实账本，不调用比较器或修改预算。
-      const extra = Array.from({ length: 30 - used }, (_, i) => ({ ...observed, invoke_id: `historical-spent-${i}` }));
-      const terminal = events.findIndex(e => e.type === 'run_end');
-      events.splice(terminal, 0, ...extra);
-      assert(events.filter(e => e.type === 'agent_invoke_start').length === 30, '旧窗口调用记录恰30');
-      fs.writeFileSync(path.join(seed.reportDir, 'events.jsonl'), events.map(e => JSON.stringify(e)).join('\n') + '\n');
+      assert(used === 30 && events.some(e => e.halt_reason === 'budget_turns'), '生产运行真实耗尽原30调用，不补造历史次数');
       backdateLastRunEnd(root, source);
       writeFile(root, PRODUCT_FILE, 'new input after original budgets exhausted');
       const next = await runChain(root, {

@@ -3110,6 +3110,6 @@ cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   const only = process.env.EXECUTION_SCOPE_ONLY;
-  for (const test of cases.filter(test => !only || only.split(',').some(name => test.name === name))) { try { await test.run(); results.push({ name: test.name, ok: true }); } catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); } }
+  for (const test of cases.filter(test => !only || test.name === only || only.split(',').some(name => test.name === name))) { try { await test.run(); results.push({ name: test.name, ok: true }); } catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); } }
   return results;
 }

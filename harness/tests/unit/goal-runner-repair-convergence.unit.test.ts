@@ -157,10 +157,10 @@ export function runAll(): UnitCaseResult[] {
     const evs = events(
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
       { type: 'phase_backtrack_started', to_phase: 'coding' },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_B)] },
       { type: 'phase_backtrack_started', to_phase: 'coding' },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
     );
     const attempted = replayAttemptedSignalIdentities(evs);
     assert(attempted.has(FP_A), 'FP_A 已 attempted（第一次回退目标 phase 已执行）');
@@ -175,9 +175,9 @@ export function runAll(): UnitCaseResult[] {
     // A 驱动回退并执行（失败未消除）；C 驱动另一轮回退并执行；下一轮 A 又 open。
     const evs = events(
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_C)] },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
     );
     const attempted = replayAttemptedSignalIdentities(evs);
     assert(attempted.has(FP_A) && attempted.has(FP_C), 'A 与 C 均已 attempted');
@@ -194,7 +194,7 @@ export function runAll(): UnitCaseResult[] {
   run('P2-T6 相同检查 ID 的真实新指纹可继续，原指纹无新事实仍停止', () => {
     const attempted = replayAttemptedSignalIdentities(events(
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
     ));
     assert(computeEligibleSignalIdentities([signalCandidate(FP_A)], attempted).length === 0,
       '相同 ID + 相同事实不得借新一轮重试');
@@ -219,7 +219,7 @@ export function runAll(): UnitCaseResult[] {
     // request → coding 执行（settled）→ completed 前崩溃 → resume
     const evs = events(
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
     );
     const attempted = replayAttemptedSignalIdentities(evs);
     assert(attempted.has(FP_A), 'settled 后即计入 attempted（不依赖 completed）');
@@ -230,7 +230,7 @@ export function runAll(): UnitCaseResult[] {
   run('legacy check-domain 候选不参与收敛判定（eligible 恒真）', () => {
     const evs = events(
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [legacyCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
     );
     const attempted = replayAttemptedSignalIdentities(evs);
     assert(attempted.size === 0, 'legacy（无 identity_schema）不入 attempted 回放');
@@ -322,7 +322,7 @@ export function runAll(): UnitCaseResult[] {
     // （settled 触发回放）→ 下一轮 eligible 空。纯函数层验证回放侧：settled 在案即 attempted。
     const evs = events(
       { type: 'phase_backtrack_requested', to_phase: 'coding', candidates: [signalCandidate(FP_A)] },
-      { type: 'agent_process_settled', phase: 'coding' },
+      { type: 'agent_process_settled', phase: 'coding', exit_code: 0, invoke_id: 'fixture-coding' },
     );
     const attempted = replayAttemptedSignalIdentities(evs);
     assert(attempted.has(FP_A), 'target phase 已执行（settled）即计入 attempted（no-op 并入逻辑的输入）');
@@ -347,7 +347,7 @@ export function runAll(): UnitCaseResult[] {
     type: 'phase_halt', phase: 'testing', run_disposition: 'WAITING', ...extra,
   });
   const settledEv = (extra: Record<string, unknown>) => ({
-    type: 'agent_process_settled', phase: 'testing', invoke_id: 'testing-i4', ...extra,
+    type: 'agent_process_settled', phase: 'testing', invoke_id: 'testing-i4', exit_code: 0, ...extra,
   });
   const harnessEndEv = (extra: Record<string, unknown>) => ({
     type: 'harness_end', phase: 'testing', invoke_id: 'testing-i4', exit_code: 0, ...extra,
