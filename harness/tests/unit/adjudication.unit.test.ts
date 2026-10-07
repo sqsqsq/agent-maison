@@ -120,7 +120,6 @@ const ironLawCases: TestCase[] = [
       const facts = Object.freeze<IncidentFacts>({
         incident: 'unauthorized_source_mutation',
         chain_has_coding_review: true,
-        backtrack_budget_remaining: 1,
       });
       const authority = Object.freeze<AuthorityFacts>({ grants: Object.freeze([]) as never });
       const context = Object.freeze(ctx());
@@ -199,7 +198,7 @@ const consistencyCases: TestCase[] = [
     name: '契约(b)：相同 facts+authority+context → 相同决定（决定性）',
     run: () => {
       for (const incident of Object.keys(INCIDENT_REGISTRY)) {
-        const facts: IncidentFacts = { incident, chain_has_coding_review: true, backtrack_budget_remaining: 2 };
+        const facts: IncidentFacts = { incident, chain_has_coding_review: true };
         const a = decide(facts, NO_AUTHORITY, ctx());
         const b = decide({ ...facts }, { grants: [] }, ctx());
         assert(JSON.stringify(a) === JSON.stringify(b), `${incident}: 决定不稳定`);
@@ -710,7 +709,6 @@ const metaGateCases: TestCase[] = [
         const d = decide({
           incident,
           chain_has_coding_review: true,
-          backtrack_budget_remaining: 2,
           round_fingerprint_repeated: false,
         }, NO_AUTHORITY, ctx());
         if (shape.class === 'external') {
@@ -739,7 +737,6 @@ const incidentClosureCases: TestCase[] = [
           phase: 'ut',
           files: ['src/main/ets/BankCardRepository.ets'],
           chain_has_coding_review: true,
-          backtrack_budget_remaining: 2,
           round_fingerprint_repeated: false,
         },
         NO_AUTHORITY, // ← 无任何 grant
@@ -752,18 +749,15 @@ const incidentClosureCases: TestCase[] = [
     },
   },
   {
-    name: '事故②边界：截断链/重复指纹仍 terminal，旧固定额度不阻止恢复',
+    name: '事故②边界：截断链/重复指纹仍 terminal',
     run: () => {
       const base: IncidentFacts = {
         incident: 'unauthorized_source_mutation',
         chain_has_coding_review: true,
-        backtrack_budget_remaining: 2,
         round_fingerprint_repeated: false,
       };
       const trunc = decide({ ...base, chain_has_coding_review: false }, NO_AUTHORITY, ctx());
       assert(trunc.kind === 'terminal' && trunc.reason.includes('截断链'), `截断链：${JSON.stringify(trunc)}`);
-      const budget = decide({ ...base, backtrack_budget_remaining: 0 }, NO_AUTHORITY, ctx());
-      assert(budget.kind === 'recover', `retired fixed budget must not block: ${JSON.stringify(budget)}`);
       const repeat = decide({ ...base, round_fingerprint_repeated: true }, NO_AUTHORITY, ctx());
       assert(repeat.kind === 'terminal' && repeat.reason.includes('指纹'), `指纹：${JSON.stringify(repeat)}`);
     },
@@ -1331,7 +1325,7 @@ const projectionCases: TestCase[] = [
       assert(
         !/withRunDisposition\s*\(/.test(src),
         'report 仍在调 withRunDisposition —— 那会用中性上下文按 halt_reason 重新 decide，' +
-        '丢掉 runner 的结构事实（回退预算/截断链/重复指纹），把 TERMINAL 翻成 RECOVERY_PENDING',
+        '丢掉 runner 的结构事实（截断链/重复指纹），把 TERMINAL 翻成 RECOVERY_PENDING',
       );
       // 反例锁死：同一 incident 在「结构前提不满足」时生产端算 TERMINAL，
       // 而中性重算会得到 RECOVERY_PENDING —— 证明这两者确实会分叉，不是空担心

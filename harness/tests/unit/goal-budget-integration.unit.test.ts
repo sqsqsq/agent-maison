@@ -35,7 +35,7 @@ import { assessFeature } from '../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
 import { buildSupersedeAuditEvent, createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
-import type { GoalManifest } from '../../scripts/utils/goal-manifest';
+import { computeManifestIdentityFields, type GoalManifest } from '../../scripts/utils/goal-manifest';
 import { loadHostSnapshot, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { completionOriginal, readJson, runFile, runIds, supersede } from './successor-exit.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
@@ -243,6 +243,43 @@ const b1Cases: TestCase[] = [
       const { progress, heartbeat } = progressAndHeartbeatTurns(s, successor);
       assert(progress === N_TURNS + O_TURNS + own && heartbeat === progress, `resume 后 progress/heartbeat 应为 ${N_TURNS + O_TURNS + own}：${progress}/${heartbeat}`);
     }),
+  },
+  {
+    // plan a2f7c9e4 §3.1 反例①：宿主 d6d31d 形状——本周期 run 用满来源的 30 次后经 --override-manifest 授权到 42，后继出生时取本周期最新授权值，
+    // 不再整份继承合同来源（F）的 30 而零调用停机；后继再起一次仍是 42。
+    name: 'a2f7c9e4 B1-5 本周期授权 42：O 用满 30 次后授权到 42 → 后继上限 42、首次调用不因来源的 30 停；从后继再起一次仍 42',
+    run: async () => {
+      const s = loadHostSnapshot();
+      try {
+        clearFrameworkConfigCache();
+        const [source] = runIds(s.root, B1_FEATURE);
+        seedFailedRun(s, source, RUN_N, [], N_TURNS);
+        seedFailedRun(s, source, RUN_O, [source, RUN_N], 30);
+        const oFile = runFile(s.root, B1_FEATURE, RUN_O, 'manifest.json');
+        const o = readJson<GoalManifest>(oFile);
+        o.budget = { ...o.budget, max_total_turns: 42 };
+        fs.writeFileSync(oFile, JSON.stringify(o, null, 2));
+        fs.appendFileSync(runFile(s.root, B1_FEATURE, RUN_O, 'events.jsonl'), JSON.stringify({
+          ts: new Date().toISOString(), type: 'manifest_identity_rebase', to_fields: computeManifestIdentityFields(o), authorized_by: 'override-manifest', changed_fields: ['budget'],
+        }) + '\n');
+        fs.rmSync(featureFilePath(s.root, B1_FEATURE, 'ut/reports/phase-evidence-manifest.json'));
+        assert(recordState(s) === 'ok', `前提：F 完成记录可信（record=${recordState(s)}）`);
+        const budgetOf = (id: string): number => readJson<GoalManifest>(runFile(s.root, B1_FEATURE, id, 'manifest.json')).budget.max_total_turns;
+        assert(budgetOf(source) === 30, '前提：合同来源 F 的预算是 30');
+        const { successor, turns } = await bornSuccessor(s, source);
+        assert(turns === N_TURNS + 30, `前提：后继起步已用 N+O=${N_TURNS + 30}（≥ 来源的 30），实得 ${turns}`);
+        assert(budgetOf(successor) === 42, `后继上限须为本周期最新授权的 42，实得 ${budgetOf(successor)}`);
+        const own = countType(eventsOf(s, successor), 'agent_invoke_start');
+        assert(own > 0 && !eventsOf(s, successor).some(e => e.type === 'phase_halt' && (e as { halt_reason?: string }).halt_reason === 'budget_turns'),
+          `后继首次调用不得因继承旧上限而停：own=${own}`);
+        const again = await supersede(s, B1_FEATURE, successor, ['ut'], { supersede: [successor], ...utFails });
+        assert(again.successor, `从后继再起一次须出生：${again.error}`);
+        assert(budgetOf(again.successor!) === 42, `再起一次仍须 42，实得 ${budgetOf(again.successor!)}`);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(s.root, { recursive: true, force: true });
+      }
+    },
   },
 ];
 

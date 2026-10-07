@@ -23,16 +23,16 @@ export interface AdhocDumpUiResult {
   stderr: string;
 }
 
-export function resolveAdhocDumpUiOutPath(
-  projectRoot: string,
-  bundle: string,
-  explicitOut?: string,
-): string {
+/**
+ * plan a2f7c9e4 §3.6：缺省落即席 reports（`_adhoc/testing/reports/`），不再写进 bundle 级共享的
+ * app-snapshot-cache；秒级时间戳，修前 / 修后两次 dump 不互相覆盖。
+ */
+export function resolveAdhocDumpUiOutPath(reportsBase: string, explicitOut?: string): string {
   if (explicitOut?.trim()) return path.resolve(explicitOut.trim());
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const slug = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-  return path.join(projectRoot, 'doc', 'app-snapshot-cache', bundle, `dump-ui-${slug}.json`);
+  const slug = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  return path.join(reportsBase, `dump-ui-${slug}.json`);
 }
 
 export function runAdhocDumpUi(opts: AdhocDumpUiOptions): AdhocDumpUiResult {
@@ -42,7 +42,7 @@ export function runAdhocDumpUi(opts: AdhocDumpUiOptions): AdhocDumpUiResult {
     'testing',
     opts.frameworkRoot,
   );
-  const outPath = resolveAdhocDumpUiOutPath(opts.projectRoot, opts.bundle, opts.outPath);
+  const outPath = resolveAdhocDumpUiOutPath(reportsBase, opts.outPath);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const logPath = opts.logPath ?? path.join(reportsBase, 'device-test-run.log');

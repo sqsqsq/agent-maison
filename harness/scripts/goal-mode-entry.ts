@@ -34,6 +34,7 @@ import {
   createGoalRun,
   decideRunContinuation,
   inspectGoalRunCreation,
+  resolveCycleEffectiveBudget,
   successorBoundsConflicts,
   successorBoundsRefusal,
   resolveActualGoalPhaseChainAtBirth,
@@ -153,12 +154,20 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     const ancestors = collectSupersededAncestorEvents({ projectRoot: options.projectRoot, featuresDir, feature, seedTargets: continuation.targets });
     const pick = (key: 'round_fingerprint' | 'drift_fingerprint'): string[] => ancestors
       .map(e => (e as Record<string, unknown>)[key]).filter((v): v is string => typeof v === 'string');
-    const manifest = inheritSuccessorManifest(buildGoalManifestFromInput({
+    const birthInput = buildGoalManifestFromInput({
       feature, run_id: options.runId, requirement, adapter: source.adapter,
       ...(options.requirementSourceFiles?.length ? { requirement_source_files: options.requirementSourceFiles } : {}),
       start_phase: source.start_phase, end_phase: source.end_phase,
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
-    }, { projectRoot: options.projectRoot, featuresDir }), source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
+    }, { projectRoot: options.projectRoot, featuresDir });
+    const manifest = inheritSuccessorManifest(birthInput, source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
+    // plan a2f7c9e4 §3.1：与 runtime 出生段同一个有效预算解析；无法核验时在建 run 之前抛出（有人在场入口没有 --override-manifest）。
+    const effectiveBudget = resolveCycleEffectiveBudget({
+      projectRoot: options.projectRoot, featuresDir, feature, frameworkRoot: options.frameworkRoot, targets: continuation.targets,
+      sourceBudget: source.budget, birthInputBudget: birthInput.budget, override: false,
+    });
+    manifest.budget = effectiveBudget.budget;
+    console.log(`[goal-mode-entry] 后继预算：${effectiveBudget.basis}`);
     // 与 runtime 合并块同一个函数：没有新内容时保留源合同全文，否则源全文 + 新增段（本次文本已是合并格式也不丢新增内容）
     manifest.requirement = deriveSuccessorRequirement(source.requirement, requirement);
     const scope = resolveSuccessorExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, manifest.requirement, source.run_id);

@@ -2389,6 +2389,80 @@ test('E2E-3 PASS+新鲜 must_fix → 回 coding（prompt 含原始 must_fix）�
   assertRunReachedEnd(probe, 'E2E-3');
 });
 
+for (const entry of ['foreground', 'detach'] as const) test(`a2f7c9e4 §3.6/§3.7 返修窗口 coding 提示含局部诊断入口；带 --repair-notes 的 resume 注入材料（非需求）且不改需求、不起后继 [${entry}]`, async () => {
+  const { root } = setupHost();
+  const NOTES = '驱动方假设：sheet 弹起后 sms_next 被键盘遮挡，可能是 keyboardAvoidMode 未生效';
+  const onTesting = ({ root: r, attempt }: AgentCtx): void => {
+    if (attempt === 1) {
+      writeVisualDiff(r, [{ id: 'add_card_home', verdict: 'warn', mustFix: [MUST_FIX_TEXT] }]);
+      writeConfirmedReview(r, [MUST_FIX_TEXT]);
+    } else {
+      writeCleanTesting(r);
+    }
+  };
+  // 尝试计数按进程重置（resume 是新进程），故按"是否在返修窗口"决定是否真改产品
+  const onCoding = ({ root: r, prompt }: AgentCtx): void => {
+    if (prompt.includes('Verified repair candidates for this phase')) writeFile(r, PRODUCT_FILE, 'struct AllBanksPage { build() { Text("fixed") } }');
+  };
+  // ① 6 次调用用满：testing 请求回 coding 后，coding 在返修窗口起点撞预算停下
+  const first = await runChain(root, { freshBudget: { max_total_turns: 6 }, onTesting, onCoding });
+  assert(first.events.some(e => e.type === 'phase_backtrack_requested'), `前置：须已请求回 coding：${first.events.map(e => e.type).join(',')}`);
+  assert(runEndStatus(first.events) === 'HALTED' && first.codingPrompts.length === 1, `前置：返修 coding 前停下：${runEndStatus(first.events)} / ${first.codingPrompts.length}`);
+  assert(!first.codingPrompts[0].includes('Local device diagnosis'), '非返修窗口不提示局部诊断');
+  const runId = path.basename(first.reportDir);
+  const manifestAbs = path.join(first.reportDir, 'manifest.json');
+  const before = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as { requirement?: string; budget: { max_total_turns: number } };
+  before.budget.max_total_turns = 99;
+  fs.writeFileSync(manifestAbs, JSON.stringify(before, null, 2) + '\n', 'utf-8');
+  writeFile(root, 'repair-notes.md', `${NOTES}\n`);
+
+  // ② fresh 带材料：两入口都在入口用法错误（exit 2），不建 run / 日志目录、不起子进程（材料不是需求）
+  const realExit = process.exit;
+  let freshExit = '';
+  let freshChildArgs: string[] | undefined;
+  process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
+  try {
+    if (entry === 'detach') {
+      const fresh = await requestVia('detach', root, { launchArgs: ['--repair-notes', 'repair-notes.md'], onTesting, onCoding });
+      freshExit = `exit=${fresh.exitCode}`;
+      freshChildArgs = fresh.childArgs;
+    } else {
+      await runChain(root, { launchArgs: ['--repair-notes', 'repair-notes.md'], onTesting, onCoding });
+    }
+  } catch (error) {
+    freshExit = String((error as Error).message);
+  } finally { process.exit = realExit; }
+  assert(entry === 'detach' ? freshExit === 'exit=2' && !freshChildArgs : freshExit.includes('process.exit(2)'), `fresh 带 --repair-notes 须入口用法错误：${freshExit || '未退出'}`);
+  assert(goalRunIds(root).length === 1, `fresh 拒绝不得建 run：${goalRunIds(root).join(',')}`);
+
+  // ③ 显式 resume + 授权预算 + 材料：原 run 续跑，返修 coding 提示同时含诊断入口与标明非需求的材料
+  const resumeOpts = {
+    resume: runId,
+    resumeExtraArgs: ['--override-manifest', '--repair-notes', 'repair-notes.md'],
+    onTesting: ({ root: r }: AgentCtx) => writeCleanTesting(r),
+    onCoding,
+  };
+  const resumed: RunProbe & { childArgs?: string[] } = entry === 'detach' ? await requestVia('detach', root, resumeOpts) : await runChain(root, resumeOpts);
+  if (entry === 'detach') assert(!!resumed.childArgs?.includes('--repair-notes') && resumed.childArgs.includes('--resume'), `detach 子进程原样带材料续原 run：${JSON.stringify(resumed.childArgs)}`);
+  assert(resumed.reportDir === first.reportDir && goalRunIds(root).length === 1, `须续原 run、不起后继：${goalRunIds(root).join(',')}`);
+  const repairPrompt = resumed.codingPrompts[0] ?? '';
+  assert(repairPrompt.includes('Verified repair candidates for this phase'), '前置：resume 后首个 coding 在返修窗口');
+  assert(repairPrompt.includes('Local device diagnosis') && repairPrompt.includes('--install-current-build'), '返修窗口 coding 提示含局部诊断入口');
+  assert(repairPrompt.includes('Driver repair notes (driver hypothesis, NOT a requirement)') && repairPrompt.includes(NOTES), '提示含材料并标明驱动方假设、非需求');
+  assert(repairPrompt.indexOf(NOTES) > repairPrompt.indexOf('Verified repair candidates for this phase'), '材料放在候选段之后');
+  assert(!resumed.testingPrompts.some(p => p.includes(NOTES)), '非返修窗口的阶段不注入材料');
+  const after = JSON.parse(fs.readFileSync(manifestAbs, 'utf-8')) as { requirement?: string };
+  assert(after.requirement === before.requirement, '需求文本不变');
+  const shaOf = (text: string | undefined): string => computeRequirementShaFromText(root, FEATURE, text ?? '', 'doc/features');
+  assert(shaOf(after.requirement) === shaOf(before.requirement), 'requirement_sha256（生产同一函数）前后相等');
+  const created = goalRunEvents(root, runId).filter(e => e.type === 'run_created') as Array<{ manifest_identity_fields?: Record<string, string> }>;
+  const rebases = goalRunEvents(root, runId).filter(e => e.type === 'manifest_identity_rebase') as Array<{ changed_fields?: string[] }>;
+  assert(created.length === 1 && rebases.every(e => JSON.stringify(e.changed_fields) === '["budget"]'),
+    `身份只因预算授权前进，需求摘要不变：${JSON.stringify(rebases.map(e => e.changed_fields))}`);
+  // 首段 budget_turns 的 phase_halt 属设计内（同 e9d4b7a3 t5），只断言续跑到达终点
+  assert(runEndStatus(resumed.events) === 'CHAIN_SLICE_COMPLETED', `续跑须到达终点：${runEndStatus(resumed.events)} / exit=${resumed.exitCode}`);
+});
+
 test('E2E-4 本 run crash 归档 → 回 coding（prompt 含 crash 指令+诊断路径）；旧 run 残留 → 不回退', async () => {
   // 4a：本 run 归档 → 回退且交接
   {
@@ -6168,23 +6242,190 @@ test('P3 t5 A14 foreground：预算耗尽（结构终局）后无人脚本连续
   }
 });
 
-test('P3 t5 预算改动：有权者改了停机 run 的预算后带 --override-manifest 重发同一请求 → 起后继、后继用改过的预算（该 run 即合同来源时）', async () => {
+// ---------------------------------------------------------------------------
+// plan a2f7c9e4 §3.1–§3.3：预算有效值、仅预算变化续原 run、接续冷却——全部走公开入口与真实 run 产物
+// ---------------------------------------------------------------------------
+
+/** 有权者手改停机 run 的 manifest 预算（授权与否只看本次是否带 --override-manifest）；patch 可同时改其它身份字段。 */
+function editRunBudget(root: string, run: string, turns: number, patch: (m: Record<string, any>) => void = () => undefined): void {
+  const p = featureFilePath(root, FEATURE, `goal-runs/${run}/manifest.json`);
+  const m = JSON.parse(fs.readFileSync(p, 'utf-8')) as Record<string, any>;
+  m.budget = { ...m.budget, max_total_turns: turns };
+  patch(m);
+  fs.writeFileSync(p, JSON.stringify(m, null, 2) + '\n', 'utf-8');
+}
+
+/** 首个请求以 1 次轮次预算出生并耗尽（budget_turns，结构终局）。 */
+async function budgetExhaustedRun(root: string): Promise<string> {
+  await requestVia('foreground', root, { freshBudget: { max_total_turns: 1 }, freshEndPhase: 'plan' });
+  const [run] = goalRunIds(root);
+  assert(lastRunEndOf(goalRunEvents(root, run))?.halt_reason === 'budget_turns', `夹具：首个请求须耗尽轮次预算：${JSON.stringify(lastRunEndOf(goalRunEvents(root, run)))}`);
+  return run;
+}
+
+/** 收集 console.error（恢复守卫的拒绝原因只打在这里）；被调方抛错时一并返回。 */
+async function withStderr<T>(fn: () => Promise<T>): Promise<{ value?: T; error?: Error; stderr: string }> {
+  const prev = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]): void => { lines.push(args.map(String).join(' ')); prev(...args); };
+  try { return { value: await fn(), stderr: lines.join('\n') }; } catch (error) { return { error: error as Error, stderr: lines.join('\n') }; } finally { console.error = prev; }
+}
+
+const runsWithManifest = (root: string): string[] => goalRunIds(root).filter(id => fs.existsSync(featureFilePath(root, FEATURE, `goal-runs/${id}/manifest.json`)));
+
+for (const entry of ['foreground', 'detach', 'resume'] as const) {
+  test(`a2f7c9e4 授权预算一次生效 ${entry}：预算耗尽 run 改到 42 + --override-manifest，刚停下就发起、不带 --force-resume → 续原 run、上限 42、无后继，首次调用不因旧上限停`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      const run = await budgetExhaustedRun(root);
+      editRunBudget(root, run, 42);
+      const done = entry === 'resume'
+        ? await runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, resumeExtraArgs: ['--override-manifest'] })
+        : await requestVia(entry, root, { freshEndPhase: 'plan', launchArgs: ['--override-manifest'] });
+      assert(runsWithManifest(root).length === 1, `只改预算不得起后继：${goalRunIds(root).join(',')}`);
+      const events = goalRunEvents(root, run);
+      const rebases = events.filter(e => e.type === 'manifest_identity_rebase');
+      assert(rebases.length === 1 && JSON.stringify(rebases[0].changed_fields) === '["budget"]' && rebases[0].authorized_by === 'override-manifest',
+        `预算改动须经 --override-manifest 登记一次：${JSON.stringify(rebases)}`);
+      assert(loadGoalManifestFromRun(root, run, { feature: FEATURE }).budget.max_total_turns === 42, '原 run 上限须为 42');
+      assert(done.invokedPhases.length > 0, `续跑须真正调用阶段（不因旧上限零调用停）：${done.invokedPhases.join(',')}`);
+      assertSealedComplete(events, `${entry} 授权预算后续原 run`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const entry of ['foreground', 'detach'] as const) {
+  test(`a2f7c9e4 r1 B1-3 ${entry}：按出生时的 --manifest 文件（预算 1）重发原命令、run 预算已改到 42 并带 --override-manifest → 自动接回原 run，续跑用 42，不被旧文件盖回 1`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      const run = await budgetExhaustedRun(root);
+      editRunBudget(root, run, 42);
+      const done = await requestVia(entry, root, { freshBudget: { max_total_turns: 1 }, freshEndPhase: 'plan' });
+      assert(runsWithManifest(root).length === 1, `只改预算不得起后继：${goalRunIds(root).join(',')}`);
+      const budget = loadGoalManifestFromRun(root, run, { feature: FEATURE }).budget.max_total_turns;
+      assert(budget === 42, `原 run 预算须保持 42（不被旧 --manifest 文件盖回）：${budget}`);
+      const runStarts = goalRunEvents(root, run).filter(e => e.type === 'run_start').length;
+      assert(runStarts === 2 && done.invokedPhases.length > 0, `须续跑原 run 并真正调用阶段：run_start=${runStarts} invoked=${done.invokedPhases.join(',')}`);
+      assertSealedComplete(goalRunEvents(root, run), `${entry} 带旧 --manifest 的接回`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [entry, fileTurns] of [['foreground', 42], ['detach', 42], ['resume', 42], ['foreground', 1], ['detach', 1]] as const) {
+  test(`a2f7c9e4 r2/r3 B1-3-R ${entry}（文件预算 ${fileTurns}）：原 run 预算 1 / 超时 600 秒耗尽，只把 run 预算改到 42；本次传入的完整 manifest 另把超时收紧到 60 秒并带 --override-manifest → 接回原 run，60 秒与 42 都生效、改动经授权登记，不被静默丢弃`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      const birthYaml = [`feature: ${FEATURE}`, 'budget:', '  max_total_turns: 1', 'unattended:', '  write_mode: full-access', '  approval_mode: never', '  max_turns: 20', '  timeout_seconds: 600'].join('\n');
+      await requestVia('foreground', root, { freshManifestContent: birthYaml, freshEndPhase: 'plan' });
+      const [run] = goalRunIds(root);
+      assert(lastRunEndOf(goalRunEvents(root, run))?.halt_reason === 'budget_turns', '夹具：首个请求须耗尽轮次预算');
+      editRunBudget(root, run, 42);
+      const full = JSON.parse(fs.readFileSync(featureFilePath(root, FEATURE, `goal-runs/${run}/manifest.json`), 'utf-8')) as Record<string, any>;
+      assert(full.unattended?.timeout_seconds === 600 && Array.isArray(full.phase_chain), '夹具：原 run 超时 600、manifest 完整');
+      // r3：文件预算可仍是旧的 1（操作者只在原 run 上调了预算）——接回依据的是原 run 当前的 42，文件里的旧预算不得盖回。
+      const tightened = JSON.stringify({ ...full, budget: { ...full.budget, max_total_turns: fileTurns }, unattended: { ...full.unattended, timeout_seconds: 60 } }, null, 2);
+      const done = entry === 'resume'
+        ? (writeFile(root, 'rejoin-manifest.json', tightened),
+          await runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, resumeExtraArgs: ['--manifest', 'rejoin-manifest.json', '--override-manifest'] }))
+        : await requestVia(entry, root, { freshManifestContent: tightened, freshEndPhase: 'plan' });
+      assert(runsWithManifest(root).length === 1, `只改预算与限制不得起后继：${goalRunIds(root).join(',')}`);
+      const m = loadGoalManifestFromRun(root, run, { feature: FEATURE });
+      assert(m.budget.max_total_turns === 42 && m.unattended.timeout_seconds === 60, `42 与 60 秒须同时生效：${JSON.stringify({ budget: m.budget, unattended: m.unattended })}`);
+      const changed = goalRunEvents(root, run).filter(e => e.type === 'manifest_identity_rebase').flatMap(e => (e.changed_fields as string[] | undefined) ?? []);
+      assert(changed.includes('unattended') && changed.includes('budget'), `超时收紧须经 --override-manifest 登记：${JSON.stringify(changed)}`);
+      assert(done.invokedPhases.length > 0, `须续跑原 run 并调用阶段：${done.invokedPhases.join(',')}`);
+      assertSealedComplete(goalRunEvents(root, run), `${entry} 带改动的 --manifest 接回`);
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('a2f7c9e4 无 override 的手改不生效：普通重发保持停止；显式 --resume --force-resume 被身份漂移检测停下，均零调用', async () => {
   const { root } = setupHost('codex');
   try {
-    const common = { freshBudget: { max_total_turns: 1 }, freshEndPhase: 'plan' };
+    const run = await budgetExhaustedRun(root);
+    editRunBudget(root, run, 42);
+    backdateLastRunEnd(root, run);
+    const eventsBefore = goalRunEvents(root, run).length;
+    const held = await requestVia('foreground', root, { freshEndPhase: 'plan' });
+    assert(held.exitCode === 1 && runsWithManifest(root).length === 1 && goalRunEvents(root, run).length === eventsBefore, `未授权手改须保持停止、不写事件：exit=${held.exitCode}`);
+    const resumed = await withStderr(() => runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, forceResume: true }));
+    assert(!!resumed.error || resumed.value?.exitCode !== 0, '未授权的预算漂移不得续跑');
+    assert(/漂移且未被对应 override 授权/.test(`${resumed.error?.message ?? ''}\n${resumed.stderr}`), `须按身份漂移停下：${resumed.error?.message ?? resumed.stderr}`);
+    assert(!goalRunEvents(root, run).some(e => e.type === 'manifest_identity_rebase'), '不得登记预算改动');
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a2f7c9e4 反例⑤ 公开入口：授权 1 次已耗尽、手改 99、带需求增量不带 override → 不出生后继、不取默认 30；随后带 --override-manifest 重发 → 后继上限取被授权的 99 并开始执行', async () => {
+  const { root } = setupHost('codex');
+  try {
+    const run = await budgetExhaustedRun(root);
+    editRunBudget(root, run, 99);
+    const increment = { freshRequirement: '真机测试银行卡开卡流程，另补绑卡提示', freshEndPhase: 'plan' };
+    const refused = await withStderr(() => requestVia('foreground', root, increment));
+    const message = `${refused.error?.message ?? ''}\n${refused.stderr}`;
+    assert(!!refused.error || refused.value?.exitCode !== 0, '无法核验的预算不得出生后继');
+    assert(/无法构造 supersede 后继 manifest/.test(message) && /找不到同值/.test(message) && /--override-manifest/.test(message) && /还原/.test(message),
+      `须走既有后继 manifest 构造失败路径并指引 override / 还原：${message}`);
+    assert(runsWithManifest(root).length === 1, `不得产生 run：${runsWithManifest(root).join(',')}`);
+    const done = await requestVia('foreground', root, { ...increment, launchArgs: ['--override-manifest'] });
+    const next = runsWithManifest(root).find(id => id !== run);
+    assert(!!next, `带 override 重发须起后继：${goalRunIds(root).join(',')}`);
+    const nm = loadGoalManifestFromRun(root, next!, { feature: FEATURE });
+    assert(nm.successor_of === run && nm.budget.max_total_turns === 99, `后继上限须取被授权的改动值：${JSON.stringify({ of: nm.successor_of, budget: nm.budget })}`);
+    assert(done.invokedPhases.length > 0, `后继首次调用不因继承旧上限而停：${done.invokedPhases.join(',')}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a2f7c9e4 §3.3 决策为起后继（预算耗尽但身份另有改动）：显式 --resume 不等冷却，但仍须 --force-resume', async () => {
+  const { root } = setupHost('codex');
+  try {
+    const run = await budgetExhaustedRun(root);
+    editRunBudget(root, run, 42, m => { m.unattended = { ...m.unattended, max_turns: 21 }; });
+    const plain = decideRunContinuation({ projectRoot: root, feature: FEATURE, call: { budgetOverride: true } });
+    assert(plain.kind === 'successor' && plain.change === 'budget_changed' && plain.targets.includes(run), `夹具：去掉显式旗标的决策须为起后继：${JSON.stringify(plain)}`);
+    const noForce = await withStderr(() => runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, resumeExtraArgs: ['--override-manifest'] }));
+    assert(noForce.value?.exitCode === 1 && /pass --force-resume/.test(noForce.stderr) && !/cooldown/.test(noForce.stderr),
+      `不带 --force-resume 须被拒且原因不是冷却：${noForce.stderr.slice(-400)}`);
+    const forced = await withStderr(() => runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, forceResume: true, resumeExtraArgs: ['--override-manifest'] }));
+    assert(!/cooldown/.test(forced.stderr), `冷却期内带 --force-resume 不得再被冷却拦：${forced.stderr.slice(-400)}`);
+    assert((forced.value?.invokedPhases.length ?? 0) > 0, `带 --force-resume 须立即原地恢复并调用阶段：${forced.error?.message ?? ''}`);
+    assert(runsWithManifest(root).length === 1, '原地恢复不起后继');
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a2f7c9e4 §3.3 两入口对照（非结构终局、无变化、5 分钟内）：普通重发保持停止；显式 --resume 被冷却拒，带 --force-resume 也照旧冷却', async () => {
+  const { root } = setupHost('codex');
+  try {
+    recordHvigorBuildOutcome(root, CAPABILITY_GAP);
+    const common = { freshEndPhase: 'coding', conditionWait: TINY_WAIT };
     await requestVia('foreground', root, common);
     const [run] = goalRunIds(root);
-    assert(lastRunEndOf(goalRunEvents(root, run))?.halt_reason === 'budget_turns', '夹具：首个请求须耗尽轮次预算');
-    const manifestPath = featureFilePath(root, FEATURE, `goal-runs/${run}/manifest.json`);
-    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { budget: { max_total_turns: number } };
-    m.budget.max_total_turns = 30;
-    fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n', 'utf-8');
-    const done = await requestVia('foreground', root, common);
-    const next = goalRunIds(root).find(id => id !== run);
-    assert(!!next, `改了预算须起后继：${goalRunIds(root).join(',')}`);
-    const nm = loadGoalManifestFromRun(root, next!, { feature: FEATURE });
-    assert(nm.successor_of === run && nm.budget.max_total_turns === 30, `后继须承接停机 run 并用改过的预算：${JSON.stringify({ of: nm.successor_of, budget: nm.budget })}`);
-    assert(done.invokedPhases.length > 0, `后继须继续执行：${done.invokedPhases.join(',')}`);
+    assert(goalRunEvents(root, run).some(e => e.type === 'phase_halt' && e.halt_reason === 'await_human_capability_gap'), '夹具：须停在能力缺口（非结构终局）');
+    const held = await requestVia('foreground', root, common);
+    assert(held.exitCode === 1 && goalRunIds(root).length === 1, `普通重发须保持停止：exit=${held.exitCode}`);
+    for (const forceResume of [false, true]) {
+      const r = await withStderr(() => runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, forceResume, conditionWait: TINY_WAIT }));
+      assert(r.value?.exitCode === 1 && /resume cooldown/.test(r.stderr) && (r.value?.invokedPhases.length ?? 0) === 0,
+        `显式 --resume${forceResume ? ' --force-resume' : ''} 须被冷却拒、零调用：${r.error?.message ?? r.stderr.slice(-300)}`);
+    }
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });

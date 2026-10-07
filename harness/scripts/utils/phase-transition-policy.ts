@@ -501,7 +501,8 @@ export function recommendationAuthorized(
   chain: string[],
   opts?: { startPhase?: string },
 ): boolean {
-  if (recommendation.action === 'stop') return false;
+  // feature_completed：完成评估已 VALID，没有可授权的执行。
+  if (recommendation.action === 'stop' || recommendation.action === 'feature_completed') return false;
   if (authorization.mode === 'goal_mode') return true;
   if (authorization.mode === 'manual') return false;
   if (!recommendation.phase || !authorization.through_phase) return false;

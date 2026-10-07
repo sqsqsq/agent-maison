@@ -47,6 +47,7 @@ import {
 } from './image-toolkit';
 const REFERENCE_VIEWPORT_ASPECT_TOLERANCE_TEXT = String(REFERENCE_VIEWPORT_ASPECT_TOLERANCE);
 import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
+import { isBlockingCheck } from '../../../harness/scripts/utils/check-disposition';
 import { loadRefElementsFile, refElementsAbsPath, type RefElementEntry, checkRequirementQuote, collectCurrentRequirementText } from '../../../harness/scripts/utils/fidelity-shared';
 import { collectLayoutOracleForScreen, loadLayoutDumpFile, LOCATOR_COVERAGE_THRESHOLD, type LayoutFinding } from './layout-oracle-check';
 import {
@@ -465,6 +466,30 @@ export interface CriticReceipt {
   /** t3b：验读覆盖缺口（runner 审计如实记录，unverified 档） */
   unread_screenshots?: string[];
   unread_crops?: string[];
+}
+
+/** 回执结构校验（门禁与 test-report 同一判据）：合法返回 null，否则返回拒绝原因。 */
+export function criticReceiptShapeError(raw: Record<string, unknown>): string | null {
+  if (
+    typeof raw.critic_run_id !== 'string' || !raw.critic_run_id.trim() ||
+    typeof raw.adapter !== 'string' || !raw.adapter.trim() ||
+    typeof raw.prompt_hash !== 'string' || !raw.prompt_hash.trim() ||
+    (raw.input_provenance !== 'verified' && raw.input_provenance !== 'unverified') ||
+    !Array.isArray(raw.image_inputs)
+  ) {
+    return '回执缺必填字段（critic_run_id/adapter/prompt_hash/input_provenance/image_inputs）';
+  }
+  if (
+    // rev8：空 image_inputs=声称跑了 critic 却没看任何图——任何档位拒绝（codex 反例实锤）
+    raw.image_inputs.length === 0 ||
+    !raw.image_inputs.every(i => i && typeof (i as { path?: unknown }).path === 'string' && ((i as { path: string }).path).trim())
+  ) {
+    return 'image_inputs 须非空且逐项含合法 path（空数组/坏条目=无视觉输入的"视觉评审"，拒绝）';
+  }
+  if (raw.input_provenance === 'verified' && (typeof raw.output_hash !== 'string' || !raw.output_hash.trim())) {
+    return 'provenance=verified 须带 output_hash（更强主张须更强证据，rev8）';
+  }
+  return null;
 }
 
 export interface VisualDiffScreenEntry {
@@ -1225,12 +1250,14 @@ interface VisualDiffHit {
   advisory?: boolean;
 }
 
-function visualDiffHitRank(severity: 'BLOCKER' | 'MAJOR', status: 'FAIL' | 'WARN'): number {
-  return severity === 'BLOCKER' || status === 'FAIL' ? 3 : 2;
+function visualDiffHitRank(hit: Omit<VisualDiffHit, 'rank'>): number {
+  // 真实阻断优先于非阻断失败——聚合顶条决定 visual_diff 的结论，不得被同轮 MAJOR/FAIL 按 id 排序吞掉。
+  if (isBlockingCheck(hit)) return 4;
+  return hit.severity === 'BLOCKER' || hit.status === 'FAIL' ? 3 : 2;
 }
 
 function pushVisualDiffHit(hits: VisualDiffHit[], hit: Omit<VisualDiffHit, 'rank'>): void {
-  hits.push({ ...hit, rank: visualDiffHitRank(hit.severity, hit.status) });
+  hits.push({ ...hit, rank: visualDiffHitRank(hit) });
 }
 
 function uiSpecCoversElementId(
@@ -1593,7 +1620,10 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const failScreens = effScreens.filter(s => s.verdict === 'fail');
   const warnScreens = rep.screens.filter(s => s.verdict === 'warn');
   const passScreens = rep.screens.filter(s => s.verdict === 'pass');
-  const deterministicScreens = rep.screens.filter(s => s.verdict === 'pass' || visualResidualDisposition(s) === 'minor');
+  // plan a2f7c9e4 §3.8：pass / minor 处置按授权过滤后的有效视图取（同屏 excluded major + 授权 minor 也受检；
+  // 原始 pass / minor 屏在有效视图中仍为 pass 或 minor，故受检集合是原始口径的超集）；保留原始对象供下游按引用过滤。
+  const deterministicScreens = rep.screens.filter((_, i) =>
+    effScreens[i].verdict === 'pass' || visualResidualDisposition(effScreens[i]) === 'minor');
   const skippedScreens = rep.screens.filter(s => s.verdict === 'skipped');
   const pendingScreens = rep.screens.filter(s => s.verdict === 'pending');
   const byScreenId = new Map(rep.screens.map(s => [s.screen_id, s] as const));
@@ -2362,25 +2392,9 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       } else {
         try {
           const raw = JSON.parse(fs.readFileSync(receiptAbs, 'utf-8')) as Record<string, unknown>;
-          if (
-            typeof raw.critic_run_id !== 'string' || !raw.critic_run_id.trim() ||
-            typeof raw.adapter !== 'string' || !raw.adapter.trim() ||
-            typeof raw.prompt_hash !== 'string' || !raw.prompt_hash.trim() ||
-            (raw.input_provenance !== 'verified' && raw.input_provenance !== 'unverified') ||
-            !Array.isArray(raw.image_inputs)
-          ) {
-            receiptErr = '回执缺必填字段（critic_run_id/adapter/prompt_hash/input_provenance/image_inputs）';
-          } else if (
-            // rev8：空 image_inputs=声称跑了 critic 却没看任何图——任何档位拒绝（codex 反例实锤）
-            raw.image_inputs.length === 0 ||
-            !raw.image_inputs.every(i => i && typeof (i as { path?: unknown }).path === 'string' && ((i as { path: string }).path).trim())
-          ) {
-            receiptErr = 'image_inputs 须非空且逐项含合法 path（空数组/坏条目=无视觉输入的"视觉评审"，拒绝）';
-          } else if (raw.input_provenance === 'verified' && (typeof raw.output_hash !== 'string' || !raw.output_hash.trim())) {
-            receiptErr = 'provenance=verified 须带 output_hash（更强主张须更强证据，rev8）';
-          } else {
-            receipt = raw as unknown as CriticReceipt;
-          }
+          const shapeError = criticReceiptShapeError(raw);
+          if (shapeError) receiptErr = shapeError;
+          else receipt = raw as unknown as CriticReceipt;
         } catch (e) {
           receiptErr = `回执解析失败：${(e as Error).message}`;
         }

@@ -10,7 +10,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
+import { clearFrameworkConfigCache, featureDir, featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
+import { computeHapBuildFingerprint } from '../../../profiles/hmos-app/harness/build-fingerprint';
+import { __testing_setVisualDiffOcrFn, checkVisualDiff, checkVisualDiffDeterministicOnly, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import { loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
+import { deriveVisualDebt, writeVisualDebt } from '../../scripts/utils/visual-debt';
 import { evaluateExecutionChannelDeclaration } from '../../scripts/utils/execution-channel';
 import { classifyPhaseAssessment } from '../../scripts/utils/phase-transition-policy';
 import {
@@ -97,7 +102,81 @@ function input(root: string, seeded: ReturnType<typeof seed>, overrides: Record<
   };
 }
 
-const cases: Array<{ name: string; run: () => void }> = [
+/** plan a2f7c9e4 §3.5：visual-diff + 截图 + 装机 HAP + 规范路径回执（宿主 d6d31d 同形：pass 屏 + provider minor warn 屏）。 */
+function seedVisual(root: string, reportsDir: string, opts: { failScreen?: boolean } = {}): { hap: string; receipt: string } {
+  const dev = path.join(featureDir(root, FEATURE), 'device-testing');
+  const hap = path.join(root, 'build', 'app-signed.hap');
+  fs.mkdirSync(path.dirname(hap), { recursive: true });
+  fs.writeFileSync(hap, 'hap-v1');
+  writeJson(path.join(reportsDir, 'device-test-install.meta.json'), { hapPath: hap });
+  const fp = computeHapBuildFingerprint(hap)!;
+  const screens = ['home', 'sheet', ...(opts.failScreen ? ['result'] : [])].map(id => {
+    const rel = `${path.relative(root, dev).replace(/\\/g, '/')}/device-screenshots/shot-${id}.png`;
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), `png-${id}`);
+    const hash = hashScreenshotFile(path.join(root, rel))!;
+    const base = { screen_id: id, ref_id: `${id}_ref`, screenshot_path: rel, screenshot_hash: hash, evaluated_screenshot_hash: hash, evaluated_build_fingerprint: fp, reverse_missing: [] };
+    if (id === 'sheet') {
+      return { ...base, verdict: 'warn', must_fix: ['文案补回银行名称'], defects: [{ class: 'other', severity: 'minor', element: 'cts_notice', note: '小字文案与参考图不一致', must_fix_refs: [0], source: { producer: 'visual_provider', invoke_id: 'review-i34-4' } }] };
+    }
+    if (id === 'result') {
+      return { ...base, verdict: 'fail', must_fix: ['修复结果图标裁切'], defects: [{ class: 'clipping', severity: 'major', element: 'result_icon', note: '结果图标被裁切', must_fix_refs: [0] }] };
+    }
+    return { ...base, verdict: 'pass', must_fix: [], defects: [] };
+  });
+  writeJson(path.join(dev, 'device-screenshots', 'visual-diff.json'), { schema_version: '1.1', screens });
+  const receipt = path.join(dev, 'reports', 'critic-receipt.json');
+  writeJson(receipt, {
+    schema_version: '1.1', critic_run_id: 'run-i34', adapter: 'claude', prompt_hash: 'abc', input_provenance: 'unverified',
+    image_inputs: screens.map(s => ({ path: s.screenshot_path, hash: s.screenshot_hash })),
+  });
+  return { hap, receipt };
+}
+
+const ANCHORS = ['余额', '添卡', '最近交易'];
+
+/** 裁决 2：真实 visual_diff 门禁产出结构化结论（hard 档 T1 blocker / soft 档 provider major），交给报告生成器。 */
+async function runVisualGate(root: string, tier: 'hard' | 'soft', opts: { omitSchemaVersion?: boolean } = {}): Promise<ReturnType<typeof checkVisualDiff>[number]> {
+  const f = (rel: string) => path.join(featureDir(root, FEATURE), rel);
+  fs.mkdirSync(f('spec'), { recursive: true });
+  fs.writeFileSync(f('spec/spec.md'), `\`\`\`yaml\nui_change: new_or_changed\nvisual_handoff:\n  authoritative_refs:\n    - id: home\n      path: doc/features/${FEATURE}/ux-reference/ref.png\n\`\`\`\n`);
+  writeJson(f('spec/ui-spec.yaml'), { schema_version: '1.0', screens: [{ id: 'home', priority: 'P0', root: {
+    id: 'home_root', type: 'navigation_frame', order: 0,
+    children: ANCHORS.map((text, order) => ({ id: `anchor${order}`, type: 'content_display', text, order })),
+  } }], tokens: {}, assets: [] });
+  fs.mkdirSync(f('device-testing/device-screenshots'), { recursive: true });
+  fs.writeFileSync(f('device-testing/visual-diff.md'), '# Visual diff\n');
+  const shotRel = `doc/features/${FEATURE}/device-testing/device-screenshots/shot-home.png`;
+  const Jimp = require('jimp');
+  await new Jimp(12, 12, 0xff0000ff).writeAsync(path.join(root, shotRel));
+  fs.mkdirSync(f('ux-reference'), { recursive: true });
+  fs.copyFileSync(path.join(root, shotRel), f('ux-reference/ref.png'));
+  const hash = hashScreenshotFile(path.join(root, shotRel));
+  const defect = tier === 'hard'
+    ? { class: 'other', severity: 'minor', element: 'anchor0', note: 'minor colour detail', must_fix_refs: [0] }
+    : { class: 'other', severity: 'major', element: 'anchor0', note: 'provider major detail', must_fix_refs: [0], source: { producer: 'visual_provider', invoke_id: 'review-x' } };
+  writeJson(f('device-testing/device-screenshots/visual-diff.json'), { ...(opts.omitSchemaVersion ? {} : { schema_version: '1.1' }), screens: [{
+    screen_id: 'home', ref_id: 'home', verdict: 'warn', screenshot_path: shotRel, screenshot_hash: hash, evaluated_screenshot_hash: hash,
+    fidelity_score: 0.99, reverse_missing: [], must_fix: ['fix detail'], defects: [defect],
+    region_attest: [{ region: 'root', verdict: 'no_diff', method: 'vl_screening' }],
+  }] });
+  // hard：OCR 读不到锚点 → T1 整块缺失 BLOCKER；soft：锚点齐全，provider major 只记债务
+  __testing_setVisualDiffOcrFn(() => ({ ok: true, width: 12, height: 12, text: '', words: tier === 'hard' ? [] :
+    ANCHORS.map((text, index) => ({ text, conf: 90, bbox: [0.1, 0.1 + index * 0.2, 0.3, 0.05] })) }) as never);
+  try {
+    clearFrameworkConfigCache();
+    return checkVisualDiff({ phase: 'testing', projectRoot: root, feature: FEATURE, frameworkRoot: path.resolve(__dirname, '../../..'),
+      phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual' } } }, featureSpec: { feature: FEATURE },
+      resolvedProfile: loadResolvedProfile(root, loadFrameworkConfig(root)), fidelityTarget: 'pixel_1to1',
+      acceptanceStrictness: tier === 'hard' ? 'hard' : 'best_effort' } as never)
+      .find(check => (check.structured as { kind?: string })?.kind === 'visual_diff')!;
+  } finally {
+    __testing_setVisualDiffOcrFn(null);
+    clearFrameworkConfigCache();
+  }
+}
+
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: '全过 + 1 条 gap：既有解析器逐格读回，timing/trace 对账零失配，结论有条件达标（gap 与稳定性 UNKNOWN 披露）',
     run: () => {
@@ -154,16 +233,93 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '弱化旗标在场：报告披露旗标、区分执行完成与验收通过，且结论不为达标',
+    name: '弱化旗标在场（a2f7c9e4 §3.5）：显式断言通过数与被跳过的自然语言预期分别列出，旗标只限定被跳过的部分，且结论不为达标',
     run: () => {
       const root = mkProject();
       try {
         const seeded = seed(root);
+        const trace = JSON.parse(fs.readFileSync(seeded.tracePath, 'utf-8')) as Record<string, any>;
+        for (const c of trace.cases) {
+          c.expected_check_mode = 'disabled_by_flag';
+          c.steps.push({ index: c.steps.length, kind: 'expected_check', role: 'assertion', duration_ms: 0, device_session: null, artifacts: [], diagnostic: null,
+            extensions: {}, selector: null, outcome: { status: 'skipped', reason: { type: 'policy', code: 'expected_check.disabled_by_flag' } } });
+        }
+        writeJson(seeded.tracePath, trace);
         writeJson(path.join(seeded.reportsDir, 'device-test-run.meta.json'), { command: 'hylyre run --plan x --skip-assert-expected' });
         const gen = generateTestReport(input(root, seeded));
         assert.ok(gen.content.includes('--skip-assert-expected'), '披露旗标');
-        assert.ok(/执行完成/.test(gen.content) && /非验收通过/.test(gen.content), '区分口径');
+        assert.ok(gen.content.includes('显式断言 2/2 通过，自然语言预期跳过 2 条'), '两类计数分别出现');
+        assert.ok(/非验收通过/.test(gen.content), '被跳过部分仍声明非验收通过');
+        assert.ok(!/仅表示动作链执行完成|仅为动作链执行完成/.test(gen.content), '旗标不得概括全部「通过」');
+        assert.ok(gen.conclusion.gaps.some(g => g.includes('自然语言预期跳过 2 条')), JSON.stringify(gen.conclusion.gaps));
         assert.notStrictEqual(parseReportConclusionVerdict(gen.content), '达标');
+        // 无结构化断言步骤（无从限定被跳过的部分）时保留整体弱化口径
+        for (const c of trace.cases) c.steps = [];
+        writeJson(seeded.tracePath, trace);
+        const legacy = generateTestReport(input(root, seeded));
+        assert.ok(legacy.conclusion.gaps.some(g => g.includes('仅为动作链执行完成')), JSON.stringify(legacy.conclusion.gaps));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 §3.5 视觉同源：有效视图 minor 屏计入已评估（几何 PASS）且列「披露」；规范路径回执覆盖当前截图 hash 与构建 → 内容/样式已复核',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        seedVisual(root, seeded.reportsDir);
+        const gen = generateTestReport(input(root, seeded));
+        assert.strictEqual(gen.conclusion.visual_geometry, 'PASS', gen.conclusion.gaps.join('；'));
+        assert.strictEqual(gen.conclusion.visual_content, 'CHECKED');
+        assert.strictEqual(gen.conclusion.visual_style, 'CHECKED');
+        assert.ok(!gen.conclusion.gaps.some(g => g.startsWith('视觉')), JSON.stringify(gen.conclusion.gaps));
+        assert.ok(/\| DEF-V001 \|[^\n]*\| MINOR \|[^\n]*\| 披露 \|/.test(gen.content), gen.content.split('\n').filter(l => l.startsWith('| DEF')).join('\n'));
+        assert.ok(/\| MINOR \| 1 \| 0 \|/.test(gen.content), '披露不计入待修复');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 §3.5 反例：回执不绑定当前输入（截图 hash 不覆盖 / 构建指纹已变 / 只在旧 device-screenshots 路径）→ 内容/样式 UNKNOWN',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        const { hap, receipt } = seedVisual(root, seeded.reportsDir);
+        const content = () => generateTestReport(input(root, seeded)).conclusion.visual_content;
+        assert.strictEqual(content(), 'CHECKED', '前提：绑定时已复核');
+        const original = fs.readFileSync(receipt, 'utf-8');
+        const doc = JSON.parse(original);
+        doc.image_inputs[0].hash = '0000000000000000';
+        fs.writeFileSync(receipt, JSON.stringify(doc));
+        assert.strictEqual(content(), 'UNKNOWN', '回执 hash 未覆盖当前截图');
+        fs.writeFileSync(receipt, original);
+        fs.writeFileSync(hap, 'hap-v2');
+        assert.strictEqual(content(), 'UNKNOWN', '构建已换，判定不再绑定当前构建');
+        fs.writeFileSync(hap, 'hap-v1');
+        const legacy = path.join(featureDir(root, FEATURE), 'device-testing', 'device-screenshots', 'critic-receipt.json');
+        fs.renameSync(receipt, legacy);
+        assert.strictEqual(content(), 'UNKNOWN', '旧路径回执不是门禁读取的规范路径');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 §3.5 仍有有效 fail 屏 → 视觉几何 FAIL，该屏 MAJOR「待修复」（minor 屏仍为披露）',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        seedVisual(root, seeded.reportsDir, { failScreen: true });
+        const gen = generateTestReport(input(root, seeded));
+        assert.strictEqual(gen.conclusion.visual_geometry, 'FAIL');
+        assert.ok(gen.conclusion.gaps.includes('视觉几何 FAIL'), JSON.stringify(gen.conclusion.gaps));
+        assert.ok(/\| DEF-V\d+ \|[^\n]*\| MAJOR \| 视觉 fail：屏 result[^\n]*\| 待修复 \|/.test(gen.content), gen.content.split('\n').filter(l => l.startsWith('| DEF')).join('\n'));
+        assert.ok(/\| DEF-V\d+ \|[^\n]*\| MINOR \| 视觉 warn：屏 sheet[^\n]*\| 披露 \|/.test(gen.content));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -242,6 +398,156 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'a2f7c9e4 裁决 2：总体结论取 testing gate 的 visual_diff 结论——hard 档 blocker → FAILED；soft 档 provider major → 有条件达标且债务 open',
+    run: async () => {
+      for (const tier of ['hard', 'soft'] as const) {
+        const root = mkProject();
+        try {
+          writeJson(path.join(root, 'framework.config.json'), { schema_version: '1.1', project_name: 'test', project_profile: { name: 'hmos-app', sub_variant: 'app' }, paths: { features_dir: 'doc/features' } });
+          clearFrameworkConfigCache();
+          const seeded = seed(root);
+          const gate = await runVisualGate(root, tier);
+          if (tier === 'hard') {
+            assert.ok(gate.status === 'FAIL' && gate.severity === 'BLOCKER', `前提：hard 档门禁阻断：${gate.status}/${gate.severity} ${gate.details}`);
+            const gen = generateTestReport(input(root, seeded, { visualChecks: [gate] }));
+            assert.strictEqual(gen.conclusion.overall, 'FAILED', gen.conclusion.gaps.join('；'));
+            assert.strictEqual(parseReportConclusionVerdict(gen.content), '不达标');
+            assert.ok(gen.conclusion.gaps.some(g => g.startsWith('视觉门禁阻断')), JSON.stringify(gen.conclusion.gaps));
+            // 生产接线：check-testing 报告重写从本轮 check 结果取 visual_diff 结论
+            const { regenerateTestReport } = require('../../scripts/check-testing') as typeof import('../../scripts/check-testing');
+            const written = regenerateTestReport(
+              { projectRoot: root, feature: FEATURE, phase: 'testing' } as never, { hylyreTracePath: seeded.tracePath } as never,
+              PLAN_MD, evaluateExecutionChannelDeclaration(PLAN_MD), [gate], [],
+            );
+            assert.strictEqual(parseReportConclusionVerdict(written ?? ''), '不达标', '接线：门禁阻断须进入写盘报告');
+          } else {
+            assert.ok(gate.status !== 'FAIL' && gate.severity !== 'BLOCKER', `前提：soft 档门禁不阻断：${gate.status}/${gate.severity} ${gate.details}`);
+            const debt = deriveVisualDebt(FEATURE, [gate as never], null);
+            assert.ok(debt.entries.some(e => e.status === 'open'), `soft 档 provider major 须进债务 open：${JSON.stringify(debt.entries)}`);
+            writeVisualDebt(root, debt);
+            const gen = generateTestReport(input(root, seeded, { visualChecks: [gate] }));
+            assert.strictEqual(gen.conclusion.overall, 'COMPLETE_WITH_GAPS', gen.conclusion.gaps.join('；'));
+            assert.strictEqual(parseReportConclusionVerdict(gen.content), '有条件达标');
+            assert.ok(gen.conclusion.gaps.some(g => /^视觉债务 open=[1-9]/.test(g)), JSON.stringify(gen.conclusion.gaps));
+          }
+        } finally {
+          clearFrameworkConfigCache();
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 返修 B2-1：非致命 schema 错误（MAJOR/FAIL）+ hard 档 T1 锚点缺失（BLOCKER/FAIL）→ 门禁聚合为 BLOCKER，写盘报告总体 FAILED',
+    run: async () => {
+      const root = mkProject();
+      try {
+        writeJson(path.join(root, 'framework.config.json'), { schema_version: '1.1', project_name: 'test', project_profile: { name: 'hmos-app', sub_variant: 'app' }, paths: { features_dir: 'doc/features' } });
+        clearFrameworkConfigCache();
+        const seeded = seed(root);
+        const gate = await runVisualGate(root, 'hard', { omitSchemaVersion: true });
+        assert.ok(/visual-diff\.json 结构问题/.test(gate.details) && /锚点文本整块缺失/.test(gate.details), `前提：两条命中同时在场：${gate.details}`);
+        assert.ok(gate.status === 'FAIL' && gate.severity === 'BLOCKER', `聚合顶条须为真实阻断：${gate.status}/${gate.severity}`);
+        const { regenerateTestReport } = require('../../scripts/check-testing') as typeof import('../../scripts/check-testing');
+        const written = regenerateTestReport(
+          { projectRoot: root, feature: FEATURE, phase: 'testing' } as never, { hylyreTracePath: seeded.tracePath } as never,
+          PLAN_MD, evaluateExecutionChannelDeclaration(PLAN_MD), [gate], [],
+        );
+        assert.strictEqual(parseReportConclusionVerdict(written ?? ''), '不达标');
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 返修 B2-2：report-only（visual_diff=SKIP）+ 独立确定性检查 visual_diff_tamper_artifact BLOCKER → 写盘报告总体 FAILED',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        const tamper = path.join(featureDir(root, FEATURE), 'device-testing', 'fix-visual.js');
+        fs.mkdirSync(path.dirname(tamper), { recursive: true });
+        fs.writeFileSync(tamper, "const doc = JSON.parse(fs.readFileSync('visual-diff.json'));\nfor (const s of doc.screens) s.verdict = 'pass';\n");
+        const ctx = { projectRoot: root, feature: FEATURE, phase: 'testing' } as never;
+        // check-testing report-only 分支的结果形状：聚合 visual_diff SKIP + 确定性检查的独立结果
+        const results = [
+          { id: 'visual_diff', category: 'structure', description: 'visual', severity: 'MAJOR', status: 'SKIP', details: 'report-only' },
+          ...checkVisualDiffDeterministicOnly(ctx),
+        ];
+        assert.ok(results.some(r => r.id === 'visual_diff_tamper_artifact' && r.status === 'FAIL' && r.severity === 'BLOCKER'), `前提：确定性红线命中：${JSON.stringify(results.map(r => [r.id, r.status, r.severity]))}`);
+        const { regenerateTestReport } = require('../../scripts/check-testing') as typeof import('../../scripts/check-testing');
+        const written = regenerateTestReport(ctx, { hylyreTracePath: seeded.tracePath } as never, PLAN_MD, evaluateExecutionChannelDeclaration(PLAN_MD), results as never, []);
+        assert.strictEqual(parseReportConclusionVerdict(written ?? ''), '不达标', '独立视觉 blocker 不得被漏读');
+        assert.ok((written ?? '').includes('visual_diff_tamper_artifact'), '缺口须点名阻断检查');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 返修 B2-2 残留：视觉块内独立的 runtime_mount_conformance BLOCKER（visual_diff 仅 WARN）→ 写盘报告不达标；同形 MAJOR/WARN 不单独触发；视觉块外的非视觉结果不计入',
+    run: () => {
+      const { regenerateTestReport, visualChecksOfRound } = require('../../scripts/check-testing') as typeof import('../../scripts/check-testing');
+      // 结果形状取自生产者契约：checkVisualDiff 聚合 visual_diff + runtime-mount-conformance.ts 的 hard/soft 分支
+      const check = (id: string, severity: string, status: string) => ({ id, category: 'structure', description: id, severity, status, details: id });
+      const round = (mount: 'hard' | 'soft') => [
+        check('visual_diff_capture', 'MINOR', 'PASS'),
+        check('device_test_run_probe', 'BLOCKER', 'FAIL'),
+        check('visual_diff', 'MAJOR', 'WARN'),
+        mount === 'hard' ? check('runtime_mount_conformance', 'BLOCKER', 'FAIL') : check('runtime_mount_conformance', 'MAJOR', 'WARN'),
+        check('report_reconcile_only', 'BLOCKER', 'FAIL'),
+      ];
+      const block = { start: 2, end: 4 };
+      assert.deepStrictEqual(visualChecksOfRound(round('hard') as never, block).map(c => c.id),
+        ['visual_diff_capture', 'visual_diff', 'runtime_mount_conformance'], '按来源取视觉块 + 采集阶段 visual_diff*，块外非视觉结果不计');
+      assert.deepStrictEqual(visualChecksOfRound([...round('hard'), check('visual_diff_late', 'BLOCKER', 'FAIL')] as never, block).map(c => c.id),
+        ['visual_diff_capture', 'visual_diff', 'runtime_mount_conformance'], '前缀只补视觉块之前（采集阶段）的结果，块后不补');
+      for (const mount of ['hard', 'soft'] as const) {
+        const root = mkProject();
+        try {
+          const seeded = seed(root);
+          const written = regenerateTestReport(
+            { projectRoot: root, feature: FEATURE, phase: 'testing' } as never, { hylyreTracePath: seeded.tracePath } as never,
+            PLAN_MD, evaluateExecutionChannelDeclaration(PLAN_MD), round(mount) as never, [], block,
+          ) ?? '';
+          if (mount === 'hard') {
+            assert.strictEqual(parseReportConclusionVerdict(written), '不达标', '独立挂载 BLOCKER 不得被漏读');
+            assert.ok(written.includes('runtime_mount_conformance BLOCKER') || written.includes('runtime_mount_conformance FAIL'), '缺口须点名挂载检查');
+          } else {
+            assert.strictEqual(parseReportConclusionVerdict(written), '有条件达标', 'soft/WARN 不单独触发 FAILED，块外 BLOCKER 不计入视觉结论');
+          }
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 返修 B2-3：弱化旗标在场但零跳过、无其它缺口 → 报告「有条件达标」并保留准确计数，生成后弱化旗标门禁不 FAIL',
+    run: () => {
+      const root = mkProject();
+      try {
+        const seeded = seed(root);
+        const nativePlan = PLAN_MD.split('\n').filter(line => !line.startsWith('| TC-003 ')).join('\n');
+        writeJson(path.join(seeded.reportsDir, 'device-test-run.meta.json'), { command: 'hylyre run --plan x --skip-assert-expected', run_started_at: '2026-09-03T00:01:30.000Z' });
+        writeJson(path.join(seeded.reportsDir, 'stability.json'), { rows: [
+          { tc_id: 'TC-001', rounds: 2, consistent: 2, first_divergent_step: null },
+          { tc_id: 'TC-002', rounds: 2, consistent: 2, first_divergent_step: null },
+        ] });
+        const gen = generateTestReport(input(root, seeded, { planMd: nativePlan, channelDecl: evaluateExecutionChannelDeclaration(nativePlan) }));
+        assert.strictEqual(parseReportConclusionVerdict(gen.content), '有条件达标', gen.conclusion.gaps.join('；'));
+        assert.deepStrictEqual(gen.conclusion.gaps.length, 1, `前提：弱化旗标是唯一缺口：${JSON.stringify(gen.conclusion.gaps)}`);
+        assert.ok(gen.conclusion.gaps[0].includes('自然语言预期跳过 0 条') && gen.conclusion.gaps[0].includes('显式断言 2 条通过'), gen.conclusion.gaps[0]);
+        const { checkSkipFlagDisclosure } = require('../../scripts/check-testing') as typeof import('../../scripts/check-testing');
+        const issues = checkSkipFlagDisclosure({ projectRoot: root, feature: FEATURE, phase: 'testing' } as never, gen.content);
+        assert.deepStrictEqual(issues, [], `生成的报告不得被弱化旗标门禁否决：${issues.join('；')}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: '写盘：首次覆盖手写报告 → 旧文迁 testing/notes.legacy-report.md；再次生成不重复迁移',
     run: () => {
       const root = mkProject();
@@ -264,11 +570,11 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
     try {
-      c.run();
+      await c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });

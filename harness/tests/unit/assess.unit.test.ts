@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { spawnSync } from 'child_process';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -26,6 +27,8 @@ import {
   assessAndRenderNextStep,
   formatAssessNextStep,
 } from '../../scripts/utils/assess-renderer';
+import { selectRunnerActionFromAssess } from '../../scripts/utils/goal-assess-driver';
+import { recommendationAuthorized } from '../../scripts/utils/phase-transition-policy';
 
 export interface UnitCaseResult {
   name: string;
@@ -362,6 +365,70 @@ const cases: Case[] = [
       } finally {
         clearFrameworkConfigCache();
         fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    // plan a2f7c9e4 §3.4：宿主 d6d31d 同形（记录 VALID、CU 出生链 coding→review→ut、spec summary 缺）。
+    name: 'a2f7c9e4 无 run：完成评估已 VALID → feature_completed/VALIDATED、无授权请求、gaps 空、观察链取记录 run 范围；渲染 none、driver advance、不授权执行',
+    run: () => {
+      const s = loadHostSnapshot();
+      try {
+        clearFrameworkConfigCache();
+        const feature = SNAPSHOT_CU_FEATURE;
+        const r = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
+        assert(r.recommendation.action === 'feature_completed' && r.recommendation.phase === null, JSON.stringify(r.recommendation));
+        assert(r.recommendation.requires_driver_authorization === false, JSON.stringify(r.recommendation));
+        assert(r.feature_completion === 'VALIDATED' && r.run_status_candidate === 'CHAIN_SLICE_COMPLETED', `${r.feature_completion}/${r.run_status_candidate}`);
+        assert(r.gaps.length === 0, `已完成不得保留缺口：${JSON.stringify(r.gaps)}`);
+        const chain = r.observed.phases.map(p => p.phase);
+        assert(JSON.stringify(chain) === '["coding","review","ut"]', `观察链须为记录 run 的执行范围：${JSON.stringify(chain)}`);
+        const rendered = formatAssessNextStep(r, { phase: 'ut', mode: 'manual', status: 'PASS/closed' });
+        assert(rendered.includes('recommendation=feature_completed') && rendered.includes('authorization=none'), rendered);
+        const action = selectRunnerActionFromAssess({
+          assessment: r, observation: { schema_version: '1.0', state: 'active', residual_fingerprints: [] } as never,
+          currentPhase: 'ut', chain, driverGuardAction: 'none',
+        });
+        assert(action === 'advance', `driver 映射须为 advance：${action}`);
+        assert(!recommendationAuthorized(r.recommendation, { mode: 'goal_mode' }, chain), 'feature_completed 没有可授权的执行');
+        // 观察器另有缺口（快照 coding assurance=degraded，调用方要求 full）时，缺口仍以唯一完成评估为准；observed 原样保留。
+        const strict = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, minimumAssurance: { coding: 'full' }, writeProjection: false });
+        assert(strict.recommendation.action === 'feature_completed' && strict.gaps.length === 0, JSON.stringify({ rec: strict.recommendation, gaps: strict.gaps }));
+        assert(strict.observed.phases.find(p => p.phase === 'coding')?.assurance_satisfied === false, '观察事实须原样保留');
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(s.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'a2f7c9e4 反例：完成原件校验失败（义务仍覆盖）→ 仍推荐 validate_feature_completion/REQUIRES_VALIDATION；删掉完成记录 → 不输出已完成投影',
+    run: () => {
+      const s = loadHostSnapshot();
+      try {
+        clearFrameworkConfigCache();
+        const feature = SNAPSHOT_CU_FEATURE;
+        const projectionFile = featureFilePath(s.root, feature, 'feature-completion.json');
+        const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
+        const originalFile = path.join(s.root, projection.original_path);
+        const original = JSON.parse(fs.readFileSync(originalFile, 'utf8'));
+        original.phases[1].run_id = '20260101T000000Z-f0f0f0';
+        const text = JSON.stringify(original, null, 2) + '\n';
+        fs.writeFileSync(originalFile, text);
+        fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
+        const broken = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
+        assert(broken.recommendation.action === 'validate_feature_completion', JSON.stringify(broken.recommendation));
+        assert(broken.recommendation.requires_driver_authorization === true, JSON.stringify(broken.recommendation));
+        assert(broken.feature_completion === 'REQUIRES_VALIDATION', String(broken.feature_completion));
+        assert(formatAssessNextStep(broken, { phase: 'ut', mode: 'manual', status: 'PASS' }).includes('authorization=driver_required'), 'broken 记录须要求驱动授权');
+
+        fs.rmSync(projectionFile);
+        const absent = assessFeature({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, writeProjection: false });
+        assert(absent.recommendation.action !== 'feature_completed' && absent.feature_completion !== 'VALIDATED', JSON.stringify(absent.recommendation));
+        assert(absent.recommendation.requires_driver_authorization === true, JSON.stringify(absent.recommendation));
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(s.root, { recursive: true, force: true });
       }
     },
   },

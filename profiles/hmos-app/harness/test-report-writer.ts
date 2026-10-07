@@ -29,9 +29,21 @@ import {
 import type { ExecutionChannelDeclarationResult } from '../../../harness/scripts/utils/execution-channel';
 import type { ChannelEvidenceBinding } from '../../../harness/scripts/utils/execution-channel-evidence';
 import { countBlockingDebt, loadVisualDebtEx } from '../../../harness/scripts/utils/visual-debt';
+import { isBlockingCheck, type DispositionCheck } from '../../../harness/scripts/utils/check-disposition';
 import { parseHylyreTrace, type HylyreTrace, type HylyreTraceCase } from './providers/device-test-run';
 import type { DeviceTestTimingDocument } from './device-test-timings';
-import { validateVisualDiffJson } from './visual-diff-check';
+import {
+  criticReceiptShapeError,
+  effectiveScreens,
+  hashScreenshotFile,
+  isCaptureMutableVerdict,
+  isMissingEvaluatedScreenshotHash,
+  isStaleVisualDiffVerdict,
+  loadRepairAuthorityScope,
+  validateVisualDiffJson,
+  visualResidualDisposition,
+} from './visual-diff-check';
+import { resolveCurrentBuildFingerprint } from './build-fingerprint';
 import { collectP0VisualTargetIds } from './visual-diff-targets';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
 
@@ -49,6 +61,8 @@ export interface TestReportWriterInput {
   channelDecl: ExecutionChannelDeclarationResult;
   /** visual/channel/P0 共用的逐 TC 机器裁决；不在 writer 内重算。 */
   channelEvidenceBindings?: readonly ChannelEvidenceBinding[];
+  /** testing gate 本轮视觉检查结果集合（visual_diff* 与 visual_reference_viewport）；其中任一真实阻断时总体结论 FAILED。缺省 = 调用方未提供。 */
+  visualChecks?: readonly DispositionCheck[];
   now?: () => Date;
 }
 
@@ -189,36 +203,55 @@ function severityFor(priority: string): DefectRow['severity'] {
 
 interface VisualFacts {
   available: boolean;
-  screens: Array<{ screen_id: string; verdict: string; defects: number; must_fix: number; note: string }>;
-  critic_receipt: boolean;
+  /** 授权过滤后的有效视图（与 visual_diff 门禁同一来源）；`minor` = 有效处置为 minor 的披露屏。 */
+  screens: Array<{ screen_id: string; verdict: string; defects: number; must_fix: number; note: string; minor: boolean; reviewed: boolean }>;
   measure: Map<string, { geometry: AxisStatus; detail: string }>;
+}
+
+/**
+ * 回执结构合法（门禁同一判据）时返回其 image_inputs 声明的截图 hash 集合；规范路径
+ * `device-testing/reports/critic-receipt.json`（visual-provider-review 写入、门禁读取的同一路径）。
+ */
+function criticReceiptImageHashes(projectRoot: string, feature: string): Set<string> {
+  const raw = readJson<Record<string, unknown>>(path.join(featureDir(projectRoot, feature), 'device-testing', 'reports', 'critic-receipt.json'));
+  if (!raw || typeof raw !== 'object' || criticReceiptShapeError(raw)) return new Set();
+  return new Set((raw.image_inputs as Array<{ hash?: unknown }>)
+    .map(i => (typeof i.hash === 'string' ? i.hash.trim() : ''))
+    .filter(h => h.length > 0));
 }
 
 function collectVisualFacts(projectRoot: string, feature: string): VisualFacts {
   const dir = path.join(featureDir(projectRoot, feature), 'device-testing', 'device-screenshots');
-  const out: VisualFacts = { available: false, screens: [], critic_receipt: false, measure: new Map() };
+  const out: VisualFacts = { available: false, screens: [], measure: new Map() };
   const raw = readJson<unknown>(path.join(dir, 'visual-diff.json'));
   if (raw) {
     const validated = validateVisualDiffJson(raw, projectRoot);
     if (validated.report && !validated.fatal) {
       out.available = true;
-      for (const s of validated.report.screens ?? []) {
-        const defects = Array.isArray((s as { defects?: unknown[] }).defects) ? (s as { defects: unknown[] }).defects : [];
-        const mustFix = Array.isArray((s as { must_fix?: unknown[] }).must_fix) ? (s as { must_fix: unknown[] }).must_fix : [];
-        const firstNote = defects
-          .map(d => (d && typeof d === 'object' ? String((d as { note?: unknown }).note ?? '') : ''))
-          .find(n => n.trim().length > 0) ?? '';
+      // plan a2f7c9e4 §3.5：消费门禁同一有效视图与新鲜度判据，不自行推导第二套结论。
+      const view = effectiveScreens(validated.report, loadRepairAuthorityScope(projectRoot, feature));
+      const currentBuildFingerprint = resolveCurrentBuildFingerprint(projectRoot, feature);
+      const receiptHashes = criticReceiptImageHashes(projectRoot, feature);
+      for (const s of view.screens) {
+        const defects = s.defects ?? [];
+        const firstNote = defects.map(d => String(d?.note ?? '')).find(n => n.trim().length > 0) ?? '';
+        const shot = typeof s.screenshot_path === 'string' && s.screenshot_path.trim() ? s.screenshot_path : null;
+        const currentHash = shot ? hashScreenshotFile(path.resolve(projectRoot, shot)) : null;
+        // 已复核 = 已定稿判定绑定当前截图 hash 与构建指纹，且结构合法的规范路径回执覆盖当前截图 hash。
+        const reviewed = !isCaptureMutableVerdict(s.verdict) && !isMissingEvaluatedScreenshotHash(s) && currentHash !== null &&
+          !isStaleVisualDiffVerdict(s, projectRoot, { currentBuildFingerprint }) && receiptHashes.has(currentHash);
         out.screens.push({
           screen_id: String(s.screen_id ?? ''),
           verdict: String(s.verdict ?? ''),
           defects: defects.length,
-          must_fix: mustFix.length,
+          must_fix: (s.must_fix ?? []).length,
           note: firstNote,
+          minor: s.verdict === 'warn' && visualResidualDisposition(s) === 'minor',
+          reviewed,
         });
       }
     }
   }
-  out.critic_receipt = fs.existsSync(path.join(dir, 'critic-receipt.json'));
   try {
     for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
       const m = /^measure-(.+)\.json$/.exec(f);
@@ -367,7 +400,8 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
       cases: related.join(', '),
       severity: s.verdict === 'fail' ? 'MAJOR' : 'MINOR',
       description: `视觉 ${s.verdict}：屏 ${s.screen_id}，defects=${s.defects}，must_fix=${s.must_fix}${s.note ? `；${s.note}` : ''}`,
-      status: '待修复',
+      // minor 残差只披露、不返修（与门禁有效视图同口径）
+      status: s.minor ? '披露' : '待修复',
     });
   }
 
@@ -413,30 +447,46 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
   // 视觉轴只在 feature 确有视觉面（有 visual-diff.json 或 P0 checkpoint 屏）时才计入缺口
   const visualApplicable = visual.available || p0Screens.size > 0;
   let visualGeometry: AxisStatus = visualApplicable ? 'UNKNOWN' : 'NOT_APPLICABLE';
+  const relevantScreens = visual.screens.filter(s =>
+    canonicalP0Targets.size > 0 ? canonicalP0Targets.has(s.screen_id) : p0Screens.size === 0 || p0Screens.has(s.screen_id));
   if (!visualApplicable) {
     /* 无视觉面：三轴 NOT_APPLICABLE，不进缺口 */
   } else if (visual.measure.size > 0) {
     const statuses = [...visual.measure.values()].map(m => m.geometry);
     visualGeometry = statuses.some(s => s === 'FAIL') ? 'FAIL' : statuses.every(s => s === 'PASS') ? 'PASS' : 'UNKNOWN';
   } else if (visual.available && visual.screens.length > 0) {
-    const relevant = visual.screens.filter(s =>
-      canonicalP0Targets.size > 0 ? canonicalP0Targets.has(s.screen_id) : p0Screens.size === 0 || p0Screens.has(s.screen_id));
-    visualGeometry = relevant.some(s => s.verdict === 'fail') ? 'FAIL'
-      : relevant.length > 0 && relevant.every(s => s.verdict === 'pass') ? 'PASS' : 'UNKNOWN';
+    // minor 披露屏已评估（WARN 披露），不再因不是 raw pass 而记 UNKNOWN
+    visualGeometry = relevantScreens.some(s => s.verdict === 'fail') ? 'FAIL'
+      : relevantScreens.length > 0 && relevantScreens.every(s => s.verdict === 'pass' || s.minor) ? 'PASS' : 'UNKNOWN';
   }
-  const visualContent: CheckStatus = !visualApplicable ? 'NOT_APPLICABLE' : visual.critic_receipt ? 'CHECKED' : 'UNKNOWN';
-  const visualStyle: CheckStatus = !visualApplicable ? 'NOT_APPLICABLE' : visual.critic_receipt ? 'CHECKED' : 'UNKNOWN';
+  const contentReviewed = relevantScreens.length > 0 && relevantScreens.every(s => s.reviewed);
+  const visualContent: CheckStatus = !visualApplicable ? 'NOT_APPLICABLE' : contentReviewed ? 'CHECKED' : 'UNKNOWN';
+  const visualStyle: CheckStatus = !visualApplicable ? 'NOT_APPLICABLE' : contentReviewed ? 'CHECKED' : 'UNKNOWN';
+  // 显式断言（role=assertion）与被弱化旗标跳过的自然语言预期分别计数；旗标只限定被跳过的部分。
+  const assertionSteps = (trace?.cases ?? []).flatMap(c => (Array.isArray(c.steps) ? c.steps : []))
+    .filter(st => st?.role === 'assertion');
+  const assertionsPassed = assertionSteps.filter(st => st.outcome?.status === 'passed').length;
+  const assertionsSkipped = assertionSteps.filter(st => st.outcome?.status === 'skipped').length;
+  const assertionText = `显式断言 ${assertionsPassed}/${assertionSteps.length - assertionsSkipped} 通过，自然语言预期跳过 ${assertionsSkipped} 条`;
 
   const gaps: string[] = [];
   for (const g of decl.unsupported_gap) gaps.push(`${g.tc_id}[${g.channel}:${g.reason}]`);
   if (debt.open + debt.accepted > 0) gaps.push(`视觉债务 open=${debt.open}, accepted=${debt.accepted}（visual-debt.md）`);
   if (debtCorrupt) gaps.push('视觉债务账本损坏（visual-debt.json 不可解析）');
   if (visualGeometry === 'FAIL' || visualGeometry === 'UNKNOWN') gaps.push(`视觉几何 ${visualGeometry}`);
-  if (visualContent === 'UNKNOWN') gaps.push('视觉内容/样式 UNKNOWN（无 provider 复核）');
+  if (visualContent === 'UNKNOWN') gaps.push('视觉内容/样式 UNKNOWN（无绑定当前截图与构建的 provider 复核）');
   if (stabilityAxis === 'UNKNOWN') gaps.push(stability.available ? '交互稳定性 UNKNOWN（同执行键真实执行不足 2 轮，单轮不构成稳定性证据）' : '交互稳定性 UNKNOWN（无 stability.json）');
-  for (const f of weakeningFlags) gaps.push(`弱化旗标 ${f}：trace「通过」仅为动作链执行完成，非验收通过`);
+  // 弱化旗标在场时结论恒不签「达标」（与 check-testing 的弱化旗标门禁同口径）；措辞只限定实际跳过的部分。
+  for (const f of weakeningFlags) {
+    gaps.push(assertionSteps.length === 0
+      ? `弱化旗标 ${f}：trace 无结构化断言步骤，「通过」仅为动作链执行完成，非验收通过`
+      : `弱化旗标 ${f}：自然语言预期跳过 ${assertionsSkipped} 条（未验证）；显式断言 ${assertionsPassed} 条通过；结论不以「达标」签发`);
+  }
+  // 视觉总体结论取 testing gate 本轮视觉检查的结论，不由报告自行推导（soft 档只记债务、门禁不阻断）。
+  const visualBlockers = (input.visualChecks ?? []).filter(check => isBlockingCheck(check));
+  if (visualBlockers.length > 0) gaps.push(`视觉门禁阻断（${visualBlockers.map(c => `${c.id} ${c.status}/${c.severity ?? '-'}`).join('、')}）`);
 
-  const overall: OverallStatus = functional === 'FAIL' ? 'FAILED' : gaps.length > 0 || functional === 'UNKNOWN' ? 'COMPLETE_WITH_GAPS' : 'COMPLETE';
+  const overall: OverallStatus = functional === 'FAIL' || visualBlockers.length > 0 ? 'FAILED' : gaps.length > 0 || functional === 'UNKNOWN' ? 'COMPLETE_WITH_GAPS' : 'COMPLETE';
   const declared: TestReportConclusion['declared_verdict'] =
     overall === 'FAILED' ? '不达标' : overall === 'COMPLETE_WITH_GAPS' ? '有条件达标' : '达标';
 
@@ -518,9 +568,14 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     ...exec.map(r => `| ${r.id} | ${cell(r.name)} | ${r.priority} | ${r.status} | ${r.duration} | ${cell(r.note)} |`),
     '',
   );
+  if (assertionSteps.length > 0) {
+    lines.push(`> **断言披露**：${assertionText}。`, '');
+  }
   if (weakeningFlags.length > 0) {
     lines.push(
-      `> **弱化旗标披露**：本轮真机执行命令含 ${weakeningFlags.join('、')}——表中「通过」仅表示动作链执行完成，未验证自然语言预期/性能/视觉断言，非验收通过。`,
+      assertionSteps.length === 0
+        ? `> **弱化旗标披露**：本轮真机执行命令含 ${weakeningFlags.join('、')}——表中「通过」仅表示动作链执行完成，未验证自然语言预期/性能/视觉断言，非验收通过。`
+        : `> **弱化旗标披露**：本轮真机执行命令含 ${weakeningFlags.join('、')}——只跳过上述 ${assertionsSkipped} 条自然语言预期（这部分未验证、非验收通过）；显式断言照常执行并按结果计入。`,
       '',
     );
   }
@@ -550,15 +605,16 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     );
   }
   const sevCount = (sev: DefectRow['severity']) => defects.filter(d => d.severity === sev).length;
+  const toFix = (sev?: DefectRow['severity']) => defects.filter(d => d.status === '待修复' && (!sev || d.severity === sev)).length;
   lines.push(
     '### 缺陷统计',
     '',
     '| 严重程度 | 数量 | 待修复 | 已修复 | 已关闭 | 延期处理 |',
     '|---------|------|--------|--------|--------|---------|',
-    `| BLOCKER | ${sevCount('BLOCKER')} | ${sevCount('BLOCKER')} | 0 | 0 | 0 |`,
-    `| MAJOR | ${sevCount('MAJOR')} | ${sevCount('MAJOR')} | 0 | 0 | 0 |`,
-    `| MINOR | ${sevCount('MINOR')} | ${sevCount('MINOR')} | 0 | 0 | 0 |`,
-    `| **合计** | **${defects.length}** | **${defects.length}** | **0** | **0** | **0** |`,
+    `| BLOCKER | ${sevCount('BLOCKER')} | ${toFix('BLOCKER')} | 0 | 0 | 0 |`,
+    `| MAJOR | ${sevCount('MAJOR')} | ${toFix('MAJOR')} | 0 | 0 | 0 |`,
+    `| MINOR | ${sevCount('MINOR')} | ${toFix('MINOR')} | 0 | 0 | 0 |`,
+    `| **合计** | **${defects.length}** | **${toFix()}** | **0** | **0** | **0** |`,
     '',
     '---',
     '',
@@ -577,7 +633,7 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     `**测试结论**: ${declared}`,
     '',
     '**按轴结论**（确定性派生）:',
-    `- 功能：${functional}（hylyre ${hylyreRows.filter(r => r.status === '通过').length}/${hylyreRows.length} 通过，失败 ${hylyreRows.filter(r => r.status === '失败').length}，阻塞 ${hylyreRows.filter(r => r.status === '阻塞').length}${trace ? `，trace.outcome=${trace.outcome}` : '，无权威 trace'}）`,
+    `- 功能：${functional}（hylyre ${hylyreRows.filter(r => r.status === '通过').length}/${hylyreRows.length} 通过，失败 ${hylyreRows.filter(r => r.status === '失败').length}，阻塞 ${hylyreRows.filter(r => r.status === '阻塞').length}${trace ? `，trace.outcome=${trace.outcome}` : '，无权威 trace'}${assertionSteps.length > 0 ? `；${assertionText}` : ''}）`,
     `- 交互稳定性：${stabilityAxis}${stability.available ? `（${stability.rows.length} 条用例有同键多轮数据）` : '（无 stability.json）'}`,
     `- 视觉几何：${visualGeometry}${visual.measure.size > 0 ? `（measure 文件 ${visual.measure.size} 屏）` : visual.available ? `（visual-diff.json ${visual.screens.length} 屏：${visual.screens.map(s => `${s.screen_id}=${s.verdict}`).join('、')}）` : '（无 visual-diff.json）'}`,
     `- 视觉内容：${visualContent}`,

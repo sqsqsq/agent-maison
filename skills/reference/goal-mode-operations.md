@@ -60,7 +60,7 @@ manifest**，`--resume` 只认冻结值、不会重读源文件——所以源�
 > preflight 与 vision 收紧重建写入，与既有空 deps / `goal_requirement:<fp16>` detail 形态完全
 > 一致，goal run 无需任何调整。
 
-停机后续跑：请用户补上缺的输入，再**重新发起同一请求**（重跑同一条启动命令）即可——框架自己决定重新接入原 run、起后继还是保持停止，不要让用户找 run id 或拼 `--resume` / `--supersede` / `--force-resume`（规则见运行手册「停机之后怎么继续」）。无人值守重跑时，正式开始过的 run 停下不到 5 分钟会先保持停止（`--force-resume` 也越不过这段冷却），有人在场补好即可立即重发。重新发起不等于授权：设备策略、凭据、人审闸门、scope 扩展确认照旧要人做。非 orphan 的 session↔process 正常转换只走 mailbox handoff。只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover；supervisor 永不得代为触发。显式命令仍可用、行为不变：
+停机后续跑：请用户补上缺的输入，再**重新发起同一请求**（重跑同一条启动命令）即可——框架自己决定重新接入原 run、起后继还是保持停止，不要让用户找 run id 或拼 `--resume` / `--supersede` / `--force-resume`（规则见运行手册「停机之后怎么继续」）。无人值守重跑时，正式开始过的 run 停下不到 5 分钟且什么都没变会先保持停止（`--force-resume` 也越不过这段冷却），有人在场补好即可立即重发。预算耗尽时改本 run 预算后带 `--override-manifest` 重发（或显式续跑）即接回原 run，不起后继、不要 `--force-resume`、不等冷却；后继的上限取本交付周期已授权的预算。返修窗口里要给修法假设时用显式续跑附 `--repair-notes <文件>`（只进返修提示词、标明非需求，不改需求与身份）。重新发起不等于授权：设备策略、凭据、人审闸门、scope 扩展确认照旧要人做。非 orphan 的 session↔process 正常转换只走 mailbox handoff。只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover；supervisor 永不得代为触发。显式命令仍可用、行为不变：
 
 ```bash
 npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --detach

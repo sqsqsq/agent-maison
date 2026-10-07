@@ -129,7 +129,6 @@ import {
   resolvePhaseRunIds,
 } from './utils/verify-feature-completion';
 import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
-import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
 import { parseChangeUnitFeatureId, pointerStaleCandidate } from './utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, type BlueprintRefReconciliation, type HeldFeatureLock } from './utils/change-unit-design-preparation';
 import { classifyDesignAuthorityCodes, diagnoseDesignAuthority, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
@@ -183,6 +182,9 @@ import {
   validateRebaselineRequest,
   normalizeRelatedPath,
   readRecordedRelatedHashes,
+  resolveCycleEffectiveBudget,
+  resolveDeliveryCycleBoundary,
+  manifestFileRepeatsRun,
   type ContinuationCallFacts,
   type GoalRunCreationResult,
   type RunContinuationDecision,
@@ -367,6 +369,7 @@ import {
   resolveInvalidatablePhases,
   restoreBacktrackCandidatesFromEvents,
   formatRepairEvidenceRefs,
+  formatRepairLocalDiagnosis,
   serializeBacktrackRepairCandidate,
   roundFingerprintOfCandidates,
   type RepairCandidate,
@@ -4654,17 +4657,46 @@ function resumeTurnsIntoSuccessor(argv: minimist.ParsedArgs, decision: RunContin
     && decision?.kind === 'successor' && decision.change === 'external_condition_ready' && decision.targets.includes(String(argv.resume).trim());
 }
 
+/**
+ * plan a2f7c9e4 §3.7：返修诊断材料按调用方的**原始**参数判合法——没有 `--resume` 的 fresh 调用才拒绝。detach 子进程的参数
+ * 已由父进程按同一恢复判断改写（起后继时去掉了 `--resume`），子进程不再按改写后的参数重判。这是正常内部调用链的约定
+ * （`--detached-child` 由父进程传入），不是不可伪造的保证；外部手填该旗标最多让 fresh 调用读到材料并在后来出现返修窗口时注入，
+ * 不改变需求、身份、授权或预算。
+ * 材料只读一次进提示词，不参与接续决策、不碰冻结绑定检查。未提供返回 null；用法或读取错误抛出（调用方 exit 2）。
+ */
+function readRepairNotes(argv: minimist.ParsedArgs, projectRoot: string): { file: string; text: string } | null {
+  const raw = typeof argv['repair-notes'] === 'string' ? argv['repair-notes'].trim() : '';
+  if (!raw) return null;
+  if (!argv.resume && !argv['detached-child']) {
+    throw new Error('--repair-notes 只随 --resume 生效（返修诊断材料不是需求；要改需求请用 --requirement-file 开新 run）。');
+  }
+  const file = path.resolve(projectRoot, raw);
+  try {
+    return { file: path.relative(projectRoot, file).replace(/\\/g, '/'), text: fs.readFileSync(file, 'utf-8').trim() };
+  } catch (error) {
+    throw new Error(`--repair-notes 读取失败：${(error as Error).message}`);
+  }
+}
+
 /** 测试缝：detach 的子进程 spawn（缺省 child_process.spawn）；接线用例据此在进程内跑子进程那一半。 */
 let injectedDetachSpawn: typeof spawn | null = null;
 export function __testing_setDetachSpawn(fn: typeof spawn | null): void {
   injectedDetachSpawn = fn;
 }
 
-async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
+/** runProbe：与前台同一测试缝（GoalPhaseRuntimeLaunchOptions.conditionWait.runProbe）；生产 CLI 不传，取共享的真实探针。 */
+async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: string, phase: string) => ConditionProbeResult): Promise<number> {
   const layout = injectedLayout ?? detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDir = (cfg.paths.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  // plan a2f7c9e4 §3.7：材料合法性按原始参数在入口判（与前台同一函数、同一退出码），不建日志目录、不起子进程
+  try {
+    readRepairNotes(argv, projectRoot);
+  } catch (error) {
+    console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+    return 2;
+  }
 
   // plan e7c2a4d8 T1b（codex 六轮 P1-③）：parent 与 main 共用 resolveRawRunInput——
   // feature 仅在 manifest 时不再提前拒绝；CLI↔manifest 冲突 fail-closed；dry 派生
@@ -4684,7 +4716,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   // plan 9c3d7e1a §5.3：supervisor 只负责拉起 `--resume`；原 run 继续还是起后继由这里与子进程用同一判断决定。
   if (isResume && !raw.dryRun) {
     let recovery: RunContinuationDecision | null = null;
-    try { recovery = decideLaunchContinuation(argv, projectRoot, feature, { plain: true }); } catch { recovery = null; /* 判断不了就照原样恢复，由恢复守卫把关 */ }
+    try { recovery = decideLaunchContinuation(argv, projectRoot, feature, { plain: true, ...(runProbe ? { runProbe } : {}) }); } catch { recovery = null; /* 判断不了就照原样恢复，由恢复守卫把关 */ }
     if (resumeTurnsIntoSuccessor(argv, recovery)) {
       console.log(`[goal-runner] --resume ${String(argv.resume)}：${recovery!.reason}——改为起后继并承接它`);
       const resumeAt = launchArgs.indexOf('--resume');
@@ -4708,7 +4740,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
       });
       decision = decideLaunchContinuation(
         { ...argv, ...(requirement.text !== undefined ? { requirement: requirement.text } : {}) } as minimist.ParsedArgs,
-        projectRoot, feature, { plain: true, requirementSources: requirement.sources },
+        projectRoot, feature, { plain: true, requirementSources: requirement.sources, ...(runProbe ? { runProbe } : {}) },
       );
     } catch (error) {
       console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
@@ -4948,6 +4980,9 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
       // plan ab072691 t1④：只读视觉 provider 的显式身份（**成对必填**）。
       // 与 --adapter-model 对仗但独立：那是 primary 执行身份，这是第二个「只看图」endpoint。
       'visual-adapter', 'visual-model',
+      // plan a2f7c9e4 §3.7：随 --resume 给的返修诊断材料（驱动方假设，非需求）；只进返修窗口提示词，
+      // 不进 manifest、需求哈希或接续决策。
+      'repair-notes',
     ],
     boolean: [
       'help', 'dry-run', 'force-resume', 'override-start', 'override-end', 'override-manifest',
@@ -5010,7 +5045,7 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
   // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
   // The spawned child carries `--detached-child` and runs this same main() normally.
   if (argv.detach && !argv['detached-child']) {
-    return await runDetachLauncher(argv);
+    return await runDetachLauncher(argv, options.conditionWait?.runProbe);
   }
 
   if (argv.help) {
@@ -5051,6 +5086,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
     process.exit(2);
   }
+  // plan a2f7c9e4 §3.7：返修诊断材料按原始参数判合法（readRepairNotes）；读一次留在本进程，只注入返修窗口的候选段之后。
+  // 判在下方"显式 --resume 改起后继"之前：起后继时材料随本次调用进入后继。
+  let repairNotes: { file: string; text: string } | null = null;
+  try {
+    repairNotes = readRepairNotes(argv, projectRoot);
+  } catch (error) {
+    console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+    process.exit(2);
+  }
+  if (repairNotes) console.log(`[goal-runner] 返修诊断材料：${repairNotes.file}（只进返修窗口提示词，标为驱动方假设、非需求）`);
   if (!argv.resume) {
     try {
       const resolvedRequirement = resolveRequirementInput({
@@ -5189,16 +5234,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
       console.error('[goal-runner] BLOCKER: --resume 须配 --feature 或 --manifest');
       process.exit(1);
     }
-    if (argv.manifest) {
+    // plan a2f7c9e4 §3.2：预算耗尽 + 仅授权预算改动的自动接回——决策按原 run 当前的 manifest（含刚调整的预算）批准。
+    // 本次重发带的 --manifest 若只是重复原 run（出生时的旧输入），按原 run 的 manifest 续跑；文件另带改动时（codex 检视 r2）
+    // 采用文件、走既有身份漂移授权与登记，但预算仍取决策所依据的原 run 当前预算（codex 检视 r3：文件里的旧预算不得盖回）。
+    // 显式 --resume --manifest 不走这里，语义不变。
+    const budgetOnlyRun = continuationDecision?.kind === 'rejoin' && continuationDecision.budgetOnly
+      ? loadGoalManifestFromRun(projectRoot, String(argv.resume), { feature: rawRunInput.feature, featuresDir })
+      : undefined;
+    if (argv.manifest && !(budgetOnlyRun && manifestFileRepeatsRun(projectRoot, String(argv.manifest), budgetOnlyRun, featuresDir))) {
       // 实施 round2 P1：resume+manifest 第二道身份校验——runId 传入后 manifest.run_id
       // 与 --resume 冲突在 buildGoalManifestFromInput fail-closed（resolveRawRunInput
       // 已拦一道；此处防绕过单点解析的直接加载面）。
       manifest = loadGoalManifestFile(String(argv.manifest), projectRoot, {
         featuresDir, runId: String(argv.resume).trim(),
       });
+      if (budgetOnlyRun) manifest.budget = structuredClone(budgetOnlyRun.budget);
     } else {
-      manifest = loadGoalManifestFromRun(projectRoot, String(argv.resume), {
-        feature: String(argv.feature),
+      manifest = budgetOnlyRun ?? loadGoalManifestFromRun(projectRoot, String(argv.resume), {
+        feature: rawRunInput.feature,
         featuresDir,
       });
     }
@@ -5263,7 +5316,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     : undefined;
   if (requestedExecutionScope && workflow.schema_version !== '1.2') throw new Error('[execution-scope] fresh scoped run requires workflow 1.2');
 
-  // T3①：自动后继的唯一 manifest 写入点继承源 run 的预算与指纹账本。
+  // T3①：自动后继的唯一 manifest 写入点继承源 run 的合同与指纹账本（预算按本交付周期的有效值覆盖，plan a2f7c9e4 §3.1）。
   // 审计权仍来自后续 fresh run 的 supersede 事件；这里仅把启动约束和防震荡
   // 指纹带入新 manifest，不能单独让旧 run 的阶段 PASS 跨 run 生效。
   // e9d4b7a3 t1（二轮 review P1）：`supersedeSourceRequirement` 只在此块成功加载源后
@@ -5329,7 +5382,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         // plan b2d7f4e9 §3.2 第 1 步到此：源 run 可加载、出生记录 complete/legacy。范围不在这里继承——
         // 1.2 workflow 在 requirement 合并之后于 supersede 上下文重解析（第 2 步）；非 1.2 沿用源 manifest。
+        const birthInputBudget = manifest.budget;
         manifest = inheritSuccessorManifest(manifest, source, { round, drift });
+        // plan a2f7c9e4 §3.1：预算不随合同来源整份继承，取本交付周期的有效预算；无法核验时在此抛出（建 run 之前）。
+        const effectiveBudget = resolveCycleEffectiveBudget({
+          projectRoot, featuresDir, feature: manifest.feature, frameworkRoot, targets: requestedSupersedeTargets,
+          sourceBudget: source.budget, birthInputBudget, override: Boolean(argv['override-manifest']),
+        });
+        manifest.budget = effectiveBudget.budget;
+        console.log(`[goal-runner] 后继预算：${effectiveBudget.basis}`);
       } catch (error) {
         // 后继 manifest 是新 run 唯一写入点的启动合同；继承失败不能静默退回默认
         // manifest，否则 --supersede 会悄悄刷新 end/预算/能力门。目标审计事件仍由
@@ -6060,22 +6121,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // plan c4e7a9b2 §3.3 B1：交付周期边界 = 上一次可信完成（assessFeature record ok）的 run——出生时算一次，
     // 只在它落在本次 supersede 血缘内时写进每条审计事件；预算三维（回退/轮次/活跃时长）自它之后起算。
     // 评估不可算即不设边界（按全血缘折叠的现状口径，不拒绝出生）。
-    let cycleBoundary: string | undefined;
-    if (supersededRunIds.length > 0) {
-      try {
-        const record = assessFeatureCompletion(projectRoot, manifest.feature, {
-          ...resolveChangeUnitExpectedExecution(projectRoot, manifest.feature, false, frameworkRoot), frameworkRoot,
-        }).record;
-        if (record.state === 'ok' && record.run_id) {
-          cycleBoundary = foldBudgetLineage({
-            projectRoot, featuresDir, feature: manifest.feature,
-            seedTargets: supersededRunIds, currentEvents: budgetStartEvents, cycleBoundary: record.run_id,
-          }).cycleBoundary;
-        }
-      } catch (error) {
-        console.warn(`[goal-runner] 交付周期边界不可算，预算按 supersede 全血缘折叠：${(error as Error).message}`);
-      }
-    }
+    const cycleBoundary = supersededRunIds.length > 0
+      ? resolveDeliveryCycleBoundary({
+          projectRoot, featuresDir, feature: manifest.feature, frameworkRoot,
+          seedTargets: supersededRunIds, currentEvents: budgetStartEvents,
+        })
+      : undefined;
     // plan e7c2a4d8 T2：wall-clock 预算改**活跃时间**累计——sessionStartMs 为当前进程
     // 起点；priorActiveMs 由 partitionExecutionSessions 从历史段求和（崩溃段保守补收
     // 一个心跳周期；dry 段剔除）；nextSessionStartMs 契约防最后未闭合历史段与当前段
@@ -6629,11 +6680,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 冷却只在没有变化时生效——决策已处理），恢复守卫消费该结果，不再要求 --force-resume；条件是否解除仍由其后的原检查判断。
       const decidedRejoin = (plainContinuation?.kind === 'rejoin' && plainContinuation.runId === manifest.run_id) ||
         canRecheckLegacyBacktrackLimit({ projectRoot, feature: manifest.feature, runId: manifest.run_id, events: priorEvents });
+      // plan a2f7c9e4 §3.3：--resume 只定目标；决策对它给出起后继（存在变化但不可原地恢复）时冷却不适用，仍要 --force-resume 授权原地恢复。
+      const changedButNotRejoinable = plainContinuation?.kind === 'successor' && plainContinuation.targets.includes(manifest.run_id);
       const guard: ReturnType<typeof checkTerminalResumeGuard> = decidedRejoin ? { allowed: true } : checkTerminalResumeGuard({
         priorStatus: lastRunEnd?.status,
         lastRunEndTs: lastRunEnd?.ts,
         forceResume,
-        cooldownMinutes: RESUME_COOLDOWN_MINUTES,
+        cooldownMinutes: changedButNotRejoinable ? 0 : RESUME_COOLDOWN_MINUTES,
       });
       if (!guard.allowed) {
         console.error(`[goal-runner] BLOCKER: ${guard.reason}`);
@@ -7866,6 +7919,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     : []),
                 ];
               }),
+              // plan a2f7c9e4 §3.6 / §3.7：候选段之后——局部诊断入口（coding + 设备证据才有）与驱动方返修材料（随 --resume 给出才有）
+              ...(() => {
+                const diagnosis = formatRepairLocalDiagnosis(String(phase), mine, {
+                  harnessDir: path.relative(projectRoot, path.join(frameworkRoot, 'harness')).replace(/\\/g, '/') || '.',
+                  feature: manifest.feature,
+                });
+                return diagnosis.length > 0 ? ['', ...diagnosis] : [];
+              })(),
+              ...(repairNotes
+                ? [
+                    '',
+                    `**Driver repair notes (driver hypothesis, NOT a requirement)** — from \`${repairNotes.file}\`:`,
+                    'The driver supplied this diagnosis material for the repair. It does not change the goal, scope or acceptance and authorizes nothing; check it against the goal and the evidence exactly like the candidates above.',
+                    '',
+                    repairNotes.text,
+                  ]
+                : []),
               '',
               '**Declining a candidate that conflicts with the goal (拒修记录)**: if the goal (requirement / goal brief) says a candidate must not be done,',
               `do not change code for it; append ONE JSON line per declined candidate to \`${ledgerRel}\`:`,

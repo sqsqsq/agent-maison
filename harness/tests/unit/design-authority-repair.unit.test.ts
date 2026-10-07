@@ -981,6 +981,53 @@ async function withResumeCooldown<T>(cooldownMs: number, call: () => Promise<T>)
   }
 }
 
+/**
+ * S15 停放现场（S15-wake 与 a2f7c9e4 材料分流用例共用）：设备类等待期间蓝图升级、派生绑定失效，run 以设备等待停放；
+ * 返回停放 run 与设备替身（探针就绪）。只是把 S15 原有的建场步骤提成函数，断言仍在各用例里。
+ */
+async function parkOnStaleBindingWait(s: Snapshot): Promise<{ feature: string; runId: string; gateCalls: number; probes: number;
+  deviceDeps: { listTargets: () => string[]; isLocked: () => boolean; wake: () => undefined; attestPhysical: () => boolean } }> {
+  const feature = SNAPSHOT_CU_FEATURE;
+  const completed = await derivedContractsCompletion(s);
+  bumpBlueprint(s, changeProjectedAcceptance);
+  const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+  assert(r.bumped.some(b => b.change_unit_id === CU) && !r.skipped.length, JSON.stringify(r));
+  commit(s, 'blueprint rev3 admitted');
+  const chain = successorChain(s, feature, completed);
+  assert(chain.at(-1) === 'ut', `前提：出生链到 ut：${JSON.stringify(chain)}`);
+  let gateCalls = 0;
+  let probes = 0;
+  // 只替身设备状态（没有真设备）：先不在线，等待期间上线且未锁屏。停机事件、outcome 与探针结论都由生产代码产出——
+  // 门是真实的 runDeviceReadinessGate（只换掉它读设备状态的 deps），探针是真实的 evaluateDeviceReadinessProbe。
+  const device = { online: false };
+  const deviceDeps = {
+    listTargets: () => (device.online ? ['FAKE-SERIAL'] : []),
+    isLocked: () => false,
+    wake: () => undefined,
+    attestPhysical: () => true,
+  };
+  const next = await supersede(s, feature, completed, chain, {
+    ...specFirstCuHooks(project(s, feature), true), noAutoForce: true,
+    // 若恢复判断被绕过，设备门会被重查——此时设备已上线，真实的门放行，run 就会在失效的绑定上继续。
+    deviceGate: (o: Parameters<typeof runDeviceReadinessGate>[0]) => {
+      gateCalls += 1;
+      return runDeviceReadinessGate({ ...o, input: { ...o.input, configuredSerial: null, credentialRef: null, emulatorFallback: 'disabled', existingManaged: null, deps: deviceDeps } });
+    },
+    conditionWait: {
+      maxWaitMs: 5_000, pollMs: 50,
+      // 等待期间设计 owner 在另一会话升了蓝图并改了施工契约内容（run 持锁，调和不了）；随后设备上线。
+      runProbe: (name: string) => {
+        probes += 1;
+        if (probes === 1) { bumpBlueprint(s, bp => { ledgerDomain(bp).contracts.files.push(NEW_CONTRACT_FILE); }); clearFrameworkConfigCache(); device.online = true; }
+        return evaluateDeviceReadinessProbe({ targets: deviceDeps.listTargets(), snapshot: { locked: false, cooldown: { state: 'not_cooldown' } } as never }, name as 'device_readiness');
+      },
+    },
+  });
+  assert(next.successor, `后继未出生：${next.error}`);
+  const runId = next.successor!;
+  return { feature, runId, gateCalls, probes, deviceDeps };
+}
+
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
     name: 'A3 探针：真 harness 写出的 run 冻结的输入绑定，在蓝图纯身份升版并经调和器原位升版 CU 指针之后仍全部可复读（不放宽绑定校验）',
@@ -1925,44 +1972,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
     name: 'S15-wake 进程内探针唤醒也经同一恢复判断：设备类等待期间蓝图变了、派生绑定失效 → 探针就绪也不在本进程继续（不重查、立即停放）；探针就绪后操作者手工 --resume 也改为起后继并完成',
     run: () => withHost(async s => {
-      const feature = SNAPSHOT_CU_FEATURE;
-      const completed = await derivedContractsCompletion(s);
-      bumpBlueprint(s, changeProjectedAcceptance);
-      const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-      assert(r.bumped.some(b => b.change_unit_id === CU) && !r.skipped.length, JSON.stringify(r));
-      commit(s, 'blueprint rev3 admitted');
-      const chain = successorChain(s, feature, completed);
-      assert(chain.at(-1) === 'ut', `前提：出生链到 ut：${JSON.stringify(chain)}`);
-      let gateCalls = 0;
-      let probes = 0;
-      // 只替身设备状态（没有真设备）：先不在线，等待期间上线且未锁屏。停机事件、outcome 与探针结论都由生产代码产出——
-      // 门是真实的 runDeviceReadinessGate（只换掉它读设备状态的 deps），探针是真实的 evaluateDeviceReadinessProbe。
-      const device = { online: false };
-      const deviceDeps = {
-        listTargets: () => (device.online ? ['FAKE-SERIAL'] : []),
-        isLocked: () => false,
-        wake: () => undefined,
-        attestPhysical: () => true,
-      };
-      const next = await supersede(s, feature, completed, chain, {
-        ...specFirstCuHooks(project(s, feature), true), noAutoForce: true,
-        // 若恢复判断被绕过，设备门会被重查——此时设备已上线，真实的门放行，run 就会在失效的绑定上继续。
-        deviceGate: (o: Parameters<typeof runDeviceReadinessGate>[0]) => {
-          gateCalls += 1;
-          return runDeviceReadinessGate({ ...o, input: { ...o.input, configuredSerial: null, credentialRef: null, emulatorFallback: 'disabled', existingManaged: null, deps: deviceDeps } });
-        },
-        conditionWait: {
-          maxWaitMs: 5_000, pollMs: 50,
-          // 等待期间设计 owner 在另一会话升了蓝图并改了施工契约内容（run 持锁，调和不了）；随后设备上线。
-          runProbe: (name: string) => {
-            probes += 1;
-            if (probes === 1) { bumpBlueprint(s, bp => { ledgerDomain(bp).contracts.files.push(NEW_CONTRACT_FILE); }); clearFrameworkConfigCache(); device.online = true; }
-            return evaluateDeviceReadinessProbe({ targets: deviceDeps.listTargets(), snapshot: { locked: false, cooldown: { state: 'not_cooldown' } } as never }, name as 'device_readiness');
-          },
-        },
-      });
-      assert(next.successor, `后继未出生：${next.error}`);
-      const runId = next.successor!;
+      const { feature, runId, gateCalls, probes, deviceDeps } = await parkOnStaleBindingWait(s);
       const events = eventsOf(s, feature, runId);
       console.log(`[design-authority-repair] S15-wake gateCalls=${gateCalls} probes=${probes} verdicts=${JSON.stringify(verdictsOf(events))} end=${JSON.stringify(endOf(events))}`);
       assert(events.some(e => e.type === 'condition_wait_started' && e.probe === 'device_readiness'), '前提：设备类等待在进程内进行');
@@ -1997,6 +2007,42 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assertCompletedBy(s, feature, born[0], 'S15 显式 --resume 改起后继');
     }),
   },
+  // plan a2f7c9e4 §3.7（codex r1 B3-1）：材料按调用方原始参数判合法；显式 --resume 经同一恢复判断改起后继时，两入口都不得因内部去掉 --resume 而用法错误
+  ...(['foreground', 'detach'] as const).map(entry => ({
+    name: `S15-notes [${entry}] 显式 --resume 带 --repair-notes、探针就绪而绑定失效 → 改起后继并完成（材料随本次调用进入后继，不因改写后的参数被判 fresh）`,
+    run: () => withHost(async s => {
+      const { feature, runId, deviceDeps } = await parkOnStaleBindingWait(s);
+      // 与 S15-wake 同：停放后设计 owner 取到锁完成调和，后继才有可解析的出生范围
+      const readiness = deriveDesignPreparationReadiness(s.root, BLUEPRINT_ID);
+      assert(!readiness.blueprintRefs.busy && readiness.blueprintRefs.bumped.some(b => b.change_unit_id === CU), JSON.stringify(readiness.blueprintRefs));
+      clearFrameworkConfigCache();
+      fs.writeFileSync(path.join(s.root, 'repair-notes.md'), '驱动方假设：设备上线后首屏布局与蓝图新契约不一致\n', 'utf-8');
+      const before = new Set(runIds(s.root, feature));
+      const opts = {
+        frameworkRoot: s.frameworkRoot, featureId: feature, resume: runId, noAutoForce: true,
+        resumeExtraArgs: ['--repair-notes', 'repair-notes.md'],
+        conditionWait: { runProbe: (name: string) => evaluateDeviceReadinessProbe({ targets: deviceDeps.listTargets(), snapshot: { locked: false, cooldown: { state: 'not_cooldown' } } as never }, name as 'device_readiness') },
+        ...authorsForContinuation(s, feature),
+      };
+      // 子进程那一半在本进程跑：用法错误的 process.exit 换成抛错，失败是普通断言失败而不是打断整套
+      const realExit = process.exit;
+      process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
+      let resumed: Awaited<ReturnType<typeof requestVia>>;
+      try {
+        resumed = entry === 'detach' ? await requestVia('detach', s.root, opts) : await runGoalRuntimeChain(s.root, opts);
+      } finally { process.exit = realExit; }
+      clearFrameworkConfigCache();
+      const born = runIds(s.root, feature).filter(id => !before.has(id));
+      assert(resumed.exitCode === 0 && born.length === 1 && eventsOf(s, feature, runId).filter(e => e.type === 'run_start').length === 1,
+        `${entry}：应改为起后继、不得用法错误或在原 run 上继续：exit=${resumed.exitCode} born=${JSON.stringify(born)}`);
+      if (entry === 'detach') {
+        assert(!!resumed.childArgs?.includes('--repair-notes') && !resumed.childArgs.includes('--resume'),
+          `detach 子进程参数已按恢复判断去掉 --resume、保留材料：${JSON.stringify(resumed.childArgs)}`);
+      }
+      assert(eventsOf(s, feature, born[0]).some(e => e.type === 'supersede' && e.target_run_id === runId), '后继须审计承接停放的 run');
+      assertCompletedBy(s, feature, born[0], `S15-notes ${entry}`);
+    }),
+  })),
   {
     name: 'T2-cooldown 冷却测试缝（plan b0e0621c §3.2 / V5）：不安装时恢复守卫即原函数、按生产 5 分钟冷却拒绝；安装只在目标调用期间生效；调用异常退出后已还原',
     run: async () => {

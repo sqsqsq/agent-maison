@@ -5884,17 +5884,30 @@ function buildTestingRunStatusResult(
 }
 
 /**
+ * plan a2f7c9e4 §3.5 / 裁决 2：报告消费的本轮视觉检查集合——按来源取，不按 id 前缀枚举：
+ * 视觉块（下标在 [start, end)）内的全部结果 = dispatchDeviceVisualDiff → checkVisualDiff 返回的
+ * visual_diff / visual_reference_viewport / runtime_mount_conformance / calibrate / visual_feedback，
+ * 或 report-only、provider 不可用时的 visual_diff SKIP/投影 + checkVisualDiffDeterministicOnly；
+ * 另加视觉块之前采集阶段产出的 visual_diff*（visual_diff_capture）。
+ */
+export function visualChecksOfRound(results: readonly CheckResult[], block: { start: number; end: number }): CheckResult[] {
+  return results.filter((r, i) => (i >= block.start && i < block.end) || (i < block.start && r.id.startsWith('visual_diff')));
+}
+
+/**
  * plan 07a41ec6 T5：报告由 harness 生成。只在存在权威 trace 时重写（无 trace 的轮次保留现有报告，
  * 由 device_test_run 等门禁裁决）；首次覆盖手写报告时旧文迁到 testing/notes.legacy-report.md。
  * 结果以 MINOR check 记账（生成失败只 WARN——报告类门禁随后会按现有报告如实判定）。
  */
-function regenerateTestReport(
+export function regenerateTestReport(
   ctx: CheckContext,
   holder: DeviceTestPipelineHolder,
   plan: string | null,
   channelDecl: ExecutionChannelDeclarationResult,
   results: CheckResult[],
   channelEvidenceBindings?: readonly ChannelEvidenceBinding[],
+  /** 本轮视觉检查块在 results 中的下标区间 [start, end)（缺省 = results 全部视为视觉块） */
+  visualBlock: { start: number; end: number } = { start: 0, end: results.length },
 ): string | null {
   const id = 'test_report_generated';
   const description = 'test-report.md 由 harness 从权威 run 整份生成（plan 07a41ec6 T5）';
@@ -5917,6 +5930,7 @@ function regenerateTestReport(
     planMd: plan,
     channelDecl,
     channelEvidenceBindings,
+    visualChecks: visualChecksOfRound(results, visualBlock),
   });
   if (!written.written) {
     results.push({
@@ -6089,6 +6103,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
 
+    const visualStart = results.length;
     if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
       results.push({
         id: 'visual_diff',
@@ -6154,6 +6169,7 @@ const checker: PhaseChecker = {
         }
       }
     }
+    const visualBlock = { start: visualStart, end: results.length };
 
     if (pipelinePlan.reportOnly) {
       results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
@@ -6174,6 +6190,7 @@ const checker: PhaseChecker = {
         channelDeclaration,
         results,
         channelEvidenceBindings,
+        visualBlock,
       ) ?? report;
     }
     results.push(

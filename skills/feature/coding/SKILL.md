@@ -106,6 +106,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 按精确 case/step 读取原 StepResult 的 selector request/resolution、outcome 与 diagnostic，再在已授权范围内调查源码。
 没有机器定位的源码目标会保持空 `files`；不要把截图、trace 或派生证据路径当作待改源码，也不要改断言或 hash 洗绿。
 
+**返修局部诊断（可选，诊断不是验收）**：返修窗口里收到真机 testing 报出的候选时，你自己没有视觉判断能力，但可以取得当前设备的观察数据（元素几何、截图）来选修法、验修法，再交 review。修前用 `cd framework/harness && npm run adhoc-device-test -- --bundle <bundle id> --dump-ui-only` 看失败屏现状（或 `--observe-ui --steps "<导航自然语言>"` 先走到再 dump）；修后在同一命令加 `--install-current-build`，用与 testing 同一套 product / build mode 解析器把当前工作树出包并强制装机，再 dump / observe；需要量测时加 `--measure-screen <screen_id> --feature <feature>`（截图 + 布局 + 该屏 ui-spec 元素量测，ui-spec 只读）。产物默认落 `doc/features/_adhoc/testing/reports/`（显式 `--dump-ui-out` 不要指向正式 feature 目录；observe / 执行解析主 Ability 时会更新同 bundle 共享的 `app-meta.json` 能力缓存）：不签任何凭证、不是验收证据、不替代 review → UT → testing，testing 会按自己的规则重新出包装机并判定；不要改正式 testing / device-testing 证据。CLI 自带设备门，门不过就继续从源码与证据推进，不要绕门；诊断耗时计入本次调用的活跃时长与超时，没有单独额度。
+
 **closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
 1. `<features_dir>/<feature>/coding/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后编码阶段完成，**具备**进 code-review 的资格；**不授权**自动开 code-review。

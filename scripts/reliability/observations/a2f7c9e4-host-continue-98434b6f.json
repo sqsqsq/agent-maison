@@ -1,0 +1,127 @@
+{
+  "label": "a2f7c9e4-host-continue-98434b6f",
+  "recorded_at": "2026-10-07",
+  "framework_source_commit": "98434b6f",
+  "initial_state": {
+    "host_commit": "未核",
+    "worktree_state": "继续模式：承接 20261004T185607Z-700aeb 停机后的现场（未存档）；不是从需求起点运行",
+    "archive_path": null,
+    "archive_sha256sums": null
+  },
+  "environment": {
+    "adapter": "codex",
+    "adapter_version": "未核",
+    "model": "未核",
+    "reasoning_effort": "未核",
+    "device": "未核",
+    "vision_provider": "未核",
+    "adapter_user_default_model": "未核",
+    "changes": []
+  },
+  "notes": [
+    "来源：plan a2f7c9e4（.cursor/plans/预算有效值与完成输出同源_返修局部诊断与接续冷却归一_a2f7c9e4.plan.md）§1 只读取证与 §5 本轮基线；run 事件取自宿主 doc/features/bc-openCard-2/open-card-flow-v2/goal-runs 下两个 run 的只读副本。",
+    "交付周期边界：20260920T100035Z-f829b8（两个 run 的 supersede 均指向它）。",
+    "d6d31d 的 #7 phase_halt(budget_turns) 是一次零调用的预算耗尽启动：run_start 15:59:02.915Z → phase_halt 15:59:03.001Z。",
+    "d22e3b#2 的 supersede_successor 候选是本轮起跑（承接 700aeb），起跑命令是否携带修正文件未核，不关联。"
+  ],
+  "plan_a2f7c9e4_metrics": {
+    "definition": "plan a2f7c9e4 §5：效率（首个 run_start 到最终 run_end 的墙钟；阶段调用次数；可避免等待；零调用启动次数；宿主 AI 为框架做的额外动作次数）、成功率（无人介入下是否达成 FEATURE_COMPLETED；需宿主 AI 自行绕过的卡住点数）、准确率（完成状态、下一步、报告陈述与事实一致的条数 / 总条数）",
+    "baseline_continue_mode": {
+      "efficiency": {
+        "wall_clock": "1 h 49 m（d22e3b run_start 2026-10-06T14:54:59Z → d6d31d run_end 2026-10-06T16:43:39Z）",
+        "phase_invocations": 10,
+        "avoidable_wait_seconds": 246,
+        "zero_invocation_starts": 1,
+        "extra_actions": "手改 manifest 2 次、失败命令 1 次、修正文件 2 份"
+      },
+      "success": {
+        "feature_completed_without_intervention": false,
+        "result": "1 次带缺口完成（不是概率）",
+        "stuck_points": 2,
+        "stuck_point_detail": ["预算搬运", "冷却"]
+      },
+      "accuracy": {
+        "completion_state_contradictions": 1,
+        "report_distortions": 3,
+        "report_distortion_detail": ["断言", "provider", "几何"]
+      }
+    },
+    "acceptance_targets": "零调用启动 0、可避免等待 0、预算相关额外动作 ≤ 1；完成状态矛盾 0、报告失真 0（以 plan §4.2 结果为准）",
+    "comparisons": {
+      "control_plane_regression_same_start": {
+        "how": "宿主现场副本恢复到 d22e3b 出生前（700aeb 之后的同一停机状态），用本 plan 落地后的发布件重放；按本文件同一口径另写一份观察记录（标签建议 a2f7c9e4-host-continue-<候选包 commit>），只与本基线比较",
+        "attributable_to_framework": true,
+        "status": "未运行"
+      },
+      "rerun_from_scratch": {
+        "how": "从需求起点完整运行，单独写一份观察记录（标签建议 a2f7c9e4-host-scratch-<候选包 commit>），只记录墙钟、调用次数与成功率",
+        "attributable_to_framework": false,
+        "compare_with_this_baseline": false,
+        "status": "未运行"
+      }
+    }
+  },
+  "tasks": [
+    {
+      "label": "a2f7c9e4-host-continue-bc-openCard-2",
+      "scenarios": [],
+      "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg",
+      "runs": [
+        "20261006T145342Z-d22e3b",
+        "20261006T155756Z-d6d31d"
+      ],
+      "recoverable_fault": true,
+      "interventions": [
+        {
+          "kind": "manual_file_edit",
+          "at": "d22e3b 停机（2026-10-06T15:55:59Z）之后、d6d31d 创建（15:58:35Z）之前",
+          "content": "宿主 AI 手改 d22e3b manifest 的预算，未带 --override-manifest、未登记（事件无 rebase；现盘 max_total_turns=30，是否已还原无法从盘面确认）。未授权手改按设计不生效",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": []
+        },
+        {
+          "kind": "rescue_command",
+          "at": "d6d31d run_created 2026-10-06T15:58:35Z",
+          "content": "以新修正文件（--requirement-file）重新发起 → requirement_increment → 后继 d6d31d 整份继承合同来源 f829b8 的预算 30，零调用即 budget_turns 停（#7）",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": [{ "run_id": "20261006T155756Z-d6d31d", "event_index": 2 }]
+        },
+        {
+          "kind": "rescue_command",
+          "at": "d6d31d 停机（15:59:03Z）之后、rebase（16:05:05Z）之前",
+          "content": "显式 --resume --override-manifest --force-resume 被旧冷却守卫拒（失败命令），可避免等待 246 秒。不对应任何候选信号",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": []
+        },
+        {
+          "kind": "manual_file_edit",
+          "at": "2026-10-06T16:05:05Z 之前",
+          "content": "手改 d6d31d manifest 预算至 42，冷却过后以 --resume --override-manifest --force-resume 续跑（记 manifest_identity_rebase{authorized_by:override-manifest, changed_fields:[budget]}），终态 34/42、CHAIN_SLICE_COMPLETED。授权调整预算本身是有权者的决定，但须手改 + 显式旗标 + 等冷却是框架缺陷所致",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": [
+            { "run_id": "20261006T155756Z-d6d31d", "event_index": 9 },
+            { "run_id": "20261006T155756Z-d6d31d", "event_index": 12 }
+          ]
+        },
+        {
+          "kind": "rescue_command",
+          "at": "未核",
+          "content": "第二份修正文件（plan §1：本轮两份修正文件经 --requirement-file 进入冻结需求，驱动方猜测被抬成目标约束；第一份即上面起 d6d31d 的那次）。本份的时间与入口未核，不关联候选。最终通过的修法（keyboardAvoidMode: NONE + 监听 keyboardHeightChange 加底部留白）来自修正文件，coding-i31 实现",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": []
+        }
+      ],
+      "independent_acceptance": {
+        "result": "not_accepted",
+        "actor": "未核",
+        "basis": "本轮没有记录独立验收；框架宣称 CHAIN_SLICE_COMPLETED / FEATURE_COMPLETED（verify=VALID）"
+      },
+      "source": "maison 调度会话据 plan a2f7c9e4 §1 取证与两个 run 的只读事件副本整理（2026-10-07）；动作次数按 plan §5 口径，时间与入口未核处如实标注"
+    }
+  ]
+}

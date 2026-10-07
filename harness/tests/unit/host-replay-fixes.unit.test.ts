@@ -499,12 +499,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (/字段级授权|只放行这次预算/.test(g)) throw new Error('不得把整体 manifest 授权说成只授权预算');
       if (!/整体授权/.test(g) || !/只应.{0,8}预算/.test(g)) throw new Error('须写明整体授权、本次修改只应涉及预算');
       if (!/活跃/.test(g)) throw new Error('未说明活跃时间口径');
-      // plan 4e6fb3b6 §7（调度方 2026-09-29 裁定）：首选显式续跑本 run（已填好 run id）；"重新发起同一请求"起后继时沿用
-      // 合同来源的预算，只能写成"仅在本 run 就是合同来源时有效"的次选，放在显式命令之后。
-      const explicitAt = g.indexOf('--resume r1 --override-manifest --force-resume');
-      const rerequestAt = g.indexOf('重新发起同一请求');
-      if (explicitAt < 0 || rerequestAt < explicitAt) throw new Error('首选须是已填好的显式续跑命令，重新发起只作次选');
-      if (!/只在本 run 就是该任务的合同来源时有效/.test(g)) throw new Error('重新发起须写明只在本 run 是合同来源时有效');
+      // plan a2f7c9e4 §3.2/§3.3：只改预算时重新发起同一请求与显式续跑都接回本 run——不再要求 --force-resume、不再提冷却，
+      // 也不再写"起后继、沿用来源旧预算"的限定。
+      if (!g.includes('--resume r1 --override-manifest') || !/重新发起同一请求/.test(g)) throw new Error('须给出重新发起与已填好的显式续跑两条路');
+      if (/--override-manifest --force-resume|冷却过去|合同来源|旧预算/.test(g)) throw new Error('不得再要求 --force-resume / 等冷却，或写起后继沿用旧预算');
+      if (!/接回本 run/.test(g)) throw new Error('须写明两种做法都接回本 run');
     },
   },
   // ------------------------------------------------------------ T3b

@@ -255,7 +255,7 @@ export function generateGoalReportJson(
   const deferred_phases = phases.filter((p) => p.deferred).map((p) => p.phase);
   // t5④（codex 订正）：报告**只消费**投影，绝不重算。
   // 此前这里调 withRunDisposition 用**中性上下文**按 halt_reason 重新 decide——
-  // 那是第二个裁决入口：runner 拿着真实结构事实（回退预算/截断链/重复指纹）算出
+  // 那是第二个裁决入口：runner 拿着真实结构事实（截断链/重复指纹）算出
   // TERMINAL，报告却会重算成 RECOVERY_PENDING，「运行器说无法恢复、报告说正在恢复」。
   // 真实投影由生产端在 halt 那一刻写进事件，并由 runner 回填进 outcome（见
   // goal-runner enrichOutcomesWithProjection）。此处原样透传。

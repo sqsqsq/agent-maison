@@ -43,7 +43,7 @@ export function formatAssessNextStep(
     `observed_fingerprint=${result.observed_fingerprint.slice(0, 16)} gaps=${result.gaps.length} fused=${result.stop.fused}`,
     `recommendation=${target}`,
     `reason=${oneLine(result.recommendation.reason)}`,
-    `authorization=driver_required policy=${result.authorization_context.mode}`,
+    `authorization=${result.recommendation.requires_driver_authorization === false ? 'none' : 'driver_required'} policy=${result.authorization_context.mode}`,
     'END_NEXT_STEP',
   ].join('\n');
 }

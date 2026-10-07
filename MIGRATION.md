@@ -2,6 +2,22 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：预算有效值、接续冷却、完成输出同源与返修局部诊断（行为变化，plan a2f7c9e4）
+
+无须迁移宿主旧 run、旧报告或旧 next.json；下列变化在更新发布件后的下一次启动 / 重算时生效。
+
+- **后继的预算取本交付周期的已授权值**：后继不再随合同来源整份继承预算。出生时先按事件定本周期最新的授权预算（`run_created` 出生值，或带 `--override-manifest` 写下的预算改写），再在本周期各 run、合同来源与本次出生输入的现有 `manifest.budget` 里取与之同值的那份；本次带 `--override-manifest` 时，被承接 run 上尚未登记的预算改动即作为本次授权。运行期上限仍读本 run 自己的 manifest，与有效值同值。
+- **新周期不继承上一周期的追加**：上一次可信完成之后的首个后继取本次出生输入的预算（`--manifest` 给出的预算，否则默认值），不再沿用来源 run 的预算快照。原先只在首次 `--manifest` 里设过、从未再改的 feature 级预算，在新周期需要重新给出。本版之前出生、已继承旧值的后继不追溯修正。
+- **未授权的预算改动不生效**：手改 manifest 预算却不带 `--override-manifest`，调高调低都不会被采用；只有现有 manifest 里已找不到最新授权值时，后继才不出生（不建 run、不写事件），按提示带 `--override-manifest` 重新发起，或把 `manifest.budget` 还原为已授权值。旧版本留下的 run 若整个交付周期都没有身份事件（没有 `run_created`，`run_start` 也不带预算摘要），框架无从核验授权值，后继照旧沿用合同来源 run 的预算；周期里只要有一个 run 带预算摘要，就按上面的规则核验。
+- **仅预算变化续原 run**：run 停在 `budget_turns` / `budget_wall_clock`，有权者只改了它的预算并带 `--override-manifest` 重新发起同一请求或显式 `--resume`，都接回这个 run 续跑，不再起后继、不再需要 `--force-resume`、不受冷却。叠加真实需求变化、型号变化或范围失效时仍起后继，后继预算取上面的有效值；其它终局原因（如 `no_progress_fuse`）不因预算变化被接回。功能已完成且本次只改了预算时保持停止，要追加内容须写明需求。这样自动接回时若同时传了 `--manifest`：文件只是重复原 run 就按原 run 续跑；文件另带改动则采用文件（文件里没写的字段不重置为默认值），预算取原 run 当前已改的值，统一按 `--override-manifest` 登记改写。
+- **显式 `--resume` 的冷却**：`--resume <run>` 只确定目标 run，能否原地恢复看去掉显式旗标后的同一接续决策——判为重新接入该 run 时立即恢复；判为"有变化但不能原地恢复"（起后继）时不等冷却，但仍须 `--force-resume`（例外不变：停机所挂探针已就绪而冻结绑定已失效时，显式 `--resume` 照旧直接改为起后继并承接）；没有任何变化的重复请求照旧冷却。冷却时长与有人在场不冷却的规则不变。
+- **assess 已完成投影（`assess@1` 取值扩展）**：完成评估已成立（完成记录校验 VALID、义务全覆盖、无后续未终局 run）时，`next.json` 输出 `recommendation.action=feature_completed`、`recommendation.requires_driver_authorization=false`、`feature_completion=VALIDATED`、`run_status_candidate=CHAIN_SLICE_COMPLETED`、`gaps=[]`，渲染为 `authorization=none`；不再推荐 `validate_feature_completion`，也不再列旧缺口。`requires_driver_authorization` 由恒为 `true` 改为布尔，按字面 `true` 解析 `assess.schema.json` 的自写工具须放宽。无 run 上下文时按完成记录所属 run 的执行范围观察缺口，不再落到全工作流链。完成记录存在但校验失败时仍推荐验证；记录缺失时按既有观察推荐回责任阶段。
+- **测试报告措辞改为同源**（`test-report.md`）：显式断言（trace `role=assertion` 且 passed）与被 `--skip-assert-expected` 跳过的自然语言预期分开计数，弱化旗标只限定被跳过的部分，带旗标的报告仍不签「达标」；视觉几何 / 内容 / 样式改读授权过滤后的有效视图，内容 / 样式"已复核"要求规范路径 `device-testing/reports/critic-receipt.json` 通过门禁同一结构校验、且其图像 hash 覆盖当前截图、判定未因截图或构建指纹变化而过期；minor 残差在缺陷表记「披露」，不计入"待修复"（缺陷统计表的"数量"因此可能大于各状态列之和）；testing gate 的视觉检查（`visual_diff*`、`visual_reference_viewport`、`runtime_mount_conformance` 等）有真实阻断时，总体结论为"不达标"。visual-diff 门禁的受检屏集合按有效处置取（有效 pass 或授权 minor 的屏都纳入锚点检查）。
+- **返修局部诊断（可选，诊断不是验收）**：coding 返修窗口收到真机 testing 报出的候选时，提示词与 coding Skill 给出 `adhoc-device-test` 的诊断入口：`--install-current-build`（以与 testing 同一解析器出包当前工作树并强制装机）、`--measure-screen <screen_id> --feature <f>`（截图 + 布局 + 只读 ui-spec 量测），与既有 `--dump-ui-only` / `--observe-ui` 同用。产物默认落 `doc/features/_adhoc/testing/reports/`，不写正式截图、visual-diff、回执与 testing 报告，不签凭证、不替代 review → UT → testing；testing 照常自行出包装机判定。设备门照旧在首个设备操作前执行；诊断耗时计入本次调用。注意它会改写工程构建输出、替换设备上的应用；可选的 provider 视觉筛查未提供。使用契约：`_adhoc` 只是默认落点，显式 `--dump-ui-out` 不做路径隔离，不要指向正式 feature 目录；`--observe-ui` / 执行解析主 Ability 时会更新同 bundle 共享的 `doc/app-snapshot-cache/<bundle>/app-meta.json` 能力缓存。
+- **`--dump-ui-only` 缺省落点变化**：缺省输出由 `doc/app-snapshot-cache/<bundle>/dump-ui-<日期>.json` 改为 `doc/features/_adhoc/testing/reports/dump-ui-<秒级时间戳>.json`（同日多次不再互相覆盖）；按旧路径找 dump 的脚本请改读 stderr `ADHOC_DUMP_UI_PATH=` 或显式传 `--dump-ui-out`。
+- **`--repair-notes <文件>`（驱动方修法假设）**：只随显式 `--resume` 生效（fresh 启动带它直接拒绝、不建 run），读一次后注入当前返修窗口的提示词（候选段之后，标明"驱动方假设，非需求"）；不改需求哈希、身份与接续决策，不起后继。要改需求仍用 `--requirement-file`。
+- **验收边界（尚未在真实环境验收）**：本节行为的开发仓验证中，设备（hdc 传输面、装前就绪桥）、出包、截图 / 布局取材均为替身；detach 用例是在测试进程内直接调用子进程入口完成的，不是真实 OS 层 detach；返修中断回归用脚本化执行者作真实子进程，只证明 spawn、终止与事件解析。真实 Codex CLI 被杀 / 断流时的中断行为、真机上"返修内装机 → 观察 → 选修法"的反馈链、真实后台 detach 下的预算接回与 `--repair-notes` 传递，均待宿主实测。
+
 ## 3.1.0：返修接续、资源预算与视觉裁决
 
 更新 Maison 发布件后，无须迁移或重写宿主旧 run、候选、拒修账本和相关输入快照。中断的返修保留原 request，在同一 run/窗口继续；普通 compile/static PASS 不再代表已完成指定修复。新 `agent_invoke_end` 增加可选 `completion_observed`，旧事件按同一 invoke 的 verdict 回放；正常完成后清理返回非零仍可验证收口。

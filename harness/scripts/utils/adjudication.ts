@@ -97,8 +97,6 @@ export interface IncidentFacts {
   detail?: string;
   /** 当前 chain 是否同时含 coding 与 review（回退重验的结构前提）。 */
   chain_has_coding_review?: boolean;
-  /** Legacy optional observation, ignored by current resource adjudication. */
-  backtrack_budget_remaining?: number;
   /** 整轮 actionable 集合指纹是否与上次回退完全相同（回退震荡）。 */
   round_fingerprint_repeated?: boolean;
   /** 相关文件（诊断用；不参与裁决）。 */
@@ -655,8 +653,8 @@ export function decide(
       if (!action) {
         return { kind: 'waiting', wait_kind: 'human', reason: `${facts.incident}：可恢复但未声明恢复动作` };
       }
-      // retry_transaction 只重跑当前责任阶段，不消费回退预算，也不依赖 coding/review
-      // 链；预算/截断/指纹只约束真正跨阶段的 backtrack_to_coding。
+      // retry_transaction 只重跑当前责任阶段，不依赖 coding/review 链；
+      // 截断链/重复指纹只约束真正跨阶段的 backtrack_to_coding。
       const blocked = action === 'backtrack_to_coding' ? backtrackBlocked(facts) : null;
       if (blocked) return { kind: 'terminal', reason: blocked };
       return {

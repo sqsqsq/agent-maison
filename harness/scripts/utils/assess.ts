@@ -191,11 +191,13 @@ export interface AssessRecommendation {
     | 'resolve_deferred'
     | 'restore_inputs_and_rerun'
     | 'validate_feature_completion'
+    | 'feature_completed'
     | 'revise_scope'
     | 'stop';
   phase: string | null;
   reason: string;
-  requires_driver_authorization: true;
+  /** false 仅用于 feature_completed：完成评估已 VALID，没有可授权的执行。 */
+  requires_driver_authorization: boolean;
   /** Exact SSOT verdict action when recommendation was derived from a phase outcome. */
   runner_action?: PhaseVerdictAction;
 }
@@ -221,7 +223,7 @@ export interface AssessResult {
   alternatives: AssessRecommendation[];
   stop: { fused: boolean; reason: string | null };
   run_status_candidate: 'CHAIN_SLICE_COMPLETED' | null;
-  feature_completion: 'REQUIRES_VALIDATION' | null;
+  feature_completion: 'REQUIRES_VALIDATION' | 'VALIDATED' | null;
   projection_fingerprint: string;
 }
 
@@ -1006,23 +1008,26 @@ export function writeNextProjection(
 /**
  * plan c4e7a9b2 §3.5：无 run 时推荐以完成评估入口（feature-assessment）为准——与出生链同源，
  * 不再按逐阶段 summary 推荐。无完成记录时评估无「已完成部分哪里失效」可答，保留观察器推荐（返回 null）。
+ * plan a2f7c9e4 §3.4：`complete` 已蕴含记录 VALID、blocking 空、义务全覆盖——输出"已完成"投影，不再请求验证。
  */
-function completionAssessmentRecommendation(
-  options: AssessFeatureOptions,
-  chain: string[],
-): AssessRecommendation | null {
-  let a: ReturnType<typeof assessFeatureCompletion>;
+function featureCompletionAssessment(options: AssessFeatureOptions): ReturnType<typeof assessFeatureCompletion> | null {
   try {
-    a = assessFeatureCompletion(options.projectRoot, options.feature, {
+    return assessFeatureCompletion(options.projectRoot, options.feature, {
       ...resolveChangeUnitExpectedExecution(options.projectRoot, options.feature, false, options.frameworkRoot),
       frameworkRoot: options.frameworkRoot,
     });
   } catch {
     return null;
   }
+}
+
+function completionAssessmentRecommendation(
+  a: ReturnType<typeof assessFeatureCompletion>,
+  chain: string[],
+): AssessRecommendation | null {
   if (a.record.state === 'absent') return null;
   if (a.complete) {
-    return { action: 'validate_feature_completion', phase: null, reason: '完成评估：记录可信、义务全覆盖；仍须执行 feature completion validation', requires_driver_authorization: true };
+    return { action: 'feature_completed', phase: null, reason: '完成评估：记录 VALID、义务全覆盖、无后续未终局 run', requires_driver_authorization: false };
   }
   const uncovered = a.obligations.filter(o => o.status === 'uncovered' && o.owner_phase);
   if (uncovered.length) {
@@ -1041,20 +1046,26 @@ function completionAssessmentRecommendation(
 }
 
 export function assessFeature(options: AssessFeatureOptions): AssessResult {
-  const observation = observeFeatureState(options);
+  // 无 run 身份：完成记录带 run_id 时按该 run 的执行范围观察，不落到全工作流链（plan a2f7c9e4 §3.4）。
+  const completion = options.runId ? null : featureCompletionAssessment(options);
+  const recordRunId = completion && completion.record.state !== 'absent' ? completion.record.run_id : null;
+  const observation = observeFeatureState(recordRunId ? { ...options, runId: recordRunId } : options);
   let result = assessObservation(
     observation,
     options.authorization ?? { mode: 'manual' },
   );
-  const override = options.runId ? null : completionAssessmentRecommendation(options, observation.phases.map(p => p.phase));
+  const override = completion ? completionAssessmentRecommendation(completion, observation.phases.map(p => p.phase)) : null;
   if (override) {
     const { projection_fingerprint: _stale, ...rest } = result;
+    const completed = override.action === 'feature_completed';
     const reconciled = rest.gaps.length === 0 && !rest.stop.fused && override.action === 'validate_feature_completion';
     const withoutProjection = {
       ...rest,
+      // 已完成：缺口以唯一完成评估为准（observed 原样保留作观察）。
+      gaps: completed ? [] : rest.gaps,
       recommendation: override,
-      run_status_candidate: reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
-      feature_completion: reconciled ? 'REQUIRES_VALIDATION' as const : null,
+      run_status_candidate: completed || reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
+      feature_completion: completed ? 'VALIDATED' as const : reconciled ? 'REQUIRES_VALIDATION' as const : null,
     };
     result = { ...withoutProjection, projection_fingerprint: hash(withoutProjection) };
   }

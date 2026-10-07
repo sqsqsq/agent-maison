@@ -1198,8 +1198,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         return source.slice(s, e + endAnchor.length);
       };
 
-      // ① dump-ui-only：门在 runAdhocDumpUi 之前，且**判定失败分支自己**退出
-      const dumpBlock = slice('if (dumpUiOnly) {', 'process.exit(0);');
+      // ① 只碰设备的模式（dump-ui-only / 装当前构建 / 量测）：门在 runAdhocDumpUi 之前，且**判定失败分支自己**退出
+      const dumpBlock = slice('if (deviceOnly) {', 'process.exit(0);');
       const dumpGate = dumpBlock.indexOf('applyPhaseEntryDeviceGate(');
       const dumpCall = dumpBlock.indexOf('runAdhocDumpUi(');
       assert(dumpGate > 0 && dumpCall > 0, 'dump-ui-only 块内两个锚点都须存在');
@@ -1210,6 +1210,12 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert(
         dumpBlock.indexOf(dumpFail!) < dumpCall,
         'dump-ui-only：`!gate.ok` 分支须整体早于 runAdhocDumpUi',
+      );
+      // plan a2f7c9e4 §3.6：装当前构建也是设备操作——在门与 `!gate.ok` 退出之后、dump 之前
+      const dumpInstall = dumpBlock.indexOf('installCurrent();');
+      assert(
+        dumpInstall > dumpBlock.indexOf(dumpFail!) + dumpFail!.length && dumpInstall < dumpCall,
+        '只碰设备的模式：installCurrent() 须在 `!gate.ok` 分支之后、runAdhocDumpUi 之前',
       );
 
       // ② 执行 / observe 主路径：门在 resolveMainAbilityForBundle（首个 bm dump）之前，
@@ -1230,6 +1236,11 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert(
         execBlock.indexOf(execFail!) > execGate && execBlock.indexOf(execFail!) + execFail!.length < execAbility,
         '主路径：`!gate.ok` 分支须整体位于门之后、resolveMainAbilityForBundle 之前',
+      );
+      const execInstall = execBlock.indexOf('installCurrent();');
+      assert(
+        execInstall > execBlock.indexOf(execFail!) + execFail!.length && execInstall < execAbility,
+        '主路径：installCurrent() 须在 `!gate.ok` 分支之后、resolveMainAbilityForBundle（首个 bm dump）之前',
       );
 
       // ③ derive-only：不碰设备 → 不起门

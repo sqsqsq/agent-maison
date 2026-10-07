@@ -19,6 +19,7 @@ import {
   evaluateFreshRunContinuation,
   decideRunContinuation,
   inspectGoalRunCreation,
+  resolveCycleEffectiveBudget,
   validateRebaselineRequest,
   type RunContinuationDecision,
 } from '../../scripts/utils/goal-run-creation';
@@ -735,7 +736,8 @@ cases.push(
     onDisk.budget.wall_clock_minutes += 60;
     fs.writeFileSync(manifestPath, JSON.stringify(onDisk, null, 2), 'utf8');
     assert.strictEqual(changeOf({ requirement: '旧需求' }), 'hold', '预算改了但没有既有授权不算变化');
-    assert.strictEqual(changeOf({ requirement: '旧需求', budgetOverride: true }), 'budget_changed');
+    // plan a2f7c9e4 §3.2：预算耗尽 + 只改预算并授权 → 接回原 run（budget_changed 起后继见下方非预算终局用例）
+    assert.strictEqual(changeOf({ requirement: '旧需求', budgetOverride: true }), 'rejoin');
     fs.writeFileSync(manifestPath, JSON.stringify({ ...onDisk, budget: { ...onDisk.budget, wall_clock_minutes: onDisk.budget.wall_clock_minutes - 60 } }, null, 2), 'utf8');
     fs.writeFileSync(path.join(root, sourceRel), '新需求', 'utf8');
     assert.strictEqual(changeOf({ requirement: '新需求', requirementSourceFiles: [sourceRel] }), 'requirement_source_changed');
@@ -748,6 +750,143 @@ cases.push(
     assert(force.kind === 'fresh' && force.explicit, JSON.stringify(force));
     const resume = decide(root, { resume: a.manifest.run_id }, now);
     assert(resume.kind === 'rejoin' && resume.explicit, JSON.stringify(resume));
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// plan a2f7c9e4 §3.2：仅预算变化接回原 run；§3.1：后继出生时的本周期有效预算（真实 createGoalRun 出生记录 + 生产解析函数）
+// ---------------------------------------------------------------------------
+
+function editBudget(root: string, reportDir: string, turns: number, extra: Record<string, unknown> = {}): ReturnType<typeof buildGoalManifestFromInput> {
+  const file = path.join(root, reportDir, 'manifest.json');
+  const m = JSON.parse(fs.readFileSync(file, 'utf8')) as ReturnType<typeof buildGoalManifestFromInput>;
+  const next = { ...m, ...extra, budget: { ...m.budget, max_total_turns: turns } };
+  fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+
+/** 与 runtime 写盘同形的授权改写事件（--override-manifest）。 */
+const rebaseTo = (ms: number, manifest: ReturnType<typeof buildGoalManifestFromInput>): Record<string, unknown> => ({
+  ts: at(ms), type: 'manifest_identity_rebase', to_fields: computeManifestIdentityFields(manifest), authorized_by: 'override-manifest', changed_fields: ['budget'],
+});
+
+/** 两次出生之间至少隔 2ms：run_created.ts 是毫秒精度，授权"最新"按 ts 判。 */
+function tick(): void { const until = Date.now() + 2; while (Date.now() < until) { /* spin */ } }
+
+const effectiveBudget = (root: string, targets: string[], sourceBudget: object, override = false): ReturnType<typeof buildGoalManifestFromInput>['budget'] =>
+  resolveCycleEffectiveBudget({
+    projectRoot: root, featuresDir: 'doc/features', feature: 'demo', frameworkRoot: path.resolve(__dirname, '..', '..', '..'),
+    targets, sourceBudget: sourceBudget as never, birthInputBudget: buildGoalManifestFromInput({ feature: 'demo', unattended }, { projectRoot: root }).budget, override,
+  }).budget;
+const effective = (root: string, targets: string[], sourceBudget: object, override = false): number =>
+  effectiveBudget(root, targets, sourceBudget, override).max_total_turns;
+
+/** legacy run：没有 run_created，出生身份只在首个 run_start 的 manifest_identity_fields（withIdentity=false 时连它也没有）。 */
+function legacyRun(root: string, suffix: string, budget: Record<string, number>, withIdentity = true): ReturnType<typeof buildGoalManifestFromInput> {
+  const manifest = buildGoalManifestFromInput({
+    feature: 'demo', run_id: `20260928T00000${suffix}Z-${suffix}${suffix}${suffix}`, start_phase: 'plan', end_phase: 'plan', requirement: '完成开卡', unattended, budget,
+  }, { projectRoot: root });
+  const dir = path.join(root, manifest.report_dir);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+  appendRunEvents(path.join(dir, 'events.jsonl'), [
+    { ...started(T0), ...(withIdentity ? { manifest_identity_fields: computeManifestIdentityFields(manifest) } : {}) },
+    ...halted(T0 + 10, 'budget_turns'),
+  ]);
+  return manifest;
+}
+
+cases.push(
+  decisionCase('a2f7c9e4 §3.2 预算耗尽 + 只改预算并授权 → 接回原 run；未授权 / 叠加需求增量 / 身份另有改动 / 非预算终局 → 不接回', (root) => {
+    const a = bornRun(root, '完成开卡', '1');
+    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_turns')]);
+    editBudget(root, a.manifest.report_dir, 42);
+    const d = decide(root, { requirement: '完成开卡', budgetOverride: true }, T0 + 60_000);
+    assert(d.kind === 'rejoin' && d.runId === a.manifest.run_id && d.started && !d.explicit, `仅预算授权须接回原 run：${JSON.stringify(d)}`);
+    assert.strictEqual(decide(root, { requirement: '完成开卡' }, T0 + HOUR).kind, 'hold', '没有 --override-manifest 的手改不算变化');
+    const inc = decide(root, { requirement: '完成开卡，并补绑卡提示', budgetOverride: true }, T0 + HOUR);
+    assert(inc.kind === 'successor' && inc.change === 'requirement_increment', `叠加需求增量仍起后继：${JSON.stringify(inc)}`);
+    editBudget(root, a.manifest.report_dir, 42, { end_phase: 'testing' });
+    const wider = decide(root, { requirement: '完成开卡', budgetOverride: true }, T0 + HOUR);
+    assert(wider.kind === 'successor' && wider.change === 'budget_changed', `身份差集含 budget 以外字段不得接回：${JSON.stringify(wider)}`);
+    const b = bornRun(root, '完成开卡', '2');
+    appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'no_progress_fuse')]);
+    editBudget(root, b.manifest.report_dir, 42);
+    const fuse = decide(root, { requirement: '完成开卡', budgetOverride: true }, T0 + HOUR);
+    assert(fuse.kind === 'successor' && fuse.change === 'budget_changed', `非预算结构终局不被预算变化接回：${JSON.stringify(fuse)}`);
+  }),
+  decisionCase('a2f7c9e4 §3.1 反例⑤：唯一 run 授权 10 已耗尽、手改 99、不带 override → 无匹配即抛出（不取默认 30）；带 override → 99', (root) => {
+    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 10 } });
+    appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_turns')]);
+    const edited = editBudget(root, a.manifest.report_dir, 99);
+    assert.throws(() => effective(root, [a.manifest.run_id], edited.budget), /找不到同值[\s\S]*--override-manifest[\s\S]*还原/);
+    assert.strictEqual(effective(root, [a.manifest.run_id], edited.budget, true), 99, '本次 --override-manifest 授权承接目标上的改动');
+    editBudget(root, a.manifest.report_dir, 10);
+    assert.strictEqual(effective(root, [a.manifest.run_id], edited.budget), 10, '还原为已授权值后取 10');
+  }),
+  decisionCase('a2f7c9e4 §3.1 反例⑥：旧 run 授权 42、最新授权降到 20、最新 manifest 手改 50 → 不回选 42；最新 manifest 手改 10 而旧候选仍存 20 → 采用 20', (root) => {
+    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 30 } });
+    const a42 = editBudget(root, a.manifest.report_dir, 42);
+    appendRunEvents(a.eventsPath, [started(T0), rebaseTo(Date.now(), a42), ...halted(T0 + 10, 'budget_turns')]);
+    tick();
+    const b = bornRun(root, '完成开卡', '2', { budget: { max_total_turns: 20 } });
+    appendRunEvents(b.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: a.manifest.run_id, supersedingRunId: b.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
+    const b50 = editBudget(root, b.manifest.report_dir, 50);
+    assert.throws(() => effective(root, [b.manifest.run_id], b50.budget), /找不到同值/, '最新授权 20 无匹配数值时停下，不回选 42 / 50');
+    editBudget(root, b.manifest.report_dir, 20);
+    tick();
+    const c = bornRun(root, '完成开卡', '3', { budget: { max_total_turns: 20 } });
+    appendRunEvents(c.eventsPath, [started(T0 + 300), buildSupersedeAuditEvent({ targetRunId: b.manifest.run_id, supersedingRunId: c.manifest.run_id }), ...halted(T0 + 400, 'budget_turns')]);
+    const c10 = editBudget(root, c.manifest.report_dir, 10);
+    assert.strictEqual(effective(root, [c.manifest.run_id], c10.budget), 20, '当前 manifest 手改成 10、另一候选仍存授权 20 → 采用 20，不停');
+  }),
+  decisionCase('a2f7c9e4 r1 B1-1：本周期只有一个 legacy run（无 run_created，run_start 带身份）→ 按它的出生摘要取 10 / 60 分钟，不当新周期取默认 30 / 480；手改无 override → 抛出', (root) => {
+    const legacy = legacyRun(root, '1', { max_total_turns: 10, wall_clock_minutes: 60 });
+    const got = effectiveBudget(root, [legacy.run_id], legacy.budget);
+    assert.deepStrictEqual([got.max_total_turns, got.wall_clock_minutes], [10, 60], `legacy run 的授权值须按 run_start 摘要取回：${JSON.stringify(got)}`);
+    const legacyFile = path.join(root, legacy.report_dir, 'manifest.json');
+    const edited = { ...legacy, budget: { ...legacy.budget, wall_clock_minutes: 600 } };
+    fs.writeFileSync(legacyFile, JSON.stringify(edited, null, 2), 'utf8');
+    assert.throws(() => effectiveBudget(root, [legacy.run_id], edited.budget), /找不到同值/, '墙钟维度的未授权手改同样不得生效、不回退默认 480');
+  }),
+  decisionCase('a2f7c9e4 r4：整个周期没有任何 run 带预算摘要（前身份时代 legacy）→ 沿用合同来源预算，不取默认、不拒绝；周期里另有带摘要的 run 时仍严格（缺摘要的 run 拒绝）', (root) => {
+    const bare = legacyRun(root, '2', { max_total_turns: 10, wall_clock_minutes: 60 }, false);
+    const inherited = effectiveBudget(root, [bare.run_id], { ...bare.budget, max_total_turns: 12 });
+    assert.deepStrictEqual([inherited.max_total_turns, inherited.wall_clock_minutes], [12, 60], `前身份时代周期须沿用来源预算：${JSON.stringify(inherited)}`);
+    const modern = bornRun(root, '完成开卡', '3', { budget: { max_total_turns: 20 } });
+    appendRunEvents(modern.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: bare.run_id, supersedingRunId: modern.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
+    assert.throws(() => effectiveBudget(root, [modern.manifest.run_id], modern.manifest.budget), /没有可核验的出生预算摘要/, '周期里有带摘要的 run 时，缺摘要的 run 仍按严格规则拒绝');
+  }),
+  decisionCase('a2f7c9e4 r1 B1-2：旧 run 授权 42、较新 run 授权 20，较新 run 的 manifest 因无关字段损坏读不出 → 不回选 42（其它候选有 20 时取 20）；较新 run 的 events 含损坏行 → 抛出', (root) => {
+    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 30 } });
+    const a42 = editBudget(root, a.manifest.report_dir, 42);
+    appendRunEvents(a.eventsPath, [started(T0), rebaseTo(Date.now(), a42), ...halted(T0 + 10, 'budget_turns')]);
+    tick();
+    const b = bornRun(root, '完成开卡', '2', { budget: { max_total_turns: 20 } });
+    appendRunEvents(b.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: a.manifest.run_id, supersedingRunId: b.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
+    editBudget(root, b.manifest.report_dir, 20, { report_dir: 'doc/features/demo/goal-runs/elsewhere' });
+    assert.throws(() => loadGoalManifestFromRun(root, b.manifest.run_id, { feature: 'demo' }), /report_dir/, '夹具：较新 run 的 manifest 读不出');
+    assert.throws(() => effective(root, [b.manifest.run_id], { ...a42.budget }), /找不到同值/, '最新授权 20 仍按事件算数，42 不得被重新选中');
+    assert.strictEqual(effective(root, [b.manifest.run_id], { ...a42.budget, max_total_turns: 20 }), 20, '其它候选（合同来源）有 20 时取 20');
+    fs.appendFileSync(b.eventsPath, '{broken\n', 'utf8');
+    assert.throws(() => effective(root, [b.manifest.run_id], { ...a42.budget, max_total_turns: 20 }), /损坏行/, '授权历史读不可靠时不出生');
+  }),
+  decisionCase('a2f7c9e4 r1 非阻断：跨 run 同一毫秒的授权并列 → 取 run id 较大者；同一 run 内并列取事件序靠后者', (root) => {
+    const a = bornRun(root, '完成开卡', '1', { budget: { max_total_turns: 42 } });
+    const b = bornRun(root, '完成开卡', '2', { budget: { max_total_turns: 20 } });
+    appendRunEvents(b.eventsPath, [started(T0 + 100), buildSupersedeAuditEvent({ targetRunId: a.manifest.run_id, supersedingRunId: b.manifest.run_id }), ...halted(T0 + 200, 'budget_turns')]);
+    const sameTs = (eventsPath: string, ts: string): void => {
+      const lines = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>);
+      fs.writeFileSync(eventsPath, lines.map(e => JSON.stringify(e.type === 'run_created' ? { ...e, ts } : e)).join('\n') + '\n', 'utf8');
+    };
+    const tie = new Date(T0).toISOString();
+    sameTs(a.eventsPath, tie);
+    sameTs(b.eventsPath, tie);
+    assert(b.manifest.run_id > a.manifest.run_id, '夹具：b 的 run id 较大');
+    assert.strictEqual(effective(root, [b.manifest.run_id], { max_total_turns: 1 }), 20, '跨 run 并列取 run id 较大者（b 的 20）');
+    const b30 = editBudget(root, b.manifest.report_dir, 30);
+    appendRunEvents(b.eventsPath, [{ ...rebaseTo(T0, b30), ts: tie }]);
+    assert.strictEqual(effective(root, [b.manifest.run_id], { max_total_turns: 1 }), 30, '同一 run 内并列取事件序靠后的改写');
   }),
 );
 

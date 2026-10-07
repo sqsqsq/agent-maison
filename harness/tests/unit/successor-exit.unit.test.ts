@@ -23,7 +23,7 @@ import { featureScopeCandidateFingerprint } from '../../scripts/utils/feature-tr
 import { loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { resolveWorkflowSpec } from '../../workflow-loader';
-import { buildGoalManifestFromInput, mergeSuccessorRequirement, SUCCESSOR_REQUIREMENT_INCREMENT_MARKER } from '../../scripts/utils/goal-manifest';
+import { buildGoalManifestFromInput, computeManifestIdentityFields, mergeSuccessorRequirement, SUCCESSOR_REQUIREMENT_INCREMENT_MARKER } from '../../scripts/utils/goal-manifest';
 import { computeRequirementShaFromText, computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
@@ -439,6 +439,59 @@ for (const entry of ['foreground', 'detach'] as const) {
     assert(done.invokedPhases.length > 0, `后继须开始执行：${done.invokedPhases.join(',')}`);
   }) });
 }
+
+/** 已完成 run 的预算改到 turns；authorized 时按 runtime 同形补一条 --override-manifest 授权改写（上一周期的追加）。 */
+function editCompletedBudget(s: Snapshot, feature: string, runId: string, turns: number, authorized: boolean): void {
+  const file = runFile(s.root, feature, runId, 'manifest.json');
+  const m = readJson<ReturnType<typeof buildGoalManifestFromInput>>(file);
+  m.budget = { ...m.budget, max_total_turns: turns };
+  fs.writeFileSync(file, JSON.stringify(m, null, 2));
+  if (!authorized) return;
+  fs.appendFileSync(runFile(s.root, feature, runId, 'events.jsonl'), JSON.stringify({
+    ts: new Date().toISOString(), type: 'manifest_identity_rebase', to_fields: computeManifestIdentityFields(m), authorized_by: 'override-manifest', changed_fields: ['budget'],
+  }) + '\n');
+}
+
+for (const entry of ['foreground', 'attended'] as const) {
+  cases.push({ name: `a2f7c9e4 §3.1 反例③ 新周期 ${entry}：上一周期完成 run 曾授权追加到 42，完成后带需求增量起后继 → 后继取本次出生输入的预算（默认 30），不带上一周期的追加`, run: () => withSnapshot(async s => {
+    const feature = SNAPSHOT_FLAT_FEATURE;
+    const [completed] = runIds(s.root, feature);
+    freezeAndTransfer(s, feature, completed);
+    ensureFakeDeveco(s);
+    editCompletedBudget(s, feature, completed, 42, true);
+    assert.strictEqual(assess(s, feature).record.state, 'ok', '前提：完成记录可信（交付周期边界生效）');
+    const before = new Set(runIds(s.root, feature));
+    await requestVia(entry, s.root, {
+      frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: INCREMENT_AFTER_COMPLETION, failExecutorFor: () => true,
+      ...(entry === 'foreground' ? { freshStartPhase: 'spec' as const, freshEndPhase: 'plan' } : {}),
+    });
+    clearFrameworkConfigCache();
+    const successor = runIds(s.root, feature).find(id => !before.has(id) && hasManifest(s.root, feature, id));
+    assert(successor, `须起后继：${runIds(s.root, feature).join(',')}`);
+    const manifest = readJson<{ successor_of?: string; budget: { max_total_turns: number } }>(runFile(s.root, feature, successor!, 'manifest.json'));
+    assert.strictEqual(manifest.successor_of, completed);
+    assert.strictEqual(manifest.budget.max_total_turns, 30, `新周期首个后继取出生输入预算，不继承上一周期的 42：${JSON.stringify(manifest.budget)}`);
+  }) });
+}
+
+cases.push({ name: 'a2f7c9e4 §3.2 已完成功能只改预算并带 --override-manifest 重发原请求 → 保持停止、不新建 run（仅预算不构成新工作）', run: () => withSnapshot(async s => {
+  const feature = SNAPSHOT_FLAT_FEATURE;
+  const [completed] = runIds(s.root, feature);
+  freezeAndTransfer(s, feature, completed);
+  ensureFakeDeveco(s);
+  editCompletedBudget(s, feature, completed, 42, false);
+  const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, completed, 'manifest.json')).requirement;
+  const d = decideRunContinuation({ projectRoot: s.root, feature, call: { requirement, budgetOverride: true } });
+  assert(d.kind === 'hold' && d.runId === completed && /只改预算/.test(d.guidance), `仅预算变化须保持停止：${JSON.stringify(d)}`);
+  const done = await requestVia('foreground', s.root, {
+    frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: requirement, failExecutorFor: () => true,
+    freshStartPhase: 'spec', freshEndPhase: 'plan', launchArgs: ['--override-manifest'],
+  });
+  clearFrameworkConfigCache();
+  assert.strictEqual(done.exitCode, 1, '保持停止');
+  assert.deepStrictEqual(runIds(s.root, feature), [completed], '不得新建 run');
+}) });
+
 cases.push({ name: 'P3 R4 有人在场：已完成功能 + 需求增量重发 → prepare-run 出生后继，附着补完承接审计与范围转交，在有人在场执行者之下真正执行', run: () => withSnapshot(async s => {
   const feature = SNAPSHOT_FLAT_FEATURE;
   const [completed] = runIds(s.root, feature);

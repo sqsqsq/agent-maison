@@ -6,6 +6,11 @@
  * Execute:    --bundle <id> --plan <path> | --steps-file <path>  (default cold-restart; --continue-session keeps Nav)
  * Dump only:  --bundle <id> --dump-ui-only [--dump-ui-out <path>]
  * Observe:    --bundle <id> --steps "…" --observe-ui  (touch-only NL auto-run + dump + summarize)
+ * Diagnose:   add --install-current-build (build the current working tree + force-install, before any other
+ *             device step) and/or --measure-screen <screen_id> --feature <f> (screenshot + layout + measure the
+ *             ui-spec elements of that screen; ui-spec read-only). Usable alone or with dump / observe / execute.
+ *             All outputs stay under doc/features/_adhoc/testing/reports/ — diagnosis, not acceptance evidence
+ *             (plan a2f7c9e4 §3.6).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -24,7 +29,12 @@ import {
 } from '../../profiles/hmos-app/harness/app-snapshot-warmup';
 import { listSnapshotPages, isCacheLayoutMismatch, listSnapshotPageJsonPaths } from './utils/app-snapshot-cache-hint';
 import { ensureHypiumWorkDir } from '../../profiles/hmos-app/harness/device-test-hypium-workdir';
-import { featurePhaseReportsDir } from '../config';
+import { featurePhaseReportsDir, loadFrameworkConfig } from '../config';
+import {
+  buildHylyreLayoutDumpFn,
+  buildHylyreVisualDiffScreenshotFn,
+} from '../../profiles/hmos-app/harness/visual-diff-hylyre-screenshot';
+import { installCurrentBuildForAdhoc, measureAdhocScreen } from './utils/adhoc-repair-diagnosis';
 import { detectRepoLayout } from '../repo-layout';
 import {
   lintHylyrePlanMarkdown,
@@ -71,8 +81,11 @@ const argv = minimist(process.argv.slice(2), {
     'project-root',
     'p',
     'dump-ui-out',
+    'measure-screen',
+    'feature',
   ],
   boolean: [
+    'install-current-build',
     'skip-explore',
     'skip-explore-warmup',
     'accept-cold-start',
@@ -190,6 +203,10 @@ const skipPageSaveFlag = argv['skip-page-save'] === true;
 const observeUi = argv['observe-ui'] === true;
 const useNormalize = argv['no-normalize'] !== true;
 const dumpUiOutArg = (argv['dump-ui-out'] || '').trim();
+// plan a2f7c9e4 §3.6：返修局部诊断——装当前工作树的构建 / 量测某屏（产物只落 _adhoc）
+const installCurrentBuild = argv['install-current-build'] === true;
+const measureScreenId = (argv['measure-screen'] || '').trim();
+const measureFeature = (argv.feature || '').trim();
 // 设备目标**只在门之后**读（c7d2a9e4 D1）：此前这里顶层读 env，而即席链从未起过门，
 // 于是 env 恒空、恢复桥"不对未知设备动手"整体跳过——登记好的凭据永远用不上。
 const continueSession = argv['continue-session'] === true;
@@ -198,10 +215,17 @@ const coldRestart = !continueSession && !process.argv.includes('--no-cold-restar
 
 if (!bundle) {
   console.error(
-    '用法: npm run adhoc-device-test -- --bundle <id> (--steps "…" | --plan <path> | --steps-file <path> | --dump-ui-only | --observe-ui)',
+    '用法: npm run adhoc-device-test -- --bundle <id> (--steps "…" | --plan <path> | --steps-file <path> | --dump-ui-only | --observe-ui) [--install-current-build] [--measure-screen <screen_id> --feature <f>]',
   );
   process.exit(2);
 }
+if (measureScreenId && !measureFeature) {
+  console.error('--measure-screen 需要 --feature <ui-spec 所属 feature>（只读其 ui-spec，产物仍落 _adhoc）');
+  process.exit(2);
+}
+/** 只碰设备、不跑步骤的模式：当前屏 dump / 只装当前构建 / 只量测 */
+const deviceOnly =
+  dumpUiOnly || (!stepsRaw && !planPathArg && !stepsFileArg && !observeUi && (installCurrentBuild || Boolean(measureScreenId)));
 
 const appSnapshotCacheAbs = resolveAppSnapshotCacheAbs(projectRoot);
 const reportsBase = featurePhaseReportsDir(projectRoot, ADHOC_FEATURE, 'testing', ADHOC_FRAMEWORK_ROOT);
@@ -210,17 +234,59 @@ const logPath = path.join(reportsBase, 'device-test-run.log');
 // 门与设备操作都要 await：本文件是顶层脚本，commonjs/ES2020 无顶层 await，
 // 故把"起门之后的全部流程"包进一个 async IIFE（缩进以外零改动）。
 void (async (): Promise<void> => {
-  // --- dump-ui-only mode ---
-  if (dumpUiOnly) {
-    logAdhocPhase('dump_ui_only');
-    const ready = ensureHylyreReady({
+  /** 门之后、其它设备步骤之前调用：出包 + 强制真装当前工作树的构建；失败即停 */
+  const installCurrent = (): void => {
+    if (!installCurrentBuild) return;
+    logAdhocPhase('install_current_build');
+    const installed = installCurrentBuildForAdhoc({
       projectRoot,
       harnessRoot: HARNESS_ROOT,
       frameworkRoot: ADHOC_FRAMEWORK_ROOT,
-      feature: ADHOC_FEATURE,
-      phase: 'testing',
+      log: line => console.error(`[adhoc] ${line}`),
     });
-    if (!ready.ok) {
+    if (!installed.ok) {
+      console.error(installed.reason);
+      process.exit(1);
+    }
+    console.error(`ADHOC_INSTALLED_HAP=${installed.hapPath}`);
+    console.error(`ADHOC_HAP_SHA256_FULL=${installed.hapSha256Full ?? ''}`);
+  };
+  /** 截图 + 布局 + 量测当前屏；全部写进 _adhoc 下的新目录 */
+  const measureCurrent = (pythonPath: string, deviceSn: string | undefined): boolean => {
+    if (!measureScreenId) return true;
+    logAdhocPhase('measure_screen');
+    const outDir = path.join(reportsBase, `measure-${timestampSlug()}`);
+    const capture = { pythonPath, hypiumWorkDir: ensureHypiumWorkDir(reportsBase), deviceSn, logPath };
+    const measured = measureAdhocScreen({
+      projectRoot,
+      feature: measureFeature,
+      screenId: measureScreenId,
+      outDir,
+      screenshot: buildHylyreVisualDiffScreenshotFn(capture),
+      layoutDump: buildHylyreLayoutDumpFn(capture),
+      deviceSn,
+      specVisualSources: loadFrameworkConfig(projectRoot).spec?.visual_sources,
+      log: line => console.log(line),
+    });
+    console.error(`ADHOC_MEASURE_DIR=${outDir}`);
+    if (!measured.ok) console.error(measured.reason);
+    return measured.ok;
+  };
+
+  // --- device-only modes: dump-ui-only / install-current-build / measure-screen ---
+  if (deviceOnly) {
+    logAdhocPhase(dumpUiOnly ? 'dump_ui_only' : 'device_diagnosis');
+    // 只装当前构建不需要 hylyre（出包走 hvigor、装机走 hdc），不为它跑 ensure
+    const ready = dumpUiOnly || measureScreenId
+      ? ensureHylyreReady({
+        projectRoot,
+        harnessRoot: HARNESS_ROOT,
+        frameworkRoot: ADHOC_FRAMEWORK_ROOT,
+        feature: ADHOC_FEATURE,
+        phase: 'testing',
+      })
+      : null;
+    if (ready && !ready.ok) {
       console.error('ensureHylyreReady 失败');
       for (const e of ready.errors) console.error(`  - ${e.message}`);
       process.exit(1);
@@ -244,23 +310,27 @@ void (async (): Promise<void> => {
       process.exit(1);
     }
     const deviceSn = process.env.HARNESS_HDC_TARGET;
-    const dump = runAdhocDumpUi({
-      projectRoot,
-      frameworkRoot: ADHOC_FRAMEWORK_ROOT,
-      bundle,
-      pythonPath: ready.pythonPath,
-      appSnapshotCacheAbs,
-      deviceSn,
-      outPath: dumpUiOutArg || undefined,
-      logPath,
-    });
-    console.error(`ADHOC_DUMP_UI_PATH=${dump.outPath}`);
-    if (!dump.ok) {
-      console.error('dump-ui 失败', dump.stderr.slice(0, 1500));
-      process.exit(1);
+    installCurrent();
+    if (dumpUiOnly) {
+      const dump = runAdhocDumpUi({
+        projectRoot,
+        frameworkRoot: ADHOC_FRAMEWORK_ROOT,
+        bundle,
+        pythonPath: ready!.pythonPath,
+        appSnapshotCacheAbs,
+        deviceSn,
+        outPath: dumpUiOutArg || undefined,
+        logPath,
+      });
+      console.error(`ADHOC_DUMP_UI_PATH=${dump.outPath}`);
+      if (!dump.ok) {
+        console.error('dump-ui 失败', dump.stderr.slice(0, 1500));
+        process.exit(1);
+      }
+      const summary = runSummarizeDump(dump.outPath);
+      if (summary) console.log(summary);
     }
-    const summary = runSummarizeDump(dump.outPath);
-    if (summary) console.log(summary);
+    if (!measureCurrent(ready?.pythonPath ?? '', deviceSn)) process.exit(1);
     process.exit(0);
   }
 
@@ -504,6 +574,7 @@ void (async (): Promise<void> => {
     process.exit(1);
   }
   const deviceSn = process.env.HARNESS_HDC_TARGET;
+  installCurrent();
 
   logAdhocPhase('resolve_ability');
   const ability = resolveMainAbilityForBundle({
@@ -589,6 +660,7 @@ void (async (): Promise<void> => {
       pythonPath: ready.pythonPath,
       appSnapshotCacheAbs,
       deviceSn,
+      outPath: dumpUiOutArg || undefined,
       logPath,
     });
     console.error(`ADHOC_DUMP_UI_PATH=${dump.outPath}`);
@@ -601,6 +673,8 @@ void (async (): Promise<void> => {
       }
     }
   }
+  // 步骤跑到位后再量测（跑失败就不在错屏上量）
+  const measuredOk = run.ok ? measureCurrent(ready.pythonPath, deviceSn) : true;
 
   if (!trace) {
     writeAdhocTracePlaceholder(traceOutPath, {
@@ -639,7 +713,7 @@ void (async (): Promise<void> => {
   console.log(
     JSON.stringify(
       {
-        ok: run.ok && !warmupDegraded,
+        ok: run.ok && !warmupDegraded && measuredOk,
         observe_ui: observeUi,
         skip_page_save: effectiveSkipPageSaveFinal,
         bundle,
@@ -654,7 +728,7 @@ void (async (): Promise<void> => {
   );
 
   printAdhocAnchors(anchors);
-  process.exit(run.ok ? 0 : 1);
+  process.exit(run.ok && measuredOk ? 0 : 1);
 })().catch((err: unknown) => {
   console.error((err as Error).stack ?? String(err));
   process.exit(1);

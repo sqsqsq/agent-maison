@@ -268,7 +268,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 3. 其它 — 我在对话中说明意图
 ```
 
-`{assess_recommendation}` 来自刚生成且指纹已验证的 `assess@1`；投影位于 `<paths.features_dir>/<feature>/next.json`。缺失、损坏或 stale 时，从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 原子重算（只读巡检加 `--no-write`）；不得手改投影。推荐不构成授权，仍由当前 driver 按 `transition_policy` 裁决。
+`{assess_recommendation}` 来自刚生成且指纹已验证的 `assess@1`；投影位于 `<paths.features_dir>/<feature>/next.json`。缺失、损坏或 stale 时，从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 原子重算（只读巡检加 `--no-write`）；不得手改投影。推荐不构成授权，仍由当前 driver 按 `transition_policy` 裁决。推荐为 `feature_completed`（`feature_completion=VALIDATED`、`requires_driver_authorization=false`，渲染 `authorization=none`）表示功能已按完成记录验证完成、没有待执行动作：直接告知已完成，不要把它当成待授权的下一步。
 
 ---
 

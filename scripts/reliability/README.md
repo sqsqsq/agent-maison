@@ -81,6 +81,12 @@ node scripts/reliability-metrics.mjs --scenario-results <json> --format md
 实例：`observations/host-history-20260928.json`（宿主历史参考值，出表见 `baselines/host-history-20260928.md`）。
 这份数据跨多个框架版本、初始现场不同，只作参考，不与受控基线混算。
 
+plan a2f7c9e4 的本轮基线（98434b6f，继续模式）：`observations/a2f7c9e4-host-continue-98434b6f.json`，§5 口径的指标值写在
+`plan_a2f7c9e4_metrics`（脚本不读该键，只读 `tasks[]`）。两种对照各写一份新记录、互不比较：控制面回归（宿主现场恢复到 d22e3b 出生前、
+即 700aeb 之后的同一停机状态，用新发布件重放）标签 `a2f7c9e4-host-continue-<commit>`，只有它与本基线比较、可归因框架；
+推倒重来（从需求起点完整运行）标签 `a2f7c9e4-host-scratch-<commit>`，只记墙钟、调用次数与成功率，不与 1 小时 49 分比较。
+出表时用 `--runs` 按记录里的 run 显式分组。
+
 ## 3. 确定性层：场景套件
 
 十三个场景的确定性重放在 `harness/tests/unit/reliability-scenarios.unit.test.ts`，场景登记表在

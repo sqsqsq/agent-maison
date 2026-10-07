@@ -78,7 +78,7 @@
       }
     },
     "run_status_candidate": { "type": ["string", "null"], "enum": ["CHAIN_SLICE_COMPLETED", null] },
-    "feature_completion": { "type": ["string", "null"], "enum": ["REQUIRES_VALIDATION", null] },
+    "feature_completion": { "type": ["string", "null"], "enum": ["REQUIRES_VALIDATION", "VALIDATED", null] },
     "projection_fingerprint": { "$ref": "#/$defs/hash" }
   },
   "$defs": {
@@ -148,12 +148,12 @@
         "action": {
           "enum": [
             "run_phase", "rerun_phase", "complete_closure", "resolve_deferred",
-            "restore_inputs_and_rerun", "validate_feature_completion", "revise_scope", "stop"
+            "restore_inputs_and_rerun", "validate_feature_completion", "feature_completed", "revise_scope", "stop"
           ]
         },
         "phase": { "type": ["string", "null"] },
         "reason": { "type": "string" },
-        "requires_driver_authorization": { "const": true }
+        "requires_driver_authorization": { "type": "boolean" }
       }
     }
   }

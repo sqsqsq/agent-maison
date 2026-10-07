@@ -277,6 +277,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
   { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
   { id: 'repair-continuity', modulePath: './unit/repair-continuity.unit.test' },
+  // plan a2f7c9e4 t6：脚本化执行者作为真实子进程的返修中断回归（只证 spawn / 终止 / 事件解析）
+  { id: 'repair-interruption-real-process', modulePath: './unit/repair-interruption-real-process.unit.test' },
   { id: 'goal-run-birth-contract', modulePath: './unit/goal-run-birth-contract.unit.test' },
   { id: 'goal-runtime-structural-acceptance', modulePath: './unit/goal-runtime-structural-acceptance.unit.test' },
   { id: 'runtime-policy', modulePath: './unit/runtime-policy.unit.test' },
@@ -319,6 +321,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'adhoc-canonical-paths', modulePath: './unit/adhoc-canonical-paths.unit.test' },
   { id: 'hylyre-planned-step-lint', modulePath: './unit/hylyre-planned-step-lint.unit.test' },
   { id: 'adhoc-trace-placeholder', modulePath: './unit/adhoc-trace-placeholder.unit.test' },
+  // plan a2f7c9e4 §3.6：返修局部诊断（装当前构建 / 量测 / dump 落点 / 提示入口 / CLI 设备门）
+  { id: 'adhoc-repair-diagnosis', modulePath: './unit/adhoc-repair-diagnosis.unit.test' },
   { id: 'confirmation-ux', modulePath: './unit/confirmation-ux.unit.test' },
   { id: 'adapter-catalog-consistency', modulePath: './unit/adapter-catalog-consistency.unit.test' },
   // plan 7b2e9d4c：codex verifier 角色 toml 由 claude verifier.md 渲染（等值 / 转义 / 物化）

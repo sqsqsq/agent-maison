@@ -171,22 +171,22 @@ export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts):
     kind === 'budget_wall_clock'
       ? `已累计活跃 ${Math.round(activeElapsedMs / 60000)}m / 预算 ${Math.round(limit / 60000)}m`
       : `已消耗 agent 轮次达上限 ${limit}`;
-  // plan 4e6fb3b6 §3.3：删去"复制 manifest、以新 run_id 启动、旧 run 用 --supersede 废弃"一路——
-  // 它要求用户自己拼 run 与旗标。§7（调度方 2026-09-29 裁定）：首选显式续跑本 run——"改预算后带 --override-manifest
-  // 重新发起同一请求"会起后继，而后继沿用合同来源 run 的预算，只有本 run 就是合同来源时才用得上改过的预算。
+  // plan 4e6fb3b6 §3.3：删去"复制 manifest、以新 run_id 启动、旧 run 用 --supersede 废弃"一路——它要求用户自己拼 run 与旗标。
+  // plan a2f7c9e4 §3.2/§3.3：预算耗尽且只改了预算时，带 --override-manifest 重新发起同一请求或显式续跑都接回本 run，
+  // 不起后继、不要 --force-resume、不受冷却。
   return [
     `【${feature} · run ${runId} · ${phase}】run 预算已耗尽（${kind}，${spent}）。`,
     `影响：${feature} 停在 ${phase} 阶段，本 run 的剩余阶段未执行；已完成的阶段结果保留。`,
     '预算按活跃执行时间累计（停机等待不计入）——本次熔断是真实消耗，不是隔夜钟漂。',
     '谁能修：有权决定预算的人（通常是你）——硬预算框架不会自行增加。',
     '',
-    '怎么恢复：调大本 run manifest.json 的 budget.wall_clock_minutes / budget.max_total_turns，然后显式续跑本 run（已填好）：',
-    `  npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --override-manifest --force-resume`,
+    '怎么恢复：调大本 run manifest.json 的 budget.wall_clock_minutes / budget.max_total_turns，然后带 --override-manifest 重新发起同一请求，',
+    '  或显式续跑本 run（已填好）：',
+    `  npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --override-manifest`,
+    '  两种做法都接回本 run 继续，不需要 --force-resume，也不用等冷却。',
     // plan 4e6fb3b6 返修 3：overrideAuthorizedIdentityFields 对 --override-manifest 返回 'all'——整体授权。
     '  （--override-manifest 是对本 run manifest 身份字段的**整体授权**，会接受 manifest 里的全部改动，',
-    '   所以这次对 manifest 的修改只应涉及预算字段；已消耗的预算不会清零。距停止不足 5 分钟时 --force-resume 也要等冷却过去。）',
-    '  改完预算后带 --override-manifest 重新发起同一请求也能继续，但只在本 run 就是该任务的合同来源时有效',
-    '  （同一 feature 没有更早的完成、范围也没转交给别的 run）；否则起出来的后继沿用来源 run 的旧预算。',
+    '   所以这次对 manifest 的修改只应涉及预算字段；已消耗的预算不会清零。）',
     `确认已恢复：续跑后 ${phase} 阶段重新开始推进，且不再以 ${kind} 停止。`,
   ];
 }

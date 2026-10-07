@@ -100,7 +100,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature 
 
 ## 阶段闭环判定（全局入口 §5.1）
 
-> **标准 feature 模式**适用下文四条件。**即席（`_adhoc`）模式**不宣称「某需求 testing 阶段闭环」：不写 receipt、不强求 `harness-runner testing --feature _adhoc` PASS、不要求 verifier；以交付 trace.json 摘要为主。
+> **标准 feature 模式**适用下文四条件。**即席（`_adhoc`）模式**不宣称「某需求 testing 阶段闭环」：不写 receipt、不强求 `harness-runner testing --feature _adhoc` PASS、不要求 verifier；以交付 trace.json 摘要为主。coding 返修窗口用 `adhoc-device-test --install-current-build` / `--measure-screen` / `--dump-ui-only` 做的局部诊断默认落 `_adhoc`：那些构建结果、装机 meta、dump、截图与量测**不是验收证据**，本阶段不读、不采信，照常按自己的规则出包、装机（goal 正式 gate 强制重装）并判定。
 
 **closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
