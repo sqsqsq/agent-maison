@@ -109,6 +109,42 @@
       "shape": "旧 control input + matching facts baseline；正式 override/rebase，生产 gate env/provider review/checker/writer，只有外部 provider 响应替身",
       "limits": "仅外部 provider/设备 transport 事实替身；native proposal/commit、asset 检查与完成校验用生产链。正例累计 5 次调用（上游额外0）、真实来源变化累计8次；缺 native/asset 反例 PARTIAL。真实 CLI/账号/设备 H1 pending"
     },
+    "candidate_validation_20261009": {
+      "source_commit": "770616c8b231be0a16d03c9f59675ef5a2323541",
+      "command": "npm run candidate:build",
+      "exit_code": 0,
+      "elapsed_minutes": 121.62,
+      "full_chain_first_attempt_pass": true,
+      "checks": {
+        "typecheck": "PASS",
+        "unit_release": { "passed": 5305, "failed": 0 },
+        "fixtures": { "passed": 46, "failed": 0 },
+        "pack_release_verify": "PASS",
+        "release_only": { "real_chain": "4/0", "seams": "10/0", "lifecycle_evolution": "14/0", "reliability_scenarios": "44/0", "design_authority_repair": "38/0" },
+        "consumer_lifecycle_smoke": { "result": "PASS", "scenarios": 9, "real_stage_coverage": 8, "registered_retired": 1 }
+      },
+      "candidate": {
+        "path": "dist/candidates/framework-3.1.0-candidate.zip",
+        "zip_sha256": "d82ebe5c53dba95ce44bb5fda7ee902f03abffcbdecf2f7559101196382e0345",
+        "in_zip_manifest_sha256": "77c2782d9580595278a909a55c645e1082af4f0118bebc8e95fe4eac24d60323",
+        "files": 1231,
+        "complete": true,
+        "promoted": false,
+        "skipped_gate": "final plan release completion gate"
+      },
+      "proof": ["dist/8d4e6a21-validation/candidate-proof.json", "dist/8d4e6a21-validation/candidate-build-770616c8.log"],
+      "host_readonly_replay": {
+        "proof": "dist/8d4e6a21-validation/host-readonly-evidence-replay.json",
+        "coding_review_ut": "all fresh under host framework environment",
+        "testing_i29_resolver": "PASS",
+        "original_coding_baseline_dependencies": 86,
+        "facts_rebuild_reason": null,
+        "source_environment_upstream_preflight": "all fresh"
+      },
+      "provider_readonly_diagnostic": "此前一次 14.623 秒 success 仍有效，未再次调用；只证明当前 CLI/账号可调用",
+      "host_h1": "pending：未改宿主 framework/产品/manifest/events，未启动原 run，保留 29/30 原预算；集成与续跑须独立明确授权",
+      "limits": "完整链首次全绿不覆盖 C1/C2 之前的定向失败；只读兼容与 provider 可调用不等于四屏视觉验收或宿主交付完成，未正式 promote"
+    },
     "not_counted": "不把 c3f8a2d7 的 2 次纯登记调用/28m40s 再算本事故；不估算尚未发生的真机节省"
   },
   "tasks": [

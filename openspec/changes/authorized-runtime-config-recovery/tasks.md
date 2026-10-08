@@ -1,4 +1,4 @@
-实施范围与状态以 plan `8d4e6a21` 的 frontmatter t1–t6 为准；下面逐项映射并同步更新。plan R1 已通过并冻结；t1–t4 及 t5 文档/目标验证完成，Astra C2 代码评审已收口通过，R1/N1 均已修复。全量、candidate/发布门禁与 H1 仍待调度；t5 in_progress、t6 pending。
+实施范围与状态以 plan `8d4e6a21` 的 frontmatter t1–t6 为准；下面逐项映射并同步更新。plan R1 已通过并冻结；Astra C2 代码评审已收口通过，R1/N1 均已修复。2026-10-09 一次 candidate:build 完整验证通过，t1–t5 completed；真实宿主 H1 未执行，t6 pending，尚未正式 promote。
 
 ## 1. 当前内容依赖（t1）
 
@@ -23,8 +23,8 @@
 ## 5. 文档与开发收口（t5）
 
 - [x] 5.1 更新 MIGRATION、goal-mode/harness runbook 与既有可靠性观察记录，说明自动兼容、有效证据复用、配置成功不等于能力可用及 H1 边界。
-- [ ] 5.2 运行 typecheck 与目标套件；冻结后覆盖 `cd harness && npm test`、受影响 release-only 套件。准备 H1 候选件时合并到既有 `npm run candidate:build` 的完整测试链，不重复先后跑同一全量。
-- [ ] 5.3 必须执行 `npm run release:verify` 的包/清单校验；H1 尚未完成时沿既有 candidate 模式暂缓最终 plan 发布门禁，命令与前提见 plan §5.3，正式 promote 再补门禁。完成 plan 扫描、OpenSpec strict、diff 和 LF 校验，保留真实失败/补验记录。
+- [x] 5.2 运行 typecheck 与目标套件；冻结后覆盖 `cd harness && npm test`、受影响 release-only 套件。准备 H1 候选件时合并到既有 `npm run candidate:build` 的完整测试链，不重复先后跑同一全量。
+- [x] 5.3 必须执行 `npm run release:verify` 的包/清单校验；H1 尚未完成时沿既有 candidate 模式暂缓最终 plan 发布门禁，命令与前提见 plan §5.3，正式 promote 再补门禁。完成 plan 扫描、OpenSpec strict、diff 和 LF 校验，保留真实失败/补验记录。
 
 ## 6. 宿主 H1（t6）
 
@@ -37,4 +37,4 @@ goal-runner 的 MODIFIED 块以当前主 spec 的完整「Facts admission and wi
 
 初次起草仅创建提案；用户现已授权开发/评审/修复循环，plan 评审收口后由调度直接安排代码实施，无需新增许可询问。当前文档轮不实施运行时代码。若以后执行 `openspec update`，按仓库规则重跑 `node scripts/patch-openspec-artifacts.mjs`，本次无需运行 update。
 
-C1 目标验证与初轮失败/修复事实见 plan §7；5.2/5.3 的全量与包门禁尚未跑，因此保持未完成。H1 独立 pending，不以自动回放替代。
+C1/C2 的目标验证、初轮失败/修复及 2026-10-09 完整候选验证事实见 plan §7。candidate:build exit 0，unit --release 5305/0、fixtures 46/0、包/清单校验和同一 zip consumer smoke PASS；5.2/5.3 完成。仅暂缓最终 plan 发布门禁，正式 promote 尚未执行；H1 独立 pending，不以只读或自动回放替代。

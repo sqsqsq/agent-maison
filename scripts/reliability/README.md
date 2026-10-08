@@ -91,6 +91,7 @@ plan b7d2e9f4 的第四轮（5acd53e2，从 09-28 公共起点，run be091c）�
 旧包、98434b6f 两轮同起点对照写在 `plan_b7d2e9f4_metrics`（只作描述性对照，脚本不读该键）。
 plan c3f8a2d7 对同一轮的 §5 观察成本追加在同一文件的 `plan_c3f8a2d7_metrics`（`measured` 实测与 `estimated` 估算分开，脚本不读该键）。
 plan 8d4e6a21 的 10-08 授权 provider 切换事故追加为 `plan_8d4e6a21_metrics`：两次零 executor gate、约 40 秒与一次假停机；不重复计算 c3f8a2d7 成本，自动回放与真实宿主 H1 分开登记。
+2026-10-09 的完整候选验证与旧证据只读回放追加在同键的 `candidate_validation_20261009`：一次 candidate:build 全绿、实测 121.62 分钟、同一 zip 身份与 consumer smoke 已核；真实宿主旧证据 fresh 只证明读取兼容，H1 仍 pending，未集成宿主或续跑原 run。
 
 ## 3. 确定性层：场景套件
 
