@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { clearFrameworkConfigCache, resolveFeatureArtifact } from '../../config';
+import { clearFrameworkConfigCache, resolveFeatureArtifact, featurePhaseReportsDir } from '../../config';
 import {
   REQUIRED_FEATURE_FILES_BY_PHASE,
   OPTIONAL_FEATURE_FILES_BY_PHASE,
@@ -27,7 +27,13 @@ import {
   writeReceiptManifestPointer,
   verifyPhaseEvidenceManifestWithStagedOutputs,
   sha256File,
+  phaseEvidenceBusinessInputs,
+  factsBaselineBusinessDependencies,
+  phaseEvidenceManifestCandidatePaths,
+  recomputeManifestAggregate,
 } from '../../scripts/utils/phase-evidence-manifest';
+import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
+import { computeRequirementSsotAggregate } from '../../scripts/utils/verify-feature-completion';
 import { resolveFactsAbsPath, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { readBoundInput, resolveCapabilityInputs, type InputBinding } from '../../scripts/utils/capability-resolution';
@@ -128,6 +134,176 @@ const addEdgeRemoval = (id: string, from: string, to: string) => (bp: Blueprint)
 interface Case { name: string; run: () => void }
 
 const cases: Case[] = [
+  ...(['canonical-summary', 'environment'] as const).map(identity => ({
+    name: `8d4e6a21 C2 new evidence without control inputs detects inline requirement drift through ${identity} in default/staged readers`,
+    run: () => {
+      const root = mkProject();
+      const priorRun = process.env.MAISON_GOAL_RUN_ID;
+      try {
+        delete process.env.MAISON_GOAL_RUN_ID;
+        seedSpecPhase(root);
+        const runDir = path.join(root, `doc/features/${FEATURE}/goal-runs/R1`);
+        fs.mkdirSync(runDir, { recursive: true });
+        const control = path.join(runDir, 'manifest.json');
+        const goal = { requirement: 'inline requirement A', visual_provider_pin: { adapter: 'claude', model: 'old' } };
+        fs.writeFileSync(control, JSON.stringify(goal));
+        fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n');
+        if (identity === 'canonical-summary') {
+          const summary = path.join(featurePhaseReportsDir(root, FEATURE, 'spec'), 'summary.json');
+          fs.mkdirSync(path.dirname(summary), { recursive: true });
+          fs.writeFileSync(summary, JSON.stringify({ feature: FEATURE, phase: 'spec', run_id: 'R1' }));
+        } else process.env.MAISON_GOAL_RUN_ID = 'R1';
+        const evidence = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec',
+          requirementSha: computeRunRequirementSha(root, FEATURE, 'R1') });
+        assert(!evidence.inputs.some(entry => entry.path.includes('/goal-runs/')), '新证据不含退休控制输入');
+        writePhaseEvidenceManifest(root, evidence);
+        const normal = (runId?: string) => recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'], runId ? { runId } : undefined)[0];
+        const staged = (runId?: string) => verifyPhaseEvidenceManifestWithStagedOutputs({ projectRoot: root, feature: FEATURE,
+          phase: 'spec', stagedOutputs: [], ...(runId ? { runId } : {}) });
+        assert.strictEqual(normal().verdict, 'fresh'); assert.strictEqual(staged().verdict, 'fresh');
+        fs.writeFileSync(control, JSON.stringify({ ...goal, visual_provider_pin: { adapter: 'codex', model: 'new' } }));
+        assert.strictEqual(normal().verdict, 'fresh', 'provider-only 不改变需求');
+        assert.strictEqual(staged().verdict, 'fresh', 'staged 同样不绑定控制字节');
+        if (identity === 'canonical-summary') {
+          const other = path.join(root, `doc/features/${FEATURE}/goal-runs/R2`);
+          fs.mkdirSync(other, { recursive: true });
+          fs.writeFileSync(path.join(other, 'manifest.json'), JSON.stringify({ requirement: 'inline requirement B' }));
+          fs.writeFileSync(path.join(other, 'events.jsonl'), '{"type":"run_start"}\n');
+          process.env.MAISON_GOAL_RUN_ID = 'R2';
+          assert.strictEqual(normal().verdict, 'stale', '环境中的真实当前身份优先于产物原身份');
+          assert.strictEqual(staged().verdict, 'stale');
+          assert.strictEqual(normal('R1').verdict, 'fresh', '显式调用身份优先于环境身份');
+          assert.strictEqual(staged('R1').verdict, 'fresh');
+          delete process.env.MAISON_GOAL_RUN_ID;
+        }
+        fs.writeFileSync(control, JSON.stringify({ ...goal, requirement: 'inline requirement B' }));
+        for (const result of [normal(), staged(), normal('R1'), staged('R1')]) {
+          assert.strictEqual(result.verdict, 'stale');
+          assert(result.changed_paths.includes('<environment:requirement>'), JSON.stringify(result));
+        }
+      } finally {
+        if (priorRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRun;
+        clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  })),
+  {
+    name: '8d4e6a21 C2 standalone without actual requirement identity does not borrow an unrelated historical run',
+    run: () => {
+      const root = mkProject();
+      const priorRun = process.env.MAISON_GOAL_RUN_ID;
+      try {
+        delete process.env.MAISON_GOAL_RUN_ID;
+        seedSpecPhase(root);
+        const runDir = path.join(root, `doc/features/${FEATURE}/goal-runs/unrelated`);
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: 'unrelated requirement' }));
+        fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n');
+        const summary = path.join(featurePhaseReportsDir(root, FEATURE, 'spec'), 'summary.json');
+        fs.mkdirSync(path.dirname(summary), { recursive: true });
+        fs.writeFileSync(summary, JSON.stringify({ feature: FEATURE, phase: 'spec' }));
+        writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec', requirementSha: 'a'.repeat(64) }));
+        assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'])[0].verdict, 'fresh');
+        assert.strictEqual(verifyPhaseEvidenceManifestWithStagedOutputs({ projectRoot: root, feature: FEATURE, phase: 'spec', stagedOutputs: [] }).verdict, 'fresh');
+      } finally {
+        if (priorRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRun;
+        clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '8d4e6a21 legacy control input retires in freshness, staged closure, facts and writer; business drift remains stale',
+    run: () => {
+      const root = mkProject();
+      try {
+        seedSpecPhase(root);
+        const run = 'R1';
+        const runDir = path.join(root, `doc/features/${FEATURE}/goal-runs/${run}`);
+        fs.mkdirSync(runDir, { recursive: true });
+        const control = path.join(runDir, 'manifest.json');
+        const source = path.join(root, 'doc/requirements/current.md');
+        fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, 'business v1');
+        const goal = { requirement: '需求见 doc/requirements/current.md', visual_provider_pin: { adapter: 'claude', model: 'old' } };
+        fs.writeFileSync(control, JSON.stringify(goal));
+        fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n');
+        const summary = path.join(featurePhaseReportsDir(root, FEATURE, 'spec'), 'summary.json');
+        fs.mkdirSync(path.dirname(summary), { recursive: true });
+        fs.writeFileSync(summary, JSON.stringify({ feature: FEATURE, phase: 'spec', run_id: run }));
+        const opts = { runId: run, currentRequirementSha: computeRunRequirementSha(root, FEATURE, run)! };
+        const old = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec', extraInputs: [control, source], requirementSha: opts.currentRequirementSha });
+        writePhaseEvidenceManifest(root, old);
+        const evidenceBytes = fs.readFileSync(phaseEvidenceManifestPath(root, FEATURE, 'spec'), 'utf8');
+        const context: FactsInvocationContext = { subject: { feature: FEATURE, run_id: run }, first_phase: 'spec', source_paths: [], required_input_snippets: [],
+          baseline: { established_by: 'spec', fingerprint: 'original', dependencies: old.inputs.map(entry => ({ path: path.resolve(root, entry.path), exists: entry.exists, sha256: entry.sha256, role: 'derive' })) } };
+        const baseline = stableStringify(context);
+        fs.writeFileSync(control, JSON.stringify({ ...goal, visual_provider_pin: { adapter: 'codex', model: 'new' } }));
+        const business = phaseEvidenceBusinessInputs(root, FEATURE, old, opts);
+        assert(!business.some(entry => path.resolve(root, entry.path) === control));
+        assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'], opts)[0].verdict, 'fresh');
+        assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'])[0].verdict, 'fresh', '只读调用从同份产物的确切身份取得同一依据');
+        assert.strictEqual(verifyPhaseEvidenceManifestWithStagedOutputs({ projectRoot: root, feature: FEATURE, phase: 'spec', stagedOutputs: [], ...opts }).verdict, 'fresh');
+        assert(!factsBaselineBusinessDependencies(root, FEATURE, context, opts).some(dep => dep.path === control));
+        const next = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec', factsContext: context, requirementSha: opts.currentRequirementSha });
+        assert(!next.inputs.some(entry => path.resolve(root, entry.path) === control));
+        assert(!phaseEvidenceManifestCandidatePaths({ projectRoot: root, feature: FEATURE, phase: 'spec', factsContext: context }).has(path.relative(root, control).replace(/\\/g, '/')));
+        assert.strictEqual(stableStringify(context), baseline);
+        assert.strictEqual(fs.readFileSync(phaseEvidenceManifestPath(root, FEATURE, 'spec'), 'utf8'), evidenceBytes);
+        fs.writeFileSync(source, 'genuine business change');
+        assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'], { runId: run })[0].verdict, 'stale');
+        assert(factsBaselineBusinessDependencies(root, FEATURE, context, { runId: run }).some(dep => dep.path === control), '真实需求漂移不建立控制等价');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: '8d4e6a21 retirement excludes explicit canonical manifest, outputs, null authority, missing runs and damaged aggregate',
+    run: () => {
+      const root = mkProject();
+      try {
+        seedSpecPhase(root);
+        const runDir = path.join(root, `doc/features/${FEATURE}/goal-runs/R1`);
+        fs.mkdirSync(runDir, { recursive: true });
+        const control = path.join(runDir, 'manifest.json');
+        const rel = path.relative(root, control).replace(/\\/g, '/');
+        fs.writeFileSync(control, JSON.stringify({ requirement: 'inline' }));
+        fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n');
+        const opts = { runId: 'R1', currentRequirementSha: computeRunRequirementSha(root, FEATURE, 'R1')! };
+        const old = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec', extraInputs: [control], requirementSha: opts.currentRequirementSha });
+        writePhaseEvidenceManifest(root, old);
+        fs.writeFileSync(control, JSON.stringify({ requirement: 'inline', visual_provider_pin: { adapter: 'codex', model: 'new' }, requirement_source_files: [rel] }));
+        assert(phaseEvidenceBusinessInputs(root, FEATURE, old, opts).some(entry => entry.path === rel), '显式规范控制路径也是业务来源');
+        fs.writeFileSync(control, JSON.stringify({ requirement: 'inline', visual_provider_pin: { adapter: 'codex', model: 'new' } }));
+        assert.strictEqual(phaseEvidenceBusinessInputs(root, FEATURE, old, { ...opts, currentRequirementSha: null }).length, old.inputs.length);
+        for (const role of ['output', 'both'] as const) {
+          const changed = structuredClone(old); changed.inputs.find(entry => entry.path === rel)!.role = role;
+          assert(phaseEvidenceBusinessInputs(root, FEATURE, changed, opts).some(entry => entry.path === rel));
+        }
+        const damaged = structuredClone(old); damaged.inputs.find(entry => entry.path === rel)!.sha256 = 'tampered';
+        writePhaseEvidenceManifest(root, damaged);
+        assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'], opts)[0].verdict, 'tampered');
+        damaged.aggregate_sha256 = recomputeManifestAggregate(damaged);
+        fs.rmSync(path.join(runDir, 'events.jsonl'));
+        assert(phaseEvidenceBusinessInputs(root, FEATURE, old, opts).some(entry => entry.path === rel), '损坏 run 不属于退休集合');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: '8d4e6a21 legacy no-scope completion retains inline requirement independently of provider',
+    run: () => {
+      const root = mkProject();
+      try {
+        const dir = path.join(root, `doc/features/${FEATURE}/goal-runs/R1`);
+        fs.mkdirSync(dir, { recursive: true });
+        const file = path.join(dir, 'manifest.json');
+        fs.writeFileSync(file, JSON.stringify({ requirement: 'inline' }));
+        fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"run_start"}\n');
+        const hash = computeRequirementSsotAggregate(root, FEATURE, 'R1'); assert(hash);
+        fs.writeFileSync(file, JSON.stringify({ requirement: 'inline', visual_provider_pin: { adapter: 'codex', model: 'new' } }));
+        assert.strictEqual(computeRequirementSsotAggregate(root, FEATURE, 'R1'), hash);
+        fs.writeFileSync(file, JSON.stringify({ requirement: 'genuine requirement change' }));
+        assert.notStrictEqual(computeRequirementSsotAggregate(root, FEATURE, 'R1'), hash);
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
   {
     name: '下游责任阶段可推进其源码，非责任漂移仍使上游 stale',
     run: () => {

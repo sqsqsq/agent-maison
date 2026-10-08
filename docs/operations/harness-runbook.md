@@ -181,6 +181,7 @@ doc/features/<feature>/
 - `run_statuses`：阶段状态面板，例如 `coding_run_status` / `ut_run_status` / `testing_run_status`。
   testing 的阻断只剩能力缺席（视觉 provider / OCR 不可用，`blocking_class=externalBlocked`、`failure_kind=capability_missing`）时：`testing_run_status` 降为 WARN 并写 `partial_readiness: capability_missing`，
   `test-report.md` 写「有条件达标」+ 暂缓 gap（P0 视觉用例留在分母、状态「跳过」、备注"未验证（能力缺席）"），阶段 verdict 为 `INCOMPLETE`；仍有真实产品失败或无效证据时照旧 `FAIL`（plan c3f8a2d7）。
+  授权切换视觉 provider 的正式恢复会记录 `manifest_identity_rebase`；业务依据有效时，旧自动 run-manifest 字节依赖不再使 coding/review/ut 假失效。freshness、facts、闭环与只读评估使用同一解释；显式业务 manifest、需求/源码变化和完整性失败仍严格核对。facts 入场失败若存在更早链内 gap，先沿原恢复动作给责任阶段机会，不在当前阶段重复空 gate；原记录和哈希无需手工迁移（plan 8d4e6a21）。
 - `readiness_signals`：非 BLOCKER 但代表"尚未就绪"的信号，例如 catalog/glossary 空骨架、docs freshness 无法判定。
 - `blocking_skips`：`severity=BLOCKER` 但状态为 `SKIP` 的检查项（已确认不适用的除外），避免被 verdict PASS 掩盖。`blocking_warnings` 已停写：schema 保留该属性，旧 summary 带着它照常可读，新 summary 不再出现。
 - `verdict` / 退出码 / `blocker_count`：阶段结论只算一次（脚本阻断、报告合法性、质量轴与能力解析取更严一侧），控制台、合并报告与进程退出码都用它；`blockers` 与 `blocker_count` 是同一个有效阻断集合（聚合的运行状态项在源失败已列出时不重复计入）。

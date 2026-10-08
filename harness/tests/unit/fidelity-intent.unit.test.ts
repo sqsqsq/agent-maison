@@ -11,6 +11,7 @@ import * as path from 'path';
 import {
   collectRequirementIntentText,
   collectRequirementSsotPaths,
+  computeRunRequirementSha,
   dereferenceRequirementDocs,
   detectFidelityIntent,
   resolveRequestedFidelity,
@@ -99,7 +100,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: '内联 requirement 入血缘（codex 七轮 P0-2）：collectRequirementSsotPaths 含 manifest.json',
+    name: '8d4e6a21 当前需求内容独立绑定；collector 不累积历史控制文件或引用',
     run: () => {
       const root = mkProject();
       const runDir = path.join(root, 'doc/features/f1/goal-runs/R1');
@@ -107,11 +108,22 @@ const cases: Case[] = [
       // 纯内联需求（不引用任何文件）
       fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: '实现银行卡开卡完整流程' }), 'utf-8');
       fs.writeFileSync(path.join(runDir, 'events.jsonl'), '{"type":"run_start"}\n', 'utf-8');
-      const paths = collectRequirementSsotPaths(root, 'f1');
-      assert.ok(
-        paths.some((p) => p.endsWith('goal-runs/R1/manifest.json')),
-        `manifest.json 须入血缘（内联需求改写才能被检测）：${JSON.stringify(paths)}`,
-      );
+      fs.mkdirSync(path.join(root, 'doc/requirements'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc/requirements/current.md'), 'current');
+      fs.writeFileSync(path.join(root, 'doc/requirements/history.md'), 'history');
+      const oldDir = path.join(root, 'doc/features/f1/goal-runs/R0');
+      fs.mkdirSync(oldDir, { recursive: true });
+      fs.writeFileSync(path.join(oldDir, 'manifest.json'), JSON.stringify({ requirement: 'doc/requirements/history.md' }));
+      fs.writeFileSync(path.join(oldDir, 'events.jsonl'), '{"type":"run_start"}\n');
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: '当前 inline', requirement_source_files: ['doc/requirements/current.md'] }));
+      const paths = collectRequirementSsotPaths(root, 'f1', 'doc/features', { runId: 'R1' });
+      assert.deepStrictEqual(paths, ['doc/requirements/current.md']);
+      const hash = computeRunRequirementSha(root, 'f1', 'R1');
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: '当前 inline', visual_provider_pin: { adapter: 'codex', model: 'gpt-6.1-sol' } }));
+      assert.strictEqual(computeRunRequirementSha(root, 'f1', 'R1'), hash, 'provider 不属于需求内容');
+      fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ requirement: '真实新需求' }));
+      assert.notStrictEqual(computeRunRequirementSha(root, 'f1', 'R1'), hash);
+      fs.rmSync(root, { recursive: true, force: true });
     },
   },
 ];

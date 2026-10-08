@@ -16,7 +16,6 @@ import {
 } from '../../scripts/utils/fidelity-shared';
 import {
   buildGoalManifestFromInput,
-  goalManifestHashMatchesModuloAdapterProvenance,
   isDryReportDir,
   loadGoalManifestFromRun,
   resolvePersistedAdapterProvenance,
@@ -152,6 +151,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           { projectRoot: root, runId },
         );
         const manifestAbs = writeGoalManifest(manifest, root);
+        fs.writeFileSync(path.join(path.dirname(manifestAbs), 'events.jsonl'), '{"type":"run_start"}\n');
         const frozenHash = crypto.createHash('sha256').update(fs.readFileSync(manifestAbs)).digest('hex');
 
         const receiptAbs = path.join(root, 'doc/features', feature, 'spec', 'phase-completion-receipt.md');
@@ -162,6 +162,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           feature,
           phase: 'spec',
           extraInputs: [manifestAbs],
+          requirementSha: computeRunRequirementSha(root, feature, runId),
           now: () => new Date('2026-08-18T00:00:00.000Z'),
         });
         const written = writePhaseEvidenceManifest(root, evidence);
@@ -172,17 +173,14 @@ const cases: Array<{ name: string; run: () => void }> = [
           path.relative(root, written.absPath).replace(/\\/g, '/'),
           written.sha256,
         );
-        const before = recomputePhaseEvidenceStaleness(root, feature, ['spec']);
+        const before = recomputePhaseEvidenceStaleness(root, feature, ['spec'], { runId });
         if (before[0]?.verdict !== 'fresh') throw new Error(`出生 evidence 非 fresh：${JSON.stringify(before)}`);
 
         const poisoned = { ...manifest, adapter_provenance: 'override' };
         writeGoalManifest(poisoned, root);
         const poisonedHash = crypto.createHash('sha256').update(fs.readFileSync(manifestAbs)).digest('hex');
         if (poisonedHash === frozenHash) throw new Error('夹具未制造 provenance 全文件 hash 漂移');
-        if (!goalManifestHashMatchesModuloAdapterProvenance(poisoned, frozenHash)) {
-          throw new Error('provenance-only 漂移未被识别为语义等价');
-        }
-        const specStillFresh = recomputePhaseEvidenceStaleness(root, feature, ['spec']);
+        const specStillFresh = recomputePhaseEvidenceStaleness(root, feature, ['spec'], { runId });
         if (specStillFresh[0]?.verdict !== 'fresh') {
           throw new Error(`旧 spec evidence 被审计元数据误伤：${JSON.stringify(specStillFresh)}`);
         }
@@ -197,6 +195,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           feature,
           phase: 'plan',
           extraInputs: [manifestAbs],
+          requirementSha: computeRunRequirementSha(root, feature, runId),
           now: () => new Date('2026-08-19T00:00:00.000Z'),
         });
         const planWritten = writePhaseEvidenceManifest(root, planEvidence);
@@ -215,7 +214,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         writeGoalManifest(repair.manifest, root);
         const repairedHash = crypto.createHash('sha256').update(fs.readFileSync(manifestAbs)).digest('hex');
         if (repairedHash !== frozenHash) throw new Error(`恢复后 hash 未命中冻结值：${repairedHash}`);
-        const freshAgain = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan']);
+        const freshAgain = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan'], { runId });
         if (freshAgain.some((result) => result.verdict !== 'fresh')) {
           throw new Error(`恢复后新旧 evidence 未同时 fresh：${JSON.stringify(freshAgain)}`);
         }
@@ -225,12 +224,6 @@ const cases: Array<{ name: string; run: () => void }> = [
           frozenHash,
         );
         if (mixedDrift.repaired) throw new Error('provenance 之外仍有漂移时不得猜测恢复');
-        if (goalManifestHashMatchesModuloAdapterProvenance(
-          { ...poisoned, requirement: '被额外改写的需求' },
-          frozenHash,
-        )) {
-          throw new Error('真实字段漂移不得被 provenance 兼容判断放行');
-        }
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

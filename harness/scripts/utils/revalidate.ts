@@ -152,7 +152,7 @@ export function runRevalidate(
   const chain = [...resolution.chain];
   const hasSummary = (phase: string): boolean =>
     fs.existsSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'));
-  const before = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot });
+  const before = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot, runId });
 
   console.log(`\n🔁 revalidate: feature=${feature}${from ? `, from=${from}` : ''}`);
   console.log(`   链：${chain.join(' → ')}${resolution.degraded ? `（workflow 链退化：${resolution.degradedReason}）` : ''}`);
@@ -169,7 +169,7 @@ export function runRevalidate(
   }
   const results: RevalidationPhaseResult[] = [];
   const writeRecord = (exitCode: number): void => {
-    const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot });
+    const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot, runId });
     const record = {
       schema_version: '1.0',
       feature,
@@ -255,7 +255,7 @@ export function runRevalidate(
     });
   }
 
-  const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot });
+  const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot, runId });
   const allFresh = after.every(s => s.verdict === 'fresh' || !hasSummary(s.phase));
   console.log('\n📋 revalidate 结果');
   console.log('| phase | 脚本 | 闭环 | verifier | 标注 |');

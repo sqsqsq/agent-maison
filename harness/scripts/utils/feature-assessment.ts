@@ -146,7 +146,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
         if (issue.condition === 'execution_scope' || issue.condition === 'goal_run_identity_intact') continue;
         if (issue.propagated_from) {
           // 沿链传染不是本阶段结果失效：失效只沿真实消费关系传播——直查本阶段自身证据（其输入含上游产物时照样判出）。
-          const own = recomputePhaseEvidenceStaleness(projectRoot, feature, [issue.phase], { currentRequirementSha, frameworkRoot: opts.frameworkRoot })[0];
+          const own = recomputePhaseEvidenceStaleness(projectRoot, feature, [issue.phase], { currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: runId ?? undefined })[0];
           if (own?.verdict === 'fresh') continue;
           addToPhase(issue.phase, 'evidence', `[lineage_fresh] ${own?.verdict}：${[...(own?.changed_paths ?? []), ...(own?.receipt_changed ? ['<receipt>'] : [])].join(', ')}`);
           continue;

@@ -14,7 +14,7 @@ import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { assertFactsSourceReadable, parseContextExploration } from './context-exploration';
-import { evidenceEntryMatchesCurrentFile, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
+import { evidenceEntryMatchesCurrentFile, factsBaselineBusinessDependencies, phaseEvidenceBusinessInputs, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { featuresDirPath, enumerateFeatures, featureFilePath, receiptDirPath, featurePhaseReportsDir } from '../../config';
 import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
@@ -283,7 +283,8 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   const ownedSources = resolveFactsPhaseOwnedSources({ ...options, frameworkRoot, runId }, context);
   const isOwnedSource = (source: string): boolean => ownedSources.has(source);
   const initial = new Map<string, string | null>();
-  for (const dep of context.baseline.dependencies) {
+  const businessDependencies = factsBaselineBusinessDependencies(options.projectRoot, options.feature, context, { runId, frameworkRoot });
+  for (const dep of businessDependencies) {
     if (!dep || typeof dep.path !== 'string' || typeof dep.exists !== 'boolean'
       || !(dep.sha256 === null || typeof dep.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(dep.sha256))
       || !isInsideProjectRoot(options.projectRoot, dep.path)) return undefined;
@@ -330,7 +331,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
     }
   }
   const changed = new Set<string>();
-  for (const dep of context.baseline.dependencies) {
+  for (const dep of businessDependencies) {
     const source = path.relative(options.projectRoot, dep.path).replace(/\\/g, '/');
     const current = sha256File(dep.path);
     if (current === dep.sha256 && fs.existsSync(dep.path) === dep.exists) continue;
@@ -342,7 +343,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   if (!changed.size && !interrupted) return undefined;
   const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
   const requirement = options.requirement ?? manifest.requirement;
-  const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot,
+  const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId,
     pendingOwnerPaths: [...changed],
     ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
   if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict) || freshness.receipt_changed
@@ -483,7 +484,9 @@ export function resolveCapabilityResolutionEntryInput(
               source_owners: Object.fromEntries([...evidence.manifest.inputs, ...evidence.manifest.outputs]
                 .filter(entry => entry.owner_phase === options.phase && entry.exists && sha256File(path.join(options.projectRoot, entry.path)))
                 .map(entry => [entry.path, options.phase])) })] : [];
-          const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { frameworkRoot,
+          const semanticOptions = { frameworkRoot, runId: goalRunId,
+            ...(requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) };
+          const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { ...semanticOptions,
             ...(pendingOwnerPaths.length ? { pendingOwnerPaths } : {}),
             ...(requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })
             .find(result => result.phase === establishing);
@@ -494,11 +497,11 @@ export function resolveCapabilityResolutionEntryInput(
             }
           } else {
             const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
-            factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...evidence.manifest.inputs, ...evidence.manifest.outputs].filter(entry => entry.facts_phase === undefined
+            factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...phaseEvidenceBusinessInputs(options.projectRoot, options.feature, evidence.manifest, semanticOptions), ...evidence.manifest.outputs].filter(entry => entry.facts_phase === undefined
               && (paths.includes(entry.path) || (entry.role === 'input' && entry.owner_phase !== options.phase))).map(entry => {
               const ownerEvidence = entry.owner_phase && entry.owner_phase !== establishing
                 ? loadPhaseEvidenceManifest(options.projectRoot, options.feature, entry.owner_phase) : null;
-              const owner = ownerEvidence?.integrityOk && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [entry.owner_phase!], { frameworkRoot })[0]?.verdict === 'fresh'
+              const owner = ownerEvidence?.integrityOk && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [entry.owner_phase!], semanticOptions)[0]?.verdict === 'fresh'
                 ? ownerEvidence.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase) : undefined;
               const abs = path.join(options.projectRoot, entry.path);
               // plan c4e7a9b2 B2：身份中立条目存的是摘要；等价成立时基线依赖按当前字节登记（下游按字节核对）。

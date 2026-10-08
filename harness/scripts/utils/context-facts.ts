@@ -263,7 +263,11 @@ function checkFactsFile(
     if (record.established_by !== expectedPhase || !expectedPhase || (!invocation.baseline && phase !== invocation.first_phase)) issue('context_exploration_facts_established_by_invalid', '建立资格必须来自首个实际调用或经验证的已有基线');
     if (invocation.baseline) {
       if (factsBaselineFingerprint(raw) !== invocation.baseline.fingerprint) issue('context_exploration_facts_baseline_stale', `facts 基线正文或原身份已变化；保留已核基线，在 ## phase_delta: ${phase} 精确追加当前变化来源与事实，不通过改正文或run_id洗新`);
-      for (const dep of invocation.baseline.dependencies) {
+      const { factsBaselineBusinessDependencies } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
+      const businessDependencies = feature ? factsBaselineBusinessDependencies(projectRoot, feature, invocation, {
+        frameworkRoot: options?.frameworkRoot, resolvedInputs: options?.resolvedInputs,
+      }) : invocation.baseline.dependencies;
+      for (const dep of businessDependencies) {
         if (!isInsideProjectRoot(projectRoot, dep.path)) { issue('context_exploration_facts_source_stale', '事实来源不在项目内'); continue; }
         let hash: string | null = null;
         try { hash = crypto.createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex'); } catch { /* stale below */ }

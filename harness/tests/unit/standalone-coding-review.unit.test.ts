@@ -1324,6 +1324,8 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p1-plan-first', requirement: 'deliver planned page and UT', run_base_sha: f.git('rev-parse', 'HEAD'), execution_scope: prepared.scope,
         chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
       const born = createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+      // This case creates a different run from the outer fixture; default readers use its actual identity.
+      process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
       const testRel = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
       fs.mkdirSync(path.dirname(path.join(f.root, testRel)), { recursive: true });
       fs.writeFileSync(path.join(f.root, testRel), 'export const test = true;\n');
@@ -1624,6 +1626,8 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'p3-review-evidence', requirement: 'review existing implementation',
       execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
     createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+    // This case creates a different run from the outer fixture; default readers use its actual identity.
+    process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
     fs.mkdirSync(path.join(f.root, 'doc/features/demo/context'), { recursive: true });
     fs.writeFileSync(path.join(f.root, 'doc/features/demo/context/facts.md'), ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: manifest.run_id,
       established_by: 'review', ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts'], key_inputs_read: ['src/demo/value.ts'],

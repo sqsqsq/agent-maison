@@ -87,6 +87,26 @@ function select(
 interface TestCase { name: string; run: () => void }
 const cases: TestCase[] = [
   {
+    name: '8d4e6a21 fresh facts-admission failure routes the earlier evidence gap before retry; product and stale-summary failures retain their path',
+    run: () => {
+      for (const [blocker, fresh, owner] of [['context_exploration_facts_source_stale', true, 'plan'], ['product_failure', true, 'testing'], ['context_exploration_facts_source_stale', false, 'testing']] as const) {
+        const reconcile = observation({ current_summary_fresh: fresh, blockers: [{ id: blocker, actionability: 'automatic' }],
+          phase_outcome: { phase: 'testing', verdict: 'FAIL', legacy_action: 'none', failure_kind: 'code_regression' },
+          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 }, invalidatable_phases: ['plan', 'coding', 'review', 'ut', 'testing'] });
+        const baseline = result({ action: 'rerun_phase', phase: 'testing', reason: 'fixture', requires_driver_authorization: true });
+        const phases = baseline.observed.phases.map(phase => ({ ...phase, verdict: phase.phase === 'testing' ? 'FAIL' : 'PASS',
+          closure: phase.phase === 'plan' ? 'stale' as const : phase.phase === 'testing' ? 'open' as const : 'closed' as const }));
+        const assessed = assessObservation({ schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'testing',
+          phases, fingerprints: baseline.fingerprints, reconcile }, { mode: 'goal_mode' });
+        assert(assessed.recommendation.phase === owner, JSON.stringify(assessed.recommendation));
+        assert(selectRunnerActionFromAssess({ assessment: assessed, observation: reconcile, currentPhase: 'testing', chain, driverGuardAction: 'none' })
+          === (owner === 'plan' ? 'backtrack_to_phase' : 'retry'), '责任动作须可执行');
+        if (owner === 'plan') assert(selectRunnerActionFromAssess({ assessment: assessed, observation: { ...reconcile, invalidatable_phases: [] },
+          currentPhase: 'testing', chain, driverGuardAction: 'none' }) === 'halt', '无失效授权仍不能执行回退');
+      }
+    },
+  },
+  {
     name: 'assess selects same-phase retry, later advance, and completion advance',
     run: () => {
       assert(select({

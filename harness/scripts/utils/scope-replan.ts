@@ -223,6 +223,7 @@ export function checkPlanAuthority(input: {
   //   stale → live_drift replan（changed_paths 即漂移面）；
   //   missing/tampered → closure_untrusted replan。
   const plan = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, ['plan'], {
+    runId: input.currentRunId,
     ...(input.frameworkRoot ? { frameworkRoot: input.frameworkRoot } : {}),
     ...(input.pendingOwnerPhase ? { pendingOwnerPhase: input.pendingOwnerPhase } : {}),
   })[0];

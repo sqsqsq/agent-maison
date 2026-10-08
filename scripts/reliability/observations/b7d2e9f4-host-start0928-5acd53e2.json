@@ -94,6 +94,23 @@
     },
     "acceptance_targets": "授权内资源修改仅因归属遗漏判 stale 0 次；仅剩外部缺席的 testing 轮 → INCOMPLETE、重试调用 0 次；条件恢复后同 run 继续；返修提示词在 testing / review 两类窗口都给出复看要求；停机指引与金丝雀原因与事实一致"
   },
+  "plan_8d4e6a21_metrics": {
+    "source": "plan 8d4e6a21 §2.1 / §7；宿主 be091c 2026-10-08 现场，非新的宿主回归",
+    "measured": {
+      "authorized_change": "19:38:59 visual_provider_pin 经 override-manifest 重签；需求/范围/预算/产品字节不变",
+      "zero_executor_gate_retries": 2,
+      "unnecessary_halt": 1,
+      "elapsed": "约 40 秒",
+      "agent_invocations_after_switch": 0,
+      "budget_before_after": "29/30 未增加"
+    },
+    "development_replay": {
+      "status": "C1 连续回放 7/7 PASS，代码评审待进行",
+      "shape": "旧 control input + matching facts baseline；正式 override/rebase，生产 gate env/provider review/checker/writer，只有外部 provider 响应替身",
+      "limits": "仅外部 provider/设备 transport 事实替身；native proposal/commit、asset 检查与完成校验用生产链。正例累计 5 次调用（上游额外0）、真实来源变化累计8次；缺 native/asset 反例 PARTIAL。真实 CLI/账号/设备 H1 pending"
+    },
+    "not_counted": "不把 c3f8a2d7 的 2 次纯登记调用/28m40s 再算本事故；不估算尚未发生的真机节省"
+  },
   "tasks": [
     {
       "label": "b7d2e9f4-host-start0928-bc-openCard-2",

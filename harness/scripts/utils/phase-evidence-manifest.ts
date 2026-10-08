@@ -48,9 +48,8 @@ import {
 import { inferRepoLayout } from '../../repo-layout';
 import { computeGateFingerprint } from './gate-fingerprint';
 import {
-  goalManifestHashMatchesModuloAdapterProvenance,
-  type GoalManifest,
-} from './goal-manifest';
+  collectRequirementSsotPaths, computeRequirementShaFromText, listAuthoritativeGoalRuns, resolveCurrentRequirementSource,
+} from './fidelity-shared';
 import {
   REQUIRED_FEATURE_FILES_BY_PHASE,
   OPTIONAL_FEATURE_FILES_BY_PHASE,
@@ -230,10 +229,6 @@ export function sha256File(absPath: string): string | null {
   }
 }
 
-function isGoalRunManifestPath(relPath: string): boolean {
-  return /(?:^|\/)goal-runs\/(?:\.dry\/)?[^/]+\/manifest\.json$/.test(relPath.replace(/\\/g, '/'));
-}
-
 export function evidenceEntryMatchesCurrentFile(
   projectRoot: string,
   entry: EvidenceEntry,
@@ -245,15 +240,96 @@ export function evidenceEntryMatchesCurrentFile(
     return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE && entry.sha256 !== null
       && identityNeutralEvidenceDigest(projectRoot, feature, absPath) === entry.sha256;
   }
-  const current = sha256File(absPath);
-  if (current === entry.sha256) return true;
-  if (!isGoalRunManifestPath(entry.path) || entry.sha256 === null || !fs.existsSync(absPath)) return false;
-  try {
-    const manifest = JSON.parse(fs.readFileSync(absPath, 'utf-8')) as GoalManifest;
-    return goalManifestHashMatchesModuloAdapterProvenance(manifest, entry.sha256);
-  } catch {
-    return false;
+  return sha256File(absPath) === entry.sha256;
+}
+
+export interface EvidenceSemanticOptions {
+  runId?: string;
+  currentRequirementSha?: string | null;
+  frameworkRoot?: string;
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
+}
+
+function evidenceRequirementContext(projectRoot: string, feature: string, phase: string, opts: EvidenceSemanticOptions) {
+  const featuresDir = (loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  let runId = opts.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (!runId) {
+    try {
+      const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, opts.frameworkRoot), 'summary.json'), 'utf8'));
+      if (summary.feature === feature && summary.phase === phase && typeof summary.run_id === 'string') runId = summary.run_id.trim();
+    } catch { /* No artifact identity: retain independent authority. */ }
   }
+  const source = resolveCurrentRequirementSource(projectRoot, feature, featuresDir, runId);
+  const requirement = source?.kind === 'run' ? source.requirement : source?.text;
+  const requirementSha = opts.currentRequirementSha !== undefined ? opts.currentRequirementSha : (requirement === undefined ? null
+    : computeRequirementShaFromText(projectRoot, feature, requirement, featuresDir));
+  return { featuresDir, runId, source, requirementSha };
+}
+
+function currentEvidenceRequirementSha(projectRoot: string, feature: string, manifest: PhaseEvidenceManifest, opts: EvidenceSemanticOptions = {}) {
+  if (opts.currentRequirementSha !== undefined) return opts.currentRequirementSha;
+  if (manifest.environment.requirement_sha256 == null) return null;
+  const context = evidenceRequirementContext(projectRoot, feature, manifest.phase, opts);
+  // A real run binds new evidence too; context-free standalone evidence keeps its existing contract.
+  return context.source?.kind === 'run' || manifest.inputs.some(entry => /\/goal-runs\/[^/]+\/manifest\.json$/.test(entry.path))
+    ? context.requirementSha : null;
+}
+
+function evidenceSemanticContext(projectRoot: string, feature: string, phase: string, opts: EvidenceSemanticOptions) {
+  const { featuresDir, runId, requirementSha } = evidenceRequirementContext(projectRoot, feature, phase, opts);
+  const businessPaths = new Set(collectRequirementSsotPaths(projectRoot, feature, featuresDir, { runId }).map(file => path.resolve(projectRoot, file)));
+  for (const input of Object.values(opts.resolvedInputs?.values ?? {})) {
+    for (const dep of input.state === 'resolved' ? input.binding.dependencies : input.attempts.flatMap(attempt => attempt.dependencies)) businessPaths.add(path.resolve(projectRoot, dep.path));
+  }
+  for (const file of opts.factsContext?.source_paths ?? []) businessPaths.add(path.resolve(projectRoot, file));
+  try {
+    const facts = YAML.parse(fs.readFileSync(resolveFactsAbsPath(projectRoot, feature), 'utf8').split(/^---\s*$/m)[1] ?? '') as { source_code_paths?: unknown };
+    if (Array.isArray(facts?.source_code_paths)) for (const file of facts.source_code_paths) if (typeof file === 'string') businessPaths.add(path.resolve(projectRoot, file));
+  } catch { /* Missing facts do not declare extra business sources. */ }
+  try {
+    const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    const scope = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
+    if (scope) {
+      const { resolveDependencyPath, inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+      const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
+      for (const obligation of scope.obligations) for (const binding of [...obligation.basis, ...(obligation.satisfied_by ?? []).filter(ref => 'dependencies' in ref)]) {
+        for (const dep of binding.dependencies) businessPaths.add(resolveDependencyPath(projectRoot, dep.path, legacyRoot));
+      }
+    }
+  } catch { return null; }
+  const controlPaths = new Set(listAuthoritativeGoalRuns(projectRoot, feature, featuresDir).runs
+    .map(id => path.resolve(featureFilePath(projectRoot, feature, `goal-runs/${id}/manifest.json`, { featuresDirAbs: path.resolve(projectRoot, featuresDir) }))));
+  return { requirementSha, businessPaths, controlPaths };
+}
+
+/** Old entries lack collection provenance: retire only the former collector's bounded control surface. */
+export function phaseEvidenceBusinessInputs(projectRoot: string, feature: string, manifest: PhaseEvidenceManifest,
+  opts: EvidenceSemanticOptions = {}): EvidenceEntry[] {
+  if (!manifest.inputs.some(entry => /\/goal-runs\/[^/]+\/manifest\.json$/.test(entry.path))) return manifest.inputs;
+  const context = evidenceSemanticContext(projectRoot, feature, manifest.phase, opts);
+  const now = resolveEnvironment(projectRoot, manifest.phase, opts.frameworkRoot);
+  if (!context?.requirementSha || context.requirementSha !== manifest.environment.requirement_sha256
+    || ['framework_version', 'gate_fingerprint', 'framework_config_sha256', 'workflow_sha256'].some(key =>
+      now[key as keyof EvidenceEnvironment] !== manifest.environment[key as keyof EvidenceEnvironment])) return manifest.inputs;
+  return manifest.inputs.filter(entry => entry.role !== 'input' || entry.facts_phase !== undefined || entry.identity_neutral !== undefined
+    || entry.owner_phase !== undefined || !entry.exists || entry.sha256 === null
+    || !context.controlPaths.has(path.resolve(projectRoot, entry.path)) || context.businessPaths.has(path.resolve(projectRoot, entry.path)));
+}
+
+/** Keep the original invocation baseline intact; consumers use this view after evidence integrity checks. */
+export function factsBaselineBusinessDependencies(projectRoot: string, feature: string,
+  context: import('./context-facts').FactsInvocationContext, opts: EvidenceSemanticOptions = {}): import('./capability-resolution').ResolutionDependency[] {
+  const dependencies = context.baseline?.dependencies ?? [];
+  if (!context.baseline) return dependencies;
+  const loaded = loadPhaseEvidenceManifest(projectRoot, feature, context.baseline.established_by);
+  if (!loaded?.integrityOk) return dependencies;
+  const inputs = phaseEvidenceBusinessInputs(projectRoot, feature, loaded.manifest, {
+    ...opts, factsContext: context, runId: opts.runId ?? ('run_id' in context.subject ? context.subject.run_id : undefined),
+  });
+  const retired = loaded.manifest.inputs.filter(entry => !inputs.includes(entry));
+  return dependencies.filter(dep => !retired.some(entry => path.resolve(dep.path) === path.resolve(projectRoot, entry.path)
+    && dep.exists === entry.exists && dep.sha256 === entry.sha256));
 }
 
 function factsEvidenceHash(absPath: string, phase: string): string | null {
@@ -492,7 +568,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
         addEntry(path.resolve(projectRoot, source), 'output', owner);
       }
     }
-    if (opts.factsContext.baseline) for (const dep of opts.factsContext.baseline.dependencies) {
+    if (opts.factsContext.baseline) for (const dep of factsBaselineBusinessDependencies(projectRoot, feature, opts.factsContext, opts)) {
       const rel = toPosixRel(projectRoot, dep.path);
       if (opts.factsContext.source_owners?.[rel] === String(phase)) addEntry(dep.path, 'output', String(phase));
       else addBoundInput(dep);
@@ -611,7 +687,7 @@ export function phaseEvidenceManifestCandidatePaths(opts: {
       add(toPosixRel(projectRoot, resolveFactsAbsPath(projectRoot, feature, opts.factsContext)));
       for (const source of opts.factsContext.source_paths) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
       for (const source of Object.keys(opts.factsContext.source_owners ?? {})) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
-      for (const dep of opts.factsContext.baseline?.dependencies ?? []) add(toPosixRel(projectRoot, dep.path));
+      for (const dep of factsBaselineBusinessDependencies(projectRoot, feature, opts.factsContext, opts)) add(toPosixRel(projectRoot, dep.path));
     }
     return out;
   }
@@ -819,6 +895,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   stagedOutputs: Array<{ canonicalPath: string; sha256: string }>;
   frameworkRoot?: string;
   currentRequirementSha?: string | null;
+  runId?: string;
   /** 兼容保留：回执指针已退出证据链，本项不再参与判定。 */
   allowPriorReceiptPointer?: boolean;
 }): PhaseStalenessResult {
@@ -838,14 +915,15 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   // plan 07a41ec6（codex review P0）：回执指针不再参与 partial publication 的等价证明（manifest 自证）。
   const envNow = resolveEnvironment(input.projectRoot, input.phase, input.frameworkRoot);
   const envRec = loaded.manifest.environment;
+  const currentRequirementSha = currentEvidenceRequirementSha(input.projectRoot, input.feature, loaded.manifest, input);
   const envChanged: string[] = [];
   if (envNow.framework_config_sha256 !== envRec.framework_config_sha256) envChanged.push('framework_config');
   if (envNow.workflow_sha256 !== envRec.workflow_sha256) envChanged.push('workflow');
   if (envNow.gate_fingerprint !== envRec.gate_fingerprint) envChanged.push('gate_fingerprint');
   if (envNow.framework_version !== envRec.framework_version) envChanged.push('framework_version');
-  if (input.currentRequirementSha != null) {
+  if (currentRequirementSha != null) {
     if (envRec.requirement_sha256 == null) envChanged.push('requirement_unbound');
-    else if (input.currentRequirementSha !== envRec.requirement_sha256) envChanged.push('requirement');
+    else if (currentRequirementSha !== envRec.requirement_sha256) envChanged.push('requirement');
   }
   if (envChanged.length > 0) {
     return {
@@ -862,7 +940,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   ]));
   const seenStaged = new Set<string>();
   const changed = new Set<string>();
-  for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
+  for (const entry of [...phaseEvidenceBusinessInputs(input.projectRoot, input.feature, loaded.manifest, input), ...loaded.manifest.outputs]) {
     const stagedSha = staged.get(entry.path);
     if (stagedSha !== undefined) {
       seenStaged.add(entry.path);
@@ -895,7 +973,7 @@ export function recomputePhaseEvidenceStaleness(
   projectRoot: string,
   feature: string,
   chain: string[],
-  opts?: { currentRequirementSha?: string | null; frameworkRoot?: string; pendingOwnerPhase?: string; pendingOwnerPaths?: string[] },
+  opts?: EvidenceSemanticOptions & { pendingOwnerPhase?: string; pendingOwnerPaths?: string[] },
 ): PhaseStalenessResult[] {
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
@@ -954,6 +1032,7 @@ export function recomputePhaseEvidenceStaleness(
     //    framework 版本任一变化 → stale（environment_changed）。
     const envNow = resolveEnvironment(projectRoot, phase, opts?.frameworkRoot);
     const envRec = loaded.manifest.environment;
+    const currentRequirementSha = currentEvidenceRequirementSha(projectRoot, feature, loaded.manifest, opts);
     const envChanged: string[] = [];
     if (envNow.framework_config_sha256 !== envRec.framework_config_sha256) envChanged.push('framework_config');
     if (envNow.workflow_sha256 !== envRec.workflow_sha256) envChanged.push('workflow');
@@ -962,12 +1041,12 @@ export function recomputePhaseEvidenceStaleness(
     // ②c requirement 血缘（codex 八轮 P0-2 + 九轮 P0）：当前权威 run 的规范化 requirement
     //    与本 closure 记录的不一致 → stale。**记录为 null 同样 fail-closed**（交互态闭环
     //    合法产生 null——但新 goal 从中间阶段起链时无法证明旧 closure 审的是当前需求，
-    //    未绑定即 stale：`requirement_unbound`）。opts.currentRequirementSha 未提供
-    //    （交互态消费）则跳过比较。
-    if (opts?.currentRequirementSha != null) {
+    //    未绑定即 stale：`requirement_unbound`）。已绑定的 run 证据从调用/环境/产物身份
+    //    取得当前需求；真正无需求上下文的交互态仍跳过比较。
+    if (currentRequirementSha != null) {
       if (envRec.requirement_sha256 == null) {
         envChanged.push('requirement_unbound');
-      } else if (opts.currentRequirementSha !== envRec.requirement_sha256) {
+      } else if (currentRequirementSha !== envRec.requirement_sha256) {
         envChanged.push('requirement');
       }
     }
@@ -983,7 +1062,7 @@ export function recomputePhaseEvidenceStaleness(
     }
     const { manifest } = loaded;
     const changed = new Set<string>();
-    for (const entry of [...manifest.inputs, ...manifest.outputs]) {
+    for (const entry of [...phaseEvidenceBusinessInputs(projectRoot, feature, manifest, opts), ...manifest.outputs]) {
       if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
     // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）

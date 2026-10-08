@@ -18,6 +18,8 @@ import { writeReviewClosureAttestation } from './closure-attestation';
 import {
   collectRequirementSsotPaths,
   computeRunRequirementSha,
+  computeRequirementShaFromText,
+  resolveCurrentRequirementSource,
   listAuthoritativeGoalRuns,
 } from './fidelity-shared';
 import { computeGateFingerprint } from './gate-fingerprint';
@@ -294,12 +296,17 @@ function productionEvidence(
     );
   }
   const runId = opts.goalRunId?.trim() || process.env.MAISON_GOAL_RUN_ID?.trim();
+  const evidenceRunId = runId || readSummary(summaryPath).parsed.run_id?.trim();
+  const independentSource = evidenceRunId ? null : resolveCurrentRequirementSource(opts.projectRoot, opts.feature, featuresDirRel);
+  const independentRequirement = opts.resolvedInputs?.values.requirement?.state === 'resolved'
+    ? opts.resolvedInputs.values.requirement.value : independentSource?.kind === 'runless' ? independentSource.text : undefined;
   const requirementSha = computeRunRequirementSha(
     opts.projectRoot,
     opts.feature,
-    runId,
+    evidenceRunId,
     featuresDirRel,
-  );
+  ) ?? (typeof independentRequirement === 'string'
+    ? computeRequirementShaFromText(opts.projectRoot, opts.feature, independentRequirement, featuresDirRel) : null);
   if ((Boolean(opts.goalRunId?.trim()) || isGoalEnvironment()) && requirementSha === null) {
     throw new Error(
       `goal 环境闭环无法计算 requirement 血缘哈希（run=${runId ?? '<missing>'}）`,
@@ -307,7 +314,7 @@ function productionEvidence(
   }
   return {
     extraInputs: [...new Set([
-      ...(opts.resolvedInputs ? [] : collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel)),
+      ...(opts.resolvedInputs ? [] : collectRequirementSsotPaths(opts.projectRoot, opts.feature, featuresDirRel, { runId: evidenceRunId })),
       ...capabilityResolutionEvidenceInputs(summaryPath, opts.projectRoot),
       ...executedEvidenceInputs(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
     ])].sort(),
@@ -521,6 +528,7 @@ function recoverPartialPublication(
     currentRequirementSha: opts.goalRunId
       ? computeRunRequirementSha(opts.projectRoot, opts.feature, opts.goalRunId)
       : undefined,
+    runId: opts.goalRunId,
     // A previous completed closure may already own the receipt pointer. If the
     // current manifest independently proves the staged summary and all other
     // evidence, this transaction is precisely the writer allowed to advance it.

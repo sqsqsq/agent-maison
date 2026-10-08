@@ -1051,26 +1051,6 @@ function serializedGoalManifestSha256(manifest: GoalManifest): string {
   return crypto.createHash('sha256').update(serializeGoalManifest(manifest), 'utf-8').digest('hex');
 }
 
-/**
- * phase evidence 的旧条目保存的是全文件 hash，无法直接迁移为字段级 hash。兼容判断只
- * 枚举 adapter_provenance（身份哈希明确排除的审计元数据）；命中意味着其它每个字节
- * 都与闭环时一致。adapter/requirement/budget 等真实字段不参与枚举，仍 fail-closed。
- */
-export function goalManifestHashMatchesModuloAdapterProvenance(
-  manifest: GoalManifest,
-  expectedHash: string | null,
-): boolean {
-  if (!/^[0-9a-f]{64}$/.test(expectedHash ?? '')) return false;
-  if (serializedGoalManifestSha256(manifest) === expectedHash) return true;
-  const candidates: Array<RunAdapterProvenance | undefined> = [undefined, ...RUN_ADAPTER_PROVENANCES];
-  return candidates.some((provenance) => {
-    const candidate = { ...manifest };
-    if (provenance === undefined) delete candidate.adapter_provenance;
-    else candidate.adapter_provenance = provenance;
-    return serializedGoalManifestSha256(candidate) === expectedHash;
-  });
-}
-
 export type FrozenAdapterProvenanceRepair =
   | { repaired: false; manifest: GoalManifest }
   | { repaired: true; manifest: GoalManifest; from: 'override'; to: string | undefined };

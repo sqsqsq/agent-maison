@@ -524,37 +524,28 @@ export function resolveCurrentRequirementSource(
 }
 
 /**
- * 需求 SSOT 引用文档路径集（codex 六轮 P0-5：manifest.requirement 引用的原始需求/
- * 解引用文档必须进阶段血缘，否则改原始需求后上游 closure 仍判 fresh）。扫全部
- * goal-run manifest 的 requirement，返回项目根相对路径去重集（供 evidence extraInputs）。
+ * 当前需求引用的原始文件/解引用文档进入内容血缘；run manifest 只负责运行控制。
  * ux-reference 目录下的参考图同样纳入（UI feature 的视觉 SSOT）。
  */
 export function collectRequirementSsotPaths(
   projectRoot: string,
   feature: string,
   featuresDirRel = 'doc/features',
+  current?: { runId?: string; requirement?: string; requirementSourceFiles?: string[] },
 ): string[] {
   const out = new Set<string>();
   const featureRel = featureRelativePath(feature);
-  const runsDir = path.join(projectRoot, featuresDirRel, featureRel, 'goal-runs');
-  if (fs.existsSync(runsDir)) {
-    // T1d：权威枚举单一入口（.dry/残留不入阶段血缘——更晚 dry run 不得改变 lineage）。
-    for (const runId of listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs) {
-      const manifestPath = path.join(runsDir, runId, 'manifest.json');
-      // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
-      //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
-      // 需求改写对 closure 隐形。
-      out.add(path.join(featuresDirRel, featureRel, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
-      try {
-        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
-        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, {
-          featuresDirRel,
-          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`],
-        }).resolvedPaths) {
-          out.add(rel);
-        }
-      } catch { /* 单 manifest 损坏跳过 */ }
-    }
+  const source = resolveCurrentRequirementSource(projectRoot, feature, featuresDirRel, current?.runId);
+  const requirement = current?.requirement ?? (source?.kind === 'run' ? source.requirement : source?.text);
+  const sourceFiles = current?.requirementSourceFiles ?? (source?.kind === 'run' ? source.sourceFiles
+    : source?.kind === 'runless' ? loadFidelityIntentSsot(projectRoot, feature)?.requirement_source_files ?? [] : []);
+  for (const file of sourceFiles) {
+    out.add(path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/'));
+  }
+  if (requirement !== undefined) {
+    for (const rel of dereferenceRequirementDocs(projectRoot, requirement, {
+      featuresDirRel, excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`],
+    }).resolvedPaths) out.add(rel);
   }
   // ux-reference 参考图
   const uxDir = path.join(projectRoot, featuresDirRel, featureRel, 'ux-reference');

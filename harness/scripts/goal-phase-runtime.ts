@@ -6085,6 +6085,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         process.exit(1);
       }
       const staleness = recomputePhaseEvidenceStaleness(projectRoot, manifest.feature, upstream, {
+        runId: manifest.run_id,
         currentRequirementSha: currentReqSha,
         frameworkRoot,
       });
@@ -8374,7 +8375,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           flushProgress();
         } else {
           console.warn(
-            `[goal-runner] resume 跳过 coding agent invoke（settled 在案，仅补验证/收尾）：phase=${phase}`,
+            `[goal-runner] 跳过 ${phase} agent invoke（${factsAdmissionError ? 'facts 入场输入阻塞' : 'settled 在案，仅补验证/收尾'}）`,
           );
           flushProgress();
         }
@@ -9762,6 +9763,71 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //（顺序见下方赋值处注释），这里只暂存事件体。plan 4e6fb3b6 返修起推进阻断停机
         //（closure_open / receipt_missing）也经此发出，故改名 postVerdictHaltEvent。
         let postVerdictHaltEvent: Record<string, unknown> | undefined;
+        const contentHasNoProgress = (): boolean => shouldHaltNoProgress({
+          failureKind, priorBlockerSignature, currentBlockerSignature, priorArtifactSnapshot, currentArtifactSnapshot,
+          relevantEvidenceKnown: failureKind === 'code_regression' && contentRelatedFiles.length > 0,
+        });
+        const haltForNoProgress = (): void => {
+          driverGuardAction = 'halt';
+          // T6/P0-B：分流 halt 原因——基建(toolchain/capture/agent_timeout)求人修环境
+          // vs 视觉(visual_gap)同门禁无改善熔断求复核。
+          // plan a5f9c3e2（codex 七轮 P0）：**incident id 一律显式 literal，禁止模板串生成**
+          // ——模板生成的 id 绕过注册表元门禁（扫描器只提字面量），实测 6 个真实可达 id
+          // 未注册而测试仍全绿。此处按原值域逐项展开，emit 值与改造前逐字等同。
+          haltReason =
+            failureKind === 'visual_gap'
+              ? 'no_progress_visual_gap'
+              : failureKind === 'toolchain'
+                ? 'no_progress_toolchain'
+                : failureKind === 'capture'
+                  ? 'no_progress_capture'
+                  : failureKind === 'agent_timeout'
+                    ? 'no_progress_agent_timeout'
+                    : 'no_progress_guard';
+          // plan e7a2c4f1 §3.6（G27）：相关集合未知/为空＝没解析出可修目标，本阶段无路
+          // 可走——沿**既有** `no_progress_guard` 停下交回（不新增 halt reason），只把
+          // 理由说准。措辞守住一条线：`extractContentRelatedFiles` 的集合只来自
+          // `repair_candidates[].files` 与 `blockers[].affected_files`，空集说明「相关目标
+          // 未知」，**不是**「证明了没做修复尝试」。
+          if (failureKind === 'code_regression' && contentRelatedFiles.length === 0) {
+            awaitConfirmGuidance = buildNoRelevantTargetGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase: String(phase),
+              blockerIds: (decisionSummary?.blockers ?? [])
+                .map((blocker) => String((blocker as { id?: string }).id ?? ''))
+                .filter(Boolean)
+                .slice(0, 8),
+              harnessPrefixRel: layout.frameworkRel
+                ? path.posix.join(layout.frameworkRel, 'harness')
+                : 'harness',
+            }).join('\n');
+            console.log(`\n===== ${haltReason} =====\n${awaitConfirmGuidance}\n`);
+          }
+          // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
+          // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
+          // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
+          // §3.6 让普通 content 失败（相关集合未知）也能走到这里，必须补齐。
+          // **发射点在 `decideAndEmit` 之后**：`rebuildOutcomesFromEvents`（`goal-runner-phase.ts`）
+          // 遇到更新的 `phase_verdict` 会丢弃在它之前的 `lastHalt`，先发就等于没发。
+          postVerdictHaltEvent = {
+            type: 'phase_halt',
+            phase,
+            halt_reason: haltReason,
+            reason: `blocker_signature 重复且 watched 产物零变化（failure_kind=${failureKind}）`,
+            ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
+            ...runDispositionFields(decide(
+              { incident: haltReason, phase: String(phase) },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: runtimeOwnerKind,
+                can_prompt_now: runtimeOwnerKind === 'session',
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            )),
+          };
+
+        };
         let pointerReconcile: ReturnType<typeof reconcilePointerInRun> | undefined;
         // plan 9c3d7e1a §5.5：设计 owner 阻断的分类与简报只算一次——无人值守派发与停机分支共用同一份。
         let designBrief: DesignRepairBrief | undefined;
@@ -10233,74 +10299,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               },
             )),
           };
-        } else if (
-          shouldHaltNoProgress({
-            failureKind,
-            priorBlockerSignature,
-            currentBlockerSignature,
-            priorArtifactSnapshot,
-            currentArtifactSnapshot,
-            relevantEvidenceKnown: failureKind === 'code_regression' && contentRelatedFiles.length > 0,
-          })
-        ) {
-          driverGuardAction = 'halt';
-          // T6/P0-B：分流 halt 原因——基建(toolchain/capture/agent_timeout)求人修环境
-          // vs 视觉(visual_gap)同门禁无改善熔断求复核。
-          // plan a5f9c3e2（codex 七轮 P0）：**incident id 一律显式 literal，禁止模板串生成**
-          // ——模板生成的 id 绕过注册表元门禁（扫描器只提字面量），实测 6 个真实可达 id
-          // 未注册而测试仍全绿。此处按原值域逐项展开，emit 值与改造前逐字等同。
-          haltReason =
-            failureKind === 'visual_gap'
-              ? 'no_progress_visual_gap'
-              : failureKind === 'toolchain'
-                ? 'no_progress_toolchain'
-                : failureKind === 'capture'
-                  ? 'no_progress_capture'
-                  : failureKind === 'agent_timeout'
-                    ? 'no_progress_agent_timeout'
-                    : 'no_progress_guard';
-          // plan e7a2c4f1 §3.6（G27）：相关集合未知/为空＝没解析出可修目标，本阶段无路
-          // 可走——沿**既有** `no_progress_guard` 停下交回（不新增 halt reason），只把
-          // 理由说准。措辞守住一条线：`extractContentRelatedFiles` 的集合只来自
-          // `repair_candidates[].files` 与 `blockers[].affected_files`，空集说明「相关目标
-          // 未知」，**不是**「证明了没做修复尝试」。
-          if (failureKind === 'code_regression' && contentRelatedFiles.length === 0) {
-            awaitConfirmGuidance = buildNoRelevantTargetGuidance({
-              feature: manifest.feature,
-              runId: manifest.run_id,
-              phase: String(phase),
-              blockerIds: (decisionSummary?.blockers ?? [])
-                .map((blocker) => String((blocker as { id?: string }).id ?? ''))
-                .filter(Boolean)
-                .slice(0, 8),
-              harnessPrefixRel: layout.frameworkRel
-                ? path.posix.join(layout.frameworkRel, 'harness')
-                : 'harness',
-            }).join('\n');
-            console.log(`\n===== ${haltReason} =====\n${awaitConfirmGuidance}\n`);
-          }
-          // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
-          // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
-          // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
-          // §3.6 让普通 content 失败（相关集合未知）也能走到这里，必须补齐。
-          // **发射点在 `decideAndEmit` 之后**：`rebuildOutcomesFromEvents`（`goal-runner-phase.ts`）
-          // 遇到更新的 `phase_verdict` 会丢弃在它之前的 `lastHalt`，先发就等于没发。
-          postVerdictHaltEvent = {
-            type: 'phase_halt',
-            phase,
-            halt_reason: haltReason,
-            reason: `blocker_signature 重复且 watched 产物零变化（failure_kind=${failureKind}）`,
-            ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
-            ...runDispositionFields(decide(
-              { incident: haltReason, phase: String(phase) },
-              NO_AUTHORITY,
-              {
-                orchestration: 'goal', owner_kind: runtimeOwnerKind,
-                can_prompt_now: runtimeOwnerKind === 'session',
-                invocation: argv.resume ? 'resume' : 'fresh',
-              },
-            )),
-          };
+        } else if (!factsAdmissionError && contentHasNoProgress()) {
+          haltForNoProgress();
         } else if (
           // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
           // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
@@ -10688,6 +10688,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
           reconcile: reconcileObservation,
         });
         let assessment = runAssess();
+        const recoveryTarget = assessment.recommendation.phase;
+        const executableInputRecovery = !!factsAdmissionError && skipExecutor && !!recoveryTarget
+          && chain.indexOf(recoveryTarget as FeaturePhase) >= 0 && chain.indexOf(recoveryTarget as FeaturePhase) < phaseIdx
+          && (assessment.recommendation.runner_action === 'backtrack_to_phase'
+            ? reconcileObservation.invalidatable_phases?.includes(recoveryTarget)
+            : assessment.recommendation.action === 'complete_closure');
+        if (driverGuardAction === 'none' && factsAdmissionError && !executableInputRecovery && contentHasNoProgress()) {
+          haltForNoProgress();
+          reconcileObservation.state = 'fused';
+          reconcileObservation.reason = haltReason;
+          assessment = runAssess();
+        }
 
         // b3e8d4c7 t2：assess 推荐 `complete_closure:<上游>` 时，driver 词汇表里没有这个
         // 动作 → 旧实现落无条件 halt，重试当前阶段永远修不好上游闭环（宿主实锤死锁）。
@@ -11130,9 +11142,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // M1 收敛（review 修复）：signal@1 只注入 eligible（attempted 已排除），
             // legacy 恒 eligible 原样保留——eligibleForBacktrack 在 assess 前一次性算出。
             backtrackRepairCandidates = eligibleForBacktrack.slice(0, 20);
-            const invalidatedBt = chain
-              .slice(targetIdxBt, phaseIdx + 1)
-              .filter(ph => outcomes.some(o => o.phase === ph));
+            const invalidatedBt = chain.slice(targetIdxBt, phaseIdx + 1);
+            for (const invalidatedPhase of invalidatedBt) {
+              resumePostAgentPhases.delete(invalidatedPhase);
+              delete resumePostAgentAttemptIds[invalidatedPhase];
+            }
             const txIdBt = `${manifest.run_id}-repairbt${backtracksUsed}`;
             goalEvents.emit({
               type: 'phase_backtrack_requested',
@@ -11331,6 +11345,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           projectRoot,
           feature: manifest.feature,
           chain: terminalChain,
+          runId: manifest.run_id,
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }),
@@ -11342,6 +11357,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           projectRoot,
           feature: manifest.feature,
           chain: terminalChain,
+          runId: manifest.run_id,
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }))}`);

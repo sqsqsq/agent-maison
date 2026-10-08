@@ -48,6 +48,7 @@ import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capab
 import { checkFactsArtifact } from '../../scripts/utils/context-facts';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { frameworkDeclaringTsSources, removeShimFramework } from './standalone-coding-review.unit.test';
 import {
@@ -60,19 +61,26 @@ import { loadHeadlessLedger } from '../../scripts/utils/headless-assumptions';
 import { casAcquireRunOwner, ensureRunControl, readRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import { assembleGoalBrief, renderGoalBrief } from '../../scripts/utils/goal-brief';
-import { runVisualProviderReview } from '../../../profiles/hmos-app/harness/visual-provider-review';
+import { runVisualProviderReview, collectReviewTargets, visualDiffJsonPathFor } from '../../../profiles/hmos-app/harness/visual-provider-review';
+import { hashImageFile } from '../../scripts/utils/visual-provider-invoke';
+import { applyGoalVisualProviderEnv } from '../../scripts/utils/phase-state';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
+  loadPhaseEvidenceManifest,
+  recomputeManifestAggregate,
+  phaseEvidenceManifestPath,
+  sha256File,
+  recomputePhaseEvidenceStaleness,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
 import { __testing_setVisualDiffOcrFn, checkVisualDiff, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { loadResolvedProfile } from '../../profile-loader';
-import { loadFrameworkConfig } from '../../config';
-import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
+import { loadFrameworkConfig, resolveHylyreToolConfig } from '../../config';
+import { uiSpecAbsPath, loadUiSpecFile } from '../../scripts/utils/ui-spec-shared';
 import {
   projectIdentityHash,
 } from '../../scripts/utils/pass-snapshot';
@@ -103,6 +111,8 @@ import {
   collectCurrentRequirementText,
   computeRequirementShaFromText,
   computeRunRequirementSha,
+  writeFidelityIntentSsot,
+  assetManifestAbsPath,
   loadFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
 import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
@@ -497,6 +507,8 @@ export async function runGoalRuntimeChain(
     testingGateChecks?: (ctx: {
       root: string; feature: string; runId: string; attemptId: string; fields: HarnessFidelityContextFields;
     }) => CheckResult[] | null | Promise<CheckResult[] | null>;
+    /** Old-run recovery replay uses production facts admission before the fake transport's ordinary checks. */
+    checkFactsAdmission?: boolean;
     /** plan 4e6fb3b6 §5.1：进程内有界等待的上限/间隔/探针（runtime 启动入参；生产 CLI 不传，取默认 15 分钟/30 秒/真实探针）。 */
     conditionWait?: GoalPhaseRuntimeLaunchOptions['conditionWait'];
     /**
@@ -656,6 +668,16 @@ export async function runGoalRuntimeChain(
         return { exitCode: 1, timedOut: false, outputTail: currentFailure };
       }
       let failOverride = opts.onHarnessSummary?.({ phase: String(ph), attempt: harnessAttempt });
+      let admittedFacts: import('../../scripts/utils/context-facts').FactsInvocationContext | undefined;
+      if (opts.checkFactsAdmission) {
+        try {
+          admittedFacts = resolveCapabilityResolutionEntryInput({ projectRoot: pr, frameworkRoot: _fr, feature: feat, phase: String(ph),
+            featuresDir: 'doc/features', goalRunId: gm?.run_id, goalAttemptId: roundIdentity?.attemptId }).factsContext;
+        } catch (error) {
+          failOverride = { checks: [{ id: 'context_exploration_facts_source_stale', category: 'structure', description: 'facts entry validity',
+            severity: 'BLOCKER', status: 'FAIL', details: String(error) }] };
+        }
+      }
       // plan 2f8a6d40：本轮真实 gate 的 CheckResult（PASS 出口交给真实 writer 用）。
       let specGateChecks: CheckResult[] | null = null;
       let passOverrideChecks: CheckResult[] | undefined;
@@ -810,6 +832,7 @@ export async function runGoalRuntimeChain(
           const manifest = resolvePhaseEvidenceManifest({
             projectRoot: pr, feature: feat, phase: String(ph),
             extraInputs: [], extraOutputs: [],
+            ...(admittedFacts ? { factsContext: admittedFacts } : {}),
             ...(opts.frameworkRoot ? { frameworkRoot } : {}),
             requirementSha: gm?.run_id
               ? computeRunRequirementSha(pr, feat, gm.run_id, 'doc/features')
@@ -867,13 +890,16 @@ export async function runGoalRuntimeChain(
       const gateAttemptId = roundIdentity?.attemptId ?? '';
       // plan c3f8a2d7 §3.5：gate env 覆盖到可等待的真实 checker 结束为止（不在第一个 await 处提前还原）。
       const inGateEnv = async <T>(fn: () => T | Promise<T>): Promise<T> => {
-        const before = new Map(GOAL_ENV_KEYS.map(k => [k, process.env[k]]));
+        const gateEnvKeys = [...GOAL_ENV_KEYS, ...Object.keys(deviceTargetEnv ?? {}), 'MAISON_GOAL_VISUAL_PROVIDER_ADAPTER', 'MAISON_GOAL_VISUAL_PROVIDER_MODEL'];
+        const before = new Map(gateEnvKeys.map(k => [k, process.env[k]]));
         Object.assign(process.env, {
+          ...deviceTargetEnv,
           MAISON_GOAL_RUN_ID: gateRunId, MAISON_GOAL_ATTEMPT: gateAttemptId,
           MAISON_GOAL_ATTEMPT_PHASE: 'testing', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_GATE_HARNESS: '1',
         });
+        applyGoalVisualProviderEnv(process.env, gm?.visual_provider_pin);
         try { return await fn(); } finally {
-          for (const k of GOAL_ENV_KEYS) {
+          for (const k of gateEnvKeys) {
             const v = before.get(k);
             if (v === undefined) delete process.env[k]; else process.env[k] = v;
           }
@@ -6345,6 +6371,144 @@ test('c3f8a2d7 t5 连续回放：testing FAIL（产品+provider 缺席）→ 回
 // ---------------------------------------------------------------------------
 // plan a2f7c9e4 §3.1–§3.3：预算有效值、仅预算变化续原 run、接续冷却——全部走公开入口与真实 run 产物
 // ---------------------------------------------------------------------------
+
+for (const { genuineSourceChange, completeEvidence } of [
+  { genuineSourceChange: false, completeEvidence: true }, { genuineSourceChange: true, completeEvidence: true },
+  { genuineSourceChange: false, completeEvidence: false },
+]) {
+  test(`8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase${genuineSourceChange ? ' + genuine-source-change 实际责任恢复' : ' 保留原业务证据'} → 新 provider review ${completeEvidence ? '完整恢复' : '缺证据 PARTIAL 反例'}`, async () => {
+    const { root } = setupHost('codex');
+    const research = 'doc/research/provider-recovery.md';
+    const facts = `doc/features/${FEATURE}/context/facts.md`;
+    let restored = false;
+    let researchCalls = 0;
+    let providerCalls = 0;
+    let firstPhase = 'spec';
+    let lastPhase = 'testing';
+    const delta = ({ phase }: AgentCtx): void => fs.appendFileSync(path.join(root, facts), `\n## phase_delta: ${phase}\nnone\n`);
+    const researchOrDelta = (ctx: AgentCtx): void => {
+        if (ctx.phase !== firstPhase) return delta(ctx);
+        const { runId } = ctx;
+        researchCalls++;
+        const text = fs.readFileSync(path.join(root, research), 'utf8');
+        writeFile(root, facts, ['---', 'schema_version: "1.1"', `feature: ${FEATURE}`, `run_id: ${runId}`, `established_by: ${firstPhase}`,
+          'ready_to_produce: true', 'source_code_paths:', `  - ${PRODUCT_FILE}`, `  - ${research}`, '---',
+          '# Code Facts', '| 路径 | 事实 |', '|---|---|', `| ${research} | ${text} |`, `| ${PRODUCT_FILE} | ${fs.readFileSync(path.join(root, PRODUCT_FILE), 'utf8')} |`, ''].join('\n'));
+    };
+    const common: Parameters<typeof runGoalRuntimeChain>[1] = {
+      checkFactsAdmission: true,
+      onSpec: researchOrDelta, onPlan: researchOrDelta, onCoding: researchOrDelta, onReview: researchOrDelta, onUt: researchOrDelta, onTesting: researchOrDelta,
+      testingGateChecks: async ({ root: r, runId, attemptId }) => {
+        seedReplay(r, { feature: FEATURE, productFixed: true });
+        const { results } = await computeReplayChecks(r, { feature: FEATURE, productFixed: true, currentRuntimeEvidence: completeEvidence && restored,
+          providerOutcome: restored ? 'restored' : 'unavailable',
+          ...(restored ? { providerReview: async ctx => {
+            const result = await runVisualProviderReview(ctx, { frameworkRoot: REPO_ROOT, runId, attemptId,
+              invoke: async input => {
+                providerCalls++;
+                assert(input.provider.adapter === 'codex' && input.provider.model === 'gpt-6.1-sol', `须到达新正式 pin：${JSON.stringify(input.provider)}`);
+                const current = JSON.parse(fs.readFileSync(visualDiffJsonPathFor(r, FEATURE), 'utf8'));
+                const targets = collectReviewTargets(ctx, current.screens);
+                assert(targets.length > 0 && targets.every(target => current.screens.find((screen: { screen_id: string; verdict: string; region_attest?: unknown[] }) => screen.screen_id === target.screen_id).verdict === 'pending'), '外部调用前旧 PASS 已清场');
+                assert(input.imagePaths.length === targets.length * 2 && input.prompt.includes(runId) && input.prompt.includes(attemptId), '原图及 run/attempt 载荷进入正式调用');
+                const imageHashes = input.imagePaths.map(file => hashImageFile(file)!);
+                const body = JSON.stringify({ schema_version: '1.0', run_id: runId, attempt_id: attemptId, image_hashes: imageHashes,
+                  screens: targets.map(target => ({ screen_id: target.screen_id, reference_image_hash: target.refHash, evaluated_screenshot_hash: target.shotHash,
+                    must_fix: [], defects: [], region_attest: (target.mustHaveElements?.length ? target.mustHaveElements : [target.screen_id])
+                      .map(region => ({ region, verdict: 'no_diff', method: 'vl_screening' })) })) });
+                return { invoke_id: input.invokeId, provider: input.provider, purpose: input.purpose, outcome: 'success', duration_ms: 1,
+                  image_hashes: imageHashes, workspace_dirtied: false, input_provenance: 'unverified', body };
+              },
+            });
+            assert(result.kind === 'applied', `生产 review 校验/写入须成功：${JSON.stringify(result)}`);
+          } } : {}),
+        });
+        return results;
+      },
+    };
+    try {
+      writeFile(root, research, 'v1');
+      writeFile(root, `${resolveHylyreToolConfig(root).vendor_dir}/release.manifest.json`, JSON.stringify({ schema: 1, hylyre_version: '0.5.1' }));
+      seedReplay(root, { feature: FEATURE, productFixed: true });
+      if (completeEvidence) {
+        const assets = loadUiSpecFile(uiSpecAbsPath(root, FEATURE))!.assets ?? [];
+        const Jimp = require('jimp');
+        for (const asset of assets) if (asset.resolved_path) {
+          const target = path.resolve(root, asset.resolved_path); fs.mkdirSync(path.dirname(target), { recursive: true });
+          await new Jimp(12, 12, 0xffffffff).writeAsync(target);
+        }
+        writeFile(root, path.relative(root, assetManifestAbsPath(root, FEATURE)), require('yaml').stringify({ schema_version: '1.0',
+          assets: assets.map(asset => ({ key: asset.key, purpose: 'replay fixture', has_source: !!asset.resolved_path && fs.existsSync(path.resolve(root, asset.resolved_path)) })) }));
+      }
+      fs.rmSync(featurePhaseReportsDir(root, FEATURE, 'testing'), { recursive: true, force: true });
+      const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+      config.active_workflow = 'obligation-driven';
+      writeFile(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      writeFidelityIntentSsot(root, FEATURE, { inferred: 'semantic_layout', selected: 'semantic_layout', effective: 'semantic_layout',
+        strictness: 'best_effort', assetAcquisitionMode: 'approximate', clamped: false, rejectedDowngrade: false, defer: false,
+        decision: { source: 'explicit_cli', rationale: '回放已定档语义布局', decision_id: '8d4e6a2100000001' } },
+      { executionIdentity: `phase:${FEATURE}:spec`, requirementSha: computeRequirementShaFromText(root, FEATURE, '真机测试银行卡开卡流程'), requirementProvenance: 'explicit_cli' });
+      prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE, completionTarget: 'request',
+        requestedResults: ['银行卡功能与视觉补验'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'],
+        impact: { userVisibleBehaviorChange: true, reason: '银行卡页面行为与视觉补验', basisPaths: [PRODUCT_FILE] },
+        requirement: '真机测试银行卡开卡流程', overwrite: true });
+      const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE });
+      assert(frozen.status === 'frozen' || frozen.status === 'reused', JSON.stringify(frozen));
+      const scope = loadEffectiveExecutionScope(root, FEATURE)!;
+      assert(scope.phase_chain.includes('testing'), JSON.stringify(scope.obligations.map(o => ({ kind: o.kind, applicability: o.applicability, reason: o.reason }))));
+      firstPhase = scope.phase_chain[0]; lastPhase = scope.phase_chain.at(-1)!;
+      const first = await requestVia('foreground', root, { ...common, freshStartPhase: firstPhase as 'coding', freshEndPhase: lastPhase, launchArgs: ['--visual-adapter', 'claude', '--visual-model', 'claude-opus-5'] });
+      const [run] = goalRunIds(root);
+      assert(lastRunEndOf(goalRunEvents(root, run))?.status === 'DEFERRED_CAPABILITY_MISSING', '先按真实 checks/writer 停放');
+      const control = path.join(first.reportDir, 'manifest.json');
+      const controlEntry = { path: path.relative(root, control).replace(/\\/g, '/'), exists: true, sha256: sha256File(control), role: 'input' as const };
+      // Saved legacy-format fixture: the former collector appended this exact byte-bound input; retain every existing product binding.
+      for (const phase of loadGoalManifestFromRun(root, run, { feature: FEATURE }).phase_chain!.filter(phase => phase !== 'testing')) {
+        const loaded = loadPhaseEvidenceManifest(root, FEATURE, phase);
+        assert(!!loaded?.integrityOk, `旧形状底稿须为真实完整闭环：${phase}`);
+        loaded!.manifest.inputs.push(controlEntry);
+        loaded!.manifest.aggregate_sha256 = recomputeManifestAggregate(loaded!.manifest);
+        writePhaseEvidenceManifest(root, loaded!.manifest);
+      }
+      const eventFile = path.join(first.reportDir, 'events.jsonl');
+      const legacyEvents = goalRunEvents(root, run);
+      for (const event of legacyEvents) {
+        const baseline = (event.facts_context as import('../../scripts/utils/context-facts').FactsInvocationContext | undefined)?.baseline;
+        if (baseline) baseline.dependencies.push({ path: control, exists: true, sha256: controlEntry.sha256, role: 'derive' });
+      }
+      assert(legacyEvents.some(event => (event.facts_context as import('../../scripts/utils/context-facts').FactsInvocationContext | undefined)?.baseline?.dependencies.some(dep => dep.path === control)), '旧控制依赖必须进入下游 facts baseline');
+      fs.writeFileSync(eventFile, legacyEvents.map(event => JSON.stringify(event)).join('\n') + '\n');
+      const legacyEventBytes = fs.readFileSync(eventFile, 'utf8');
+      const oldEvidence = ['coding', 'review', 'ut'].map(phase => fs.readFileSync(phaseEvidenceManifestPath(root, FEATURE, phase), 'utf8'));
+      const before = goalRunEvents(root, run);
+      if (genuineSourceChange) writeFile(root, research, 'v2 genuine source');
+      restored = true;
+      const second = await requestVia('foreground', root, { ...common, freshStartPhase: firstPhase as 'coding', freshEndPhase: lastPhase, launchArgs: ['--visual-adapter', 'codex', '--visual-model', 'gpt-6.1-sol', '--override-manifest'] });
+      const after = goalRunEvents(root, run);
+      assert(fs.readFileSync(eventFile, 'utf8').startsWith(legacyEventBytes), '恢复只追加事件，不改旧 facts context/baseline');
+      const session = after.slice(before.length);
+      const rebase = session.find(event => event.type === 'manifest_identity_rebase');
+      assert(JSON.stringify(rebase?.changed_fields) === '["visual_provider_pin"]' && rebase?.authorized_by === 'override-manifest', '正式只重签 provider pin');
+      assert(goalRunIds(root).length === 1 && providerCalls > 0, '原地恢复并至少调用一次新 provider');
+      assert(!session.some(event => event.halt_reason === 'no_progress_guard'), '不在零 executor gate 空转熔断');
+      if (genuineSourceChange) {
+        assert(session.some(event => event.type === 'phase_backtrack_requested' && event.to_phase === firstPhase) && second.invokedPhases.includes(firstPhase) && researchCalls === 2, '真实来源变化第一轮回实际责任并重建');
+        assert(fs.readFileSync(path.join(root, facts), 'utf8').includes('v2 genuine source'), '新事实来自实际读取');
+      } else {
+        assert(!second.invokedPhases.some(phase => ['spec', 'plan', 'coding', 'review', 'ut'].includes(phase)), `provider-only 不重调上游：${second.invokedPhases}`);
+        assert(['coding', 'review', 'ut'].every((phase, index) => fs.readFileSync(phaseEvidenceManifestPath(root, FEATURE, phase), 'utf8') === oldEvidence[index]), '旧 evidence 原字节保留');
+        const fresh = recomputePhaseEvidenceStaleness(root, FEATURE, ['coding', 'review', 'ut'], { runId: run, frameworkRoot: REPO_ROOT });
+        assert(fresh.every(result => result.verdict === 'fresh'), `旧业务证据有效：${JSON.stringify(fresh)}`);
+      }
+      const turns = resolveResumedBudget(foldBudgetLineage({ projectRoot: root, featuresDir: 'doc/features', feature: FEATURE, currentEvents: loadAuthoritativeEvents(eventFile) }).budgetFoldEvents, { nextSessionStartMs: Date.now() }).totalTurns;
+      assert(turns === after.filter(event => event.type === 'agent_invoke_start').length, '预算按原调用 lineage 累计');
+      const testingVerdict = [...session].reverse().find(event => event.type === 'phase_verdict' && event.phase === 'testing');
+      assert(testingVerdict?.verdict === 'PASS' && testingVerdict?.action === 'advance', '真实 provider review 与 checker 完成视觉补验');
+      if (completeEvidence) assert(lastRunEndOf(after)?.status === 'CHAIN_SLICE_COMPLETED', '正式切换 + 当前 native/HAP/asset 依据必须完整完成');
+      else assert(lastRunEndOf(after)?.status === 'PARTIAL', '缺 native/HAP 与 asset 完成依据不得假称产品完整完成');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 /** 有权者手改停机 run 的 manifest 预算（授权与否只看本次是否带 --override-manifest）；patch 可同时改其它身份字段。 */
 function editRunBudget(root: string, run: string, turns: number, patch: (m: Record<string, any>) => void = () => undefined): void {

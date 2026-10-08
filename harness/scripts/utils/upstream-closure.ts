@@ -167,7 +167,7 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
   }
 
   // ③ passed 之后**重算** freshness——stale 绝不 rebound（顺序见文件头）
-  const [staleness] = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, [target], { frameworkRoot: input.frameworkRoot });
+  const [staleness] = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, [target], { frameworkRoot: input.frameworkRoot, runId: input.goalRunId });
   if (staleness && staleness.verdict !== 'fresh') {
     return {
       kind: 'backtrack',

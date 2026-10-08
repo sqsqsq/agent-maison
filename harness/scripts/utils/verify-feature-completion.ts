@@ -33,7 +33,7 @@ import { featureFilePath, featurePhaseReportsDir, receiptDirPath, resolveFeature
 import {
   loadReviewClosureAttestation,
 } from './closure-attestation';
-import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha } from './fidelity-shared';
+import { classifyGoalRunsDir, collectRequirementSsotPaths, computeRunRequirementSha, computeRequirementShaFromText, resolveCurrentRequirementSource } from './fidelity-shared';
 import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
 import { buildSourceInventory } from './closure-attestation';
 import {
@@ -435,6 +435,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   for (const r of recomputePhaseEvidenceStaleness(projectRoot, feature, chain, {
     currentRequirementSha: opts.currentRequirementSha,
     frameworkRoot: opts.frameworkRoot,
+    runId: opts.runId,
   })) {
     if (r.verdict !== 'fresh') {
       issues.push({
@@ -622,9 +623,13 @@ export function computeRequirementSsotAggregate(projectRoot: string, feature: st
       .map(binding => ({ input_id: binding.input_id, source: binding.source, value: readBoundInput({ projectRoot, frameworkRoot: fwRoot, feature, phase: obligation.owner_phase, track: 'full' }, binding, legacyRoot) })));
     return executionScopeFingerprint({ requirement: computeRunRequirementSha(projectRoot, feature, runId, relFeaturesDir(projectRoot)), contents });
   }
-  const paths = collectRequirementSsotPaths(projectRoot, feature);
-  if (paths.length === 0) return null;
+  const featuresDir = relFeaturesDir(projectRoot);
+  const source = resolveCurrentRequirementSource(projectRoot, feature, featuresDir, runId);
+  const requirement = source?.kind === 'run' ? source.requirement : source?.text;
+  const paths = collectRequirementSsotPaths(projectRoot, feature, featuresDir, { runId });
+  if (paths.length === 0 && requirement === undefined) return null;
   const parts: string[] = [];
+  if (requirement !== undefined) parts.push('requirement:' + computeRequirementShaFromText(projectRoot, feature, requirement, featuresDir));
   for (const rel of paths) {
     const h = sha256File(path.join(projectRoot, rel));
     parts.push(rel + ':' + (h === null ? 'missing' : h));

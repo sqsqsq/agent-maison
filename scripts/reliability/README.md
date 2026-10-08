@@ -90,6 +90,7 @@ plan a2f7c9e4 的本轮基线（98434b6f，继续模式）：`observations/a2f7c
 plan b7d2e9f4 的第四轮（5acd53e2，从 09-28 公共起点，run be091c）：`observations/b7d2e9f4-host-start0928-5acd53e2.json`，§5 口径的本轮值与
 旧包、98434b6f 两轮同起点对照写在 `plan_b7d2e9f4_metrics`（只作描述性对照，脚本不读该键）。
 plan c3f8a2d7 对同一轮的 §5 观察成本追加在同一文件的 `plan_c3f8a2d7_metrics`（`measured` 实测与 `estimated` 估算分开，脚本不读该键）。
+plan 8d4e6a21 的 10-08 授权 provider 切换事故追加为 `plan_8d4e6a21_metrics`：两次零 executor gate、约 40 秒与一次假停机；不重复计算 c3f8a2d7 成本，自动回放与真实宿主 H1 分开登记。
 
 ## 3. 确定性层：场景套件
 

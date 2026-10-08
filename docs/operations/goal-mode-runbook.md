@@ -131,6 +131,8 @@ run 停下来之后，补上缺的那样东西，再**重新发起同一请求**
   不改需求、身份与接续决策，不起后继；fresh 启动带它会被拒。要改需求仍用 `--requirement-file`。
 - 闭环墙（`closure_wall_repeated`，结构终局）：只修了回执或闭环事务、产品与契约文件没变时不算变化，重发会保持停止——用停机说明里的显式续跑命令。
   只有相关产品或契约文件确有改动时，重发才会起后继。
+- 授权更换冻结视觉 provider：用既有正式入口的 `--visual-adapter <adapter> --visual-model <model> --override-manifest` 续跑。身份重签不代表视觉验收完成；当前需求、范围与业务来源有效时保留上游证据，testing 仍须实际调用新 provider。原预算累计，账号/型号不可用如实停放；旧 run/回执/hash 不手改（plan 8d4e6a21）。
+- facts 入场失败且上游 evidence 已失效时，机器先回链内责任阶段读源重验，再返回被阻塞阶段；失效窗口内的旧 settled 不再具有 validation-only 资格。真实需求/源码变化仍须修复，不以改 hash 或 run_id 代替探索。
 - `DEFERRED_CAPABILITY_MISSING`（testing 只剩视觉 provider 或 OCR 等能力缺席，plan c3f8a2d7）：恢复该能力（例如重新登录视觉 provider 的 CLI）后重新发起同一请求，
   接回同一 run、testing 重新入队并由原检查重验（仅限 run 停在该阶段的延迟：延迟动作为 halt，或该阶段是链尾的 continue；链中段的 continue 延迟下游照常推进，不在此承诺内）；停机说明点名缺席的能力。这类停机不挂探针，框架不会自动探测恢复，也不算第 7 种变化；重发直接重新接入、不等 5 分钟冷却，
   所以能力没恢复就重发只会再跑一轮 testing、再以同一原因停下。

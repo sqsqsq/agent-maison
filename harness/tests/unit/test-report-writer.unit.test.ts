@@ -43,6 +43,10 @@ import { evaluateP0CoverageIntegrity, evaluateP0SemanticCoverage } from '../../s
 import { extractDerivedPlanCases } from '../../scripts/utils/derived-hylyre-plan';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
 import { collectP0VisualTargetIds } from '../../../profiles/hmos-app/harness/visual-diff-targets';
+import { checkAssetAcquisition } from '../../../profiles/hmos-app/harness/asset-acquisition';
+import { checkAssetManifest } from '../../../profiles/hmos-app/harness/asset-manifest-check';
+import { validateNativeTraceArtifactBinding } from '../../scripts/utils/native-trace-binding';
+import { writeDeviceTestEvidenceIfEligible } from '../../scripts/check-testing';
 import { reduceCase, runOutcome, toolCallsProjection, verifyTraceCrossRow } from '../../scripts/utils/hylyre-crossrow-verifier';
 import { deriveSummaryVerdictLattice, resolveEffectiveVerdict } from '../../scripts/utils/quality-axes';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
@@ -605,10 +609,14 @@ const REPLAY_READY = { ok: true, doctorOk: true, version_consistent: true, insta
 const REPLAY_RECOMPUTED = /^(visual_diff|test_report_generated|negative_verdict_closure|pass_rate_calculated|p0_coverage_integrity|p0_pass_rate_dual_metrics|p0_semantic_coverage_integrity|p0_runtime_step_evidence_boundary|testing_failure_routing.*|testing_channel_evidence_obligation|testing_run_status)$/;
 
 export interface ReplayOpts {
+  feature?: string;
   /** TC-004/005 改为通过：按派生计划同 index 补通过的 StepResult，trace.outcome=success，device_test_run 输入取 PASS */
   productFixed?: boolean;
   /** restored = provider 恢复：替身按 provider 产出写回逐屏 pass 判定，再由真实 checkVisualDiff 出视觉结论 */
   providerOutcome?: 'unavailable' | 'invalid' | 'restored';
+  /** Exercise the real provider-review path after preparing capture artifacts; only its external invoke is replaced. */
+  providerReview?: (ctx: CheckContext) => Promise<void>;
+  currentRuntimeEvidence?: boolean;
   /** TC-007 关联的 AC-8 去掉 checkpoint 屏声明（视觉绑定缺口） */
   dropAc8Screens?: boolean;
   /** 追加一条没有任何 TC 关联的 P0 device AC */
@@ -640,14 +648,22 @@ function synthPassedStep(index: number, planned: Record<string, Record<string, u
   return { index, kind, role: assertion ? 'assertion' : 'action', duration_ms: 100, device_session: true, outcome, selector, artifacts: [], diagnostic: null, extensions: {} };
 }
 
-function replayTracePath(root: string): string {
-  return path.join(featurePhaseReportsDir(root, REPLAY_FEATURE, 'testing'), REPLAY_RUN, 'hylyre', 'trace.json');
+function replayTracePath(root: string, feature = REPLAY_FEATURE): string {
+  return path.join(featurePhaseReportsDir(root, feature, 'testing'), REPLAY_RUN, 'hylyre', 'trace.json');
 }
 
 export function seedReplay(root: string, opts: ReplayOpts): void {
-  fs.cpSync(REPLAY_FIXTURE, featureDir(root, REPLAY_FEATURE), { recursive: true, force: true });
+  const feature = opts.feature ?? REPLAY_FEATURE;
+  fs.cpSync(REPLAY_FIXTURE, featureDir(root, feature), { recursive: true, force: true });
+  if (opts.feature) {
+    const tracePath = replayTracePath(root, feature);
+    const trace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
+    trace.feature = feature;
+    trace.artifacts = { ...trace.artifacts, plan: path.join(path.dirname(tracePath), 'test-plan.hylyre.md') };
+    writeJson(tracePath, trace);
+  }
   if (opts.productFixed) {
-    const tracePath = replayTracePath(root);
+    const tracePath = replayTracePath(root, feature);
     const trace = JSON.parse(fs.readFileSync(tracePath, 'utf-8')) as { outcome: string; cases: Array<Record<string, any>> };
     const derived = extractDerivedPlanCases(fs.readFileSync(path.join(path.dirname(tracePath), 'test-plan.hylyre.md'), 'utf-8'));
     for (const id of ['TC-004', 'TC-005']) {
@@ -665,7 +681,7 @@ export function seedReplay(root: string, opts: ReplayOpts): void {
   }
   if (opts.dropAc8Screens || opts.orphanP0Ac) {
     const YAML = require('yaml') as typeof import('yaml');
-    const acceptancePath = resolveFeatureArtifact(root, REPLAY_FEATURE, 'acceptance.yaml').actualPath;
+    const acceptancePath = resolveFeatureArtifact(root, feature, 'acceptance.yaml').actualPath;
     const doc = YAML.parse(fs.readFileSync(acceptancePath, 'utf-8')) as { criteria: Array<Record<string, any>> };
     if (opts.dropAc8Screens) {
       const cp = doc.criteria.find(c => c.id === 'AC-8')!.checkpoint;
@@ -681,25 +697,25 @@ export function seedReplay(root: string, opts: ReplayOpts): void {
 }
 
 /** provider 恢复轮的外部调用替身：按 provider 评审产出写回全部 P0 目标屏的 pass 判定（绑定当前截图与构建），视觉结论交真实 checkVisualDiff。 */
-async function writeRestoredProviderVerdicts(root: string): Promise<void> {
+async function writeRestoredProviderVerdicts(root: string, feature = REPLAY_FEATURE): Promise<void> {
   // 夹具不带二进制参考图：在 spec 声明的权威参考路径上补同名占位图（宿主这些文件真实存在）
-  const specMd = fs.readFileSync(resolveFeatureArtifact(root, REPLAY_FEATURE, 'spec/spec.md').actualPath, 'utf-8');
+  const specMd = fs.readFileSync(resolveFeatureArtifact(root, feature, 'spec/spec.md').actualPath, 'utf-8');
   const Jimp = require('jimp');
   for (const m of specMd.matchAll(/path:\s*(doc\/features\/[^\s}]+)/g)) {
     fs.mkdirSync(path.dirname(path.join(root, m[1])), { recursive: true });
     await new Jimp(12, 12, 0xffffffff).writeAsync(path.join(root, m[1]));
   }
-  const uiScreens = loadUiSpecFile(uiSpecAbsPath(root, REPLAY_FEATURE))?.screens ?? [];
+  const uiScreens = loadUiSpecFile(uiSpecAbsPath(root, feature))?.screens ?? [];
   const refOf = (target: string): string | undefined =>
     (uiScreens.find(s => target === s.id || target.startsWith(`${s.id}__overlay__`)) as { ref_id?: string } | undefined)?.ref_id;
-  const reportsDir = featurePhaseReportsDir(root, REPLAY_FEATURE, 'testing');
+  const reportsDir = featurePhaseReportsDir(root, feature, 'testing');
   const hap = path.join(root, 'build', 'replay-signed.hap');
   fs.mkdirSync(path.dirname(hap), { recursive: true });
   fs.writeFileSync(hap, 'replay-hap');
   writeJson(path.join(reportsDir, 'device-test-install.meta.json'), { hapPath: hap });
   const fp = computeHapBuildFingerprint(hap)!;
-  const featureRel = path.relative(root, featureDir(root, REPLAY_FEATURE)).replace(/\\/g, '/');
-  const screens = collectP0VisualTargetIds(loadUiSpecFile(uiSpecAbsPath(root, REPLAY_FEATURE))).map(id => {
+  const featureRel = path.relative(root, featureDir(root, feature)).replace(/\\/g, '/');
+  const screens = collectP0VisualTargetIds(loadUiSpecFile(uiSpecAbsPath(root, feature))).map(id => {
     const rel = `${featureRel}/device-testing/device-screenshots/shot-${id}.png`;
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), `png-${id}`);
@@ -710,8 +726,8 @@ async function writeRestoredProviderVerdicts(root: string): Promise<void> {
       region_attest: [{ region: id, verdict: 'no_diff', method: 'vl_screening' }],
     };
   });
-  const dev = path.join(featureDir(root, REPLAY_FEATURE), 'device-testing');
-  writeJson(path.join(dev, 'device-screenshots', 'visual-diff.json'), { schema_version: '1.1', feature: REPLAY_FEATURE, screens });
+  const dev = path.join(featureDir(root, feature), 'device-testing');
+  writeJson(path.join(dev, 'device-screenshots', 'visual-diff.json'), { schema_version: '1.1', feature, screens });
   writeJson(path.join(dev, 'reports', 'critic-receipt.json'), {
     schema_version: '1.1', critic_run_id: 'replay-provider', adapter: 'claude', prompt_hash: 'replay', input_provenance: 'unverified',
     image_inputs: screens.map(s => ({ path: s.screenshot_path, hash: s.screenshot_hash })),
@@ -723,20 +739,23 @@ async function writeRestoredProviderVerdicts(root: string): Promise<void> {
  * → 证据义务 → 状态面板）。goal-runner-testing-integrity 的连续回放复用本函数产出各轮 summary 的 checks。
  */
 export async function computeReplayChecks(root: string, opts: ReplayOpts = {}): Promise<{ results: CheckResult[]; report: string; bindings: ReturnType<typeof __testing_resolveChannelEvidenceBindings>['bindings'] }> {
+  const feature = opts.feature ?? REPLAY_FEATURE;
+  const executionStartedAt = new Date().toISOString();
   const ctx = {
-    phase: 'testing', projectRoot: root, feature: REPLAY_FEATURE, frameworkRoot: path.resolve(__dirname, '../../..'),
-    phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual diff' } } }, featureSpec: { feature: REPLAY_FEATURE },
+    phase: 'testing', projectRoot: root, feature, frameworkRoot: path.resolve(__dirname, '../../..'),
+    phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual diff' } } }, featureSpec: { feature },
     resolvedProfile: loadResolvedProfile(root, loadFrameworkConfig(root)),
     fidelityTarget: 'semantic_layout', acceptanceStrictness: 'best_effort',
   } as unknown as CheckContext;
-  const plan = fs.readFileSync(resolveFeatureArtifact(root, REPLAY_FEATURE, 'test-plan.md').actualPath, 'utf-8');
-  const real = (JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, REPLAY_FEATURE, 'testing'), 'script-report.json'), 'utf-8')) as { checks: CheckResult[] }).checks;
+  const plan = fs.readFileSync(resolveFeatureArtifact(root, feature, 'test-plan.md').actualPath, 'utf-8');
+  const real = (JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'testing'), 'script-report.json'), 'utf-8')) as { checks: CheckResult[] }).checks;
   // device_test_evidence 的 proposal 绑定宿主那台机器的 HAP 摘要，换了工程根无法核验（runtime 提交时会拒），不带入回放
   const results: CheckResult[] = real.filter(c => !REPLAY_RECOMPUTED.test(c.id) && c.id !== 'device_test_evidence')
     .map(c => (opts.productFixed && c.id === 'device_test_run' ? { ...c, status: 'PASS' as const, details: '回放输入：同一 run 的 TC-004/005 改为通过' } : c));
   const visualStart = results.length;
   if (opts.providerOutcome === 'restored') {
-    await writeRestoredProviderVerdicts(root);
+    await writeRestoredProviderVerdicts(root, feature);
+    if (opts.providerReview) await opts.providerReview(ctx);
     __testing_setVisualDiffOcrFn((() => ({ ok: false, error: 'ocr worker produced no output' })) as never);
     try {
       clearFrameworkConfigCache();
@@ -748,8 +767,9 @@ export async function computeReplayChecks(root: string, opts: ReplayOpts = {}): 
     results.push(projectDelegatedVisualProviderFailure(ctx, opts.providerOutcome ?? 'unavailable', PROVIDER_REASON, 'visual'));
   }
   const visualBlock = { start: visualStart, end: results.length };
+  if (opts.currentRuntimeEvidence) results.push(...checkAssetAcquisition(ctx), ...checkAssetManifest(ctx));
   const { decl, bindings } = __testing_resolveChannelEvidenceBindings(ctx, plan, results);
-  const tracePath = replayTracePath(root);
+  const tracePath = replayTracePath(root, feature);
   const report = regenerateTestReport(ctx, { hylyreTracePath: tracePath } as never, plan, decl, results, bindings, visualBlock);
   assert.ok(report, '生产 writer 须生成报告');
   results.push(...checkNegativeTestingVerdictClosure(report), ...checkPassRateCalculated(ctx, report, bindings));
@@ -757,12 +777,29 @@ export async function computeReplayChecks(root: string, opts: ReplayOpts = {}): 
   const evidenceGate = evaluateHylyreNativeEvidenceGate({ trace, readyMeta: REPLAY_READY, manifestVersion: '0.5.1' });
   const derivedPlanPath = path.join(path.dirname(tracePath), 'test-plan.hylyre.md');
   const p0Inputs = {
-    projectRoot: root, feature: REPLAY_FEATURE, planMd: plan, reportMd: report, trace, evidenceGate, derivedPlanPath,
+    projectRoot: root, feature, planMd: plan, reportMd: report, trace, evidenceGate, derivedPlanPath,
     reportConclusion: parseReportConclusionVerdict(report), unsupportedGapTcIds: decl.unsupported_gap_tc_ids, channelEvidenceBindings: bindings,
   };
   results.push(...evaluateP0CoverageIntegrity(p0Inputs), ...evaluateP0SemanticCoverage(p0Inputs));
   results.push(...__testing_checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath, tracePath));
   results.push(...__testing_checkChannelEvidenceObligation(ctx, plan, results, null, bindings));
+  if (opts.currentRuntimeEvidence) {
+    const artifact = validateNativeTraceArtifactBinding({ trace, expectedFeature: feature, tracePath,
+      testPlanPath: resolveFeatureArtifact(root, feature, 'test-plan.md').actualPath, derivedPlanPath });
+    assert(artifact.ok && artifact.binding, `当前 native 绑定须由实际 trace/plan 生成：${artifact.reasons.join('; ')}`);
+    const meta = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'testing'), 'device-test-install.meta.json'), 'utf8'));
+    const hapPath = path.resolve(root, meta.hapPath);
+    const hapSha256Full = require('crypto').createHash('sha256').update(fs.readFileSync(hapPath)).digest('hex');
+    const stat = fs.statSync(hapPath);
+    const reports = featurePhaseReportsDir(root, feature, 'testing');
+    writeJson(path.join(reports, 'device-test-install.meta.json'), { hapPath, hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size, hapSha256: hapSha256Full });
+    writeJson(path.join(reports, 'device-test-run.meta.json'), { trace_path: tracePath, artifact_binding: artifact.binding,
+      run_started_at: executionStartedAt, run_ended_at: new Date().toISOString() });
+    results.push(...writeDeviceTestEvidenceIfEligible(ctx, { hapPath, hapSha256Full, installExecuted: true, installOk: true,
+      deviceTestRunExecuted: true, hylyreTracePath: tracePath, hylyreEvidenceGate: evidenceGate,
+      hylyreEvidenceCapability: { native: true }, nativeArtifactBinding: artifact.binding,
+    } as Parameters<typeof writeDeviceTestEvidenceIfEligible>[1]));
+  }
   results.push(__testing_buildTestingRunStatusResult(plan, report, results));
   return { results, report, bindings };
 }

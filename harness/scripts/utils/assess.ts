@@ -463,6 +463,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   const staleness = new Map(
     recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, phases, {
       frameworkRoot,
+      runId: options.runId,
     }).map((entry) => [entry.phase, entry]),
   );
 
@@ -882,6 +883,11 @@ function recommendationForObservation(
     const currentObservation = observation.phases.find(phase => phase.phase === phaseOutcome.phase);
     const currentOwnerGap = currentObservation ? producerOwnedInputGap(currentObservation, phaseOrder) : null;
     if (currentOwnerGap) return recommendationForGap(observation, currentOwnerGap, false);
+    const factsAdmissionBlocked = observation.reconcile?.blockers?.some(blocker => blocker.id === 'context_exploration_facts_source_stale');
+    const currentIndex = phaseOrder.get(phaseOutcome.phase);
+    const upstreamGap = factsAdmissionBlocked && currentIndex !== undefined
+      ? gaps.find(gap => (phaseOrder.get(gap.phase) ?? currentIndex) < currentIndex) : undefined;
+    if (upstreamGap) return recommendationForGap(observation, upstreamGap, false);
   }
   if (!fused && phaseOutcome && ['PASS', 'FAIL', 'INCOMPLETE'].includes(phaseOutcome.verdict)) {
     const decision = classifyPhaseAssessment({
