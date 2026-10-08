@@ -818,6 +818,25 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       }),
   },
   {
+    // plan c3f8a2d7 §3.4：exit=1、无终态信封时原因不得全丢——回退到 stderr 最后一行（去控制字符、单行）。
+    name: 'c3f8a2d7 runVisionCanaryProbe: invoke 失败无 terminal_error_excerpt → error 带 stderr 尾行摘要',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        const r = await runVisionCanaryProbe({
+          projectRoot: root,
+          frameworkRoot: fw,
+          manifest: baseManifest('claude'),
+          invokeFn: (async () => ({ exitCode: 1, stdout: '', command: 'fake',
+            stderr: 'Reading prompt from stdin...\n\x1b[31mERROR: stream disconnected before completion\x07\x1b[0m\n\n' })) as typeof invokeAgentHeadless,
+        });
+        assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify(r));
+        assert.match(r.error ?? '', /exitCode=1.*ERROR: stream disconnected before completion$/, JSON.stringify(r));
+        assert(!/[\x00-\x1f\x7f]/.test(r.error ?? ''), `摘要须去控制字符：${JSON.stringify(r.error)}`);
+        assert(!(r.error ?? '').includes('Reading prompt'), '只取尾部单行');
+      }),
+  },
+  {
     name: 'c7d2e9a4 runVisionCanaryProbe: 有效全对答卷 → valid_cached，写入 probe_version 且保留其余字段',
     run: () =>
       withTmpAsync(async (root) => {

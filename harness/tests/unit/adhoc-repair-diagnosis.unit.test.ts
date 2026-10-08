@@ -259,9 +259,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '提示入口：只在 coding 且候选由真机 testing 报出时给出；review 等非设备来源、非 coding 阶段为空',
+    name: 'c3f8a2d7 §3.3 复看要求：coding 收到候选（testing / review 来源）且本 run 有设备资格时给出；无设备资格、非 coding、无候选为空',
     run: () => {
-      const ctx = { harnessDir: 'framework/harness', feature: FEATURE };
+      const ctx = { harnessDir: 'framework/harness', feature: FEATURE, deviceCapable: true };
       const withRef: RepairCandidate = { ...CANDIDATE_BASE, evidence_refs: [{ trace_path: 'doc/features/demo/testing/reports/t/trace.json', case_id: 'TC-001', step_index: 3 }] };
       const visual: RepairCandidate = { ...CANDIDATE_BASE, id: 'visual_diff:home' };
       const review: RepairCandidate = { ...CANDIDATE_BASE, id: 'CR-001', source_phase: 'review' };
@@ -269,8 +269,15 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert.ok(lines.includes('--install-current-build') && lines.includes('--dump-ui-only') && lines.includes(`--feature ${FEATURE}`), lines);
       assert.ok(lines.includes('cd framework/harness && npm run adhoc-device-test'), '入口是既有 npm script');
       assert.ok(/no visual judgement/.test(lines) && /not acceptance evidence/.test(lines) && lines.includes('doc/features/_adhoc/testing/reports/'), lines);
-      assert.ok(formatRepairLocalDiagnosis('coding', [visual], ctx).length > 0, '视觉缺陷候选（无 StepResult 引用）同样给出');
-      assert.deepStrictEqual(formatRepairLocalDiagnosis('coding', [review], ctx), [], '只有 review 候选（无设备证据）不提示');
+      assert.ok(!/optional/i.test(lines), '复看是执行要求，不再标 optional');
+      assert.ok(/you MUST reproduce the relevant state with your current build and check the fix result before handing back/.test(lines), lines);
+      assert.ok(/record what you tried, the obstacle and the remaining uncertainty/.test(lines) && lines.includes('coding/notes.md'), '条件不足时记入既有交回说明');
+      assert.ok(/One valid recheck of the same screen can cover several related candidates/.test(lines), '一次复看覆盖多条候选');
+      assert.ok(/never blocks the phase/.test(lines), '不因缺诊断文件阻断');
+      assert.ok(formatRepairLocalDiagnosis('coding', [visual], ctx).length > 0, 'testing 来源（视觉缺陷）仍含');
+      assert.deepStrictEqual(formatRepairLocalDiagnosis('coding', [review], ctx), formatRepairLocalDiagnosis('coding', [withRef], ctx), 'review 来源与 testing 来源给同一段复看要求');
+      assert.deepStrictEqual(formatRepairLocalDiagnosis('coding', [review, withRef], { ...ctx, deviceCapable: false }), [], '无设备资格的 run 不含');
+      assert.deepStrictEqual(formatRepairLocalDiagnosis('coding', [], ctx), [], '无候选不提示');
       assert.deepStrictEqual(formatRepairLocalDiagnosis('spec', [withRef], ctx), [], '非 coding 不提示');
     },
   },

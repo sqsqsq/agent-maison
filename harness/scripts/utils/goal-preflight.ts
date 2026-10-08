@@ -478,8 +478,10 @@ export async function runVisionCanaryProbe(input: {
       ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
-      // 调用失败时带出 adapter terminal 原文（codex turn.failed 等），不让 400/401 只剩一个 exitCode。
-      const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt : undefined;
+      // 调用失败时带出 adapter terminal 原文（codex turn.failed 等），不让 400/401 只剩一个 exitCode；
+      // 没有终态信封时回退到 stderr 最后一行非空文字（去控制字符，plan c3f8a2d7 §3.4）。
+      const stderrTail = (invoke.stderr ?? '').split(/\r?\n/).map(line => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g, ' ').trim()).filter(Boolean).pop();
+      const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt || stderrTail : undefined;
       return {
         ran: true,
         outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',

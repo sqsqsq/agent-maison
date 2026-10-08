@@ -632,6 +632,49 @@ cases.push(
       && d.guidance.includes('重新发起同一请求'), JSON.stringify(d));
     assert(!/<run|run_id>|--supersede|--force-resume/.test(d.guidance), `说明不得要求枚举 run 或拼旗标：${d.kind === 'hold' ? d.guidance : ''}`);
   }),
+  decisionCase('c3f8a2d7 §3.4 冷却提示只看最近一次停止窗口：新停机无指引取 reason；同窗口 run_end 不覆盖 phase_halt；更晚的启动期失败取 run_end.error', (root) => {
+    const guidanceOf = (now: number): string => {
+      const d = decide(root, { requirement: '完成开卡' }, now);
+      assert(d.kind === 'hold', `冷却期内须保持停止：${JSON.stringify(d)}`);
+      return d.kind === 'hold' ? d.guidance : '';
+    };
+    // be091c 形状：旧 canary 停机带指引，新 framework_bug 停机只有 reason。
+    const a = bornRun(root, '完成开卡', '1');
+    appendRunEvents(a.eventsPath, [
+      started(T0),
+      { ts: at(T0 + 10), type: 'phase_halt', phase: 'plan', halt_reason: 'canary_cli_hard_failure', verdict: 'FAIL', reason: 'canary', halt_guidance: '旧金丝雀指引：核对 adapter' },
+      { ts: at(T0 + 10), type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure', session_started_at: at(T0), error: 'canary' },
+      started(T0 + 100),
+      { ts: at(T0 + 200), type: 'phase_halt', phase: 'plan', halt_reason: 'framework_bug', verdict: 'FAIL', reason: 'framework_bug: plan 收口抛错 X' },
+      { ts: at(T0 + 200), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug' },
+    ]);
+    let g = guidanceOf(T0 + 60_000);
+    assert(g.includes('原停止说明：framework_bug: plan 收口抛错 X') && !g.includes('旧金丝雀指引'), g);
+    // 同一窗口：phase_halt 的完整指引优先，收尾 run_end 只复制首行，不覆盖。
+    const b = bornRun(root, '完成开卡', '2');
+    appendRunEvents(b.eventsPath, [
+      started(T0 + 300),
+      { ts: at(T0 + 400), type: 'phase_halt', phase: 'plan', halt_reason: 'framework_bug', verdict: 'FAIL', reason: 'r', halt_guidance: '首行原因\n第二行处置' },
+      { ts: at(T0 + 400), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', error: '首行原因' },
+    ]);
+    g = guidanceOf(T0 + 60_000);
+    assert(g.includes('原停止说明：首行原因\n第二行处置'), g);
+    // 最新 phase_halt 之后另起的会话启动即失败（只有 run_end.error，session_started_at 更晚）→ 取该错误。
+    const c = bornRun(root, '完成开卡', '3');
+    appendRunEvents(c.eventsPath, [
+      started(T0 + 500),
+      { ts: at(T0 + 600), type: 'phase_halt', phase: 'plan', halt_reason: 'framework_bug', verdict: 'FAIL', reason: 'r', halt_guidance: '旧指引' },
+      { ts: at(T0 + 600), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', error: '旧指引' },
+      { ts: at(T0 + 800), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', session_started_at: at(T0 + 700), error: '启动期失败 Y' },
+    ]);
+    g = guidanceOf(T0 + 60_000);
+    assert(g.includes('原停止说明：启动期失败 Y') && !g.includes('旧指引'), g);
+    // 没有任何 phase_halt 的启动期失败 → 取 run_end.error。
+    const d = bornRun(root, '完成开卡', '4');
+    appendRunEvents(d.eventsPath, [started(T0 + 900), { ts: at(T0 + 1000), type: 'run_end', status: 'HALTED', halt_reason: 'framework_bug', session_started_at: at(T0 + 900), error: '启动期失败 Z' }]);
+    g = guidanceOf(T0 + 60_000);
+    assert(g.includes('原停止说明：启动期失败 Z'), g);
+  }),
   decisionCase('结构终局 + 需求增量 → 起后继；非结构终局 + 需求增量/新型号同样起后继（原 run 接不住）', (root) => {
     const a = bornRun(root, '完成开卡', '1');
     appendRunEvents(a.eventsPath, [started(T0), ...halted(T0 + 10, 'budget_wall_clock')]);

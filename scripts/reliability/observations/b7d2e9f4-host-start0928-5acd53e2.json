@@ -72,6 +72,28 @@
     },
     "acceptance_targets": "同形场景下假停机 0、显式恢复未启动 run 的失败发起 0、报告 error/WARN 失真 0；修后宿主继续本 run 应直接进入 testing 复跑（plan §4.2 H1）"
   },
+  "plan_c3f8a2d7_metrics": {
+    "definition": "plan c3f8a2d7 §5，口径同 a2f7c9e4 §5；measured 为本轮观察实测，estimated 为反事实估算、不记作节省收益",
+    "source": ".cursor/plans/合法修改归属与外部缺席裁决统一_设备返修复看与连续回放_c3f8a2d7.plan.md §1.2 / §5；真源同本记录 notes（be091c events、coding/notes.md、phase_write_observed）",
+    "measured": {
+      "registration_only_rounds": {
+        "invocations": 2,
+        "agent_wall_clock": "28 m 40 s",
+        "detail": "coding-i13→i14、coding-i16→i17：唯一 BLOCKER context_exploration_facts_source_stale（string.json 被 facts 归属按后缀筛掉），重试轮只重建 facts、产品零改动"
+      }
+    },
+    "estimated": {
+      "external_absence_fail_retries": {
+        "value": "约 35 min",
+        "basis": "本轮未发生（候选先行回退）；按既有 FAIL 重试上限 2 次、每次约 15–20 min 估"
+      },
+      "blind_repair_round": {
+        "value": "约 45 min",
+        "basis": "返修未复看时修复效果只能等下一轮，按一轮 testing + review + ut 估"
+      }
+    },
+    "acceptance_targets": "授权内资源修改仅因归属遗漏判 stale 0 次；仅剩外部缺席的 testing 轮 → INCOMPLETE、重试调用 0 次；条件恢复后同 run 继续；返修提示词在 testing / review 两类窗口都给出复看要求；停机指引与金丝雀原因与事实一致"
+  },
   "tasks": [
     {
       "label": "b7d2e9f4-host-start0928-bc-openCard-2",

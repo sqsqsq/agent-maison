@@ -230,6 +230,17 @@ export function loadFactsInvocationContext(options: {
   return structuredClone(context);
 }
 
+/** The runtime write boundary for facts ownership; throws without a construction binding. */
+function resolveFactsWriteBoundary(options: { projectRoot: string; frameworkRoot: string; feature: string; runId?: string },
+  scope: import('./execution-scope').ExecutionScope) {
+  const config = loadFrameworkConfig(options.projectRoot);
+  const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
+  return resolvePhaseWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, feature: options.feature, runId: options.runId,
+    phaseOrder: executionCompletionPhases(scope), track: 'full',
+    profileDir: profile.profileDir, productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
+    resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
+}
+
 /** Existing source ownership and write authorization, shared by admission and the final facts check. */
 export function resolveFactsPhaseOwnedSources(options: {
   projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId?: string;
@@ -237,11 +248,7 @@ export function resolveFactsPhaseOwnedSources(options: {
   try {
     const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
     if (!scope?.phase_chain.includes(options.phase)) return new Set();
-    const config = loadFrameworkConfig(options.projectRoot);
-    const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
-    const boundary = resolvePhaseWriteBoundary({ ...options, phaseOrder: executionCompletionPhases(scope), track: 'full',
-      profileDir: profile.profileDir, productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
-      resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
+    const boundary = resolveFactsWriteBoundary(options, scope);
     if (boundary.unresolvedSourcePhases.includes(options.phase)) return new Set();
     return new Set(Object.entries(context.source_owners ?? {}).filter(([source, owner]) => {
       const granted = resolvePhasePathOwnership(boundary, source);
@@ -581,6 +588,7 @@ export function resolveCapabilityResolutionEntryInput(
       // 后缀不认的路径就不是源码：`contracts.files` 只被 schema 约束为非空字符串
       //（`contracts.schema.yaml:49`）、`contract-reference-closure.ts:36` 只做路径规范化，
       // 所以写集里**同样可能**出现文档/清单，它们不得拿到实现阶段归属。
+      // plan c3f8a2d7 §3.1 起本判据只管 coding 写边界**之外**的文件；写边界内的按写边界裁决（见下方 owner 分配）。
       const normalizedSuffixes = sourceFileSuffixes.map(suffix => (suffix.startsWith('.') ? suffix : `.${suffix}`));
       const isHostSourceFile = (relative: string): boolean =>
         normalizedSuffixes.some(suffix => relative.endsWith(suffix));
@@ -663,7 +671,21 @@ export function resolveCapabilityResolutionEntryInput(
       // （`contracts.files`）同样只被约束为字符串路径——任一侧混进非源码路径，盖上实现阶段
       // owner 就会让它的字节漂移在施工期被整批豁免跳过（消费点 `phase-evidence-manifest.ts:907`），
       // 与「需求、contracts 与其它非源码输入不适用此承接规则」相悖。
-      if (mayAdvance(codeOwner)) for (const file of [...new Set([...contractFiles, ...sourcePaths])].filter(file => !isTestPath(file) && isHostSourceFile(file))) {
+      // plan c3f8a2d7 §3.1：与运行时写入归属同一裁决——写边界把文件判给实现阶段的 source 域即为源码，
+      // 不看后缀（产品资源如 string.json）；写边界之外仍只认后缀。边界只解析一次，无施工绑定
+      //（spec / plan 合法状态）或实现阶段未解析时不扩大归属，沿用后缀筛选。
+      let codeBoundary: ReturnType<typeof resolveFactsWriteBoundary> | null | undefined;
+      const inCodeWriteBoundary = (file: string): boolean => {
+        try {
+          if (codeBoundary === undefined) {
+            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId }, scope);
+            codeBoundary = boundary.unresolvedSourcePhases.includes(codeOwner!) ? null : boundary;
+          }
+          const granted = codeBoundary && resolvePhasePathOwnership(codeBoundary, file);
+          return !!granted && granted.owner === codeOwner && granted.roles.some(role => role.kind === 'source');
+        } catch { codeBoundary ??= null; return false; }
+      };
+      if (mayAdvance(codeOwner)) for (const file of [...new Set([...contractFiles, ...sourcePaths])].filter(file => !isTestPath(file) && (isHostSourceFile(file) || inCodeWriteBoundary(file)))) {
         if (codeOwner === options.phase || historical.has(file)) owners.push([file, codeOwner]);
       }
       if (mayAdvance(testOwner)) for (const file of [...new Set([...contractFiles.filter(isTestPath), ...sourcePaths.filter(isTestPath)])]) {

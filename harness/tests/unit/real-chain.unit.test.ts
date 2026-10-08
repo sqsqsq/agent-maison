@@ -966,10 +966,8 @@ function diskSha(p: RealChainProject, rel: string): string {
 function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 /**
- * PNG 走过冻结 → 解析 → 归属整条链（b5c1e9d7 §8.9：非源码不盖施工归属）。
- * 实测口径（与 plan §2.3 原文不同处见 plan §10）：PNG 从 coding 起进 manifest（spec/plan 的源码读集来自
- * facts baseline，不含它们）；coding 新建的那张也记 `role=input`、不记产出——非源码不进写集归属。
- * 断言：出现在 manifest 的每条 PNG 条目 sha 与盘上字节一致且**无** `owner_phase`；coding 起两张都在。
+ * c3f8a2d7：模块写边界内的 PNG 资源归 coding，不再由文件后缀排除。
+ * coding 起既有与新建资源都须进 manifest；施工归属只给 coding，后续阶段按只读输入绑定当前字节哈希。
  */
 function assertPngProvenance(p: RealChainProject): void {
   for (const phase of PHASES) {
@@ -977,7 +975,8 @@ function assertPngProvenance(p: RealChainProject): void {
     const m = JSON.parse(fs.readFileSync(abs, 'utf-8')) as { inputs?: Array<Record<string, unknown>>; outputs?: Array<Record<string, unknown>> };
     const entries = [...(m.inputs ?? []), ...(m.outputs ?? [])].filter(e => /\.png$/.test(String(e.path)));
     for (const e of entries) {
-      assert(e.owner_phase === undefined, `${phase}：PNG 条目带了施工归属（非源码不得盖 owner）：${JSON.stringify(e)}`);
+      const expectedOwner = phase === 'coding' ? 'coding' : undefined;
+      assert(e.owner_phase === expectedOwner, `${phase}：PNG 施工归属应为 ${expectedOwner ?? '无（只读输入）'}：${JSON.stringify(e)}`);
       assert(e.sha256 === diskSha(p, String(e.path)), `${phase}：PNG 条目 sha 与盘上字节不符：${JSON.stringify(e)}`);
     }
     if (phase === 'spec' || phase === 'plan') continue;

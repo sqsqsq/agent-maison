@@ -2,6 +2,22 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：合法修改按写边界归属、外部能力缺席判延迟、返修先复看（行为变化，plan c3f8a2d7）
+
+无须迁移宿主旧 run、旧报告或旧 facts；下列变化在更新发布件后的下一次启动 / 重算时生效。
+
+- **facts 来源归属与运行时写入同一裁决**：facts 的来源 owner 不再只按 profile 声明的源码后缀判断。写边界判给当前实现阶段（coding）源码域的文件——模块包路径内的产品资源（如 `resources/base/element/string.json`），以及同处模块目录的 `README.md`、`oh-package.json5` 这类非源码文件——一律归 coding，coding 施工期间改它们只记"未登记精确 delta"的披露（WARN），不再判 `context_exploration_facts_source_stale` 阻断、逼出只重建 facts 的空转轮。写边界之外的文件行为不变：需求、`acceptance.yaml`、`contracts.yaml`、`context/facts.md` 即便列进 `contracts.files` 也不归 coding，改动仍阻断；不在写边界内的研究来源仍只认源码后缀。spec / plan 阶段还没有冻结施工绑定时，归属与此前逐字相同。
+- **外部能力缺席判延迟，不再按产品失败重试**：testing 里视觉 provider 不可用（例如 CLI 登录过期）或 OCR 执行能力缺失，缺席事实沿同一条链传下去，各处只消费、不再各自重判：
+  - 视觉绑定带 `repair_owner=capability`；证据义务门 `testing_channel_evidence_obligation`、`p0_coverage_integrity`、`p0_semantic_coverage_integrity` 在阻断来源**全部**是能力缺席时改用与 `visual_diff` 同一投影（`externalBlocked` / `capability_missing`，details 写"视觉能力缺席，非产品失败"）；`testing_run_status` 降为 WARN 并写 `partial_readiness: capability_missing`。只要还有真实产品失败、spec / coding 归属的缺口、无效 provider 证据，或有 P0 AC 没有任何关联用例，这些检查照旧 `FAIL`。
+  - `test-report.md`：能力缺席导致未验证的 P0 视觉用例留在分母，表格状态记「跳过」、备注"未验证（能力缺席）"，不进缺陷清单、不算功能轴失败；总体写「有条件达标」+ 暂缓 gap"视觉轴能力缺席（视觉 provider 不可用或 OCR 执行能力缺失）：暂缓，非产品失败"，下一步建议改为恢复能力后重发同一请求。执行状态列仍只有 通过 / 失败 / 阻塞 / 跳过 四值，按状态列统计"跳过"的自写工具需结合备注区分能力缺席。`negative_verdict_closure`、报告裁决词集合不变。
+  - 阶段 verdict 为 `INCOMPLETE`，run 终态 `DEFERRED_CAPABILITY_MISSING`（等待外部）。testing 被延迟时（停在本阶段，或它已是链尾）补一条与设备停放同形的 `phase_halt`，停机说明点名缺席的能力。**恢复能力后重新发起同一请求**：接回同一 run、testing 重新入队、由原检查重验，预算跨会话累计。框架不加 provider 探针、不自动探测恢复，也不声称 `external_condition_ready`；重发不受 5 分钟冷却，能力没恢复就重发只会再跑一轮 testing、再停一次。
+  - **OCR 缺口的归因变化**：此前 OCR 执行能力缺失按工具链缺口（`toolchain`）判阶段 `FAIL`；现在与 provider 缺席走同一投影，归因变为 `external_block`，阶段裁决变为 `INCOMPLETE`、run 收成 `DEFERRED_CAPABILITY_MISSING`。两者都不盲重试、都不产修复候选；按停机分类统计 OCR 问题的自写工具请改读 `external_block`。
+  - 链中段的延迟（下游照常推进）不加停放投影，收尾后恢复仍把该阶段算作已完成，与此前相同。
+- **返修先复看再交回（不设门禁）**：coding 返修窗口收到候选（testing **或 review** 来源）且本 run 阶段链含需要设备的阶段时，提示词与 coding / device-testing Skill 要求：影响设备界面或交互的返修，条件具备时交回前须用当前构建复现相关状态并检查修复结果；条件不足时在 `coding/notes.md` 既有交回段记录尝试、障碍与剩余不确定性；同一页面一次有效复看可覆盖多条相关候选。此前该段标为"可选"、只在 testing 来源时给出。复看不替代 review → UT → testing，框架不检查 `_adhoc` 产物、缺诊断文件不阻断；工具入口（`adhoc-device-test --install-current-build` / `--measure-screen` / `--dump-ui-only`）不变。
+- **冷却期"原停止说明"只看最近一次停止窗口**：取最新 `phase_halt` 的 `halt_guidance`，没有就取它的 `reason`；同一会话收尾的 `run_end` 不覆盖它；只有之后另起会话的启动期失败（`run_end.error`）才改用该错误。此前会跳过没有指引的新停机、引用更早一次停机的旧指引。
+- **金丝雀调用失败附原因**：视觉金丝雀 invoke 非零退出且没有终态错误摘要时，error 追加 stderr 最后一行非空文字（去控制字符，≤500 字），不再只剩 `exitCode`。
+- **验收边界**：外部缺席链用宿主真实 testing 产物（provider 缺席 + TC-004/005 失败）经生产 checker / writer 重算，并在脚本化执行器上回放"失败 → 回 coding → 只剩缺席 → 延迟 → 恢复后重发 → 完成"；真机与真实 provider 恢复、返修复看在真机上的效果待宿主实测。
+
 ## 3.1.0：延迟只认阶段结论、显式恢复未启动 run 改附着、报告终止轴（行为变化，plan b7d2e9f4）
 
 无须迁移宿主旧 run 或旧报告；下列变化在更新发布件后的下一次启动 / 重算时生效。

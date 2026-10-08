@@ -29,6 +29,26 @@ import {
   generateTestReport,
   writeGeneratedTestReport,
 } from '../../../profiles/hmos-app/harness/test-report-writer';
+import {
+  __testing_buildTestingRunStatusResult,
+  __testing_checkChannelEvidenceObligation,
+  __testing_checkHylyreFailureRouting,
+  __testing_resolveChannelEvidenceBindings,
+  checkNegativeTestingVerdictClosure,
+  checkPassRateCalculated,
+  projectDelegatedVisualProviderFailure,
+  regenerateTestReport,
+} from '../../scripts/check-testing';
+import { evaluateP0CoverageIntegrity, evaluateP0SemanticCoverage } from '../../scripts/utils/p0-semantic-gates';
+import { extractDerivedPlanCases } from '../../scripts/utils/derived-hylyre-plan';
+import { loadUiSpecFile, uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
+import { collectP0VisualTargetIds } from '../../../profiles/hmos-app/harness/visual-diff-targets';
+import { reduceCase, runOutcome, toolCallsProjection, verifyTraceCrossRow } from '../../scripts/utils/hylyre-crossrow-verifier';
+import { deriveSummaryVerdictLattice, resolveEffectiveVerdict } from '../../scripts/utils/quality-axes';
+import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
+import { buildSummaryRepairCandidates } from '../../scripts/utils/repair-candidates';
+import { evaluateHylyreNativeEvidenceGate, parseHylyreTrace } from '../../../profiles/hmos-app/harness/providers/device-test-run';
+import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 
 const FEATURE = 'rw-fixture';
@@ -569,6 +589,303 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
 ];
+
+// ---------------------------------------------------------------------------
+// plan c3f8a2d7 §4.2：外部缺席裁决链回放。夹具是宿主第四轮真实 testing 产物（fixtures/provider-absence-replay，
+// 取自 bc-openCard-2/open-card-flow-v2 run 20261007T170043Z-568，只做 CRLF→LF）；visual_diff 起的派生检查与报告
+// 一律用生产 checker / writer 重算，再交共享裁决与 phase policy。不改、不删任何重算出的 blocker。
+// ---------------------------------------------------------------------------
+const REPLAY_FIXTURE = path.resolve(__dirname, '../fixtures/provider-absence-replay/open-card-flow-v2');
+const REPLAY_FEATURE = 'open-card-flow-v2';
+const REPLAY_RUN = '20261007T170043Z-568';
+const PROVIDER_REASON = 'provider 观测到失败终态：result.failed: Failed to authenticate: OAuth session expired and could not be refreshed';
+/** 宿主 hylyre-ready.meta.json 中 native evidence gate 读取的字段（原值）。 */
+const REPLAY_READY = { ok: true, doctorOk: true, version_consistent: true, installed_version: '0.5.1', manifest_version: '0.5.1' };
+/** 下列检查由本回放用生产函数重算；其余沿用宿主真实 script-report（上游事实，不在本链内）。 */
+const REPLAY_RECOMPUTED = /^(visual_diff|test_report_generated|negative_verdict_closure|pass_rate_calculated|p0_coverage_integrity|p0_pass_rate_dual_metrics|p0_semantic_coverage_integrity|p0_runtime_step_evidence_boundary|testing_failure_routing.*|testing_channel_evidence_obligation|testing_run_status)$/;
+
+export interface ReplayOpts {
+  /** TC-004/005 改为通过：按派生计划同 index 补通过的 StepResult，trace.outcome=success，device_test_run 输入取 PASS */
+  productFixed?: boolean;
+  /** restored = provider 恢复：替身按 provider 产出写回逐屏 pass 判定，再由真实 checkVisualDiff 出视觉结论 */
+  providerOutcome?: 'unavailable' | 'invalid' | 'restored';
+  /** TC-007 关联的 AC-8 去掉 checkpoint 屏声明（视觉绑定缺口） */
+  dropAc8Screens?: boolean;
+  /** 追加一条没有任何 TC 关联的 P0 device AC */
+  orphanP0Ac?: boolean;
+}
+
+/** 派生计划一步 → 通过的 native StepResult（hylyre.step-outcome/1 形状，与真实 trace 中通过步同构）。 */
+function synthPassedStep(index: number, planned: Record<string, Record<string, unknown>>): Record<string, unknown> {
+  const kind = Object.keys(planned)[0];
+  const args = planned[kind] ?? {};
+  const assertion = kind === 'wait_for' || kind === 'wait_gone';
+  const absence = kind === 'wait_gone';
+  const byId = typeof args.by_id === 'string' ? args.by_id : null;
+  const byText = typeof args.by_text === 'string' ? args.by_text : null;
+  const within = (args.within as { by_id?: string } | undefined)?.by_id ?? null;
+  const selected = { id: byId ?? within ?? byText, bounds: null };
+  const selector = byId || byText
+    ? {
+        request: { kind: byId ? 'by_id' : 'by_text', value: byId ?? byText, match: args.match ?? null, constraints: {} },
+        resolution: absence
+          ? { state: 'not_found', candidate_count: 0, selected: null, candidates: [] }
+          : { state: 'unique', candidate_count: 1, selected, candidates: [selected] },
+      }
+    : null;
+  const outcome = assertion
+    ? { status: 'passed', observation: { kind: 'assertion', assertion_type: absence ? 'absence' : 'presence', matched: true,
+        facts: { expected_present: !absence, observed_present: !absence, candidate_count: absence ? 0 : 1, raw_return_present: !absence } } }
+    : { status: 'passed', observation: { kind: 'action', operation: kind, performed: true, facts: { engine: 'native' } } };
+  return { index, kind, role: assertion ? 'assertion' : 'action', duration_ms: 100, device_session: true, outcome, selector, artifacts: [], diagnostic: null, extensions: {} };
+}
+
+function replayTracePath(root: string): string {
+  return path.join(featurePhaseReportsDir(root, REPLAY_FEATURE, 'testing'), REPLAY_RUN, 'hylyre', 'trace.json');
+}
+
+export function seedReplay(root: string, opts: ReplayOpts): void {
+  fs.cpSync(REPLAY_FIXTURE, featureDir(root, REPLAY_FEATURE), { recursive: true, force: true });
+  if (opts.productFixed) {
+    const tracePath = replayTracePath(root);
+    const trace = JSON.parse(fs.readFileSync(tracePath, 'utf-8')) as { outcome: string; cases: Array<Record<string, any>> };
+    const derived = extractDerivedPlanCases(fs.readFileSync(path.join(path.dirname(tracePath), 'test-plan.hylyre.md'), 'utf-8'));
+    for (const id of ['TC-004', 'TC-005']) {
+      const c = trace.cases.find(x => x.id === id)!;
+      const planned = derived.find(r => r.tc_id.toUpperCase() === id)!.steps_raw.split(/;\s*(?=\{)/).map(s => JSON.parse(s.trim()));
+      c.steps = c.steps.map((s: Record<string, any>, i: number) =>
+        s.outcome?.status === 'passed' || s.outcome?.status === 'skipped' ? s : synthPassedStep(i, planned[i]));
+      // 三轴 / run outcome / tool_calls 都由生产 reducer 从 steps 派生（跨行不变量），不手填
+      const { status, execution, verification, evidence } = reduceCase(c as never);
+      Object.assign(c, { status, execution, verification, evidence });
+    }
+    Object.assign(trace, { outcome: runOutcome(trace.cases as never), tool_calls: toolCallsProjection(trace.cases as never) });
+    assert.deepStrictEqual(verifyTraceCrossRow(trace as never), [], '回放 trace 须满足 Step Outcome v1 跨行不变量');
+    writeJson(tracePath, trace);
+  }
+  if (opts.dropAc8Screens || opts.orphanP0Ac) {
+    const YAML = require('yaml') as typeof import('yaml');
+    const acceptancePath = resolveFeatureArtifact(root, REPLAY_FEATURE, 'acceptance.yaml').actualPath;
+    const doc = YAML.parse(fs.readFileSync(acceptancePath, 'utf-8')) as { criteria: Array<Record<string, any>> };
+    if (opts.dropAc8Screens) {
+      const cp = doc.criteria.find(c => c.id === 'AC-8')!.checkpoint;
+      delete cp.pre_screen;
+      delete cp.post_screen;
+    }
+    if (opts.orphanP0Ac) {
+      doc.criteria.push({ id: 'AC-99', priority: 'P0', description: '无任何 TC 关联的 P0 device AC', ut_layer: 'device', linked_flow: 'entry_to_type',
+        checkpoint: { pre_screen: 'add_bank_card', action: { target_element_id: 'col_row_cmb' }, post_screen: 'card_type_sheet', required_element_ids: ['cts_title'] } });
+    }
+    fs.writeFileSync(acceptancePath, YAML.stringify(doc), 'utf-8');
+  }
+}
+
+/** provider 恢复轮的外部调用替身：按 provider 评审产出写回全部 P0 目标屏的 pass 判定（绑定当前截图与构建），视觉结论交真实 checkVisualDiff。 */
+async function writeRestoredProviderVerdicts(root: string): Promise<void> {
+  // 夹具不带二进制参考图：在 spec 声明的权威参考路径上补同名占位图（宿主这些文件真实存在）
+  const specMd = fs.readFileSync(resolveFeatureArtifact(root, REPLAY_FEATURE, 'spec/spec.md').actualPath, 'utf-8');
+  const Jimp = require('jimp');
+  for (const m of specMd.matchAll(/path:\s*(doc\/features\/[^\s}]+)/g)) {
+    fs.mkdirSync(path.dirname(path.join(root, m[1])), { recursive: true });
+    await new Jimp(12, 12, 0xffffffff).writeAsync(path.join(root, m[1]));
+  }
+  const uiScreens = loadUiSpecFile(uiSpecAbsPath(root, REPLAY_FEATURE))?.screens ?? [];
+  const refOf = (target: string): string | undefined =>
+    (uiScreens.find(s => target === s.id || target.startsWith(`${s.id}__overlay__`)) as { ref_id?: string } | undefined)?.ref_id;
+  const reportsDir = featurePhaseReportsDir(root, REPLAY_FEATURE, 'testing');
+  const hap = path.join(root, 'build', 'replay-signed.hap');
+  fs.mkdirSync(path.dirname(hap), { recursive: true });
+  fs.writeFileSync(hap, 'replay-hap');
+  writeJson(path.join(reportsDir, 'device-test-install.meta.json'), { hapPath: hap });
+  const fp = computeHapBuildFingerprint(hap)!;
+  const featureRel = path.relative(root, featureDir(root, REPLAY_FEATURE)).replace(/\\/g, '/');
+  const screens = collectP0VisualTargetIds(loadUiSpecFile(uiSpecAbsPath(root, REPLAY_FEATURE))).map(id => {
+    const rel = `${featureRel}/device-testing/device-screenshots/shot-${id}.png`;
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), `png-${id}`);
+    const hash = hashScreenshotFile(path.join(root, rel))!;
+    return {
+      screen_id: id, verdict: 'pass', ref_id: refOf(id) ?? id, screenshot_path: rel, screenshot_hash: hash, evaluated_screenshot_hash: hash,
+      evaluated_build_fingerprint: fp, must_fix: [], defects: [], reverse_missing: [],
+      region_attest: [{ region: id, verdict: 'no_diff', method: 'vl_screening' }],
+    };
+  });
+  const dev = path.join(featureDir(root, REPLAY_FEATURE), 'device-testing');
+  writeJson(path.join(dev, 'device-screenshots', 'visual-diff.json'), { schema_version: '1.1', feature: REPLAY_FEATURE, screens });
+  writeJson(path.join(dev, 'reports', 'critic-receipt.json'), {
+    schema_version: '1.1', critic_run_id: 'replay-provider', adapter: 'claude', prompt_hash: 'replay', input_provenance: 'unverified',
+    image_inputs: screens.map(s => ({ path: s.screenshot_path, hash: s.screenshot_hash })),
+  });
+}
+
+/**
+ * 用生产 checker / writer 重算一轮 testing 检查（主链同序：上游检查 → 视觉块 → 一次绑定 → 报告 → 报告类门 → P0 → 失败路由
+ * → 证据义务 → 状态面板）。goal-runner-testing-integrity 的连续回放复用本函数产出各轮 summary 的 checks。
+ */
+export async function computeReplayChecks(root: string, opts: ReplayOpts = {}): Promise<{ results: CheckResult[]; report: string; bindings: ReturnType<typeof __testing_resolveChannelEvidenceBindings>['bindings'] }> {
+  const ctx = {
+    phase: 'testing', projectRoot: root, feature: REPLAY_FEATURE, frameworkRoot: path.resolve(__dirname, '../../..'),
+    phaseRule: { phase: 'testing', structure_checks: { visual_diff: { description: 'visual diff' } } }, featureSpec: { feature: REPLAY_FEATURE },
+    resolvedProfile: loadResolvedProfile(root, loadFrameworkConfig(root)),
+    fidelityTarget: 'semantic_layout', acceptanceStrictness: 'best_effort',
+  } as unknown as CheckContext;
+  const plan = fs.readFileSync(resolveFeatureArtifact(root, REPLAY_FEATURE, 'test-plan.md').actualPath, 'utf-8');
+  const real = (JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, REPLAY_FEATURE, 'testing'), 'script-report.json'), 'utf-8')) as { checks: CheckResult[] }).checks;
+  // device_test_evidence 的 proposal 绑定宿主那台机器的 HAP 摘要，换了工程根无法核验（runtime 提交时会拒），不带入回放
+  const results: CheckResult[] = real.filter(c => !REPLAY_RECOMPUTED.test(c.id) && c.id !== 'device_test_evidence')
+    .map(c => (opts.productFixed && c.id === 'device_test_run' ? { ...c, status: 'PASS' as const, details: '回放输入：同一 run 的 TC-004/005 改为通过' } : c));
+  const visualStart = results.length;
+  if (opts.providerOutcome === 'restored') {
+    await writeRestoredProviderVerdicts(root);
+    __testing_setVisualDiffOcrFn((() => ({ ok: false, error: 'ocr worker produced no output' })) as never);
+    try {
+      clearFrameworkConfigCache();
+      results.push(...checkVisualDiff(ctx));
+    } finally {
+      __testing_setVisualDiffOcrFn(null);
+    }
+  } else {
+    results.push(projectDelegatedVisualProviderFailure(ctx, opts.providerOutcome ?? 'unavailable', PROVIDER_REASON, 'visual'));
+  }
+  const visualBlock = { start: visualStart, end: results.length };
+  const { decl, bindings } = __testing_resolveChannelEvidenceBindings(ctx, plan, results);
+  const tracePath = replayTracePath(root);
+  const report = regenerateTestReport(ctx, { hylyreTracePath: tracePath } as never, plan, decl, results, bindings, visualBlock);
+  assert.ok(report, '生产 writer 须生成报告');
+  results.push(...checkNegativeTestingVerdictClosure(report), ...checkPassRateCalculated(ctx, report, bindings));
+  const trace = parseHylyreTrace(tracePath);
+  const evidenceGate = evaluateHylyreNativeEvidenceGate({ trace, readyMeta: REPLAY_READY, manifestVersion: '0.5.1' });
+  const derivedPlanPath = path.join(path.dirname(tracePath), 'test-plan.hylyre.md');
+  const p0Inputs = {
+    projectRoot: root, feature: REPLAY_FEATURE, planMd: plan, reportMd: report, trace, evidenceGate, derivedPlanPath,
+    reportConclusion: parseReportConclusionVerdict(report), unsupportedGapTcIds: decl.unsupported_gap_tc_ids, channelEvidenceBindings: bindings,
+  };
+  results.push(...evaluateP0CoverageIntegrity(p0Inputs), ...evaluateP0SemanticCoverage(p0Inputs));
+  results.push(...__testing_checkHylyreFailureRouting(ctx, trace, evidenceGate, derivedPlanPath, tracePath));
+  results.push(...__testing_checkChannelEvidenceObligation(ctx, plan, results, null, bindings));
+  results.push(__testing_buildTestingRunStatusResult(plan, report, results));
+  return { results, report, bindings };
+}
+
+async function replayTestingRound(opts: ReplayOpts = {}) {
+  const root = mkProject();
+  try {
+    seedReplay(root, opts);
+    const { results, report, bindings } = await computeReplayChecks(root, opts);
+    const legacy = resolveVerdictFromChecks(results);
+    const lattice = deriveSummaryVerdictLattice(results, { phase: 'testing', visualApplicable: true, assetApplicable: false });
+    const verdict = resolveEffectiveVerdict({ pre: lattice.pre_projection_verdict, post: lattice.projected_verdict, legacy }).verdict;
+    const visual = results.find(c => c.id === 'visual_diff')!;
+    const assessment = classifyPhaseAssessment({
+      verdict, blocking_class: visual.blocking_class, failure_kind: visual.failure_kind,
+      dependency_policy: { deferrable_blocking_classes: ['externalBlocked'], deferrable_failure_kinds: ['capability_missing'], propagate_to_downstream: false },
+    });
+    const candidates = buildSummaryRepairCandidates({ phase: 'testing', checks: results, reportValidity: 'PASS', reviewReportText: null, verifierReportText: null });
+    const conclusion = (results.find(c => c.id === 'test_report_generated')?.structured as { conclusion?: Record<string, unknown> } | undefined)?.conclusion;
+    return { results, report, bindings, legacy, lattice, verdict, assessment, candidates, conclusion, byId: (id: string) => results.find(c => c.id === id) };
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const isAbsence = (c: CheckResult | undefined): boolean => c?.status === 'FAIL' && c.blocking_class === 'externalBlocked' && c.failure_kind === 'capability_missing';
+
+cases.push(
+  {
+    name: 'c3f8a2d7 §4.2 真实第四轮产物（TC-004/005 失败 + provider 缺席）：仍 FAIL、候选归 coding、报告不达标',
+    run: async () => {
+      const r = await replayTestingRound();
+      assert.ok(isAbsence(r.byId('visual_diff')), JSON.stringify(r.byId('visual_diff')));
+      assert.strictEqual(r.bindings.find(b => b.tc_id === 'TC-007')?.repair_owner, 'capability', '既有读取器据源头 owner 给绑定归属');
+      assert.strictEqual(parseReportConclusionVerdict(r.report), '不达标');
+      assert.strictEqual(r.byId('negative_verdict_closure')?.status, 'FAIL');
+      assert.ok(r.results.some(c => /^testing_failure_routing_TC-00[45]/.test(c.id) && c.status === 'FAIL'), '真实断言失败仍由失败路由产出');
+      assert.ok(!isAbsence(r.byId('p0_coverage_integrity')) && r.byId('p0_coverage_integrity')?.status === 'FAIL', 'P0 混有真实失败不得投影成缺席');
+      assert.ok(!isAbsence(r.byId('p0_semantic_coverage_integrity')) && r.byId('p0_semantic_coverage_integrity')?.status === 'FAIL');
+      assert.strictEqual(r.byId('testing_run_status')?.severity, 'BLOCKER');
+      assert.strictEqual(r.verdict, 'FAIL');
+      assert.ok(r.candidates.length > 0 && r.candidates.every(c => c.category === 'coding'), JSON.stringify(r.candidates.map(c => c.category)));
+      assert.notStrictEqual(r.assessment.runner_action, 'defer_external_and_halt');
+    },
+  },
+  {
+    name: 'c3f8a2d7 §4.2 同一产物 TC-004/005 改为通过、provider 仍缺席：派生三项与 run_status 全为能力缺席，报告有条件达标 + 暂缓 gap，verdict INCOMPLETE → defer',
+    run: async () => {
+      const r = await replayTestingRound({ productFixed: true });
+      for (const id of ['visual_diff', 'testing_channel_evidence_obligation', 'p0_coverage_integrity', 'p0_semantic_coverage_integrity']) {
+        assert.ok(isAbsence(r.byId(id)), `${id} 须为能力缺席投影：${JSON.stringify(r.byId(id))}`);
+      }
+      assert.ok(/视觉能力缺席，非产品失败/.test(r.byId('testing_channel_evidence_obligation')!.details), '义务门写明非产品失败');
+      const runStatus = r.byId('testing_run_status')!;
+      assert.ok(runStatus.severity === 'MINOR' && runStatus.status === 'WARN' && runStatus.details.includes('partial_readiness: capability_missing（harness verdict 应为 INCOMPLETE）'), runStatus.details);
+      assert.strictEqual(parseReportConclusionVerdict(r.report), '有条件达标');
+      assert.strictEqual(r.byId('negative_verdict_closure')?.status, 'PASS');
+      assert.strictEqual(r.conclusion?.overall, 'COMPLETE_WITH_GAPS');
+      assert.strictEqual(r.conclusion?.functional, 'PASS', '能力缺席的 P0 visual TC 不让功能轴 FAIL');
+      assert.ok((r.conclusion?.gaps as string[]).some(g => g.startsWith('视觉轴能力缺席（视觉 provider 不可用或 OCR 执行能力缺失）：暂缓，非产品失败')), JSON.stringify(r.conclusion?.gaps));
+      const row = parseReportExecutionRows(r.report).find(x => x.id === 'TC-007');
+      assert.strictEqual(row?.status, '跳过', '留分母、不算通过不算失败');
+      assert.ok(/\| TC-007 \|[^\n]*未验证（能力缺席）/.test(r.report), '行备注写明未验证（能力缺席）');
+      assert.ok(!/\| DEF-\d+ \| TC-007 \|/.test(r.report), '不列为待修产品缺陷');
+      assert.ok(!r.report.includes('功能完成可推进'), '不输出功能完成可推进');
+      assert.ok(/\| P0 \| 8 \|/.test(r.report), 'P0 分母保持 8');
+      assert.ok(r.results.every(c => !/^testing_failure_routing_TC/.test(c.id) || c.status !== 'FAIL'), '产品已修：无失败路由');
+      assert.strictEqual(r.legacy, 'INCOMPLETE');
+      assert.strictEqual(r.verdict, 'INCOMPLETE');
+      assert.strictEqual(r.lattice.quality_axes.visual.verdict, 'UNVERIFIED');
+      assert.strictEqual(r.lattice.release_readiness, 'BLOCKED');
+      assert.strictEqual(r.candidates.length, 0, '外部缺席不产回退候选');
+      assert.strictEqual(r.assessment.runner_action, 'defer_external_and_halt');
+    },
+  },
+  {
+    name: 'c3f8a2d7 §3.5 provider 恢复（替身写回逐屏 pass，真实 checkVisualDiff 出结论）：TC-007 绑定 covered，派生检查不再投影缺席，verdict PASS',
+    run: async () => {
+      const r = await replayTestingRound({ productFixed: true, providerOutcome: 'restored' });
+      const visual = r.byId('visual_diff')!;
+      assert.ok((visual.structured as { channel_evidence_usable?: boolean })?.channel_evidence_usable === true, `${visual.status} ${visual.details}`);
+      assert.strictEqual(r.bindings.find(b => b.tc_id === 'TC-007')?.verdict.kind, 'covered', `${visual.status} ${visual.details}`);
+      for (const id of ['testing_channel_evidence_obligation', 'p0_coverage_integrity', 'p0_semantic_coverage_integrity', 'testing_run_status']) {
+        assert.strictEqual(r.byId(id)?.status, 'PASS', `${id}：${r.byId(id)?.details}`);
+      }
+      assert.notStrictEqual(parseReportConclusionVerdict(r.report), '不达标');
+      assert.strictEqual(r.verdict, 'PASS');
+      assert.strictEqual(r.assessment.runner_action, 'advance');
+    },
+  },
+  {
+    name: 'c3f8a2d7 §4.2 provider 返回 invalid 证据：visual_provider_invalid_evidence FAIL，不当成缺席',
+    run: async () => {
+      const r = await replayTestingRound({ productFixed: true, providerOutcome: 'invalid' });
+      const visual = r.byId('visual_diff')!;
+      assert.ok(visual.status === 'FAIL' && visual.failure_kind === 'visual_provider_invalid_evidence' && !visual.blocking_class, JSON.stringify(visual));
+      assert.ok(!isAbsence(r.byId('testing_channel_evidence_obligation')), '无归属绑定仍是原 FAIL');
+      assert.strictEqual(r.byId('testing_run_status')?.severity, 'BLOCKER');
+      assert.strictEqual(r.verdict, 'FAIL');
+    },
+  },
+  {
+    name: 'c3f8a2d7 §4.2 视觉绑定缺口（AC-8 checkpoint 未声明屏）+ provider 缺席：仍 FAIL，不归 capability',
+    run: async () => {
+      const r = await replayTestingRound({ productFixed: true, dropAc8Screens: true });
+      assert.strictEqual(r.bindings.find(b => b.tc_id === 'TC-007')?.repair_owner, undefined, '计划侧绑定断裂不冒领 capability');
+      const obligation = r.byId('testing_channel_evidence_obligation')!;
+      assert.ok(obligation.status === 'FAIL' && obligation.failure_kind === 'testing_channel_unverified' && !obligation.blocking_class, JSON.stringify(obligation));
+      assert.ok(!isAbsence(r.byId('p0_coverage_integrity')));
+      assert.strictEqual(r.verdict, 'FAIL');
+    },
+  },
+  {
+    name: 'c3f8a2d7 §4.2 另有 P0 AC 无任何关联 TC + provider 缺席：仍 FAIL（空关联集合不放行）',
+    run: async () => {
+      const r = await replayTestingRound({ productFixed: true, orphanP0Ac: true });
+      const semantic = r.byId('p0_semantic_coverage_integrity')!;
+      assert.ok(semantic.status === 'FAIL' && !semantic.blocking_class && semantic.details.includes('AC-99'), semantic.details);
+      assert.strictEqual(r.verdict, 'FAIL');
+    },
+  },
+);
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];

@@ -1,0 +1,181 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg"
+flows:
+  entry_to_type: { description: "银行入口到选卡类型", screens: [add_bank_card, card_type_sheet] }
+  type_to_card: { description: "卡类型到具体卡", screens: [card_type_sheet, bank_card_selection] }
+  card_to_sms: { description: "具体卡到短信验证", screens: [bank_card_selection, sms_verification_sheet] }
+  result_exit: { description: "结果页到首页", screens: [add_card_result, wallet_home] }
+  legacy_route_regression: { description: "老路由", screens: [card_pack, add_card_entry] }
+criteria:
+  - id: AC-1
+    prd_function: F1
+    priority: P0
+    description: 两个银行列表点击银行均拉起对应银行的卡类型半模态
+    testable: true
+    verification_steps: [分别从添加银行卡页和全部银行页点击招商银行, 断言选择卡类型半模态及银行名称可见]
+    expected_result: 两个入口行为一致
+    ut_layer: device
+    device_focus: 真实点击与半模态可见性
+    linked_flow: entry_to_type
+    checkpoint:
+      pre_screen: add_bank_card
+      action: { target_element_id: col_row_cmb }
+      post_screen: card_type_sheet
+      required_element_ids: [cts_title, cts_bank]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "之前点击任一银行点击后，提示暂不支持，本次需求改为拉起选择卡类型半模态页面。"
+  - id: AC-2
+    prd_function: F2
+    priority: P0
+    description: 每家银行的储蓄卡和信用卡各有 1–2 张 mock 卡且显示掩码卡号
+    testable: true
+    verification_steps: [读取候选数据, 校验类型数量与掩码]
+    expected_result: UI 只显示前四后四，模型保留完整卡号
+    ut_layer: unit
+    ut_focus: 候选筛选与 PAN 掩码纯函数
+    linked_flow: bank_open_card
+  - id: AC-3
+    prd_function: F3
+    priority: P0
+    description: 验证码半模态自动发送并执行 60 秒倒计时，任意六位数字才能继续
+    testable: true
+    verification_steps: [打开验证码半模态, 输入不足六位和六位数字, 等待归零并重发]
+    expected_result: 门禁、倒计时和重发正确
+    ut_layer: both
+    ut_focus: 验证码过滤、可提交判断与倒计时状态
+    device_focus: 输入和按钮可用态
+    linked_flow: card_to_sms
+    checkpoint:
+      pre_screen: bank_card_selection
+      action: { target_element_id: bcs_next }
+      post_screen: sms_verification_sheet
+      required_element_ids: [sms_title, sms_input, sms_resend]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "用户选择一张银行卡后，同意协议，点击下一步，拉起输入验证码半模态页面。"
+  - id: AC-4
+    prd_function: F4
+    priority: P0
+    description: 成功写入的 RDB 记录包含所有必需字段
+    testable: true
+    verification_steps: [构造候选卡并保存, 查询记录]
+    expected_result: 完整 PAN、类别、银行、时间、两个 false 支付状态及空交易记录均正确
+    ut_layer: unit
+    ut_focus: 建表、插入和字段映射
+    linked_flow: bank_open_card
+  - id: AC-5
+    prd_function: F4
+    priority: P0
+    description: RDB 成功或失败都携带完整卡号进入相应结果页
+    testable: true
+    verification_steps: [分别注入成功和失败保存结果, 断言结果参数]
+    expected_result: 结果状态匹配且完整卡号未丢失
+    ut_layer: unit
+    ut_focus: 保存结果到导航参数的分支
+    linked_flow: bank_open_card
+  - id: AC-6
+    prd_function: F5
+    priority: P0
+    description: 结果页无返回入口并消费系统返回；完成后按结果清理流程栈
+    testable: true
+    verification_steps: [在结果页触发返回, 点击完成, 检查目标页及栈]
+    expected_result: 成功回钱包首页，失败回 AddBankCardPage，流程页均被移除
+    ut_layer: device
+    device_focus: 系统返回、完成按钮和真实导航栈
+    linked_flow: result_exit
+    checkpoint:
+      pre_screen: add_card_result
+      action: { target_element_id: result_done }
+      post_screen: wallet_home
+      required_element_ids: [home_root]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "如果本次添加是成功状态，则带着卡片卡号跳转到钱包首页"
+  - id: AC-7
+    prd_function: F6
+    priority: P0
+    description: 既有 CardPack 到 AllBanks 路由链保持正常
+    testable: true
+    verification_steps: [依次走 CardPack、AddCardEntry、AddBankCard、AllBanks]
+    expected_result: 所有旧页面可达且返回正常
+    ut_layer: device
+    device_focus: 老代码与新页面的真实跳转
+    linked_flow: legacy_route_regression
+    checkpoint:
+      pre_screen: card_pack
+      action: { target_element_id: cp_add_card_btn }
+      post_screen: add_card_entry
+      required_element_ids: [ac_bank_card_row]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "测试用例要包含老代码和本轮新开发代码的页面互相跳转功能，不能导致原有路由受损。"
+  - id: AC-8
+    prd_function: F1
+    priority: P0
+    description: 四个新界面覆盖参考图的必备元素与核心视觉关系
+    testable: true
+    verification_steps: [真机逐屏截图, 与四张权威参考图比较]
+    expected_result: 标题、卡片、按钮、半模态、插画与状态布局一致
+    ut_layer: device
+    device_focus: visual diff 与布局量测
+    linked_flow: type_to_card
+    checkpoint:
+      pre_screen: card_type_sheet
+      action: { target_element_id: cts_continue }
+      post_screen: bank_card_selection
+      required_element_ids: [bcs_title, bcs_card_list]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "页面布局完全参考'4-点击信用卡或储蓄卡后拉起选卡页面.jpg'。"
+boundaries:
+  - id: BD-1
+    priority: P0
+    prd_exception: E1
+    scenario: 未完成选择或协议
+    description: 卡类型、具体卡或协议任一缺失
+    handling: 下一步保持禁用
+    expected_behavior: 不发生跳转
+    ut_layer: unit
+    ut_focus: 可提交状态组合
+  - id: BD-2
+    priority: P0
+    prd_exception: E2
+    scenario: 非法验证码
+    description: 非数字或非六位输入
+    handling: 过滤为最多六位数字并禁用下一步
+    expected_behavior: 不提交
+    ut_layer: unit
+    ut_focus: 输入过滤和长度判断
+  - id: BD-3
+    priority: P0
+    prd_exception: E3
+    scenario: 重复提交
+    description: 用户快速多次点击下一步
+    handling: 提交锁阻止第二次写入
+    expected_behavior: 至多一次插入和跳转
+    ut_layer: unit
+    ut_focus: submission guard
+  - id: BD-4
+    priority: P0
+    prd_exception: E4
+    scenario: RDB 失败
+    description: 打开、建表或插入失败
+    handling: 记录不含 PAN 的日志并进入失败结果页
+    expected_behavior: 不崩溃且可完成退出
+    ut_layer: unit
+    ut_focus: 失败捕获与结果归一化
+performance:
+  - { id: NFR-1, metric: 点击到可见状态变化, threshold: "300", unit: ms, description: "前景 UI 反馈", ut_layer: device, device_focus: "真机上点击银行行/卡类型/下一步到对应界面可见的耗时；需外部性能采样，当前测试工具无该类原语" }
+  - { id: NFR-2, metric: 单次 RDB 插入, threshold: "500", unit: ms, description: "本地单条写入", ut_layer: device, device_focus: "真机上短信验证通过后单条卡数据写入 RDB 的耗时；需外部性能采样，当前测试工具无该类原语" }
+coverage_summary:
+  P0_functions: [F1, F2, F3, F4, F5, F6]
+  P0_function_ac_map:
+    F1: [AC-1, AC-8]
+    F2: [AC-2]
+    F3: [AC-3]
+    F4: [AC-4, AC-5]
+    F5: [AC-6]
+    F6: [AC-7]
+  p0_coverage: "6/6"
+  boundary_coverage: "4/4"

@@ -325,11 +325,28 @@ export interface P0GateInputs {
   now?: () => Date;
 }
 
+/**
+ * plan c3f8a2d7 §3.2：外部能力缺席的唯一投影（visual_diff provider 缺席、证据义务门、两项 P0 门共用），
+ * 最终由共享裁决 `areBlockersOnlyCapabilityMissing` 给 INCOMPLETE。放在本模块是因为 check-testing 依赖本模块，反向引用会成环。
+ */
+export const CAPABILITY_ABSENCE_PROJECTION = {
+  blocking_class: 'externalBlocked', failure_kind: 'capability_missing',
+} as const satisfies Pick<CheckResult, 'blocking_class' | 'failure_kind'>;
+export const CAPABILITY_ABSENCE_NOTE = '视觉能力缺席，非产品失败';
+
+/** 结构化判据：该检查是否就是上面那份能力缺席投影（run_status 与报告 writer 共用）。 */
+export function isCapabilityAbsenceCheck(check: { blocking_class?: string; failure_kind?: string }): boolean {
+  return check.blocking_class === CAPABILITY_ABSENCE_PROJECTION.blocking_class
+    && check.failure_kind === CAPABILITY_ABSENCE_PROJECTION.failure_kind;
+}
+
 interface NativeCaseEvaluation {
   caseId: string;
   passed: boolean;
   reasons: string[];
   acIds: string[];
+  /** 内部参数：未通过的 visual TC 由其绑定带来的责任方（只有"视觉产物不可用"那一支才有）。 */
+  repairOwner?: ChannelEvidenceBinding['repair_owner'];
 }
 
 interface NativeP0Evaluation {
@@ -347,6 +364,8 @@ interface NativeP0Evaluation {
   /** 只被 gap TC 引用、因此本轮无法验证的 P0 AC */
   gapAcIds: string[];
   gateFailure?: string;
+  /** 每条未通过的 P0 TC / AC 都有失败来源且全部是 capability 归属的视觉缺席、trace 无失败（plan c3f8a2d7 §3.2③）。 */
+  capabilityAbsenceOnly?: boolean;
 }
 
 function canonicalIdsForStep(
@@ -767,6 +786,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
           ? (acs.length > 0 ? [] : ['visual TC 未关联可验收的 P0 AC'])
           : [visualBinding.verdict.detail],
         acIds: acs.map(ac => ac.id),
+        ...(visualBinding.verdict.kind !== 'covered' && acs.length > 0 && visualBinding.repair_owner
+          ? { repairOwner: visualBinding.repair_owner } : {}),
       };
       evaluations.push(evaluation);
       if (evaluation.passed) {
@@ -802,8 +823,17 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
     })
     .map(ac => ac.id);
   const gapAcSet = new Set(gapAcIds);
-  const acFailures = p0Acs
-    .filter(ac => !acceptedAcIds.has(ac.id) && !gapAcSet.has(ac.id))
+  const failedAcs = p0Acs.filter(ac => !acceptedAcIds.has(ac.id) && !gapAcSet.has(ac.id));
+  // plan c3f8a2d7 §3.2③：归属判断先于 acFailures 文案，只看结构化事实；空关联集合不放行（不用真空 every）。
+  const capabilityOwned = (e: NativeCaseEvaluation): boolean => e.repairOwner === 'capability';
+  const failedEvaluations = evaluations.filter(e => !e.passed);
+  const traceClean = trace.outcome === 'success' && !(trace.cases ?? []).some(c => c.status === '失败' || c.status === '阻塞');
+  const capabilityAbsenceOnly = traceClean && failedEvaluations.length > 0 && failedEvaluations.every(capabilityOwned)
+    && failedAcs.every(ac => {
+      const related = evaluations.filter(e => e.acIds.includes(ac.id));
+      return related.length > 0 && related.every(capabilityOwned);
+    });
+  const acFailures = failedAcs
     .map(ac => {
       const related = evaluations.filter(e => e.acIds.includes(ac.id));
       const reason = related.flatMap(e => e.reasons).slice(0, 3).join('；') || '无通过的 StepResult 证据';
@@ -821,6 +851,7 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
     acFailures,
     gapCaseIds,
     gapAcIds,
+    capabilityAbsenceOnly,
   };
 }
 
@@ -878,14 +909,17 @@ function evaluateNativeP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
     gap_ac_ids: evaluation.gapAcIds,
   };
   const failedEvaluations = evaluation.caseEvaluations.filter(item => !item.passed);
+  const capabilityAbsent = failed > 0 && evaluation.capabilityAbsenceOnly === true;
   const result: CheckResult = {
     id,
     category: 'structure',
     description,
     severity: 'BLOCKER',
     status: failed === 0 ? 'PASS' : 'FAIL',
+    ...(capabilityAbsent ? CAPABILITY_ABSENCE_PROJECTION : {}),
     structured,
     details: [
+      capabilityAbsent ? `${CAPABILITY_ABSENCE_NOTE}：未通过的 P0 TC 全部因视觉能力缺席而未验证，能力恢复后由同一检查重验。` : null,
       rate,
       gapCount > 0
         ? `unsupported_gap ${gapCount} 条（留在分母、不算 PASS、不阻止普通开发完成；报告与 completion_status 须披露 COMPLETE_WITH_P0_GAPS）：${evaluation.gapCaseIds.join(', ')}`
@@ -946,7 +980,9 @@ export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
       description,
       severity: 'BLOCKER',
       status: 'FAIL',
+      ...(evaluation.capabilityAbsenceOnly ? CAPABILITY_ABSENCE_PROJECTION : {}),
       details:
+        (evaluation.capabilityAbsenceOnly ? `${CAPABILITY_ABSENCE_NOTE}：未成立的 P0 AC 全部只因视觉能力缺席而未验证。\n` : '') +
         `P0 acceptance coverage 未成立（${evaluation.acFailures.length} 项）：\n` +
         evaluation.acFailures.slice(0, 12).map(item => `  - ${item}`).join('\n'),
       suggestion: '仅以 authoritative trace 的 CaseResult 三轴和同 index 的 assertion StepResult 对账；缺 required/forbidden evidence 留在 testing，不得从旧 status 或报告散文补齐。',

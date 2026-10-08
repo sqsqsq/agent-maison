@@ -1,0 +1,1255 @@
+{
+  "phase": "testing",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg",
+  "timestamp": "2026-10-07T17:04:24.648Z",
+  "project_root": "D:\\1.code\\SimulatedWalletForHmos",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_testing_cases",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "cases",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "2cc6721d0afa360d19907dd0821357f7772f9a1ebfae8ab715b9242dfb4c4d17",
+          "binding": {
+            "input_id": "cases",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml",
+                "exists": true,
+                "sha256": "64d2a868713ba8c166d2abf1fc1368fbecd5e31f70c89e534c58886a2b6260cf",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/acceptance.yaml"
+            ],
+            "content_fingerprint": "2cc6721d0afa360d19907dd0821357f7772f9a1ebfae8ab715b9242dfb4c4d17"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "64d2a868713ba8c166d2abf1fc1368fbecd5e31f70c89e534c58886a2b6260cf",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_testing_code_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "tested_code",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "ccacedac2ba0152151d396c967284bf1dc815c0a6eb3a4c849e78896736654ab",
+          "binding": {
+            "input_id": "tested_code",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                "exists": true,
+                "sha256": "59f3d54faec4ac48b99fe12452d9ccd6ec186703634de538476ae2b6a0d6a260",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankCardCandidate.ets",
+                "exists": true,
+                "sha256": "069f880ca6fa2aeef6ddc79b225110495b91e4323f7d2d0065048d2151623165",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankInfo.ets",
+                "exists": true,
+                "sha256": "656f8666fff00f9b09cf97701a1ced472c36a636abadd95026cc519b835c3733",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\StoredCard.ets",
+                "exists": true,
+                "sha256": "cdf508073f5401aea9e9b567a2f76c31fe10b7f16568989b028506343558e21f",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankCardRepository.ets",
+                "exists": true,
+                "sha256": "f3130cb235d0ab4f98c77f3d4fe3956614e5cd8db787e6708d629c8f7a1391bd",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                "exists": true,
+                "sha256": "fa58ae07a45fb04bc983fad5da3a06a3f7c029d81240d8c4c10c5e384fc0ce6e",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\BankCardOpeningService.ets",
+                "exists": true,
+                "sha256": "5ab8dd940875deaf878cdd9c94585489b873d26edf04a4975fcac73e1ac17eb2",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\index.ets",
+                "exists": true,
+                "sha256": "8091328f669e0b71340b6b141a47ded704f62a31647ad7bab0ea60752f9338c4",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\CardTypeSheet.ets",
+                "exists": true,
+                "sha256": "f82d1af19a5ac26a2e596282a3962977abd7291ee5baa0f75dc37d00e70b9625",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\SmsVerificationSheet.ets",
+                "exists": true,
+                "sha256": "37561a330e6c8412e6341ef6fec41eee8f0b1f9dc03f5bcdc10e17c54e868dbf",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                "exists": true,
+                "sha256": "e20e85e205df93dd904a7cd89e68d43008875602c4fdf306e3e03830041ce271",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddCardResultPage.ets",
+                "exists": true,
+                "sha256": "1332423796313baefd11b1773e2986ff917b2848f49e44594265343b270f0e05",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "810f23c60d2b6caf5d518961483d83b20f12b1280dfbd6637cf79bc8994b43c4",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardSelectionPage.ets",
+                "exists": true,
+                "sha256": "abc0be325ee3f8bae6fea0197ddf57bc5c15eea6e268a181effa68448f273c40",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\HomeTabPage.ets",
+                "exists": true,
+                "sha256": "3e4fa654e03c1c005a2042cf9e8805a4d8e5bf381c18e8296dae484808318555",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\shared\\constant\\BankConstants.ets",
+                "exists": true,
+                "sha256": "5e7eed004dd1a8a5958cf372f8695920f2af1ad2dd04c790332f4f612b9ae45c",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\color.json",
+                "exists": true,
+                "sha256": "45df07b5db46ef5f885c72d79d29ea4b1894b461c05016a27825ad08bb34f437",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\float.json",
+                "exists": true,
+                "sha256": "7c31d2487bf04814f0a5ccbfbc63f5fc53d7feacfe4bd0b7f807b2825962a754",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\string.json",
+                "exists": true,
+                "sha256": "916f2785736bce93183138c8c13b993909a842c0dd6c75c7fb9820ff14a50028",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\media\\bank_logo_cmb.png",
+                "exists": true,
+                "sha256": "7edccfcc0ca89fb093490d116953a45ae38c5aaf97bbb7a6fde26b368ac3ba7b",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\media\\result_payment_illustration.png",
+                "exists": true,
+                "sha256": "5509c9185af9384403eba92287ba958e9a418cd3cda8b8968a4208488b0c665a",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\data\\model\\UserProfile.ets",
+                "exists": true,
+                "sha256": "78938092d541566973d7b91dc9a4e485fe3105d59a745bf54dd194d23d82f431",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\domain\\service\\AccountService.ets",
+                "exists": true,
+                "sha256": "fd59612dc434eb11586f797d60ee81fe267662f39ecc9f49f4a4811ad6b9b601",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\index.ets",
+                "exists": true,
+                "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "01-Product/Phone/src/main/ets/pages/index.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/StoredCard.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets",
+              "02-Feature/WalletMain/src/main/ets/index.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/SmsVerificationSheet.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+              "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+              "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+              "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+              "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+              "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png",
+              "02-Feature/WalletMain/src/main/resources/base/media/result_payment_illustration.png",
+              "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+              "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+              "04-BusinessBase/AccountManager/src/main/ets/index.ets"
+            ],
+            "content_fingerprint": "ccacedac2ba0152151d396c967284bf1dc815c0a6eb3a4c849e78896736654ab"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                  "exists": true,
+                  "sha256": "59f3d54faec4ac48b99fe12452d9ccd6ec186703634de538476ae2b6a0d6a260",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankCardCandidate.ets",
+                  "exists": true,
+                  "sha256": "069f880ca6fa2aeef6ddc79b225110495b91e4323f7d2d0065048d2151623165",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankInfo.ets",
+                  "exists": true,
+                  "sha256": "656f8666fff00f9b09cf97701a1ced472c36a636abadd95026cc519b835c3733",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\StoredCard.ets",
+                  "exists": true,
+                  "sha256": "cdf508073f5401aea9e9b567a2f76c31fe10b7f16568989b028506343558e21f",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankCardRepository.ets",
+                  "exists": true,
+                  "sha256": "f3130cb235d0ab4f98c77f3d4fe3956614e5cd8db787e6708d629c8f7a1391bd",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "fa58ae07a45fb04bc983fad5da3a06a3f7c029d81240d8c4c10c5e384fc0ce6e",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\BankCardOpeningService.ets",
+                  "exists": true,
+                  "sha256": "5ab8dd940875deaf878cdd9c94585489b873d26edf04a4975fcac73e1ac17eb2",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\index.ets",
+                  "exists": true,
+                  "sha256": "8091328f669e0b71340b6b141a47ded704f62a31647ad7bab0ea60752f9338c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\CardTypeSheet.ets",
+                  "exists": true,
+                  "sha256": "f82d1af19a5ac26a2e596282a3962977abd7291ee5baa0f75dc37d00e70b9625",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\SmsVerificationSheet.ets",
+                  "exists": true,
+                  "sha256": "37561a330e6c8412e6341ef6fec41eee8f0b1f9dc03f5bcdc10e17c54e868dbf",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                  "exists": true,
+                  "sha256": "e20e85e205df93dd904a7cd89e68d43008875602c4fdf306e3e03830041ce271",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddCardResultPage.ets",
+                  "exists": true,
+                  "sha256": "1332423796313baefd11b1773e2986ff917b2848f49e44594265343b270f0e05",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "810f23c60d2b6caf5d518961483d83b20f12b1280dfbd6637cf79bc8994b43c4",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardSelectionPage.ets",
+                  "exists": true,
+                  "sha256": "abc0be325ee3f8bae6fea0197ddf57bc5c15eea6e268a181effa68448f273c40",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\HomeTabPage.ets",
+                  "exists": true,
+                  "sha256": "3e4fa654e03c1c005a2042cf9e8805a4d8e5bf381c18e8296dae484808318555",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\shared\\constant\\BankConstants.ets",
+                  "exists": true,
+                  "sha256": "5e7eed004dd1a8a5958cf372f8695920f2af1ad2dd04c790332f4f612b9ae45c",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\color.json",
+                  "exists": true,
+                  "sha256": "45df07b5db46ef5f885c72d79d29ea4b1894b461c05016a27825ad08bb34f437",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\float.json",
+                  "exists": true,
+                  "sha256": "7c31d2487bf04814f0a5ccbfbc63f5fc53d7feacfe4bd0b7f807b2825962a754",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\string.json",
+                  "exists": true,
+                  "sha256": "916f2785736bce93183138c8c13b993909a842c0dd6c75c7fb9820ff14a50028",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\media\\bank_logo_cmb.png",
+                  "exists": true,
+                  "sha256": "7edccfcc0ca89fb093490d116953a45ae38c5aaf97bbb7a6fde26b368ac3ba7b",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\media\\result_payment_illustration.png",
+                  "exists": true,
+                  "sha256": "5509c9185af9384403eba92287ba958e9a418cd3cda8b8968a4208488b0c665a",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\data\\model\\UserProfile.ets",
+                  "exists": true,
+                  "sha256": "78938092d541566973d7b91dc9a4e485fe3105d59a745bf54dd194d23d82f431",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\domain\\service\\AccountService.ets",
+                  "exists": true,
+                  "sha256": "fd59612dc434eb11586f797d60ee81fe267662f39ecc9f49f4a4811ad6b9b601",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\index.ets",
+                  "exists": true,
+                  "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_testing_design_context",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "17f63c7bef61fcd50f077e4bd28ab136908a4d88f70f49181adc150685ec5ac3",
+          "binding": {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\contracts.yaml",
+                "exists": true,
+                "sha256": "a735eb0433b881928e7d594f5b54f412f9a641fa2b895c0a2021374187c41724",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/contracts.yaml"
+            ],
+            "content_fingerprint": "17f63c7bef61fcd50f077e4bd28ab136908a4d88f70f49181adc150685ec5ac3"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "a735eb0433b881928e7d594f5b54f412f9a641fa2b895c0a2021374187c41724",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\contracts.yaml"
+            }
+          ]
+        },
+        {
+          "id": "use_cases",
+          "state": "resolved",
+          "selected_source": "use-cases@1",
+          "selected_source_fingerprint": "1db6ee0351e0672b5df03ecadef1883f2e9f5e0ef53f199db58387fce0a07568",
+          "binding": {
+            "input_id": "use_cases",
+            "source": {
+              "kind": "artifact",
+              "artifact": "use-cases@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\use-cases.yaml",
+                "exists": true,
+                "sha256": "b68a3fc5fb489d8c83e450ea91a96740d59701a009527f9659b2720216dba312",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/open-card-flow-v2/use-cases.yaml"
+            ],
+            "content_fingerprint": "1db6ee0351e0672b5df03ecadef1883f2e9f5e0ef53f199db58387fce0a07568"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "use-cases@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\use-cases.yaml",
+                  "exists": true,
+                  "sha256": "b68a3fc5fb489d8c83e450ea91a96740d59701a009527f9659b2720216dba312",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\use-cases.yaml"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "4a58dc938b02f3120902bd2dd9a71c6b0c606528c37391d3a8d489c599a96930",
+  "checks": [
+    {
+      "id": "node_options_injection",
+      "category": "structure",
+      "description": "进程预加载注入自检（P0-7：门禁产物防篡改）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "NODE_OPTIONS/execArgv/.node-options/.npmrc 未检出预加载注入。"
+    },
+    {
+      "id": "context_exploration_facts_phase_delta_present",
+      "category": "structure",
+      "description": "facts.md 本阶段 phase_delta 节已声明",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "\"## phase_delta: testing\" 节已声明（1846 字符）。"
+    },
+    {
+      "id": "testing_execution_channel",
+      "category": "structure",
+      "description": "顶层 test-plan 每 TC 唯一编译期 execution_channel",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "通道声明完整：hylyre=6、visual=1、provider=0、manual=3；三态：executable=7、unsupported_gap=3（TC-008[manual:perf_sampling], TC-009[manual:perf_sampling], TC-010[manual:data_injection]；留分母、不算 PASS、不阻止完成）、invalid_test=0。派生器只编译 hylyre 集合，不得新增/删除/改写通道。",
+      "structured": {
+        "unsupported_gap": [
+          {
+            "tc_id": "TC-008",
+            "channel": "manual",
+            "reason": "perf_sampling"
+          },
+          {
+            "tc_id": "TC-009",
+            "channel": "manual",
+            "reason": "perf_sampling"
+          },
+          {
+            "tc_id": "TC-010",
+            "channel": "manual",
+            "reason": "data_injection"
+          }
+        ],
+        "unsupported_gap_count": 3
+      },
+      "suggestion": "通道属计划 identity：修改必须经 test-plan review，不在 derive/回灌时静默重写。"
+    },
+    {
+      "id": "p0_identity_injection",
+      "category": "structure",
+      "description": "P0 身份断言可注入性（派生计划装载时由 harness 注入裸 by_id 断言）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 P0 checkpoint 的身份断言已在派生计划中以精确形状存在，无需注入。",
+      "structured": {
+        "injected": []
+      }
+    },
+    {
+      "id": "plan_references_unit_layer_ac",
+      "category": "traceability",
+      "description": "按 TC 引用形态分档：某条 TC 仅关联 ut_layer=unit 的 AC/BD（且无 NFR 引用）时 BLOCKER （该 TC 应由 business-ut 覆盖，须从 test-plan 删除，不得改标 manual 通道）； 混合引用（unit + device/both 或 NFR）仅 WARN。 在任何 build/install/device 动作之前裁决，BLOCKER 时零设备调用。",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "test-plan 未关联 ut_layer=unit 的 AC/BD（符合 device 执行层分母）。"
+    },
+    {
+      "id": "device_test_build",
+      "category": "structure",
+      "description": "当 project_profile 将 device_test.build 声明为 BLOCKER 且未 SKIP 时， harness 必须产出可安装的主应用 signed HAP（执行 hvigor 或按源码 mtime 复用已有 HAP， `reused: true` 时门禁仍为 PASS）；并落盘编译日志/result.json； 声明 SKIP 时本检查 SKIP。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "product=default buildMode=debug\n编译形态：product=default（来源：confirmed_env）；工程可选：default\nHAP: D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\build\\default\\outputs\\default\\Phone-default-signed.hap\n复用 HAP（跳过 hvigor）：HAP 不早于业务源码且 product/buildMode 一致，复用已有包；hapBuiltAt=2026-10-07T16:53:55.575Z"
+    },
+    {
+      "id": "device_test_install",
+      "category": "structure",
+      "description": "当 project_profile 将 device_test.install 声明为 BLOCKER 且未 SKIP 时， harness 必须将主应用 HAP 通过 hdc 安装到已连接设备；声明 SKIP 或上游 device_test.build SKIP 时本检查 SKIP。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "已安装: D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\build\\default\\outputs\\default\\Phone-default-signed.hap\n日志: ../../doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/hdc-app-install.log"
+    },
+    {
+      "id": "derived_selector_contract",
+      "category": "structure",
+      "description": "派生 Hylyre selector 必须可追溯到 ui-spec",
+      "severity": "MINOR",
+      "status": "WARN",
+      "details": "[SELECTOR-SPEC-001] 共 72 个 canonical selector 问题：\n  - TC-001 step 2 by_text=添加管理卡片: by_text 未映射到当前 feature ui-spec text（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 3 by_id=cp_page_title: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 4 by_id=cp_add_card_btn: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 5 by_id=ac_bank_card_row: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 6 by_id=ac_page_title: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 7 by_id=ac_bank_card_row: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 8 by_id=col_page_title: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-001 step 9 by_id=col_row_cmb: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-002 step 2 by_text=添加管理卡片: by_text 未映射到当前 feature ui-spec text（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-002 step 3 by_id=cp_page_title: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-002 step 4 by_id=cp_add_card_btn: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决\n  - TC-002 step 5 by_id=ac_page_title: by_id 不在当前 feature ui-spec（开放世界：既有入口/前置页面通常不重复建模）；静态放行，最终由本轮 native selector evidence 裁决",
+      "suggestion": "用 derive-hylyre-plan-hint 的 selector_contract 只读查询修正；dump/cache 发现的候选须先回写 ui-spec/锚点注入。",
+      "source": "derived_selector_contract"
+    },
+    {
+      "id": "hylyre_evidence_gate",
+      "category": "structure",
+      "description": "Hylyre native CaseResult/StepResult 三重判据与 legacy 划界",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "structured": {
+        "mode": "native",
+        "native": true,
+        "legacy": false,
+        "minimumVersion": "0.5.0",
+        "installedVersion": "0.5.1",
+        "manifestVersion": "0.5.1",
+        "traceVersion": "0.5.1",
+        "traceSchemaVersion": "0.4-p0",
+        "reasons": []
+      },
+      "details": "native evidence gate PASS：version=0.5.1, schema=0.4-p0，CaseResult/StepResult 必需字段完整。",
+      "suggestion": "P0/acceptance 仅消费当前 trace 的 CaseResult.steps[]。"
+    },
+    {
+      "id": "device_test_run",
+      "category": "structure",
+      "description": "当 project_profile 将 device_test.run 声明为 BLOCKER 且未 SKIP 时， harness 必须按 profile 指定的真机自动化能力消费派生测试用例并产出 report + trace； 脚本以 doc/features/<feature>/testing/test-plan.md「测试用例」表为 SSOT：每条 TC 声明唯一 execution_channel（hylyre | visual | manual | provider:<capability-id>），派生 hylyre 表须与 channel=hylyre 的集合完全相等（missing/extra 均 BLOCKER）。正式派生计划禁止写 explicit_skip_tc_ids（登记即 BLOCKER），历史产物中的该字段仅只读诊断、不减除缺口、不贡献 PASS； 烟测占位类派生无效；在多条派生产物间按 test-plan.hylyre.md 的 mtime 选取最新有效计划。 **门禁语义**：run.ok 仅表示 runner 未崩溃；本检查还须 trace.outcome=success 且无失败/阻塞 case， 否则 BLOCKER FAIL（partial/failed/aborted 不得 PASS）。 声明 SKIP 或上游 device_test.install SKIP 时本检查 SKIP。",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "structured": {
+        "execution_key": "c1e78480c764b4728400ca9decddb98ae8f7bc25e8da4bd3078e21a1a2478ab6",
+        "reused_by_execution_key": false,
+        "reuse_reason": "最新同键 run 20261007T165359Z-979 outcome=failed，重新真跑"
+      },
+      "details": "真机自动化执行完成：exit=1, outcome=failed, cases=6\nexecution_key：c1e78480c764b4728400ca9decddb98ae8f7bc25e8da4bd3078e21a1a2478ab6（本轮；决策：最新同键 run 20261007T165359Z-979 outcome=failed，重新真跑）\n报告：D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\reports\\20261007T170043Z-568\\hylyre\\test-report.md\ntrace：D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\reports\\20261007T170043Z-568\\hylyre\\trace.json\n自动化产物未达标（run.ok 仅表示 runner 未崩溃）：\n  - trace.outcome=failed（非 success）\n  - 失败用例 2 条：TC-004, TC-005\n  - 阻塞用例 2 条：TC-004, TC-005\n  - 级联归类（root/blocked 三分——通过率与裁决不变）：根故障 TC-004, TC-005；无级联",
+      "suggestion": "修复失败/阻塞用例或 trace.outcome 非 success 后重跑 device_test.run；勿在顶层报告谎报通过。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "visual_diff_capture",
+      "category": "structure",
+      "description": "device_test.run 后 visual_diff 自动截图与骨架采集",
+      "severity": "MAJOR",
+      "status": "WARN",
+      "details": "P0 屏截图失败（采集证据未刷新）：bank_card_selection, add_card_result, sms_verification_sheet__overlay__sms_root\nscreens=1\npixel_1to1 下不得以陈旧/缺失证据通过；沿用旧 shot/旧 verdict 闭环＝假证据。\nnotes:\n  - bank_card_selection: 导航失败 — 2026-10-08T01:02:32 pid=15124 hypium_dump_ui uitree.refresh_ms=434.7\r\n2026-10-08T01:02:32 pid=15124 augment_ui_dump_payload walk_ms=0.2\r\n2026-10-08T01:02:47 pid=15124 hypium_dump_ui uitree.refresh_ms=585.7\r\n2026-10-08T01:02:47 pid=15124 augment_ui_dump_payload walk_ms=0.4\r\n[2026-10-08 01:02:26,054] [32952] [Analysis] [WARNING] [tracker dependency is not ok]\r\n[2026-10-08 01:02:26,055] [32952] [EnvPool] [INFO] [Report path: D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow（未截图，避免截错屏）；崩溃诊断：本轮无该应用新增 faultlog——按元素定位问题处理（选择器/渲染时机/导航未到位）\n  - add_card_result: 导航失败 — 2026-10-08T01:02:56 pid=33496 hypium_dump_ui uitree.refresh_ms=426.9\r\n2026-10-08T01:02:56 pid=33496 augment_ui_dump_payload walk_ms=0.2\r\n2026-10-08T01:03:11 pid=33496 hypium_dump_ui uitree.refresh_ms=693.6\r\n2026-10-08T01:03:11 pid=33496 augment_ui_dump_payload walk_ms=0.3\r\n[2026-10-08 01:02:49,610] [8972] [Analysis] [WARNING] [tracker dependency is not ok]\r\n[2026-10-08 01:02:49,612] [8972] [EnvPool] [INFO] [Report path: D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v（未截图，避免截错屏）；崩溃诊断：本轮无该应用新增 faultlog——按元素定位问题处理（选择器/渲染时机/导航未到位）\n  - sms_verification_sheet__overlay__sms_root: overlay 导航失败 — 2026-10-08T01:04:02 pid=30404 hypium_dump_ui uitree.refresh_ms=452.1\r\n2026-10-08T01:04:02 pid=30404 augment_ui_dump_payload walk_ms=0.3\r\n2026-10-08T01:04:17 pid=30404 hypium_dump_ui uitree.refresh_ms=693.4\r\n2026-10-08T01:04:17 pid=30404 augment_ui_dump_payload walk_ms=0.3\r\n[2026-10-08 01:03:55,871] [2236] [Analysis] [WARNING] [tracker dependency is not ok]\r\n[2026-10-08 01:03:55,872] [2236] [EnvPool] [INFO] [Report path: D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v（未截图，避免截错屏）；崩溃诊断：本轮无该应用新增 faultlog——按元素定位问题处理（选择器/渲染时机/导航未到位）\ngolden_contract=none",
+      "suggestion": "修复截图采集（Permission denied/锁屏/设备占用）后重采 P0 屏；不得沿用旧 shot/旧 verdict。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "device_test_evidence",
+      "category": "structure",
+      "description": "goal device-test-evidence proposal",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native CaseResult.steps[] 保持唯一证据源；goal identity/HAP/trace proposal 交 runtime 正式提交。",
+      "structured": {
+        "kind": "device_test_evidence",
+        "doc": {
+          "schema_version": "1.1",
+          "goal_run_id": "20260928T043051Z-be091c",
+          "attempt_id": "i20",
+          "device_target": {
+            "serial": "3UJ0225321000395",
+            "target_kind": "physical",
+            "session_id": "testing-i20"
+          },
+          "hap_sha256_full": "cad4c89cdedb13475f2ee1f271695a82159471f4257ee3816fcd9f436ed48a08",
+          "install_executed": true,
+          "install_ok": true,
+          "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\reports\\20261007T170043Z-568\\hylyre\\trace.json",
+          "run_failure_kind": null,
+          "written_at": "2026-10-07T17:04:18.560Z",
+          "cases": [],
+          "artifact_binding": {
+            "test_plan_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\test-plan.md",
+            "test_plan_sha256": "884bb4eb5e53bc6a339eba4545ffc061665d1ac68ff837b78992435f453515b2",
+            "derived_plan_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\reports\\20261007T170043Z-568\\hylyre\\test-plan.hylyre.md",
+            "derived_plan_sha256": "a311b67ce4ba6ceac14b50959109103522152364548321e3129f6e7680f4ce90",
+            "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\reports\\20261007T170043Z-568\\hylyre\\trace.json",
+            "trace_sha256": "8d74e724cd772915e8497a12ea058cee95e1a5f0423a7bb7c2127fb40e132e11"
+          },
+          "install_reused": false,
+          "reused_by_execution_key": false,
+          "execution_key": "c1e78480c764b4728400ca9decddb98ae8f7bc25e8da4bd3078e21a1a2478ab6"
+        }
+      }
+    },
+    {
+      "id": "ui_entry_coverage",
+      "category": "structure",
+      "description": "当 use-cases.yaml 中同一 user_actions.calls 存在多个 ui_bindings.ui 入口时， 派生 Hylyre 计划须以 entry_ui / linked_flow / calls 结构化字段覆盖每个入口； P0 多入口缺派生覆盖 → BLOCKER FAIL；非 P0 → MAJOR FAIL；缺结构化字段 → MAJOR WARN。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "多 UI 入口业务调用均在派生 Hylyre 计划中有结构化覆盖。"
+    },
+    {
+      "id": "plan_required_chapters",
+      "category": "structure",
+      "description": "测试计划必须包含以下章节： 测试范围、测试环境、测试用例清单、测试策略、通过标准、风险与依赖",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "测试计划包含全部 6 个必需章节。"
+    },
+    {
+      "id": "test_case_table_format",
+      "category": "structure",
+      "description": "「测试用例清单」必须包含 Markdown 表格，表头至少包含： 用例编号、用例名称、前置条件、测试步骤、预期结果、优先级、关联 AC",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "用例清单表格包含全部必需列，共 10 条用例。"
+    },
+    {
+      "id": "test_case_priority_values",
+      "category": "structure",
+      "description": "测试用例优先级必须为 P0/P1/P2/P3",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 10 条用例的优先级值域合规。"
+    },
+    {
+      "id": "test_case_flow_consistency",
+      "category": "structure",
+      "description": "test_case_flow 结构化 DAG 与用例表一致性（级联归类 SSOT）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "test_case_flow 10 条与用例表一致（引用/环校验通过）。"
+    },
+    {
+      "id": "test_environment_defined",
+      "category": "structure",
+      "description": "「测试环境」必须明确列出：设备型号/模拟器、系统版本、API 版本、 特殊配置要求",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "测试环境章节包含设备、系统版本、API 版本信息。"
+    },
+    {
+      "id": "pass_criteria_defined",
+      "category": "structure",
+      "description": "「通过标准」必须定义量化的通过条件， 如 P0 用例 100% 通过、P1 用例 ≥ 95% 通过",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "通过标准章节包含量化阈值。"
+    },
+    {
+      "id": "plan_metadata_header",
+      "category": "structure",
+      "description": "测试计划和报告顶部必须包含模块标识、版本、日期、测试人员等元数据",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "测试计划包含元数据头部。"
+    },
+    {
+      "id": "upstream_verdict_gate",
+      "category": "structure",
+      "description": "跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "上游机器裁决全部可消费且无负面结论。\n已消费：coding, review, ut"
+    },
+    {
+      "id": "acceptance_yaml_present",
+      "category": "structure",
+      "description": "acceptance_yaml_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "doc/features/bc-openCard-2/open-card-flow-v2/acceptance.yaml 已存在。"
+    },
+    {
+      "id": "acceptance_content_complete",
+      "category": "structure",
+      "severity": "BLOCKER",
+      "description": "验收内容可执行且有精确预期",
+      "status": "PASS",
+      "details": "验收内容完整"
+    },
+    {
+      "id": "acceptance_ut_layer_complete",
+      "category": "structure",
+      "description": "acceptance_ut_layer_complete",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 12 条 AC/BD 均有合法 ut_layer。"
+    },
+    {
+      "id": "acceptance_device_focus_present",
+      "category": "structure",
+      "description": "acceptance_device_focus_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "device/both 共 7 条均已声明 device_focus（及 both 的 ut_focus）。"
+    },
+    {
+      "id": "legacy_device_testing_todo_deprecated",
+      "category": "structure",
+      "description": "legacy_device_testing_todo_deprecated",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "未检测到 legacy device-testing-todo.md。"
+    },
+    {
+      "id": "device_case_contract",
+      "category": "traceability",
+      "description": "Device testing cases 统一归一契约",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "mode=acceptance depth=full cases=7"
+    },
+    {
+      "id": "test_plan_freshness_vs_acceptance",
+      "category": "traceability",
+      "description": "acceptance.yaml 的 mtime 不得新于 test-plan.md（否则须按 acceptance 重派生 plan）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "test-plan.md 不早于 acceptance.yaml（按 mtime）。"
+    },
+    {
+      "id": "acceptance_to_test_case",
+      "category": "traceability",
+      "description": "acceptance.yaml 中 ut_layer∈{device,both} 的 P0/P1 criteria/boundaries 必须被 test-plan.md 至少一条用例覆盖（「关联 AC」列）；c7e4a2d9 增补 P0 优先级 对齐锚（同 check 原地断言，不新立 gate）：每个 device/both 的 P0 criterion 必须被 至少一条 priority=P0 的 TC 引用（复用 parsePlanTcEntries 既有解析）——TC 从 P0 降为 P2 不得令其退出 P0 全分母并假绿；缺口 BLOCKER FAIL，owner=testing 恢复对齐。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "追溯分母：ut_layer∈{device,both} 的 P0/P1（不含 unit 层 AC）\nP0 AC 覆盖率: 5/5\nP1 AC 覆盖率: 2/2\nBD 覆盖率: 0/0\nP0 优先级对齐覆盖率: 5/5（每个 device/both P0 AC 须被至少一条 priority=P0 的 TC 引用；TC P0→P2 降档即缺口）"
+    },
+    {
+      "id": "test_case_to_acceptance",
+      "category": "traceability",
+      "description": "每条测试用例必须关联到至少一个验收标准（AC 编号）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 10 条测试用例都关联了 AC/BD 编号。"
+    },
+    {
+      "id": "boundary_coverage",
+      "category": "traceability",
+      "description": "边界场景应被测试计划覆盖",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 0 个 device 层边界场景被测试用例覆盖。"
+    },
+    {
+      "id": "visual_diff",
+      "category": "structure",
+      "description": "设备渲染视觉回环（device_test.visual_diff）：Hylyre 截图 vs authoritative_refs 原图， 产出 visual-diff.md / must-fix 清单与保真分（含几何 IoU）。QA 阶段级动作，非 test-plan 派生步骤根键。warmup/无设备 → SKIP。 当 spec UI change=new_or_changed 且 P0 目标屏 visual verdict 全 pending 或未覆盖 → BLOCKER FAIL。 score_floor 已降级 reference_only（P1-C·f2d8c4a6：像素直方图历史多次实测证伪，不参与任何判定）。 P0-9（e7a91b3c）判定持久化：机器判定（pass/warn/fail）绑定 「被评截图文件 hash + build 指纹（实际 hap sha256 前 12 hex，现算）」——同 build 下 capture 跳采、判定跨 harness 轮持久（像素恒等作新鲜度键已被真机时钟/轮播漂移证伪）；换 build/ 文件被换/legacy 缺指纹 → stale 重置重判。legacy confirmed_by 可读但无 gate 权重； 当前 deterministic/native/delegated 机器证据决定结论，required 能力缺失走 capability defer。",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "structured": {
+        "kind": "visual_provider_round",
+        "outcome": "unavailable",
+        "reason": "provider 观测到失败终态：result.failed: Failed to authenticate: OAuth session expired and could not be refreshed"
+      },
+      "details": "【DEFERRED_CAPABILITY_MISSING】发布必需的视觉轴所需 provider 本轮不可用：provider 观测到失败终态：result.failed: Failed to authenticate: OAuth session expired and could not be refreshed\n复用既有 external/capability-missing 投影，当前内容不重试，也不请求人工签字。",
+      "blocking_class": "externalBlocked",
+      "failure_kind": "capability_missing",
+      "suggestion": "恢复当前冻结 provider/profile 的视觉能力后 resume；无需修改产品内容。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "test_report_generated",
+      "category": "structure",
+      "description": "test-report.md 由 harness 从权威 run 整份生成（plan 07a41ec6 T5）",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "已生成 doc/features/bc-openCard-2/open-card-flow-v2/testing/test-report.md（权威 run doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/trace.json）\n按轴：功能=FAIL 稳定性=PASS 视觉几何=UNKNOWN 内容=UNKNOWN 样式=UNKNOWN 总体=FAILED（声明 不达标）\n已知缺口 8 项：TC-008[manual:perf_sampling]；TC-009[manual:perf_sampling]；TC-010[manual:data_injection]；视觉债务 open=1, accepted=0（visual-debt.md）；视觉几何 UNKNOWN；视觉内容/样式 UNKNOWN（无绑定当前截图与构建的 provider 复核）",
+      "structured": {
+        "conclusion": {
+          "functional": "FAIL",
+          "stability": "PASS",
+          "visual_geometry": "UNKNOWN",
+          "visual_content": "UNKNOWN",
+          "visual_style": "UNKNOWN",
+          "gaps": [
+            "TC-008[manual:perf_sampling]",
+            "TC-009[manual:perf_sampling]",
+            "TC-010[manual:data_injection]",
+            "视觉债务 open=1, accepted=0（visual-debt.md）",
+            "视觉几何 UNKNOWN",
+            "视觉内容/样式 UNKNOWN（无绑定当前截图与构建的 provider 复核）",
+            "弱化旗标 --skip-assert-expected：自然语言预期跳过 6 条（未验证）；显式断言 41 条通过；结论不以「达标」签发",
+            "视觉门禁阻断（visual_diff FAIL/BLOCKER）"
+          ],
+          "overall": "FAILED",
+          "declared_verdict": "不达标"
+        }
+      }
+    },
+    {
+      "id": "report_trace_reconciliation",
+      "category": "structure",
+      "description": "顶层 test-report.md「测试执行结果」须与 device_test_run 本轮选中的 testing/reports/<ts>/hylyre/trace.json 全量对账（禁止以顶层 reports/trace.json 回填件为 SSOT）。 报告写通过但 trace 失败/阻塞、结论达标但 trace.outcome≠success → BLOCKER FAIL。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "顶层报告与 Hylyre trace 全量对账一致\ntrace 来源：D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\open-card-flow-v2\\testing\\reports\\20261007T170043Z-568\\hylyre\\trace.json"
+    },
+    {
+      "id": "report_required_chapters",
+      "category": "structure",
+      "description": "测试报告必须包含以下章节： 测试概览、测试执行结果、缺陷清单（如有）、通过率统计、结论",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "测试报告包含全部必需章节。"
+    },
+    {
+      "id": "execution_result_table",
+      "category": "structure",
+      "description": "「测试执行结果」必须包含每条用例的执行状态表， 状态值限于：通过 / 失败 / 阻塞 / 跳过，并包含最终 run 的耗时列；耗时使用精确整数 毫秒 `Nms`（读取侧可兼容合法千分位）；已进入 trace/timing 的 skip/block case 使用 `0ms`， 未进入 trace/timing 的用例（非 hylyre 通道或历史 legacy skip）使用 `—`。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "执行结果表格格式合规，共 10 条记录。"
+    },
+    {
+      "id": "pass_rate_calculated",
+      "category": "structure",
+      "description": "「通过率统计」必须包含各优先级的通过率数值， 以及总体通过率",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "通过率统计章节包含各优先级通过率数值，且分子与机器证据/执行口径一致。"
+    },
+    {
+      "id": "defect_table_format",
+      "category": "structure",
+      "description": "如有失败用例，「缺陷清单」必须包含： 缺陷编号、关联用例、严重程度、描述、状态（待修复/已修复/已关闭）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "缺陷清单表格格式合规，共 3 条缺陷。"
+    },
+    {
+      "id": "report_conclusion_with_verdict",
+      "category": "structure",
+      "description": "报告结论必须包含明确的判定：达标 / 有条件达标 / 不达标， 并引用通过率数据",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "结论章节包含可机读判定：不达标。"
+    },
+    {
+      "id": "negative_verdict_closure",
+      "category": "structure",
+      "description": "负面产品裁决闭环门禁（测试结论=不达标 → 阻断 phase 闭环，修复重跑后方可推进）",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "details": "测试结论=「不达标」——产品负面裁决不得闭环推进。报告如实登记不达标是 report_validity 层面的合规，但产品裁决为负时 phase 不得以 PASS 收口（对齐 review 侧 negative_verdict_closure 语义）。",
+      "suggestion": "修复失败用例/缺陷后重跑 device 测试与本 harness，结论更新为非「不达标」后方可闭环。",
+      "failure_kind": "negative_testing_verdict",
+      "blocking_class": "product_verdict",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "visual_debt_disclosure",
+      "category": "structure",
+      "description": "视觉债务披露门禁（存在未清偿债务时结论必须引用视觉债务清单）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "结论已披露视觉债务（open=1, accepted=0；SSOT=visual-debt.json / summary.quality_axes）。"
+    },
+    {
+      "id": "plan_to_report_consistency",
+      "category": "traceability",
+      "description": "测试报告中的用例编号必须与测试计划中的用例编号一一对应， 不允许报告中出现计划中未定义的用例",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "计划与报告的用例编号完全一致（10 条）。"
+    },
+    {
+      "id": "defect_to_test_case",
+      "category": "traceability",
+      "description": "缺陷清单中每个缺陷的「关联用例」必须指向测试用例清单中的有效编号",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "缺陷清单中的用例引用全部有效。"
+    },
+    {
+      "id": "review_closure_attestation",
+      "category": "structure",
+      "description": "review 闭环源码快照与 testing 期产品源码对账（防测试期篡改产品行为）",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "产品源码与 review 闭环快照一致（inventory 113 文件，roots=6）。"
+    },
+    {
+      "id": "product_behavior_switch_scan",
+      "category": "structure",
+      "description": "产品行为开关扫描（测试性开关默认开启=BLOCKER）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "未发现默认开启的测试性行为开关。"
+    },
+    {
+      "id": "p0_coverage_integrity",
+      "category": "structure",
+      "description": "P0 用例覆盖（CaseResult 三轴 + StepResult required/forbidden 对账）",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "structured": {
+        "p0_total": 8,
+        "verified_pass": 4,
+        "unsupported_gap": 1,
+        "failed": 3,
+        "verified_coverage": 50,
+        "gap_case_ids": [
+          "TC-010"
+        ],
+        "gap_ac_ids": []
+      },
+      "details": "P0 total 8 / verified_pass 4 / unsupported_gap 1 / failed 3 / verified_coverage 50%\nunsupported_gap 1 条（留在分母、不算 PASS、不阻止普通开发完成；报告与 completion_status 须披露 COMPLETE_WITH_P0_GAPS）：TC-010\n缺口分类：explicit skip 0，trace skip 0，无执行记录 0，执行了但证据不足 3\n  - TC-004：execution=aborted；verification=failed；AC-3 action step 14（touch）StepResult 缺失或未通过（须 outcome.status=passed 且 selector 身份匹配 bcs_next）\n  - TC-005：execution=aborted；verification=failed；AC-6 action step 26（touch）StepResult 缺失或未通过（须 outcome.status=passed 且 selector 身份匹配 result_done）\n  - TC-007：TC-007 已绑定屏 card_type_sheet、bank_card_selection，但视觉产物不可用：本轮 visual_diff 门未通过（status=FAIL：门缺席、id 不符或状态本身不可消费），无本轮视觉证据可消费",
+      "suggestion": "逐条按上面 TC/step 的原因处理：缺身份断言→重跑 harness 让注入生效或补触发动作；StepResult 未通过→修产品或修计划；未执行→补跑该 TC。explicit skip 留在 testing，零自动 coding。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "p0_pass_rate_dual_metrics",
+      "category": "structure",
+      "description": "P0 通过率与全分母对账",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native evidence 五数口径：P0 total 8 / verified_pass 4 / unsupported_gap 1 / failed 3 / verified_coverage 50%。"
+    },
+    {
+      "id": "p0_semantic_coverage_integrity",
+      "category": "structure",
+      "description": "P0 acceptance coverage（计划要求 × CaseResult.steps[] 实际证据）",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "details": "P0 acceptance coverage 未成立（3 项）：\n  - AC-3：execution=aborted；verification=failed；AC-3 action step 14（touch）StepResult 缺失或未通过（须 outcome.status=passed 且 selector 身份匹配 bcs_next）\n  - AC-6：execution=aborted；verification=failed；AC-6 action step 26（touch）StepResult 缺失或未通过（须 outcome.status=passed 且 selector 身份匹配 result_done）\n  - AC-8：TC-007 已绑定屏 card_type_sheet、bank_card_selection，但视觉产物不可用：本轮 visual_diff 门未通过（status=FAIL：门缺席、id 不符或状态本身不可消费），无本轮视觉证据可消费",
+      "suggestion": "仅以 authoritative trace 的 CaseResult 三轴和同 index 的 assertion StepResult 对账；缺 required/forbidden evidence 留在 testing，不得从旧 status 或报告散文补齐。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "testing_case_execution_completeness",
+      "category": "structure",
+      "description": "顶层测试用例执行完整性",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "derived/trace 与 channel=hylyre TC 集合已精确闭合（6 个）；explicit skip 为 0，未执行 case 为 0；非 Hylyre 通道 4 个仍在报告总分母，由 testing_channel_evidence_obligation 裁决（per-TC 证据绑定建立前保持 FAIL/UNVERIFIED）。",
+      "suggestion": "继续消费同一 trace 的 CaseResult.steps[]。"
+    },
+    {
+      "id": "testing_artifact_integrity",
+      "category": "structure",
+      "description": "Hylyre artifact 定位/哈希与 failure-boundary 义务",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "artifact 全部可定位、哈希相符、停留在 trace 目录树内；根失败的失败边界义务已满足。"
+    },
+    {
+      "id": "testing_failure_routing_TC-004_s11",
+      "category": "structure",
+      "description": "Step Outcome v1 责任路由（outcome.failure.domain）",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "failure_kind": "assertion",
+      "failure_code": "assertion.mismatch",
+      "coding_candidate": true,
+      "repair_owner": "coding",
+      "details": "TC-004 step 11：已执行 assertion 失败，且同 case 较小 index 有已通过 action：进入 coding/product candidate",
+      "structured": {
+        "repair_evidence": {
+          "trace_path": "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/trace.json",
+          "case_id": "TC-004",
+          "step_index": 11,
+          "derived_plan_path": "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/test-plan.hylyre.md",
+          "artifact_paths": [
+            "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/failures/TC-004-step-11.json",
+            "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/failures/TC-004-step-11.png"
+          ]
+        },
+        "selector": {
+          "request": {
+            "kind": "by_id",
+            "value": "bcs_root",
+            "match": null,
+            "constraints": {}
+          },
+          "resolution": {
+            "state": "not_found",
+            "candidate_count": 0,
+            "selected": null,
+            "candidates": []
+          }
+        },
+        "outcome": {
+          "status": "failed",
+          "failure": {
+            "domain": "assertion",
+            "code": "assertion.mismatch",
+            "facts": {
+              "assertion": "presence"
+            }
+          },
+          "observation": {
+            "kind": "assertion",
+            "assertion_type": "presence",
+            "matched": false,
+            "facts": {
+              "expected_present": true,
+              "observed_present": false,
+              "candidate_count": 0,
+              "raw_return_present": false
+            }
+          }
+        },
+        "diagnostic": null
+      },
+      "suggestion": "由既有 summary repair-candidates 链投递 coding/product。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "testing_failure_routing_TC-005_s11",
+      "category": "structure",
+      "description": "Step Outcome v1 责任路由（outcome.failure.domain）",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "failure_kind": "assertion",
+      "failure_code": "assertion.mismatch",
+      "coding_candidate": true,
+      "repair_owner": "coding",
+      "details": "TC-005 step 11：已执行 assertion 失败，且同 case 较小 index 有已通过 action：进入 coding/product candidate",
+      "structured": {
+        "repair_evidence": {
+          "trace_path": "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/trace.json",
+          "case_id": "TC-005",
+          "step_index": 11,
+          "derived_plan_path": "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/test-plan.hylyre.md",
+          "artifact_paths": [
+            "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/failures/TC-005-step-11.json",
+            "doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/failures/TC-005-step-11.png"
+          ]
+        },
+        "selector": {
+          "request": {
+            "kind": "by_id",
+            "value": "bcs_root",
+            "match": null,
+            "constraints": {}
+          },
+          "resolution": {
+            "state": "not_found",
+            "candidate_count": 0,
+            "selected": null,
+            "candidates": []
+          }
+        },
+        "outcome": {
+          "status": "failed",
+          "failure": {
+            "domain": "assertion",
+            "code": "assertion.mismatch",
+            "facts": {
+              "assertion": "presence"
+            }
+          },
+          "observation": {
+            "kind": "assertion",
+            "assertion_type": "presence",
+            "matched": false,
+            "facts": {
+              "expected_present": true,
+              "observed_present": false,
+              "candidate_count": 0,
+              "raw_return_present": false
+            }
+          }
+        },
+        "diagnostic": null
+      },
+      "suggestion": "由既有 summary repair-candidates 链投递 coding/product。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "hylyre_selector_runtime_gate",
+      "category": "structure",
+      "description": "Hylyre StepResult selector evidence 运行时门",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native StepResult selector evidence 已通过 candidate_count/消歧/absence assertion 运行时门。"
+    },
+    {
+      "id": "testing_channel_evidence_obligation",
+      "category": "structure",
+      "description": "非 Hylyre 通道 TC 的机器证据义务",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "failure_kind": "testing_channel_unverified",
+      "structured": {
+        "unsupported_gap_count": 3,
+        "unsupported_gap": [
+          {
+            "tc_id": "TC-008",
+            "channel": "manual",
+            "detail": "manual:perf_sampling——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。"
+          },
+          {
+            "tc_id": "TC-009",
+            "channel": "manual",
+            "detail": "manual:perf_sampling——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。"
+          },
+          {
+            "tc_id": "TC-010",
+            "channel": "manual",
+            "detail": "manual:data_injection——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。"
+          }
+        ]
+      },
+      "details": "以下 TC 声明为非 hylyre 通道，但未由机器证据闭合（visual 绑定断裂/失效，或通道写法错误）：\n  - [visual/unbound] TC-007：TC-007 已绑定屏 card_type_sheet、bank_card_selection，但视觉产物不可用：本轮 visual_diff 门未通过（status=FAIL：门缺席、id 不符或状态本身不可消费），无本轮视觉证据可消费\n\nunsupported_gap 3 条（留在分母、不算 PASS、不阻止普通开发完成；报告结论与 completion_status 须披露）：\n  - [manual] TC-008：manual:perf_sampling——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。\n  - [manual] TC-009：manual:perf_sampling——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。\n  - [manual] TC-010：manual:data_injection——当前工具无该类原语，需求保留、带缺口完成；不算 PASS；人工确认 / confirmed_by / 质量 receipt / manual resume 都不构成本轮通过证据。",
+      "suggestion": "visual 通道：补齐所缺的「关联 AC」/checkpoint 屏声明/本轮视觉产物；写法错误的 TC 改回 execution_channel=hylyre 并写出步骤，或按固定缺口类别写成 manual:<class>（工具确无原语时）。provider 通道：provider 通道要可通过，执行该通道的 capability provider 必须产出 per-TC 结果：至少包含 tc_id、机器判定的 outcome、以及可复核的产物引用（路径 + sha256）；并与本次 run 的身份绑定。当前 capability 解析记录只有 feature 级的 state（resolved/pruned/blocked/not_applicable），没有 TC 维度——\"能力在场\"不证明\"该 TC 执行并通过\"，因此不得据此放行。任何情况下都不接受人工确认、confirmed_by、质量 receipt 或 manual resume 作为本轮通过证据。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "p0_runtime_step_evidence",
+      "category": "structure",
+      "description": "P0 device flow 原生 CaseResult.steps[] 证据",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "native CaseResult.steps[] 已在场并通过三重判据（version=0.5.1, schema=0.4-p0）；goal identity binding 保留。"
+    },
+    {
+      "id": "testing_run_status",
+      "category": "structure",
+      "description": "Testing 阶段脚本门禁总体状态",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "details": "Testing 阶段状态面板：\n- 文档结构规则：FAIL（visual_diff, negative_verdict_closure, p0_coverage_integrity, p0_semantic_coverage_integrity, testing_failure_routing_TC-004_s11, testing_failure_routing_TC-005_s11, testing_channel_evidence_obligation）\n- 主应用打包：PASS\n- 真机装机：PASS\n- 当前是否可以宣称 testing 完成：否\ncan_claim_done: NO\ntest_plan: PRESENT\ntest_report: PRESENT\nblocker_fail_count: 8\nblocker_skip_count: 0\nblocking_warn_count: 0\nblocker_fail_ids: device_test_run, visual_diff, negative_verdict_closure, p0_coverage_integrity, p0_semantic_coverage_integrity, testing_failure_routing_TC-004_s11, testing_failure_routing_TC-005_s11, testing_channel_evidence_obligation\n- 阻塞项：device_test_run, visual_diff, negative_verdict_closure, p0_coverage_integrity, p0_semantic_coverage_integrity, testing_failure_routing_TC-004_s11, testing_failure_routing_TC-005_s11, testing_channel_evidence_obligation",
+      "suggestion": "补齐 test-plan.md / test-report.md，并修复 BLOCKER FAIL/SKIP 后重跑 testing harness。",
+      "source": "check-testing.ts"
+    },
+    {
+      "id": "capability_testing_cases",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_testing_cases)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=evidence; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_testing_code_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_testing_code_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_testing_design_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_testing_design_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=evidence; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    }
+  ],
+  "summary": {
+    "total": 59,
+    "pass": 48,
+    "fail": 9,
+    "warn": 2,
+    "skip": 0,
+    "blockers": 8,
+    "verdict": "FAIL"
+  }
+}

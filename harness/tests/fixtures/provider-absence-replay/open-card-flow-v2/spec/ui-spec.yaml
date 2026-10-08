@@ -1,0 +1,81 @@
+schema_version: "1.0"
+verified: unverified
+screens:
+  - id: card_type_sheet
+    priority: P0
+    ref_id: card_type_sheet_ref
+    must_have_elements: [cts_title, cts_close, cts_bank, cts_debit, cts_credit, cts_notice, cts_agreement, cts_continue]
+    root:
+      id: cts_root
+      type: overlay_panel
+      order: 0
+      layout: column
+      bg_color: color.sheet_bg
+      children:
+        - { id: cts_title, type: content_display, order: 0, text: "选择卡类型", style_ref: font.title, color_ref: color.text_primary }
+        - { id: cts_close, type: action_button, order: 1, variant: tonal, icon: { kind: system_symbol, ref: sys.symbol.xmark } }
+        - { id: cts_bank, type: content_display, order: 2, text: "银行名称", asset_ref: bank_logo }
+        - { id: cts_debit, type: list_selection, order: 3, text: "储蓄卡" }
+        - { id: cts_credit, type: list_selection, order: 4, text: "信用卡" }
+        - { id: cts_notice, type: content_display, order: 5, text: "为您的银行卡开通华为支付和银联手机闪付服务" }
+        - { id: cts_agreement, type: content_display, order: 6, text: "我已阅读快捷支付服务协议、银联无卡自助消费授权协议" }
+        - { id: cts_continue, type: action_button, order: 7, text: "同意并继续", variant: primary }
+  - id: bank_card_selection
+    priority: P0
+    ref_id: bank_card_selection_ref
+    must_have_elements: [bcs_back, bcs_title, bcs_hint, bcs_card_list, bcs_agreement, bcs_next]
+    root:
+      id: bcs_root
+      type: navigation_frame
+      order: 0
+      layout: column
+      bg_color: color.page_bg
+      children:
+        - { id: bcs_back, type: action_button, order: 0, icon: { kind: system_symbol, ref: sys.symbol.chevron_left } }
+        - { id: bcs_title, type: content_display, order: 1, text: "银行名称", style_ref: font.title }
+        - { id: bcs_hint, type: content_display, order: 2, text: "请选择您要绑定的银行卡" }
+        - { id: bcs_card_list, type: list_selection, order: 3, text: "4392 **** **** 2269", asset_ref: bank_logo }
+        - { id: bcs_agreement, type: list_selection, order: 4, text: "同意并阅读用户授权协议" }
+        - { id: bcs_next, type: action_button, order: 5, text: "下一步", variant: primary }
+  - id: sms_verification_sheet
+    priority: P0
+    ref_id: sms_sheet_ref
+    must_have_elements: [sms_title, sms_close, sms_hint, sms_input, sms_resend, sms_next]
+    root:
+      id: sms_root
+      type: overlay_panel
+      order: 0
+      layout: column
+      bg_color: color.sheet_bg
+      children:
+        - { id: sms_title, type: content_display, order: 0, text: "输入验证码", style_ref: font.title }
+        - { id: sms_close, type: action_button, order: 1, icon: { kind: system_symbol, ref: sys.symbol.xmark } }
+        - { id: sms_hint, type: content_display, order: 2, text: "请输入发送至手机的验证码" }
+        - { id: sms_input, type: input, order: 3, text: "请输入短信验证码" }
+        - { id: sms_resend, type: action_button, order: 4, text: "60 秒后重试", variant: text }
+        - { id: sms_next, type: action_button, order: 5, text: "下一步", variant: primary }
+  - id: add_card_result
+    priority: P0
+    ref_id: result_ref
+    must_have_elements: [result_status, result_title, result_desc, result_illustration, result_done]
+    root:
+      id: result_root
+      type: navigation_frame
+      order: 0
+      layout: column
+      bg_color: color.page_bg
+      children:
+        - { id: result_status, type: content_display, order: 0, icon: { kind: system_symbol, ref: sys.symbol.checkmark_circle_fill } }
+        - { id: result_title, type: content_display, order: 1, text: "添卡成功", style_ref: font.title }
+        - { id: result_desc, type: content_display, order: 2, text: "可用于实体店二维码支付和网上商城支付" }
+        - { id: result_illustration, type: content_display, order: 3, asset_ref: result_payment_illustration }
+        - { id: result_done, type: action_button, order: 4, text: "完成", variant: tonal }
+tokens:
+  color.page_bg: { value: "#F5F6F7", sampled: true, source_ref: result_ref, source_bbox: [0.0, 0.1, 0.1, 0.1] }
+  color.sheet_bg: { value: "#F5F6F7", sampled: true, source_ref: card_type_sheet_ref, source_bbox: [0.1, 0.4, 0.1, 0.1] }
+  color.text_primary: { value: "#1A1A1A", sampled: true, source_ref: card_type_sheet_ref, source_bbox: [0.05, 0.42, 0.3, 0.05] }
+  color.primary: { value: "#0A59F7", sampled: true, source_ref: card_type_sheet_ref, source_bbox: [0.25, 0.86, 0.5, 0.05] }
+  font.title: { value: "24fp", sampled: true, source_ref: card_type_sheet_ref, source_bbox: [0.03, 0.4, 0.35, 0.06] }
+assets:
+  - { key: bank_logo, acquisition: repo_asset, resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png, placeholder: false }
+  - { key: result_payment_illustration, acquisition: repo_asset, resolved_path: doc/features/bc-openCard-2/open-card-flow-v2/spec/assets/result_payment_illustration.png, placeholder: false }

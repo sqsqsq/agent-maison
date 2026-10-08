@@ -205,8 +205,11 @@ import {
   buildEntryUiPriorityMap,
 } from './utils/testing-trace-gates';
 import {
+  CAPABILITY_ABSENCE_NOTE,
+  CAPABILITY_ABSENCE_PROJECTION,
   evaluateP0CoverageIntegrity,
   evaluateP0SemanticCoverage,
+  isCapabilityAbsenceCheck,
   isP0DeviceInteractive,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
@@ -5377,6 +5380,16 @@ export function __testing_checkChannelEvidenceObligation(
   return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath, resolvedBindings);
 }
 
+/** plan c3f8a2d7 §4.2 回放入口：主链在 visual 之后算一次的逐 TC 绑定（报告 / P0 / 义务门共用）。 */
+export function __testing_resolveChannelEvidenceBindings(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[],
+): { decl: ExecutionChannelDeclarationResult; bindings: ChannelEvidenceBinding[] } {
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  return { decl, bindings: resolveChannelEvidenceBindings(ctx, plan, decl, priorResults, null) };
+}
+
 export function __testing_checkExecutionChannelDeclaration(
   ctx: CheckContext,
   plan: string | null,
@@ -5574,13 +5587,15 @@ function checkChannelEvidenceObligation(
   const ownerRank = ['coding', 'spec', 'capability'] as const;
   const blockingOwner = ownerRank.find(owner => blocking.some(b => b.repair_owner === owner));
   const blockingFiles = [...new Set(blocking.filter(b => b.repair_owner === blockingOwner).flatMap(b => b.affected_files ?? []))];
+  // plan c3f8a2d7 §3.2③：阻断绑定全部归 capability（视觉 provider 缺席）→ 复用同一外部缺席投影；混有 coding/spec/无归属仍原样 FAIL。
+  const capabilityAbsent = blocking.length > 0 && blocking.every(b => b.repair_owner === 'capability');
   return [{
     id: 'testing_channel_evidence_obligation',
     category: 'structure',
     description: '非 Hylyre 通道 TC 的机器证据义务',
     severity: 'BLOCKER',
     status: blocking.length === 0 ? 'PASS' : 'FAIL',
-    ...(blocking.length === 0 ? {} : { failure_kind: 'testing_channel_unverified' as const }),
+    ...(blocking.length === 0 ? {} : capabilityAbsent ? CAPABILITY_ABSENCE_PROJECTION : { failure_kind: 'testing_channel_unverified' as const }),
     ...(blocking.length > 0 && blockingOwner ? { repair_owner: blockingOwner } : {}),
     ...(blockingFiles.length > 0 ? { affected_files: blockingFiles } : {}),
     structured: {
@@ -5594,6 +5609,7 @@ function checkChannelEvidenceObligation(
           ...gapLines,
         ].join('\n')
       : [
+          ...(capabilityAbsent ? [`${CAPABILITY_ABSENCE_NOTE}：以下 visual TC 只因视觉能力不可用（绑定责任方=capability）而未闭合，能力恢复后由同一检查重验，无需修改产品。`] : []),
           '以下 TC 声明为非 hylyre 通道，但未由机器证据闭合（visual 绑定断裂/失效，或通道写法错误）：',
           ...blocking.map(b => `  - [${b.channel}/${b.verdict.kind}] ${b.tc_id}：${b.verdict.detail}`),
           ...gapLines,
@@ -5766,7 +5782,13 @@ export function projectDelegatedVisualProviderFailure(
     description,
     severity: 'BLOCKER',
     status: 'SKIP',
-    structured: { kind: 'visual_provider_round', outcome, reason, ...(diagnosticPaths?.length ? { diagnostic_paths: diagnosticPaths } : {}) },
+    // plan c3f8a2d7 §3.2①：provider 缺席（unavailable）的责任方是能力，经既有读取器
+    // （execution-channel-evidence loadVisualScreenVerdicts）落到绑定的 repair_owner；invalid 是证据产出失败，不补。
+    structured: {
+      kind: 'visual_provider_round', outcome, reason,
+      ...(outcome === 'unavailable' ? { evidence_block_owner: 'capability' } : {}),
+      ...(diagnosticPaths?.length ? { diagnostic_paths: diagnosticPaths } : {}),
+    },
     details: '',
   };
 
@@ -5788,8 +5810,7 @@ export function projectDelegatedVisualProviderFailure(
     return {
       ...base,
       status: 'FAIL',
-      blocking_class: 'externalBlocked',
-      failure_kind: 'capability_missing',
+      ...CAPABILITY_ABSENCE_PROJECTION,
       details:
         `【DEFERRED_CAPABILITY_MISSING】发布必需的视觉轴所需 provider 本轮不可用：${reason}\n` +
         '复用既有 external/capability-missing 投影，当前内容不重试，也不请求人工签字。',
@@ -5838,6 +5859,9 @@ function buildTestingRunStatusResult(
     r => r.id !== 'device_test_build' && r.id !== 'device_test_install' && r.id !== 'device_test_run',
   );
   const canClaimDone = Boolean(plan && report) && blockerFails.length === 0 && blockerSkips.length === 0;
+  // plan c3f8a2d7 §3.2⑤：只剩视觉能力缺席时与装机外部阻塞同款降级（最终 INCOMPLETE 仍由共享裁决给出）。
+  const capabilityAbsenceOnly = blockerFails.length > 0 && blockerFails.every(isCapabilityAbsenceCheck);
+  const externalOnly = (deviceExternalBlocked && compilePassed) || capabilityAbsenceOnly;
 
   const lines: string[] = [
     'Testing 阶段状态面板：',
@@ -5854,6 +5878,9 @@ function buildTestingRunStatusResult(
   ];
   if (deviceExternalBlocked && compilePassed) {
     lines.push('- partial_readiness: compile_passed_device_blocked（harness verdict 应为 INCOMPLETE，非 PASS）');
+  }
+  if (capabilityAbsenceOnly) {
+    lines.push('- partial_readiness: capability_missing（harness verdict 应为 INCOMPLETE）');
   }
   if (blockerFails.length > 0) {
     lines.push(`blocker_fail_ids: ${blockerFails.map(r => r.id).join(', ')}`);
@@ -5872,11 +5899,13 @@ function buildTestingRunStatusResult(
     id: 'testing_run_status',
     category: 'structure',
     description: 'Testing 阶段脚本门禁总体状态',
-    severity: deviceExternalBlocked && compilePassed ? 'MINOR' : 'BLOCKER',
-    status: canClaimDone ? 'PASS' : deviceExternalBlocked && compilePassed ? 'WARN' : 'FAIL',
+    severity: externalOnly ? 'MINOR' : 'BLOCKER',
+    status: canClaimDone ? 'PASS' : externalOnly ? 'WARN' : 'FAIL',
     details: lines.join('\n'),
     suggestion: canClaimDone
       ? '脚本门禁可进入 verifier + receipt 闭环；仍需确认真机测试证据与报告语义质量。'
+      : capabilityAbsenceOnly
+        ? '恢复视觉能力（provider 等）后重新发起同一请求，由同一检查重验；无需修改产品，不允许宣称 testing 阶段完成。'
       : deviceExternalBlocked && compilePassed
         ? '接入真机/模拟器后重跑；summary.next_action=device_ready_then_rerun_testing；不允许宣称 testing 阶段完成。'
         : '补齐 test-plan.md / test-report.md，并修复 BLOCKER FAIL/SKIP 后重跑 testing harness。',

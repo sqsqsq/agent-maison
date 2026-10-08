@@ -106,7 +106,7 @@ export function removeShimFramework(fw: string): void {
 const UT_TEST = 'src/demo/src/ohosTest/ets/test/Value.test.ets';
 const UT_BASELINE_TEST = 'src/demo/src/ohosTest/ets/test/Base.test.ets';
 
-function fixture(newFile = false, baselineTest = false) {
+function fixture(newFile = false, baselineTest = false, extraContractFiles: string[] = []) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-coding-review-'));
   const write = (file: string, value: string) => { const abs = path.join(root, file); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, value); };
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -115,6 +115,7 @@ function fixture(newFile = false, baselineTest = false) {
   if (baselineTest) write(UT_BASELINE_TEST, 'export default function baseTest() {}\n');
   const contracts = { feature: 'demo', source: 'approved design', version: '1', modules: [{ name: 'demo', layer: 'src', package_path: 'src/demo' }], files: ['src/demo/value.ts'], module_dependencies: {}, data_models: [], interfaces: [], components: [], prd_to_code_traceability: [{ prd_id: 'AC-1', key_files: ['src/demo/value.ts'] }] };
   if (newFile) contracts.files.push('src/demo/new.ts');
+  contracts.files.push(...extraContractFiles);
   write('doc/features/demo/contracts.yaml', YAML.stringify(contracts));
   write('doc/features/demo/acceptance.yaml', YAML.stringify({ feature: 'demo', source: 'approved behavior', version: '1', criteria: [{ id: 'AC-1', description: 'value is 42', priority: 'P1', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: ['value is 42'] }], boundaries: [] }));
   git('init', '-q'); git('add', 'src/demo/value.ts', ...(baselineTest ? [UT_BASELINE_TEST] : [])); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'baseline');
@@ -203,7 +204,7 @@ async function scopeCheck(f: ReturnType<typeof fixture>) {
   return check!;
 }
 
-const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; extraContractFiles?: string[]; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
   ...(['new', 'modified', 'untouched'] as const).map(mode => ({ name: `b1b2 owned source coverage ${mode}: only actual phase writes downgrade missing research`, newFile: true, run(f: ReturnType<typeof fixture>) {
     const fw = frameworkDeclaringTsSources();
     try {
@@ -536,6 +537,78 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ru
       const broken = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
       assert(!broken.factsContext?.baseline && broken.factsRebuildReason?.includes('frontmatter'), '坏baseline有自动重建出口');
     } finally { removeShimFramework(fw); }
+  } },
+  /**
+   * plan c3f8a2d7 §3.1 / §4.2（be091c coding-i13/i16 形状）：facts owner 与运行时写入归属同一裁决。
+   * 写边界判给 coding source 域的产品资源（非 `.ts` 后缀）漂移只记账本 WARN；列进 contracts.files 的
+   * 规格文件与写边界外的研究来源（非源码后缀）漂移仍是 BLOCKER。
+   */
+  { name: 'c3f8a2d7 t1 facts owner follows the coding write boundary: in-boundary resource drift only warns, specs and outside research stay blocking',
+    extraContractFiles: ['src/demo/resources/base/element/string.json', 'doc/features/demo/acceptance.yaml', 'doc/features/demo/contracts.yaml', 'doc/features/demo/context/facts.md'], run(f) {
+    const fw = frameworkDeclaringTsSources();
+    const resource = 'src/demo/resources/base/element/string.json';
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      f.write(resource, '{"string":[]}\n'); f.write('build-profile.json5', '{}\n');
+      f.facts();
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace('source_code_paths:\n  - src/demo/value.ts',
+        `source_code_paths:\n  - src/demo/value.ts\n  - ${resource}\n  - doc/features/demo/acceptance.yaml\n  - build-profile.json5`));
+      const initial = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
+      const owners = initial.factsContext!.source_owners!;
+      assert.equal(owners[resource], 'coding', `写边界内的产品资源必须归 coding：${JSON.stringify(owners)}`);
+      for (const file of ['doc/features/demo/acceptance.yaml', 'doc/features/demo/contracts.yaml', 'doc/features/demo/context/facts.md', 'build-profile.json5']) {
+        assert.equal(owners[file], undefined, `${file} 不归 coding 写边界，不得拿到 owner：${JSON.stringify(owners)}`);
+      }
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', factsContext: initial.factsContext }));
+      beginFactsInvocation(f, fw, 'coding', f.manifest.run_id, 'i1');
+      const gate = () => {
+        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'i1' });
+        const inputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', track: 'full', ...entry }).inputs!;
+        return checkFactsArtifact(f.root, 'demo', 'coding', { frameworkRoot: fw, factsContext: entry.factsContext, resolvedInputs: inputs, goalAttemptId: 'i1' });
+      };
+      const originalResource = fs.readFileSync(path.join(f.root, resource), 'utf8');
+      f.write(resource, '{"string":[{"name":"card_type","value":"Card type"}]}\n');
+      const resourceChecks = gate();
+      const stale = resourceChecks.filter(check => check.id === 'context_exploration_facts_source_stale');
+      assert(stale.some(check => check.status === 'WARN' && check.details.includes(resource)), JSON.stringify(resourceChecks));
+      // 夹具把规格文件列进 contracts.files 只为验证归属；它们引出的覆盖面检查与本项无关，这里只看来源过期。
+      assert(!stale.some(check => check.status === 'FAIL'), JSON.stringify(stale));
+      f.write(resource, originalResource);
+      for (const file of ['doc/features/demo/acceptance.yaml', 'build-profile.json5']) {
+        const before = fs.readFileSync(path.join(f.root, file), 'utf8');
+        fs.appendFileSync(path.join(f.root, file), '\n# drift during coding\n');
+        assert(gate().some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'FAIL' && check.details.includes(file)), `${file} 漂移必须仍是 BLOCKER`);
+        f.write(file, before);
+      }
+    } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
+  } },
+  { name: 'c3f8a2d7 t1 plan without a construction binding keeps suffix ownership and the write boundary failure never escapes', run(f) {
+    const fw = frameworkDeclaringTsSources();
+    const resource = 'src/demo/resources/base/element/string.json';
+    try {
+      fs.rmSync(path.join(f.root, 'doc/features/demo/contracts.yaml'));
+      const config = JSON.parse(fs.readFileSync(path.join(f.root, 'framework.config.json'), 'utf8'));
+      config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+      f.write('framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', completionTarget: 'feature',
+        requestedResults: ['deliver planned page'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: 'deliver planned page', overwrite: true });
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'c3-plan-unbound', requirement: 'deliver planned page', run_base_sha: f.git('rev-parse', 'HEAD'), execution_scope: prepared.scope,
+        chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain });
+      assert.throws(() => readRunBoundContracts(f.root, fw, 'demo', manifest.run_id), /frozen construction contract missing/, '前提：plan 前没有施工绑定');
+      f.write(resource, '{"string":[]}\n');
+      const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md'); fs.mkdirSync(path.dirname(factsPath), { recursive: true });
+      fs.writeFileSync(factsPath, ['---', YAML.stringify({ schema_version: '1.1', feature: 'demo', run_id: manifest.run_id, established_by: 'plan', ready_to_produce: true,
+        has_blocker_coverage_risk: false, source_code_paths: ['src/demo/value.ts', resource], key_inputs_read: ['src/demo/value.ts', resource], files_inspected_count: 2,
+        searches_performed_estimate: 1, decisions_unlocked: ['planned page location'], exploration_mode: 'sequential' }).trimEnd(), '---',
+        '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', '| src/demo/value.ts | existing source | extend safely |', `| ${resource} | existing strings | reuse keys |`, ''].join('\n'));
+      const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: manifest.run_id });
+      assert(bridge.factsContext!.source_paths.includes(resource), JSON.stringify(bridge.factsContext));
+      assert.deepStrictEqual(bridge.factsContext!.source_owners, { 'src/demo/value.ts': 'coding' }, '无施工绑定时不扩大归属，沿用后缀筛选');
+    } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
   } },
   /**
    * plan e7a2c4f1 §3.4（G01）：facts 声明的来源没进建立阶段的证据登记，是**账本类**缺口——
@@ -1864,7 +1937,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   const only = process.env.STANDALONE_CODING_REVIEW_ONLY;
   for (const test of cases.filter(test => !only || only.split(',').some(prefix => test.name.startsWith(prefix)))) {
     let f: ReturnType<typeof fixture> | undefined;
-    try { f = fixture(test.newFile, test.baselineTest); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
+    try { f = fixture(test.newFile, test.baselineTest, test.extraContractFiles); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
     finally { if (prior === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prior; clearFrameworkConfigCache(); if (f) fs.rmSync(f.root, { recursive: true, force: true }); }
   }

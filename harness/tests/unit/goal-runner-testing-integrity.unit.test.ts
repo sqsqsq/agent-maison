@@ -109,6 +109,9 @@ import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../script
 import type { UnitCaseResult } from '../run-unit';
 import { NO_AUTHORITY, decide } from '../../scripts/utils/adjudication';
 import { reduceRunState } from '../../scripts/utils/run-state-reducer';
+import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
+import { resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
+import { computeReplayChecks, seedReplay } from './test-report-writer.unit.test';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
@@ -493,7 +496,7 @@ export async function runGoalRuntimeChain(
      */
     testingGateChecks?: (ctx: {
       root: string; feature: string; runId: string; attemptId: string; fields: HarnessFidelityContextFields;
-    }) => CheckResult[] | null;
+    }) => CheckResult[] | null | Promise<CheckResult[] | null>;
     /** plan 4e6fb3b6 §5.1：进程内有界等待的上限/间隔/探针（runtime 启动入参；生产 CLI 不传，取默认 15 分钟/30 秒/真实探针）。 */
     conditionWait?: GoalPhaseRuntimeLaunchOptions['conditionWait'];
     /**
@@ -862,21 +865,30 @@ export async function runGoalRuntimeChain(
       // 生产 gate harness 子进程的身份 env（goal-phase-runtime.ts runHarnessPhase：身份 + RUNNER + GATE=1）
       const gateRunId = roundIdentity?.runId ?? gm?.run_id ?? '';
       const gateAttemptId = roundIdentity?.attemptId ?? '';
-      const inGateEnv = <T>(fn: () => T): T => withGoalEnv(() => {
+      // plan c3f8a2d7 §3.5：gate env 覆盖到可等待的真实 checker 结束为止（不在第一个 await 处提前还原）。
+      const inGateEnv = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+        const before = new Map(GOAL_ENV_KEYS.map(k => [k, process.env[k]]));
         Object.assign(process.env, {
           MAISON_GOAL_RUN_ID: gateRunId, MAISON_GOAL_ATTEMPT: gateAttemptId,
           MAISON_GOAL_ATTEMPT_PHASE: 'testing', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_GATE_HARNESS: '1',
         });
-        return fn();
-      });
+        try { return await fn(); } finally {
+          for (const k of GOAL_ENV_KEYS) {
+            const v = before.get(k);
+            if (v === undefined) delete process.env[k]; else process.env[k] = v;
+          }
+        }
+      };
       const realTestingChecks = String(ph) === 'testing' && opts.testingGateChecks
-        ? inGateEnv(() => opts.testingGateChecks!({
+        ? await inGateEnv(() => opts.testingGateChecks!({
             root: pr, feature: feat, runId: gateRunId, attemptId: gateAttemptId,
             fields: harnessFidelityContexts[harnessFidelityContexts.length - 1].fields,
           }))
         : null;
       if (realTestingChecks) {
-        const failed = realTestingChecks.some(c => c.status === 'FAIL' && c.severity === 'BLOCKER');
+        // 与生产 harness 同一共享裁决（computeSummary → resolveVerdictFromChecks）：仅剩外部缺席时为 INCOMPLETE，不是 FAIL。
+        const verdict = resolveVerdictFromChecks(realTestingChecks);
+        const failed = verdict !== 'PASS';
         const testingReport: ScriptReport = {
           phase: 'testing' as Phase, feature: feat, timestamp: new Date().toISOString(), project_root: pr,
           assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
@@ -888,12 +900,12 @@ export async function runGoalRuntimeChain(
             warn: realTestingChecks.filter(c => c.status === 'WARN').length,
             skip: realTestingChecks.filter(c => c.status === 'SKIP').length,
             blockers: realTestingChecks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER').length,
-            verdict: failed ? 'FAIL' : 'PASS',
+            verdict,
           },
         };
         // 生产 harness 同序：先落 script-report.json（checks[].structured 随之落盘），再由 writer 派生 summary
         fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(testingReport, null, 2));
-        inGateEnv(() => writeRunSummaryBase(pr, testingReport, _fr));
+        await inGateEnv(() => writeRunSummaryBase(pr, testingReport, _fr));
         writeManifestAndPointer();
         return { exitCode: failed ? 1 : 0, timedOut: false };
       }
@@ -6238,6 +6250,92 @@ test('P3 t5 A14 foreground：预算耗尽（结构终局）后无人脚本连续
       assert(again.exitCode === 1, `第 ${i + 1} 次重发须保持停止：exit=${again.exitCode}`);
     }
     assert(goalRunIds(root).length === 1 && goalRunEvents(root, run).length === eventsBefore, `run 数量与事件不得增加：runs=${goalRunIds(root).join(',')}`);
+  } finally {
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// plan c3f8a2d7 §3.5 / §4.2：连续回放——宿主第四轮真实 testing 产物（fixtures/provider-absence-replay）经生产
+// checker / writer 产出每一轮 testing 的 checks，再由真实 writeRunSummaryBase 落 summary、runtime 读盘调度。
+// provider 缺席 / 恢复只由外部调用替身表达（缺席轮 = provider 不可用的投影入口；恢复轮 = 替身写回逐屏 pass + 真实 checkVisualDiff）。
+// ---------------------------------------------------------------------------
+
+test('c3f8a2d7 t5 连续回放：testing FAIL（产品+provider 缺席）→ 回 coding → 修好后复跑只剩缺席 → DEFERRED_CAPABILITY_MISSING（WAITING external）→ 恢复后重发同一请求接回同 run → testing 重新入队并 PASS', async () => {
+  const { root } = setupHost('codex');
+  let providerRestored = false;
+  const gateRounds: Array<{ productFixed: boolean; provider: string; ids: Record<string, string> }> = [];
+  const common: Parameters<typeof runGoalRuntimeChain>[1] = {
+    onCoding: ({ root: r, attempt }) => { if (attempt > 1) writeFile(r, PRODUCT_FILE, `struct AddCardFlow { fixed ${attempt} }`); },
+    testingGateChecks: async ({ root: r }) => {
+      const productFixed = gateRounds.length > 0;
+      const provider = providerRestored ? 'restored' : 'unavailable';
+      seedReplay(r, { productFixed });
+      const { results } = await computeReplayChecks(r, { productFixed, providerOutcome: provider });
+      gateRounds.push({
+        productFixed, provider,
+        ids: Object.fromEntries(results.filter(c => c.status === 'FAIL').map(c => [c.id, `${c.blocking_class ?? '-'}/${c.failure_kind ?? '-'}`])),
+      });
+      return results;
+    },
+  };
+  try {
+    // ① 首个请求：testing 第 1 轮真实失败 → 回 coding；第 2 轮只剩 provider 缺席 → 延迟停下
+    const first = await requestVia('foreground', root, common);
+    const [run] = goalRunIds(root);
+    const ev1 = goalRunEvents(root, run);
+    const testingVerdicts1 = ev1.filter(e => e.type === 'phase_verdict' && e.phase === 'testing');
+    assert(gateRounds.length === 2 && first.invokedPhases.filter(p => p === 'testing').length === 2,
+      `夹具：首个请求须两轮 testing：${JSON.stringify(gateRounds)} / ${first.invokedPhases.join(',')}`);
+    assert(Boolean(gateRounds[0].ids['testing_failure_routing_TC-004_s11']) && gateRounds[0].ids.visual_diff === 'externalBlocked/capability_missing',
+      `第 1 轮须是产品失败与 provider 缺席并存：${JSON.stringify(gateRounds[0])}`);
+    assert(ev1.some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'coding'), '第 1 轮产品候选回退 coding');
+    // 源检查与派生检查仍在且分类为能力缺席（不是把 blocker 删掉证明通过）
+    for (const id of ['visual_diff', 'testing_channel_evidence_obligation', 'p0_coverage_integrity', 'p0_semantic_coverage_integrity']) {
+      assert(gateRounds[1].ids[id] === 'externalBlocked/capability_missing', `第 2 轮 ${id} 须为能力缺席：${JSON.stringify(gateRounds[1].ids)}`);
+    }
+    assert(Object.values(gateRounds[1].ids).every(v => v === 'externalBlocked/capability_missing'), `第 2 轮只剩能力缺席：${JSON.stringify(gateRounds[1].ids)}`);
+    const summary = testingSummaryOf(root) as { verdict?: string; blockers?: Array<{ id: string; blocking_class?: string; classification?: string }> };
+    assert(summary.verdict === 'INCOMPLETE', `生产 writer 的 summary 须为 INCOMPLETE：${summary.verdict}`);
+    assert(['visual_diff', 'testing_channel_evidence_obligation', 'p0_coverage_integrity', 'p0_semantic_coverage_integrity'].every(id =>
+      (summary.blockers ?? []).some(b => b.id === id && b.blocking_class === 'externalBlocked' && b.classification === 'capability_missing')),
+      `summary blockers 保留源检查与派生检查：${JSON.stringify(summary.blockers)}`);
+    // 缺席轮无 FAIL 重试：第 2 轮 testing 的裁决即延迟停下，之后本会话不再调用 testing
+    const lastVerdict = testingVerdicts1[testingVerdicts1.length - 1];
+    // 动作由 dependency policy 决定（本宿主默认 propagate → continue；testing 已是链尾，run 就此停下）
+    assert(/^defer_external_and_/.test(String(lastVerdict?.action)) && lastVerdict?.verdict === 'INCOMPLETE', `缺席轮须走既有延迟路径：${JSON.stringify(lastVerdict)}`);
+    assert(!testingVerdicts1.some(e => e.action === 'retry'), `缺席轮不得按 FAIL 重试：${JSON.stringify(testingVerdicts1.map(e => e.action))}`);
+    assert(lastRunEndOf(ev1)?.status === 'DEFERRED_CAPABILITY_MISSING', `run 终态：${JSON.stringify(lastRunEndOf(ev1))}`);
+    const projection = reduceRunState(ev1);
+    assert(projection.run_disposition === 'WAITING' && projection.run_wait_kind === 'external', `run 投影：${JSON.stringify(projection)}`);
+    // 停机说明点名 provider；不挂探针、不声称 external_condition_ready
+    const park = [...ev1].reverse().find(e => e.type === 'phase_halt' && e.phase === 'testing') as Record<string, unknown> | undefined;
+    assert(park?.run_disposition === 'WAITING' && park.run_wait_kind === 'external' && !('probe' in park) && !('halt_reason' in park),
+      `停放投影与设备停放同形、无探针：${JSON.stringify(park)}`);
+    assert(/provider/.test(String(park?.halt_guidance)) && /OAuth/.test(String(park?.halt_guidance)), `停机说明须点名 provider：${String(park?.halt_guidance)}`);
+    const reportMd = fs.readFileSync(path.join(first.reportDir, 'goal-report.md'), 'utf-8');
+    assert(reportMd.includes('OAuth session expired'), '报告的终止处置节点名 provider');
+
+    // ② provider 恢复后重新发起同一请求：接续决策接回同一 run，testing 重新入队并 PASS
+    providerRestored = true;
+    const second = await requestVia('foreground', root, common);
+    const ev2 = goalRunEvents(root, run);
+    const session2 = ev2.slice(ev1.length);
+    assert(goalRunIds(root).length === 1, `接回同一 run，不新建：${goalRunIds(root).join(',')}`);
+    assert(!session2.some(e => JSON.stringify(e).includes('external_condition_ready')), '不声称 external_condition_ready');
+    assert(session2.some(e => e.type === 'resume' && e.start_phase === 'testing'), `testing 须重新入队：${JSON.stringify(session2.filter(e => e.type === 'resume'))}`);
+    assert(second.invokedPhases.join(',') === 'testing', `恢复会话只重跑 testing：${second.invokedPhases.join(',')} ${JSON.stringify(gateRounds.slice(2))}`);
+    assert(gateRounds.length === 3 && gateRounds[2].provider === 'restored' && Object.keys(gateRounds[2].ids).length === 0,
+      `恢复轮原 checker 重验通过：${JSON.stringify(gateRounds[2])}`);
+    assertSealedComplete(ev2, '恢复后重发');
+    assert(lastRunEndOf(ev2)?.status === 'CHAIN_SLICE_COMPLETED', `终态：${JSON.stringify(lastRunEndOf(ev2))}`);
+    // turns 跨会话累计（既有 foldBudgetLineage）
+    const invokes = ev2.filter(e => e.type === 'agent_invoke_start').length;
+    const fold = foldBudgetLineage({ projectRoot: root, featuresDir: 'doc/features', feature: FEATURE, currentEvents: loadAuthoritativeEvents(path.join(second.reportDir, 'events.jsonl')) });
+    const turns = resolveResumedBudget(fold.budgetFoldEvents, { nextSessionStartMs: Date.now() }).totalTurns;
+    assert(turns === invokes && invokes > session2.filter(e => e.type === 'agent_invoke_start').length,
+      `turns 须跨会话累计：fold=${turns} invokes=${invokes}`);
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });

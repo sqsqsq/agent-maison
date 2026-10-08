@@ -1,0 +1,6364 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-001",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 6,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 7,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 8,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 10,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 10,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 11,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 13,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 14,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 15,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 11,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 12,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 13,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 14,
+      "kind": "scroll_to",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 17,
+      "kind": "scroll_to",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 18,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 20,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 22,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 11,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "assertion",
+          "code": "assertion.mismatch"
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 12,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 14,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 15,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 17,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 20,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 22,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 23,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 24,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 25,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 26,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 27,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 28,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 29,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 30,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 31,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 32,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 33,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 34,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 11,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "assertion",
+          "code": "assertion.mismatch"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 12,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 14,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 15,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 16,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 17,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 19,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 20,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 21,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 22,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 24,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 25,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 26,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 27,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 28,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 29,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 30,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 31,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 32,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 33,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 34,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 35,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 11
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 36,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 6,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 7,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 8,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 9,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 10,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 11,
+      "kind": "scroll_to",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 12,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 13,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 14,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 15,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 16,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 17,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 18,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 20,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow-v2/testing/reports/20261007T170043Z-568/hylyre/test-plan.hylyre.md",
+    "use_fakes": false
+  },
+  "cases": [
+    {
+      "id": "TC-001",
+      "name": "老路由链进入添加银行卡页",
+      "priority": "P0",
+      "ac_ref": "AC-7",
+      "status": "通过",
+      "notes": "expected check disabled by flag",
+      "execution": "completed",
+      "verification": "passed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 8391.62,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1157.767,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 751.438,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "center": [
+                  1021,
+                  925
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[818,871][1224,979]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[818,871][1224,979]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 38.813,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 323.581,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 40.369,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 38.431,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 1720.275,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 39.01,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 33.153,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-002",
+      "name": "添加银行卡页拉起卡类型半模态",
+      "priority": "P0",
+      "ac_ref": "AC-1",
+      "status": "通过",
+      "notes": "expected check disabled by flag",
+      "execution": "completed",
+      "verification": "passed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 666.366,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1127.156,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 675.514,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "center": [
+                  1021,
+                  925
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[818,871][1224,979]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[818,871][1224,979]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 35.477,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 311.263,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 39.26,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 330.583,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1557.056,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 410.94,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 972.856,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 56.437,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_bank",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_bank",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_bank",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 73.885,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_debit",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_debit",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_debit",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 65.813,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_credit",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_credit",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_credit",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 66.755,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_continue",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_continue",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_continue",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 608.777,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "composite",
+              "value": "招商银行",
+              "match": "exact",
+              "constraints": {
+                "within": {
+                  "by_id": "cts_bank"
+                },
+                "primary": "by_text"
+              }
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[234,1150][450,1213]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[234,1150][450,1213]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-003",
+      "name": "全部银行页拉起相同卡类型半模态",
+      "priority": "P0",
+      "ac_ref": "AC-1",
+      "status": "通过",
+      "notes": "expected check disabled by flag",
+      "execution": "completed",
+      "verification": "passed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 735.176,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1173.389,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 650.39,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "center": [
+                  1021,
+                  925
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[818,871][1224,979]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[818,871][1224,979]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 36.282,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 325.439,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 37.44,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 340.555,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1545.563,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 358.674,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 979.071,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 402.559,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_close",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_close",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_close",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 53.789,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_more_pill",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_more_pill",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_more_pill",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 362.096,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_more_pill",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_more_pill",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_more_pill",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 54.437,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "exp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "scroll_to",
+          "role": "action",
+          "duration_ms": 6607.275,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "scroll_to",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "tap": false,
+                "center": [
+                  660,
+                  1964
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_view_all_banks_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_view_all_banks_btn",
+                "bounds": "[48,1893][1272,2036]"
+              },
+              "candidates": [
+                {
+                  "id": "exp_view_all_banks_btn",
+                  "bounds": "[48,1893][1272,2036]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 457.773,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_view_all_banks_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_view_all_banks_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "exp_view_all_banks_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 65.349,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ab_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ab_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ab_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "scroll_to",
+          "role": "action",
+          "duration_ms": 6817.095,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "scroll_to",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "tap": false,
+                "center": [
+                  624,
+                  1613
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ab_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ab_row_cmb",
+                "bounds": "[48,1529][1200,1697]"
+              },
+              "candidates": [
+                {
+                  "id": "ab_row_cmb",
+                  "bounds": "[48,1529][1200,1697]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 575.683,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ab_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ab_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ab_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1025.462,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 80.21,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_bank",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_bank",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_bank",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 617.906,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "composite",
+              "value": "招商银行",
+              "match": "exact",
+              "constraints": {
+                "within": {
+                  "by_id": "cts_bank"
+                },
+                "primary": "by_text"
+              }
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[234,1150][450,1213]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[234,1150][450,1213]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-004",
+      "name": "六位验证码门禁提交",
+      "priority": "P0",
+      "ac_ref": "AC-3",
+      "status": "失败",
+      "notes": "expected check disabled by flag; step 11 is the root outcome; 22 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 762.909,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1142.862,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 645.376,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "center": [
+                  1021,
+                  925
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[818,871][1224,979]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[818,871][1224,979]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 37.045,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 324.863,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 40.092,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 342.398,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1561.985,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 399.845,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 986.464,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_continue",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_continue",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_continue",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 411.092,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_continue",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_continue",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_continue",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 10063.835,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "assertion",
+              "code": "assertion.mismatch",
+              "facts": {
+                "assertion": "presence"
+              }
+            },
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": false,
+              "facts": {
+                "expected_present": true,
+                "observed_present": false,
+                "candidate_count": 0,
+                "raw_return_present": false
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "bcs_root",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-004-step-11.json",
+              "sha256": "e70987e207e971431ef2c0d450ec9ddeda106d09d100308e9ad6e7b50cbeb077",
+              "bytes": 346025
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-004-step-11.png",
+              "sha256": "3ccdf295cb2ca97f803ca4ca37f0cb33ae0eb217928e5817722cb68b83a076e6",
+              "bytes": 150503
+            }
+          ],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 27,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 28,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 29,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 30,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 31,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 32,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 33,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 34,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-005",
+      "name": "成功结果页禁止返回并完成清栈",
+      "priority": "P0",
+      "ac_ref": "AC-6",
+      "status": "失败",
+      "notes": "expected check disabled by flag; step 11 is the root outcome; 24 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 760.62,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1152.52,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 653.254,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "center": [
+                  1021,
+                  925
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[818,871][1224,979]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[818,871][1224,979]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 34.214,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 325.46,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 35.403,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 324.815,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1558.15,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 401.939,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_row_cmb",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_row_cmb",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_row_cmb",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 989.793,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_continue",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_continue",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_continue",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 392.472,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cts_continue",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cts_continue",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cts_continue",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 10095.419,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "assertion",
+              "code": "assertion.mismatch",
+              "facts": {
+                "assertion": "presence"
+              }
+            },
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": false,
+              "facts": {
+                "expected_present": true,
+                "observed_present": false,
+                "candidate_count": 0,
+                "raw_return_present": false
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "bcs_root",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-005-step-11.json",
+              "sha256": "7646516c06da712b114a97e6144e714014468b4a83e5da52c9665719593d992c",
+              "bytes": 346025
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-005-step-11.png",
+              "sha256": "bde89ea8835f3c68564ed20d587f2be418389641db7eb0b3f24093b9bd63b6c2",
+              "bytes": 150493
+            }
+          ],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 27,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 28,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 29,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 30,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 31,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 32,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 33,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 34,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 35,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 11
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 36,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-006",
+      "name": "老路由进入全部银行并逐级返回",
+      "priority": "P0",
+      "ac_ref": "AC-7",
+      "status": "通过",
+      "notes": "expected check disabled by flag",
+      "execution": "completed",
+      "verification": "passed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 739.751,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1138.017,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 660.211,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "center": [
+                  1021,
+                  925
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": null,
+                "bounds": "[818,871][1224,979]"
+              },
+              "candidates": [
+                {
+                  "id": null,
+                  "bounds": "[818,871][1224,979]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 38.189,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 319.756,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 36.281,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 34.899,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 326.368,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1564.417,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_more_pill",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_more_pill",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_more_pill",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 412.732,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "col_more_pill",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "col_more_pill",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "col_more_pill",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 61.299,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "exp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "scroll_to",
+          "role": "action",
+          "duration_ms": 6435.678,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "scroll_to",
+              "performed": true,
+              "facts": {
+                "engine": "resolver",
+                "tap": false,
+                "center": [
+                  660,
+                  1964
+                ],
+                "resolution_kind": null,
+                "fragment_bounds": null
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_view_all_banks_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_view_all_banks_btn",
+                "bounds": "[48,1893][1272,2036]"
+              },
+              "candidates": [
+                {
+                  "id": "exp_view_all_banks_btn",
+                  "bounds": "[48,1893][1272,2036]"
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 449.231,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "touch",
+              "performed": true,
+              "facts": {
+                "engine": "native"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_view_all_banks_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_view_all_banks_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "exp_view_all_banks_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 60.535,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ab_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ab_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ab_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 109.799,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "back",
+              "performed": true,
+              "facts": {
+                "times": 1
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 57.635,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "exp_page_title",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "exp_page_title",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "exp_page_title",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 112.355,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "back",
+              "performed": true,
+              "facts": {
+                "times": 1
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 59.276,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "ac_bank_card_row",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "ac_bank_card_row",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "ac_bank_card_row",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 110.89,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "back",
+              "performed": true,
+              "facts": {
+                "times": 1
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 1643.34,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "assertion",
+              "assertion_type": "presence",
+              "matched": true,
+              "facts": {
+                "expected_present": true,
+                "observed_present": true,
+                "candidate_count": 1,
+                "raw_return_present": true
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_id",
+              "value": "cp_add_card_btn",
+              "match": null,
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "unique",
+              "candidate_count": 1,
+              "selected": {
+                "id": "cp_add_card_btn",
+                "bounds": null
+              },
+              "candidates": [
+                {
+                  "id": "cp_add_card_btn",
+                  "bounds": null
+                }
+              ]
+            }
+          },
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    }
+  ],
+  "environment": {
+    "hylyre_version": "0.5.1",
+    "hypium_version": "6.1.0.210",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed",
+    "ui_driver": "HypiumDriver"
+  }
+}

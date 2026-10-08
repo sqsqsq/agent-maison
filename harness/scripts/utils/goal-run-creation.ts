@@ -939,13 +939,23 @@ function isStructurallyTerminal(run: SiblingRun, projectRoot: string): boolean {
   return reduceRunState(run.events).run_disposition === 'TERMINAL' && !COMPLETED_STATUSES.has(run.status);
 }
 
-/** 保持停止时交还的原停止说明：最近一次停机的 halt_guidance，没有则取 run_end 的错误原文。 */
+/**
+ * 保持停止时交还的原停止说明，只看最近一次停止窗口（plan c3f8a2d7 §3.4）：最新 phase_halt 的
+ * halt_guidance，没有就用它的 reason；同一会话收尾的 run_end 只复制指引首行，不覆盖它。只有最新
+ * phase_halt 之后另起的会话（其后有 run_start，或 run_end 自带更晚的 session_started_at）以
+ * run_end.error 失败时才取该错误。
+ */
 function lastStopGuidance(run: SiblingRun): string {
-  const halt = [...run.events].reverse().find(event => event.type === 'phase_halt' && typeof (event as { halt_guidance?: unknown }).halt_guidance === 'string');
-  const guidance = (halt as { halt_guidance?: string } | undefined)?.halt_guidance;
-  if (guidance?.trim()) return guidance.trim();
-  const end = [...run.events].reverse().find(event => event.type === 'run_end') as { error?: unknown } | undefined;
-  return typeof end?.error === 'string' ? end.error.trim() : '';
+  const events = run.events as Array<Record<string, unknown>>;
+  const h = events.map(event => event.type).lastIndexOf('phase_halt');
+  const e = events.map(event => event.type).lastIndexOf('run_end');
+  const halt = events[h];
+  const end = events[e];
+  const restarted = e > h && (h < 0 || events.slice(h + 1, e).some(event => event.type === 'run_start')
+    || Date.parse(String(end.session_started_at)) > Date.parse(String(halt.ts)));
+  const text = [restarted ? end.error : undefined, halt?.halt_guidance, halt?.reason]
+    .find((value): value is string => typeof value === 'string' && !!value.trim());
+  return text?.trim() ?? '';
 }
 
 /**

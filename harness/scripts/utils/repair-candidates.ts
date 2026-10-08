@@ -1140,20 +1140,22 @@ export function formatRepairEvidenceRefs(candidate: Pick<RepairCandidate, 'evide
 }
 
 /**
- * plan a2f7c9e4 §3.6：返修窗口的局部诊断入口——只在 coding 收到真机 testing 报出的候选时给出
- * （testing 产的 coding 候选都出自真机执行与采集：StepResult 只读证据引用、视觉 / 崩溃 / 设备用例缺陷）；
- * 其余情形返回空，提示词与旧版逐字相同。
+ * plan a2f7c9e4 §3.6 / c3f8a2d7 §3.3：返修窗口的局部复看要求——coding 收到候选（任何来源）且本 run
+ * 有设备资格（调用方由有效阶段链经 `chainRequiresDevice` 派生）时给出；其余情形返回空。
+ * 只是提示词要求：不加检查、不看 `_adhoc` 产物，设备当下是否可用仍由 adhoc 设备门判断。
  */
 export function formatRepairLocalDiagnosis(
   phase: string,
-  mine: readonly Pick<RepairCandidate, 'source_phase'>[],
-  ctx: { harnessDir: string; feature: string },
+  mine: readonly unknown[],
+  ctx: { harnessDir: string; feature: string; deviceCapable: boolean },
 ): string[] {
-  if (phase !== 'coding') return [];
-  if (!mine.some(c => c.source_phase === 'testing')) return [];
+  if (phase !== 'coding' || mine.length === 0 || !ctx.deviceCapable) return [];
   const cli = `cd ${ctx.harnessDir} && npm run adhoc-device-test -- --bundle <app bundle id>`;
   return [
-    '**Local device diagnosis (optional; diagnosis, not acceptance):** you have no visual judgement of your own, but you CAN obtain current device observation data — element geometry and screenshots — to choose and check a fix before handing back:',
+    '**Local device diagnosis — recheck before handing back (diagnosis, not acceptance):** you have no visual judgement of your own, but you CAN obtain current device observation data — element geometry and screenshots.',
+    '- For a repair that affects device UI or interaction, when the conditions allow you MUST reproduce the relevant state with your current build and check the fix result before handing back. One valid recheck of the same screen can cover several related candidates.',
+    '- If the conditions do not allow it (device gate stops, no device, the state cannot be reached), record what you tried, the obstacle and the remaining uncertainty in the existing handoff section of coding/notes.md.',
+    '- This recheck does not replace review → UT → testing acceptance, and a missing diagnosis file never blocks the phase on its own.',
     `- Before fixing, look at the failing screen as it is now: \`${cli} --dump-ui-only\` (current screen), or \`--observe-ui --steps "<navigation in natural language>"\` to drive there first and dump.`,
     `- After fixing, put YOUR current build on the device and look again: add \`--install-current-build\` to the same command (it builds the current working tree with the same product/build-mode resolver as testing and force-installs it); add \`--measure-screen <screen_id> --feature ${ctx.feature}\` for a screenshot + layout + measurement of that screen's ui-spec elements.`,
     '- By default outputs go to `doc/features/_adhoc/testing/reports/` (stderr `ADHOC_DUMP_UI_PATH=` / `ADHOC_MEASURE_DIR=`); do not point `--dump-ui-out` at formal feature directories. They only help you pick a fix: they sign nothing, are not acceptance evidence, and never replace review → UT → testing; testing re-installs and re-judges its own build. Do not edit formal testing / device-testing evidence.',

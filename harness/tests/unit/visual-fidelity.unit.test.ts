@@ -4780,8 +4780,9 @@ export function runAll(): UnitCaseResult[] {
           fs.rmSync(specRoot, { recursive: true, force: true });
         }
       }
-      // ② OCR 环境缺口 + 无覆盖证据 → 责任方 capability：归因走 toolchain（盲重试无益），
-      //    且**不产生任何 repair 候选**（三档不回 coding，也不冤枉 spec）。
+      // ② OCR 环境缺口 + 无覆盖证据 → 责任方 capability，且**不产生任何 repair 候选**（三档不回 coding，也不冤枉 spec）。
+      //    plan c3f8a2d7 §3.2③：阻断绑定全部归 capability 的证据义务门复用外部能力缺席投影
+      //    （externalBlocked/capability_missing），归因随之为 external_block（原为 toolchain；两者都不盲重试）。
       {
         const { root: capRoot } = seedTieringProject({ alignRefIds: true });
         try {
@@ -4790,7 +4791,7 @@ export function runAll(): UnitCaseResult[] {
           const route = routeOf(capRoot, gate);
           if (route.owner !== 'capability') throw new Error(`OCR 能力缺口须归 capability：${route.owner}（${route.detail}）`);
           if (route.files.some(f => f.startsWith('spec/'))) throw new Error(`能力缺口不得拉 spec 下水：${JSON.stringify(route.files)}`);
-          if (route.kind !== 'toolchain') throw new Error(`期望 toolchain，实得 ${route.kind}`);
+          if (route.kind !== 'external_block') throw new Error(`期望 external_block，实得 ${route.kind}`);
           if (route.categories.length > 0) throw new Error(`能力缺口不得产回退候选：${JSON.stringify(route.categories)}`);
         } finally {
           clearFrameworkConfigCache();

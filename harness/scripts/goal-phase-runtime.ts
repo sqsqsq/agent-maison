@@ -205,7 +205,7 @@ import {
 } from './utils/goal-timeout';
 // openspec device-readiness-and-completion t3：设备就绪门（独立异步门，排在 capability
 // gate 之后、agent_invoke_start 之前；未 READY 不调 agent）
-import { phaseRequiresDevice } from './utils/phase-device-requirement';
+import { chainRequiresDevice, phaseRequiresDevice } from './utils/phase-device-requirement';
 import {
   chainRequiresProduct,
   goalProductPurpose,
@@ -7938,11 +7938,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     : []),
                 ];
               }),
-              // plan a2f7c9e4 §3.6 / §3.7：候选段之后——局部诊断入口（coding + 设备证据才有）与驱动方返修材料（随 --resume 给出才有）
+              // plan a2f7c9e4 §3.6 / §3.7：候选段之后——局部复看要求（coding + 本 run 有设备资格才有）与驱动方返修材料（随 --resume 给出才有）
               ...(() => {
+                // plan c3f8a2d7 §3.3：资格取本 run 的有效阶段链（review→coding 与恢复会话同样适用），设备当下是否可用由 adhoc 设备门判断
+                let deviceCapable = false;
+                try { deviceCapable = chainRequiresDevice(chain.map(String), loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot))); } catch { /* 无可解析 profile：不给复看要求 */ }
                 const diagnosis = formatRepairLocalDiagnosis(String(phase), mine, {
                   harnessDir: path.relative(projectRoot, path.join(frameworkRoot, 'harness')).replace(/\\/g, '/') || '.',
                   feature: manifest.feature,
+                  deviceCapable,
                 });
                 return diagnosis.length > 0 ? ['', ...diagnosis] : [];
               })(),
@@ -11003,6 +11007,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
             manifest.report_dir,
             frameworkRoot,
           );
+          // plan c3f8a2d7 §3.2⑥：run 停在本阶段的外部延迟（halt，或 continue 但已是链尾）与设备停放同一投影形状
+          // （WAITING/external）——resume 回放据此把本阶段重新入队，而不是算作完成；停机说明直接取 summary 里外部阻断
+          // 检查自己的说明与建议（不新建文案源、不挂探针）。链中段的 continue 不在此列（下游照常推进）。
+          const parkProjection = action === 'defer_external_and_halt' || phaseIdx === chain.length - 1
+            ? {
+                run_disposition: 'WAITING' as const,
+                run_wait_kind: 'external' as const,
+                halt_guidance: (decisionSummary?.blockers ?? [])
+                  .filter((b) => (b as { blocking_class?: string }).blocking_class === 'externalBlocked')
+                  .map((b) => {
+                    const blocker = b as { id?: string; details_excerpt?: string; suggestion?: string };
+                    const detail = (blocker.details_excerpt ?? '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? '';
+                    return [`${blocker.id ?? 'unknown'}：${detail}`, ...(blocker.suggestion ? [blocker.suggestion] : [])].join('\n');
+                  })
+                  .join('\n') || `外部条件未满足（${reason}）：条件恢复后重新发起同一请求继续。`,
+              }
+            : undefined;
           outcomes.push({
             phase,
             verdict,
@@ -11017,8 +11038,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             agent_warn: agentWarn,
             snapshot_files: snap.snapshot_files,
               verifier_evidence: snap.verifier_evidence,
+            ...(parkProjection ?? {}),
           });
           phaseDone = true;
+          if (parkProjection) {
+            // phase_verdict（defer）之后落：events-only 重建以"最后一条 phase_halt 覆盖更早的 verdict"把本阶段视为未完成。
+            goalEvents.emit({ type: 'phase_halt', phase, verdict, reason, ...parkProjection });
+            console.error(`\n===== deferred_external（${reason}） =====\n${parkProjection.halt_guidance}\n`);
+          }
           if (action === 'defer_external_and_halt') {
             halted = true;
           }

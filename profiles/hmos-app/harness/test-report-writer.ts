@@ -22,6 +22,7 @@ import * as crypto from 'crypto';
 import { featureDir, resolveFeatureArtifact } from '../../../harness/config';
 import { extractTables, getSectionContent } from '../../../harness/scripts/utils/markdown-parser';
 import {
+  isCapabilityAbsenceCheck,
   isP0DeviceInteractive,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
@@ -61,8 +62,8 @@ export interface TestReportWriterInput {
   channelDecl: ExecutionChannelDeclarationResult;
   /** visual/channel/P0 共用的逐 TC 机器裁决；不在 writer 内重算。 */
   channelEvidenceBindings?: readonly ChannelEvidenceBinding[];
-  /** testing gate 本轮视觉检查结果集合（visual_diff* 与 visual_reference_viewport）；其中任一真实阻断时总体结论 FAILED。缺省 = 调用方未提供。 */
-  visualChecks?: readonly DispositionCheck[];
+  /** testing gate 本轮视觉检查结果集合（visual_diff* 与 visual_reference_viewport）；其中任一真实阻断时总体结论 FAILED（能力缺席投影除外，只进缺口）。缺省 = 调用方未提供。 */
+  visualChecks?: ReadonlyArray<DispositionCheck & { blocking_class?: string; failure_kind?: string }>;
   now?: () => Date;
 }
 
@@ -105,8 +106,8 @@ interface ExecRow {
   status: RowStatus;
   duration: string;
   note: string;
-  /** 参与"通过率"分子的执行事实来源 */
-  source: 'hylyre' | 'visual' | 'gap' | 'invalid' | 'absent';
+  /** 参与"通过率"分子的执行事实来源；capability = visual 绑定因视觉能力缺席未验证（留分母、不算通过也不算失败） */
+  source: 'hylyre' | 'visual' | 'gap' | 'invalid' | 'absent' | 'capability';
 }
 
 interface DefectRow {
@@ -346,6 +347,12 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     }
     if (visualSet.has(row.id)) {
       const binding = channelBindingByTc.get(row.id);
+      // plan c3f8a2d7 §3.2④：capability 归属的视觉绑定 = 能力缺席导致未验证。执行状态取值域只有四个
+      // （execution_result_table 门禁），故落「跳过」并在备注写明，留分母、不算通过也不列为待修产品缺陷。
+      if (binding && binding.verdict.kind !== 'covered' && binding.repair_owner === 'capability') {
+        exec.push({ ...row, status: '跳过', duration: '—', note: `未验证（能力缺席）：${binding.verdict.detail}`, source: 'capability' });
+        continue;
+      }
       const status: RowStatus =
         binding?.verdict.kind === 'covered' ? '通过'
           : binding?.verdict.kind === 'failed' ? '失败' : '阻塞';
@@ -435,7 +442,7 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     !trace ? 'UNKNOWN'
       : hylyreRows.some(r => r.status === '失败' || r.status === '阻塞') ||
           exec.some(r => r.source === 'absent' && hylyreSet.has(r.id)) ||
-          exec.some(r => r.priority.toUpperCase() === 'P0' && r.source !== 'gap' && r.status !== '通过') ||
+          exec.some(r => r.priority.toUpperCase() === 'P0' && r.source !== 'gap' && r.source !== 'capability' && r.status !== '通过') ||
           trace.outcome !== 'success'
         ? 'FAIL'
         : 'PASS';
@@ -483,7 +490,12 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
       : `弱化旗标 ${f}：自然语言预期跳过 ${assertionsSkipped} 条（未验证）；显式断言 ${assertionsPassed} 条通过；结论不以「达标」签发`);
   }
   // 视觉总体结论取 testing gate 本轮视觉检查的结论，不由报告自行推导（soft 档只记债务、门禁不阻断）。
-  const visualBlockers = (input.visualChecks ?? []).filter(check => isBlockingCheck(check));
+  // plan c3f8a2d7 §3.2④：能力缺席投影（externalBlocked/capability_missing）只进缺口、不判 FAILED；其余视觉阻断照旧。
+  const blockingVisual = (input.visualChecks ?? []).filter(check => isBlockingCheck(check));
+  const visualAbsent = blockingVisual.filter(isCapabilityAbsenceCheck);
+  const visualBlockers = blockingVisual.filter(check => !isCapabilityAbsenceCheck(check));
+  const absentScope = [...visualAbsent.map(c => c.id), ...exec.filter(r => r.source === 'capability').map(r => r.id)];
+  if (absentScope.length > 0) gaps.push(`视觉轴能力缺席（视觉 provider 不可用或 OCR 执行能力缺失）：暂缓，非产品失败（${absentScope.join('、')}）`);
   if (visualBlockers.length > 0) gaps.push(`视觉门禁阻断（${visualBlockers.map(c => `${c.id} ${c.status}/${c.severity ?? '-'}`).join('、')}）`);
 
   const overall: OverallStatus = functional === 'FAIL' || visualBlockers.length > 0 ? 'FAILED' : gaps.length > 0 || functional === 'UNKNOWN' ? 'COMPLETE_WITH_GAPS' : 'COMPLETE';
@@ -657,6 +669,8 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
     '**下一步建议**:',
     overall === 'FAILED'
       ? '- 修复失败/阻塞用例（见缺陷清单）后重跑 testing harness；未执行的 hylyre 用例补跑。'
+      : overall === 'COMPLETE_WITH_GAPS' && absentScope.length > 0
+        ? '- 视觉轴能力缺席（视觉 provider 不可用或 OCR 执行能力缺失）：恢复缺席的视觉能力（provider / OCR）后重新发起同一请求，由同一检查重验；暂缓项不是待修产品缺陷，release_readiness 保持阻断。'
       : overall === 'COMPLETE_WITH_GAPS'
         ? '- 功能完成可推进；已知缺口按条目在需求/spec 登记并披露，视觉缺口不阻止功能完成但阻断 release_readiness。'
         : '- 功能模块验收完成。',

@@ -173,7 +173,7 @@ const OWN_FEATURE = 'demo-own';
 const OWN_SOURCE = 'src/demo/src/main/BankPage.ets';
 /** 合格 facts 允许声明的**非源码**研究来源（`context-facts.unit.test.ts:72` 同形）。 */
 const OWN_NON_SOURCE = 'doc/research-notes.md';
-/** **模块包路径内**的非源码文件：模块根下本就常驻这类文件，目录位置不是源码判据。 */
+/** **模块包路径内**的非源码文件：落在 coding 写边界内，plan c3f8a2d7 §3.1 起按写边界归 coding（与运行时写入归属一致）。 */
 const OWN_MODULE_DOC = 'src/demo/src/main/README.md';
 const OWN_REQUIREMENT = '把银行列表页接上真实数据源';
 
@@ -437,11 +437,11 @@ const cases: Case[] = [
     },
   },
   {
-    // OWN-T7 反例（codex 二轮阻断）：并集的**写集那一半**同样要过源码判据。
+    // OWN-T7 反例（codex 二轮阻断）：并集的**写集那一半**同样要过源码判据（写边界外；写边界内按 plan c3f8a2d7 §3.1 归实现阶段）。
     // `contracts.files` 只被 schema 约束为非空字符串，非源码路径若同时落在写集与研究读集里，
     // `historical.has(file)` 会照样给它实现阶段 owner，其字节漂移随即在施工期被整批豁免。
     // 单变量：同一次闭环、同一份 facts、同一个写集，只有「是不是源码」不同。
-    name: 'OWN-T7 反例：非源码路径同时在 contracts.files 与 source_code_paths 也不得拿 owner',
+    name: 'OWN-T7 反例：写边界外的非源码路径同时在 contracts.files 与 source_code_paths 也不得拿 owner',
     run: () => {
       const project = mkOwnershipProject(['coding', 'review', 'ut'], true);
       try {
@@ -450,10 +450,12 @@ const cases: Case[] = [
         const sourceOwner = ownerOfSource(project, 'coding');
         assert(sourceOwner === 'coding',
           `对照组不成立：写集里的源码没拿到 owner（${sourceOwner}）`);
-        // 两条都在写集与研究读集里，差别只有「在不在模块包路径内」——**目录位置不是源码判据**：
-        // 模块根下本就常驻 `oh-package.json5` / README 这类文件（生产检查直接读前者，
-        // `profiles/hmos-app/harness/coding-host-rules.ts` / `profile-path-conventions.ts`）。
-        for (const rel of [OWN_NON_SOURCE, OWN_MODULE_DOC]) {
+        // 两条都在写集与研究读集里，差别只有「在不在 coding 写边界内」。plan c3f8a2d7 §3.1 起归属与
+        // 运行时写入同一裁决：写边界（模块包路径）内的文件归 coding、不看后缀——运行时本就把 coding 对它的
+        // 写入判为 owned（be091c 的 string.json 同形）；写边界外的非源码来源仍不得拿 owner、漂移仍 stale。
+        const moduleDocOwner = ownerOfPath(project, 'coding', OWN_MODULE_DOC);
+        assert(moduleDocOwner === 'coding', `写边界内的文件须与运行时写入归属一致（owner=${moduleDocOwner}）`);
+        for (const rel of [OWN_NON_SOURCE]) {
           const docOwner = ownerOfPath(project, 'coding', rel);
           assert(docOwner === undefined,
             `写集里的非源码路径 ${rel} 拿到了 owner=${docOwner}——源码判据被放宽`);
