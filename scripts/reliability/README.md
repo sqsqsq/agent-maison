@@ -87,6 +87,9 @@ plan a2f7c9e4 的本轮基线（98434b6f，继续模式）：`observations/a2f7c
 推倒重来（从需求起点完整运行）标签 `a2f7c9e4-host-scratch-<commit>`，只记墙钟、调用次数与成功率，不与 1 小时 49 分比较。
 出表时用 `--runs` 按记录里的 run 显式分组。
 
+plan b7d2e9f4 的第四轮（5acd53e2，从 09-28 公共起点，run be091c）：`observations/b7d2e9f4-host-start0928-5acd53e2.json`，§5 口径的本轮值与
+旧包、98434b6f 两轮同起点对照写在 `plan_b7d2e9f4_metrics`（只作描述性对照，脚本不读该键）。
+
 ## 3. 确定性层：场景套件
 
 十三个场景的确定性重放在 `harness/tests/unit/reliability-scenarios.unit.test.ts`，场景登记表在

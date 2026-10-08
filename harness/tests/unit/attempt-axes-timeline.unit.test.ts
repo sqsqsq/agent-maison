@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildAttemptAxesTimeline } from '../../scripts/utils/goal-report-generator';
+import { buildAgentWarn } from '../../scripts/goal-phase-runtime';
 
 export interface UnitCaseResult {
   name: string;
@@ -49,6 +50,29 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (buildAttemptAxesTimeline([], 'spec').length !== 0) throw new Error('空事件应空');
       const other = [{ type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i1', exit_code: 0 }];
       if (buildAttemptAxesTimeline(other, 'spec').length !== 0) throw new Error('异 phase 应空');
+    },
+  },
+  {
+    // plan b7d2e9f4 §3.4：宿主 be091c 12/13 次 invoke 是"完成后宽限 kill"（exit=1 + completion_observed）；
+    // coding-i21 是无完成的终态失败（exit=1、无 completion）。前者按完成事实标注、不告警，后者保留 error 与 WARN。
+    name: 'axes: exit=1 + completion_observed → completed（cleanup，exit=1）且无 WARN；exit=1 无 completion → error + WARN',
+    run: () => {
+      const events = [
+        { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i20', exit_code: 1, completion_observed: true },
+        { type: 'phase_verdict', phase: 'coding', invoke_id: 'coding-i20', verdict: 'PASS', action: 'advance' },
+        { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i21', exit_code: 1 },
+        { type: 'phase_verdict', phase: 'coding', invoke_id: 'coding-i21', verdict: 'FAIL', action: 'retry' },
+      ];
+      const rows = buildAttemptAxesTimeline(events, 'coding');
+      if (rows[0] !== '- coding-i20: completed（cleanup，exit=1） × PASS × advanced × unknown') throw new Error(rows[0]);
+      if (rows[1] !== '- coding-i21: error × FAIL × retried × unknown') throw new Error(rows[1]);
+      if (!rows[2].includes('0 次超时') || !rows[2].includes('1 次非超时内容 FAIL')) throw new Error(`计数口径须不变：${rows[2]}`);
+      if (buildAgentWarn({ exitCode: 1, completion_observed: true, duration_ms: 5 }) !== undefined) throw new Error('完成后清理不得告警');
+      const failed = buildAgentWarn({ exitCode: 1, duration_ms: 5 });
+      if (!failed?.includes('exit=1')) throw new Error(`真实失败须保留 WARN：${failed}`);
+      for (const extra of [{ timed_out: true }, { silent_killed: true }]) {
+        if (!buildAgentWarn({ exitCode: 1, completion_observed: true, ...extra })) throw new Error(`timeout / silent_killed 须保留 WARN：${JSON.stringify(extra)}`);
+      }
     },
   },
 ];

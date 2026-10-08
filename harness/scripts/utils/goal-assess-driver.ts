@@ -69,6 +69,8 @@ export function selectRunnerActionFromAssess(
     ) {
       return recommendation.runner_action;
     }
+    // 尚未到达的延迟阶段只前进：runner 按链序进入该阶段复跑（plan b7d2e9f4 §3.2）。
+    if (targetRelation(recommendation, input.currentPhase, input.chain) === 'later') return 'advance';
     return 'halt';
   }
   if (

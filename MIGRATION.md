@@ -2,6 +2,14 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：延迟只认阶段结论、显式恢复未启动 run 改附着、报告终止轴（行为变化，plan b7d2e9f4）
+
+无须迁移宿主旧 run 或旧报告；下列变化在更新发布件后的下一次启动 / 重算时生效。
+
+- **延迟只认阶段自身结论**：assess 只把 `verdict=INCOMPLETE` 或 `completion_status=deferred` 的阶段摘要判为延迟；`verdict=FAIL` 的摘要即便带外部 blocker（`externalBlocked` / `external_block` / `device_blocked`）也按失败处理，回到该阶段复跑时外部条件随之重评。尚未到达的阶段即便确属延迟（INCOMPLETE），驱动也按链序前进去跑它，不再兜底停成 `framework_bug`。
+- **显式 `--resume` 对从未正式开始的 run 改为附着**：目标 run 只有出生事件（没有 `run_start`）且同一接续决策判为重新接入它时，`--resume <run>` 自动改为附着同一 run 并正式开始，前台与 `--detach` 一致（detach 由子进程改写，父进程照常以 `run_start` 握手）；用户给的 `--force-resume` 保留，过期 session owner 仍须它显式接管。其它情况下 events 缺 `run_start` 的拒绝不变，提示区分"只有出生事件：普通方式重新发起或 `--attach-created`"与"文件被替换 / 清空：人工核查"。
+- **报告终止轴**：agent 已完成、随后被宽限清理 kill 的调用（`completion_observed=true`），`goal-report` 四轴时间线的终止轴显示 `completed（cleanup，exit=N）`，不再标 `error`，也不再打 `agent observability … exit=N` 告警；超时、真实失败与 `silent_killed` 的诊断照旧，事件字段与计数口径不变。
+
 ## 3.1.0：预算有效值、接续冷却、完成输出同源与返修局部诊断（行为变化，plan a2f7c9e4）
 
 无须迁移宿主旧 run、旧报告或旧 next.json；下列变化在更新发布件后的下一次启动 / 重算时生效。

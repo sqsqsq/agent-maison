@@ -1,7 +1,9 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   assessObservation,
+  observeFeatureState,
   type AssessObservation,
   type AssessRecommendation,
   type AssessResult,
@@ -240,6 +242,98 @@ const cases: TestCase[] = [
           driverGuardAction: 'none',
         }) === expected, `expected ${expected}`);
       }
+    },
+  },
+  {
+    // plan b7d2e9f4 §3.1/§3.2：宿主 be091c 形状——testing 旧摘要 FAIL 同时带外部 blocker 与 coding 候选，
+    // 回退修完 coding→review→ut 全 PASS。延迟只认阶段自身结论，testing 是 failed 而非 deferred，链前进复跑。
+    name: 'b7d2e9f4 be091c: testing FAIL + externalBlocked blocker is failed (not deferred) and the chain advances after ut PASS',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'b7d2-be091c-'));
+      try {
+        fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.1', project_name: 'b7d2-be091c', project_profile: { name: 'generic' },
+          paths: { features_dir: 'doc/features', reports_dir_pattern: 'doc/features/<feature>/<phase>/reports', docs_committed: false },
+        }), 'utf-8');
+        const featureDir = path.join(root, 'doc', 'features', 'demo');
+        fs.mkdirSync(featureDir, { recursive: true });
+        fs.writeFileSync(path.join(featureDir, 'feature.yaml'), 'schema_version: "1.0"\ntrack: full\n', 'utf-8');
+        for (const phase of chain) {
+          const reports = path.join(featureDir, phase, 'reports');
+          fs.mkdirSync(reports, { recursive: true });
+          fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify(phase === 'testing'
+            ? {
+                schema_version: '1.2', phase, feature: 'demo', verdict: 'FAIL', closure_status: 'open',
+                blockers: [
+                  { id: 'testing_failure_routing_TC-004_s11', status: 'FAIL' },
+                  { id: 'visual_diff', status: 'FAIL', blocking_class: 'externalBlocked', failure_kind: 'capability_missing' },
+                ],
+                repair_candidates: [
+                  { id: 'testing_failure_routing_TC-004_s11', category: 'coding', item_fingerprint: 'b'.repeat(64) },
+                  { id: 'testing_failure_routing_TC-005_s11', category: 'coding', item_fingerprint: 'c'.repeat(64) },
+                ],
+              }
+            : { schema_version: '1.2', phase, feature: 'demo', verdict: 'PASS', closure_status: 'closed' }), 'utf-8');
+        }
+        const observed = observeFeatureState({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'demo', goalEnd: 'testing' });
+        const testing = observed.phases.find((p) => p.phase === 'testing');
+        assert(testing?.deferred === false, `testing FAIL 不得判延迟：${JSON.stringify(testing)}`);
+        assert(testing?.repair_candidates?.length === 2, JSON.stringify(testing));
+        const reconcile = observation({
+          phase_outcome: { phase: 'ut', verdict: 'PASS', legacy_action: 'advance' },
+          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 1 },
+          invalidatable_phases: ['coding', 'review', 'ut'],
+        });
+        // 上游 PASS 阶段的闭环提交与 evidence 新鲜度不是本例对象：直接视为已闭环。
+        const assessed = assessObservation({
+          ...observed,
+          phases: observed.phases.map((p) => (p.phase === 'testing' ? p : { ...p, closure: 'closed' as const })),
+          reconcile,
+        }, { mode: 'goal_mode' });
+        assert(assessed.gaps[0]?.phase === 'testing' && assessed.gaps[0]?.kind === 'failed', JSON.stringify(assessed.gaps));
+        assert(
+          assessed.recommendation.action === 'rerun_phase' && assessed.recommendation.phase === 'testing',
+          JSON.stringify(assessed.recommendation),
+        );
+        const action = selectRunnerActionFromAssess({
+          assessment: assessed, observation: reconcile, currentPhase: 'ut', chain, driverGuardAction: 'none',
+        });
+        assert(action === 'advance', `expected advance (不再落 halt→framework_bug), got ${action}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'b7d2e9f4 downstream INCOMPLETE deferred phase: resolve_deferred review maps to advance, not halt',
+    run: () => {
+      const reconcile = observation({
+        phase_outcome: { phase: 'coding', verdict: 'PASS', legacy_action: 'advance' },
+        budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 },
+        invalidatable_phases: ['spec', 'plan', 'coding'],
+      });
+      const assessed = assessObservation({
+        schema_version: '1.0', feature: 'demo', workflow: 'spec-driven', track: 'full', goal_end: 'testing',
+        phases: chain.map((phase) => ({
+          phase, summary_state: 'current', schema_version: '1.2',
+          verdict: phase === 'review' ? 'INCOMPLETE' : 'PASS',
+          closure: phase === 'review' ? 'open' : 'closed', assurance: 'full',
+          required_assurance: null, assurance_satisfied: null, deferred: phase === 'review',
+          summary_fingerprint: phase, evidence_fingerprint: phase,
+        })),
+        fingerprints: {
+          workflow: 'w', track: 't', goal: 'g', run_attempt: 'r',
+          summaries: 's', evidence: 'e', reconcile: 'c', observed: 'o',
+        },
+        reconcile,
+      }, { mode: 'goal_mode' });
+      assert(
+        assessed.recommendation.action === 'resolve_deferred' && assessed.recommendation.phase === 'review',
+        JSON.stringify(assessed.recommendation),
+      );
+      assert(selectRunnerActionFromAssess({
+        assessment: assessed, observation: reconcile, currentPhase: 'coding', chain, driverGuardAction: 'none',
+      }) === 'advance', 'downstream deferred phase must advance');
     },
   },
   {

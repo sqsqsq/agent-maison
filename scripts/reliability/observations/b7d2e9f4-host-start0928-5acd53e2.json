@@ -1,0 +1,110 @@
+{
+  "label": "b7d2e9f4-host-start0928-5acd53e2",
+  "recorded_at": "2026-10-08",
+  "framework_source_commit": "5acd53e2",
+  "initial_state": {
+    "host_commit": "025d1b6b013667ef63d190fb13054a52c0a55f44（存档 host-head.txt）",
+    "worktree_state": "从 09-28 公共起点存档恢复后由宿主 AI 无人值守发起；候选包 dist/candidates/framework-3.1.0-candidate.zip（源 5acd53e2）",
+    "archive_path": "dist/reliability-baseline/host-initial-state-20260928",
+    "archive_sha256sums": "dist/reliability-baseline/host-initial-state-20260928/SHA256SUMS"
+  },
+  "environment": {
+    "adapter": "codex",
+    "adapter_version": "codex CLI 0.153.4",
+    "model": "未核",
+    "reasoning_effort": "未核",
+    "device": "未核",
+    "vision_provider": "claude / claude-opus-5（framework.local.json vision.visual_provider；宿主机 claude auth status → loggedIn=false）",
+    "adapter_user_default_model": "未核",
+    "changes": []
+  },
+  "notes": [
+    "来源：plan b7d2e9f4（.cursor/plans/延迟只认阶段自身结论_未启动run显式恢复改附着_报告终止轴准确_b7d2e9f4.plan.md）§1 只读取证与 §5 本轮列；真源为宿主 doc/features/bc-openCard-2/open-card-flow-v2/goal-runs/20260928T043051Z-be091c/{events.jsonl,detach.log,goal-report.md}、open-card-flow-v2/next.json、testing/reports/{summary.json,script-report.json}。",
+    "be091c 于 09-28 出生，本轮前事件只有 run_created + 启动期 phase_halt/run_end canary_cli_hard_failure，无 run_start；本轮无新出生 run。",
+    "10-07 15:0x 显式 --resume 被 goal-phase-runtime.ts:6572-6581 拒绝（只写进 detach.log，父进程报 alive_timeout），是一次零调用的发起尝试；改普通发起后按接续决策附着，15:13:25 run_start。",
+    "testing（16:47–17:04）结论 FAIL：summary 8 个 BLOCKER，含产品缺陷 testing_failure_routing_TC-004_s11 / TC-005_s11（owner=coding）与 visual_diff（blocking_class=externalBlocked, failure_kind=capability_missing，provider OAuth 过期）；事件 failure_kind_classified=external_block；assess 候选分支回退 coding。",
+    "回退后 coding / review / ut 全 PASS（ut 18:16:01）；assess 把 testing 旧 FAIL 摘要判 deferred=true → resolve_deferred testing → driver halt → framework_bug；phase_halt ut framework_bug，run_end HALTED WAITING external。18:21 --resume（距停机 5 m 32 s，已过默认 5 分钟冷却）→ ut 复跑 PASS → 18:23:49 同一停机再现。",
+    "invoke 终止：13 次中 12 次 exit=1 + completion_observed=true + kill_attempted=true（codex turn.completed 后不自行退出，宽限 5 s 后 tree-kill）；coding-i21 为模型容量 + 断流的终态失败（无 completion、未 kill），按 agent_failed 重试一次。"
+  ],
+  "plan_b7d2e9f4_metrics": {
+    "definition": "plan b7d2e9f4 §5，口径同 a2f7c9e4 §5：效率（run_start→run_end 墙钟、阶段调用、可避免等待、零调用的发起尝试、宿主 AI 额外动作）、成功率（无人介入达成 / 卡住点）、准确率（陈述与事实矛盾数）",
+    "this_round": {
+      "efficiency": {
+        "runs_sessions_invocations": "1 既有 run / 2 执行会话 / 13 次调用（无新出生 run）",
+        "wall_clock": "3 h 10 m 24 s（15:13:25 → 18:23:49；其中停机间隔 5 m 52 s，两段运行合计约 3 h 4 m 32 s）",
+        "backtracks_and_retries": "2 回退（review→coding、testing→coding）；重试 3 次，全部 coding（facts 过期 ×2、模型容量/断流 ×1）",
+        "zero_invocation_starts": 1,
+        "extra_actions": 2,
+        "extra_action_detail": ["显式 --resume 被拒后改普通发起", "假停机后 --resume"]
+      },
+      "success": {
+        "result": "未完成：ut PASS 后同一组假停机 ×2，testing 未复跑",
+        "stuck_points": 1,
+        "stuck_point_detail": ["ut PASS 后 assess 对未到达的 testing 给 resolve_deferred，兜底 framework_bug 停机（出现 2 次，按一组事故计）"]
+      },
+      "accuracy": {
+        "false_halts": 2,
+        "misleading_resume_guidance": 1,
+        "report_error_x_pass_rows": 3,
+        "report_agent_warn": 1,
+        "not_counted": "混合原因被压成单标签 external_block（聚合策略的真实结果，不计失真）"
+      }
+    },
+    "same_start_comparison": {
+      "note": "三轮同起点（09-28 归档）只作描述性对照，不据此宣称框架速度或成功概率；旧两轮数据取自 plan §5 表",
+      "old_package_20261002": {
+        "runs_sessions_invocations": "5 / 6 / 30",
+        "wall_clock": "16:09→21:50（5 h 41 m）",
+        "backtracks_and_retries": "2 回退 + 3 次 backtrack_limit、1 次指纹重复",
+        "result": "未完成（INCOMPLETE）",
+        "zero_invocation_starts": 0,
+        "extra_actions": "多次（切 provider、改 manifest）"
+      },
+      "98434b6f_20261004": {
+        "runs_sessions_invocations": "4 / 5 / 22",
+        "wall_clock": "10-04 15:53→10-06 16:43（跨两天，期间人工介入）",
+        "backtracks_and_retries": "1 回退 + backtrack_limit×2、budget_turns×2",
+        "result": "CHAIN_SLICE_COMPLETED（COMPLETE_WITH_P0_GAPS）",
+        "zero_invocation_starts": 1,
+        "extra_actions": "手改 manifest 2、修正文件 2",
+        "accuracy": "1 矛盾 + 3 失真（a2f7c9e4 已修）"
+      }
+    },
+    "acceptance_targets": "同形场景下假停机 0、显式恢复未启动 run 的失败发起 0、报告 error/WARN 失真 0；修后宿主继续本 run 应直接进入 testing 复跑（plan §4.2 H1）"
+  },
+  "tasks": [
+    {
+      "label": "b7d2e9f4-host-start0928-bc-openCard-2",
+      "scenarios": [],
+      "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg",
+      "runs": [
+        "20260928T043051Z-be091c"
+      ],
+      "recoverable_fault": true,
+      "interventions": [
+        {
+          "kind": "rescue_command",
+          "at": "2026-10-07 15:0x（显式 --resume 被拒之后、15:13:25 run_start 之前）",
+          "content": "显式 --resume be091c 被拒（指引人工核查，父进程 alive_timeout，零调用），宿主 AI 改为普通发起，按接续决策附着同一 run",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": []
+        },
+        {
+          "kind": "rescue_command",
+          "at": "2026-10-07 18:21（ut framework_bug 停机后 5 m 32 s）",
+          "content": "--resume 续跑，ut 复跑（agent 61 s）PASS 后 18:23:49 同一停机再现，宿主 AI 停止",
+          "actor": "宿主 AI",
+          "necessary": false,
+          "related_events": []
+        }
+      ],
+      "independent_acceptance": {
+        "result": "not_accepted",
+        "actor": "未核",
+        "basis": "本轮未完成（testing 未复跑），没有独立验收"
+      },
+      "source": "maison 实施会话据 plan b7d2e9f4 §1.2 事实链与 §5 本轮列整理（2026-10-08）；事件序号未逐条核对，related_events 留空"
+    }
+  ]
+}

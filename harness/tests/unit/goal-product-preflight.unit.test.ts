@@ -161,11 +161,12 @@ const cases: Array<{ name: string; run: () => void }> = [];
 }
 
 {
-  // plan 4e6fb3b6 批一返修 2(a)：停机说明里的恢复办法须经实际入口可用。该停机发生在 run_start 之前——
-  // 用 --resume 续跑会被"缺 authoritative run_start"守卫拒绝（本用例先证明这一点），说明因此改为
-  // "确认后重新发起同一请求"；再用 record-product-selection 的生产函数确认，以同一 requirement、
-  // 不带 --force 新开 run，断言它越过 product 检查正式开始。
-  const name = '返修 2(a)：product_selection_unresolved 说明的恢复办法经实际入口可用（--resume 被拒；确认后重新发起同一请求不被拒）';
+  // plan 4e6fb3b6 批一返修 2(a)：停机说明里的恢复办法须经实际入口可用。该停机发生在 run_start 之前，
+  // 说明写"确认后重新发起同一请求"；用 record-product-selection 的生产函数确认，以同一 requirement、
+  // 不带 --force 重新发起，断言它越过 product 检查正式开始。
+  // plan b7d2e9f4 §3.3：原先先证明"--resume 被拒"的负向段已删——--resume 对未开始的 run 现改为附着，
+  // 正向断言在 goal-runner-testing-integrity 的「b7d2e9f4 §3.3」用例（前台 / detach / orphaned_session）。
+  const name = '返修 2(a)：product_selection_unresolved 说明的恢复办法经实际入口可用（确认后重新发起同一请求不被拒）';
   cases.push({
     name,
     run: () => {
@@ -179,23 +180,7 @@ const cases: Array<{ name: string; run: () => void }> = [];
             .split('\n').filter(Boolean).map(l => JSON.parse(l) as { type?: string; halt_reason?: string });
         assert(!runEvents(firstRunId).some(e => e.type === 'run_start'),
           `${name}: 前提——启动即失败的 run 没有 run_start：${runEvents(firstRunId).map(e => e.type).join(',')}`);
-        // 按说明办：先经生产函数确认 product（二轮顺手项：确认放在负向调用之前，使拒绝只可能来自缺 run_start）
         recordProductSelection(root, 'mirror');
-        // 旧说明的办法：--resume 该 run → 被"缺 authoritative run_start"守卫拒绝（exit 1，不产生新的 run_start）
-        const resumeOut = spawnSync(
-          process.execPath,
-          [TS_NODE, '--transpile-only', DRIVER, 'resume_after_park', FEATURE, '-', root, firstRunId],
-          { encoding: 'utf-8', timeout: 300_000, cwd: path.resolve(__dirname, '..', '..') },
-        );
-        const resumeText = `${resumeOut.stdout ?? ''}\n${resumeOut.stderr ?? ''}`;
-        const at = (resumeOut.stdout ?? '').lastIndexOf(RESULT_MARK);
-        const resumed = JSON.parse((resumeOut.stdout ?? '').slice(at + RESULT_MARK.length)) as GoalRunOutcome;
-        assert(resumed.exitCode === 1 && !runEvents(firstRunId).some(e => e.type === 'run_start'),
-          `${name}: 没有 run_start 的 run 用 --resume 应被拒：${JSON.stringify({ exit: resumed.exitCode, err: resumed.error })}`);
-        assert(/--resume 需要 events 含有效 authoritative run_start/.test(resumeText)
-          // driver 结果 JSON 会带出 run1 的历史停机记录，故只看本次调用有没有打出 product 检查的停机横幅
-          && !/===== product_selection_unresolved =====/.test(resumeText),
-        `${name}: 拒绝原因须是缺 run_start（而非 product 检查）：${resumeText.slice(-800)}`);
         const guidance = buildProductSelectionUnresolvedGuidance({
           feature: FEATURE, phase: 'spec', candidates: ['product', 'mirror'], projectRoot: root,
         }).join('\n');

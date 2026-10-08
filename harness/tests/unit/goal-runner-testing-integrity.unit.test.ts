@@ -383,6 +383,8 @@ export async function runGoalRuntimeChain(
     /** plan c6a9e4d2：sealed 拒绝等「不达 resume 恢复流程」用例跳过 legacy bound 追补
      *（该用例断言 events 字节零变化，夹具不得写盘） */
     skipLegacySeal?: boolean;
+    /** plan b7d2e9f4 返修 r1：resume 不补 --feature（feature 只由 resumeExtraArgs 里的 --manifest 提供） */
+    resumeOmitFeature?: boolean;
     /** b7e4d2a9 Todo2：--supersede 目标（可多个） */
     supersede?: string[];
     /** M5 incident fixture: operator-only audited baseline reset for a fresh successor. */
@@ -1025,7 +1027,7 @@ export async function runGoalRuntimeChain(
     }
     process.argv = opts.resume
       ? [
-          'node', 'goal-runner.ts', '--resume', opts.resume, '--feature', featureId,
+          'node', 'goal-runner.ts', '--resume', opts.resume, ...(opts.resumeOmitFeature ? [] : ['--feature', featureId]),
           '--foreground-ok', ...(opts.noAutoForce ? [] : ['--force']),
           // 无 HMAC 测试宿主的 resume 须弱 ack vision 账本（生产合法路径；终态封顶人工复核）
           ...(opts.forceResume ? ['--force-resume', '--ack-unverified-ledgers'] : []),
@@ -6617,6 +6619,88 @@ for (const entry of ['foreground', 'detach'] as const) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// plan b7d2e9f4 §3.3：显式 --resume 指向从未正式开始的 run（宿主 be091c 同形：run_created + 启动期 canary 停机、无 run_start）
+// ---------------------------------------------------------------------------
+
+const CANARY_OK = (async () => ({ exitCode: 0, stdout: 'ok', stderr: '', command: 'fake-codex' })) as never;
+
+/** 首个请求停在启动期金丝雀（只有出生事件 + 启动期停机，无 run_start）。 */
+async function bornOnlyCanaryRun(root: string): Promise<string> {
+  uiHostNoCanaryCache(root);
+  __testing_setCanaryProbeInvoke((async () => codexModelUnsupportedInvoke()) as never);
+  await requestVia('foreground', root, { freshRequirement: '银行卡开卡页面按参考图还原布局' });
+  const [run] = goalRunIds(root);
+  const events = goalRunEvents(root, run);
+  assert(!!run && events[0]?.type === 'run_created' && events.some(e => e.type === 'phase_halt' && e.halt_reason === 'canary_cli_hard_failure')
+    && !events.some(e => e.type === 'run_start'), `夹具：只有出生事件与启动期停机：${events.map(e => e.type).join(',')}`);
+  return run;
+}
+
+async function withStdout<T>(fn: () => Promise<T>): Promise<{ value: T; stdout: string }> {
+  const prev = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]): void => { lines.push(args.map(String).join(' ')); prev(...args); };
+  try { return { value: await fn(), stdout: lines.join('\n') }; } finally { console.log = prev; }
+}
+
+for (const [entry, manifestOnly] of [['foreground', false], ['detach', false], ['foreground', true], ['detach', true]] as const) {
+  // 返修 r1：manifestOnly = 不带 --feature、只给该 run 的 manifest.json——附着分支须用 resolveRawRunInput 解出的 feature。
+  test(`b7d2e9f4 §3.3 ${entry}${manifestOnly ? '（仅 --manifest 提供 feature）' : ''}：显式 --resume 指向只有出生事件的 run → 改为附着同一 run 并正式开始（detach 父进程透传原参、以 run_start 握手）`, async () => {
+    const { root } = setupHost('codex');
+    try {
+      const run = await bornOnlyCanaryRun(root);
+      __testing_setCanaryProbeInvoke(CANARY_OK);
+      const viaManifest = manifestOnly
+        ? { resumeOmitFeature: true, resumeExtraArgs: ['--manifest', `doc/features/${FEATURE}/goal-runs/${run}/manifest.json`] }
+        : {};
+      const { value: done, stdout } = await withStdout(() => (entry === 'foreground'
+        ? runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, skipLegacySeal: true, ...viaManifest })
+        : requestVia('detach', root, { resume: run, skipLegacySeal: true, ...viaManifest })));
+      assert(stdout.includes(`--resume ${run} 改为附着`), `须打印改附着：${stdout.slice(-600)}`);
+      assert(goalRunIds(root).length === 1, `附着同一 run，不新建：${goalRunIds(root).join(',')}`);
+      assert(goalRunEvents(root, run).some(e => e.type === 'run_start'), '附着后须写出 run_start');
+      assert(done.invokedPhases.includes('spec'), `附着后须真正执行：${done.invokedPhases.join(',')}`);
+      if (entry === 'detach') {
+        const childArgs = (done as { childArgs?: string[] }).childArgs ?? [];
+        assert(childArgs.includes('--resume'), `父进程透传原始 --resume，由子进程改写：${childArgs.join(' ')}`);
+        const line = stdout.split('\n').find(l => l.startsWith('{') && l.includes('"detached":true'));
+        const startup = (JSON.parse(line ?? '{}') as { startup?: { state?: string } }).startup;
+        assert(startup?.state === 'ready' || startup?.state === 'terminal', `父进程须握手成功（不再 alive_timeout）：${line}`);
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('b7d2e9f4 §3.3 orphaned_session：只有出生事件的 run 挂着过期 session owner——--resume 不带 --force-resume 维持 owner busy；带 --force-resume 改附着后显式接管并正式开始', async () => {
+  const { root } = setupHost('codex');
+  const realExit = process.exit;
+  try {
+    const run = await bornOnlyCanaryRun(root);
+    const runDir = featureFilePath(root, FEATURE, `goal-runs/${run}`);
+    const taken = casAcquireRunOwner(runDir, run, ensureRunControl(runDir, run).current_epoch, { kind: 'session', owner_id: 'stale-session', lease_ms: 1 });
+    assert(taken.ok, '夹具：以生产 CAS 写下 session owner');
+    const until = Date.now() + 5; while (Date.now() < until) { /* 等租约过期 */ }
+    process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
+    __testing_setCanaryProbeInvoke(CANARY_OK);
+    const refused = await withStderr(() => runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, skipLegacySeal: true }));
+    assert(/owner busy/.test(refused.stderr) && !goalRunEvents(root, run).some(e => e.type === 'run_start'),
+      `不带 --force-resume 须维持 owner busy 拒绝：${refused.error?.message ?? ''} ${refused.stderr.slice(-400)}`);
+    assert(readRunControl(runDir, run)?.owner?.state === 'orphaned_session', '夹具：过期 session owner 已标 orphaned_session');
+    __testing_setCanaryProbeInvoke(CANARY_OK);
+    const forced = await withStderr(() => runChain(root, { adapter: 'codex', resume: run, noAutoForce: true, skipLegacySeal: true, forceResume: true }));
+    assert(goalRunEvents(root, run).some(e => e.type === 'run_start') && (forced.value?.invokedPhases.includes('spec') ?? false),
+      `带 --force-resume 须改附着后接管并正式开始：${forced.error?.message ?? ''} ${forced.stderr.slice(-400)}`);
+  } finally {
+    process.exit = realExit;
+    clearFrameworkConfigCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   // 按用例名前缀单跑（逗号分隔；同 DESIGN_AUTHORITY_REPAIR_ONLY），未设置时跑全部

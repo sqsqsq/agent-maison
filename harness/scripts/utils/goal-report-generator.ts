@@ -207,6 +207,8 @@ interface AttemptAxisEventLike {
   invoke_id?: string;
   exit_code?: number;
   timed_out?: boolean;
+  /** agent-invoke 只在 exit=0 或完成后清理 kill 时置它（plan b7d2e9f4 §3.4）。 */
+  completion_observed?: boolean;
   verdict?: string;
   action?: string;
   advance_blocked?: boolean;
@@ -226,7 +228,9 @@ export function buildAttemptAxesTimeline(events: AttemptAxisEventLike[], phase: 
   let passBlocked = 0;
   for (const inv of invokes) {
     const v = verdicts.find(x => x.invoke_id === inv.invoke_id);
-    const termination = inv.timed_out === true ? 'timeout' : inv.exit_code === 0 ? 'exit0' : 'error';
+    const termination = inv.timed_out === true ? 'timeout'
+      : inv.exit_code === 0 ? 'exit0'
+        : inv.completion_observed === true ? `completed（cleanup，exit=${inv.exit_code}）` : 'error';
     const harnessVerdict = v?.verdict ?? 'unavailable';
     const transition = v
       ? (v.action === 'advance' ? 'advanced' : v.advance_blocked ? 'advance_blocked' : v.action === 'halt' ? 'halted' : 'retried')

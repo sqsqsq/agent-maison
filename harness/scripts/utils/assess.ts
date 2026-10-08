@@ -323,14 +323,13 @@ function readRepairCandidatesFromSummary(
   return out;
 }
 
+/**
+ * 延迟是阶段级结论：只由 producer 写出的 verdict=INCOMPLETE / completion_status=deferred 表达。
+ * FAIL 摘要即便带外部 blocker，也是"失败且另有外部条件缺席"，回到该阶段复跑时外部条件自然重评；
+ * 不得因 blockers 里有 externalBlocked 就把 FAIL 判成延迟（plan b7d2e9f4 §3.1）。
+ */
 function isDeferredSummary(summary: Record<string, unknown>): boolean {
-  if (summary.verdict === 'INCOMPLETE') return true;
-  if (summary.completion_status === 'deferred') return true;
-  return (summary.blockers as Array<Record<string, unknown>> | undefined)?.some((blocker) =>
-    ['externalBlocked', 'external_block', 'device_blocked'].includes(
-      String(blocker.blocking_class ?? blocker.classification ?? ''),
-    ),
-  ) ?? false;
+  return summary.verdict === 'INCOMPLETE' || summary.completion_status === 'deferred';
 }
 
 /**
