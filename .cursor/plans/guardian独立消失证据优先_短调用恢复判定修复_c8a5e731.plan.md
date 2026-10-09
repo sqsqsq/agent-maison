@@ -17,7 +17,7 @@ todos:
     status: completed
   - id: t4-final-validation
     content: 调度最终集中全量/候选验收；保留既往失败事实，未完成前不称完整发布验证通过。
-    status: in_progress
+    status: completed
 ---
 
 # guardian 独立消失证据优先 — 短调用恢复判定修复
@@ -54,3 +54,4 @@ typecheck 与原 repair-interruption-real-process 三个真实子进程 case 必
 - 日志为 `dist/8d4e6a21-validation/repair-interruption-l3.log`、`agent-containment-l3.log`、`design-containment-l3.log`、`typecheck-l3-final.log`。此前 5303/2、1/3 与 0/3 的原记录完整保留；本次不声称原 candidate 全链已 PASS，未重复全量、打包、提交或操作宿主。
 - 实现与目标验证完成，diff 自此冻结交 Astra 窄 review；t3 in_progress、t4 pending。原 `8d4e6a21` t7 in_progress、t6 pending。
 - 2026-10-09 Astra L3 窄 review PASS：冻结修复已完成，无剩余修复项或直接回归；t3 completed、t4 in_progress，等待调度提交稳定切点后的最终集中候选验收。生产、测试与设计正文继续冻结，先前 5303/2、1/3、0/3 失败事实保留，本次仅同步评审与待办状态，不重复测试或声称原 candidate 成功。
+- 2026-10-09 调度在 `ca860a77ec73bd479ba3ead44861ca066fb487c4` 完成最终 candidate:build，exit 0、实测 124.18 分钟：typecheck、unit --release 5307/0、fixtures 46/0、pack/release:verify 与同 ZIP consumer lifecycle smoke 全部 PASS；原真实子进程套件 3/0、设计修复 40/0。候选完整身份与证明见关联 `8d4e6a21` §7 及 `dist/8d4e6a21-validation/candidate-proof-ca860a77.json`；t4 completed，本 plan 全部待办完成。历史失败保留，未回灌/启动实际宿主、未 promote，关联 H1 仍 pending。本次仅文档收口，未重复测试。
