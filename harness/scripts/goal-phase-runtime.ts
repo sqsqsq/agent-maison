@@ -1559,9 +1559,9 @@ function bindGuardianOrKill(pid: number, guardianToken: string):
     && identity.executable.trim().length > 0
     && /^[a-zA-Z]:[\\/]/.test(identity.executable.trim());
   const fail = (error: string): { ok: false; error: string; stillAlive: boolean } => {
-    const killed = terminateGuardianProcessOnly(pid);
+    terminateGuardianProcessOnly(pid);
     const gone = awaitGuardianGone(pid);
-    return { ok: false, error, stillAlive: !killed || !gone };
+    return { ok: false, error, stillAlive: !gone };
   };
   if (!identity?.commandLine || !executableOk) {
     return fail(`guardian(pid=${pid}) 身份不可得/命令行不可读/可执行文件非绝对路径——` +
@@ -8397,7 +8397,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // t3（plan c6a9e4d2）：guardian 绑定状态——onActiveChild 落 agent_process_bound；
         // 身份不可得/argv 缺 token = 绑定失败（guardianBoundError），invoke 后按
         // containment 失败处置（fail-closed：绝不对外宣称已受控，也不按正常 invoke
-        // 结果续跑）。P0-2 review：guardian 未证明消失（kill 失败/复验仍活）时置
+        // 结果续跑）。P0-2 review：guardian 未证明消失（复验仍活或查询失败）时置
         // guardianStillAlive——不得落 settled、不得继续下一 invoke（halt 阻断）。
         let guardianBoundError: string | null = null;
         let guardianStillAlive = false;
@@ -8570,7 +8570,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             stderr: `${(invoke.stderr ?? '').slice(-4096)}${diag}`,
           };
         }
-        // P0-2（review）：绑定失败且 guardian **未证明消失**（kill 失败/复验仍活）——
+        // P0-2（review）：绑定失败且 guardian **未证明消失**（复验仍活或查询失败）——
         // 旧 guardian/agent 仍在野跑且无身份记录可接管：不得落 settled、不得继续下一
         // invoke。halt 阻断（fail-closed；真冲突求人，不自动清理）。
         if (guardianBoundError && guardianStillAlive) {

@@ -33,6 +33,7 @@ import { decideRunContinuation, loadEffectiveExecutionScope, staleFrozenBindings
 import { runConditionProbe } from '../../scripts/utils/condition-wait';
 import * as supervise from '../../scripts/goal-supervise';
 import { __testing_setLockHeartbeatMs, lockHeartbeatIntervalMs } from '../../scripts/goal-phase-runtime';
+import { __testing_setPidProbeExecutor } from '../../scripts/utils/goal-containment-reconcile';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { publishVerifier, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
@@ -1914,6 +1915,49 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       }
     }),
   },
+  ...(['absent', 'query-failure'] as const).map(existence => ({
+    name: `S16-r2c 终止命令失败但独立存在探针 ${existence}：${existence === 'absent' ? '已证明消失按调用失败收口' : '查询失败仍阻断续跑'}，不发布、不派质询`,
+    run: () => withHost(async s => {
+      if (process.platform !== 'win32') { console.log('[design-authority-repair] S16-r2c 跳过：收容只在 Windows 上启用'); return; }
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const cp = require('child_process') as typeof import('child_process');
+      const dummy = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+      const spawnSync = cp.spawnSync;
+      let terminateCalls = 0;
+      let existenceQueries = 0;
+      try {
+        const b = await s16Born(s, { adapter: { author: async () => {
+          // ABSENT 用真实已退出子进程；查询失败用仍活子进程与既有 OS 探针注入缝。
+          if (existence === 'absent') { dummy.kill(); await childExited(dummy); }
+          else __testing_setPidProbeExecutor(() => { existenceQueries++; return { status: 1, stdout: '' }; });
+          cp.spawnSync = ((file: string, args: readonly string[] = [], ...rest: unknown[]) => {
+            if (/taskkill/i.test(String(file)) && args.includes(String(dummy.pid))) {
+              terminateCalls++;
+              return { status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), pid: 0, output: [], signal: null };
+            }
+            return (spawnSync as (...a: unknown[]) => unknown)(file, args, ...rest);
+          }) as never;
+          return { activeChildPid: dummy.pid };
+        } } });
+        assert(terminateCalls > 0, '实际生产绑定路径仍须尝试终止');
+        const halt = haltOf(b.events);
+        if (existence === 'absent') {
+          assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.probe === 'design_authority_projectable', `已证明消失不得标为收容未解决：${describeS16(b)}`);
+          assert(b.events.some(e => e.type === 'agent_invoke_end' && e.phase === 'design-repair-author'), '绑定失败仍按普通调用失败收口');
+        } else {
+          assert(existenceQueries > 0 && halt?.halt_reason === 'agent_containment_unresolved' && !halt.probe, `查询失败不得作为消失证明：${describeS16(b)}`);
+          assert(!b.events.some(e => e.type === 'agent_invoke_end' && e.phase === 'design-repair-author'), '未证明消失时不落 invoke_end');
+        }
+        assertNotPublished(s, b, 'author', `收容 ${existence}`);
+        assert(!b.log.prompts['design-repair-questioning'] && outOfChainStarts(b.events).length === 1, '绑定失败不得继续质询调用');
+      } finally {
+        cp.spawnSync = spawnSync;
+        __testing_setPidProbeExecutor(null);
+        try { dummy.kill(); } catch { /* 已不在 */ }
+        await childExited(dummy);
+      }
+    }),
+  })),
   {
     name: 'S16-r4 取锁中途 I/O 异常（codex t6 首轮 4）：第二把 feature 锁注入一次 EACCES → 本次自取的锁全部放掉、借来的锁仍在、原异常抛出；同进程重试成功',
     run: () => withSnapshot(s => {
