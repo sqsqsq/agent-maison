@@ -8,6 +8,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -20,7 +21,6 @@ import { checkFidelityCapabilityPregate } from '../../scripts/check-spec';
 import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { collectBlockedCapabilityFacts, resolveCapabilityReport } from '../../scripts/utils/capability-resolution';
 import { checkPassRateCalculated, checkVisualDebtDisclosure } from '../../scripts/check-testing';

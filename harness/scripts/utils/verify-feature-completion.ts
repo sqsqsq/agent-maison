@@ -44,7 +44,6 @@ import { dispatchHylyreResult } from './hylyre-result-protocol';
 import { phaseManifestBindsRuntimeArtifacts, validateRuntimeFidelityEvidenceDocument } from './runtime-step-evidence';
 import { isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import {
-  computeCanonicalReceiptSha256,
   loadPhaseEvidenceManifest,
   recomputePhaseEvidenceStaleness,
   sha256File,
@@ -443,7 +442,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
         condition: 'lineage_fresh',
         detail: r.verdict === 'missing'
           ? '缺 phase-evidence-manifest（旧版产物/未闭环）'
-          : `closure 后证据变更：${[...r.changed_paths, ...(r.receipt_changed ? ['<receipt>'] : [])].join(', ') || `传染自 ${r.propagated_from}`}`,
+          : `closure 后证据变更：${r.changed_paths.join(', ') || `传染自 ${r.propagated_from}`}`,
         kind: 'needs_fix',
         ...(r.propagated_from ? { propagated_from: r.propagated_from } : {}),
       });
@@ -686,7 +685,7 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
       run_id: opts.phaseRunIds[phase] ?? opts.runId ?? null,
       attempt: opts.phaseAttempts?.[phase] ?? null,
       gate_fingerprint: manifest?.manifest.environment.gate_fingerprint ?? null,
-      receipt_sha256: computeCanonicalReceiptSha256(projectRoot, feature, phase),
+      receipt_sha256: null,
       evidence_manifest_aggregate: manifest?.manifest.aggregate_sha256 ?? null,
       // D1 H2：feature 载体把阶段闭环指纹写进凭证，verify 侧与 summary 重算对账。
       ...(carrier?.source === 'feature' ? { closure_fingerprint: readPhaseClosureFingerprint(projectRoot, feature, phase, opts.frameworkRoot) } : {}),
@@ -1200,11 +1199,11 @@ export function inspectCompletionRecord(opts: VerifyCompletionOptions): Completi
   }
 
   // 逐阶段自报值 vs 当前阶段证据。当前 manifest 与记录的 aggregate 相同 = 仍是记录切出时那份证据，
-  // 此时 gate_fingerprint 不等只能是记录被改写 → 记录不可信（第一轮阻断 8）；receipt / aggregate 不同 =
+  // 此时 gate_fingerprint 不等只能是记录被改写 → 记录不可信（第一轮阻断 8）；aggregate 不同 =
   // 该阶段证据后变（重跑、删除、损坏）→ 交义务侧 evidence 缺口（plan b2d7f4e9 §6 #9：记录仍可信）。
   for (const rec of completion.phases) {
-    const nowReceipt = computeCanonicalReceiptSha256(projectRoot, feature, rec.phase);
-    if (nowReceipt !== rec.receipt_sha256) {
+    // 当前 writer 不再生成回执摘要；旧非 null 记录保留既有 drift 语义，不重算回执字节。
+    if (rec.receipt_sha256 !== null) {
       drift.push({ phase: rec.phase, detail: '回执规范化哈希与凭证记录失配（阶段证据后变）', class: 'evidence' });
     }
     const manifest = loadPhaseEvidenceManifest(projectRoot, feature, rec.phase);

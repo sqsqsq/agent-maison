@@ -2,10 +2,11 @@
 //
 // 覆盖面（openspec harness-gates/feature-artifact-layout delta）：
 //   - loader 表一致性（inputs 与 spec-loader REQUIRED/OPTIONAL 同源，无第二手写表）
-//   - 无环封装：回执/manifest 自身禁入集合；规范化剔指针幂等；aggregate 不含时间戳
-//   - staleness 重算：input/output 变更、回执变更、缺 manifest、下游传染
+//   - 无环封装：回执/manifest 自身禁入集合；aggregate 不含时间戳
+//   - staleness 重算：业务输入/输出与环境变更、回执投影不参与、缺 manifest、下游传染
 
 import assert from 'assert';
+import { receiptPathForPhase, writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -16,15 +17,11 @@ import {
   OPTIONAL_FEATURE_FILES_BY_PHASE,
 } from '../../scripts/utils/spec-loader';
 import {
-  canonicalizeReceiptContent,
-  computeCanonicalReceiptSha256,
   loadPhaseEvidenceManifest,
   phaseEvidenceManifestPath,
-  receiptPathForPhase,
   recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
   verifyPhaseEvidenceManifestWithStagedOutputs,
   sha256File,
   phaseEvidenceBusinessInputs,
@@ -77,7 +74,7 @@ function seedSpecPhase(root: string): void {
 
 const FIXED_NOW = () => new Date('2026-07-13T00:00:00.000Z');
 
-/** 生成 manifest + 回写回执指针（生产封装序）——staleness 测试须走此路径，否则缺指针=tampered */
+/** 生产 writer 生成 manifest；测试 helper 附历史回执 shape，指针不参与 freshness。 */
 function writeManifestWithPointer(root: string, phase: string): void {
   const written = writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: phase as Phase, now: FIXED_NOW }));
   writeReceiptManifestPointer(root, FEATURE, phase, `doc/features/${FEATURE}/${phase}/reports/phase-evidence-manifest.json`, written.sha256);

@@ -50,9 +50,8 @@ import {
   loadPhaseEvidenceManifest,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
-import { seedCleanCompletionChain } from '../utils/completion-chain-seed';
+import { seedCleanCompletionChain, writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 // P3 套件的现场装配（施工投影 + 可信证据链 + 哈希重绑）唯一实现，MG 直接复用，不另造夹具。
 import { prepareCompleteProject } from './component-closure.unit.test';
 // 接缝证明与绕过尺子来自 fixture 本体——MG 直接执行它们，证明不是 return true 占位。

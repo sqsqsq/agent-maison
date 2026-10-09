@@ -180,7 +180,7 @@ export type PlanAuthorityOutcome =
  *
  * runner-owned-machine-facts 裁剪（codex 定案）后语义统一为一句话：
  * **授权 = 仓内 fresh 的 plan closure**。检查复用 recomputePhaseEvidenceStaleness
- * （与截断链 preflight / assess 同一把尺）：manifest 完整性 + 回执指针锚 + 冻结面
+ * （与截断链 preflight / assess 同一把尺）：manifest schema/aggregate 完整性 + 冻结面
  * （plan.md / contracts.yaml 等 outputs∪inputs）逐文件哈希比对 + 环境重算——跨 run
  * 稳定：fresh 的 --start coding 无需本 run 状态即可开工；resume 语义相同（无内存态
  * 依赖）。pass snapshot 已整体退役（旧 per-run 快照/内存锚方案的动机与缺陷分析见
@@ -214,7 +214,7 @@ export function checkPlanAuthority(input: {
     }
   }
   // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520）：
-  // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest + 回执指针，
+  // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest 的完整性与条目核对，
   // 跨 run 稳定）。per-run pass snapshot 只是同阶段 closure-retry 的 TOCTOU 缓存，
   // 不是授权载体——旧实现按当前 runId 查快照，跨 run 下游起点（--start coding）必得
   // kind=none → 无处回退 → halt，合法分段续跑结构性跑不通。
@@ -247,7 +247,7 @@ export function checkPlanAuthority(input: {
       kind: 'replan',
       reason: 'live_drift',
       detail:
-        `plan closure 冻结面已偏离（${[...fileChanges, ...envChanges, ...(plan.receipt_changed ? ['<receipt>'] : [])].join('、')}）` +
+        `plan closure 冻结面已偏离（${[...fileChanges, ...envChanges].join('、')}）` +
         '——不在漂移的授权面上开工，回 plan 重新裁决',
       affectedFiles: fileChanges,
     };

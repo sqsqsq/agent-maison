@@ -13,18 +13,12 @@
 //   - outputs：该阶段自己产出/认证的 artifact（本模块唯一的增量表，语义=产出，
 //     loader 表没有这一概念）；
 //   - environment：gate 指纹 / framework.config 哈希 / 激活 workflow 哈希；
-//   - receipt_sha256：**规范化**回执哈希。
+//   - receipt_sha256：旧格式兼容字段，新 writer 写 null，旧值仍参与原 aggregate。
 //
-// 无环封装序（openspec design §3.1，固定不留实现自由度）：
-//   1. reports 与 receipt 正文先完成；
-//   2. receipt 规范化（剔除 evidence_manifest / evidence_manifest_sha256 /
-//      phase_closure_fingerprint 指针行）后取 hash；
-//   3. 生成本 manifest（inputs+outputs+规范化 receipt hash），manifest 不 hash 自身；
-//   4. receipt/summary 只保存 manifest 路径 + manifest sha256；
-//   5. verify 侧先重算 manifest 所列物证 hash，再校验 manifest sha256——单向链无环。
-//   为此 outputs 集合**强制排除**回执与 manifest 自身（拼进来即 throw，防实现者回环）。
+// 闭环由 finalizer 先准备 staged summary，再生成绑定其字节的 manifest，最后发布 summary。
+// 回执是提交后的人读投影，不参与 freshness；回执与 manifest 自身不得进入证据集合。
 //
-// 消费点（两处，不做常驻失效 DAG）：
+// 主要消费点（不做常驻失效 DAG）：
 //   - goal-runner 截断链 preflight：上游各阶段 recompute → STALE 即拒启；
 //   - verify-feature-completion：全链 recompute → 任一 STALE/missing 即非 VALID。
 // ============================================================================
@@ -58,13 +52,6 @@ import type { Phase } from './types';
 
 export const PHASE_EVIDENCE_MANIFEST_FILENAME = 'phase-evidence-manifest.json';
 export const PHASE_EVIDENCE_MANIFEST_SCHEMA_VERSION = '1.0';
-
-/** 回执中指向 manifest 的指针键（规范化时剔除；receipt 写入侧与本表同源） */
-export const RECEIPT_MANIFEST_POINTER_KEYS = [
-  'evidence_manifest',
-  'evidence_manifest_sha256',
-  'phase_closure_fingerprint',
-] as const;
 
 export type EvidenceRole = 'input' | 'output' | 'both';
 
@@ -136,7 +123,7 @@ export interface PhaseEvidenceManifest {
   inputs: EvidenceEntry[];
   outputs: EvidenceEntry[];
   environment: EvidenceEnvironment;
-  /** 规范化回执哈希；回执不存在为 null（如非 receipt 阶段） */
+  /** 旧记录原值继续参与 aggregate；新 writer 写 null，不核对当前回执。 */
   receipt_sha256: string | null;
   /** 对 {feature,phase,inputs,outputs,environment,receipt_sha256} 稳定序列化的哈希 */
   aggregate_sha256: string;
@@ -343,50 +330,6 @@ function sha256Text(text: string): string {
 
 function toPosixRel(projectRoot: string, absPath: string): string {
   return path.relative(projectRoot, absPath).split(path.sep).join('/');
-}
-
-/**
- * 回执规范化：整行剔除 manifest 指针键（含缩进的 YAML 子键形态），统一换行，
- * **并归一尾部空行**——writeReceiptManifestPointer 的空行分隔符在剔指针后会残留为
- * 尾部空行，若参与 hash 则"刚生成即 stale"（codex 六轮 P0-1 实测复现）。
- * 契约：receipt 写入侧新增指针字段必须同步进 RECEIPT_MANIFEST_POINTER_KEYS；
- * 单测用**生产 writer** 覆盖"写指针前后规范化哈希不变"。
- */
-export function canonicalizeReceiptContent(content: string): string {
-  const keyAlt = RECEIPT_MANIFEST_POINTER_KEYS.join('|');
-  const pointerLine = new RegExp(`^\\s*(${keyAlt})\\s*:.*$`);
-  const lines = content
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .filter((line) => !pointerLine.test(line));
-  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
-  return lines.join('\n');
-}
-
-export function receiptPathForPhase(
-  projectRoot: string,
-  feature: string,
-  phase: string,
-  opts?: FeaturePathOptions,
-): string {
-  return featureFilePath(projectRoot, feature, path.join(phase, 'phase-completion-receipt.md'), opts);
-}
-
-export function computeCanonicalReceiptSha256(
-  projectRoot: string,
-  feature: string,
-  phase: string,
-  opts?: FeaturePathOptions,
-): string | null {
-  // plan 07a41ec6 T4：回执退出 evidence 链——它是 harness 的只读投影，不再参与 freshness。
-  // 保留函数签名供既有调用方；恒返回 null（旧 manifest 里的字符串值不再比较）。
-  void receiptPathForPhase;
-  void canonicalizeReceiptContent;
-  void projectRoot;
-  void feature;
-  void phase;
-  void opts;
-  return null;
 }
 
 /** 稳定序列化（键排序）——aggregate 与 manifest 文件哈希的共同基础 */
@@ -631,9 +574,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   const outputs = entries.filter((e) => e.role !== 'input');
 
   const environment = resolveEnvironment(projectRoot, phase, opts.frameworkRoot, opts.requirementSha);
-  const receiptSha = computeCanonicalReceiptSha256(projectRoot, feature, phase, opts.featurePathOpts);
-
-  const core = { feature, phase: String(phase), inputs, outputs, environment, receipt_sha256: receiptSha };
+  const core = { feature, phase: String(phase), inputs, outputs, environment, receipt_sha256: null };
   return {
     schema_version: PHASE_EVIDENCE_MANIFEST_SCHEMA_VERSION,
     generated_at: nowIso,
@@ -753,9 +694,7 @@ export function writePhaseEvidenceManifest(
   return { absPath, sha256: sha256Text(text) };
 }
 
-/** manifest 自身的 aggregate 重算（tamper 检测：codex 五轮 P0——改 entry 保留旧
- * aggregate 会洗白 stale；aggregate 可被同步伪造，最终锚是 receipt 指针→completion，
- * 本重算拦"改条目没改 aggregate"的低成本篡改层） */
+/** 按原记录全部字段重算 aggregate；包括旧 receipt 字段，不核对人读回执指针。 */
 export function recomputeManifestAggregate(m: PhaseEvidenceManifest): string {
   return computeAggregate({
     feature: m.feature,
@@ -817,52 +756,6 @@ export function loadPhaseEvidenceManifest(
   }
 }
 
-/** 回执中记录的 manifest 指针值（evidence_manifest_sha256）——staleness 的外部锚。
- * 取**最后一次**赋值（写入侧为替换式，此处再兜一层防历史残留行）。 */
-export function readReceiptManifestPointer(
-  projectRoot: string,
-  feature: string,
-  phase: string,
-  opts?: FeaturePathOptions,
-): string | null {
-  const p = receiptPathForPhase(projectRoot, feature, phase, opts);
-  if (!fs.existsSync(p)) return null;
-  const re = /^\s*evidence_manifest_sha256\s*:\s*["']?([0-9a-f]{64})["']?\s*$/gm;
-  let last: string | null = null;
-  let m: RegExpExecArray | null;
-  const content = fs.readFileSync(p, 'utf-8');
-  while ((m = re.exec(content)) !== null) last = m[1];
-  return last;
-}
-
-/**
- * 把 manifest 指针写进回执（**仅人读线索**，plan 07a41ec6 起不再参与任何判定；回执由 harness 投影重生成时
- * 指针自然消失，也不影响 freshness）。保留给旧夹具与人读排障。
- */
-export function writeReceiptManifestPointer(
-  projectRoot: string,
-  feature: string,
-  phase: string,
-  manifestRelPath: string,
-  manifestSha256: string,
-  opts?: FeaturePathOptions,
-): void {
-  const p = receiptPathForPhase(projectRoot, feature, phase, opts);
-  if (!fs.existsSync(p)) {
-    throw new Error(`[phase-evidence-manifest] 回执不存在，无法写指针：${p}`);
-  }
-  const keyAlt = RECEIPT_MANIFEST_POINTER_KEYS.join('|');
-  const pointerLine = new RegExp(`^\\s*(${keyAlt})\\s*:.*$`);
-  const kept = fs
-    .readFileSync(p, 'utf-8')
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .filter((line) => !pointerLine.test(line));
-  while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
-  kept.push('', `evidence_manifest: "${manifestRelPath}"`, `evidence_manifest_sha256: "${manifestSha256}"`, '');
-  fs.writeFileSync(p, kept.join('\n'), 'utf-8');
-}
-
 export type PhaseStalenessVerdict = 'fresh' | 'stale' | 'missing' | 'tampered';
 
 export interface PhaseStalenessResult {
@@ -870,7 +763,7 @@ export interface PhaseStalenessResult {
   verdict: PhaseStalenessVerdict;
   /** 变更/缺失的证据路径（stale 时非空）；missing/tampered 时可为空 */
   changed_paths: string[];
-  /** 规范化回执哈希失配 */
+  /** 兼容结果字段；回执已退出 freshness，当前重算恒 false。 */
   receipt_changed: boolean;
   /** tampered/完整性问题的机器原因 */
   integrity_errors?: string[];
@@ -881,12 +774,9 @@ export interface PhaseStalenessResult {
 /**
  * Verify an already-published manifest while one or more canonical outputs are
  * still represented by staged bytes. This is the closure crash-recovery view:
- * every ordinary input/output, environment fact and normalized receipt must be
- * current, while the named canonical output is compared with the staged hash.
- * A missing receipt pointer is allowed because publication may have crashed
- * between manifest and pointer. The closure finalizer may additionally allow
- * a prior pointer while it proves that the newly published manifest binds the
- * staged summary; only that runner-owned transaction may advance the pointer.
+ * integrity, business inputs/outputs and environment must be current; named
+ * canonical outputs are compared with their staged hashes. Receipt projections
+ * and their human-readable pointers do not participate in this proof.
  */
 export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   projectRoot: string;
@@ -896,8 +786,6 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   frameworkRoot?: string;
   currentRequirementSha?: string | null;
   runId?: string;
-  /** 兼容保留：回执指针已退出证据链，本项不再参与判定。 */
-  allowPriorReceiptPointer?: boolean;
 }): PhaseStalenessResult {
   const loaded = loadPhaseEvidenceManifest(input.projectRoot, input.feature, input.phase);
   if (!loaded) {
@@ -952,21 +840,17 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
   for (const stagedPath of staged.keys()) {
     if (!seenStaged.has(stagedPath)) changed.add(stagedPath);
   }
-  // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
-  const receiptChanged = false;
-  return changed.size > 0 || receiptChanged
-    ? { phase: input.phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: receiptChanged }
+  return changed.size > 0
+    ? { phase: input.phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: false }
     : { phase: input.phase, verdict: 'fresh', changed_paths: [], receipt_changed: false };
 }
 
 /**
- * 两消费点共用的重算：逐阶段——
+ * 阶段输入、状态评估与完成核验共用的重算：逐阶段——
  *   ① manifest schema 完整性 + aggregate 重算（改条目留旧 aggregate → tampered，
  *      codex 五轮 P0）；
- *   ② 回执指针锚：回执记录的 evidence_manifest_sha256 须等于 manifest 当前文件哈希
- *      （改写 manifest 同步改 aggregate 的高成本篡改在此被回执→completion 链拴住）；
- *   ③ inputs+outputs 逐文件重算 vs 条目哈希；④ 回执规范化哈希 vs 记录值。
- * 任一非 fresh 沿 chain 传染下游。missing=无 manifest；tampered=完整性/指针断裂——
+ *   ② 环境与当前需求重算；③ 同源业务输入/输出逐项核对。
+ * 任一非 fresh 沿 chain 传染下游。missing=无 manifest；tampered=记录完整性失配——
  * 消费方语义：preflight 拒启、completion verify 非 VALID；本函数只报事实不定裁决。
  */
 export function recomputePhaseEvidenceStaleness(
@@ -1065,10 +949,8 @@ export function recomputePhaseEvidenceStaleness(
     for (const entry of [...phaseEvidenceBusinessInputs(projectRoot, feature, manifest, opts), ...manifest.outputs]) {
       if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
-    // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
-    const receiptChanged = false;
-    if (changed.size > 0 || receiptChanged) {
-      results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: receiptChanged });
+    if (changed.size > 0) {
+      results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: false });
       upstreamBad = phase;
     } else {
       results.push({ phase, verdict: 'fresh', changed_paths: [], receipt_changed: false });

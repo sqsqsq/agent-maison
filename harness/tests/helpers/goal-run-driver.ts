@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 
 export const RESULT_MARK = '<<goal-run-result>>';
 
@@ -427,7 +428,7 @@ async function runScenario(args: {
     // ---- 写盘 harness 桩（与 goal-runner-testing-integrity 同源形态）----
     // 桩必须把 receipt/verifier/summary(1.2)/evidence-manifest 写到盘：runner 的
     // 截断链 preflight 与 closure finalizer 消费的是**文件**，内存 PASS 走不通全链。
-    // 全部 writer 从 frameworkRoot 动态取（静态 import = 恒锚开发仓，第八批 P1 教训）。
+    // 生产 evidence/attestation writer 从被测 frameworkRoot 动态取；历史回执 shape 用测试 helper。
     const closure = req('harness/scripts/utils/closure-attestation');
     const pem = req('harness/scripts/utils/phase-evidence-manifest');
     const fidelity = req('harness/scripts/utils/fidelity-shared');
@@ -544,7 +545,7 @@ async function runScenario(args: {
         });
         const written = (pem.writePhaseEvidenceManifest as (r: string, m: unknown) => { absPath: string; sha256: string })(pr, manifest);
         const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
-        (pem.writeReceiptManifestPointer as (...a: unknown[]) => void)(pr, feat, String(ph), rel, written.sha256);
+        writeReceiptManifestPointer(pr, feat, String(ph), rel, written.sha256);
       } catch { /* manifest 失败 → 后续门如实红（非本场景被测对象） */ }
       return { exitCode: 0, timedOut: false };
     });

@@ -1,26 +1,62 @@
 // completion-chain-seed.ts —— 用生产 writer 造"一次成功 Goal run 的完成事实"
 //
-// 唯一实现，两处消费：
-//   - verify-feature-completion.unit.test.ts（原 seedCleanChain，2 阶段链）
-//   - mechanical-loop-closure.unit.test.ts（MG-A 跨层正链，workflow 真实全链）
+// 完成链种子复用生产 evidence/attestation writer；历史回执指针仅作测试 shape 构造。
 //
-// 纪律（plan 2d6b4f83 §5）：只调生产 writer，不手抄 feature-completion.json、
-// 不复制 summary/manifest 结构；chain 由调用方给，本文件不推导也不裁决。
+// 完成记录不手抄，chain 由调用方给；测试回执 shape 不参与生产 freshness 或阶段裁决。
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
+import { featureFilePath, receiptDirPath, resolveFeatureArtifact, type FeaturePathOptions } from '../../config';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import {
   loadPhaseEvidenceManifest,
-  receiptPathForPhase,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import type { Phase } from '../../scripts/utils/types';
+
+/** 历史回执指针 shape 的替换键，仅测试 helper 内部使用。 */
+const RECEIPT_MANIFEST_POINTER_KEYS = [
+  'evidence_manifest',
+  'evidence_manifest_sha256',
+  'phase_closure_fingerprint',
+] as const;
+
+export function receiptPathForPhase(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  opts?: FeaturePathOptions,
+): string {
+  return featureFilePath(projectRoot, feature, path.join(phase, 'phase-completion-receipt.md'), opts);
+}
+
+/** 只构造历史回执指针 shape；当前生产 freshness 不消费它。 */
+export function writeReceiptManifestPointer(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  manifestRelPath: string,
+  manifestSha256: string,
+  opts?: FeaturePathOptions,
+): void {
+  const p = receiptPathForPhase(projectRoot, feature, phase, opts);
+  if (!fs.existsSync(p)) {
+    throw new Error(`[phase-evidence-manifest] 回执不存在，无法写指针：${p}`);
+  }
+  const keyAlt = RECEIPT_MANIFEST_POINTER_KEYS.join('|');
+  const pointerLine = new RegExp(`^\\s*(${keyAlt})\\s*:.*$`);
+  const kept = fs
+    .readFileSync(p, 'utf-8')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .filter((line) => !pointerLine.test(line));
+  while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+  kept.push('', `evidence_manifest: "${manifestRelPath}"`, `evidence_manifest_sha256: "${manifestSha256}"`, '');
+  fs.writeFileSync(p, kept.join('\n'), 'utf-8');
+}
 
 export interface SeedCompletionChainOptions {
   projectRoot: string;

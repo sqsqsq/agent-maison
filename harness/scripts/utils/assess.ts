@@ -528,7 +528,6 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     const staleDetail = stalenessEntry && stalenessEntry.verdict !== 'fresh'
       ? [
           ...stalenessEntry.changed_paths,
-          ...(stalenessEntry.receipt_changed ? ['<receipt>'] : []),
           ...(stalenessEntry.propagated_from ? [`<传染自 ${stalenessEntry.propagated_from}>`] : []),
           ...(stalenessEntry.integrity_errors ?? []),
         ].join(', ')

@@ -10,13 +10,13 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 import type { AssessRecommendation } from '../../scripts/utils/assess';
 import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { tryCloseUpstreamPhase } from '../../scripts/utils/upstream-closure';
 import type { UnitCaseResult } from '../run-unit';

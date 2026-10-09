@@ -216,7 +216,7 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
 
   // ④ 有 UI 变更 → 冻结白名单必须可用（fail-closed，禁退未经核对的 live contracts）
   // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520 同族）：
-  // 白名单校验源=plan closure 的 phase-evidence-manifest（跨 run 稳定、由回执指针锚定
+  // 白名单校验源=plan closure 的 phase-evidence-manifest（跨 run 稳定、由 schema/aggregate 核对
   // 完整性），不再依赖 per-run pass snapshot（那是 closure-retry 的 TOCTOU 缓存，跨 run
   // 下游起点名下天然没有）。当前盘上 contracts.yaml 与 closure 冻结 hash 相等才读取；
   // 失配=live 漂移，按越界同罚 FAIL（post-agent 的 plan 授权检查走既有 replan 处置）。

@@ -87,7 +87,6 @@ export interface FinalizePhaseClosureOptions {
 export type ClosurePublicationCut =
   | 'after_staged_summary'
   | 'after_manifest_publish'
-  | 'after_receipt_pointer'
   | 'after_phase_state'
   | 'after_summary_rename';
 
@@ -445,8 +444,6 @@ function publishEvidenceBinding(
   });
   const written = writePhaseEvidenceManifest(opts.projectRoot, manifest);
   maybeCrash(opts, 'after_manifest_publish');
-  // plan 07a41ec6（codex review P0）：回执指针退出证据链——不再回写；回执是 harness 只读投影，可随时重生成。
-  maybeCrash(opts, 'after_receipt_pointer');
   return { manifestRel, manifestSha: written.sha256 };
 }
 
@@ -529,10 +526,6 @@ function recoverPartialPublication(
       ? computeRunRequirementSha(opts.projectRoot, opts.feature, opts.goalRunId)
       : undefined,
     runId: opts.goalRunId,
-    // A previous completed closure may already own the receipt pointer. If the
-    // current manifest independently proves the staged summary and all other
-    // evidence, this transaction is precisely the writer allowed to advance it.
-    allowPriorReceiptPointer: true,
   });
   if (verification.verdict !== 'fresh') {
     // The staged summary is a runner-owned temporary witness. Once the current

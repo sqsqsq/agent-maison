@@ -5,6 +5,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -30,7 +31,6 @@ import {
   recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import {
   isLockStale,

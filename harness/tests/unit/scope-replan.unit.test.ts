@@ -6,6 +6,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -19,7 +20,6 @@ import {
   recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { makeClosedFeatureFixture } from '../utils/closed-feature-fixture';
 import type { Phase } from '../../scripts/utils/types';

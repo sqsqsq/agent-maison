@@ -12,10 +12,8 @@ import * as path from 'path';
 
 import { clearFrameworkConfigCache, featureFilePath, receiptDirPath, resolveFeatureArtifact } from '../../config';
 import {
-  receiptPathForPhase,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import {
   FEATURE_COMPLETION_FILENAME,

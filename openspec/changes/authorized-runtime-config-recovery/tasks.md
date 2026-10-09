@@ -1,4 +1,4 @@
-实施范围与状态以 plan `8d4e6a21` 的 frontmatter t1–t6 为准；下面逐项映射并同步更新。plan R1 已通过并冻结；Astra C2 代码评审已收口通过，R1/N1 均已修复。2026-10-09 一次 candidate:build 完整验证通过，t1–t5 completed；真实宿主 H1 未执行，t6 pending，尚未正式 promote。
+实施范围与状态以 plan `8d4e6a21` 的 frontmatter 为准；下面逐项映射并同步更新。plan R1 已通过并冻结；Astra C2 代码评审已收口通过，R1/N1 均已修复。2026-10-09 原批 candidate:build 完整验证通过，t1–t5 completed；关联清理 L2 的 Astra 窄复审 PASS，R1/R2/R3 均已修复，无仍需修复项或直接回归，清理独立 review 已收口，待调度最终集中验证，t7 保持 in_progress；真实宿主 H1 未执行，t6 pending，尚未正式 promote。
 
 ## 1. 当前内容依赖（t1）
 
@@ -30,6 +30,14 @@
 
 - [ ] 6.1 由宿主操作者在已有授权范围内集成已验证候选发布件，保留原 run、产物和预算，并通过既有 provider 调用路径核实用户指定型号与账号的实际可用性。
 - [ ] 6.2 续跑 be091c，确认没有 provider-only 上游假失效、视觉补验真实执行、完成状态与产品验收一致；外部条件未满足时如实停放，t6 不伪标完成。
+
+## 7. 关联回执退役清理（t7）
+
+- [x] 7.1 按 plan §7 的 L1 冻结清单删除无调用回执导出/恒值占位、未读参数、恒 false 临时分支、重复 requirement 计算与假注释/未用导入；旧记录 schema/aggregate/字段与旧非 null receipt drift 判定不变。首轮关于旧指针构造器生产位置的保留判断已撤回，测试 shape 功能按 L2 收编。
+- [ ] 7.2 typecheck、直接目标套件及删除项零有效引用核对后冻结代码，交 Astra 独立 review；只修既有意见与直接回归，最终全量/候选由调度集中安排，不操作宿主。
+- [x] 7.3 L2 按首轮冻结 R1/R2/R3 删除六处当前恒 false 结果消费、重复故障切点，并将旧指针构造器原样收编到 completion-chain-seed；迁移全部测试引用，保持 goal-run-driver 的真实实现从被测 framework 动态加载。
+
+L1 目标验证事实保留。首轮 R1/R2/R3 已落实 L2 并完成目标验证：typecheck PASS；phase-evidence 31/31、finalizer 28/28、completion 20/20、assess 56/56、scope-replan 15/15、ui-scope 15/15、component-closure 45/45、execution-scope 121/121、host-replay 36/36、visual-debt 35/35、upstream-closure 10/10、mechanical-loop 17/17、动态 driver 1/1、smoke 注册 6/6、连续回放与 facts admission 定向各 3/3，全部 PASS。生产无三项测试指针构造器或测试 helper 依赖；两函数原文本保持，真实 writer 的被测 framework 来源保持。实现已冻结；t7 仍 in_progress，7.2 的 Astra 窄复审与最终集中验收待完成，原完整候选验证事实不覆盖本轮新发布内容。
 
 ## 归档与约束
 

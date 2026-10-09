@@ -346,7 +346,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId,
     pendingOwnerPaths: [...changed],
     ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
-  if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict) || freshness.receipt_changed
+  if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict)
     || freshness.propagated_from || freshness.integrity_errors?.length
     || freshness.changed_paths.some(source => !changed.has(source))) return undefined;
   return structuredClone(context);
@@ -487,8 +487,7 @@ export function resolveCapabilityResolutionEntryInput(
           const semanticOptions = { frameworkRoot, runId: goalRunId,
             ...(requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) };
           const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { ...semanticOptions,
-            ...(pendingOwnerPaths.length ? { pendingOwnerPaths } : {}),
-            ...(requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })
+            ...(pendingOwnerPaths.length ? { pendingOwnerPaths } : {}) })
             .find(result => result.phase === establishing);
           if (fresh?.verdict !== 'fresh' || !evidence?.integrityOk) {
             if (evidence || !currentResearch) {

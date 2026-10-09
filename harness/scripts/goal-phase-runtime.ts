@@ -1293,7 +1293,7 @@ export function __testing_setCanaryProbeInvoke(fn: InvokeAgentFn | null): void {
 
 // 【已删除 · runner-owned-machine-facts 裁剪（codex 定案）】scopeAnchorEnv（b3e8d4c7 t4
 // 的 plan 快照锚跨进程注入）：ui-scope-gate 的白名单校验源已改为 plan closure 的
-// phase-evidence-manifest（跨 run 稳定、回执指针锚定完整性），不再消费快照锚 env。
+// phase-evidence-manifest（跨 run 稳定、schema/aggregate 与实际条目核对），不再消费快照锚 env。
 
 /** gate harness 注入（测试用；**spy 它有没有被调用**是"污染轮不 spawn"的核心断言） */
 type RunHarnessFn = (
@@ -6100,7 +6100,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ? '缺 phase-evidence-manifest（旧版产物/未闭环，须补跑该阶段闭环）'
               : r.propagated_from
                 ? `传染自上游 ${r.propagated_from}`
-                : `证据变更：${[...r.changed_paths, ...(r.receipt_changed ? ['<receipt>'] : []), ...(r.integrity_errors ?? [])].join('、')}`;
+                : `证据变更：${[...r.changed_paths, ...(r.integrity_errors ?? [])].join('、')}`;
           console.error(`  - [${r.phase}] ${r.verdict}：${detail}`);
         }
         if (missingAttestation) {

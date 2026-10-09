@@ -18,7 +18,6 @@ import { syncPhaseStateOnReceiptPassStrict } from '../../scripts/utils/phase-sta
 import { patchSummarySoftAdvisory } from '../../scripts/check-receipt';
 import {
   loadPhaseEvidenceManifest,
-  readReceiptManifestPointer,
   recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
   sha256File,
@@ -120,7 +119,7 @@ function finalize(
   fixture: ReturnType<typeof mkProject>,
   persistPhaseState: () => void = () => undefined,
   assessAfterCommit?: () => unknown,
-  faultAt?: 'after_staged_summary' | 'after_manifest_publish' | 'after_receipt_pointer' | 'after_phase_state' | 'after_summary_rename',
+  faultAt?: 'after_staged_summary' | 'after_manifest_publish' | 'after_phase_state' | 'after_summary_rename',
 ) {
   return finalizePhaseClosure({
     projectRoot: fixture.root,
@@ -963,7 +962,6 @@ const cases: Case[] = [
       const cuts = [
         'after_staged_summary',
         'after_manifest_publish',
-        'after_receipt_pointer',
         'after_phase_state',
         'after_summary_rename',
       ] as const;
@@ -984,7 +982,7 @@ const cases: Case[] = [
             `${cut} manifest does not bind canonical summary`,
           );
           assert(!finalize(fixture).transitioned, `${cut} repeat was not idempotent`);
-          if (cut === 'after_manifest_publish' || cut === 'after_receipt_pointer') {
+          if (cut === 'after_manifest_publish') {
             assert(recovered.recovered_partial === true, `${cut} did not resume the published transaction`);
           }
         } finally {

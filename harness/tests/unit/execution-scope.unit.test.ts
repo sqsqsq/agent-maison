@@ -22,8 +22,11 @@ import { runUiDiffWithinDeclaredFiles } from '../../scripts/utils/ui-scope-gate'
 import { featureTrackDeclPath } from '../../scripts/utils/feature-track';
 import { SCOPE_REVISION_FIELDS as SCOPE_REVISION_FIELDS_CONST } from '../../scripts/utils/goal-manifest';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
-import { writePhaseSummary, writePhaseReceipt } from '../utils/completion-chain-seed';
-import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
+import { writePhaseSummary, writePhaseReceipt, writeReceiptManifestPointer } from '../utils/completion-chain-seed';
+import {
+  resolvePhaseEvidenceManifest,
+  writePhaseEvidenceManifest,
+} from '../../scripts/utils/phase-evidence-manifest';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 import { createHash } from 'crypto';
 import { stableStringify, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';

@@ -11,12 +11,12 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from './completion-chain-seed';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attestation';
 

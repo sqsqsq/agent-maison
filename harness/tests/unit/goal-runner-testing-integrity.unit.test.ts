@@ -19,6 +19,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
@@ -76,7 +77,7 @@ import {
   sha256File,
   recomputePhaseEvidenceStaleness,
 } from '../../scripts/utils/phase-evidence-manifest';
-import { writeReceiptManifestPointer } from '../../scripts/utils/phase-evidence-manifest';
+
 import { __testing_setVisualDiffOcrFn, checkVisualDiff, hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { loadResolvedProfile } from '../../profile-loader';
 import { loadFrameworkConfig, resolveHylyreToolConfig } from '../../config';
@@ -823,7 +824,7 @@ export async function runGoalRuntimeChain(
           gateFingerprint: 'integration-spy', runIdentity: null,
         });
       }
-      // phase-evidence-manifest + 回执指针（生产 writer 同源；lineage_fresh 巡检消费）。
+      // 生产 writer 生成 phase evidence 供 lineage_fresh 核验；测试 helper 附历史回执指针 shape。
       // frameworkRoot 不传——verify 侧重算 environment 时也是 guess 口径，两侧必须同源，
       // 否则 gate_fingerprint/framework_version 恒 stale；requirementSha 绑定当前 run
       //（记录 null 会被判 requirement_unbound，fail-closed 正确但非本套被测对象）。

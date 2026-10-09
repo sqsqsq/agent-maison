@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
@@ -29,7 +30,6 @@ import {
   recomputePhaseEvidenceStaleness,
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { CheckResult, Phase } from '../../scripts/utils/types';

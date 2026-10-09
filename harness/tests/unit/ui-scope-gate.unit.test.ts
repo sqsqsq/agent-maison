@@ -13,6 +13,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
@@ -29,7 +30,6 @@ import {
 import {
   resolvePhaseEvidenceManifest,
   writePhaseEvidenceManifest,
-  writeReceiptManifestPointer,
 } from '../../scripts/utils/phase-evidence-manifest';
 import type { Phase } from '../../scripts/utils/types';
 import { clearFrameworkConfigCache } from '../../config';
