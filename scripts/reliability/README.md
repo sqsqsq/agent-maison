@@ -111,12 +111,14 @@ node scripts/reliability-metrics.mjs --scenario-results dist/reliability-scenari
 PowerShell 下先 `$env:RELIABILITY_RESULTS_OUT = "..\dist\reliability-scenarios.json"` 再跑同一条 npm 命令。
 不设 `RELIABILITY_RESULTS_OUT` 时套件不写任何文件。结果文件每个分支一条任务，带 `scenario_meta.branch`。
 
-## 4. 真实 agent 层：宿主执行程序
+## 4. 真实 agent 层：旧包宿主执行程序（历史）
+
+> 2026-10-11：1dbe4fa4 t5 的旧包基线任务及上位 P1 剩余责任已取消；宿主已更新，旧现场已放弃，原真实 agent 基线未取得。本节保留历史程序，不再要求还原或运行 074a4c3c。新的干净宿主验收按 272acb5f H1 / 6e2f9a10 t6 执行，继续复用本文采集工具，历史观察不作为受控对照。
 
 ### 4.1 责任与时机
 
-- 责任方是**宿主操作者**。结果是 P1 的交付项（t5），取得之前 P1 与上位总纲的 P1 都不关闭。
-- 必须在宿主同步下一个候选包**之前**做完。宿主当前框架 source_commit 是 `074a4c3c`（`framework/RELEASE-MANIFEST.json`），跑之前先核对。
+- 原责任方是**宿主操作者**；t5 已取消，不再作为 P1 关闭的前置。
+- 原定时机为同步下一候选包之前、使用 `074a4c3c`；该窗口已失效，以下版本和路径只描述当时现场。
 - 宿主：`D:\1.code\SimulatedWalletForHmos`；feature：`cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdy12Mg`
   （目录 `doc/features/bc-openCard-2/open-card-flow-v2`）。
 

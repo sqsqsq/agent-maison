@@ -1,4 +1,4 @@
-实施范围与状态以 plan `8d4e6a21` 的 frontmatter 为准；下面逐项映射并同步更新。plan R1、代码 C2、关联清理 L2 与独立 bugfix L3 均通过 Astra 评审。2026-10-09 调度在稳定切点 ca860a77 完成最终 candidate 全链验收，t1–t5、t7 completed；旧集中验证与诊断失败记录保留。真实宿主 H1 未执行，t6 pending，未回灌或启动宿主，尚未正式 promote。
+实施范围与状态以 plan `8d4e6a21` 的 frontmatter 为准；下面逐项映射并同步更新。plan R1、代码 C2、关联清理 L2 与独立 bugfix L3 均通过 Astra 评审。2026-10-09 调度在稳定切点 ca860a77 完成最终 candidate 全链验收，t1–t5、t7 completed；旧集中验证与诊断失败记录保留。2026-10-11 用户已删除旧现场，t6 cancelled，原 run 恢复未验证；新宿主验收归 6e2f9a10 / 272acb5f，不将取消记为通过。
 
 ## 1. 当前内容依赖（t1）
 
@@ -26,10 +26,9 @@
 - [x] 5.2 运行 typecheck 与目标套件；冻结后覆盖 `cd harness && npm test`、受影响 release-only 套件。准备 H1 候选件时合并到既有 `npm run candidate:build` 的完整测试链，不重复先后跑同一全量。
 - [x] 5.3 必须执行 `npm run release:verify` 的包/清单校验；H1 尚未完成时沿既有 candidate 模式暂缓最终 plan 发布门禁，命令与前提见 plan §5.3，正式 promote 再补门禁。完成 plan 扫描、OpenSpec strict、diff 和 LF 校验，保留真实失败/补验记录。
 
-## 6. 宿主 H1（t6）
+## 6. 宿主 H1（t6，已取消）
 
-- [ ] 6.1 由宿主操作者在已有授权范围内集成已验证候选发布件，保留原 run、产物和预算，并通过既有 provider 调用路径核实用户指定型号与账号的实际可用性。
-- [ ] 6.2 续跑 be091c，确认没有 provider-only 上游假失效、视觉补验真实执行、完成状态与产品验收一致；外部条件未满足时如实停放，t6 不伪标完成。
+2026-10-11 按用户放弃旧现场的裁决取消 6.1/6.2：不再要求保存或续跑 be091c，原 H1 未验证，不以勾选完成替代。后续干净宿主重跑由 6e2f9a10 t6 与 272acb5f h1 共验，保留新的验收条件与结果映射。
 
 ## 7. 关联回执退役清理（t7）
 
@@ -37,7 +36,7 @@
 - [x] 7.2 typecheck、直接目标套件及删除项零有效引用核对后冻结代码，交 Astra 独立 review；只修既有意见与直接回归，最终全量/候选由调度集中安排，不操作宿主。
 - [x] 7.3 L2 按首轮冻结 R1/R2/R3 删除六处当前恒 false 结果消费、重复故障切点，并将旧指针构造器原样收编到 completion-chain-seed；迁移全部测试引用，保持 goal-run-driver 的真实实现从被测 framework 动态加载。
 
-L1 目标验证事实保留。首轮 R1/R2/R3 已落实 L2 并完成目标验证：typecheck PASS；phase-evidence 31/31、finalizer 28/28、completion 20/20、assess 56/56、scope-replan 15/15、ui-scope 15/15、component-closure 45/45、execution-scope 121/121、host-replay 36/36、visual-debt 35/35、upstream-closure 10/10、mechanical-loop 17/17、动态 driver 1/1、smoke 注册 6/6、连续回放与 facts admission 定向各 3/3，全部 PASS。生产无三项测试指针构造器或测试 helper 依赖；两函数原文本保持，真实 writer 的被测 framework 来源保持。Astra L2/L3 窄评审及调度最终集中验收均已通过：ca860a77 的 candidate:build exit 0、unit --release 5307/0、fixtures 46/0、包/清单校验与同 ZIP consumer smoke PASS，实测 124.18 分钟；7.2 与 t7 completed。完整候选身份及历史 5303/2、1/3、0/3 失败记录见 plan §7；未回灌/启动宿主或 promote，H1 仍 pending。
+L1 目标验证事实保留。首轮 R1/R2/R3 已落实 L2 并完成目标验证：typecheck PASS；phase-evidence 31/31、finalizer 28/28、completion 20/20、assess 56/56、scope-replan 15/15、ui-scope 15/15、component-closure 45/45、execution-scope 121/121、host-replay 36/36、visual-debt 35/35、upstream-closure 10/10、mechanical-loop 17/17、动态 driver 1/1、smoke 注册 6/6、连续回放与 facts admission 定向各 3/3，全部 PASS。生产无三项测试指针构造器或测试 helper 依赖；两函数原文本保持，真实 writer 的被测 framework 来源保持。Astra L2/L3 窄评审及调度最终集中验收均已通过：ca860a77 的 candidate:build exit 0、unit --release 5307/0、fixtures 46/0、包/清单校验与同 ZIP consumer smoke PASS，实测 124.18 分钟；7.2 与 t7 completed。完整候选身份及历史 5303/2、1/3、0/3 失败记录见 plan §7；上述候选验证时点未回灌/启动宿主或 promote；现 H1 已取消且未验证。
 
 ## 归档与约束
 
@@ -45,4 +44,4 @@ goal-runner 的 MODIFIED 块以当前主 spec 的完整「Facts admission and wi
 
 初次起草仅创建提案；用户现已授权开发/评审/修复循环，plan 评审收口后由调度直接安排代码实施，无需新增许可询问。当前文档轮不实施运行时代码。若以后执行 `openspec update`，按仓库规则重跑 `node scripts/patch-openspec-artifacts.mjs`，本次无需运行 update。
 
-C1/C2 的目标验证、初轮失败/修复及 2026-10-09 完整候选验证事实见 plan §7。candidate:build exit 0，unit --release 5305/0、fixtures 46/0、包/清单校验和同一 zip consumer smoke PASS；5.2/5.3 完成。仅暂缓最终 plan 发布门禁，正式 promote 尚未执行；H1 独立 pending，不以只读或自动回放替代。
+C1/C2 的目标验证、初轮失败/修复及 2026-10-09 完整候选验证事实见 plan §7。candidate:build exit 0，unit --release 5305/0、fixtures 46/0、包/清单校验和同一 zip consumer smoke PASS；5.2/5.3 完成。仅暂缓最终 plan 发布门禁，正式 promote 尚未执行；原 H1 已按用户裁决取消且未验证，不以新运行、只读或自动回放替代。
