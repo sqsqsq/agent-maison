@@ -1027,21 +1027,7 @@ export function decideRunContinuation(input: {
       const changedCu = scope?.obligations.flatMap(row => [...row.basis, ...(row.satisfied_by ?? [])]).some(binding => {
         if (!('input_id' in binding) || !currentCuHash) return false;
         const direct = binding.dependencies.find(dep => resolveDependencyPath(input.projectRoot, dep.path, legacyRoot) === cuFile && dep.exists);
-        if (direct) return direct.sha256 !== currentCuHash;
-        // Older artifact bindings predate the CU dependency. Only unchanged frozen contracts
-        // bytes can supply their original exact CU reference; authored replacement bytes cannot.
-        if (binding.source.kind !== 'artifact' || binding.source.artifact !== 'contracts@1') return false;
-        const contractsFile = featureFilePath(input.projectRoot, input.feature, 'contracts.yaml');
-        if (!binding.dependencies.some(dep => resolveDependencyPath(input.projectRoot, dep.path, legacyRoot) === contractsFile
-          && dep.exists && dep.sha256 === currentFileHash(input.projectRoot, path.relative(input.projectRoot, contractsFile)))) return false;
-        try {
-          /* eslint-disable-next-line @typescript-eslint/no-require-imports */
-          const { inspectDerivedFeatureBinding, parseChangeUnitFeatureId } = require('./change-unit-path') as typeof import('./change-unit-path');
-          const identity = parseChangeUnitFeatureId(input.feature);
-          const original = inspectDerivedFeatureBinding(input.projectRoot, identity.blueprintId, identity.changeUnitId);
-          return original.status === 'matched' && /^sha256:[0-9a-f]{64}$/.test(original.ref.artifact_sha256)
-            && original.ref.artifact_sha256 !== `sha256:${currentCuHash}`;
-        } catch { return false; }
+        return !!direct && direct.sha256 !== currentCuHash;
       });
       if (issues.length && changedCu) {
         const assessment = assessFeature(input.projectRoot, input.feature, { expectedTrack: 'full', expectedChain: scope ? executionCompletionPhases(scope) : run.manifest.phase_chain ?? [], scope });

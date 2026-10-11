@@ -17,7 +17,7 @@ P3 使用 `derive.blueprint-acceptance` 和 `derive.blueprint-contracts`，返�
 
 acceptance 挂 scenarios/logical 等设计目标；contracts 挂 development 节点和 runtime flow；use_cases 挂 runtime flow。目标 provenance 保留已有 authoritative 要求。引用目标后内容整体参与该 CU 合并：数组沿 `[module,file,holder,id??name??class??data]` 行身份去重、同身份不同内容报 authority_content_conflict；对象只在内容完全相同时接受，不逐键拼接。
 
-CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，A/B 专属 AC/BD/NFR、files、用例放独占目标。module_dependencies/navigation/resource_keys/acceptance.flows 等对象集中在一个承载目标，不拆开等自动拼接。整个 change_unit 不在设计期编写，存量蓝图旧映射不参与共同内容合并；每个 Feature 的专属映射交 plan，缺失、未知谓词、旧身份或越权文件仍由原施工门拒绝。合法先后写同文件不新增门禁，不能按 predicate 隐藏误继承的 AC/文件，也不因 CU 修订/替代复制稳定设计节点。
+CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，A/B 专属 AC/BD/NFR、files、用例放独占目标。module_dependencies/navigation/resource_keys/acceptance.flows 等对象集中在一个承载目标，不拆开等自动拼接。整个 change_unit 不在设计期编写，也不进入设计内容投影；每个 Feature 的专属映射交 plan，缺失、未知谓词、过期身份或越权文件仍由原施工门拒绝。合法先后写同文件不新增门禁，不能按 predicate 隐藏误继承的 AC/文件，也不因 CU 修订/替代复制稳定设计节点。
 
 普通 AC/BD 身份只含 id，故单次 CU 投影内唯一；推荐全蓝图稳定唯一，跨目标同 ID 不同内容按目标来源披露，不新增全蓝图唯一门禁。contracts.data_models.fields.description/source_ref 为可选说明/来源，现有加载和投影透传，schema 不变。目录来自 modules[].package_path/layer、依赖来自 contracts 根级 module_dependencies、写集仅 files。
 
@@ -27,7 +27,7 @@ CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，
 
 deriveDesignPreparationReadiness 在原指针调和后，对全部未退役（含已完成）且原 constructable CU 调用 deriveBlueprintSkillInput 的**默认只读模式**。acceptance/contracts/use_cases 分别检查，另一类 absent 不漏坏用例；不传 pure，既有手写 use-cases 冲突仍以 authority_use_cases_conflict 提前报出。absent 交回原 spec/plan 补设计责任且不加门禁；invalid 复用现有原因使 perUnit blocked/not-ready。
 
-检查不物化 sidecar、不写 phase 证据、不选 CU 或开始 Goal。**正常交接不运行 prepare-blueprint-design 来提前创建 Feature 文件**；spec/plan 直接消费 provider 推导输入并各写本阶段产物。未来 plan 的 change_unit 映射缺失不阻断设计 readiness，设计投影存在也不证明 plan 完成；没有有效映射仍须安排 plan。已物化 CU 调和刷新先失败会抛 change_unit_blueprint_ref_bump_rejected 并保持整批指针/派生文件原字节，沿原异常与回滚，不能伪装 readiness 成功或正常 not-ready。
+检查不物化 sidecar、不写 phase 证据、不选 CU 或开始 Goal。**正常交接不运行 prepare-blueprint-design 来提前创建 Feature 文件**；spec/plan 直接消费 provider 推导输入并各写本阶段产物。未来 plan 的 change_unit 映射缺失不阻断设计 readiness，设计投影存在也不证明 plan 完成；没有有效映射仍须安排 plan。Feature 无法安全刷新不阻挡合法 canonical 指针升版；其旧文件保留，由既有绑定/定义缺口安排 spec/plan。canonical 校验与真实写入失败仍沿原异常和整批回滚。
 
 完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 显示与生产投影共用目标选取/合并逻辑所得声明集合，**是否通过交接校验见 readiness**。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；这些来源的真实校验仍在上述默认 readiness 路径。canonical 能确定架构相关集合时沿用原中立摘要，若相关性须靠外部 catalog 才能确定，则省略摘要并保留精确 CU 绑定与声明集合，不承诺 carry-forward。待升版 CU 的合并集合标“待指针升版后显示”。字段 absent 明确“设计期未写入，将由 spec/plan 补”；可选表达形状 WARN 不变成业务阻断。样例是框架表达夹具，不代表真实宿主验收。
 
@@ -39,7 +39,7 @@ flow 目标中的 `contracts.state_management` 缺少 `design_ref` 时绑定该�
 
 需要用例时，`use_cases` 使用既有 UseCasesSpec；linked_flow/linked_branch 和 use-case schema 共用现有校验。**当前 CU 合法投影带用例时 plan 必须产出 use-cases.yaml**，从规范化投影起步并只作不冲突补充，供业务 UT 读取；原文件存在时仍必交。required_outputs 同时看投影存在与文件存在，不能因尚无文件省略该义务。无投影、无原文件时不为此修复造空文件，其它条件式义务照常派生。分支新写 expected_port_calls，旧 expected_boundary_calls 由共同纯归一化入口兼容，两键冲突如实诊断。合法空 boundaries/performance 不要求凑条目。
 
-## 显式物化兼容入口
+## 显式投影导出入口
 
 在宿主的 framework/harness 目录执行：
 
@@ -49,9 +49,9 @@ npx ts-node scripts/prepare-blueprint-design.ts --feature <canonical-CU-feature-
 
 也可显式指定 `--project-root` 和 `--framework-root`。入口先解析并校验完整 bundle、来源和所有目标文件，再沿已有 artifact resolver 物化 acceptance/contracts 及必要 use-cases。已有内容冲突时停止，不能覆盖人工决策；已有等价结果不重复写入。不会生成 spec.md、plan.md、summary、receipt 或批准记录。
 
-该入口保留旧文件/显式物化用途，正常交接不用它。派生文件使用已有 source 标识 provider 与 canonical CU/蓝图字节身份；spec 可据真实 UI 补未声明键，plan 可补当前映射，同一权威对齐规则保护已有内容、写集与来源，不删戳、不改称手写绕过。**刷新仅在能证明设计/CU 契约内容不变、只有来源身份升版时更新来源/引用身份，业务与阶段补充字节不变**；内容真变或等价不能证明则沿原失败退责任，不覆盖、不合并。带戳但指向别的身份或部分文件带戳时拒绝整批刷新；无戳文件原样保留。
+该入口保留当前投影的显式导出用途，正常交接不用它。派生文件使用已有 source 标识 provider 与 canonical CU/蓝图字节身份；spec 可据真实 UI 补未声明键，plan 可补当前映射，同一权威对齐规则保护已有内容、写集与来源，不删戳、不改称手写绕过。**刷新仅在能证明设计/CU 契约内容不变、只有来源身份升版时更新来源/引用身份，业务与阶段补充字节不变**；内容真变或等价不能证明则复核依赖后保留该 Feature 全部旧文件，返回空写集，不覆盖、不合并。带戳但指向别的身份或部分文件带戳也不能刷新 Feature，canonical 合法身份照升；旧 acceptance 由 spec 重建，旧 contracts/use-cases 由 plan 重建，不拖回其它 CU。真正无效的 canonical 仍归设计 owner，实际 I/O/CAS 失败仍回滚。
 
-当前等价证明复用已有冻结 Feature contracts 的真实 CU 映射绑定，中立摘要展开 CU 及完整设计目标。仅 acceptance 子集相等不足以证明 CU/完整设计未变；缺映射或缺冻结等价依据的旧带戳文件沿原失败退责任，不能承诺一律自动刷新。
+当前等价证明复用已有冻结 Feature contracts 的真实 CU 映射绑定，中立摘要展开 CU 及完整设计目标。仅 acceptance 子集相等不足以证明 CU/完整设计未变；未冻结或冻结后阶段文件已改，不能自动刷新 Feature 身份，但不阻挡 canonical 指针升版。蓝图/CU 从未发布，不维持未发布旧冻结格式的专用兼容；当前 spec/plan 正常产物仍可带 derive 来源戳。
 
 ## 未完成 CU 内容修订
 

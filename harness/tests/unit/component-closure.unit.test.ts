@@ -327,15 +327,12 @@ export function knowledgePlacementRoundtrip(): void {
       const units = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint');
       const contracts = units.map(unit => featureFilePath(projectRoot, deriveChangeUnitFeatureId('ledger-app-blueprint', String(unit.changeUnit.change_unit_id)), 'contracts.yaml'));
       const bytes = contracts.map(file => fs.readFileSync(file));
-      let rejected = false;
-      try { reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint'); } catch { rejected = true; }
-      assert(rejected, '知识归位改变真实设计内容却被当作身份刷新');
-      units.forEach(unit => assert(fs.readFileSync(unit.canonicalPath).equals(unit.bytes), '拒绝后 CU 字节改变'));
-      contracts.forEach((file, i) => assert(fs.readFileSync(file).equals(bytes[i]), '拒绝后施工契约字节改变'));
+      const preparation = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
+      assert(preparation.bumped.length === units.length && preparation.skipped.length === 0, JSON.stringify(preparation));
+      units.forEach(unit => assert(!fs.readFileSync(unit.canonicalPath).equals(unit.bytes), '合法 CU 指针未升版'));
+      contracts.forEach((file, i) => assert(fs.readFileSync(file).equals(bytes[i]), '无法安全刷新时施工契约字节改变'));
       // 责任阶段丢弃当前施工输入并重建；历史完成记录、报告和证据不动。
       contracts.forEach(file => fs.rmSync(file));
-      const preparation = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
-      assert(preparation.bumped.length > 0, JSON.stringify(preparation));
       for (const unit of enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint')) configureFeature(projectRoot, unit);
       const placed = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', { evaluatedAt: FIXED_TIME });
       assert(!placed.issues.some(item => item.id.startsWith('component_closure_knowledge_')), placed.issues.map(item => item.id).join(','));

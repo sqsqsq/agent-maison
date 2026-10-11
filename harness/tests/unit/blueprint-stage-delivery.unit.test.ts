@@ -14,7 +14,7 @@ import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun, decideRunContinuation } from '../../scripts/utils/goal-run-creation';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
-import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef } from '../../scripts/utils/change-unit-path';
+import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { acceptChangeUnitCandidates } from '../../scripts/utils/change-unit-provider-boundary';
 import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic-gates';
 import { sha256Bytes } from '../../scripts/utils/component-blueprint-path';
@@ -43,17 +43,118 @@ function resolve(f: Fixture, phase: string) {
   return resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full', testTargets: ['src/ledger/LedgerFeature.ets'], requirement: 'deliver approved ledger design', inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] } });
 }
 
+function identityBump(f: Fixture): void {
+  const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8')); bp.revision++;
+  for (const row of bp.derived_results ?? []) row.input_revision = bp.revision;
+  fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); clearFrameworkConfigCache();
+}
+function consumerFixture(f: Fixture): Fixture {
+  const file = path.join(path.dirname(path.dirname(f.cuFile)), 'ledger-consumer/change-unit.yaml');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const cu = YAML.parse(fs.readFileSync(path.join(__dirname, '../fixtures/component-blueprint/valid/doc/features/ledger-app-blueprint/ledger-consumer/change-unit.yaml'), 'utf8'));
+  const walk = (value: any): void => { if (!value || typeof value !== 'object') return; if (value.artifact === 'component-blueprint@1') value.artifact_sha256 = sha256Bytes(fs.readFileSync(f.blueprintFile)); Object.values(value).forEach(walk); };
+  walk(cu); for (const predicate of cu.target_predicates) predicate.verification_refs.push('acceptance:AC-1');
+  fs.writeFileSync(file, YAML.stringify(cu));
+  return { ...f, feature: deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-consumer'), cuFile: file };
+}
+function stagePlan(f: Fixture, authorOwned = false): void {
+  const loaded = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+  const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', loaded.change_unit_id).changeUnit);
+  const accepted = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance', 'pure');
+  const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts', 'pure');
+  assert(accepted.state === 'resolved' && projected.state === 'resolved', accepted.detail ?? projected.detail);
+  const refs = { implementation_refs: ['planned:src/ledger/LedgerFeature.ets'], test_refs: ['planned:test/ledger/LedgerFeature.test.ets'] };
+  const contracts = { ...(structuredClone(projected.value) as any), change_unit: {
+    change_unit_ref: createChangeUnitRef(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', loaded.change_unit_id)),
+    predicate_mappings: cu.target_predicates.map(row => ({ predicate_id: row.predicate_id, ...refs })),
+    provide_mappings: cu.provides.map(row => ({ provide_id: row.provide_id, ...refs })),
+    design_ref_mappings: cu.design_refs.map(design_ref => ({ design_ref, implementation_refs: refs.implementation_refs, verification_refs: refs.test_refs })),
+  } };
+  write(f, 'acceptance.yaml', { ...(structuredClone(accepted.value) as any), ...(authorOwned ? { source: 'spec:ledger-request' } : {}) });
+  write(f, 'contracts.yaml', { ...contracts, ...(authorOwned ? { source: 'plan:ledger-request' } : {}) });
+  write(f, 'use-cases.yaml', { ...(structuredClone(projected.artifacts!['use-cases@1']) as any), ...(authorOwned ? { source: 'plan:ledger-request' } : {}) });
+}
+
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
-  ...[false, true].map(legacy => ({ name: `${legacy ? 'legacy exact artifact bytes' : 'canonical dependency'} proves a stopped CU change without promoting ordinary mapping errors`, run(f: Fixture) {
+  ...['unfrozen author plan', 'plan changed after freeze'].map(mode => ({
+    name: `identity reconciliation keeps unproved stage bytes and gives plan ownership: ${mode}`, run(f: Fixture) {
+      const consumer = consumerFixture(f);
+      stagePlan(consumer, true);
+      stagePlan(f, mode === 'unfrozen author plan');
+      if (mode === 'plan changed after freeze') { freeze(f); const file = featureFilePath(f.root, f.feature, 'contracts.yaml'); const value = YAML.parse(fs.readFileSync(file, 'utf8')); value.state_management[0].ordered_steps.push('notify observers'); write(f, 'contracts.yaml', value); }
+      const files = [f, consumer].flatMap(unit => ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(unit.root, unit.feature, name)));
+      const before = files.map(file => fs.readFileSync(file));
+      const revisions = [f, consumer].map(unit => Number(YAML.parse(fs.readFileSync(unit.cuFile, 'utf8')).revision));
+      identityBump(f);
+      const result = reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint');
+      assert.equal(result.bumped.length, 2, JSON.stringify(result));
+      [f, consumer].forEach((unit, index) => assert.equal(YAML.parse(fs.readFileSync(unit.cuFile, 'utf8')).revision, revisions[index] + 1));
+      files.forEach((file, index) => assert(fs.readFileSync(file).equals(before[index]), `${mode}: stage bytes changed`));
+      for (const unit of [f, consumer]) {
+        const prepared = prepareFeatureScopeCandidate({ projectRoot: unit.root, frameworkRoot, feature: unit.feature, completionTarget: 'feature',
+          requestedResults: ['approved ledger work'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'], requirement: 'deliver approved ledger design', overwrite: true });
+        assert(prepared.scope.phase_chain.includes('plan'), `plan must own stale stage inputs: ${JSON.stringify(prepared.scope)}`);
+      }
+    },
+  })),
+  { name: 'a proved identity refresh preserves supplements even when a sibling has no frozen proof', run(f) {
+    const consumer = consumerFixture(f); stagePlan(consumer, true); stagePlan(f);
+    const file = featureFilePath(f.root, f.feature, 'contracts.yaml'); const value = YAML.parse(fs.readFileSync(file, 'utf8'));
+    value.state_management[0].ordered_steps.push('notify observers'); write(f, 'contracts.yaml', value); freeze(f);
+    const sibling = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(consumer.root, consumer.feature, name));
+    const bytes = sibling.map(item => fs.readFileSync(item));
+    const before = YAML.parse(fs.readFileSync(file, 'utf8')); identityBump(f);
+    assert.equal(reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint').bumped.length, 2);
+    const after = YAML.parse(fs.readFileSync(file, 'utf8'));
+    assert(after.state_management[0].ordered_steps.includes('notify observers'));
+    assert.equal(after.change_unit.change_unit_ref.revision, before.change_unit.change_unit_ref.revision + 1);
+    sibling.forEach((item, index) => assert(fs.readFileSync(item).equals(bytes[index])));
+  } },
+  { name: 'stale source is owned by the producer while invalid canonical content remains a real external design blocker', run(f) {
+    stagePlan(f); identityBump(f); reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint');
+    for (const [phase, id, producer] of [['spec', 'acceptance', 'spec'], ['coding', 'contracts', 'plan'], ['ut', 'use_cases', 'plan']]) {
+      const input = resolve(f, phase).inputs!.values[id];
+      assert.equal(input.state, 'invalid');
+      if (input.state === 'invalid') assert(input.detail.startsWith(`${producer}:`), input.detail);
+    }
+    const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature',
+      requestedResults: ['approved ledger work'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'], requirement: 'deliver approved ledger design', overwrite: true });
+    assert(prepared.scope.phase_chain.includes('spec') && prepared.scope.phase_chain.includes('plan'));
+    const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    for (const view of bp.design_views) for (const node of view.nodes ?? []) if (node.acceptance) node.acceptance = '验收写成一段文字';
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); f.bind(); clearFrameworkConfigCache();
+    const raw = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature);
+    const blockers = checkAuthoritativeContentAligned({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec', featureSpec: raw, phaseRule: {} } as CheckContext, 'acceptance');
+    assert(blockers.some(check => check.status === 'FAIL' && check.repair_owner === 'external' && (check.structured as { kind?: string } | undefined)?.kind === 'design_authority'), JSON.stringify(blockers));
+    assert(!deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint').ready);
+  } },
+  { name: 'preserving an unproved Feature still checks projection dependencies and rolls back a real concurrent canonical change', run(f) {
+    stagePlan(f);
+    const unit = fs.readFileSync(f.cuFile);
+    const files = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(f.root, f.feature, name));
+    const bytes = files.map(file => fs.readFileSync(file)); identityBump(f);
+    const nodeFs = require('fs') as typeof fs;
+    const read = nodeFs.readFileSync; let armed = true;
+    nodeFs.readFileSync = ((file: any, options: any) => {
+      const result = read(file, options);
+      const afterProjectionCapture = new Error().stack?.split('\n')[2]?.includes('at materializeBlueprintSkillInputs');
+      if (armed && file === files[1] && afterProjectionCapture) {
+        armed = false; fs.appendFileSync(f.blueprintFile, '\n# concurrent canonical update\n');
+      }
+      return result;
+    }) as typeof fs.readFileSync;
+    try {
+      let failed: unknown;
+      try { reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint'); } catch (error) { failed = error; }
+      assert(!armed, 'the concurrent-change probe must run after canonical writes, before an unproved refresh returns');
+      assert(failed instanceof Error && /blueprint projection stale/.test(failed.message), `dependency drift was not propagated: ${String(failed)}`);
+      assert(fs.readFileSync(f.cuFile).equals(unit)); files.forEach((file, index) => assert(fs.readFileSync(file).equals(bytes[index])));
+    } finally { nodeFs.readFileSync = read; }
+  } },
+  { name: 'canonical dependency proves a stopped CU change without promoting ordinary mapping errors', run(f: Fixture) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot); write(f, 'contracts.yaml', planContracts(f));
     const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature',
       requestedResults: ['ledger compiled'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'], requirement: 'deliver approved ledger design' });
-    if (legacy) {
-      // Old valid artifact bindings carried the exact contract bytes but no separate CU dependency.
-      for (const obligation of prepared.scope.obligations) for (const binding of [...obligation.basis, ...(obligation.satisfied_by ?? [])]) {
-        if ('input_id' in binding) binding.dependencies = binding.dependencies.filter(dep => path.resolve(dep.path) !== path.resolve(f.cuFile));
-      }
-    }
     const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: '20261011T000000Z-beef01', requirement: 'deliver approved ledger design',
       execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
     const born = createGoalRun({ projectRoot: f.root, manifest, chain: prepared.scope.phase_chain, resolveHead: () => 'a'.repeat(40) });
@@ -70,12 +171,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const artifact = structuredClone(asChangeUnitArtifact(loaded.changeUnit)); artifact.purpose += ' 同一未完成切片澄清。';
     reviseChangeUnitContent(f.root, 'ledger-app-blueprint', [{ expectedRef: createChangeUnitRef(loaded), candidate: { providerId: artifact.provenance.extraction_method, artifact } }]);
     assert.equal(decide().kind, 'successor', JSON.stringify(decide()));
-    if (legacy) {
-      fs.appendFileSync(contractFile, '\n# replacement bytes after freeze\n');
-      assert.notEqual(decide().kind, 'successor', 'without exact original artifact bytes the new compatibility branch must not guess a CU birth hash');
-      assert.equal(decideRunContinuation({ projectRoot: f.root, feature: f.feature, call: { supersede: [manifest.run_id] } }).kind, 'successor');
-    }
-  } })),
+  } },
   { name: 'plan writing its own use-cases does not change the frozen acceptance design source', run(f) {
     const acceptance = resolve(f, 'plan').inputs!.values.acceptance;
     assert(acceptance.state === 'resolved');
@@ -86,7 +182,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     conflicting.use_cases[0].coordinator = 'wrong.coordinator'; write(f, 'use-cases.yaml', conflicting);
     assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance').state, 'invalid');
   } },
-  { name: 'design handoff is read-only and legacy blueprint mappings cannot hide design facts', run(f) {
+  { name: 'design handoff is read-only and CU mappings belong to plan rather than blueprint projections', run(f) {
     const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const nodes = bp.design_views.flatMap((v: any) => [...(v.nodes ?? []), ...(v.runtime_data_flows ?? [])]);
     for (const node of nodes.filter((n: any) => n.contracts)) node.contracts.change_unit = { change_unit_ref: { change_unit_id: 'retired-other-unit' } };
@@ -204,7 +300,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     acceptance.criteria[0].expected_result = 'discard approved expectation'; write(f, 'acceptance.yaml', acceptance);
     assert.equal(resolve(f, 'spec').report.assurance, 'blocked');
   } },
-  { name: 'refresh rejects true design changes without replacing supplemented bytes', run(f) {
+  { name: 'refresh preserves supplemented bytes when the real design changed', run(f) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot); write(f, 'contracts.yaml', planContracts(f)); freeze(f);
     const oldCuSha = loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').artifactSha256;
     const blueprintSha = sha256Bytes(fs.readFileSync(f.blueprintFile));
@@ -212,10 +308,10 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     for (const view of bp.design_views) for (const node of view.nodes ?? []) if (node.acceptance) node.acceptance.criteria[0].expected_result = 'new requirement';
     fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); f.bind();
-    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: oldCuSha, blueprintSha }), /内容未变|内容变化|无法证明/);
+    assert.deepStrictEqual(materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: oldCuSha, blueprintSha }), []);
     assert(fs.readFileSync(file).equals(before));
   } },
-  { name: 'legacy raw contracts use the same normalized binding proof in a real blueprint identity reconciliation', run(f) {
+  { name: 'author contracts with absent optional fields use the same normalized binding proof in real identity reconciliation', run(f) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
     const contracts = planContracts(f); delete contracts.conventions_applied;
     write(f, 'contracts.yaml', contracts); freeze(f);
@@ -236,12 +332,33 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const blueprintSha = sha256Bytes(fs.readFileSync(f.blueprintFile));
     const cu = YAML.parse(previous.bytes.toString('utf8')); cu.revision++; fs.writeFileSync(f.cuFile, YAML.stringify(cu));
     const before = fs.readFileSync(featureFilePath(f.root, f.feature, 'acceptance.yaml'));
-    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: previous.artifactSha256, blueprintSha }), /无冻结的完整 Feature contracts/);
+    assert.deepStrictEqual(materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: previous.artifactSha256, blueprintSha }), []);
     assert(fs.readFileSync(featureFilePath(f.root, f.feature, 'acceptance.yaml')).equals(before));
     fs.writeFileSync(f.cuFile, previous.bytes); write(f, 'contracts.yaml', planContracts(f)); freeze(f);
     cu.target_predicates[0].description += ' with a changed delivery promise'; fs.writeFileSync(f.cuFile, YAML.stringify(cu));
-    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: previous.artifactSha256, blueprintSha }), /内容未变/);
+    assert.deepStrictEqual(materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: previous.artifactSha256, blueprintSha }), []);
     assert(fs.readFileSync(featureFilePath(f.root, f.feature, 'acceptance.yaml')).equals(before));
+  } },
+  { name: 'a preserved stale use-case artifact cannot turn a valid canonical design change into a design-owner conflict', run(f) {
+    stagePlan(f); freeze(f);
+    const file = featureFilePath(f.root, f.feature, 'use-cases.yaml'); const before = fs.readFileSync(file);
+    const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    for (const view of bp.design_views) for (const node of view.nodes ?? []) if (node.use_cases) {
+      node.use_cases.use_cases[0].state_model.phases.splice(1, 0, 'recovered');
+      node.use_cases.use_cases[0].branches[0].expected_phase_seq.splice(1, 0, 'recovered');
+    }
+    bp.revision++; for (const row of bp.derived_results ?? []) row.input_revision = bp.revision;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); clearFrameworkConfigCache();
+    assert.equal(reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint').bumped.length, 1);
+    assert(fs.readFileSync(file).equals(before));
+    const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(projected.state, 'resolved', JSON.stringify({ codes: projected.codes, detail: projected.detail }));
+    assert(deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint').ready);
+    const input = resolve(f, 'ut').inputs!.values.use_cases;
+    assert.equal(input.state, 'invalid'); if (input.state === 'invalid') assert(input.detail.startsWith('plan:'), input.detail);
+    const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature', requestedResults: ['approved ledger work'],
+      requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'], requirement: 'deliver approved ledger design', overwrite: true });
+    assert(prepared.scope.phase_chain.includes('plan'));
   } },
   { name: 'runtime role omissions are rejected before any candidate is accepted', run(f) {
     const artifact = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
@@ -264,7 +381,8 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   } },
 ];
 export function runAll(): UnitCaseResult[] {
-  return cases.map(test => { const f = fixture(); try {
+  const only = process.env.BLUEPRINT_STAGE_DELIVERY_ONLY?.split(',').map(name => name.trim()).filter(Boolean);
+  return cases.filter(test => !only?.length || only.some(name => test.name.startsWith(name))).map(test => { const f = fixture(); try {
     const workspace = path.dirname(path.dirname(f.cuFile));
     for (const entry of fs.readdirSync(workspace, { withFileTypes: true })) if (entry.isDirectory() && !['blueprint', 'ledger-refresh'].includes(entry.name)) fs.rmSync(path.join(workspace, entry.name), { recursive: true, force: true });
     test.run(f); return { name: test.name, ok: true };

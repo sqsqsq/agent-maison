@@ -445,10 +445,20 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 - **WHEN** 未退役旧 CU 已完成且原设计 constructable，调和后手写 use-cases 与新权威投影仍冲突
 - **THEN** 默认只读检查 MUST 提前返回 authority_use_cases_conflict，不改文件、不跳过旧 CU、不重启旧 run
 
-#### Scenario: Materialized refresh fails before readiness
+#### Scenario: A stale stamped stage file is not a canonical design conflict
 
-- **WHEN** 已物化 CU 的指针调和刷新因新内容非法先抛 change_unit_blueprint_ref_bump_rejected
-- **THEN** 原异常 MUST 传播且整批指针/派生文件保留原字节，用户已修订 canonical 蓝图不回滚；MUST NOT 伪装正常 readiness 成功或正常 not-ready 返回
+- **WHEN** 当前 canonical 设计有效，保留的 use-cases 带原 derive 来源戳且该戳已过期
+- **THEN** 默认设计推导/readiness MUST NOT 把旧阶段文件判为 authority_use_cases_conflict；真实 artifact resolver MUST 将该文件交 plan 重建。当前来源戳或作者产物的真实冲突 SHALL 保持原检查
+
+#### Scenario: Unproved Feature refresh preserves stage bytes without blocking canonical reconciliation
+
+- **WHEN** canonical CU 已通过原位指针升版校验，但 Feature 未冻结、冻结后内容变更、来源戳不安全或无法证明完整内容仅身份变化
+- **THEN** 合法 canonical 指针 MUST 照常升版，该 Feature 全部阶段文件 MUST 保留原字节；其它 CU MUST NOT 被该 Feature 拖回滚。旧 acceptance SHALL 回 spec，旧 contracts/use-cases SHALL 回 plan，使用既有定义/绑定缺口，不新增状态或原因码；充分证明时 SHALL 只更新身份并保留补充
+
+#### Scenario: Current canonical invalidity and real write failures retain their original owner and transaction
+
+- **WHEN** refresh 准备期当前设计投影不可用，或准备与写入期间依赖/CAS/真实 I/O 校验失败
+- **THEN** 投影不可用 MUST 复核依赖后保留 Feature；真正无效的 canonical MUST 仍由 readiness/resolver 报设计 owner。依赖/CAS/写入失败 MUST 传播并按原事务回滚，不得 catch 任意异常冒充无 proof
 
 > **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/utils/change-unit-provider-boundary.ts`, `harness/scripts/utils/change-unit-progress-loop.ts`, `skills/project/change-unit-progression/SKILL.md`, `skills/project/component-design/SKILL.md`
 

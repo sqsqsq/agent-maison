@@ -443,7 +443,7 @@ export const freshness = (s: Snapshot, feature: string, chain: string[]): string
 /**
  * plan c4e7a9b2 §6 B2-1 / B2-2：`source` 的完成记录与各阶段证据是新代码写出的（新格式）。
  * ① 改蓝图中本 CU 未消费的内容 → 调和原位升版（CU / 蓝图 / 派生投影或手写 contracts 身份行字节全变）：各阶段证据 fresh、
- *    完成结论仍成立、后继出生链不含 coding / review / ut；② 真内容变化拒绝调和，保留原产物并回责任阶段。
+ *    完成结论仍成立、后继出生链不含 coding / review / ut；② 真内容变化时 CU 照常升版，旧阶段产物保留并回责任阶段。
  */
 function assertIdentityOnlyReuse(s: Snapshot, feature: string, source: string, executed: string[]): void {
   assert.deepStrictEqual(freshness(s, feature, executed), executed.map(ph => `${ph}:fresh`), '前提：新格式证据当下 fresh');
@@ -458,9 +458,10 @@ function assertIdentityOnlyReuse(s: Snapshot, feature: string, source: string, e
   const bytes = stage.map(file => fs.readFileSync(file));
   const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
   bumpBlueprint(s, changeConsumedTargetContent);
-  assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+  const changed = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+  assert(changed.bumped.some(row => row.change_unit_id === 'ledger-refresh'), JSON.stringify(changed));
   stage.forEach((file, index) => assert(fs.readFileSync(file).equals(bytes[index])));
-  assert(fs.readFileSync(cu.canonicalPath).equals(cu.bytes), '真内容变化仍改写 CU');
+  assert(!fs.readFileSync(cu.canonicalPath).equals(cu.bytes), '合法 CU 指针未升版');
   assert.strictEqual(assess(s, feature).complete, false, '消费 target 内容变化后不得仍判完成');
 }
 
@@ -532,19 +533,18 @@ function alignAcceptance(p: RealChainProject): void {
   writeCuSpecMaterials(p);
 }
 
-/** A real content change is rejected first; responsible authors then rebuild their stage inputs. */
+/** Canonical pointers advance while unsafe stage inputs stay intact, then their owners rebuild them. */
 export function rebuildCuDesignInputs(s: Snapshot, p: RealChainProject, preserveAuthorAcceptance = false): void {
   const paths = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(s.root, p.feature, name));
   const before = paths.map(file => fs.readFileSync(file));
   const canonical = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
-  assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+  const reconciled = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+  assert(reconciled.bumped.some(row => row.change_unit_id === 'ledger-refresh'), JSON.stringify(reconciled));
   paths.forEach((file, index) => assert(fs.readFileSync(file).equals(before[index])));
-  assert(fs.readFileSync(canonical.canonicalPath).equals(canonical.bytes));
+  assert(!fs.readFileSync(canonical.canonicalPath).equals(canonical.bytes), '合法 CU 指针未升版');
   if (preserveAuthorAcceptance) assert(!/^derive\.blueprint-/.test(String(YAML.parse(before[0].toString('utf8')).source ?? '')));
   for (const file of paths) fs.rmSync(file, { force: true });
   clearFrameworkConfigCache();
-  const reconciled = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-  assert(reconciled.bumped.some(row => row.change_unit_id === 'ledger-refresh'), JSON.stringify(reconciled));
   const facts = featureFilePath(s.root, p.feature, 'context/facts.md');
   const factsBefore = fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
   writeCuSpecMaterials(p); writeCuPlanMaterials(p);
@@ -564,7 +564,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     }
   }) },
 
-  { name: 'L1 ★2 真设计变化：调和拒绝并保字节 → spec/plan作者重建输入 → 后继真实完成', run: () => withHost(async s => {
+  { name: 'L1 ★2 真设计变化：CU升版且旧Feature保字节 → spec/plan作者重建输入 → 后继真实完成', run: () => withHost(async s => {
     const o = await evolve(s, { feature: SNAPSHOT_CU_FEATURE, change: () => {
       bumpBlueprint(s, changeProjectedAcceptance);
       rebuildCuDesignInputs(s, project(s, SNAPSHOT_CU_FEATURE));
@@ -574,27 +574,13 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assertIdentityOnlyReuse(s, SNAPSHOT_CU_FEATURE, o.successor, o.chain);
   }) },
 
-  /** plan c4e7a9b2 B2-4 旧快照兼容：同样的纯身份升版落在 3.1.0 旧格式记录上（无投影标记 / 全值指纹）→ 仍按字节口径全链重跑。 */
-  { name: 'L1 ★2b 旧快照无完整当前contracts证明：纯身份升版仍拒绝，原载体字节保留', run: () => withSnapshot(s => {
-    const feature = SNAPSHOT_CU_FEATURE;
-    const [source] = runIds(s.root, feature);
-    const files = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(s.root, feature, name));
-    const before = files.map(file => fs.readFileSync(file));
-    const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
-    bumpBlueprint(s, changeUnconsumedBlueprintContent);
-    assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
-    files.forEach((file, index) => assert(fs.readFileSync(file).equals(before[index])));
-    assert(fs.readFileSync(cu.canonicalPath).equals(cu.bytes));
-    assert.strictEqual(freshness(s, feature, ['coding'])[0], 'coding:stale');
-  }) },
-
   /**
    * L1b 宿主真实形状（bc-openCard-2 / open-card-flow-v2 盘点，2026-09-26 回灌）：三份派生文件由 plan 阶段 agent 手写、
    * 无 `derive.blueprint-*` 来源戳，contracts 带 change_unit_ref + design_ref_mappings；feature 目录无冻结记录；
    * 完成之后还有一个 HALTED run、一个无 manifest 的目录与 `.dry`。先以真 harness 跑一条后继让完成记录绑定这些手写文件
    *（宿主原始完成的替身），再走 (a) 评估 → (b) 蓝图升版调和 → (c) 评估 → (d) `--supersede` 跑完。
    */
-  { name: 'L1b 作者产物真变化：拒绝自动刷新，plan重建当前输入，spec对齐旧验收，后继真实完成且历史保留', run: () => withHost(async s => {
+  { name: 'L1b 作者产物真变化：CU升版且旧Feature保留，plan重建当前输入，spec对齐旧验收，后继真实完成且历史保留', run: () => withHost(async s => {
     const feature = SNAPSHOT_CU_FEATURE;
     const p = project(s, feature);
     const { predict, completed } = await handWrittenCompletion(s);
@@ -618,7 +604,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert(a.record.state === 'ok' && a.record.run_id === completed && a.obligations.every(o => o.status === 'covered'), brief(a));
     assert.deepStrictEqual(a.blocking, [`存在晚于凭证的未终局 run：${halted}（status=HALTED）`]);
 
-    // (b) True content changes reject automatic refresh; plan rebuilds its input, old author acceptance stays for Spec.
+    // (b) Canonical pointers advance without unsafe Feature refresh; plan rebuilds, old author acceptance stays for Spec.
     const files = ['acceptance.yaml', 'use-cases.yaml', 'contracts.yaml'];
     const before = files.map(name => fs.readFileSync(featureFilePath(s.root, feature, name), 'utf8'));
     bumpBlueprint(s, changeProjectedAcceptance);

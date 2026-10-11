@@ -147,9 +147,8 @@ function canonical(value: unknown): string {
 export function projectionContentEqual(left: unknown, right: unknown): boolean { return canonical(left) === canonical(right); }
 
 /**
- * plan b2d7f4e9 t2c/t2d：CU 指针原位升版时，来源戳指向升版前身份（`changeUnitSha` / `blueprintSha`）的派生文件
- * 按定义就是升版前的机器投影，用新投影覆盖即修复（保戳手改在旧蓝图下本就被投影门拒绝，是非法态，不是人工决策）。
- * 只有调和 writer（`reconcileChangeUnitBlueprintRefs`）传入。
+ * CU 指针原位升版时的旧来源身份（`changeUnitSha` / `blueprintSha`），只由调和 writer 传入。
+ * 匹配来源戳只是刷新候选；完整 contracts 冻结绑定证明等价后仅改身份，合法阶段补充保持原字节。
  */
 export interface ProjectionRefresh { changeUnitSha: string; blueprintSha: string }
 /** `materializeBlueprintSkillInputs` 写出的三份派生文件。 */
@@ -385,7 +384,9 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
         // 刷新模式由唯一 writer 在覆盖前核对同一文件的来源戳（hasPreBumpStamp），此处不重复判；纯投影读取不拿手写产物校验权威。
         if (!refresh) {
           const current = normalizeUseCasePortCalls(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8')));
-          if (current.issues.length || compareAuthoritativeContent(parsed.useCases, current.value).state !== 'aligned') fail('authority_use_cases_conflict', 'plan: 既有 use-cases.yaml 与获准投影冲突');
+          const oldSource = asRecord(current.value)?.source;
+          const staleStage = typeof oldSource === 'string' && oldSource.startsWith('derive.blueprint-contracts:') && oldSource !== parsed.useCases.source;
+          if (!staleStage && (current.issues.length || compareAuthoritativeContent(parsed.useCases, current.value).state !== 'aligned')) fail('authority_use_cases_conflict', 'plan: 既有 use-cases.yaml 与获准投影冲突');
         }
       }
     }
@@ -513,13 +514,20 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
 
 /**
  * One writer: prepare and validate the complete bundle before touching any artifact.
- * `refresh`（只由 CU 指针原位升版传入）：既有文件与新投影不同时，仅当其来源戳指向升版前身份才覆盖；
- * 否则一个字节不写。写出中途失败按原字节回滚本次已写文件。
+ * `refresh`（只由 CU 指针原位升版传入）：来源戳匹配且原完整 contracts 冻结绑定证明等价时才改身份；
+ * 无安全刷新依据时复核依赖后保留整个 Feature，返回空写集，由阶段 owner 重建。写出中途失败仍回滚本次已写文件。
  */
 export function materializeBlueprintSkillInputs(projectRoot: string, feature: string, frameworkRoot: string, refresh?: ProjectionRefresh): string[] {
   const acceptance = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance', refresh);
   const contracts = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts', refresh);
-  for (const result of [acceptance, contracts]) if (result.state !== 'resolved') throw new Error(result.detail);
+  const verifyDependencies = (): void => {
+    for (const dep of [...acceptance.dependencies, ...contracts.dependencies]) if (fs.existsSync(dep.path) !== dep.exists || (dep.exists && digest(dep.path) !== dep.sha256)) throw new Error('blueprint projection stale; return to design owner');
+  };
+  const preserveStageFiles = (): string[] => { verifyDependencies(); return []; };
+  for (const result of [acceptance, contracts]) if (result.state !== 'resolved') {
+    if (refresh) return preserveStageFiles();
+    throw new Error(result.detail);
+  }
   const artifacts = { ...contracts.artifacts, 'acceptance@1': acceptance.value };
   if (refresh) {
     const identity = parseChangeUnitFeatureId(feature);
@@ -531,7 +539,7 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
     const next = previous && ref?.artifact_sha256 === refresh.changeUnitSha
       ? YAML.parse(repointProjectionText(previous, String(asRecord(contracts.value)?.source), asChangeUnitArtifact(loaded.changeUnit), loaded.artifactSha256, refresh))
       : undefined;
-    if (!next || !recordedArtifactContentEquivalent(projectRoot, feature, 'contracts@1', location.actualPath, next)) throw new Error('plan: 无冻结的完整 Feature contracts 绑定证明设计及 CU 契约内容未变；回责任阶段，不覆盖旧内容');
+    if (!next || !recordedArtifactContentEquivalent(projectRoot, feature, 'contracts@1', location.actualPath, next)) return preserveStageFiles();
   }
   const names = BLUEPRINT_PROJECTION_FILES;
   const writes: Array<{ file: string; text: string; previous?: Buffer }> = [];
@@ -547,18 +555,18 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
           && (!String(asRecord(existing)?.source ?? '').startsWith('derive.blueprint-') || asRecord(existing)?.source === asRecord(value)?.source)) continue;
         throw new Error(`plan: 既有 ${names[artifact]} 与投影冲突，不覆盖人工决策`);
       }
-      if (!hasPreBumpStamp(artifact, existing, refresh)) throw new Error(`plan: 既有 ${names[artifact]} 来源戳不指向升版前身份，不覆盖人工决策`);
+      if (!hasPreBumpStamp(artifact, existing, refresh)) return preserveStageFiles();
       const identity = parseChangeUnitFeatureId(feature);
       const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
       const nextText = repointProjectionText(previous.toString('utf8'), String(asRecord(value)?.source), asChangeUnitArtifact(loaded.changeUnit), loaded.artifactSha256, refresh);
       const next = artifact === 'use-cases@1' ? normalizeUseCasePortCalls(YAML.parse(nextText)).value : YAML.parse(nextText);
       const unchanged = canonical(next) === canonical(value)
         || recordedArtifactContentEquivalent(projectRoot, feature, artifact, location.actualPath, next);
-      if (!unchanged || normalized.issues.length || compareAuthoritativeContent(value, next).state !== 'aligned') throw new Error(`plan: ${names[artifact]} 的设计或 CU 契约内容变化，或无法证明仅身份变化；回责任阶段，不覆盖旧内容`);
+      if (!unchanged || normalized.issues.length || compareAuthoritativeContent(value, next).state !== 'aligned') return preserveStageFiles();
       writes.push({ file: location.actualPath, text: nextText, previous });
     } else writes.push({ file: location.canonicalPath, text: YAML.stringify(value) });
   }
-  for (const dep of [...acceptance.dependencies, ...contracts.dependencies]) if (fs.existsSync(dep.path) !== dep.exists || (dep.exists && digest(dep.path) !== dep.sha256)) throw new Error('blueprint projection stale; return to design owner');
+  verifyDependencies();
   const done: typeof writes = [];
   try {
     for (const write of writes) {
@@ -609,7 +617,7 @@ const DESIGN_AUTHORITY_CLASS_ROWS: ReadonlyArray<readonly [DesignRepairClass, De
   // ---- B2：validateChangeUnit（§1 #3a–#3c；change-unit-validator）----
   ['B2', 'change_unit', 'CU 指针指向旧蓝图 revision：框架已尝试原位升版未完成，原因见说明（竞争退出时不需要改设计内容）', ['change_unit_blueprint_ref_stale']],
   ['B2', 'change_unit', 'CU 的 owner 蓝图不可解析：需要修蓝图或确认 CU 指向', ['change_unit_provenance_owner_unresolvable', 'change_unit_blueprint_ref_invalid']],
-  ['B2', 'change_unit', 'canonical CU 未过 schema / 语义门：形状错误本身不证明能依据既有权威恢复，需要设计 owner 判断（契约变化走新 change_unit_id + supersedes）', [
+  ['B2', 'change_unit', 'canonical CU 未过 schema / 语义门：需要设计 owner 判断；从未完成且无运行/已停住时用 reviseChangeUnitContent 同 ID 修订，运行中 busy；完成后新增交付或拆分/合并/迁移用新 ID + supersedes，补足原义务沿既有同 Feature 恢复', [
     'change_unit_schema_invalid', 'change_unit_artifact_invalid', 'change_unit_forbidden_authority_field', 'change_unit_path_identity_mismatch',
     'change_unit_blueprint_mismatch', 'change_unit_blueprint_owner_invalid', 'change_unit_blueprint_owner_mismatch', 'change_unit_blueprint_identity_mismatch',
     'change_unit_provenance_context_missing', 'change_unit_provenance_source_unrecognized', 'change_unit_provenance_authority_invalid', 'change_unit_provenance_time_invalid',

@@ -269,7 +269,6 @@ const IDENTITY_KEYS = ['revision', 'source_fingerprint', 'artifact_sha256'] as c
 export { identityNeutralDigest } from './identity-neutral-digest';
 
 const DERIVED_PROJECTION_FILES = Object.values(BLUEPRINT_PROJECTION_FILES);
-const NOT_MACHINE_OWNED = 'derived_projection_not_machine_owned: 既有派生投影的来源戳不指向升版前 CU/蓝图，须人工处理（确认无人工决策后删除该 feature 的 acceptance/contracts/use-cases 三份派生文件，再重新调和）';
 
 function identityKey(ref: Record<string, unknown> | undefined): string {
   return JSON.stringify(IDENTITY_KEYS.map(key => ref?.[key]));
@@ -319,12 +318,12 @@ function repointHandWrittenContracts(
  *
  * 前提 = 既有 `evaluateChangeUnitCarryForward` 通过（判据不改），不通过进 `skipped` 带原因、不改写。
  * 三处指针身份本就不一致的 CU（例如按新蓝图手工追加了 touch）不是指针漂移而是契约变化，同样跳过——
- * 契约变化走新 change_unit_id + supersedes。待写 CU 先全量 `validateChangeUnit`，任一失败整批不落盘；
+ * 从未完成且无运行/已停住的活动 CU 可用 `reviseChangeUnitContent` 同 ID 修订；已完成后的新增交付或拆分/合并/迁移
+ * 用新 ID + supersedes，补足已完成 CU 的原义务沿既有同 Feature 恢复。
+ * 待写 CU 先全量 `validateChangeUnit`，任一失败整批不落盘；
  * 写入与 accept 同一原语，中途失败回滚本批。幂等：指针已指向当前蓝图的 CU 不在候选内。
- * t2c：CU 派生 feature 目录已有机器投影（acceptance/contracts/use-cases）时，同批经同一个物化 writer
- *（`materializeBlueprintSkillInputs` 的 refresh 模式）刷新为新投影；带机器来源戳却不指向升版前身份的，
- * 该 CU 不升版、进 skipped。没有机器来源戳的文件不归本 writer，内容原样保留；只有 contracts.yaml 的身份指针
- *（change_unit_ref 精确指向升版前本 CU 时）同批原位维护，ref 指向别处则一个字节不动。
+ * Feature 身份只在冻结的完整 contracts 绑定证明内容等价时刷新；无法安全刷新则保留全部阶段文件，
+ * canonical 指针照常升版，旧 Feature 引用由既有输入/绑定缺口回 spec/plan。Feature 的可复用性不决定 canonical 身份。
  */
 export function reconcileChangeUnitBlueprintRefs(
   projectRoot: string,
@@ -444,7 +443,7 @@ function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite:
     if (owner === identityKey(identity)) continue;
     const skip = (reasons: string[]) => result.skipped.push({ change_unit_id: changeUnitId, reasons });
     if (pointers.some(ref => !ref || identityKey(ref) !== owner)) {
-      skip(['blueprint_ref_identity_inconsistent: 三处蓝图指针身份不一致，属契约变化，须新建 change_unit_id + supersedes']);
+      skip(['blueprint_ref_identity_inconsistent: 三处蓝图指针身份不一致，属契约变化；从未完成且无运行/已停住时用 reviseChangeUnitContent 同 ID 修订，运行中 busy；完成后新增交付或拆分/合并/迁移用新 ID + supersedes，补足原义务沿既有同 Feature 恢复']);
       continue;
     }
     if (Number(pointers[0]?.revision) > identity.revision) {
@@ -459,17 +458,11 @@ function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite:
     const next = YAML.parse(loaded.bytes.toString('utf8')) as ChangeUnitRecord;
     for (const ref of blueprintIdentityPointers(next)) Object.assign(ref!, identity);
     next.revision = Number(cu.revision) + 1;
-    // 派生 feature 目录里已有机器投影 → 升版必须同批刷新它们（否则该 feature 任何新 run 都被投影门拒绝）。
-    // 来源戳全部指向升版前身份 = 旧机器投影，刷新即修复；部分带戳 / 戳指向别的身份 → 写任何东西之前就跳过。
-    // 没有任何机器来源戳的文件（手写 / 阶段产出）不归本 writer：内容不刷新、不覆盖，指针照常升版；
-    // 其中 contracts.yaml 的身份指针（change_unit_ref 精确指向升版前本 CU 时）同批原位维护（repointHandWrittenContracts）。
+    // Feature 来源不安全时不刷新阶段产物，canonical 指针仍照常升版。匹配来源戳只是刷新候选，
+    // writer 还必须用原完整 contracts 冻结绑定证明内容等价；手写身份维护也使用同一证明。
     const feature = deriveChangeUnitFeatureId(blueprintId, changeUnitId);
     const refresh = { changeUnitSha: loaded.artifactSha256, blueprintSha: String(pointers[0]?.artifact_sha256) };
     const stamps = inspectProjectionStamps(projectRoot, feature, refresh);
-    if (Array.isArray(stamps)) {
-      skip([`${NOT_MACHINE_OWNED}：来源戳不指向升版前 CU/蓝图 ${stamps.join(', ')}`]);
-      continue;
-    }
     const contractsFile = resolveFeatureArtifact(projectRoot, feature, BLUEPRINT_PROJECTION_FILES['contracts@1']);
     const contracts = stamps === 'none' && contractsFile.exists ? { file: contractsFile.actualPath, bytes: fs.readFileSync(contractsFile.actualPath) } : undefined;
     pending.push({ loaded, next, feature, ...(stamps === 'stamped' ? { refresh } : {}), ...(contracts ? { contracts } : {}) });
@@ -548,7 +541,7 @@ function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite:
       if (contracts?.text === undefined) continue;
       const feature = pending.find(item => item.contracts === contracts)!.feature;
       if (!recordedArtifactContentEquivalent(projectRoot, feature, 'contracts@1', contracts.file, YAML.parse(contracts.text))) {
-        throw new ChangeUnitCandidateRejected('change_unit_blueprint_ref_bump_rejected', `CU ${feature} 的完整 contracts 绑定无法证明设计及 CU 契约内容未变；保留旧文件，回责任阶段。`);
+        continue;
       }
       const tmp = `${contracts.file}.tmp-${process.pid}`;
       try {

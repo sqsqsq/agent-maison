@@ -113,15 +113,17 @@ function bumpAndReconcile(s: Snapshot, mutate: (bp: Blueprint) => void): ReturnT
   clearFrameworkConfigCache();
   return reconcileChangeUnitBlueprintRefs(s.root, B2_BLUEPRINT);
 }
-/** 真内容改变先拒绝整批；责任阶段随后重建当前输入，保留原历史证据。 */
+/** 合法 CU 指针升版但保留不能安全刷新的阶段文件；责任作者随后重建。 */
 function bumpAndRebuild(s: Snapshot, mutate: (bp: Blueprint) => void): ReturnType<typeof reconcileChangeUnitBlueprintRefs> {
-  const files = b2Files(s).filter(file => file !== componentBlueprintPath(s.root, B2_BLUEPRINT));
+  const files = b2Files(s).slice(2);
   const before = files.map(file => fs.readFileSync(file));
-  assert.throws(() => bumpAndReconcile(s, mutate), /内容未变|无法证明|内容变化/);
-  files.forEach((file, i) => assert(fs.readFileSync(file).equals(before[i]), `拒绝后旧输入被改写：${file}`));
+  const cuFile = changeUnitPath(s.root, B2_BLUEPRINT, 'ledger-refresh');
+  const cuBefore = fs.readFileSync(cuFile);
+  const result = bumpAndReconcile(s, mutate);
+  assert(bumped(result) && !fs.readFileSync(cuFile).equals(cuBefore), JSON.stringify(result));
+  files.forEach((file, i) => assert(fs.readFileSync(file).equals(before[i]), `无法安全刷新时旧阶段输入被改写：${file}`));
   for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(s.root, SNAPSHOT_CU_FEATURE, name).actualPath);
   clearFrameworkConfigCache();
-  const result = reconcileChangeUnitBlueprintRefs(s.root, B2_BLUEPRINT);
   const facts = resolveFeatureArtifact(s.root, SNAPSHOT_CU_FEATURE, 'context/facts.md').actualPath;
   const priorFacts = fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
   const p = { ...s, feature: SNAPSHOT_CU_FEATURE, module: 'ledger', modulePath: 'src/ledger' };
@@ -753,7 +755,7 @@ const cases: Case[] = [
       assert.strictEqual(identityOnly.verdict, 'fresh', `纯身份变化不得判 stale：${JSON.stringify(identityOnly)}`);
       const legacy = freshness('coding');
       assert(legacy.verdict === 'stale' && legacy.changed_paths.includes(relOf(s, files[0])), `旧格式证据仍按字节口径失效：${JSON.stringify(legacy)}`);
-      assert(bumped(bumpAndRebuild(s, changeConsumedTargetContent)), '前提：真内容改变拒绝刷新后由责任阶段重建');
+      assert(bumped(bumpAndRebuild(s, changeConsumedTargetContent)), '前提：CU 升版并保留旧输入后由责任阶段重建');
       const consumed = freshness('plan');
       assert(consumed.verdict === 'stale' && consumed.changed_paths.includes(relOf(s, files[0])), `本 CU 消费的 target 内容变化必须失效：${JSON.stringify(consumed)}`);
     }),
@@ -822,7 +824,7 @@ const cases: Case[] = [
         assert.strictEqual(again?.state, 'resolved', `${id}：冻结绑定对照不应判 stale：${JSON.stringify(again)}`);
         assert.throws(() => read(phase, legacy), /input binding stale/, `${id}：旧全值指纹只能按全值命中`);
       }
-      assert(bumped(bumpAndRebuild(s, changeConsumedTargetContent)), '前提：真内容改变拒绝刷新后由责任阶段重建');
+      assert(bumped(bumpAndRebuild(s, changeConsumedTargetContent)), '前提：CU 升版并保留旧输入后由责任阶段重建');
       // contracts 经 change_unit_ref 依赖 CU 契约（含其消费的 target 内容）→ stale；
       // acceptance 投影正文未变、来源戳指向当前 CU/蓝图 → 仍是同一内容（阶段级重验由 CU/蓝图证据条目负责，见上一例）。
       const [contracts, acceptance] = current;

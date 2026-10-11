@@ -232,7 +232,9 @@ function resolveArtifact(
         const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind, 'pure');
         dependencies.push(...projected.dependencies);
         projectedValue = projected.artifacts?.[source.artifact];
-        if (projected.state === 'invalid' || !projectedValue || value.source !== (projectedValue as { source?: unknown }).source || value.feature !== (projectedValue as { feature?: unknown }).feature) return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection stale; return to design owner' };
+        if (projected.state === 'invalid') return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection invalid; return to design owner' };
+        if (!projectedValue || value.source !== (projectedValue as { source?: unknown }).source || value.feature !== (projectedValue as { feature?: unknown }).feature) return { state: 'invalid', dependencies,
+          detail: `${source.artifact === 'acceptance@1' ? 'spec' : 'plan'}: blueprint artifact source stale; return to responsibility phase` };
         artifacts = { ...projected.artifacts, [source.artifact]: value };
       }
       const schema = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas', registered.schema), 'utf8'));
@@ -728,8 +730,8 @@ function resolveInput(
       if (source.kind === 'artifact' && source.artifact === 'contracts@1' && options.feature?.startsWith('cu-')) {
         const identity = parseChangeUnitFeatureId(options.feature);
         const file = changeUnitPath(options.projectRoot, identity.blueprintId, identity.changeUnitId);
-        // 记录规范化/映射消费的同一 canonical CU；旧未登记该依赖的冻结绑定保持原兼容口径。
-        if (!expected || expected.dependencies.some(dep => resolveDependencyPath(options.projectRoot, dep.path) === file)) cuDependencies.push(dependency(file, 'artifact'));
+        // CU 是本阶段施工映射实际消费的 canonical 输入，所有该类冻结绑定都登记同一依赖。
+        cuDependencies.push(dependency(file, 'artifact'));
       }
       binding = { input_id: input.id, source, dependencies: dedupeDependencies(attempts.flatMap(attempt => attempt.dependencies)),
         source_refs: result.dependencies.filter(d => d.exists).map(d => path.relative(options.projectRoot, d.path).replace(/\\/g, '/')),
