@@ -3,7 +3,7 @@ import * as path from 'path';
 import { featureFilePath, relFeaturesDir } from '../../config';
 import { resolveWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { classifyGoalRunsDir } from './fidelity-shared';
-import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
+import { filterAuthoritativeEvents, loadEventsJsonl } from './goal-runner-phase';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import { resolveBirthExecutionScope } from './feature-execution-scope';
@@ -53,8 +53,7 @@ export function hasSuccessfulTerminalChangeUnitRun(projectRoot: string, featureI
   const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
   for (const runId of classifyGoalRunsDir(runsDir).runs) {
     const events = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, runId, 'events.jsonl')));
-    const runEnd = resolveEffectiveRunEnd(events);
-    if (runEnd?.status && SUCCESSFUL_RUN_END_STATUSES.has(runEnd.status)) return true;
+    if (events.some(event => event.type === 'run_end' && typeof event.status === 'string' && SUCCESSFUL_RUN_END_STATUSES.has(event.status))) return true;
   }
   return false;
 }
@@ -168,6 +167,12 @@ export function observeChangeUnitCompletion(
         featureId,
         reasons: ['Goal run reducer 已确认成功终局，但 feature-completion 投影缺失；不得降级为 ABSENT。'],
       };
+    }
+    const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
+    const completionDir = featureFilePath(projectRoot, featureId, 'completion');
+    if (classifyGoalRunsDir(runsDir).runs.some(runId => fs.existsSync(path.join(runsDir, runId, 'feature-completion.json')))
+      || (fs.existsSync(completionDir) && fs.readdirSync(completionDir).some(name => name.endsWith('.json')))) {
+      return { state: 'INVALID', featureId, reasons: ['完成原件存在但 feature-completion 投影缺失；不能证明从未完成，按原恢复处理。'] };
     }
     return { state: 'ABSENT', featureId, reasons: ['从未形成可验证 feature-completion 投影。'] };
   }

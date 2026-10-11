@@ -86,8 +86,11 @@ export function collectBlueprintReviewInputs(projectRoot: string, loaded: Return
         catch (error) { item.errors.push((error as Error).message); }
         let limited = false;
         const digest = identityNeutralDigest(projectRoot, 'change-unit@1', item.unit, { ...readers, unavailable: error => { if (error instanceof LayerAttributionUnavailable) { limited = true; item.equivalenceUnavailable = error.message; } } });
-        if (item.errors.length === 0 && (digest || limited)) { if (digest) item.digest = digest; item.binding = 'bound'; }
-        else if (!digest) item.errors.push('identityNeutralDigest 返回 null，无法证明内容绑定（含引用目标、supersedes 或相关架构决策）。');
+        if (item.errors.length === 0) {
+          if (digest) item.digest = digest;
+          else if (!limited) item.equivalenceUnavailable = '无法证明中立等价；当前精确来源绑定仍有效。';
+          item.binding = 'bound';
+        }
       }
     } catch (error) { item.errors.push((error as Error).message); }
   }
@@ -104,7 +107,8 @@ export function collectBlueprintReviewInputs(projectRoot: string, loaded: Return
   }
   sourceGaps.push(...retirementIssues.map(issue => `${issue.id}: ${relativeMessage(issue.message)}`));
   for (const item of units) {
-    if (item.binding === 'pending') sourceGaps.push(`${item.id}：owner 指针待升版；不承诺可以 carry-forward。`);
+    if (retirementIssues.some(issue => issue.path.startsWith(`change-unit:${item.id}.`))) item.binding = 'unresolved';
+    if (item.binding === 'pending' && !item.retiredBy) sourceGaps.push(`${item.id}：owner 指针待升版；不承诺可以 carry-forward。`);
     sourceGaps.push(...item.errors.map(error => `${item.id} (${path.relative(projectRoot, item.canonicalPath).replace(/\\/g, '/')})：${relativeMessage(error)}`));
   }
   return { units, sourceGaps, closureExists: fs.existsSync(loaded.canonicalPath.replace('component-blueprint.yaml', 'component-closure.md')),

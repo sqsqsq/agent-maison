@@ -11,8 +11,9 @@ import type { ComponentBlueprintRef } from './component-blueprint-model';
 import { generateMermaidViewGraph, validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { diagnoseBlueprintPresentationShape } from './component-blueprint-validator';
 import { extractAcceptanceIdRefs } from './check-acceptance';
+import { normalizeUseCasePortCalls } from './spec-loader';
 
-export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@4';
+export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@5';
 
 function prose(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : '未记录';
@@ -32,6 +33,16 @@ function meaning(value: unknown): string {
 function namedMeanings(value: unknown): string {
   return asRecord(value) ? Object.entries(asRecord(value)!).map(([name, entry]) => `${name}：${meaning(entry)}`).join('；')
     : asRecords(value).length ? asRecords(value).map(entry => meaning(entry)).join('；') : meaning(value);
+}
+function declaredMeaning(value: unknown): string {
+  if (value === undefined) return '未记录';
+  if (['string', 'number', 'boolean'].includes(typeof value)) return prose(value);
+  if (Array.isArray(value) && value.every(item => ['string', 'number', 'boolean'].includes(typeof item))) return value.map(prose).join('；') || '—';
+  const record = asRecord(value);
+  const description = record?.semantics ?? record?.description ?? record?.rule ?? record?.summary;
+  if (['string', 'number', 'boolean'].includes(typeof description)) return prose(description);
+  if (Array.isArray(description) && description.every(item => ['string', 'number', 'boolean'].includes(typeof item))) return description.map(prose).join('；') || '—';
+  return '未能表达（已声明的结构不支持）';
 }
 export function blueprintReviewAnchor(address: string): string { return `design-${Buffer.from(address).toString('hex')}`; }
 function anchor(address: string): string { return `<a id="${blueprintReviewAnchor(address)}"></a>`; }
@@ -84,6 +95,7 @@ function renderUnit(item: ReviewChangeUnit, blueprint: BlueprintRecord): string[
       ['用例', asRecords(bundle.useCases?.use_cases).map(row => prose(row.id)).join('；') || '设计期未写入，将由 plan 补'],
     ]));
     if (!bundle.contracts) lines.push('设计期未写入 contracts，将由 plan 补。', '');
+    else lines.push('施工/测试落点映射由 plan 在 Feature contracts.change_unit 中产出；设计声明不代表映射已通过。', '');
   } catch (error) { lines.push(`合并无效：${text(error instanceof BlueprintContentError ? error.code : '无法解析')} · ${text((error as Error).message)}。不展示部分成功集合。`, ''); }
   return lines;
 }
@@ -114,13 +126,20 @@ function renderFlow(flow: BlueprintRecord, viewId: unknown): string[] {
   const mutations = asRecords(flow.mutations); const publications = asRecords(flow.publications);
   if (mutations.length) lines.push(...table(['写入', '类型', '持久化', '发布', '恢复'], mutations.map(m => [m.mutation_id, m.kind, m.persistence_ref, m.publication_ref, m.recovery_ref])));
   else lines.push('未声明写入。', '');
-  if (publications.length) lines.push(...table(['发布', '快照/语义'], publications.map(p => [p.publication_id, p.snapshot ?? p.semantics])));
+  if (publications.length) {
+    lines.push(...table(['发布', '快照/语义', '载荷'], publications.map(p => [p.publication_id, declaredMeaning(p.snapshot ?? p.semantics), asRecord(p.payload) ? '见载荷字段表' : declaredMeaning(p.payload)])));
+    for (const p of publications.filter(p => asRecord(p.payload))) {
+      const payload = asRecord(p.payload)!;
+      lines.push(`发布 ${text(p.publication_id)} 的载荷字段：`, '', ...table(['字段', '内容'], Object.entries(payload).filter(([key]) => !['provenance', 'source_ref', 'verification_refs'].includes(key)).map(([key, value]) => [key, declaredMeaning(value)])));
+    }
+  }
   lines.push('订阅与消费者：', '');
   const subscriptions = asRecords(flow.subscriptions);
   if (subscriptions.length) lines.push(...table(['订阅', '发布', '消费者', '建立/解除', '快照/重放', '清理', '顺序'], subscriptions.map(s => [s.subscription_id, s.publication_ref ?? '—', s.consumer_ref, `${prose(s.attach)} / ${prose(s.detach)}`, s.replay_or_snapshot, s.cleanup, s.ordering])));
   else lines.push('未声明订阅。', '');
-  lines.push(...table(['消费者', '首次加载', '更新'], asRecords(flow.consumers).map(c => [c.consumer_id, c.initial_load_ref, c.update_ref])),
-    `失败与恢复：${text(recovery?.recovery_id)} · ${text(recovery?.strategy ?? '—')}；持久化失败 ${text(recovery?.persistence_failure ?? '—')}；订阅失败 ${text(recovery?.subscription_failure ?? '—')}；进程重建 ${text(recovery?.process_recreation ?? '—')}`, '',
+  lines.push(...table(['消费者', '首次加载', '更新', '消费语义'], asRecords(flow.consumers).map(c => [c.consumer_id, c.initial_load_ref, c.update_ref, declaredMeaning(c.consumption)])),
+    `失败与恢复：${text(recovery?.recovery_id)}`, '',
+    ...table(['恢复关切', '处理'], [['策略', recovery?.strategy], ['失败处理', recovery?.handling], ['重试', recovery?.retry], ['持久化失败', recovery?.persistence_failure], ['订阅失败', recovery?.subscription_failure], ['进程重建', recovery?.process_recreation]].filter(([, value]) => value !== undefined).map(([label, value]) => [label, declaredMeaning(value)])),
     '生命周期：', '', ...table(['场景', '覆盖裁决', '依据'], Object.entries(asRecord(flow.lifecycle_coverage) ?? {}).map(([name, item]) => [name, asRecord(item)?.status, refs(asRecord(item)?.evidence_refs)])),
     `验证关注：${text(refs(flow.verification_refs))}`, '');
   return lines;
@@ -218,7 +237,9 @@ function renderModels(value: BlueprintRecord): string[] {
 }
 function renderUseCases(value: BlueprintRecord): string[] {
   const lines: string[] = [];
-  for (const uc of asRecords(value.use_cases)) {
+  const normalized = normalizeUseCasePortCalls(value);
+  if (normalized.issues.length) lines.push('用例调用声明无效：', '', ...normalized.issues.map(issue => `- ${text(issue)}`), '');
+  for (const uc of asRecords(normalized.value.use_cases)) {
     lines.push(`#### 用例 ${text(uc.id)}`, '', text(uc.description), '', `编排入口：${text(uc.coordinator)}；文件 ${text(uc.coordinator_file ?? '未记录')}`, '',
       ...table(['阶段顺序', '阶段'], asStrings(asRecord(uc.state_model)?.phases).map((phase, i) => [i + 1, phase])));
     if (asRecords(asRecord(uc.state_model)?.fields).length) lines.push(...table(['状态字段', '类型'], asRecords(asRecord(uc.state_model)?.fields).map(f => [f.name, f.type])));
@@ -228,6 +249,8 @@ function renderUseCases(value: BlueprintRecord): string[] {
       ...table(['方法', '参数', '返回', '异步'], asRecords(boundary.methods).map(m => [m.name, refs(m.params), m.returns, m.async])));
     lines.push('主路径及分支去向：', '', ...table(['分支', '条件', '动作顺序', '阶段去向', '端口调用', '预期状态', '不得调用', '关联验收'],
       asRecords(uc.branches).map(b => [b.id, b.scenario, refs(b.user_sequence), refs(b.expected_phase_seq), refs(b.expected_port_calls), namedMeanings(b.expected_state), refs(b.not_called), refs(b.linked_acceptance)])));
+    const conflicted = asRecords(uc.branches).filter(b => b.expected_boundary_calls !== undefined);
+    if (conflicted.length) lines.push(...table(['分支', '冲突的旧调用声明'], conflicted.map(b => [b.id, refs(b.expected_boundary_calls)])));
     const details = asRecords(uc.branches).filter(b => b.cloud_stubs || b.local_stubs || b.local_expect);
     if (details.length) lines.push(...table(['分支', '外部桩', '本地桩', '本地预期'], details.map(b => [b.id, namedMeanings(b.cloud_stubs), namedMeanings(b.local_stubs), refs(b.local_expect)])));
   }
@@ -308,6 +331,15 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   lines.push('### 异常与恢复', '');
   for (const item of typed('acceptance').filter(i => asRecords(i.value.boundaries).length)) lines.push(origin(item), '', ...table(['边界', '异常场景', '系统行为', '可见结果/预期', '验证关注'], asRecords(item.value.boundaries).map(b => [b.id, b.scenario, b.handling, b.expected_behavior, acceptanceFocus(b)])));
   lines.push('## 5 开发视图', '', ...renderView(view('development'), blueprint, true), '模型与持久化字段见 [逻辑视图](#3-逻辑视图)；运行编排见 [运行时视图](#4-运行时视图)。未声明的索引、事务、存储配置不由 renderer 推断。', '');
+  const storageContracts = contracts.filter(c => c.table_schema !== undefined);
+  if (storageContracts.length) lines.push('### 持久化表结构', '', '表结构来自根级接口契约；领域模型见逻辑视图，存储约束和编码保留此处原始声明。', '');
+  for (const c of storageContracts) {
+    const schema = asRecord(c.table_schema);
+    if (!schema) { lines.push(`契约 ${text(c.contract_id)} 的 table_schema 未能表达（应为对象）。`, ''); continue; }
+    lines.push(`#### ${text(schema.table)} · ${text(c.contract_id)}`, '', `来源：${text(schema.source_ref)}`, '');
+    if (!Array.isArray(schema.columns) || schema.columns.some(column => !asRecord(column))) lines.push('columns 未能表达（应为对象数组）。', '');
+    else lines.push(...table(['列', '类型与声明约束', '来源字段', '编码', '显式默认值', '补充约束', '来源'], asRecords(schema.columns).map(column => [column.name, column.type, column.from, column.encoding ?? '—', column.default === undefined ? '—' : column.default, column.constraints === undefined ? '—' : declaredMeaning(column.constraints), column.source_ref ?? schema.source_ref])));
+  }
   for (const item of typed('contracts')) {
     const c = item.value;
     if (!['modules', 'files', 'interfaces', 'components', 'integration_points'].some(k => Array.isArray(c[k]) && (c[k] as unknown[]).length)) continue;

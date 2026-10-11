@@ -19,7 +19,8 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { assessFeature, type FeatureAssessment } from '../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
-import { readFeatureFrozenScope, resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
+import { readFeatureFrozenScope, resolveSuccessorExecutionScope, freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
+import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { createGoalRun, loadEffectiveExecutionScope, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
@@ -30,10 +31,10 @@ import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
-import { git, writeHostFile, REAL_CHAIN_TEST, type RealChainProject } from '../utils/real-chain-host';
+import { git, writeHostFile, REAL_CHAIN_TEST, provisionRealChainProject, scaffoldRealChainHost, type RealChainProject } from '../utils/real-chain-host';
 import {
   writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan,
-  writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, publishVerifier, dumpPhase,
+  writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, writeCuPlanMaterials, writeCuSpecMaterials, publishVerifier, dumpPhase, seedCuBoundHost, CU_REQUIREMENT, CU_SOURCE,
 } from './real-chain.unit.test';
 import {
   runIds, runFile, readJson, uncoveredOwnerPhases, freezeAndTransfer, supersede, successorScope, auditedBy, completionOriginal,
@@ -46,13 +47,13 @@ import type { UnitCaseResult } from '../run-unit';
 
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
 type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
-type Writer = (p: RealChainProject) => void;
+type Writer = (p: RealChainProject, executionRunId?: string) => void;
 export const BLUEPRINT_ID = 'ledger-app-blueprint';
 const FLAT_WRITERS: Record<Phase, Writer> = {
-  spec: writeSpecMaterials, plan: writePlanMaterials, coding: writeCodingMaterials,
+  spec: writeSpecMaterials, plan: writePlanMaterials, coding: p => writeCodingMaterials(p),
   review: writeReviewMaterials, ut: writeUtMaterials, testing: writeTestPlan,
 };
-const CU_WRITERS: Partial<Record<Phase, Writer>> = { coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials };
+const CU_WRITERS: Partial<Record<Phase, Writer>> = { spec: writeCuSpecMaterials, plan: writeCuPlanMaterials, coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials };
 
 export function project(s: Snapshot, feature: string): RealChainProject {
   return feature === SNAPSHOT_CU_FEATURE
@@ -171,6 +172,32 @@ export async function withHost(run: (s: Snapshot) => Promise<void>): Promise<voi
     baselineHost(s);
     await run(s);
   }, HOST_ROOT);
+}
+
+/** A new request fixture, before stage output or any completion/run exists. */
+export async function withFreshCuHost(run: (s: Snapshot) => Promise<void>): Promise<void> {
+  const p = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(p); seedCuBoundHost(p);
+    git(p.root, ['add', '-A']); git(p.root, ['commit', '-qm', 'fresh CU request baseline']);
+    await run({ root: p.root, frameworkRoot: p.frameworkRoot, harnessDir: p.harnessDir });
+  } finally {
+    clearFrameworkConfigCache();
+    if (process.env.REAL_CHAIN_DEBUG === '1') console.log(`[fresh-cu-host] kept root ${p.root}`);
+    else fs.rmSync(p.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+}
+
+/** Prepare/freeze after the scenario's design input, then use the selected birth span. */
+export function prepareFreshCuRequest(s: Snapshot): { requirement: string; chain: string[] } {
+  clearFrameworkConfigCache();
+  const prepared = prepareFeatureScopeCandidate({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: SNAPSHOT_CU_FEATURE,
+    completionTarget: 'feature', requestedResults: ['账目刷新与恢复'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'],
+    requirement: CU_REQUIREMENT, overwrite: true,
+    impact: { userVisibleBehaviorChange: false, reason: '只改账本领域服务，不改任何界面', basisPaths: [CU_SOURCE] } });
+  freezeFeatureExecutionScope({ projectRoot: s.root, feature: SNAPSHOT_CU_FEATURE, scope: prepared.scope,
+    candidateFingerprint: featureScopeCandidateFingerprint(s.root, SNAPSHOT_CU_FEATURE) });
+  return { requirement: CU_REQUIREMENT, chain: prepared.scope.phase_chain };
 }
 
 /**
@@ -296,8 +323,9 @@ export async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
 /** 真 harness 跑后继链的逐阶段作者材料（`supersede()` 的 extra）。 */
 export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, Writer>>, after?: Partial<Record<Phase, Writer>>) {
   const hook = (phase: Phase) => (ctx: { runId: string; attempt: number }): void => {
-    p.runId = factsIdentity(p, phase, ctx.runId);
-    writers[phase]?.(p);
+    const first = loadFrozenExecutionScope(p.root, p.feature, ctx.runId)?.phase_chain[0];
+    p.runId = first === phase ? ctx.runId : factsIdentity(p, phase, ctx.runId);
+    writers[phase]?.(p, ctx.runId);
     after?.[phase]?.(p);
     if (ctx.attempt > 1) publishVerifier(p, phase);
   };
@@ -415,7 +443,7 @@ export const freshness = (s: Snapshot, feature: string, chain: string[]): string
 /**
  * plan c4e7a9b2 §6 B2-1 / B2-2：`source` 的完成记录与各阶段证据是新代码写出的（新格式）。
  * ① 改蓝图中本 CU 未消费的内容 → 调和原位升版（CU / 蓝图 / 派生投影或手写 contracts 身份行字节全变）：各阶段证据 fresh、
- *    完成结论仍成立、后继出生链不含 coding / review / ut；② 再改本 CU 消费的 target 内容 → 依赖阶段照常重验。
+ *    完成结论仍成立、后继出生链不含 coding / review / ut；② 真内容变化拒绝调和，保留原产物并回责任阶段。
  */
 function assertIdentityOnlyReuse(s: Snapshot, feature: string, source: string, executed: string[]): void {
   assert.deepStrictEqual(freshness(s, feature, executed), executed.map(ph => `${ph}:fresh`), '前提：新格式证据当下 fresh');
@@ -426,11 +454,13 @@ function assertIdentityOnlyReuse(s: Snapshot, feature: string, source: string, e
   assert.strictEqual(identity.complete, true, `纯身份变化不应使完成结论失效：${brief(identity)}`);
   const idle = successorChain(s, feature, source);
   assert(!idle.some(ph => executed.includes(ph)), `纯身份变化：后继出生链不得含无影响阶段：${JSON.stringify(idle)}`);
-  bumpAndReconcile(s, changeConsumedTargetContent, 'blueprint: consumed target content');
-  const content = successorChain(s, feature, source);
-  console.log(`[lifecycle-evolution] B2-2 ${feature} freshness=${JSON.stringify(freshness(s, feature, executed))} chain=${JSON.stringify(content)}`);
-  assert.strictEqual(freshness(s, feature, executed)[0], `${executed[0]}:stale`, '消费 target 内容变化：首个执行阶段证据应 stale');
-  assert.deepStrictEqual(content.filter(ph => executed.includes(ph)), executed, `消费 target 内容变化：依赖阶段应照常重验：${JSON.stringify(content)}`);
+  const stage = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(s.root, feature, name));
+  const bytes = stage.map(file => fs.readFileSync(file));
+  const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
+  bumpBlueprint(s, changeConsumedTargetContent);
+  assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+  stage.forEach((file, index) => assert(fs.readFileSync(file).equals(bytes[index])));
+  assert(fs.readFileSync(cu.canonicalPath).equals(cu.bytes), '真内容变化仍改写 CU');
   assert.strictEqual(assess(s, feature).complete, false, '消费 target 内容变化后不得仍判完成');
 }
 
@@ -450,7 +480,7 @@ function dropFirstDevelopmentModule(bp: Record<string, unknown>): string {
 }
 
 /**
- * L1b / L1c 共用前半段：plan 阶段 agent 手写三份派生文件（无来源戳）→ 真 harness 跑一条后继，让完成记录绑定这些手写文件
+ * L1b / L1c 兼容前缀：作者从真实投影输入新建三份无戳阶段产物及当前 CU 映射 → 真 harness 跑一条后继，让完成记录绑定这些文件
  *（宿主原始完成的替身）。返回该完成 run 与出生链预判函数。前缀经 `cachedPrefix` 同路径缓存（进程内首跑真跑）。
  */
 export async function handWrittenCompletion(s: Snapshot): Promise<{ completed: string; predict: (source: string) => string[] }> {
@@ -497,12 +527,30 @@ export function specFirstCuHooks(p: RealChainProject, align: boolean) {
     if (ctx.attempt > 1) publishVerifier(p, 'spec');
   } };
 }
-/** spec 责任方按当前设计权威改写手写 acceptance（只改被权威改动的字段，保留其余手写内容）。 */
+/** spec 责任方从当前 provider 重产 typed 验收，并走原事实建立门。 */
 function alignAcceptance(p: RealChainProject): void {
-  const file = featureFilePath(p.root, p.feature, 'acceptance.yaml');
-  const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
-  doc.criteria.find((c: { id: string }) => c.id === 'AC-1').expected_result = NEW_EXPECTED_RESULT;
-  fs.writeFileSync(file, YAML.stringify(doc));
+  writeCuSpecMaterials(p);
+}
+
+/** A real content change is rejected first; responsible authors then rebuild their stage inputs. */
+export function rebuildCuDesignInputs(s: Snapshot, p: RealChainProject, preserveAuthorAcceptance = false): void {
+  const paths = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(s.root, p.feature, name));
+  const before = paths.map(file => fs.readFileSync(file));
+  const canonical = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
+  assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+  paths.forEach((file, index) => assert(fs.readFileSync(file).equals(before[index])));
+  assert(fs.readFileSync(canonical.canonicalPath).equals(canonical.bytes));
+  if (preserveAuthorAcceptance) assert(!/^derive\.blueprint-/.test(String(YAML.parse(before[0].toString('utf8')).source ?? '')));
+  for (const file of paths) fs.rmSync(file, { force: true });
+  clearFrameworkConfigCache();
+  const reconciled = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+  assert(reconciled.bumped.some(row => row.change_unit_id === 'ledger-refresh'), JSON.stringify(reconciled));
+  const facts = featureFilePath(s.root, p.feature, 'context/facts.md');
+  const factsBefore = fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
+  writeCuSpecMaterials(p); writeCuPlanMaterials(p);
+  if (preserveAuthorAcceptance) fs.writeFileSync(paths[0], before[0]);
+  if (factsBefore) fs.writeFileSync(facts, factsBefore); else fs.rmSync(facts, { force: true });
+  clearFrameworkConfigCache();
 }
 
 // ---- 用例 -----------------------------------------------------------------------------------------
@@ -516,11 +564,10 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     }
   }) },
 
-  { name: 'L1 ★2 宿主事故形状：蓝图升版且改进投影内容 → 调和原位升版 → --supersede → 真 harness 跑完后继链 → 新完成结论', run: () => withHost(async s => {
+  { name: 'L1 ★2 真设计变化：调和拒绝并保字节 → spec/plan作者重建输入 → 后继真实完成', run: () => withHost(async s => {
     const o = await evolve(s, { feature: SNAPSHOT_CU_FEATURE, change: () => {
       bumpBlueprint(s, changeProjectedAcceptance);
-      const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-      assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
+      rebuildCuDesignInputs(s, project(s, SNAPSHOT_CU_FEATURE));
     } });
     assertCompleted(s, SNAPSHOT_CU_FEATURE, o);
     // plan c4e7a9b2 B2：上面的后继已在新代码下写出新格式绑定与证据——再做一次纯身份升版不重跑，改消费内容照常重验。
@@ -528,15 +575,16 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
   }) },
 
   /** plan c4e7a9b2 B2-4 旧快照兼容：同样的纯身份升版落在 3.1.0 旧格式记录上（无投影标记 / 全值指纹）→ 仍按字节口径全链重跑。 */
-  { name: 'L1 ★2b 旧快照兼容：纯身份升版（改本 CU 未消费的蓝图内容）落在 3.1.0 旧格式记录上 → 字节口径，出生链 [coding, review, ut]', run: () => withSnapshot(s => {
+  { name: 'L1 ★2b 旧快照无完整当前contracts证明：纯身份升版仍拒绝，原载体字节保留', run: () => withSnapshot(s => {
     const feature = SNAPSHOT_CU_FEATURE;
     const [source] = runIds(s.root, feature);
+    const files = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(s.root, feature, name));
+    const before = files.map(file => fs.readFileSync(file));
+    const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
     bumpBlueprint(s, changeUnconsumedBlueprintContent);
-    const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-    assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
-    const chain = successorChain(s, feature, source);
-    console.log(`[lifecycle-evolution] L1 ★2b chain=${JSON.stringify(chain)} freshness=${JSON.stringify(freshness(s, feature, ['coding', 'review', 'ut']))}`);
-    assert.deepStrictEqual(chain, ['coding', 'review', 'ut']);
+    assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+    files.forEach((file, index) => assert(fs.readFileSync(file).equals(before[index])));
+    assert(fs.readFileSync(cu.canonicalPath).equals(cu.bytes));
     assert.strictEqual(freshness(s, feature, ['coding'])[0], 'coding:stale');
   }) },
 
@@ -546,7 +594,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
    * 完成之后还有一个 HALTED run、一个无 manifest 的目录与 `.dry`。先以真 harness 跑一条后继让完成记录绑定这些手写文件
    *（宿主原始完成的替身），再走 (a) 评估 → (b) 蓝图升版调和 → (c) 评估 → (d) `--supersede` 跑完。
    */
-  { name: 'L1b 宿主形状：无戳手写派生文件 + 蓝图升版 + 后继 → 调和只维护 contracts 身份指针，后继跑完 → 新完成结论', run: () => withHost(async s => {
+  { name: 'L1b 作者产物真变化：拒绝自动刷新，plan重建当前输入，spec对齐旧验收，后继真实完成且历史保留', run: () => withHost(async s => {
     const feature = SNAPSHOT_CU_FEATURE;
     const p = project(s, feature);
     const { predict, completed } = await handWrittenCompletion(s);
@@ -570,17 +618,13 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert(a.record.state === 'ok' && a.record.run_id === completed && a.obligations.every(o => o.status === 'covered'), brief(a));
     assert.deepStrictEqual(a.blocking, [`存在晚于凭证的未终局 run：${halted}（status=HALTED）`]);
 
-    // (b) 蓝图升版（含进投影的内容）→ 调和：CU 原位升版；手写 acceptance / use-cases 字节不变，contracts 只动身份行
+    // (b) True content changes reject automatic refresh; plan rebuilds its input, old author acceptance stays for Spec.
     const files = ['acceptance.yaml', 'use-cases.yaml', 'contracts.yaml'];
     const before = files.map(name => fs.readFileSync(featureFilePath(s.root, feature, name), 'utf8'));
     bumpBlueprint(s, changeProjectedAcceptance);
-    const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-    console.log(`[lifecycle-evolution] L1b (b) ${JSON.stringify(r)}`);
-    assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
+    rebuildCuDesignInputs(s, p, true);
     const after = files.map(name => fs.readFileSync(featureFilePath(s.root, feature, name), 'utf8'));
-    assert(after[0] === before[0] && after[1] === before[1], '手写 acceptance / use-cases 被改写');
-    const changed = before[2].split('\n').flatMap((line, i) => line === after[2].split('\n')[i] ? [] : [after[2].split('\n')[i]!.trim()]);
-    assert(changed.length > 0 && changed.every(line => /^(revision|source_fingerprint|artifact_sha256): /.test(line)), `contracts 身份指针未维护或非身份行被改：${JSON.stringify(changed)}`);
+    assert(after[0] === before[0], 'Spec尚未重建的作者验收被改写');
     const cu = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, 'ledger-refresh');
     assert.deepStrictEqual(YAML.parse(after[2]).change_unit.change_unit_ref, createChangeUnitRef(cu), 'contracts change_unit_ref 未跟随升版后 CU');
     commit(s, 'blueprint rev3 admitted');
@@ -590,7 +634,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     // A1（plan c4e7a9b2）：手写 acceptance 仍是旧验收 → 验收义务 uncovered 且指名 AC-1.expected_result，不能完成
     const c = assess(s, feature);
     console.log(`[lifecycle-evolution] L1b (c) ${brief(c)}`);
-    assert(c.record.state === 'ok' && c.obligations.some(o => o.owner_phase === 'plan' && o.status === 'uncovered' && o.class === 'binding'), brief(c));
+    assert(c.record.state === 'ok', brief(c));
     assert(!c.obligations.some(o => (o.reason ?? '').includes('CU 绑定失配')), `身份指针已维护，不应再报 CU 绑定失配：${brief(c)}`);
     assert(c.obligations.some(o => o.kind === 'acceptance-context' && o.owner_phase === 'spec' && o.status === 'uncovered' && (o.reason ?? '').includes('AC-1.expected_result')), `旧验收未对齐应 uncovered：${brief(c)}`);
     assert.strictEqual(c.complete, false, '旧 expected_result 仍在时不得完成');
@@ -626,8 +670,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     const p = project(s, feature);
     const { predict, completed } = await handWrittenCompletion(s);
     bumpBlueprint(s, changeProjectedAcceptance);
-    const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-    assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
+    rebuildCuDesignInputs(s, p, true);
     commit(s, 'blueprint rev3 admitted');
     const expected = predict(completed);
     assert(expected.includes('spec'), JSON.stringify(expected));
@@ -804,7 +847,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases) {
+  const only = process.env.LIFECYCLE_EVOLUTION_ONLY?.split(',').map(value => value.trim()).filter(Boolean);
+  for (const c of cases.filter(test => !only?.length || only.some(prefix => test.name.startsWith(prefix)))) {
     const started = Date.now();
     try {
       await c.run();

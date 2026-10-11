@@ -38,6 +38,8 @@ import { checkCanonicalComponentClosure, writeCanonicalComponentClosure } from '
 import { resolveComponentClosureInputs } from '../../scripts/utils/component-closure-inputs';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { assembleKnowledge, renderKnowledge } from '../../scripts/utils/knowledge-context';
+import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
+import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
 
 interface UnitCaseResult { name: string; ok: boolean; error?: string }
 
@@ -125,7 +127,8 @@ export function configureFeature(
     const unit = asChangeUnitArtifact(loaded.changeUnit);
     const featureId = deriveChangeUnitFeatureId('ledger-app-blueprint', unit.change_unit_id);
     const contractsFile = featureFilePath(projectRoot, featureId, 'contracts.yaml');
-    const contracts = YAML.parse(fs.readFileSync(contractsFile, 'utf8')) as BlueprintRecord;
+    const template = fs.existsSync(contractsFile) ? contractsFile : path.join(BASE_PROJECT, 'doc/features/ledger-app-blueprint', unit.change_unit_id, 'contracts.yaml');
+    const contracts = YAML.parse(fs.readFileSync(template, 'utf8')) as BlueprintRecord;
     contracts.change_unit = {
       change_unit_ref: createChangeUnitRef(loaded),
       predicate_mappings: unit.target_predicates.map(predicate => ({
@@ -273,6 +276,12 @@ function expectIssue(issues: Array<{ id: string }>, id: string): void {
 
 /** 蓝图升一个 admitted revision（同 component-design-handoff 的做法）。 */
 function bumpClosureBlueprint(projectRoot: string, mutate?: (blueprint: BlueprintRecord) => void): void {
+  for (const loaded of enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint')) {
+    const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', String(loaded.changeUnit.change_unit_id));
+    const prepared = prepareFeatureScopeCandidate({ projectRoot, frameworkRoot: path.resolve(__dirname, '../../..'), feature,
+      completionTarget: 'request', requestedResults: ['contracts'], requestedPhases: ['plan'], requirement: '核验已有施工契约' });
+    freezeFeatureExecutionScope({ projectRoot, feature, scope: prepared.scope, candidateFingerprint: featureScopeCandidateFingerprint(projectRoot, feature) });
+  }
   const file = componentBlueprintPath(projectRoot, 'ledger-app-blueprint');
   const blueprint = YAML.parse(fs.readFileSync(file, 'utf8')) as BlueprintRecord;
   blueprint.revision = Number(blueprint.revision) + 1;
@@ -315,9 +324,20 @@ export function knowledgePlacementRoundtrip(): void {
         const decision = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).find(item => item.status === 'decided_with_authority')!;
         decision.knowledge_refs = [...asStrings(decision.knowledge_refs), 'doc/architecture.yaml#decision:knowledge-placed'];
       });
+      const units = enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint');
+      const contracts = units.map(unit => featureFilePath(projectRoot, deriveChangeUnitFeatureId('ledger-app-blueprint', String(unit.changeUnit.change_unit_id)), 'contracts.yaml'));
+      const bytes = contracts.map(file => fs.readFileSync(file));
+      let rejected = false;
+      try { reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint'); } catch { rejected = true; }
+      assert(rejected, '知识归位改变真实设计内容却被当作身份刷新');
+      units.forEach(unit => assert(fs.readFileSync(unit.canonicalPath).equals(unit.bytes), '拒绝后 CU 字节改变'));
+      contracts.forEach((file, i) => assert(fs.readFileSync(file).equals(bytes[i]), '拒绝后施工契约字节改变'));
+      // 责任阶段丢弃当前施工输入并重建；历史完成记录、报告和证据不动。
+      contracts.forEach(file => fs.rmSync(file));
       const preparation = reconcileChangeUnitBlueprintRefs(projectRoot, 'ledger-app-blueprint');
       assert(preparation.bumped.length > 0, JSON.stringify(preparation));
-      const placed = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', evaluationOptions());
+      for (const unit of enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint')) configureFeature(projectRoot, unit);
+      const placed = evaluateComponentClosure(projectRoot, 'ledger-app-blueprint', { evaluatedAt: FIXED_TIME });
       assert(!placed.issues.some(item => item.id.startsWith('component_closure_knowledge_')), placed.issues.map(item => item.id).join(','));
       const configFile = path.join(projectRoot, 'framework.config.json');
       const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {};
@@ -712,6 +732,7 @@ export function runAll(): UnitCaseResult[] {
     unit.supersedes = createChangeUnitRef(target);
     edit?.(unit);
     fs.writeFileSync(file, YAML.stringify(unit), 'utf8');
+    configureFeature(projectRoot, enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').find(item => item.changeUnit.change_unit_id === id)!);
   };
   const unitsById = (projectRoot: string) => new Map(enumerateCanonicalChangeUnits(projectRoot, 'ledger-app-blueprint').map(item => [String(item.changeUnit.change_unit_id), item]));
 

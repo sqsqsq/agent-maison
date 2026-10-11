@@ -5,15 +5,15 @@ derived_from:
   blueprint_id: ledger-app-blueprint
   revision: 2
   source_fingerprint: sha256:5beb80530314d04f1267e9bda9f4796c572d107b46b6a446a238e24b61e24218
-  artifact_sha256: sha256:61f37734704c9e66e63c7f9ded6284e763ed1b59bc4bdfe9b402cc8be0920f7e
+  artifact_sha256: sha256:c7bd932954a15cb3918e86053e38b7d735d80f153a71c24b708eb1ea04ece3f7
   change_units:
     - change_unit_id: ledger-refresh
       binding: bound
-      identity_neutral_digest: 0e3a117ba4a24e56b4faa666a79cb2e53232fbdf7a6ba6f99a88cfbaec6c2776
+      identity_neutral_digest: be320373320bb952ea8c5887191426821ea28addd9978148f5415cc22b90c363
     - change_unit_id: ledger-report
       binding: bound
-      identity_neutral_digest: c2109dc38d615e48c386b41333c2edccca8890a3993d53b6f0a77e225831f785
-projection: component-blueprint-review@4
+      identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
+projection: component-blueprint-review@5
 ---
 
 # Ledger 完整设计表达样本（非真实需求）
@@ -284,9 +284,9 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | add-entry | user | sqlite:ledger-entry | publication:ledger-changed | recovery:reload-ledger |
 
-| 发布 | 快照/语义 |
-| --- | --- |
-| ledger-changed | full-current-ledger |
+| 发布 | 快照/语义 | 载荷 |
+| --- | --- | --- |
+| ledger-changed | full-current-ledger | 未记录 |
 
 订阅与消费者：
 
@@ -294,11 +294,17 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- | --- |
 | ledger-page-subscription | — | consumer:ledger-page | 首次加载后建立订阅 / 页面卸载或账号切换 | 最近已提交的账目 | 移除 observer token | 按 Repository 版本顺序消费 |
 
-| 消费者 | 首次加载 | 更新 |
-| --- | --- | --- |
-| ledger-page | initial-load:repository-snapshot | publication:ledger-changed |
+| 消费者 | 首次加载 | 更新 | 消费语义 |
+| --- | --- | --- | --- |
+| ledger-page | initial-load:repository-snapshot | publication:ledger-changed | 未记录 |
 
-失败与恢复：reload-ledger · —；持久化失败 保留旧快照并提供重试入口；订阅失败 重载 Repository 快照后重建订阅；进程重建 从持久账目重建 Store
+失败与恢复：reload-ledger
+
+| 恢复关切 | 处理 |
+| --- | --- |
+| 持久化失败 | 保留旧快照并提供重试入口 |
+| 订阅失败 | 重载 Repository 快照后重建订阅 |
+| 进程重建 | 从持久账目重建 Store |
 
 生命周期：
 
@@ -337,9 +343,9 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | aggregate-report | user | 未记录 | publication:report-ready | recovery:reload-ledger |
 
-| 发布 | 快照/语义 |
-| --- | --- |
-| report-ready | 按月聚合的不可变报表 |
+| 发布 | 快照/语义 | 载荷 |
+| --- | --- | --- |
+| report-ready | 按月聚合的不可变报表 | 未记录 |
 
 订阅与消费者：
 
@@ -347,11 +353,17 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- | --- |
 | report-panel-subscription | publication:report-ready | consumer:report-panel | 首次加载后建立订阅 / 页面卸载或账号切换 | 最近已聚合的报表 | 移除 observer token | 按 Repository 版本顺序消费 |
 
-| 消费者 | 首次加载 | 更新 |
-| --- | --- | --- |
-| report-panel | initial-load:repository-snapshot | publication:report-ready |
+| 消费者 | 首次加载 | 更新 | 消费语义 |
+| --- | --- | --- | --- |
+| report-panel | initial-load:repository-snapshot | publication:report-ready | 未记录 |
 
-失败与恢复：reload-ledger · —；持久化失败 本地读取失败时保留旧报表；订阅失败 重新读取并聚合；进程重建 丢弃会话缓存后重新聚合
+失败与恢复：reload-ledger
+
+| 恢复关切 | 处理 |
+| --- | --- |
+| 持久化失败 | 本地读取失败时保留旧报表 |
+| 订阅失败 | 重新读取并聚合 |
+| 进程重建 | 丢弃会话缓存后重新聚合 |
 
 生命周期：
 
@@ -813,6 +825,8 @@ flowchart TD
 | contracts.files 声明写集 | src/ledger/LedgerFeature.ets；test/ledger/LedgerFeature.test.ets；src/ledger/LedgerEntry.ets；src/ledger/LedgerRepository.ets；src/ledger/LedgerStore.ets；src/ledger/LedgerShared.ets |
 | 用例 | ledger-refresh |
 
+施工/测试落点映射由 plan 在 Feature contracts.change_unit 中产出；设计声明不代表映射已通过。
+
 ### ledger-report
 
 独立交付本地账页报表读取，复用共同金额模型，保留账目刷新切片的安全中间态。
@@ -882,6 +896,8 @@ flowchart TD
 | NFR | NFR-1；NFR-3 |
 | contracts.files 声明写集 | src/ledger/LedgerShared.ets；src/ledger/LedgerReport.ets；test/ledger/LedgerReport.test.ets；src/ledger/LedgerReportModel.ets |
 | 用例 | ledger-report |
+
+施工/测试落点映射由 plan 在 Feature contracts.change_unit 中产出；设计声明不代表映射已通过。
 
 ## 11 风险与待决项
 

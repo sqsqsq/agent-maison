@@ -42,7 +42,7 @@
 
 **CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
 
-设计期已有 acceptance/contracts/use_cases 时直接消费 typed 投影，不手写重做。无 UI 依据的 P0 已保留步骤/预期/分层/focus，spec 根据真实 ui-spec 只补 linked_flow/checkpoint/屏幕流程等缺键，保留原权威预期，通过原对齐与 P0 门；不编元素 ID、不删 acceptance 绕门。缺内容才在本职责补设计，叙述文件仅按 required_outputs 产出。
+设计期已有 acceptance/contracts/use_cases 时直接消费 typed 推导输入并写本阶段 acceptance，正常交接不提前物化。spec 根据真实 ui-spec 只补 linked_flow/checkpoint/屏幕流程等缺键，保留已有权威预期，通过原对齐与 P0 门；已有带来源戳文件也沿同一规则补充，不换戳绕过。缺内容才在本职责补设计，叙述文件仅按 required_outputs 产出。
 
 **正式性兜底复核（M7，非阻断）**：spec 是 full 轨第一次冻结施工意图的地方，也是正式需求的兜底复核点——**正式需求的 spec 一律位于蓝图与 Change Unit 之后，spec 不再是任何正式需求的第一个设计产物**。开始 Step 1 前先按判据自查一次：
 

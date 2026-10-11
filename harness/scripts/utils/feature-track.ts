@@ -12,6 +12,8 @@ import { authoritativeContentDrift, describeAuthoritativeDrift } from './bluepri
 import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { inferRepoLayout } from '../../repo-layout';
+import { SpecLoader } from './spec-loader';
+import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 // ============================================================================
 // feature-track.ts — feature.yaml 的 track 声明读取（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
@@ -534,8 +536,14 @@ function authorityGapOf(
   kind: 'acceptance' | 'contracts',
   input: { binding: InputBinding; value: unknown } | undefined,
 ): string | undefined {
-  if (!input || input.binding.source.kind !== 'artifact') return undefined;
-  return describeAuthoritativeDrift(authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, input.value), kind);
+  if (!input) return undefined;
+  const drift = input.binding.source.kind === 'artifact'
+    ? describeAuthoritativeDrift(authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, input.value), kind)
+    : undefined;
+  if (drift || kind !== 'contracts' || !ctx.feature.startsWith('cu-')) return drift;
+  const spec = new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadFeatureSpec(ctx.feature);
+  const projection = validateChangeUnitFeatureProjection(ctx.projectRoot, ctx.feature, spec.contracts, spec.acceptance, !!spec.useCases, 'plan');
+  return projection.issues.length ? `plan 尚未交付当前 CU 的施工映射：${projection.issues.map(item => `${item.id}: ${item.message}`).join('；')}` : undefined;
 }
 
 /**

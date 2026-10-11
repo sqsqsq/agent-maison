@@ -38,13 +38,17 @@ checker 不自动升 revision；只有被接受的新事实、权威裁决或冲
 
 设计 owner 在 canonical 蓝图完成 4+1：场景（+1）与旅程、逻辑边界和模型、运行顺序与分支/恢复、开发目录/文件与组件、适用部署落点和外部配套；同时写清选择与被否方案、质量属性、数据生命周期和验收。实读应能回答需求/范围、当前问题、工作方案、模块责任、选择依据、CU 交付与安全中间态、风险验收七问。详细程度取决于真实关切，不按行数压缩必要细节。
 
-会被 CU 引用的设计目标在设计期写入已有 `acceptance`、`contracts`、`use_cases` 结构。验收含 AC/BD/NFR、优先级、步骤/预期、分层与 focus；契约含类型/接口、组件、目录/文件、状态与完整 CU 映射；用例含阶段、主路径/分支及预期。来源权威仍按既有 provenance 校验。`contracts.files` 是唯一施工写集，目录表、`touches`、图和 `source_ref` 都不能扩大它；`change_unit_ref` 由投影注入，不在蓝图手填自指 hash。
+会被 CU 引用的设计目标在设计期写入已有 `acceptance`、`contracts`、`use_cases` 结构。验收含 AC/BD/NFR、优先级、步骤/预期、分层与 focus；契约保留类型/接口、模型、组件、目录/文件和状态，**整个 contracts.change_unit 由 plan 在 Feature contracts.yaml 生成**；用例含阶段、主路径/分支及预期，新写 expected_port_calls，旧 expected_boundary_calls 经共同归一化兼容、冲突诊断。来源权威仍按既有 provenance 校验。`contracts.files` 是唯一施工写集，目录表、`touches`、图和 `source_ref` 都不能扩大它。
 
-引用一个目标即整体继承其三类内容。共享目标 S 只放所有引用者都承担的验收、合法写集和用例；CU-A 引 S+A、CU-B 引 S+B，专属 AC/BD/NFR、files 和完整 `change_unit` 映射放 A/B。数组沿已有行身份去重并合并，同身份不同内容拒绝；对象只接受完全相同内容，不逐键拼接。`module_dependencies`、`navigation`、`resource_keys`、`change_unit`、acceptance 的 `flows` 等对象分别集中在本 CU 一个目标。不能按 predicate 隐藏误继承的验收或文件，合法先后写同一文件不自动判错。
+引用一个目标即整体继承其设计内容。共享目标 S 只放所有引用者都承担的验收、合法写集和用例；CU-A 引 S+A、CU-B 引 S+B，专属 AC/BD/NFR、files 和用例放 A/B。数组沿已有行身份去重并合并，同身份不同内容拒绝；对象只接受完全相同内容，不逐键拼接。`module_dependencies`、`navigation`、`resource_keys`、acceptance 的 `flows` 等对象分别集中在一个承载目标。存量蓝图 change_unit 不参与共同设计合并；当前 Feature 映射仍由 plan 原门校验。设计节点保持语义稳定，不因 CU 替代或修订复制版本节点。不能按 predicate 隐藏误继承的验收或文件，合法先后写同一文件不自动判错。
 
 六类可选表达为背景/目标/范围、被否方案、术语含义、场景旅程、部署参与方/上线协同、质量属性/数据生命周期，位置与形状见 [P1 写作约定](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图)。缺失显示“未记录”，形状错误由原 validator 给 WARN，不增加缺字段门禁、不改 schema。模型字段的可选 `description/source_ref` 字符串沿现有加载/投影透传，非字符串显示“未能表达”；来源只引用设计期已有材料，不把未来施工文件当输入。
 
-没有 ui-spec 依据时，P0 真机验收保留步骤、预期、分层与 focus，不编 `linked_flow`、checkpoint、屏幕流程或元素 ID。spec 得到真实 UI 依据后，只补未声明的键，保留原权威预期并通过现有对齐与 P0 检查。spec/plan 直接消费已有 typed 投影，只补本职责缺失内容；需要改变已声明权威时回设计 owner 修订。叙述文件只按 `required_outputs` 产出，存量合法手写文件不强制迁移或静默覆盖。精确消费和物化边界见[蓝图设计输入](../concepts/blueprint-design-inputs.md)。
+没有 ui-spec 依据时，P0 真机验收保留步骤、预期、分层与 focus，不编 `linked_flow`、checkpoint、屏幕流程或元素 ID。spec 得到真实 UI 依据后，只补未声明的键，保留原权威预期并通过现有对齐与 P0 检查。**正常交接不提前物化 Feature 文件**，spec/plan 直接消费已有 typed 推导输入，各写本阶段产物；投影带用例时 plan 必须写 use-cases.yaml 供真实业务 UT，required_outputs 不只看文件存在。带戳旧文件的合法补充只是兼容兜底，不删戳绕过；设计/CU 内容未变才仅更新来源身份，保留业务和补充字节，真内容变化退责任，不合并。叙述文件只按 required_outputs 产出，合法手写文件不强制迁移。精确边界见[蓝图设计输入](../concepts/blueprint-design-inputs.md)。
+
+标题与本次改变分别写 review_summary.title/summary，通用决策选择写 conclusion、rationale 解释原因；term.meaning 复用来源定义，模型字段 description 表达约束/单位。发布 payload、失败 handling/retry 和根契约 table_schema 的列/约束/默认值/JSON 编码由专用表格展示，原文存在就不能假报未记录。
+
+同一未完成交付的活动 CU 仅在无运行或已停住时，经 consumer 内容修订接点提交旧精确 ref 与候选，保留 ID/Feature/目录、框架 revision +1；running/锁竞争 busy，普通重复接受仍拒绝。历史完成、成功终局缺投影及损坏记录不冒充未完成，退役前身不改；修订后停住 run 沿既有 binding 缺口回 plan，保留历史与累计预算，不自动改旧产物或启动施工。完成后新增工作及拆分/合并/迁移才用新身份。
 
 ### 1.2 部署视图与外部参与方
 
@@ -220,7 +224,7 @@ owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，
 
 指针调和非 busy 后，readiness 对全部未退役（含已完成旧 CU）且原设计判定 constructable 的单元，复用 `deriveBlueprintSkillInput` 默认只读模式完整检查 acceptance/contracts/use_cases。另一类 absent 不漏掉已声明的坏 use_cases；不传 pure，手写 use-cases 与投影冲突仍提前报 `authority_use_cases_conflict`。absent 提示“设计期未写入，将由 spec/plan 补”并明确责任，不新增缺字段机器门禁；已声明的坏形状、来源、写集、映射或冲突为 invalid，复用原原因使 perUnit blocked/not-ready，不等运行中再首次发现。
 
-校验不物化 Feature 产物、不产 phase PASS/receipt、不重启旧 CU、不选择施工。`prepare-blueprint-design` CLI 是写入口，不能充当只读校验。已物化 CU 的调和刷新先失败时，沿用 `change_unit_blueprint_ref_bump_rejected` 异常与整批指针/派生文件回滚；不回滚用户已修订的 canonical 蓝图，也不伪装正常 readiness 成功。文档结果与该结论分别报告。
+校验不物化 Feature 产物、不产 phase PASS/receipt、不重启旧 CU、不选择施工。未来 plan 映射缺失不阻断设计交接，设计投影也不证明 plan 已完成。prepare-blueprint-design 只保留显式物化兼容用途。已有物化文件调和刷新先失败时，沿用 change_unit_blueprint_ref_bump_rejected 异常与整批指针/派生文件回滚；不回滚用户已修订的 canonical 蓝图，也不伪装正常 readiness 成功。文档结果与该结论分别报告。
 
 ### 4.4 铁律：投影相对蓝图与 CU 零新事实
 

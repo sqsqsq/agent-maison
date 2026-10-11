@@ -1,0 +1,207 @@
+source:
+  contract_source_id: wallet-local-rdb-card-storage
+  authority_owner: HarmonyOS ArkData and local wallet requirement
+  authority_refs:
+    - https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/ohos-data-relationalStore
+    - https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/data-sync-of-rdb-store
+    - doc/features/原始需求/1-2-银行卡/原始需求.md
+  sdk_target: HarmonyOS 6.0.2 API 22
+  materialized_at: 2026-10-10
+contract:
+  operation:
+    operation_id: save-bank-card-record
+    direction: WalletMain -> local RelationalStore
+    version: local bank card schema v1 / HarmonyOS API 22
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/operation
+    verification_refs:
+      - https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/ohos-data-relationalStore
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+  request_dto:
+    dto_id: BankCardRecordInput
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+    fields:
+      - field_id: cardNo
+        type: string
+        semantics: 完整 16 位 mock 卡号；UI 仅显示前四后四
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/0
+        needed_by_current_slice: true
+      - field_id: cardCategory
+        type: string
+        semantics: 卡片大类；当前为 bank
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/1
+        needed_by_current_slice: true
+      - field_id: bankCode
+        type: string
+        semantics: BankInfo.code
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/2
+        needed_by_current_slice: true
+      - field_id: bankName
+        type: string
+        semantics: 银行展示名
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/3
+        needed_by_current_slice: true
+      - field_id: bankCardType
+        type: string
+        semantics: savings 或 credit
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/4
+        needed_by_current_slice: true
+      - field_id: addedAt
+        type: number
+        semantics: Unix epoch 毫秒
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/5
+        needed_by_current_slice: true
+      - field_id: huaweiPayEnabled
+        type: boolean
+        semantics: 新卡初始 false
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/6
+        needed_by_current_slice: true
+      - field_id: unionPayFlashEnabled
+        type: boolean
+        semantics: 新卡初始 false
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/7
+        needed_by_current_slice: true
+      - field_id: transactionRecords
+        type: string[]
+        semantics: 新卡为空数组；写 RDB 前 JSON.stringify，读回 JSON.parse
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/request_dto/fields/8
+        needed_by_current_slice: true
+  response_dto:
+    dto_id: RdbInsertResult
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/response_dto
+    verification_refs:
+      - https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/ohos-data-relationalStore
+    fields:
+      - field_id: rowId
+        type: number
+        semantics: insert resolve 返回 row id；reject 表示写入失败
+        source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/response_dto/fields/0
+        needed_by_current_slice: true
+  mappings:
+    - mapping_id: card-no
+      kind: direct
+      source_fields:
+        - cardNo
+      target_field: card_no
+      rule: 写入全号；card_no 为 UNIQUE，不能覆盖旧记录
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/0
+      verification_refs:
+        - acceptance:AC-8
+        - acceptance:AC-9
+    - mapping_id: card-category
+      kind: direct
+      source_fields:
+        - cardCategory
+      target_field: category_type
+      rule: 存大类 bank
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/1
+      verification_refs:
+        - acceptance:AC-8
+    - mapping_id: bank-identity
+      kind: direct
+      source_fields:
+        - bankCode
+        - bankName
+      target_field: bank_code, bank_name
+      rule: 存 bank code 与名称
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/2
+      verification_refs:
+        - acceptance:AC-8
+    - mapping_id: bank-card-kind
+      kind: direct
+      source_fields:
+        - bankCardType
+      target_field: bank_card_type
+      rule: 存 savings 或 credit
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/3
+      verification_refs:
+        - acceptance:AC-8
+    - mapping_id: added-time
+      kind: direct
+      source_fields:
+        - addedAt
+      target_field: added_at
+      rule: 存添加时刻 epoch 毫秒
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/4
+      verification_refs:
+        - acceptance:AC-8
+    - mapping_id: payment-flags
+      kind: direct
+      source_fields:
+        - huaweiPayEnabled
+        - unionPayFlashEnabled
+      target_field: huawei_pay_enabled, union_pay_flash_enabled
+      rule: 新卡两状态均为 false
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/5
+      verification_refs:
+        - acceptance:AC-8
+    - mapping_id: transactions-json
+      kind: derivation
+      source_fields:
+        - transactionRecords
+      target_field: transaction_records
+      rule: JSON.stringify on write and JSON.parse on read
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/6
+      verification_refs:
+        - acceptance:AC-8
+    - mapping_id: insert-result
+      kind: derivation
+      source_fields:
+        - rowId
+      target_field: BankCardWriteResult.success
+      rule: resolve means success; reject means failure
+      source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/mappings/7
+      verification_refs:
+        - acceptance:AC-9
+  table_schema:
+    table: wallet_bank_cards
+    columns:
+      - name: card_no
+        type: TEXT NOT NULL UNIQUE
+        from: cardNo
+      - name: category_type
+        type: TEXT NOT NULL
+        from: cardCategory
+      - name: bank_code
+        type: TEXT NOT NULL
+        from: bankCode
+      - name: bank_name
+        type: TEXT NOT NULL
+        from: bankName
+      - name: bank_card_type
+        type: TEXT NOT NULL
+        from: bankCardType
+      - name: added_at
+        type: INTEGER NOT NULL
+        from: addedAt
+      - name: huawei_pay_enabled
+        type: INTEGER NOT NULL DEFAULT 0
+        from: huaweiPayEnabled
+      - name: union_pay_flash_enabled
+        type: INTEGER NOT NULL DEFAULT 0
+        from: unionPayFlashEnabled
+      - name: transaction_records
+        type: TEXT NOT NULL DEFAULT '[]'
+        from: transactionRecords
+        encoding: JSON
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/table_schema
+  errors:
+    semantics: Open/create/insert failure returns a failed result; duplicate card_no
+      is rejected and never replaces an existing row.
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/errors
+    verification_refs:
+      - https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/ohos-data-relationalStore
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+  idempotency:
+    semantics: One insert per accepted OTP submit; UNIQUE card_no rejects duplicates.
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/idempotency
+    verification_refs:
+      - acceptance:AC-9
+  nfr:
+    semantics: Local RDB only; no real bank/SMS network call; success appears only
+      after confirmed insert.
+    source_ref: doc/features/bc-openCard-2/blueprint/contract-sources/arkdata-bank-card-storage.yaml#/contract/nfr
+    verification_refs:
+      - acceptance:AC-8
+      - acceptance:AC-9

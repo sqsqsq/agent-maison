@@ -30,6 +30,7 @@ import { SpecLoader } from './spec-loader';
 import { computeRequirementShaFromText } from './fidelity-shared';
 import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
 import { resolvePhaseWriteBoundary, resolvePhasePathOwnership } from './phase-write-boundary';
+import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
 
 /** Revision-trigger kinds: historical evidence for why a revision happened, never a current target. */
 const REVISION_TRIGGER_KINDS = new Set(['design-decision', 'acceptance-definition']);
@@ -64,8 +65,11 @@ export function phaseOwnsDesignOutput(
   phase: string,
   binding: import('./capability-resolution').InputBinding,
 ): boolean {
+  const artifact = binding.source.kind === 'artifact' ? binding.source.artifact
+    : binding.source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1'
+      : binding.source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
   return ['spec', 'plan'].includes(phase)
-    && binding.source.kind === 'artifact' && produces.some(output => output.artifact === (binding.source as { artifact: string }).artifact)
+    && !!artifact && produces.some(output => output.artifact === artifact)
     && scope.obligations.some(obligation => obligation.owner_phase === phase && obligation.applicability === 'required' && !obligation.satisfied_by?.length);
 }
 
@@ -629,12 +633,15 @@ export function resolveCapabilityResolutionEntryInput(
           && !obligation.satisfied_by?.length))
       );
       const inventory = loadArtifactInventory(frameworkRoot);
+      const projectedUseCases = options.phase === 'plan'
+        ? deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts', 'pure').artifacts?.['use-cases@1']
+        : undefined;
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
         const base = path.basename(name);
         if (options.phase === 'ut' && base === 'mock-plan.yaml') return resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
         if (!['spec', 'plan'].includes(options.phase)) return true;
         if (base === 'spec.md' || base === 'plan.md') return scope.requested_results.includes(name) || scope.requested_results.includes(base);
-        if (base === 'use-cases.yaml') return resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
+        if (base === 'use-cases.yaml') return !!projectedUseCases || resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
         if (['ui-spec.yaml', 'ref-elements.yaml', 'asset-manifest.yaml', 'visual-parity.yaml'].includes(base)) return scope.obligations.some(obligation => obligation.kind === 'visual-evidence' && obligation.applicability === 'required');
         return true;
       });

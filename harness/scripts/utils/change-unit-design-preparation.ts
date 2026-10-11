@@ -25,6 +25,7 @@ import {
   deriveChangeUnitFeatureId,
   enumerateCanonicalChangeUnits,
   loadCanonicalChangeUnit,
+  resolveChangeUnitRefFromLoaded,
 } from './change-unit-path';
 import { FEATURE_LOCK_NAME, readLockRecord, releaseLock, tryAcquireLock } from './goal-run-lock';
 import {
@@ -35,13 +36,14 @@ import {
   inspectProjectionStamps,
   materializeBlueprintSkillInputs,
   type ProjectionRefresh,
+  recordedArtifactContentEquivalent,
 } from './blueprint-skill-projection';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { deriveModifiableModules } from './change-unit-feature-projection';
 import { loadCanonicalBlueprint, sha256Bytes } from './component-blueprint-path';
 import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
 import { asRecord } from './component-blueprint-model';
-import { ChangeUnitArtifact, ChangeUnitRecord, changeUnitRecords } from './change-unit-model';
+import { ChangeUnitArtifact, ChangeUnitRecord, ChangeUnitRef, changeUnitRecords } from './change-unit-model';
 import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { retiredChangeUnitIds } from './component-closure-inputs';
 import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-validator';
@@ -50,9 +52,16 @@ import {
   ChangeUnitCandidateRejected,
   acceptChangeUnitCandidates,
   writeCanonicalChangeUnit,
+  validateChangeUnitCandidate,
 } from './change-unit-provider-boundary';
 import { blueprintIdentityPointers, currentBlueprintIdentity, ownerBlueprintPointerIsStale } from './change-unit-blueprint-identity';
 import { BlueprintReviewResult, materializeBlueprintReview, summarizeBlueprintReviewResults } from './blueprint-review-materialization';
+import { observeChangeUnitCompletion } from './change-unit-completion';
+import { classifyGoalRunsDir } from './fidelity-shared';
+import { loadEventsJsonlStrict, filterAuthoritativeEvents } from './goal-runner-phase';
+import { loadGoalManifestFromRun } from './goal-manifest';
+import { detectChangeUnitDependencyCycles } from './change-unit-dependencies';
+import { stableStringify } from './phase-evidence-manifest';
 
 export interface DesignPreparationEntry {
   /** 是否可以进入设计准备段。admitted blueprint + 0 CU 是**合法**入口。 */
@@ -154,6 +163,91 @@ export function acceptChangeUnitDecomposition(
     changeUnitIds: accepted.map(loaded => String(loaded.changeUnit.change_unit_id)).sort(),
     reviewDocument: materializeBlueprintReview(projectRoot, blueprintId),
   };
+}
+
+export interface ChangeUnitContentRevision { expectedRef: ChangeUnitRef; candidate: ChangeUnitCandidate }
+export interface RevisedChangeUnitContent {
+  revised: LoadedChangeUnit[];
+  unchanged: string[];
+  busy?: string;
+  reviewDocument?: BlueprintReviewResult;
+}
+
+/** 同一未完成交付的显式 consumer 接点；不刷新 Feature 业务产物或启动 run。 */
+export function reviseChangeUnitContent(projectRoot: string, blueprintId: string, revisions: readonly ChangeUnitContentRevision[]): RevisedChangeUnitContent {
+  if (!revisions.length) throw new ChangeUnitCandidateRejected('change_unit_decomposition_empty', '内容修订至少需要一个候选。');
+  const ids = revisions.map(row => row.expectedRef.change_unit_id);
+  if (new Set(ids).size !== ids.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_duplicate_in_batch', '同一内容修订批次 CU 重复。');
+  if (revisions.some(row => row.expectedRef.blueprint_id !== blueprintId || row.candidate.artifact.blueprint_id !== blueprintId)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订必须属于同一蓝图工作区。');
+  const priorUnits = enumerateCanonicalChangeUnits(projectRoot, blueprintId).map(row => asChangeUnitArtifact(row.changeUnit));
+  const affected = [...new Set([...ids, ...priorUnits.filter(unit => unit.requires.some(row => ids.includes(row.from_change_unit_id))).map(unit => unit.change_unit_id)])].sort();
+  const locks = acquireBlueprintWriteLocks(projectRoot, blueprintId, affected);
+  if ('busy' in locks) return { revised: [], unchanged: [], busy: locks.busy };
+  try {
+    const all = enumerateCanonicalChangeUnits(projectRoot, blueprintId);
+    const retired = retiredChangeUnitIds(projectRoot, blueprintId);
+    const pending: Array<{ loaded: LoadedChangeUnit; candidate: ChangeUnitCandidate }> = [];
+    const unchanged: string[] = [];
+    for (const revision of revisions) {
+      const loaded = loadCanonicalChangeUnit(projectRoot, blueprintId, revision.expectedRef.change_unit_id);
+      resolveChangeUnitRefFromLoaded(loaded, revision.expectedRef);
+      const current = asChangeUnitArtifact(loaded.changeUnit);
+      if (retired.has(current.change_unit_id)) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 已被精确替代；保留历史字节，修订活动后继。`);
+      const candidate: ChangeUnitCandidate = { providerId: revision.candidate.providerId, artifact: structuredClone(revision.candidate.artifact) };
+      if (candidate.artifact.component_id !== current.component_id || candidate.artifact.change_unit_id !== current.change_unit_id
+        || stableStringify(candidate.artifact.supersedes) !== stableStringify(current.supersedes)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订不得改变 CU/Feature identity 或精确替代历史。');
+      candidate.artifact.revision = current.revision;
+      const feature = deriveChangeUnitFeatureId(blueprintId, current.change_unit_id);
+      const runsDir = featureFilePath(projectRoot, feature, 'goal-runs');
+      const runs = classifyGoalRunsDir(runsDir);
+      if (runs.corruptRuns.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 的 run 记录损坏；按原恢复处理：${runs.corruptRuns.map(row => row.reason).join('；')}`);
+      for (const runId of runs.runs) {
+        loadGoalManifestFromRun(projectRoot, runId, { feature });
+        const loadedEvents = loadEventsJsonlStrict(path.join(runsDir, runId, 'events.jsonl'));
+        if (loadedEvents.missing || loadedEvents.corruptLines.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 的 run 事件缺失或损坏；按原恢复处理。`);
+        const events = filterAuthoritativeEvents(loadedEvents.events);
+        const started = events.map(event => event.type).lastIndexOf('run_start');
+        const ended = events.map(event => event.type).lastIndexOf('run_end');
+        if (started > ended) return { revised: [], unchanged: [], busy: `${RECONCILE_BUSY_HINT}（${feature}/${runId} 的运行仍在执行）` };
+        if (events.some(event => event.type === 'run_end' && (event.status === 'COMPLETED' || event.status === 'CHAIN_SLICE_COMPLETED'))) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 已有成功终局；补原义务走 successor，新增工作使用新 CU identity。`);
+      }
+      const completionDir = featureFilePath(projectRoot, feature, 'completion');
+      if (fs.existsSync(completionDir) && fs.readdirSync(completionDir).some(name => name.endsWith('.json'))) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 已有 Feature completion 原件；投影缺失不能证明从未完成。`);
+      const completion = observeChangeUnitCompletion(projectRoot, current);
+      if (completion.state !== 'ABSENT') throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 不能按未完成契约修订：${completion.state}；${completion.reasons.join('；')}`);
+      validateChangeUnitCandidate(projectRoot, candidate, loaded);
+      if (stableStringify(current) === stableStringify(candidate.artifact)) { unchanged.push(current.change_unit_id); continue; }
+      candidate.artifact.revision = current.revision + 1;
+      pending.push({ loaded, candidate });
+    }
+    const prospective = all.filter(row => !retired.has(String(row.changeUnit.change_unit_id))).map(row => pending.find(item => item.loaded.canonicalPath === row.canonicalPath)?.candidate.artifact ?? asChangeUnitArtifact(row.changeUnit));
+    for (const unit of prospective) for (const dependency of unit.requires) {
+      const provider = prospective.find(row => row.change_unit_id === dependency.from_change_unit_id);
+      if (!provider || !provider.provides.some(row => row.provide_id === dependency.provide_id)) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `change_unit_dependency_provider_missing/provide_mismatch: ${unit.change_unit_id} → ${dependency.from_change_unit_id}/${dependency.provide_id}`);
+    }
+    if (detectChangeUnitDependencyCycles(prospective).length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', 'change_unit_dependency_cycle: 内容修订不得引入自循环或依赖环。');
+    for (const item of pending) {
+      const old = asChangeUnitArtifact(item.loaded.changeUnit);
+      const promise = (unit: ChangeUnitArtifact, id: string): unknown => ({
+        provide: unit.provides.find(row => row.provide_id === id),
+        predicates: unit.target_predicates.filter(row => row.provide_ids.includes(id)).sort((a, b) => a.predicate_id.localeCompare(b.predicate_id)),
+      });
+      for (const provide of old.provides) {
+        if (stableStringify(promise(old, provide.provide_id)) === stableStringify(promise(item.candidate.artifact, provide.provide_id))) continue;
+        const consumers = prospective.filter(unit => unit.requires.some(row => row.from_change_unit_id === old.change_unit_id && row.provide_id === provide.provide_id));
+        if (consumers.some(unit => !pending.some(row => row.candidate.artifact.change_unit_id === unit.change_unit_id))) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `provide ${old.change_unit_id}/${provide.provide_id} 的承诺变化须在同批显式修订受影响消费者，或用新 provide_id 改线。`);
+      }
+    }
+    const written: LoadedChangeUnit[] = [];
+    try {
+      pending.forEach((row, index) => { writeCanonicalChangeUnit(row.loaded.canonicalPath, row.candidate.artifact, `${process.pid}-content-${index}`); written.push(row.loaded); });
+    } catch (error) {
+      for (const row of written) fs.writeFileSync(row.canonicalPath, row.bytes);
+      throw new ChangeUnitCandidateRejected('change_unit_decomposition_write_failed', `内容修订写出失败，整批已回滚：${(error as Error).message}`);
+    }
+    return { revised: pending.map(row => loadCanonicalChangeUnit(projectRoot, blueprintId, row.candidate.artifact.change_unit_id)), unchanged,
+      ...(pending.length ? { reviewDocument: materializeBlueprintReview(projectRoot, blueprintId) } : {}) };
+  } finally { locks.release(); }
 }
 
 export interface BlueprintRefReconciliation {
@@ -452,6 +546,10 @@ function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite:
     // 手写 contracts 的身份指针与 CU 指针同批：temp → rename，登记原字节供整批回滚。
     for (const { contracts } of pending) {
       if (contracts?.text === undefined) continue;
+      const feature = pending.find(item => item.contracts === contracts)!.feature;
+      if (!recordedArtifactContentEquivalent(projectRoot, feature, 'contracts@1', contracts.file, YAML.parse(contracts.text))) {
+        throw new ChangeUnitCandidateRejected('change_unit_blueprint_ref_bump_rejected', `CU ${feature} 的完整 contracts 绑定无法证明设计及 CU 契约内容未变；保留旧文件，回责任阶段。`);
+      }
       const tmp = `${contracts.file}.tmp-${process.pid}`;
       try {
         fs.writeFileSync(tmp, contracts.text);
@@ -461,6 +559,7 @@ function reconcileUnderLocks(projectRoot: string, blueprintId: string, mayWrite:
     }
   } catch (error) {
     rollback();
+    if (error instanceof ChangeUnitCandidateRejected && error.code === 'change_unit_blueprint_ref_bump_rejected') throw error;
     throw new ChangeUnitCandidateRejected(
       'change_unit_blueprint_ref_bump_write_failed',
       `指针升版写出失败并已回滚本批：${(error as Error).message}`,

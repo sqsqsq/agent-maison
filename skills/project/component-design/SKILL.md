@@ -31,7 +31,7 @@ description: Create or continue a component design from the user's request and e
 - 仅重入、查看或重跑 checker **不增加 revision**。新事实、被接受的权威裁决或冲突解决才按
   P1 调和规则形成正式修订；意见、建议与未接受反馈不自动升 revision。下游由各自权责重新派生。
 - 用户要求完成设计交接且蓝图已 admitted：0 CU 从第 3 步首次分解；已有 CU 复用并在第 4 步
-  派生 readiness，**不重复创建 CU**。契约不变即同一 CU，蓝图升版时指针原位升版；契约变化才新建 id + supersedes。
+  派生 readiness，**不重复创建 CU**。仅指针漂移由框架原位升版；同一未完成活动 CU 无运行或已停住时经 consumer 同 ID 内容修订，running 返回 busy；完成后新增工作或拆分/合并/迁移才新建 ID。
 
 已有设计的局部请求不重走新需求判定或来源物化；涉及新增需求时仍执行对应正式性与来源检查。
 局部操作不强制跑完分解和交接，不选择 CU、不启动 Goal Mode/P3。
@@ -89,7 +89,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，明确共享/专属目标、六类可选细节及无 UI 依据的 P0 补充分工。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，写可读 title/本次改变 summary、通用 conclusion/理由 rationale、术语 meaning 与字段 description；整个 contracts.change_unit 交 plan，交接不物化 Feature。
 
 内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求按实际影响展开必要细节，未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
@@ -107,8 +107,8 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 3. **只有 consumer validator** 可以接受候选：校验 schema、canonical identity、设计闭包、
    provenance 与来源权威后，**原子**写出 1..N canonical `change-unit@1`。任一候选不通过即
    整批拒绝、一个字节都不落盘；
-4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝，契约变化走新 id + `supersedes`；
-5. 派生 design gate / readiness；派生前把 carry-forward 通过的 CU（已完成与未完成同规则）蓝图指针
+4. 重复接受 **fail-closed**：目标 canonical 路径已存在即拒绝；未完成内容修订使用独立 consumer 接点，资格/恢复见[蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)，不直接覆盖；
+5. 派生 design gate / readiness；派生前把 carry-forward 通过且内容未变的 CU 蓝图指针
    原位升到当前 revision，输出 `blueprintRefs.bumped / skipped` 及跳过原因；`blueprintRefs.busy` 有值＝另一执行者正在写入、本次未写也无 readiness 结论，等它结束后重跑，不改设计内容。既有 CU 不先跑 `check:change-unit`、直接派生；它报 `change_unit_blueprint_ref_stale` 即指这次框架自动升版，不是修 CU（不要手改 change-unit.yaml 或抄 sha256）。
 
 一项正式需求只分解出**一个** CU 是正常正向路径，不是退化形态。

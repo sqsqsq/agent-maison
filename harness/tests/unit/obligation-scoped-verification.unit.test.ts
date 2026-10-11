@@ -107,14 +107,18 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(summarize().verdict, 'FAIL', 'a damaged existing mock plan must still fail');
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
-  { name: 'UT and testing resolve unmaterialized blueprint acceptance and construction without spec or plan', run() {
+  { name: 'UT and testing derive blueprint acceptance and contracts but require a real use-cases artifact', run() {
     const f = blueprintFixture();
     try {
       const file = path.join(f.root, 'src/ledger/LedgerFeature.ets'); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'export class LedgerFeature {}');
       for (const phase of ['ut', 'testing']) {
         const result = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full', testTargets: ['src/ledger/LedgerFeature.ets'], inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: { 'unit-evidence': 'required', 'device-evidence': 'required' }, required_outputs: [] } });
-        assert.equal(result.report.assurance, 'full', JSON.stringify(result.report));
-        assert(result.inputs!.artifacts['acceptance@1']); assert(result.inputs!.artifacts['use-cases@1']);
+        assert.equal(result.report.assurance, 'degraded', JSON.stringify(result.report));
+        assert(result.inputs!.artifacts['acceptance@1']); assert(result.inputs!.artifacts['contracts@1']);
+        assert(!result.inputs!.artifacts['use-cases@1'], '设计投影不能替代 plan 交付的实体用例');
+        const useCases = result.report.capabilities.find(capability => capability.inputs.some(input => input.id === 'use_cases'));
+        assert.equal(useCases?.state, 'pruned', JSON.stringify(useCases));
+        assert.equal(useCases?.inputs.find(input => input.id === 'use_cases')?.state, 'absent');
       }
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },

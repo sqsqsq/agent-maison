@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { execFileSync } from 'child_process';
-import { readBoundInput, resolveCapabilityInputs, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
+import { readBoundInput, resolveCapabilityInputs, resolveRequestInputs, type InputBinding, type PhaseInputContext } from '../../scripts/utils/capability-resolution';
 import { collectContextFiles } from '../../harness-runner';
 import { assembleAIPrompt } from '../../scripts/utils/report-generator';
 import { REAL_CHAIN_PNG_EXISTING_BYTES } from '../utils/real-chain-host';
@@ -26,12 +26,13 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { __testing_checkDeviceTestRunGateBeforeInstall } from '../../scripts/check-testing';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
 import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
-import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { prepareExplicitRequest, resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { createGoalRun, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { resolveExecutionScope, type ObligationApplicability } from '../../scripts/utils/execution-scope';
 import { applyCapabilityResolutionProjection, deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
 import { normalizeDeviceTestCases } from '../../scripts/utils/device-test-case-kernel';
-import { loadFeatureTrackDecl } from '../../scripts/utils/feature-track';
+import { buildFeatureScopeCandidate, loadFeatureTrackDecl, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveFeatureTrack } from '../../scripts/utils/runtime-policy';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -362,8 +363,8 @@ cases.push(
       assert(payload.state === 'resolved', JSON.stringify(payload));
       const sha = crypto.createHash('sha256').update(png).digest('hex');
       assert(JSON.stringify(payload.state === 'resolved' && payload.value) === JSON.stringify([
-        { path: 'src/logo.png', sha256: sha, binary: true },
         { path: 'src/Page.ets', content: source },
+        { path: 'src/logo.png', sha256: sha, binary: true },
       ]), JSON.stringify(payload));
       const loader = new SpecLoader(root, undefined, undefined, fixture.framework);
       const entry = collectContextFiles(loader, { kind: 'standalone', projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, frameworkRel: '' }, 'review', 'demo', {} as never, { resolvedInputs: resolution.inputs })
@@ -541,6 +542,137 @@ cases.push(
   },
 );
 
+
+cases.push({
+  name: 'source file sets use canonical bindings and prove legacy order without accepting real drift',
+  run: () => project(root => {
+    const fixture = modernFixture(root);
+    const contractFile = path.join(fixture.framework, 'skills/feature/code-review/contract.yaml');
+    const contract = YAML.parse(fs.readFileSync(contractFile, 'utf8'));
+    write(root, 'src/a.ts', 'export const a = 1;\n');
+    write(root, 'src/z.ts', 'export const z = 2;\n');
+    write(root, 'src/extra.ts', 'export const extra = 3;\n');
+    for (const provider_id of ['derive.codebase', 'derive.test-targets'] as const) {
+      contract.phases.review.inputs = [{ id: 'payload', sources: [{ kind: 'derive', provider_id }] }];
+      fs.writeFileSync(contractFile, YAML.stringify(contract));
+      const options = { projectRoot: root, frameworkRoot: fixture.framework, feature: 'demo', phase: 'review', track: 'full' as const,
+        codeTargets: ['src/z.ts', 'src/a.ts'], testTargets: ['src/z.ts', 'src/a.ts'], inputContext: fixture.context };
+      const first = resolveCapabilityInputs(options).inputs!.values.payload;
+      assert(first.state === 'resolved', JSON.stringify(first));
+      if (first.state !== 'resolved') continue;
+      const files = first.value as Array<{ path: string; content: string }>;
+      const legacy: InputBinding = { ...first.binding, source_refs: [...first.binding.source_refs].reverse(),
+        content_fingerprint: crypto.createHash('sha256').update(stableStringify([...files].reverse())).digest('hex') };
+      assert(legacy.content_fingerprint !== first.binding.content_fingerprint, 'fixture must reproduce the old order difference');
+      const frozen = JSON.stringify(legacy);
+      const consume = (binding: InputBinding, targets = ['src/a.ts', 'src/z.ts']) => resolveCapabilityInputs({ ...options, codeTargets: targets, testTargets: targets,
+        inputContext: { ...fixture.context, expected_bindings: [binding] } }).inputs!.values.payload;
+      const reordered = consume(first.binding, ['src\\a.ts', './src/z.ts', 'src/a.ts']);
+      assert(reordered.state === 'resolved', JSON.stringify(reordered));
+      if (reordered.state === 'resolved') assert(stableStringify(reordered.binding) === stableStringify(first.binding), 'canonical file binding changed with enumeration or spelling');
+      assert(consume(legacy).state === 'resolved', 'legacy order was rejected');
+      assert(stableStringify(readBoundInput(options, legacy)) === stableStringify(files), 'bound reader did not use canonical values');
+      assert(JSON.stringify(legacy) === frozen, 'legacy frozen record was rewritten');
+      for (const changed of [
+        { ...legacy, source: { kind: 'derive' as const, provider_id: provider_id === 'derive.codebase' ? 'derive.test-targets' as const : 'derive.codebase' as const } },
+        { ...legacy, dependencies: legacy.dependencies.map((dep, i) => i ? dep : { ...dep, role: 'artifact' as const }) },
+        { ...legacy, dependencies: legacy.dependencies.map((dep, i) => i ? dep : { ...dep, exists: false }) },
+        { ...legacy, dependencies: legacy.dependencies.map((dep, i) => i ? dep : { ...dep, sha256: '0'.repeat(64) }) },
+        { ...legacy, dependencies: legacy.dependencies.slice(1) },
+        { ...legacy, source_refs: ['src/a.ts', 'src/a.ts'] },
+        { ...legacy, content_fingerprint: '0'.repeat(64) },
+      ]) {
+        assert(consume(changed).state === 'invalid', 'binding identity/bytes drift was accepted: ' + JSON.stringify(changed));
+      }
+      assert(consume(legacy, ['src/a.ts']).state === 'invalid', 'removed target was accepted');
+      assert(consume(legacy, ['src/a.ts', 'src/z.ts', 'src/extra.ts']).state === 'invalid', 'added target was accepted');
+      write(root, 'src/a.ts', 'export const a = 9;\n');
+      assert(consume(legacy).state === 'invalid', 'changed bytes were accepted');
+      expectThrow(() => readBoundInput(options, legacy), 'input binding stale');
+      write(root, 'src/a.ts', 'export const a = 1;\n');
+      // UTF-8 BOM is invisible to the decoded value but still changes the source bytes.
+      fs.writeFileSync(path.join(root, 'src/a.ts'), '\ufeffexport const a = 1;\n');
+      assert(consume(first.binding).state === 'invalid', 'same decoded value hid byte drift');
+      expectThrow(() => readBoundInput(options, first.binding), 'input binding stale');
+      fs.unlinkSync(path.join(root, 'src/a.ts'));
+      assert(consume(legacy).state === 'invalid', 'missing source was accepted');
+      expectThrow(() => readBoundInput(options, legacy), 'input binding stale');
+      write(root, 'src/a.ts', 'export const a = 1;\n');
+    }
+  }),
+});
+
+cases.push({
+  name: 'source set candidate, phase and resumed run share the resolver while ordered acceptance stays ordered',
+  run: () => project(root => {
+    write(root, 'framework.config.json', JSON.stringify({ schema_version: '1.1', active_workflow: 'obligation-driven', project_profile: { name: 'generic' }, paths: { features_dir: 'doc/features' } }));
+    write(root, 'src/a.ts', 'export const a = 1;\n'); write(root, 'src/z.ts', 'export const z = 2;\n');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q'); git('add', 'src'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'source baseline');
+    const contracts = { feature: 'demo', source: 'approved', version: '1', files: ['src/z.ts', 'src/a.ts'], modules: [], data_models: [], interfaces: [] };
+    write(root, 'doc/features/demo/contracts.yaml', YAML.stringify(contracts));
+    const acceptance = { feature: 'demo', source: 'approved', version: '1', criteria: [{ id: 'AC-1', description: 'ordered behavior', priority: 'P1', testable: true,
+      verification_steps: ['first action', 'second action'], expected_result: 'correct', ut_layer: 'unit', ut_focus: 'ordered behavior' }], boundaries: [] };
+    write(root, 'doc/features/demo/acceptance.yaml', YAML.stringify(acceptance));
+    const input = { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', completionTarget: 'request' as const, requestedResults: ['ordered behavior'], requestedPhases: ['coding'], requirement: 'implement ordered behavior' };
+    const candidate = buildFeatureScopeCandidate(input);
+    const code = candidate.facts.find(fact => fact.kind === 'implementation')!.basis[0];
+    assert(code.source.kind === 'derive' && code.source.provider_id === 'derive.codebase', 'candidate did not bind its source set');
+    contracts.files.reverse(); write(root, 'doc/features/demo/contracts.yaml', YAML.stringify(contracts));
+    const reordered = buildFeatureScopeCandidate(input).facts.find(fact => fact.kind === 'implementation')!.basis[0];
+    assert(stableStringify(code) === stableStringify(reordered), 'candidate file order changed its binding');
+    const prepared = prepareFeatureScopeCandidate(input);
+    const featureFrozen = ensureFeatureExecutionScopeFrozen(input);
+    assert(featureFrozen.status === 'frozen', JSON.stringify(featureFrozen));
+    const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'source-set-resume', requirement: input.requirement, execution_scope: prepared.scope,
+      chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
+    createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
+    const frozen = JSON.stringify(loadFrozenExecutionScope(root, 'demo', manifest.run_id));
+    for (const goalRunId of [undefined, manifest.run_id, manifest.run_id]) {
+      const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId, requirement: input.requirement });
+      const phase = resolveCapabilityInputs({ ...input, ...bridge, phase: 'coding', track: 'full' }).inputs!.values.codebase;
+      assert(phase.state === 'resolved', JSON.stringify(phase));
+      if (phase.state === 'resolved') assert(phase.binding.content_fingerprint === code.content_fingerprint, 'phase/resume fingerprint differs from candidate');
+    }
+    assert(JSON.stringify(loadFrozenExecutionScope(root, 'demo', manifest.run_id)) === frozen, 'resumption rewrote historical scope');
+    const options = { ...input, phase: 'ut', track: 'full' as const, inputContext: { schema_version: '1.1' as const, subject: { feature: 'demo' }, obligations: { 'unit-evidence': 'required' as const }, required_outputs: [] } };
+    const original = resolveCapabilityInputs(options).inputs!.values.acceptance;
+    assert(original.state === 'resolved', JSON.stringify(original));
+    if (original.state !== 'resolved') return;
+    acceptance.criteria[0].verification_steps.reverse(); write(root, 'doc/features/demo/acceptance.yaml', YAML.stringify(acceptance));
+    const changed = resolveCapabilityInputs({ ...options, inputContext: { ...options.inputContext, expected_bindings: [original.binding] } }).inputs!.values.acceptance;
+    assert(changed.state === 'invalid', 'ordered acceptance steps were treated as a set');
+  }),
+});
+
+cases.push({
+  name: 'explicit request file and test target sets use the shared canonical source resolver',
+  run: () => project(root => {
+    for (const file of ['src/a.ts', 'src/z.ts', 'tests/a.ts', 'tests/z.ts']) write(root, file, 'export const value = 1;\n');
+    const raw = { schema_version: '1.0', phase: 'ut', requested_result: 'verify selected source', targets: { files: ['src/z.ts', 'src/a.ts'], tests: ['tests/z.ts', 'tests/a.ts'] }, baseline: { head: 'WORKTREE' }, inputs: {}, allowed_test_writes: [] };
+    write(root, 'doc/request.json', JSON.stringify(raw));
+    const request = prepareExplicitRequest({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, phase: 'ut', requestFile: 'doc/request.json', reportDir: 'doc/report' });
+    const first = resolveRequestInputs(root, FRAMEWORK_ROOT, request);
+    const second = resolveRequestInputs(root, FRAMEWORK_ROOT, { ...request, sourceContents: [...request.sourceContents].reverse() });
+    for (const id of ['code', 'test_targets']) {
+      const a = first.values[id]; const b = second.values[id];
+      assert(a?.state === 'resolved' && b?.state === 'resolved', id + ' request source set missing');
+      if (a.state === 'resolved' && b.state === 'resolved') assert(stableStringify(a) === stableStringify(b), id + ' request order changed its binding');
+    }
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q'); git('add', 'src'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'selected source snapshot');
+    write(root, 'doc/request.json', JSON.stringify({ ...raw, phase: 'review', targets: { files: raw.targets.files, tests: [] }, baseline: { head: 'HEAD' } }));
+    fs.unlinkSync(path.join(root, 'src/a.ts'));
+    const snapshot = prepareExplicitRequest({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, phase: 'review', requestFile: 'doc/request.json', reportDir: 'doc/snapshot-report' });
+    const code = resolveRequestInputs(root, FRAMEWORK_ROOT, snapshot).values.code;
+    assert(code.state === 'resolved', 'selected commit source did not resolve');
+    if (code.state === 'resolved') {
+      assert(code.binding.dependencies.length === 0 && code.binding.source_refs.length === 0, 'commit snapshot acquired worktree dependencies');
+      assert(stableStringify(readBoundInput({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, phase: 'review', track: 'full', request: snapshot }, code.binding)) === stableStringify(code.value),
+        'bound selected commit snapshot required worktree source_refs');
+    }
+  }),
+});
 
 cases.push({
   name: 'composable inputs: request target derivation is bounded and never touches a Feature path',

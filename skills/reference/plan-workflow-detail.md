@@ -53,11 +53,13 @@ expansions_with_user_approval:
 
 ## UseCase 复杂度判定与 use-cases.yaml（条件式产出）
 
+**已有蓝图用例优先交付**：当前 CU 合法 typed 投影含 use-cases@1 时，plan 必须写 use-cases.yaml，先使用规范化设计内容，仅按原权威对齐规则补未声明项；原文件存在时仍必交。required_outputs 同时判定投影与物理文件，不能因为交接未提前物化就省略。业务 UT 消费真实文件，不能用 UT 总体 PASS 掩盖缺输入；无投影且无原文件才继续下方条件式判定。
+
 > `UseCase` 是**文档级业务规约**，不是代码中必须存在的类；真正的业务编排代码由 coding 阶段选择最贴合复杂度的形式落地。
 
 **仅当至少满足下列一条**才产出 `use-cases.yaml`：①多 UI 节点共享状态（≥2 页面/组件订阅同一业务状态且互相渲染依赖）；②多步云侧调用（一个动作触发 ≥2 次独立请求且顺序受前一次结果影响）；③存在回滚/补偿分支；④多路人机交互（≥2 次真实用户输入）。全部不满足则**不产出**，business-ut 走退化模式基于 `acceptance.yaml`+`dag.yaml` 直接对 data 层写 UT。
 
-**P2 CU-bound 覆盖规则**：存在 `contracts.change_unit` 时不使用作者自选阈值。use-case 义务由至少两个有序步骤、失败/重试/恢复/补偿、同状态多消费者或生命周期/后台/定时/外部恢复事实机械派生；DAG 再结合 `acceptance.ut_layer=unit|both` 与跨步骤/分支/多消费者事实派生。简单只读/首次加载、单步、无分支、无共享消费者且无生命周期恢复时不得伪造 mutation/subscription 或多余流产物。
+**P2 CU-bound 覆盖规则**：绑定 canonical CU 时不使用作者自选阈值，也不以尚未生成 contracts.change_unit 作为免责条件。use-case 义务由至少两个有序步骤、失败/重试/恢复/补偿、同状态多消费者或生命周期/后台/定时/外部恢复事实机械派生；DAG 再结合 `acceptance.ut_layer=unit|both` 与跨步骤/分支/多消费者事实派生。简单只读/首次加载、单步、无分支、无共享消费者且无生命周期恢复时不得伪造 mutation/subscription 或多余流产物。
 
 **若决定产出**，两份文档：
 
@@ -67,6 +69,8 @@ expansions_with_user_approval:
 **禁止的反模式**：要求"必须在 `domain/usecase/` 下新建 XxxUseCase 类"（代码形态由 coding 决定）；为 data 层类套 `XxxPort` 接口只为 UT 注入方便；把路由/弹窗/Toast 等 UI 副作用登记为 `data_boundaries`（应走 `ui_subscription` + `acceptance.yaml > device_focus`，不进 UT）；对简单 feature 硬凑 use-cases.yaml。
 
 ## contracts.yaml 提取字段表
+
+CU-bound 从已有 typed 设计开始，保留模型、接口、运行设计与 files；本阶段生成整个 change_unit：通过 canonical resolver 取得当前 ref，覆盖每个必需 predicate/provide/design-ref ID 的真实文件/符号/测试落点，不复制定义、不改写设计、不扩大授权。设计时省略映射不等于施工时豁免；缺映射、未知 ID、错误 CU 和越权文件均过原完整检查，已有合法 Feature 映射可按原证据复用。
 
 从 plan.md 提取到 `<features_dir>/{module-name}/contracts.yaml`：
 

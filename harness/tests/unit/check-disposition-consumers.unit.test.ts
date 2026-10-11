@@ -816,14 +816,8 @@ async function withDesignOwnerHost(run: (h: {
     return hit!;
   };
   const bump = (mutate: (bp: Record<string, any>) => void): void => {
-    const file = componentBlueprintPath(root, 'ledger-app-blueprint');
-    const bp = YAML.parse(fs.readFileSync(file, 'utf8'));
-    bp.revision = Number(bp.revision) + 1;
-    for (const r of bp.derived_results ?? []) r.input_revision = bp.revision;
-    mutate(bp);
-    fs.writeFileSync(file, YAML.stringify(bp));
-    const r = reconcileChangeUnitBlueprintRefs(root, 'ledger-app-blueprint');
-    assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
+    const { bumpAndReconcile } = require('./feature-assessment.unit.test') as typeof import('./feature-assessment.unit.test');
+    bumpAndReconcile(root, mutate);
     clearFrameworkConfigCache();
   };
   const runSuccessor = async () => {

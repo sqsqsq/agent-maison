@@ -2,8 +2,8 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { createBlueprintReviewDesignFixture } from '../fixtures/blueprint-review-design';
-import { asRecord, asRecords, BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import { createBlueprintReviewDesignFixture, hostBlueprintReviewFields } from '../fixtures/blueprint-review-design';
+import { asRecord, asRecords, asStrings, BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
 import { loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef } from '../../scripts/utils/change-unit-path';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
@@ -17,7 +17,7 @@ import { generateMermaidViewGraph, validateGeneratedBlueprintGraphs } from '../.
 import { identityNeutralDigest } from '../../scripts/utils/identity-neutral-digest';
 import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic-gates';
 import { featureFilePath } from '../../config';
-import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { SpecLoader, normalizeUseCasePortCalls } from '../../scripts/utils/spec-loader';
 import { evaluateComponentClosure } from '../../scripts/utils/component-closure-validator';
 import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
 import { loadHostSnapshot } from '../fixtures/host-snapshot-3.1.0/generate';
@@ -30,6 +30,47 @@ function target(bp: BlueprintRecord, id: string): BlueprintRecord { return asRec
 function update(f: Fixture, mutate: (bp: BlueprintRecord) => void, bind = true): void { const bp = blueprint(f); mutate(bp); fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); if (bind) f.bind(); }
 function render(f: Fixture): string { return loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').markdown; }
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'original host payload, handling/retry, nine storage columns and legacy calls remain visible', run(f) {
+    const bp = blueprint(f); const original = hostBlueprintReviewFields(); const originalContract = asRecord(original.contract)!; const originalFlow = asRecord(original.flow)!;
+    bp.contracts = [originalContract];
+    const flow = target(bp, 'ledger-refresh-flow');
+    Object.assign(flow, originalFlow);
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:raw-host-example');
+    const publication = asRecords(originalFlow.publications)[0];
+    assert(text.includes(String(publication.payload)), String(publication.payload));
+    const recovery = asRecord(originalFlow.failure_recovery)!;
+    assert(text.includes(String(recovery.handling))); assert(text.includes(String(recovery.retry)));
+    const schema = asRecord(originalContract.table_schema)!; const columns = asRecords(schema.columns); assert.equal(columns.length, 9);
+    const escaped = (value: unknown) => String(value).replace(/([\\`*_[\]])/g, '\\$1');
+    for (const column of columns) { assert(text.includes(`| ${escaped(column.name)} | ${escaped(column.type)} | ${escaped(column.from)} |`), JSON.stringify(column)); }
+    assert(text.includes('wallet\\_bank\\_cards')); assert(text.includes('| JSON |')); assert(text.includes(escaped(schema.source_ref)));
+    for (const call of ['banks.getBankCardOptions', 'account.getUserProfile', 'cards.saveBankCard']) assert(text.includes(call), call);
+    assert(!text.includes('用例调用声明无效')); assert(text.includes('尚未拆分'));
+    assert(JSON.stringify(originalFlow.use_cases).includes('expected_boundary_calls'), '原样保存旧字段，未先适配夹具');
+  } },
+  { name: 'known payload values use a dedicated table, unknown shapes and conflicting aliases are disclosed', run(f) {
+    const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
+    asRecords(flow.publications)[0].payload = { balance: '已提交金额', stage: ['committed', 'published'], nested: { unknown: { value: 1 } }, provenance: { source_ref: 'internal-provider-marker' } };
+    Object.assign(asRecord(flow.failure_recovery)!, { handling: { unknown: true }, retry: '用户重新提交' });
+    const cases = asRecord(flow.use_cases)!; const branch = asRecords(asRecords(cases.use_cases)[0].branches)[0];
+    branch.expected_boundary_calls = [...asStrings(branch.expected_port_calls)];
+    assert.deepStrictEqual(normalizeUseCasePortCalls(cases).issues, []);
+    assert(!JSON.stringify(normalizeUseCasePortCalls(cases).value).includes('expected_boundary_calls'));
+    branch.expected_boundary_calls = ['other.call'];
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:content-test');
+    assert(text.includes('| balance | 已提交金额 |')); assert(text.includes('| stage | committed；published |'));
+    assert(text.includes('nested | 未能表达')); assert(text.includes('失败处理 | 未能表达')); assert(!text.includes('internal-provider-marker'));
+    assert(text.includes('用例调用声明无效')); assert(text.includes('use\\_cases[0].branches[0]') || text.includes('use\\_cases\\[0\\].branches\\[0\\]'));
+    assert(text.includes('other.call')); assert(text.includes('repository.commit'));
+  } },
+  { name: 'generic decision conclusion and rationale are independent without inferred authority', run(f) {
+    const bp = blueprint(f); const decision = { decision_id: 'generic-choice', conclusion: '使用本地持久化', rationale: '离线也需读取', status: 'decided_with_authority', owner: 'ledger-team' };
+    (asRecord(bp.decisions_and_gaps)!.decisions as BlueprintRecord[]).push(decision);
+    const present = renderBlueprintReviewMarkdown(bp, 'sha256:decision-test'); assert(present.includes('| 选了什么 | 使用本地持久化 |')); assert(present.includes('| 理由 | 离线也需读取 |'));
+    delete (decision as BlueprintRecord).conclusion;
+    const missing = renderBlueprintReviewMarkdown(bp, 'sha256:decision-test').split('### generic-choice')[1].split('## 8 ')[0];
+    assert(missing.includes('| 选了什么 | 未记录 |')); assert(missing.includes('| 理由 | 离线也需读取 |'));
+  } },
   { name: 'review trace uses exact IDs within the owning target and keeps both focuses and narrative answer arrays', run(f) {
     update(f, bp => {
       asRecords(asRecord(target(bp, 'review-common').acceptance)!.criteria)[0].id = 'AC-100';
@@ -79,14 +120,15 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   } },
   { name: 'P0 spec supplements actual UI keys from real projection, preserves authority and passes original flow gate', run(f) {
     const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance'); assert.equal(projected.state, 'resolved', projected.detail);
-    const acceptance = structuredClone(projected.value) as AcceptanceSpec & BlueprintRecord;
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const acceptance = YAML.parse(fs.readFileSync(featureFilePath(f.root, f.feature, 'acceptance.yaml'), 'utf8')) as AcceptanceSpec & BlueprintRecord;
+    assert.equal(acceptance.source, (projected.value as AcceptanceSpec).source);
     const ac = acceptance.criteria.find(c => c.id === 'AC-2')! as unknown as BlueprintRecord; assert.equal(ac.linked_flow, undefined);
     const uiPath = featureFilePath(f.root, f.feature, 'ui-spec.yaml'); fs.writeFileSync(uiPath, YAML.stringify({ schema_version: '1.0', screens: [{ id: 'ledger-entry', elements: [{ id: 'submit-entry', type: 'button' }] }, { id: 'ledger-current', elements: [{ id: 'current-balance', type: 'text' }] }] }));
     const ui = YAML.parse(fs.readFileSync(uiPath, 'utf8'));
     fs.writeFileSync(path.join(f.root, 'ui-request.md'), '提交成功后账页显示新余额，重启后保持一致');
     Object.assign(ac, { linked_flow: 'ledger-submit', requirement_ref: { source_path: 'ui-request.md', snippet: '提交成功后账页显示新余额' }, checkpoint: { pre_screen: ui.screens[0].id, action: { type: 'touch', target_element_id: ui.screens[0].elements[0].id }, post_screen: ui.screens[1].id, required_element_ids: [ui.screens[1].elements[0].id] } });
     acceptance.flows = { 'ledger-submit': { screens: ui.screens.map((s: BlueprintRecord) => s.id) } };
-    acceptance.source = 'spec:ui-spec.yaml';
     fs.writeFileSync(featureFilePath(f.root, f.feature, 'acceptance.yaml'), YAML.stringify(acceptance));
     const spec = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature);
     const ctx = { projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'spec', phaseRule: {}, featureSpec: spec } as CheckContext;
@@ -127,15 +169,15 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(source.inputs.units.every(u => u.binding === 'bound'));
   } },
   { name: 'shared object conflicts use actual authority_content_conflict; misplaced rows remain inherited', run(f) {
-    update(f, bp => { const shared = target(bp, 'review-common'); asRecord(shared.contracts)!.change_unit = structuredClone(asRecord(target(bp, 'ledger-module').contracts)!.change_unit);
+    update(f, bp => { const shared = target(bp, 'review-common'); asRecord(shared.contracts)!.module_dependencies = { ledger: ['different-dependency'] };
       (asRecord(shared.acceptance)!.criteria as BlueprintRecord[]).push(structuredClone(asRecords(asRecord(target(bp, 'ledger-module').acceptance)!.criteria)[0]));
       (asRecord(shared.contracts)!.files as string[]).push('src/ledger/LedgerFeature.ets'); });
     const conflict = deriveBlueprintSkillInput(f.root, f.reportFeature, frameworkRoot, 'contracts'); assert(conflict.codes?.includes('authority_content_conflict'), conflict.detail);
     assert(/合并无效：authority.*content.*conflict/.test(render(f)));
-    update(f, bp => { delete asRecord(target(bp, 'ledger-report-module').contracts)!.change_unit; });
-    const wrong = deriveBlueprintSkillInput(f.root, f.reportFeature, frameworkRoot, 'contracts'); assert(wrong.codes?.some(c => c === 'change_unit_predicate_mapping_unknown' || c === 'change_unit_predicate_mapping_missing'), wrong.detail);
+    update(f, bp => { delete asRecord(target(bp, 'review-common').contracts)!.module_dependencies; });
     const unit = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-report').changeUnit); const selected = selectBlueprintSkillContent(blueprint(f), unit);
     assert(asRecords(selected.acceptance?.criteria).some(c => c.id === 'AC-2')); assert((selected.contracts?.files as string[]).includes('src/ledger/LedgerFeature.ets'));
+    assert.equal(selected.contracts?.change_unit, undefined);
     assert(render(f).includes('AC-2'));
   } },
   { name: 'optional malformed presentation stays WARN and ready; zero CU still renders typed target details', run(f) {
@@ -198,7 +240,19 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const bp = blueprint(f); assert.deepStrictEqual(validateCrossViewRelations(bp), []);
     const external = target(bp, 'ledger-service'); assert.equal(external.current_state, external.target_state); assert.equal(external.delta, undefined);
     assert.deepStrictEqual(target(bp, 'report-scenario').deployment_refs, ['view:deployment/node:local-report']);
-    for (const feature of [f.feature, f.reportFeature]) materializeBlueprintSkillInputs(f.root, feature, frameworkRoot);
+    for (const [feature, unitId] of [[f.feature, 'ledger-refresh'], [f.reportFeature, 'ledger-report']]) {
+      materializeBlueprintSkillInputs(f.root, feature, frameworkRoot);
+      const loaded = loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', unitId); const cu = asChangeUnitArtifact(loaded.changeUnit);
+      const file = featureFilePath(f.root, feature, 'contracts.yaml'); const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
+      const implementation = 'planned:' + contracts.files.find((name: string) => name.startsWith('src/') && !name.endsWith('LedgerShared.ets'));
+      const test = 'planned:' + contracts.files.find((name: string) => name.startsWith('test/'));
+      // plan owns this Feature mapping; materialized design alone is not construction delivery.
+      contracts.change_unit = { change_unit_ref: createChangeUnitRef(loaded),
+        predicate_mappings: cu.target_predicates.map(p => ({ predicate_id: p.predicate_id, implementation_refs: [implementation], test_refs: [test] })),
+        provide_mappings: cu.provides.map(p => ({ provide_id: p.provide_id, implementation_refs: [implementation], test_refs: [test] })),
+        design_ref_mappings: cu.design_refs.map(ref => ({ design_ref: ref, implementation_refs: [implementation], verification_refs: [test] })) };
+      fs.writeFileSync(file, YAML.stringify(contracts));
+    }
     const evaluation = evaluateComponentClosure(f.root, 'ledger-app-blueprint');
     const expected = ['contract:create-entry-v1', 'relation:local-ledger-consumes-service', 'view:deployment/node:ledger-service'];
     for (const address of expected) { const rows = evaluation.closure.coverage_rows.filter(row => row.blueprint_refs.includes(address)); assert(rows.length, address); assert(rows.every(row => row.owner_change_unit_ids.includes('ledger-refresh')), JSON.stringify(rows)); }

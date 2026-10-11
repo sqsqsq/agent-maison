@@ -27,7 +27,7 @@ import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-uni
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import type { CheckContext } from '../../scripts/utils/types';
 import { resolveWorkflowSpec } from '../../workflow-loader';
-import { handWriteProjections } from './component-design-handoff.unit.test';
+import { handWriteProjections, authorCurrentCuPlan } from './component-design-handoff.unit.test';
 import { changeProjectedAcceptance } from './successor-exit.unit.test';
 
 function withSnapshot(run: (root: string, frameworkRoot: string) => void): void {
@@ -79,18 +79,25 @@ const scopeOf = (over: Partial<ExecutionScope>): ExecutionScope => ({
 });
 
 // ---- plan c4e7a9b2 A1：手写产物按稳定 ID 对齐规范化投影 -------------------------------------------------
-// 夹具 = 快照 + 生产 writer（handWriteProjections 去戳成手写、蓝图升版调和）；断言走生产入口：
+// 夹具 = 快照 + 真实输入产生作者阶段产物；设计真变先拒绝，再由 plan 作者重建当前映射。
 // successor 出生范围（resolveSuccessorExecutionScope）与 assessFeature，不直接调比较函数。
 const BLUEPRINT_ID = 'ledger-app-blueprint';
-function bumpAndReconcile(root: string, mutate: (bp: Record<string, unknown>) => void): void {
+export function bumpAndReconcile(root: string, mutate: (bp: Record<string, unknown>) => void): void {
   const file = componentBlueprintPath(root, BLUEPRINT_ID);
   const bp = YAML.parse(fs.readFileSync(file, 'utf8'));
   bp.revision = Number(bp.revision) + 1;
   for (const result of bp.derived_results ?? []) result.input_revision = bp.revision;
   mutate(bp);
   fs.writeFileSync(file, YAML.stringify(bp));
+  const contractsFile = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'contracts.yaml');
+  const before = fs.readFileSync(contractsFile);
+  const cu = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
+  assert.throws(() => reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+  assert(fs.readFileSync(contractsFile).equals(before) && fs.readFileSync(cu.canonicalPath).equals(cu.bytes));
+  fs.rmSync(contractsFile);
   const r = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
   assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
+  fs.writeFileSync(contractsFile, YAML.stringify(authorCurrentCuPlan(root, YAML.parse(before.toString('utf8')))));
   clearFrameworkConfigCache();
 }
 function ledgerDomain(bp: Record<string, unknown>): Record<string, any> {
@@ -297,7 +304,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   }) },
   // 偏离 §6 A1-6 原夹具：投影侧 acceptance.performance 行被 checkAcceptanceContent 强制带 id（无 id 即投影 invalid），
   // 「无身份对象行」在可达投影里落在 contracts 的嵌套行上（如 state_management[].subscriptions：只有 subscription_id）。
-  { name: 'A1-6 投影含无身份对象行（subscriptions 行）、手写删除或改写 → drift <canonical 行>.<missing>，plan 入链不能完成；手写多加一行 → 不判', run: () => withSnapshot((root, fw) => {
+  { name: 'A1-6 subscription 行缺失或改写判 authority drift；附加未知稳定 ID 仍由原映射完整性门拒绝', run: () => withSnapshot((root, fw) => {
     handWriteProjections(root);
     const missing = '"subscription_id":"ledger-page-subscription"}.<missing>';
     editHandwritten(root, 'contracts.yaml', doc => { doc.state_management[0].subscriptions[0].cleanup = 'keep observer'; });
@@ -310,7 +317,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         { subscription_id: 'hand-extra', consumer_ref: 'consumer:ledger-page', publication_ref: 'publication:ledger-changed', replay_or_snapshot: 'latest', cleanup: 'detach observer' },
       ];
     });
-    assertAuthorityAligned(root, fw);
+    const mapped = checkChangeUnitFeatureProjection({ projectRoot: root, frameworkRoot: fw, feature: SNAPSHOT_CU_FEATURE,
+      phaseRule: {}, featureSpec: new SpecLoader(root, undefined, undefined, fw).loadFeatureSpec(SNAPSHOT_CU_FEATURE) } as CheckContext, 'plan')
+      .filter(row => row.status === 'FAIL').map(row => row.details);
+    assert(mapped.some(row => row.includes('subscriptions 稳定 ID 不一致') && row.includes('hand-extra')), JSON.stringify(mapped));
   }) },
   { name: 'A1-7 手写产物 + 蓝图升版改验收（既有 use-cases 与新投影冲突）→ 纯投影读取仍判 drift AC-1.expected_result；蓝图投影自身坏 → authority_projection_invalid，spec/plan 入链、出生不拒绝', run: () => withSnapshot((root, fw) => {
     handWriteProjections(root);
@@ -335,16 +345,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     assert(withFw.obligations.some(o => (o.reason ?? '').includes('AC-1.expected_result')), `前提：显式传 frameworkRoot 判出漂移：${brief(withFw)}`);
     assert.deepStrictEqual(withoutFw, withFw, '传与不传 frameworkRoot 裁决应逐字段相等');
   }) },
-  { name: 'A1-7b 蓝图投影自带的 change_unit_ref 过期（权威侧校验）→ 纯读取仍 invalid → design-context authority_projection_invalid，不被覆盖成当前 ref 洗白', run: () => withSnapshot((root, fw) => {
+  { name: 'A1-7b legacy blueprint CU mapping is ignored; current author plan mapping remains authoritative', run: () => withSnapshot((root, fw) => {
     handWriteProjections(root);
     bumpAndReconcile(root, bp => {
       ledgerDomain(bp).contracts.change_unit.change_unit_ref = {
         artifact: 'change-unit@1', component_id: 'ledger', blueprint_id: BLUEPRINT_ID, change_unit_id: 'ledger-refresh', revision: 1, artifact_sha256: '0'.repeat(64),
       };
     });
-    assertAuthorityGap(root, fw, 'design-context', 'authority_projection_invalid');
-    const gate = planGate(root, fw);
-    assert(gate?.status === 'FAIL' && (gate.details ?? '').includes('CU 映射来源 stale'), JSON.stringify(gate));
+    assertAuthorityAligned(root, fw);
   }) },
   { name: 'A1-8 ordered_steps 权威 A→B→C、手写 B→A→C → drift（顺序）；A→B→X→C 插入补充、files 顺序不同集合相同 → 不判', run: () => withSnapshot((root, fw) => {
     handWriteProjections(root);

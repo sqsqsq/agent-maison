@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { ChangeUnitArtifact } from './change-unit-model';
-import { changeUnitPath, loadCanonicalChangeUnit } from './change-unit-path';
+import { changeUnitPath, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
 import { assertValidChangeUnit } from './change-unit-validator';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 
@@ -63,7 +63,7 @@ export class ChangeUnitCandidateRejected extends Error {
  *
  * 单候选与批量接受都必须经过它，避免两份会漂移的 provenance/schema/design 逻辑。
  */
-function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUnitCandidate): string {
+export function validateChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate, existing?: LoadedChangeUnit): string {
   const artifact = candidate.artifact;
   if (!artifact.provenance.extraction_method.includes(candidate.providerId)) {
     throw new ChangeUnitCandidateRejected(
@@ -72,12 +72,13 @@ function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUn
     );
   }
   const target = changeUnitPath(projectRoot, artifact.blueprint_id, artifact.change_unit_id);
-  if (fs.existsSync(target)) {
+  if (fs.existsSync(target) && !existing) {
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_already_exists',
-      `canonical CU 已存在，重复接受 fail-closed：${target}。契约变化请新建 change_unit_id 并以 supersedes 引用旧单元；蓝图升版只需指针原位升版（reconcileChangeUnitBlueprintRefs）。`,
+      `canonical CU 已存在，重复接受 fail-closed：${target}。未完成活动单元经 reviseChangeUnitContent 修订；完成后新增工作用新 change_unit_id + supersedes，蓝图身份变化走原指针调和。`,
     );
   }
+  if (existing && path.resolve(target) !== path.resolve(existing.canonicalPath)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订不得改变 CU/Feature identity 或目录。');
   try {
     assertValidChangeUnit(artifact as unknown as Record<string, unknown>, { projectRoot, canonicalPath: target });
   } catch (error) {
@@ -138,7 +139,7 @@ export function acceptChangeUnitCandidates(
       );
     }
     seen.add(id);
-    targets.push(validateCandidateForAcceptance(projectRoot, candidate));
+    targets.push(validateChangeUnitCandidate(projectRoot, candidate));
   }
 
   const written: string[] = [];

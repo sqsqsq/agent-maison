@@ -58,6 +58,29 @@ export interface FeatureArtifactInspection {
   verdict: FeatureArtifactVerdict;
 }
 
+/** 旧用例键的唯一纯归一化入口，加载器与人读文档共用。 */
+export function normalizeUseCasePortCalls<T>(useCases: T): { value: T; issues: string[] } {
+  const value = structuredClone(useCases);
+  const issues: string[] = [];
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+  for (const [index, unit] of (Array.isArray(record?.use_cases) ? record.use_cases : []).entries()) {
+    if (!unit || typeof unit !== 'object') continue;
+    const branches = (unit as Record<string, unknown>).branches;
+    for (const [branchIndex, branch] of (Array.isArray(branches) ? branches : []).entries()) {
+      if (!branch || typeof branch !== 'object') continue;
+      const row = branch as Record<string, unknown>;
+      if (!Object.prototype.hasOwnProperty.call(row, 'expected_boundary_calls')) continue;
+      if (row.expected_port_calls === undefined) row.expected_port_calls = row.expected_boundary_calls;
+      else if (JSON.stringify(row.expected_port_calls) !== JSON.stringify(row.expected_boundary_calls)) {
+        issues.push(`use_cases[${index}].branches[${branchIndex}]: expected_port_calls 与 expected_boundary_calls 冲突`);
+        continue;
+      }
+      delete row.expected_boundary_calls;
+    }
+  }
+  return { value, issues };
+}
+
 const PHASE_RULE_FILENAMES: Record<Phase, string> = {
   spec: 'spec-rules.yaml',
   plan: 'plan-rules.yaml',
@@ -195,13 +218,13 @@ export class SpecLoader {
         const file = path.join(featureDir, name);
         return fs.existsSync(file) ? this.loadYamlMappingOrNull<T>(file, issues) : null;
       }
-      const value = resolved.artifacts[artifact];
-      if (value !== undefined) return structuredClone(value) as T;
-      if (feature === undefined) return null;
       // A phase's own outputs are checked as outputs, not frozen upstream inputs.
-      const file = path.join(featureDir, name);
-      return resolved.context.required_outputs.includes(name) && fs.existsSync(file)
-        ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+      if (feature !== undefined && resolved.context.required_outputs.includes(name)) {
+        const file = path.join(featureDir, name);
+        return fs.existsSync(file) ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+      }
+      const value = resolved.artifacts[artifact];
+      return value !== undefined ? structuredClone(value) as T : null;
     };
 
     const spec: Omit<FeatureSpec, 'feature'> & { feature?: string } = feature === undefined ? {} : { feature };
@@ -317,7 +340,9 @@ export class SpecLoader {
     // v2: use-cases.yaml（可选）——定义业务流程 UseCase / ports / branches
     const useCasesPath = path.join(featureDir, 'use-cases.yaml');
     if (resolved ? resolved.artifacts['use-cases@1'] !== undefined || resolved.context.required_outputs.includes('use-cases.yaml') : fs.existsSync(useCasesPath)) {
-      const useCases = read<UseCasesSpec>('use-cases.yaml', 'use-cases@1', shapeIssues);
+      const normalized = normalizeUseCasePortCalls(read<UseCasesSpec>('use-cases.yaml', 'use-cases@1', shapeIssues));
+      const useCases = normalized.value;
+      shapeIssues.push(...normalized.issues.map(issue => `${useCasesPath}: ${issue}`));
       if (useCases) {
         normalizeArrayField(useCases as unknown as Record<string, unknown>, 'use_cases', useCasesPath, shapeIssues);
         // P0-2 复审（codex P1/cursor）：嵌套集合在 loader 统一归一——check-ut 的 reduce、

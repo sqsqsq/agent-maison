@@ -681,7 +681,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     f.git('add', 'src/demo/new.ts'); f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'new implementation');
     const ctx = f.context('review');
     const code = ctx.resolvedInputs!.values.code; assert(code.state === 'resolved');
-    assert.deepStrictEqual((code.value as Array<{path: string}>).map(file => file.path), ctx.factsContext!.source_paths);
+    assert.deepStrictEqual((code.value as Array<{path: string}>).map(file => file.path), [...ctx.factsContext!.source_paths].sort());
     assert(ctx.factsContext!.source_paths.includes('src/demo/new.ts'));
     const report = '# Review\n## 审查范围\n文件 src/demo/value.ts\n## 审查方法\n对照契约\n## 问题清单\n无问题\n## 问题统计\nBLOCKER: 0\nMAJOR: 0\nMINOR: 0\n## 修复建议\n无\n## 结论\n**审查结论**: 通过\n';
     f.write('doc/features/demo/review/review-report.md', report);
@@ -1237,7 +1237,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     assert.deepStrictEqual(reviewBridge.factsContext!.source_paths, reviewBridge.codeTargets);
     const reviewInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', track: 'full', ...reviewBridge }).inputs!;
     const reviewCode = reviewInputs.values.code; assert(reviewCode.state === 'resolved', JSON.stringify(reviewCode));
-    if (reviewCode.state === 'resolved') assert.deepStrictEqual((reviewCode.value as Array<{ path: string }>).map(item => item.path), reviewBridge.codeTargets);
+    if (reviewCode.state === 'resolved') assert.deepStrictEqual((reviewCode.value as Array<{ path: string }>).map(item => item.path), [...reviewBridge.codeTargets!].sort());
     writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'review', resolvedInputs: reviewInputs, factsContext: reviewBridge.factsContext }));
     const utBridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id });
     assert(utBridge.codeTargets!.includes('framework.config.json'), JSON.stringify(utBridge));

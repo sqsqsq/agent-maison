@@ -482,9 +482,9 @@ MUST 返回明确的 unsupported / missing design lens 失败，MUST NOT 把 Ser
 
 ### Requirement: Applicable construction obligations preserve layered completion
 
-蓝图 MUST 保持正式需求目标与共同决策权威，设计期在可引用目标写入已有 acceptance/contracts/use_cases；CU MUST 保持当前切片、目标谓词与 design_refs。spec/plan MUST 直接消费已有合法 typed 投影，只补本次未声明的本职责验收/施工细节，叙述文件仅按 required_outputs 产出，MUST NOT 为阶段形式重写共同设计或生成空文件。P0 真机验收无 UI 依据时保留设计验收，真实 UI 流程/检查点由 spec 不冲突补充；改变已声明权威内容 MUST 回原设计 owner。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
+蓝图 MUST 保持正式需求目标与共同决策权威，设计期在可引用目标写入已有 acceptance/contracts/use_cases；CU MUST 保持当前切片、目标谓词与 design_refs。spec/plan MUST 直接消费已有合法 typed 投影，只补本次未声明的本职责验收/施工细节，叙述文件仅按 required_outputs 产出，MUST NOT 为阶段形式重写共同设计或生成空文件。P0 真机验收无 UI 依据时保留设计验收，真实 UI 流程/检查点由 spec 不冲突补充；改变已声明权威内容 MUST 回原设计 owner。正常交接 MUST NOT 物化 Feature 文件；spec/plan 直接消费推导输入，各写本阶段产物。整个 contracts.change_unit MUST 由 plan 生成，设计 facts/验收/接口/模型/files 仍归蓝图；无有效映射仍安排 plan。当前投影带用例时，plan required_outputs MUST 要求真实 use-cases.yaml，交业务 UT 消费，不只看已有文件。已有带戳文件的不冲突补充使用同一权威对齐，刷新仅在设计/CU 内容不变时更新身份，真变退责任而不合并。未完成活动 CU 仅无运行或已停住时经 consumer 同 ID 内容修订，running busy，历史完成和退役事实保留，并通过既有 binding 缺口回 plan 恢复；不得重置预算或新增状态/协议。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
 
-目标被 design_refs 引用后，其三类内容 MUST 整体进入该 CU 合并；共享目标只承载所有引用者共同承担的内容，专属映射、验收与写集 MUST 放独占目标。数组按原行身份合并、冲突拒绝；对象 MUST 只接受完整相等声明，不能逐键拼接或按 predicate 过滤。文档的纯声明集合 MUST NOT 被当作通过完整只读 readiness 的授权或产品完成证明；absent 明确原补设计责任，已声明 invalid 复用原原因返回 not-ready，不新增缺字段门禁。
+目标被 design_refs 引用后，其三类内容 MUST 整体进入该 CU 合并；共享目标只承载所有引用者共同承担的内容，专属验收、files 与用例 MUST 放独占目标，整个 change_unit 映射 MUST 由 Feature plan 生成。数组按原行身份合并、冲突拒绝；对象 MUST 只接受完整相等声明，不能逐键拼接或按 predicate 过滤。文档的纯声明集合 MUST NOT 被当作通过完整只读 readiness 的授权或产品完成证明；absent 明确原补设计责任，已声明 invalid 复用原原因返回 not-ready，不新增缺字段门禁。
 
 独立 Skill 完成只表示请求职责完成；Feature 完成 MUST 由同一有效范围、适用目标与既有真实运行证据验证，不以末段名称或阶段自报完成判定。CU MUST 只消费独立验证的 VALID completion 和当前 CU 映射；Component closure MUST 继续检查共同决策、目标覆盖与真实组装义务；跨部件能力完成仍归上游。合法无蓝图维护/专项入口 MUST NOT 被强造蓝图、Code Graph 或 CU。
 

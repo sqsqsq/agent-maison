@@ -232,6 +232,8 @@ test('six adapters and shared bundle resolve the indexed component curation skil
 function blueprintFixture(root: string) {
   fs.cpSync(path.join(FRAMEWORK, 'harness/tests/fixtures/component-blueprint/valid/doc/features'), path.join(root, 'doc/features'), { recursive: true });
   for (const folder of ['requirements', 'contracts', 'mappings', 'src', 'test']) fs.cpSync(path.join(FRAMEWORK, 'harness/tests/fixtures/component-blueprint/valid', folder), path.join(root, folder), { recursive: true });
+  // 本轮是初次设计，旧 fixture 的当前施工契约交回 plan；历史报告仍保留。
+  for (const unit of ['ledger-refresh', 'ledger-consumer', 'ledger-recovery', 'ledger-summary']) fs.rmSync(path.join(root, 'doc/features/ledger-app-blueprint', unit, 'contracts.yaml'), { force: true });
   const file = componentBlueprintPath(root, 'ledger-app-blueprint');
   const bp = YAML.parse(fs.readFileSync(file, 'utf8'));
   const view = bp.design_views.find((v: any) => v.view_id === 'development');
@@ -275,6 +277,7 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   const ref = { ...cu.component_blueprint_ref, target: { kind: 'decision', id: decision.decision_id } };
   cu.design_refs.push(ref);
   write(root, path.relative(root, cuLoaded.canonicalPath), YAML.stringify(cu));
+  reconcileChangeUnitBlueprintRefs(root, 'ledger-app-blueprint');
   const value = contracts(); value.feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
   value.state_management = [{
     data: 'ledger', scope: 'component', decorator: 'none', holder: 'LedgerStore', module: 'ledger',
@@ -304,7 +307,6 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
   normalized.contracts!.change_unit!.design_ref_mappings = [];
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
-  reconcileChangeUnitBlueprintRefs(root, 'ledger-app-blueprint');
   const review = loadBlueprintReviewSource(root, 'ledger-app-blueprint').markdown;
   for (const field of ['选型目标：', '选型结果：reuse', `组件：${ID}`, '理由']) assert(review.includes(field), field);
   const output = path.join(path.dirname(file), 'component-blueprint.review.md'); write(root, path.relative(root, output), review);

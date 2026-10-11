@@ -40,6 +40,14 @@ export interface ChangeUnitDesignGateResult {
   requiredAddresses: string[];
 }
 
+/** runtime vertical slice 的既有角色要求；不依赖后续施工映射。 */
+export function changeUnitRuntimeRoleIssues(changeUnit: ChangeUnitRecord): ChangeUnitIssue[] {
+  if (!changeUnitRecords(changeUnit.design_refs).some(ref => asRecord(ref.target)?.kind === 'flow')) return [];
+  const roles = new Set(changeUnitRecords(changeUnit.target_predicates).map(item => item.role));
+  return (['behavior', 'owner', 'consumer', 'recovery'] as const).filter(role => !roles.has(role)).map(role =>
+    changeUnitIssue('change_unit_runtime_vertical_role_missing', '$.target_predicates', `runtime vertical slice 缺 ${role} predicate。`));
+}
+
 function targetRef(owner: ComponentBlueprintRef, address: string): ComponentBlueprintRef | undefined {
   const viewNodeOrFlow = /^view:([^/]+)\/(node|flow):(.+)$/.exec(address);
   if (viewNodeOrFlow) {
@@ -135,7 +143,7 @@ export function validateChangeUnitDesign(
   changeUnit: ChangeUnitRecord,
   options: ChangeUnitDesignGateOptions = {},
 ): ChangeUnitDesignGateResult {
-  const issues: ChangeUnitIssue[] = [];
+  const issues: ChangeUnitIssue[] = changeUnitRuntimeRoleIssues(changeUnit);
   const explicitRefs = changeUnitRecords(changeUnit.design_refs) as unknown as ComponentBlueprintRef[];
   const explicitAddresses = explicitRefs.map(blueprintRefAddress);
   let ownerResolution: ReturnType<typeof resolveComponentBlueprintRef>;

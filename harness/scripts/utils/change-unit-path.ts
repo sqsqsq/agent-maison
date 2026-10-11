@@ -286,6 +286,7 @@ export function inspectDerivedFeatureBinding(
     const contracts = YAML.parse(fs.readFileSync(contractsPath, 'utf8')) as unknown;
     const root = isChangeUnitRecord(contracts) ? contracts : undefined;
     const section = isChangeUnitRecord(root?.change_unit) ? root!.change_unit as ChangeUnitRecord : undefined;
+    if (root && !section) return { status: 'in_progress', featureId, featurePath };
     const ref = validateChangeUnitRefShape(section?.change_unit_ref);
     if (ref.blueprint_id !== blueprintId || ref.change_unit_id !== changeUnitId
       || (componentId !== undefined && ref.component_id !== componentId)) {

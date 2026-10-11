@@ -29,7 +29,7 @@ import { collectSupersededAncestorEvents, foldBudgetLineage, loadEventsJsonlStri
 import { featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { featureRelativePath } from './feature-identity';
 import type { ExecutionScope } from './execution-scope';
-import { executionScopeFingerprint } from './execution-scope';
+import { executionScopeFingerprint, executionCompletionPhases } from './execution-scope';
 import { reduceRunState } from './run-state-reducer';
 import { externalWaitingProbe } from './goal-supervisor';
 import { loadReviewClosureAttestation } from './closure-attestation';
@@ -992,6 +992,7 @@ export function decideRunContinuation(input: {
   if (call.force) return { kind: 'fresh', explicit: true, reason: '显式 --force' };
 
   const { siblings, lastCompleted, unfinished } = deliveryCycleView(input.projectRoot, input.feature);
+  let stoppedCuBindingGap = false;
   /** 当前持有范围转交的 run（feature 冻结记录的最新转交）；记录读不出按没有转交记录处理，后继出生时的范围解析会如实报错。 */
   const scopeHolder = (): string | undefined => {
     try {
@@ -1012,6 +1013,42 @@ export function decideRunContinuation(input: {
       out.push('requirement_source_changed');
     }
     if (findChangedRelatedRepair(input.projectRoot, run)) out.push('related_repair_changed');
+    // CU 内容修订只接既有评估信号；冻结输入失效的停住 run 由原 successor/plan 责任恢复。
+    if (input.feature.startsWith('cu-') && ['HALTED', 'DEFERRED'].includes(run.status)) {
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const { assessFeature, changeUnitBindingIssues } = require('./feature-assessment') as typeof import('./feature-assessment');
+      const scope = loadEffectiveExecutionScope(input.projectRoot, input.feature, run.runId);
+      const issues = changeUnitBindingIssues(input.projectRoot, input.feature, false);
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const { inferLegacyProjectRoot, resolveDependencyPath } = require('./project-relative-path') as typeof import('./project-relative-path');
+      const cuFile = featureFilePath(input.projectRoot, input.feature, 'change-unit.yaml');
+      const legacyRoot = scope ? inferLegacyProjectRoot(input.projectRoot, scope) : undefined;
+      const currentCuHash = currentFileHash(input.projectRoot, path.relative(input.projectRoot, cuFile));
+      const changedCu = scope?.obligations.flatMap(row => [...row.basis, ...(row.satisfied_by ?? [])]).some(binding => {
+        if (!('input_id' in binding) || !currentCuHash) return false;
+        const direct = binding.dependencies.find(dep => resolveDependencyPath(input.projectRoot, dep.path, legacyRoot) === cuFile && dep.exists);
+        if (direct) return direct.sha256 !== currentCuHash;
+        // Older artifact bindings predate the CU dependency. Only unchanged frozen contracts
+        // bytes can supply their original exact CU reference; authored replacement bytes cannot.
+        if (binding.source.kind !== 'artifact' || binding.source.artifact !== 'contracts@1') return false;
+        const contractsFile = featureFilePath(input.projectRoot, input.feature, 'contracts.yaml');
+        if (!binding.dependencies.some(dep => resolveDependencyPath(input.projectRoot, dep.path, legacyRoot) === contractsFile
+          && dep.exists && dep.sha256 === currentFileHash(input.projectRoot, path.relative(input.projectRoot, contractsFile)))) return false;
+        try {
+          /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+          const { inspectDerivedFeatureBinding, parseChangeUnitFeatureId } = require('./change-unit-path') as typeof import('./change-unit-path');
+          const identity = parseChangeUnitFeatureId(input.feature);
+          const original = inspectDerivedFeatureBinding(input.projectRoot, identity.blueprintId, identity.changeUnitId);
+          return original.status === 'matched' && /^sha256:[0-9a-f]{64}$/.test(original.ref.artifact_sha256)
+            && original.ref.artifact_sha256 !== `sha256:${currentCuHash}`;
+        } catch { return false; }
+      });
+      if (issues.length && changedCu) {
+        const assessment = assessFeature(input.projectRoot, input.feature, { expectedTrack: 'full', expectedChain: scope ? executionCompletionPhases(scope) : run.manifest.phase_chain ?? [], scope });
+        stoppedCuBindingGap = assessment.obligations.some(row => row.status === 'uncovered' && row.class === 'binding');
+        if (stoppedCuBindingGap && !out.includes('related_repair_changed')) out.push('related_repair_changed');
+      }
+    }
     // 需求增量：本次文本与合并后的全文、原请求、整个历史增量块都不全文相同（批三返修 R1：与后继合并同一判据，不用子串）
     if (requirement && !isRepeatedRequirement(priorRequirement, requirement)) out.push('requirement_increment');
     if (call.model && call.model !== run.manifest.adapter_model_pin?.value) out.push('model_changed');
@@ -1102,6 +1139,7 @@ export function decideRunContinuation(input: {
   }
   const identityChange = changes.find(change => change === 'model_changed' || change === 'requirement_increment');
   if (identityChange) return successor(identityChange);
+  if (stoppedCuBindingGap) return successor('related_repair_changed');
   // plan 9c3d7e1a §5.3：外部条件已就绪——原 run 继续还是起后继，由 staleFrozenBindings 这一处判断。
   if (changes.includes('external_condition_ready')) {
     let stale: string[];

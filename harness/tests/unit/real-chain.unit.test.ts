@@ -41,11 +41,15 @@ import { validateComponentBlueprint } from '../../scripts/utils/component-bluepr
 import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
-import { asRecord, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import { asRecord, asRecords, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
 import type { ContractsSpec } from '../../scripts/utils/types';
 import { featureRelativePath } from '../../scripts/utils/feature-identity';
 import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, parseChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { loadEffectiveExecutionScope, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -1179,8 +1183,10 @@ const CU_READS = [CU_SOURCE, 'src/ledger/LedgerIntakeConsumer.ts', 'src/ledger/L
 
 function cuRel(p: RealChainProject): string { return `doc/features/${featureRelativePath(p.feature)}`; }
 
-/** CU 链首阶段是 coding，故 `established_by: coding`；coding 档下界要求 ≥6 条源码路径 / ≥8 次检索（sequential 加成后）。 */
-function writeCuFacts(p: RealChainProject, phase: string): void {
+/** Facts follow the run's actual establishing phase and keep later UT output out of earlier research. */
+export function writeCuFacts(p: RealChainProject, phase: string): void {
+  const first = p.runId ? loadFrozenExecutionScope(p.root, p.feature, p.runId)?.phase_chain[0] ?? 'coding' : 'coding';
+  const sourceReads = [...CU_READS, REAL_CHAIN_SOURCE, REAL_CHAIN_SOURCE_2, REAL_CHAIN_MODEL].filter(file => fs.existsSync(path.join(p.root, file)));
   const factsRel = `${cuRel(p)}/context/facts.md`;
   const abs = path.join(p.root, factsRel);
   const prior = fs.existsSync(abs)
@@ -1188,23 +1194,29 @@ function writeCuFacts(p: RealChainProject, phase: string): void {
       .filter(section => !new RegExp(`^##\\s*phase_delta:\\s*${phase}\\b`).test(section))
     : [];
   writeHostFile(p.root, factsRel, [
-    '---', 'schema_version: "1.1"', `feature: ${p.feature}`, ...(p.runId ? [`run_id: ${p.runId}`] : []), 'established_by: coding',
+    '---', 'schema_version: "1.1"', `feature: ${p.feature}`, ...(p.runId ? [`run_id: ${p.runId}`] : []), `established_by: ${first}`,
     'ready_to_produce: true', 'has_blocker_coverage_risk: false', 'exploration_mode: sequential',
     'key_inputs_read:', '  - doc/glossary.yaml', '  - doc/module-catalog.yaml', '  - doc/architecture.md',
     'subagents_used: none', 'decisions_unlocked:', '  - ledger_refresh', 'files_inspected_count: 14', 'searches_performed_estimate: 10',
-    'source_code_paths:', ...CU_READS.map(r => `  - ${r}`), '---', '', '## Code Facts', '',
+    'source_code_paths:', ...sourceReads.map(r => `  - ${r}`), '---', '', '## Code Facts', '',
     '| 路径 | 事实 | 对本阶段影响 |', '|------|------|--------------|',
-    ...CU_READS.map(r => `| ${r} | ${path.basename(r)} 已读 | 账目刷新沿用 |`), '',
+    ...sourceReads.map(r => `| ${r} | ${path.basename(r)} 已读 | 账目刷新沿用 |`), '',
     ...prior.map(section => section.replace(/\s*$/, '\n')), `## phase_delta: ${phase}`, '', '本阶段研究结论已确认。', '',
   ].join('\n'));
 }
 
 /**
  * 宿主前置（在 `scaffoldRealChainHost` 之后、git 提交之前调用）：落蓝图与 canonical CU、登记 catalog、
- * 物化设计输入、生成 CU 的范围候选。返回 CU 工程视图与出生链。
+ * 生成 CU 的范围候选；阶段作者随后消费投影并产出实体。返回 CU 工程视图与出生链。
  */
 export function seedCuBoundHost(project: RealChainProject): { cu: RealChainProject; birthChain: string[] } {
   const f = seedChangeUnitBlueprint(project.root);
+  const configFile = path.join(project.root, 'framework.config.json');
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  // This isolated fixture keeps Ledger outside the other feature's inventory, but its
+  // source root is still declared so the existing invocation observer records real writes.
+  config.architecture.outer_layers.push({ id: 'src', can_depend_on: [], intra_layer_deps: 'dag' });
+  fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
   writeHostFile(project.root, 'doc/module-catalog.yaml', [
     'schema_version: "1.0"', 'modules:',
     ...[[project.module, `${project.modulePath}/index.ets`], ['ledger', '02-Feature/ledger/index.ets']].flatMap(([name, entry]) => [
@@ -1232,13 +1244,49 @@ export function seedCuBoundHost(project: RealChainProject): { cu: RealChainProje
   writeHostFile(project.root, CU_SOURCE, 'export class LedgerFeature {\n  balance(): number { return 0; }\n}\n');
   writeHostFile(project.root, CU_TEST, "import { describe } from '@ohos/hypium';\n\ndescribe('LedgerFeature', () => {\n});\n");
   const cu: RealChainProject = { ...project, feature: f.feature, module: 'ledger', modulePath: 'src/ledger', runId: undefined };
-  materializeBlueprintSkillInputs(project.root, cu.feature, project.frameworkRoot);
   const prepared = prepareFeatureScopeCandidate({
     projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: cu.feature, completionTarget: 'feature',
-    requestedResults: ['账目刷新与恢复'], requestedPhases: ['coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
+    requestedResults: ['账目刷新与恢复'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
     impact: { userVisibleBehaviorChange: false, reason: '只改账本领域服务，不改任何界面', basisPaths: [CU_SOURCE] },
   });
   return { cu, birthChain: prepared.scope.phase_chain.map(String) };
+}
+
+export function writeCuSpecMaterials(p: RealChainProject): void {
+  const projected = deriveBlueprintSkillInput(p.root, p.feature, p.frameworkRoot, 'acceptance', 'pure');
+  assert(projected.state === 'resolved', projected.detail ?? 'acceptance projection absent');
+  writeHostFile(p.root, `${cuRel(p)}/acceptance.yaml`, YAML.stringify(projected.value));
+  writeCuFacts(p, 'spec');
+}
+
+/** First Spec draft from the known fixture request, before a malformed design is repaired. */
+export function writeCuSpecDraft(p: RealChainProject): void {
+  const draft = YAML.parse(fs.readFileSync(path.join(__dirname, '../fixtures/blueprint-design-inputs/acceptance.yaml'), 'utf8'));
+  draft.feature = p.feature;
+  draft.source = 'spec:fixture-ledger-request';
+  writeHostFile(p.root, `${cuRel(p)}/acceptance.yaml`, YAML.stringify(draft));
+  writeCuFacts(p, 'spec');
+}
+
+/** plan 作者从同一设计输入与当前 CU 写出映射及真实用例文件。 */
+export function writeCuPlanMaterials(p: RealChainProject): void {
+  const projected = deriveBlueprintSkillInput(p.root, p.feature, p.frameworkRoot, 'contracts', 'pure');
+  assert(projected.state === 'resolved', projected.detail ?? 'contracts projection absent');
+  const identity = parseChangeUnitFeatureId(p.feature);
+  const loaded = loadCanonicalChangeUnit(p.root, identity.blueprintId, identity.changeUnitId);
+  const cu = asChangeUnitArtifact(loaded.changeUnit);
+  const contracts = structuredClone(projected.value) as ContractsSpec;
+  const implementation_refs = [CU_SOURCE]; const test_refs = [CU_TEST];
+  contracts.change_unit = { change_unit_ref: createChangeUnitRef(loaded),
+    predicate_mappings: cu.target_predicates.map(row => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+    provide_mappings: cu.provides.map(row => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+    design_ref_mappings: cu.design_refs.map(design_ref => ({ design_ref, implementation_refs, verification_refs: test_refs })) };
+  const oldFile = path.join(p.root, `${cuRel(p)}/contracts.yaml`);
+  const old = fs.existsSync(oldFile) ? YAML.parse(fs.readFileSync(oldFile, 'utf8')) : undefined;
+  if (asRecords(old?.state_management).some(row => (row.ordered_steps as string[] ?? []).includes('notify observers'))) contracts.state_management?.[0].ordered_steps?.push('notify observers');
+  writeHostFile(p.root, `${cuRel(p)}/contracts.yaml`, YAML.stringify(contracts));
+  if (projected.artifacts?.['use-cases@1']) writeHostFile(p.root, `${cuRel(p)}/use-cases.yaml`, YAML.stringify(projected.artifacts['use-cases@1']));
+  writeCuFacts(p, 'plan');
 }
 
 export function writeCuCodingMaterials(p: RealChainProject): void {
@@ -1254,11 +1302,15 @@ export function writeCuCodingMaterials(p: RealChainProject): void {
   writeCuFacts(p, 'coding');
 }
 
-export function writeCuReviewMaterials(p: RealChainProject): void {
+export function writeCuReviewMaterials(p: RealChainProject, executionRunId = p.runId): void {
   writeCuFacts(p, 'review');
+  const contracts = YAML.parse(fs.readFileSync(path.join(p.root, `${cuRel(p)}/contracts.yaml`), 'utf8')) as ContractsSpec;
+  const entry = resolveCapabilityResolutionEntryInput({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', goalRunId: executionRunId, featuresDir: 'doc/features' });
+  const code = resolveCapabilityInputs({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: p.feature, phase: 'review', track: 'full', ...entry }).inputs?.values.code;
+  const targets = code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : contracts.files;
   writeHostFile(p.root, `${cuRel(p)}/review/review-report.md`, [
     '# 审查报告', '', '> **模块标识**: ledger', '> **审查日期**: 2026-01-01', '> **审查版本**: 1.0', '> **保证等级**: standard', '',
-    '## 1. 审查范围', '', '模块：ledger。文件范围：', '', ...CU_READS.map(r => `- ${r}`), '',
+    '## 1. 审查范围', '', '模块：ledger。文件范围来自实际绑定的施工输入；外围源码仅作只读对照。', '', ...targets.map(r => `- ${r}`), '',
     '## 2. 审查维度', '', '| 维度 | 结论 |', '|------|------|', '| 契约一致性 | 通过 |', '| 视觉保真 | 不适用（无界面变更） |', '',
     '## 3. 问题清单', '',
     '| 编号 | 分类 | 严重程度 | 问题描述 | 涉及文件 | 修复建议 |', '|------|------|----------|----------|----------|----------|',
@@ -1330,9 +1382,10 @@ export function runCuBoundChain(cu: RealChainProject, birthChain: string[]): Ret
     featureId: cu.feature,
     realHarness: true,
     adapter: 'codex',
-    freshStartPhase: birthChain[0] as 'coding',
+    freshStartPhase: birthChain[0] as 'plan' | 'coding',
     freshEndPhase: birthChain[birthChain.length - 1],
     freshRequirement: CU_REQUIREMENT,
+    onPlan: ctx => { cu.runId = ctx.runId; writeCuPlanMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'plan'); },
     onCoding: ctx => { cu.runId = ctx.runId; writeCuCodingMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'coding'); },
     onReview: ctx => { cu.runId = ctx.runId; writeCuReviewMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'review'); },
     onUt: ctx => { cu.runId = ctx.runId; writeCuUtMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'ut'); },
@@ -1348,12 +1401,12 @@ export function goalStatusFeatureLine(project: { root: string; harnessDir: strin
   return (r.stdout ?? '').split('\n').find(line => line.startsWith('feature_status=')) ?? `<no feature_status; exit=${r.status}> ${r.stderr ?? ''}`;
 }
 
-test('real-chain CU 绑定链：canonical CU 经 coding→review→ut 真实 harness 到 feature completion', async () => {
+test('real-chain CU 绑定链：plan 生成当前映射与用例后经 coding→review→ut 真实 harness 到 feature completion', async () => {
   const project = provisionRealChainProject();
   try {
     scaffoldRealChainHost(project);
     const { cu, birthChain } = seedCuBoundHost(project);
-    assert(JSON.stringify(birthChain) === '["coding","review","ut"]', `CU 出生链应为 [coding,review,ut]：${JSON.stringify(birthChain)}`);
+    assert(JSON.stringify(birthChain) === '["plan","coding","review","ut"]', `CU 出生链应包含真实 plan 映射义务：${JSON.stringify(birthChain)}`);
     git(project.root, ['add', '-A']);
     git(project.root, ['commit', '-qm', 'seed change unit']);
     clearFrameworkConfigCache();

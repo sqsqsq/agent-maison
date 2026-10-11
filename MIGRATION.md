@@ -4,9 +4,19 @@
 
 ## 3.1.0：蓝图人读设计文档默认交付与修订同步
 
-默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @4），按 4+1 展示需求/旅程、模型与接口、运行顺序/分支/恢复、开发落点、适用部署、取舍、质量、验收及 canonical CU 拆分。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿也能生成并如实标示准入；默认 checker 只读输出状态。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
+默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @5），按 4+1 展示需求/旅程、模型与接口、运行顺序/分支/恢复、开发落点、适用部署、取舍、质量、验收及 canonical CU 拆分。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿也能生成并如实标示准入；默认 checker 只读输出状态。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
 
-新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属内容和完整 change_unit 映射放独占目标；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
+新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属验收/files/用例放独占目标；整个 contracts.change_unit 归 plan 在 Feature 生成；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
+
+正常交接不运行 prepare-blueprint-design 提前物化 Feature 文件；spec/plan 消费推导输入并各写本阶段产物。蓝图仍保留设计 facts、验收、模型、接口与 files，存量 change_unit 不再继承为设计权威；缺有效 Feature 映射仍需 plan。投影带用例时 plan 必须写 use-cases.yaml 供业务 UT，required_outputs 不只看原文件存在。旧 expected_boundary_calls 经共同入口归一到 expected_port_calls，两键冲突诊断。已有带戳文件可沿同一权威对齐合法补充；只有设计/CU 内容未变才仅刷新来源/引用身份并保留补充原字节，真实变化退责任、不 merge。
+
+仅身份刷新必须有可用等价证明：复用已冻结 Feature contracts 的真实 CU 映射绑定，展开 CU 与完整设计目标；acceptance 子集相等不够。缺映射/冻结依据或不能证明完整内容不变时保留旧文件并退责任，旧带戳产物不会一律自动恢复。
+
+同一未完成交付的未退役 CU，仅无运行或已停住时支持 consumer 同 ID 内容修订，保留 Feature/目录、框架 revision +1；running/锁竞争 busy，普通再接受仍拒绝覆盖。曾完成现为 INCOMPLETE、成功终局缺投影、损坏记录或退役前身不能走未完成修订；原义务补证据沿原 successor，完成后新工作与拆分/合并/迁移用新 CU。修订后旧业务产物保留，通过既有 cu:feature-binding/合同 binding 缺口回 plan 恢复，保留历史、出生 manifest 与累计预算。
+
+停住的 HALTED/DEFERRED run 只有出生时所绑 canonical CU hash 已变化、且存在原 binding 缺口时，才沿既有 successor 接回 plan；新 contracts artifact 冻结绑定会登记实际 canonical CU 依赖。旧绑定没有这项独立依赖时，只有原 contracts 字节仍精确匹配冻结 sha，才可用同 identity 的旧 change_unit_ref hash 判断变化；缺证明不猜 hash、不改出生 manifest，仍可走原 related 修复判据或显式 --supersede。普通映射错误和已完成 holder 不据此当作新 CU 内容修订。
+
+旧格式的 ref 若在出生时已经 stale、又没有独立 canonical 依赖，上述兼容路径可能多选一次原 successor；它继承历史与累计预算，阶段门保持，后继按当前 CU 重签后不重复。无需清理历史目录或另建证明协议。
 
 背景/目标/范围、被否方案、术语含义、旅程、部署参与方/协同、质量/数据生命周期六类表达均可选，缺失显示“未记录”，坏形状只 WARN，蓝图 schema 不变。模型字段可选 description/source_ref 透传说明与已有来源，不授予写权限。文档只读取 canonical 蓝图/CU，逐 CU 展示纯合并所得声明集合并注明“是否通过交接校验见 readiness”；readiness 独立复用默认只读投影完整检查，absent 明确补设计责任，invalid 按原原因 not-ready，不以 pure 跳过已有 use-cases 冲突。
 
@@ -156,8 +166,7 @@ deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决
     都以既有违规停机 `backtrack_target_absent` 终止 run；工程文件只检测不还原，被改的事件文件由框架整份写回"调用前字节 + 框架本次
     写入的行"；只有检出具体改动时才有带路径与哈希的 `phase_write_violation`；调用的子进程没能证明已结束时不做核对、
     不发布、不启动下一次调用，以既有停机 `agent_containment_unresolved` 终止 run（不挂设计探针）；发布后评审投影
-    `component-blueprint.review.md` 在同锁内自动重建；失败或来源缺口如实披露，不改变原修复/探针结论。两次调用计入调用次数与墙钟，不重置预算。`authority_cu_mapping_stale` 的修法是
-    删掉蓝图里可省略的 `contracts.change_unit.change_unit_ref`（由投影按当前 CU 填入），不是改指当前 CU。
+    `component-blueprint.review.md` 在同锁内自动重建；失败或来源缺口如实披露，不改变原修复/探针结论。两次调用计入调用次数与墙钟，不重置预算。Feature 施工映射缺失、过期或冲突回 plan，不由 B1 删改蓝图旧映射。
   - **探针就绪算一种变化**（`external_condition_ready`，接续决策的第七种）：对所有带探针的停机（设备、能力预检、候选写回、设计权威）
     都适用，条件修好后无人值守的重发不再等 5 分钟冷却；探针没就绪时只是这一种变化不成立，其它变化与冷却仍按既有规则判断
     （例如框架在 run 内调和时改写过 contracts.yaml，算相关修复变化，重发会立即重新接入并以原因再停）。

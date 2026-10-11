@@ -4498,13 +4498,13 @@
     },
     {
       "id": "S15",
-      "title": "设计权威内容无效：责任方修好后自动续跑",
+      "title": "责任方修复与条件就绪：有效绑定续跑、已兑现实体绑定失效起后继",
       "source_incident": "宿主 run 20260924T135354Z-97af3f（蓝图内容类停机，人修蓝图后被两个后继取代，任务未完成）。plan 9c3d7e1a §5、§6",
-      "premise": "快照宿主；设计权威在链内无法兑现 → 首次即停（带探针、B1/B2 分类与修复简报，停放时释放 feature 锁）；设计 owner / 有权者经真实 readiness 入口修好；冷却期内不带旗标重发同一请求，或由生产 supervisor 拉起；不回拨事件时间",
+      "premise": "B1/B2 分支保留设计权威首次停机、责任方经 readiness 修复与原请求重发。实体绑定失效分支用 fresh 请求：真实 plan 已交 contracts/use-cases，设备等待期间合法施工补充使 artifact 绑定 stale；设备就绪后重发或 supervisor 唤醒。全部使用真实停机/探针/接续，不回拨时间。",
       "driver_layer": "真实链路",
-      "coverage_note": "design-authority-repair 套件的 S15 流程函数（同一驱动与机制断言）。两种宿主形状：全手写（绑定由 spec / plan 在链内重签 → 重新接入同一 run）；派生施工契约（acceptance 手写、contracts 不落盘、绑定来自 derive.blueprint-contracts → 修复改了它依赖的蓝图内容时自动起后继）。重发用任务原请求的需求与起止。",
+      "coverage_note": "design-authority-repair 套件的 S15 流程函数（同一驱动与机制断言）。B1/B2 权威修复分支保留；实体绑定失效两支由真实 plan 交付 contracts/use-cases 后进入设备等待，作者合法补充施工步骤使 artifact 冻结绑定失效，无剩余 owner 时起后继。重发保原请求，验证预算、历史与完成。",
       "unaffected_phases": [],
-      "expected": "修好后不需要操作者拼命令：绑定仍有效则重新接入同一 run，派生绑定已失效则自动从停机 run 起后继，任务正确完成；未修则保持停止",
+      "expected": "绑定仍有效的 B1/B2 修复按原恢复完成；未修保持停止。设备未就绪不拉起，已兑现 owner 的实体绑定失效且设备就绪时仅起一个后继，原历史/预算/材料保留并真实完成。",
       "branches": [
         {
           "key": "b1-rejoin",
@@ -4657,13 +4657,13 @@
         },
         {
           "key": "b1-stale-successor",
-          "label": "B1 修后续跑（派生绑定已 stale）",
-          "premise": "派生施工契约宿主；run 出生后蓝图被写坏（run 内先调和指针、再因内容无效停机）；修复同时改了施工契约依赖的蓝图内容；冷却期内重发",
+          "label": "实体施工绑定失效后自动后继",
+          "premise": "真实 plan 已通过并交付 contracts/use-cases；设备等待期间作者合法补充施工步骤，原 artifact 绑定失效；设备就绪后原请求重发",
           "recoverable_fault": false,
           "unaffected_phases": [],
           "expected": "运行时判定冻结绑定已失效，自动起后继（承接停机 run）并正确完成",
           "assertion": "baseline_met",
-          "coverage_note": "后继的合同来源沿用既有规则（当前持有范围转交的 run，没有转交记录时取上一次完成的 run）；停机的 run 由后继审计承接。",
+          "coverage_note": "不再把无实体 derive 完成前缀当作合法宿主。冻结 artifact 真 stale，plan 已兑现无剩余 owner；原 manifest/events 保留，后继审计承接并继承累计预算，真实完成。历史 baseline 原样保留。",
           "baseline": {
             "task_id": "S15/b1-stale-successor",
             "claimed_complete": true,
@@ -4716,11 +4716,11 @@
         },
         {
           "key": "supervisor-stale-successor",
-          "label": "supervisor 分支（绑定已 stale）",
-          "premise": "同上，无人值守停放；以生产 supervisor CLI 跑一轮（未修时一轮、修好后一轮）",
+          "label": "supervisor 分支（实体绑定已 stale）",
+          "premise": "同上，无人值守设备等待；以生产 supervisor CLI 跑一轮（设备未就绪一轮、就绪后一轮）",
           "recoverable_fault": false,
           "unaffected_phases": [],
-          "expected": "未修不拉起；探针就绪即拉起 --resume；运行时恢复入口判定绑定失效 → 起后继；后继正确完成",
+          "expected": "设备未就绪不拉起；真实探针就绪即拉起 --resume；运行时判断实体绑定失效且无剩余 owner → 一个后继；预算/重启次数保留并真实完成",
           "assertion": "baseline_met",
           "coverage_note": "supervisor 发出的命令由测试代替计划任务执行（同一 argv 形状经 detach 入口，子进程那一半在进程内跑，agent 由作者材料替身）；不计操作者动作。",
           "baseline": {
@@ -4837,11 +4837,11 @@
       "id": "S16",
       "title": "设计权威 B1 无人值守：框架派设计修复自动接手",
       "source_incident": "无宿主事故（97af3f 属 B2）；按可靠性口径与用户 2026-09-30 / 2026-10-01 裁定。plan 9c3d7e1a §5.5、§6",
-      "premise": "快照宿主；无人值守 run；framework.local.json 预授权 design_repair.unattended_b1: true；B1 停机（蓝图验收写成文字）；只有 adapter 的编写与独立质询两次链外调用由测试替身，锁、草稿、写归因核对、准入派生与写回、校验、发布、调和、探针、恢复判断全部是生产路径",
+      "premise": "无旧阶段产物的 fresh CU 请求；无人值守 run；有授权分支在 framework.local.json 预授权 design_repair.unattended_b1: true；spec 真实门报 B1（蓝图验收写成文字）；只有作者材料与 adapter 编写、独立质询调用由测试替身，锁、草稿、写归因核对、准入派生与写回、校验、发布、调和、探针、恢复判断全部是生产路径",
       "driver_layer": "真实链路",
-      "coverage_note": "design-authority-repair 套件的 S16 流程函数（同一驱动与机制断言）。主线用全手写宿主（修复后冻结绑定仍有效 → 同一 run 原地重评）；绑定失效支用派生施工契约宿主（同一节点的验收与施工契约都写成了文字、施工契约原文写明写集另含一个文件；按原文改回机器结构后施工契约与旧绑定内容不同 → 发布后停放，由 supervisor 拉起或重发时起后继；修复只改本次 B1 发现项定位到的字段，不靠扩大写集触发）。",
+      "coverage_note": "design-authority-repair 套件的 S16 流程函数。主线从 fresh 请求出生，修复机器结构后同一 run 原地重评。绑定失效支由作者验收漂移触发真实 spec 责任，冻结 derive contracts；出生后机器结构写坏，B1 修复按原文明确授权补文件，旧 contracts binding 真实 stale，但待做 plan 可正式产出实体并重签，所以仍同一 run 完成。断言原 manifest 字节、累计预算、一个 run 和没有停机；supervisor 变体只检查完成后不重复拉起，不虚记人工救援。",
       "unaffected_phases": [],
-      "expected": "有预授权时 B1 不再等人：绑定仍有效则同一 run 续跑完成（操作者动作 0）；绑定失效则发布后停放，supervisor 实际拉起后继并完成才计 0，未经 supervisor 需重发一次（如实计人工动作）；没有预授权照旧停等",
+      "expected": "有预授权时 B1 自动修复：绑定仍有效或待做 plan 能正式重签时，同一 run 续跑完成，操作者动作 0；已完成 run 不被 supervisor 重复拉起。没有预授权照旧停等。历史 baseline 保留原实测结果，不作为当前分支的 run 数或救援预期。",
       "branches": [
         {
           "key": "b1-auto-repair",
@@ -4994,11 +4994,11 @@
         },
         {
           "key": "stale-supervisor",
-          "label": "绑定失效支：supervisor 拉起",
-          "premise": "派生施工契约宿主；验收与施工契约都写成文字，按原文改回后施工契约内容与旧绑定不同（派生绑定依赖的蓝图内容变了）；以生产 CLI 跑一轮 supervisor",
+          "label": "旧 derive 由待做 plan 重签：完成后 supervisor 不重复拉起",
+          "premise": "有效 canonical 与未对齐作者验收形成真实 spec 窗口；contracts 冻结为 derive，B1 修复后旧读取 stale，但未来 plan 仍有正式交付和重签责任；以生产 CLI 检查已完成 run",
           "recoverable_fault": true,
           "unaffected_phases": [],
-          "expected": "发布后停放（探针已就绪）；supervisor 实际拉起，恢复入口起后继并正确完成，操作者动作 0",
+          "expected": "同一 run 经 spec/plan 重签后正确完成，出生 manifest 与累计预算保留；supervisor 不重复拉起，操作者动作 0",
           "assertion": "baseline_met",
           "baseline": {
             "task_id": "S16/stale-supervisor",
@@ -5052,11 +5052,11 @@
         },
         {
           "key": "stale-resend",
-          "label": "绑定失效支：未经 supervisor，重发同一请求",
-          "premise": "同上，不经 supervisor",
+          "label": "旧 derive 由待做 plan 重签：无人工重发",
+          "premise": "同上，未来 plan 可重签，正常阶段链自动完成",
           "recoverable_fault": true,
           "unaffected_phases": [],
-          "expected": "发布后停放；重发同一请求时起后继并正确完成，计一次人工动作（必要）",
+          "expected": "同一 run 经 spec/plan 重签后正确完成，不多生 run，不发生停机或人工救援，预算按实际调用连续回放",
           "assertion": "baseline_met",
           "baseline": {
             "task_id": "S16/stale-resend",

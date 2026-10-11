@@ -15,7 +15,7 @@ import checkSpec from '../../scripts/check-spec';
 import checkPlan from '../../scripts/check-plan';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { checkDesignToCode } from '../../scripts/check-coding';
-import type { CheckContext } from '../../scripts/utils/types';
+import type { CheckContext, ContractsSpec } from '../../scripts/utils/types';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
 import type { ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
@@ -29,6 +29,7 @@ import { readScopeAcceptance } from '../../scripts/utils/feature-track';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { collectCleanPassIssues } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
+import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const sha = (file: string) => 'sha256:' + createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -66,6 +67,23 @@ export function fixture(root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-
   fs.rmSync(resolveFeatureArtifact(root, feature, 'contracts.yaml').actualPath, { force: true });
   return { root, feature, blueprintFile, cuFile, bind };
 }
+
+/** 模拟 plan 从已批准设计与当前 CU 生成真实 Feature 施工映射。 */
+export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { change_unit: NonNullable<ContractsSpec['change_unit']> } {
+  const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts', 'pure');
+  assert.equal(projected.state, 'resolved', projected.detail);
+  const loaded = loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh');
+  const cu = asChangeUnitArtifact(loaded.changeUnit);
+  const implementation_refs = ['planned:src/ledger/LedgerFeature.ets'];
+  const test_refs = ['planned:test/ledger/LedgerFeature.test.ets'];
+  return { ...structuredClone(projected.value as ContractsSpec), change_unit: {
+    change_unit_ref: createChangeUnitRef(loaded),
+    predicate_mappings: cu.target_predicates.map(row => ({ predicate_id: row.predicate_id, implementation_refs, test_refs })),
+    provide_mappings: cu.provides.map(row => ({ provide_id: row.provide_id, implementation_refs, test_refs })),
+    design_ref_mappings: cu.design_refs.map(design_ref => ({ design_ref, implementation_refs, verification_refs: test_refs })),
+  } };
+}
+
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
   { name: 'P7 completion retains derived P0 device responsibility without materialized acceptance', run(f) {
     const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -91,6 +109,8 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     fs.mkdirSync(path.dirname(source), { recursive: true }); fs.writeFileSync(source, 'export class LedgerFeature { run(): number { return 42; } }\n');
     for (const materialized of [false, true]) {
       if (materialized) materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+      const contractsFile = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').canonicalPath;
+      fs.mkdirSync(path.dirname(contractsFile), { recursive: true }); fs.writeFileSync(contractsFile, YAML.stringify(planContracts(f)));
       for (const phase of ['coding', 'review']) {
         const result = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full', requirement: 'implement approved ledger refresh', testTargets: ['src/ledger/LedgerFeature.ets'], inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: { implementation: 'required', 'visual-evidence': 'not_applicable' }, required_outputs: [] } });
         assert.notEqual(result.report.assurance, 'blocked', JSON.stringify(result.report));
@@ -298,7 +318,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const visits: Array<{ phase: string; outputs: string[]; results: unknown }> = [];
     projectionModule.designScopeRevisionChecks = (ctx, results) => { visits.push({ phase: ctx.phase, outputs: ctx.resolvedInputs!.context.required_outputs, results }); return finish(ctx, results); };
     try { for (const [phase, checker] of [['spec', checkSpec], ['plan', checkPlan]] as const) {
-      const inputs = { context: { schema_version: '1.1' as const, subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase, values: {}, artifacts: { ...c.artifacts, 'acceptance@1': a.value } };
+      const inputs = { context: { schema_version: '1.1' as const, subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase, values: {}, artifacts: { ...c.artifacts, 'contracts@1': planContracts(f), 'acceptance@1': a.value } };
       const ctx = { projectRoot: f.root, frameworkRoot, frameworkRel: '', harnessRoot: path.join(frameworkRoot, 'harness'), phase, feature: f.feature, phaseRule: loader.loadPhaseRule(phase), featureSpec: loader.loadFeatureSpec(f.feature, inputs), resolvedInputs: inputs, resolvedProfile: loadResolvedProfile(f.root, loadFrameworkConfig(f.root)) } as CheckContext;
       const results = await checker.check(ctx);
       assert(!results.some(check => check.id === 'spec_file_exists' || check.id === 'plan_file_exists'));
@@ -364,7 +384,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(!resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').exists);
     assert.equal(fs.readFileSync(file, 'utf8'), 'files: [human.ts]');
   } },
-  ...(['refs-only', 'text-only', 'missing-write', 'missing-mapping', 'runtime-gap', 'unknown-usecase', 'missing-expected', 'ac-disguised-as-boundary', 'external-conflict', 'duplicate-design-id'] as const).map(mode => ({ name: 'projection responsibility gap: ' + mode, run(f: ReturnType<typeof fixture>) {
+  ...(['refs-only', 'text-only', 'missing-write', 'runtime-gap', 'unknown-usecase', 'missing-expected', 'ac-disguised-as-boundary', 'external-conflict', 'duplicate-design-id'] as const).map(mode => ({ name: 'projection responsibility gap: ' + mode, run(f: ReturnType<typeof fixture>) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
     const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
@@ -374,7 +394,6 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     if (mode === 'refs-only') { delete node.acceptance; kind = 'acceptance'; }
     if (mode === 'text-only') { node.acceptance = '验收按设计执行'; kind = 'acceptance'; }
     if (mode === 'missing-write') (node.contracts as { files: string[] }).files = [];
-    if (mode === 'missing-mapping') delete (node.contracts as BlueprintRecord).change_unit;
     if (mode === 'runtime-gap') ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].publications = [];
     if (mode === 'unknown-usecase') { ((node.acceptance as BlueprintRecord).criteria as BlueprintRecord[])[0].linked_flow = 'undefined-usecase'; kind = 'acceptance'; }
     if (mode === 'missing-expected') { delete ((node.acceptance as BlueprintRecord).criteria as BlueprintRecord[])[0].expected_result; kind = 'acceptance'; }

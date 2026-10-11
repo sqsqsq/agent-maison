@@ -170,7 +170,7 @@ run 在某个阶段的门上发现：问题不在手写产物，而在设计权�
 
 | 分类 | 含义 | 谁来修 |
 |---|---|---|
-| **B1** | 在既有授权内、依据明确，改正不需要新的设计决定。目前只有两个原因码：蓝图里的机器内容被写成了一段文字（`authority_content_not_machine_structure`，按原文含义改回机器结构）；蓝图里的 CU 映射指向本 CU 的旧 revision（`authority_cu_mapping_stale`，删掉这条可省略的 `contracts.change_unit.change_unit_ref`、由投影按当前 CU 填入，其余映射保留；不要改指当前 CU——蓝图一升版 CU 跟着升版，引用会立刻再过期） | 有人在场：设计 owner 照 `/component-design` 直接修。无人值守且已预授权：框架先自动修一次（见「无人值守时 B1 由框架自动接手」） |
+| **B1** | 在既有授权内、依据明确，改正不需要新的设计决定。当前原因是蓝图机器内容被写成文字（`authority_content_not_machine_structure`，按原文含义改回机器结构）。施工映射归 plan，不由 B1 删改蓝图旧映射 | 有人在场：设计 owner 照 `/component-design` 直接修。无人值守且已预授权：框架先自动修一次（见「无人值守时 B1 由框架自动接手」） |
 | **B2** | 其余全部：缺内容、归属或内容冲突、未决决策、缺权威来源、扩大范围、CU 或蓝图未过校验等；没登记的原因码、B1 与 B2 混在一起时也算 B2 | 有权者先裁决或补事实，说明里写清缺什么 |
 
 **修好之后**：
@@ -224,7 +224,7 @@ run 在某个阶段的门上发现：问题不在手写产物，而在设计权�
 3. 只把蓝图文件复制到 run 目录下的草稿（`<run 目录>/design-repair/component-blueprint.yaml`），派一次"编写修复"调用：
    只许改草稿，按 [无人值守修复子契约](../../skills/reference/design-repair-unattended.md) 修；而且草稿里只许改本次 B1 发现项定位到的位置
    （停机事件 `design_authority.items[].locations`）：文字类是本 CU 所选设计目标里被写成文字的 `acceptance` / `contracts` / `use_cases`
-   字段，映射过期只许删掉 `contracts.change_unit.change_unit_ref`。框架随后覆盖的 `revision`、根 `provenance` 五个登记字段与
+   字段。Feature 施工映射回 plan，不删改蓝图旧映射。框架随后覆盖的 `revision`、根 `provenance` 五个登记字段与
    `derived_results` 不算越权。
 4. 框架作废草稿里的整份旧质询结果，登记新 revision 与修订依据（写在蓝图根 `provenance`，`source_kind: design_repair_unattended`；
    框架覆盖的只有 `revision` 和根 `provenance` 里的这五个字段：`source_kind`、`source_ref`、`source_revision`、`observed_at`、

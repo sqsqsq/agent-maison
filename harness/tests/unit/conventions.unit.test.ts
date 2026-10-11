@@ -16,7 +16,7 @@ import { CheckContext, ContractsSpec } from '../../scripts/utils/types';
 import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
 import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
 import { asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
-import { componentBlueprintPath, loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
+import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
@@ -188,6 +188,8 @@ test('default conventions EACCES accepts degraded but rejects not_applicable', (
 
 test('same convention id traverses canonical blueprint/projection/CU contracts/review', () => withProject(root => {
   const base = path.join(FRAMEWORK_ROOT, 'harness/tests/fixtures/component-blueprint/valid'); fs.cpSync(base, root, { recursive: true });
+  // 新设计由 plan 重新产出当前施工契约，不用旧 fixture 映射冒充中立身份刷新。
+  for (const unit of ['ledger-refresh', 'ledger-consumer', 'ledger-recovery', 'ledger-summary']) fs.rmSync(path.join(root, 'doc/features/ledger-app-blueprint', unit, 'contracts.yaml'), { force: true });
   write(root, 'framework.config.json', JSON.stringify({ paths: { conventions: 'knowledge/practices.md' } })); clearFrameworkConfigCache();
   write(root, 'knowledge/practices.md', ASSET);
   const bpPath = componentBlueprintPath(root, 'ledger-app-blueprint');
@@ -204,7 +206,6 @@ test('same convention id traverses canonical blueprint/projection/CU contracts/r
   write(root, path.relative(root, bpPath), YAML.stringify(bp));
   const issues = validateComponentBlueprint(bp, { projectRoot: root, canonicalPath: bpPath });
   assert(!issues.some(i => i.severity === 'BLOCKER'), JSON.stringify(issues));
-  const loaded = loadCanonicalBlueprint(root, 'ledger-app-blueprint');
   reconcileChangeUnitBlueprintRefs(root, 'ledger-app-blueprint');
   const projection = loadBlueprintReviewSource(root, 'ledger-app-blueprint').markdown; assert(projection.includes('repository-fields — knowledge/practices.md#repository-fields'));
   const projectionPath = path.join(path.dirname(bpPath), 'component-blueprint.review.md');
@@ -213,11 +214,6 @@ test('same convention id traverses canonical blueprint/projection/CU contracts/r
   assert.equal(checkHostSeamMaterials(root, checked, { projection: projectionPath }).issues.length, 0);
   write(root, path.relative(root, projectionPath), projection.replace('knowledge/practices.md#repository-fields', 'knowledge/practices.md#invented-convention'));
   assert(checkHostSeamMaterials(root, checked, { projection: projectionPath }).issues.some(i => i.id === 'publication_projection_content_mismatch'));
-  const cu = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh');
-  // Rebind existing refs after a legitimate fixture revision, preserving the shared resolver.
-  const ownerRef = asRecord(cu.changeUnit.component_blueprint_ref)!;
-  const serialized = YAML.stringify(cu.changeUnit).split(String(ownerRef.source_fingerprint)).join(fingerprint).split(String(ownerRef.artifact_sha256)).join(loaded.artifactSha256);
-  write(root, path.relative(root, cu.canonicalPath), serialized);
   const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
   const value = { ...contracts(), feature, change_unit: { change_unit_ref: createChangeUnitRef(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh')), predicate_mappings: [], provide_mappings: [], design_ref_mappings: [] } };
   write(root, 'doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml', YAML.stringify(value));

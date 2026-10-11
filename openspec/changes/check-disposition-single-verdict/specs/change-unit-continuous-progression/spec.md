@@ -4,14 +4,16 @@
 
 蓝图 revision、`source_fingerprint` 或 `artifact_sha256` 变化时，CU 的旧 blueprint binding/design gate/ready projection MUST stale；CU revision/hash 变化时，旧 Feature projection MUST stale。下游 SHALL 从新 identity 自行重新派生，P1 MUST NOT 创建、修改或移除 P2 ready set。
 
-CU 身份规则：`change-unit.yaml` 契约字段（`provides`、`requires`、`target_predicates`、`touches` 的 owner 与 design_ref target 地址、`preserved_invariants`、`design_refs` 的 target 地址）不变即同一 CU，已完成与未完成 CU 同规则：
+CU 身份规则 SHALL 区分未完成内容修订、仅指针调和与完成后新工作；普通再接受 MUST 继续拒绝已有路径，不是通用 upsert：
 
 | 变化 | 处置 |
 |---|---|
 | 补证据、机械修复、验收/文案/蓝图输入变化，契约字段不变 | 同一 CU；评估入口给出的 uncovered 义务由 successor 按责任阶段补齐 |
 | 蓝图升 admitted revision，且 carry-forward 通过 | 原位升版：三处身份指针（`component_blueprint_ref`、`design_refs[]`、`touches[].design_ref`）的 revision / `source_fingerprint` / `artifact_sha256` 改为当前蓝图值，CU `revision + 1`，`change_unit_id` 与契约字段不变 |
 | carry-forward 失败 | 不升版；历史 provides 不满足依赖，路由 `reconcile_blueprint` 回 P1 调和或新建 CU |
-| 契约字段变化 | 新 `change_unit_id` 并以 `supersedes` 引用旧 `change_unit_ref` |
+| 同一未完成交付的未退役 CU，且无运行或运行已停住，修订职责/谓词/范围/设计引用 | consumer 内容修订入口保留 ID、Feature 和目录，框架 revision +1；运行中/锁竞争 busy，不写 |
+| 曾完成现为 INCOMPLETE，仅补原义务证据或修正原实现 | 原同 Feature successor/责任恢复，保留完成事实，不改旧契约 |
+| 完成后新增交付，或拆分/合并/归属迁移 | 新 change_unit_id，适用时以精确 supersedes 引用旧 CU；退役前身原字节保留 |
 
 carry-forward SHALL 以历史 refs 的每个稳定 target `kind/id/view_id?` 构造当前 blueprint ref，并只复用当前 P1 resolver/admission：仅当全部 target 在当前有效蓝图中仍可解析且仍获准、无 unknown/open decision/blocker 时通过，整个 CU 的历史 provides 才 carry forward；carry-forward 只在同一 `blueprint_id` 内跨 revision 生效，另一 `blueprint_id` 工作区的历史 CU MUST NOT 参与任何 carry-forward 或依赖满足。任一 target 缺失、因替换而原 ID 不再解析、当前 disposition 为 unknown/open decision/blocker，或蓝图/相关设计未准入时，历史 provides MUST NOT 满足依赖，未来 CU MUST 阻塞并回到 P1 调和。
 
@@ -33,10 +35,21 @@ carry-forward SHALL 以历史 refs 的每个稳定 target `kind/id/view_id?` 构
 - **WHEN** 蓝图升 admitted revision，已完成 CU 的全部 target 仍解析且获准，契约字段未变
 - **THEN** 设计准备段把该 CU 三处指针原位升到当前蓝图、revision 加一、`change_unit_id` 不变；评估入口判 plan 义务 uncovered，successor 只补 uncovered 义务，不新建 CU、不重走全链
 
-#### Scenario: Contract field change requires a new change unit id
+#### Scenario: Unfinished content revision preserves the change unit identity
 
-- **WHEN** CU 的 touches 新增模块或其它契约字段变化
-- **THEN** 原位升版 MUST NOT 接手；同一路径的候选 MUST 被拒绝，修正以新 `change_unit_id` + `supersedes` 表达，旧 CU 及其完成记录保留
+- **WHEN** 同一未完成活动 CU 无运行或运行已停住，以旧精确 ChangeUnitRef 提交合法内容修订
+- **THEN** consumer SHALL 在锁内重读完成/run/退役事实及引用，复用 schema、provenance、设计/角色/授权和依赖检查，经原子事务保留 ID/Feature/目录并 revision +1；无变化不增版，旧 ref 竞争或批次失败不写
+- **AND** 旧业务产物 SHALL 保持原字节，停住 run SHALL 沿现有 cu:feature-binding 或合同 binding 缺口回 plan 更新映射/范围，保留出生 manifest、历史和累计预算，不手填最终结果
+
+#### Scenario: Historical completion cannot be treated as unfinished
+
+- **WHEN** CU 曾形成可信完成事实但当前 INCOMPLETE，成功终局缺投影，Feature completion 原件存在但投影缺失，或 completion/run 记录 broken/corrupt
+- **THEN** 内容修订资格 MUST NOT 仅以 state 非 VALID 或文件缺失判定；原义务补证据走既有恢复，完成后新契约走新 CU，退役前身不得覆写
+
+#### Scenario: Running revision and changed provide promises stay bounded
+
+- **WHEN** CU 运行中，或修订改变了被消费者引用的提供承诺
+- **THEN** 运行中内容修订 MUST 返回 busy 且保持原字节；提供承诺变更 MUST 同批对齐受影响消费者或显式新 provide_id，MUST NOT 让旧 VALID 证明新承诺，也 MUST NOT 增加 provide 版本注册表
 
 #### Scenario: Missing or unresolved historical target returns to P1
 
@@ -82,7 +95,7 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 - **入口**：admitted blueprint。**初始 canonical CU 数量为 0 MUST 是合法入口**，MUST NOT 判为推进故障；推进决策 MUST 把该情形与"有 CU 但无 ready"区分开。
 - **候选**：decomposition provider 或人工/Agent 设计者 MUST 只产出内存/临时报告中的候选，MUST NOT 直接写 canonical CU 或完成事实；候选 provenance MUST 只记入 extraction method，MUST NOT 自称权威。
 - **接受**：只有 consumer validator MAY 接受候选，且**全仓 MUST 只有一个 canonical CU 写入实现**——单候选接受 MUST 是批量接受的 1 元包装，MUST NOT 保留第二份 provenance/schema/design-gate/落盘逻辑；设计准备段只做入口/readiness 编排并委托该唯一 consumer。它 MUST 校验 schema、canonical identity、设计闭包（设计可施工门）、provenance 与来源权威，全部通过后 MUST **原子**写出 1..N canonical `change-unit@1`：任一候选不通过即整批拒绝且一个字节都不落盘；写入中途失败 MUST 回滚本批已落盘目标。
-- **重复接受 fail-closed**：目标 canonical 文件已存在时 MUST 拒绝，MUST NOT 覆盖。契约变化 MUST 走新的 `change_unit_id` + `supersedes`；蓝图升版造成的指针漂移由下一条原位升版处理，不经再接受。
+- **重复接受 fail-closed**：目标 canonical 文件已存在时 MUST 拒绝，MUST NOT 覆盖。未完成内容修订 SHALL 使用显式 consumer 接点，不改变普通接受语义；蓝图升版造成的纯指针漂移仍由原位升版处理。
 - **指针原位升版**：派生 readiness 前，设计准备段 MUST 按「Reconciliation re-resolves stable targets without a semantic diff engine」执行三处蓝图指针原位升版；它 MUST 复用同一 canonical 校验与同一落盘原语（整批校验后写、中途失败回滚），MUST NOT 改动契约字段，不构成第二套写入机制。writer 竞争退出时 readiness MUST 报忙并不派生结论。
 - **终点**：派生 design gate / readiness 并返回后续施工入口。子流程 MUST **停在 selector 与 Goal Mode 执行之前**，MUST NOT 选择 CU、启动 run 或触碰 P3 closure。goal 运行时内的指针调和不是设计准备子流程：它只做指针原位升版，MUST NOT 接受候选、选择 CU 或触碰 closure。
 - **施工段前提不放宽**：selector 与 Goal Mode 施工段 MUST 仍要求至少一个 canonical CU；设计准备段的入口放宽 MUST NOT 传导到施工段。

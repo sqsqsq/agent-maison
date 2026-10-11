@@ -1,0 +1,550 @@
+# SSOT: 业务术语 ↔ 权威模块 (Glossary)
+# 由 Skill 0 · Phase B 逐条合并
+schema_version: "1.0"
+terms:
+  - term: "系统功能封装"
+    canonical_module: "CommFunc"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "在 PRD 中描述“系统能力沉淀到公共封装层”时，多指可复用工具与脱敏，而非业务页面。"
+    confidence_hint: "精确命中 `CommFunc.typical_business_terms`；与 NOT_responsible_for 无字面冲突（Step 1.5 已扫）。"
+    easily_confused_with:
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD/设计描述的是**无界面的**日志、脱敏、纯工具类 API → 选 **CommFunc**（本模块）。
+          若描述的是**可复用 UI 组件/布局/动效/资源**、或与用户可见界面强相关 → 选 **CommUI**。
+          子层硬规则：CommUI 可依赖 CommFunc；**CommFunc 不依赖 CommUI**；若 import 方向违反，应先怀疑分层边界而非合并两模块职责。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
+          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
+
+  - term: "通用日志"
+    canonical_module: "CommFunc"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 写「用统一 Logger 打 hilog、统一 DOMAIN」时，指本词；不是「我的」里的账户展示或业务异常上报策略。"
+    confidence_hint: "精确命中 `CommFunc.typical_business_terms`；NOT 中未以「不要记日志」形式否定本词（已扫）。"
+    easily_confused_with:
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD/设计描述的是**无界面的**日志、脱敏、纯工具类 API → 选 **CommFunc**（本模块）。
+          若描述的是**可复用 UI 组件/布局/动效/资源**、或与用户可见界面强相关 → 选 **CommUI**。
+          子层硬规则：CommUI 可依赖 CommFunc；**CommFunc 不依赖 CommUI**；若 import 方向违反，应先怀疑分层边界而非合并两模块职责。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
+          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
+
+  - term: "脱敏"
+    canonical_module: "CommFunc"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 说「展示手机号要脱敏」且指 `MaskUtil.maskPhone` 之类纯算法时，属本词；不是「已登录/展示用账号」这一账号域问题。"
+    confidence_hint: "精确命中 `CommFunc.typical_business_terms`；`CommFunc.NOT_responsible_for` 未在否定条目中单独排除「脱敏」二字（与 Step 1.5 不冲突）。"
+    easily_confused_with:
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD/设计描述的是**无界面的**日志、脱敏、纯工具类 API → 选 **CommFunc**（本模块）。
+          若描述的是**可复用 UI 组件/布局/动效/资源**、或与用户可见界面强相关 → 选 **CommUI**。
+          子层硬规则：CommUI 可依赖 CommFunc；**CommFunc 不依赖 CommUI**；若 import 方向违反，应先怀疑分层边界而非合并两模块职责。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
+          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
+
+  - term: "工具类"
+    canonical_module: "CommFunc"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当口头说「沉淀成工具类」指 `MaskUtil`/`Logger` 等无业务状态的静态能力时，属本词；不是「业务 Service 单例」。"
+    confidence_hint: "精确命中 `CommFunc.typical_business_terms`；与 NOT 无冲突（已扫）。"
+    easily_confused_with:
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD/设计描述的是**无界面的**日志、脱敏、纯工具类 API → 选 **CommFunc**（本模块）。
+          若描述的是**可复用 UI 组件/布局/动效/资源**、或与用户可见界面强相关 → 选 **CommUI**。
+          子层硬规则：CommUI 可依赖 CommFunc；**CommFunc 不依赖 CommUI**；若 import 方向违反，应先怀疑分层边界而非合并两模块职责。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若只涉及 `Logger` / `MaskUtil` 等**与登录会话、Profile 无关**的纯工具能力 → 选 **CommFunc**（本模块）。
+          若涉及**登录/登出、`UserProfile` / `LoginState` / `AppStorage` 中账号键、`AccountService` 单例** → 选 **AccountManager**。`AccountManager` 可依赖本模块；**禁止**在 `CommFunc` 内持账号业务状态。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **脱敏/日志/与 Tab·卡包无关的纯技术工具** → **CommFunc**（本模块）。
+          **钱包首页/我的/卡包/添卡、服务宫格、卡引导与 feature 内仓库** → **WalletMain**；`WalletMain` 可依赖本模块，**禁止**在 `CommFunc` 中实现主功能业务页或卡种流程。
+
+  - term: "导航栈上下文"
+    canonical_module: "CommFunc"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD/评审说「全局导航栈」「NavPathContext」「子页无法 @Link 时要取同一个 NavPathStack」时，多指本模块 `NavPathContext.attach`/`stack` 的技术语义；不是底 Tab 壳或「跳转到哪一页」的产品路由文案。"
+    confidence_hint: "精确命中 `CommFunc.typical_business_terms`；`NOT_responsible_for` 未字面否定「导航栈上下文」（Step 1.5 已扫）。"
+    easily_confused_with:
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          **hilog、`MaskUtil`、`NavPathContext`（无 `@Component`）** → **CommFunc**（本模块）。
+          **`ActionListItem`、`SectionCard`、`CommColors`、`showToast`** → **CommUI**。
+          **依赖方向**：`CommUI` → `CommFunc` ✅；反向 ❌。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          **纯工具与日志**、与「何时登录、存哪个 AppStorage 键」无关 → **CommFunc**。
+          **`AccountService`、`UserProfile`、`LoginState`、监听回调** → **AccountManager**。本模块可被其依赖，**不**写账号单例。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **导航栈上下文 / 脱敏工具 / Logger**、与卡包 Tab 产品语义无关 → **CommFunc**。
+          **首页/我的/卡包/添卡、`HomeRepository`、`pushPath` 业务语义** → **WalletMain**。`NavPathContext` **可被宿主 attach 后**供其 `pushPath` 使用，**页面名与编排**仍归 feature。
+      - term: "应用入口"
+        module: "Phone"
+        disambiguation: |
+          **`Logger` / `MaskUtil` / `NavPathContext` 通用实现** → **CommFunc**（本模块）。
+          **`PhoneAbility`、`loadContent`、根 `Navigation`/`Tabs`、在根页调用 `NavPathContext.attach`** → **Phone**；宿主 **消费**本模块 API 完成挂载，**不等价**本模块承担 HAP 壳职责。
+
+  - term: "公共 UI 组件"
+    canonical_module: "CommUI"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 说「用公共卡片区块、统一列表项」时，多指可 import 的 ArkUI 组件，而非在 Feature 里手写一套等效 UI 实现。"
+    confidence_hint: "精确命中 `CommUI.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
+          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
+          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
+          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
+
+  - term: "主题色"
+    canonical_module: "CommUI"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 说「用 comm 主色 / app.color comm_primary」时，多指与 `CommColors` 或资源 token 对齐的展示语义。"
+    confidence_hint: "精确命中 `CommUI.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
+          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
+          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
+          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
+
+  - term: "通用列表项"
+    canonical_module: "CommUI"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 说「统一行高、左右留边、右侧箭头的列表行」时，多指 `ActionListItem` 这类可复用结构，而非业务里手写的卡券行。"
+    confidence_hint: "精确命中 `CommUI.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
+          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
+          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
+          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
+
+  - term: "区段卡片"
+    canonical_module: "CommUI"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 说「同一屏里按区段分组的卡片容器、带区段标题与内边距」时，多指 `SectionCard` 这类可复用容器，而不是 feature 里绑卡种数据的 `CardGuideSection`。"
+    confidence_hint: "精确命中 `CommUI.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
+          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
+          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
+          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
+
+  - term: "Toast"
+    canonical_module: "CommUI"
+    owner_layer: "05-SystemBase"
+    aliases: []
+    sample_usage: "当 PRD 写「操作成功/失败时底部轻提示、不打断主流程的反馈」时，多指与界面上下文绑定的 `showToast` / `promptAction` 用法；不是 hilog 或业务侧「无 UI 的异常码回报」。"
+    confidence_hint: "精确命中 `CommUI.typical_business_terms`；种子行已列入 glossary-seed-allowlist 放行；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若 PRD/设计强调 **ArkUI 组件/布局/颜色 token/Toast 在界面上的使用** → 选 **CommUI**（本模块）。
+          若强调 **hilog 日志、手机号/账号脱敏、与界面无关的纯工具类** → 选 **CommFunc**。
+          依赖关系：本模块的 `oh-package` 可依赖 `CommFunc`；**CommFunc 不应依赖本模块**；若发现反向 import，优先修正分层。
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          可复用 **ArkUI 组件/主题/Toast** 等无账号领域语义 → **CommUI**（本模块）。
+          **登录态、展示账号、`UserProfile`、登出、订阅登录状态** → **AccountManager**。业务页可组合两侧导出，**禁止**在 `CommUI` 的 `@Component` 内实现 `AccountService` 或修改 AppStorage 账号键。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **无业务名状**的通用 ListItem、Section 容器、主题色、Toast → **CommUI**（本模块）。
+          **卡包/添卡/首页/我的**等钱包主路径、页面编排与 `HomeTabPage` / `buildCardPackPage` 等 → **WalletMain**；可 import 本模块拼层，**带「钱包主 feature」语义的专页**归属在 `02-Feature/WalletMain`。
+
+  - term: "账号管理"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases: []
+    sample_usage: "当 PRD 说「单例的账号会话、`AccountService` 登录/登出、AppStorage 中的登录态与展示用账号串」时，指本域；不是「只调 `MaskUtil` 做脱敏」或「可复用列表行/Toast」的纯 UI/纯工具面。"
+    confidence_hint: "精确命中 `AccountManager.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
+          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
+          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
+
+  - term: "登录"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases: []
+    sample_usage: "当 PRD 说「点登录、写入登录态、触发 `onLoginStateChanged`、拿到 `UserProfile`」时，多指 `AccountService.login` 所承载的**账号域**动作；不是「点进我的 Tab 或某个钱包页」的纯导航表述。"
+    confidence_hint: "精确命中 `AccountManager.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
+          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
+          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
+
+  - term: "登出"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases: []
+    sample_usage: "当 PRD 说「点登出、清登录态、切回未登录、`UserProfile` 清空或订阅到登出事件」时，多指 `AccountService.logout` 所承载的**账号域**动作；不是「从某个二级页按返回键回到上一级」的纯导航表述。"
+    confidence_hint: "精确命中 `AccountManager.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
+          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
+          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
+
+  - term: "我的账号"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases: []
+    sample_usage: "当 PRD 说「在『我的』里展示可读的账号串/昵称、与 `getUserProfile` 对齐的展示态」时，多指**账号域数据**的呈现依据；**Tab 与页面级路由**可仍由「我的」所指的 WalletMain 页承载，与纯 UI 列表行、 Toast 的归属不同。"
+    confidence_hint: "精确命中 `AccountManager.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
+          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
+          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
+
+  - term: "未登录"
+    canonical_module: "AccountManager"
+    owner_layer: "04-BusinessBase"
+    aliases: []
+    sample_usage: "当 PRD 说「`LoginState` 为未登录、无有效 `UserProfile`、需先走 `AccountService.login` 才能用账号能力」时，多指**账号域布尔态**；不是「该 Tab/页尚未从服务端拉到业务数据」这类仅 feature/仓库层的问题（除非文意明确与账号会话挂钩）。"
+    confidence_hint: "精确命中 `AccountManager.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          若只讨论**字符串脱敏/格式化的纯工具能力**、且与「是否已登录、会话、Profile」无关 → 选 **CommFunc** 的 `MaskUtil` 等。
+          若讨论**登录/登出、AppStorage 中账号态、UserProfile/LoginState 聚合** → 选 **AccountManager**（本模块）。本模块可依赖 `CommFunc`，不要反过来。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          若 PRD 描述**列表项/卡片/主题色/Toast 等可复用 UI 积木** → **CommUI**；若描述**登录态变化、展示账号、登出后清理**等 → **AccountManager**（本模块）。页面可以同时 import 两侧，但**账号领域逻辑**不要写进 `CommUI` 组件实现里。
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          **`AccountService` / `UserProfile` / 登录态的存储与单例** → **AccountManager**（本模块，权威域）。
+          **「我的/首页/卡包/添卡」的页面、路由、卡种入口与 feature 内仓库** → **WalletMain**；`MineTabPage` 可调用本模块，但**账号真理与 API** 仍在本模块，**页面级编排**属 `WalletMain`。
+
+  - term: "钱包主功能"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases: []
+    sample_usage: "当 PRD 说「首页/我的 Tab、卡包与添卡流程、服务宫格与卡引导、由 `HomeRepository`/`CardRepository` 支撑的钱包主路径」时，多指本 feature 的页面与数据编排；不是 `AccountService` 的域模型定义，也不是无业务名的 `ActionListItem`/`SectionCard` 积木本身。"
+    confidence_hint: "精确命中 `WalletMain.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若讨论 **`AccountService` / 登录与登出 / `UserProfile` / `LoginState` / AppStorage 中账号态** 的**领域服务与数据模型** → **AccountManager**（权威域）。
+          若讨论**「我的」页怎么摆、和首页如何跳转、卡包/添卡流程 UI** 等**feature 内页面与路由编排** → **WalletMain**（本模块），即使代码里在「我的」调用了 `AccountService`。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          可复用、无钱包业务名状的 **ListItem/卡片容器/主题色/Toast** → **CommUI**。
+          **卡引导、卡分类列表、与「卡包」强绑定的 feature 专页/区块** → **WalletMain**（本模块）；可 import `CommUI`，但**业务组件与数据绑定**的归属在仓库路径 `02-Feature/WalletMain`。
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**（本模块）；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+      - term: "主应用"
+        module: "Phone"
+        disambiguation: |
+          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+
+  - term: "卡包"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases: []
+    sample_usage: "当 PRD 说「`buildCardPackPage`、卡分类列表、卡券只读/引导入口、由 `CardRepository` 等提供的卡列表数据」时，多指**钱包卡包 feature 面**；不是无业务名的区段/列表行组件、也不是账号会话 API 或 HAP 壳的 Tab 配置。"
+    confidence_hint: "精确命中 `WalletMain.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若讨论 **`AccountService` / 登录与登出 / `UserProfile` / `LoginState` / AppStorage 中账号态** 的**领域服务与数据模型** → **AccountManager**（权威域）。
+          若讨论**「我的」页怎么摆、和首页如何跳转、卡包/添卡流程 UI** 等**feature 内页面与路由编排** → **WalletMain**（本模块），即使代码里在「我的」调用了 `AccountService`。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          可复用、无钱包业务名状的 **ListItem/卡片容器/主题色/Toast** → **CommUI**。
+          **卡引导、卡分类列表、与「卡包」强绑定的 feature 专页/区块** → **WalletMain**（本模块）；可 import `CommUI`，但**业务组件与数据绑定**的归属在仓库路径 `02-Feature/WalletMain`。
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**（本模块）；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+      - term: "主应用"
+        module: "Phone"
+        disambiguation: |
+          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+
+  - term: "添卡"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases: []
+    sample_usage: "当 PRD 说「`buildAddCardEntryPage`、卡种引导/选卡入口、进入卡包前的加卡流程」时，多指**本 feature 的添卡路由与业务页**；不是 `CommUI` 里无卡种语义的通用按钮行、也不是 `AccountService` 自身的接口定义。"
+    confidence_hint: "精确命中 `WalletMain.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若讨论 **`AccountService` / 登录与登出 / `UserProfile` / `LoginState` / AppStorage 中账号态** 的**领域服务与数据模型** → **AccountManager**（权威域）。
+          若讨论**「我的」页怎么摆、和首页如何跳转、卡包/添卡流程 UI** 等**feature 内页面与路由编排** → **WalletMain**（本模块），即使代码里在「我的」调用了 `AccountService`。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          可复用、无钱包业务名状的 **ListItem/卡片容器/主题色/Toast** → **CommUI**。
+          **卡引导、卡分类列表、与「卡包」强绑定的 feature 专页/区块** → **WalletMain**（本模块）；可 import `CommUI`，但**业务组件与数据绑定**的归属在仓库路径 `02-Feature/WalletMain`。
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**（本模块）；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+      - term: "主应用"
+        module: "Phone"
+        disambiguation: |
+          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+
+  - term: "首页"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases: []
+    sample_usage: "当 PRD 说「`HomeTabPage` 里的服务宫格/活动/卡引导、`HomeRepository` 提供的数据、双 Tab 里偏『首页』那一屏的内容」时，多指**本 feature 的首页子页**；不是 `Phone` 的 `loadContent` 或根 `Navigation` 壳、也不是 `AccountService` 的 API 面。"
+    confidence_hint: "精确命中 `WalletMain.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若讨论 **`AccountService` / 登录与登出 / `UserProfile` / `LoginState` / AppStorage 中账号态** 的**领域服务与数据模型** → **AccountManager**（权威域）。
+          若讨论**「我的」页怎么摆、和首页如何跳转、卡包/添卡流程 UI** 等**feature 内页面与路由编排** → **WalletMain**（本模块），即使代码里在「我的」调用了 `AccountService`。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          可复用、无钱包业务名状的 **ListItem/卡片容器/主题色/Toast** → **CommUI**。
+          **卡引导、卡分类列表、与「卡包」强绑定的 feature 专页/区块** → **WalletMain**（本模块）；可 import `CommUI`，但**业务组件与数据绑定**的归属在仓库路径 `02-Feature/WalletMain`。
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**（本模块）；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+      - term: "主应用"
+        module: "Phone"
+        disambiguation: |
+          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+
+  - term: "我的"
+    canonical_module: "WalletMain"
+    owner_layer: "02-Feature"
+    aliases: []
+    sample_usage: "当 PRD 说「`MineTabPage` 这一屏、与 `MineRepository` 相关的入口列表、在『我的』里编排登录入口/个人服务区块」时，多指**本 feature 的『我的』子页**；与「我的账号」不同——后者在 glossary 中偏 **AccountManager** 的展示用账号/Profile 域；**底 Tab 的壳**仍属 `Phone`。"
+    confidence_hint: "精确命中 `WalletMain.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "账号管理"
+        module: "AccountManager"
+        disambiguation: |
+          若讨论 **`AccountService` / 登录与登出 / `UserProfile` / `LoginState` / AppStorage 中账号态** 的**领域服务与数据模型** → **AccountManager**（权威域）。
+          若讨论**「我的」页怎么摆、和首页如何跳转、卡包/添卡流程 UI** 等**feature 内页面与路由编排** → **WalletMain**（本模块），即使代码里在「我的」调用了 `AccountService`。
+      - term: "公共 UI 组件"
+        module: "CommUI"
+        disambiguation: |
+          可复用、无钱包业务名状的 **ListItem/卡片容器/主题色/Toast** → **CommUI**。
+          **卡引导、卡分类列表、与「卡包」强绑定的 feature 专页/区块** → **WalletMain**（本模块）；可 import `CommUI`，但**业务组件与数据绑定**的归属在仓库路径 `02-Feature/WalletMain`。
+      - term: "系统功能封装"
+        module: "CommFunc"
+        disambiguation: |
+          **纯工具与日志/脱敏**、与卡包/首页/我的的**产品语义**无关 → **CommFunc**。
+          与**钱包 Tab、卡种入口、服务宫格/活动与导航**强相关 → **WalletMain**（本模块）；本 feature 在少数路径可能调用 `CommFunc`（如日志），**禁止**用 `CommFunc` 当「主功能 feature」的挡箭牌。
+      - term: "主应用"
+        module: "Phone"
+        disambiguation: |
+          **卡种/服务宫格/卡包/添卡、feature 内 Repository 与用例** → **WalletMain**（本模块）。
+          **Entry HAP、`PhoneAbility`、`loadContent`、根 `Navigation`+双 Tab 壳、HAP 级多模块依赖装配** → **Phone**；`Phone` 的 `pages/Index` 从本模块 import 子页，**本模块不实现** Ability 与 HAP 壳。
+
+  - term: "主应用"
+    canonical_module: "Phone"
+    owner_layer: "01-Product"
+    aliases: []
+    sample_usage: "当 PRD 说「`Phone` 入口 HAP、`PhoneAbility` 与 `loadContent`、HAP 级 `oh-package` 把 Wallet/Account/Comm 拉齐、根 `Navigation`+底 Tab 壳」时，多指**产品壳/宿主**；不指 `HomeRepository` 里的服务宫格数据或 `buildCardPackPage` 业务 UI（那是 **WalletMain**）。"
+    confidence_hint: "精确命中 `Phone.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`** → **Phone**（本模块）。
+          若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。
+
+  - term: "应用入口"
+    canonical_module: "Phone"
+    owner_layer: "01-Product"
+    aliases: []
+    sample_usage: "当 PRD 说「`main_pages` / `loadContent` 进 `pages/Index`、HAP 作为用户可见起点、Ability 里拉起根页面」时，多指**宿主壳的工程级入口**；不指**feature 子页/二级路由上的业务 CTA**（如添卡/卡包 builder），后者归 **WalletMain**。"
+    confidence_hint: "精确命中 `Phone.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`** → **Phone**（本模块）。
+          若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。
+
+  - term: "启屏"
+    canonical_module: "Phone"
+    owner_layer: "01-Product"
+    aliases: []
+    sample_usage: "当 PRD 说「冷启动到首窗口展示前、HAP/Ability 生命周期里与**系统或壳层**相关的闪屏/首帧体验」时，多落在 **Phone** 宿主与资源声明侧；不指**已进入 `HomeTabPage` 后的活动轮播/运营 Banner**（那是 **WalletMain** 的 presentation 数据面）。"
+    confidence_hint: "精确命中 `Phone.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`** → **Phone**（本模块）。
+          若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。
+
+  - term: "底 Tab"
+    canonical_module: "Phone"
+    owner_layer: "01-Product"
+    aliases: []
+    sample_usage: "当 PRD 说「`pages/index.ets` 里底部 `Tabs`、首页/我的 两个 Tab 位、`@Provide('navPathStack')` 供子页出栈入栈」时，多指 **Phone 壳**上的主导航；不指**某一 Tab 内服务宫格/卡种区块的业务编排**（那是 **WalletMain** 的 `HomeTabPage` / `MineTabPage` 内容）。"
+    confidence_hint: "精确命中 `Phone.typical_business_terms`；与 NOT 不冲突（已扫）。"
+    easily_confused_with:
+      - term: "钱包主功能"
+        module: "WalletMain"
+        disambiguation: |
+          若讲 **应用 Ability、窗口与 `loadContent`、HAP 依赖声明、多 Tab 的壳层 `Navigation`、入口 `@Entry`** → **Phone**（本模块）。
+          若讲 **首页/我的内具体卡引导、服务宫格数据、`buildCardPackPage` 业务 UI、`HomeRepository` 等** → **WalletMain**；`Phone` 的 `Index` 只 **import 并放置** 这些 export，不承载 feature 内仓库与用例实现。

@@ -161,8 +161,8 @@ async function star2(s: Snapshot, mutate?: (bp: Record<string, unknown>) => void
     for (const result of bp.derived_results ?? []) result.input_revision = bp.revision;
     mutate?.(bp);
     fs.writeFileSync(bpFile, YAML.stringify(bp));
-    const reconcile = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-    assert(reconcile.bumped.some(item => item.change_unit_id === 'ledger-refresh') && !reconcile.skipped.length, JSON.stringify(reconcile));
+    const { rebuildCuDesignInputs, project } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    rebuildCuDesignInputs(s, project(s, feature));
     if (mutate) {
       const acceptance = YAML.parse(fs.readFileSync(featureFilePath(s.root, feature, 'acceptance.yaml'), 'utf8'));
       assert.strictEqual(acceptance.criteria[0].expected_result, NEW_EXPECTED_RESULT, '派生 acceptance 未刷新为新蓝图内容');
@@ -297,8 +297,14 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     };
     assert(visit(bp), '快照蓝图缺 ledger-domain');
     fs.writeFileSync(bpFile, YAML.stringify(bp));
-    const reconcile = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
-    assert(reconcile.bumped.some(item => item.change_unit_id === 'ledger-refresh') && !reconcile.skipped.length, JSON.stringify(reconcile));
+    const contractsFile = featureFilePath(s.root, feature, 'contracts.yaml');
+    const old = fs.readFileSync(contractsFile);
+    assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+    assert(fs.readFileSync(contractsFile).equals(old));
+    fs.rmSync(contractsFile);
+    reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+    const { authorCurrentCuPlan } = require('./component-design-handoff.unit.test') as typeof import('./component-design-handoff.unit.test');
+    fs.writeFileSync(contractsFile, YAML.stringify(authorCurrentCuPlan(s.root, YAML.parse(old.toString('utf8')))));
     const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
     clearFrameworkConfigCache();
     const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!;

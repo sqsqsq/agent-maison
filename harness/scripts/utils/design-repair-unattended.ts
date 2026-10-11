@@ -128,7 +128,7 @@ function differingPaths(a: unknown, b: unknown, at = ''): string[] {
 
 /**
  * 编写调用的授权边界（plan 9c3d7e1a t6 codex 第五轮）：草稿与基线逐字段比，只允许本次 B1 发现项定位到的字段子树
- *（映射过期只允许删掉那条引用）与运行时随后覆盖的字段（revision、根 provenance 五个登记键、derived_results）不同。
+ * 与运行时随后覆盖的字段（revision、根 provenance 五个登记键、derived_results）不同。
  * 做法：把这些位置在草稿副本里还原成基线值，剩下的差异就是越权的位置。
  */
 export function outOfScopePaths(base: BlueprintRecord, draft: BlueprintRecord, blueprintId: string, items: readonly DesignAuthorityFinding[]): string[] {
@@ -153,8 +153,6 @@ export function outOfScopePaths(base: BlueprintRecord, draft: BlueprintRecord, b
       const toParent = parentOf(to);
       if (!fromParent || !toParent) continue;
       if (item.codes.includes('authority_content_not_machine_structure')) setOrDelete(toParent, leaf, fromParent[leaf]);
-      // 映射过期：只允许删掉那条引用（改成别的值不算）。
-      else if (item.codes.includes('authority_cu_mapping_stale') && !(leaf in toParent)) setOrDelete(toParent, leaf, fromParent[leaf]);
     }
   }
   return differingPaths(base, normalized);

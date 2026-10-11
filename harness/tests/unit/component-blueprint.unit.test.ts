@@ -583,7 +583,7 @@ export function runAll(): UnitCaseResult[] {
     }
     const fixtureProjection = fs.readFileSync(path.join(path.dirname(VALID_PATH), 'component-blueprint.review.md'), 'utf8');
     assert(fixtureProjection !== markdown && fixtureProjection.includes('projection: component-blueprint-review@3'), '旧 Ledger 文档保留作旧格式回归，不重生成原夹具');
-    assert(markdown.includes('projection: component-blueprint-review@4'), '新输出使用完整 4+1 格式');
+    assert(markdown.includes('projection: component-blueprint-review@5'), '新输出使用默认设计交付格式');
   }));
 
   results.push(test('review presentation selects business fields: DTO tables, ordered flow, decisions and unchanged evidence, without recursive metadata', () => {

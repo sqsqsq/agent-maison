@@ -76,7 +76,7 @@ use_cases:
           - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
           - { call: "flow.confirmOtp", with: { code: "654321" } }
         expected_phase_sequence: [Idle, Preparing, Applying, Persisting, WaitingOtp, Verifying, Success]
-        expected_boundary_calls:
+        expected_port_calls:
           - "gateway.validateRequest"
           - "gateway.allocateResource"
           - "ledger.save"
@@ -94,7 +94,7 @@ use_cases:
         triggers:
           - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
         expected_phase_sequence: [Idle, Preparing, Failed]
-        expected_boundary_calls: ["gateway.validateRequest"]
+        expected_port_calls: ["gateway.validateRequest"]
         expected_state:
           errorCode: "VAL_ERR"
           resultTaskId: "null"
@@ -112,7 +112,7 @@ use_cases:
         triggers:
           - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
         expected_phase_sequence: [Idle, Preparing, Applying, Failed]
-        expected_boundary_calls: ["gateway.validateRequest", "gateway.allocateResource"]
+        expected_port_calls: ["gateway.validateRequest", "gateway.allocateResource"]
         expected_state:
           errorCode: "APPLY_ERR"
         not_called:
@@ -129,7 +129,7 @@ use_cases:
         triggers:
           - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
         expected_phase_sequence: [Idle, Preparing, Applying, Persisting, Failed]
-        expected_boundary_calls: ["gateway.validateRequest", "gateway.allocateResource", "ledger.save"]
+        expected_port_calls: ["gateway.validateRequest", "gateway.allocateResource", "ledger.save"]
         expected_state:
           errorCode: "PERSIST_ERR"
         not_called:
@@ -149,7 +149,7 @@ use_cases:
           - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
           - { call: "flow.confirmOtp", with: { code: "000000" } }
         expected_phase_sequence: [Idle, Preparing, Applying, Persisting, WaitingOtp, Verifying, Failed]
-        expected_boundary_calls:
+        expected_port_calls:
           - "gateway.validateRequest"
           - "gateway.allocateResource"
           - "ledger.save"
@@ -171,7 +171,7 @@ use_cases:
           - { call: "flow.submitTask", with: { sku: "SKU1", actorId: "u1" } }
           - { call: "flow.cancel",     with: {} }
         expected_phase_sequence: [Idle, Preparing, Applying, Persisting, WaitingOtp, Failed]
-        expected_boundary_calls:
+        expected_port_calls:
           - "gateway.validateRequest"
           - "gateway.allocateResource"
           - "ledger.save"

@@ -302,13 +302,9 @@ function checkVerticalSlice(
   cu: ChangeUnitArtifact,
   contracts: ContractsSpec,
 ): ChangeUnitProjectionIssue[] {
-  const roles = new Set(cu.target_predicates.map(item => item.role));
   const issues: ChangeUnitProjectionIssue[] = [];
   const flowRefs = cu.design_refs.filter(ref => ref.target.kind === 'flow');
   if (flowRefs.length > 0) {
-    for (const role of ['behavior', 'owner', 'consumer', 'recovery'] as const) {
-      if (!roles.has(role)) issues.push(issue('change_unit_runtime_vertical_role_missing', `runtime vertical slice 缺 ${role} predicate。`, 'repair_change_unit'));
-    }
     for (const ref of flowRefs) {
       const mapped = (contracts.state_management ?? []).find(state => state.design_ref && sameBlueprintTarget(ref, state.design_ref));
       if (!mapped) {
@@ -612,17 +608,17 @@ export function validateChangeUnitFeatureProjection(
   useCasesPresent: boolean,
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
-  options: { changeUnitOverride?: ChangeUnitArtifact } = {},
+  options: { changeUnitOverride?: ChangeUnitArtifact; designOnly?: boolean } = {},
 ): ChangeUnitProjectionResult {
   const section = asRecord(contracts?.change_unit);
-  if (!section) {
+  if (!section && !options.designOnly) {
     // M7：缺 sidecar 时"不适用"只对**普通 Feature**成立。Feature identity 以 `cu-` 派生
     // 时它归属某份蓝图，缺 `contracts.yaml.change_unit` 就是缺机器映射真源——lite 轨没有
     // 强制 contracts.yaml 的阶段前置，若在这里静默放行，CU-bound lite 会一路假绿到闭环。
     return { ...requireSidecarForChangeUnitFeature(projectRoot, feature), useCasesRequired: false, dagRequired: false };
   }
   const issues: ChangeUnitProjectionIssue[] = [];
-  for (const key of Object.keys(section)) {
+  for (const key of Object.keys(section ?? {})) {
     if (!CHANGE_UNIT_ALLOWED_KEYS.has(key)) issues.push(issue('change_unit_projection_unknown_field', `contracts.change_unit.${key} 不属于 ID-only 投影。`));
   }
   for (const forbidden of ['runtime_flow_slices', 'use_cases_required', 'dag_required']) {
@@ -633,7 +629,7 @@ export function validateChangeUnitFeatureProjection(
   let cu: ChangeUnitArtifact | undefined = options.changeUnitOverride;
   if (!cu) {
     try {
-      const loaded = resolveChangeUnitRef(projectRoot, section.change_unit_ref);
+      const loaded = resolveChangeUnitRef(projectRoot, section?.change_unit_ref);
       cu = asChangeUnitArtifact(loaded.changeUnit);
     } catch (error) {
       const code = error instanceof ChangeUnitResolutionError ? error.code : 'change_unit_ref_unresolvable';
@@ -659,11 +655,11 @@ export function validateChangeUnitFeatureProjection(
     item.route === 'reconcile_blueprint' ? 'reconcile_blueprint' : 'repair_change_unit',
   )));
   for (const forbidden of ['purpose', 'target_predicates', 'provides', 'design_refs', 'verification_refs']) {
-    if (Object.prototype.hasOwnProperty.call(section, forbidden)) {
+    if (Object.prototype.hasOwnProperty.call(section ?? {}, forbidden)) {
       issues.push(issue('change_unit_definition_copied', `contracts.change_unit 不得复制 canonical ${forbidden}。`));
     }
   }
-  issues.push(...changeUnitMappingIssues(projectRoot, section, cu, phase));
+  if (!options.designOnly) issues.push(...changeUnitMappingIssues(projectRoot, section!, cu, phase));
   issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
   const warnings: string[] = [];
   try {

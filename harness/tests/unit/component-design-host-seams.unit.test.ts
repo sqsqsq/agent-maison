@@ -502,10 +502,10 @@ export function runAll(): UnitCaseResult[] {
       let issues = runSeamCheck(root, { projection: generated.path }).issues;
       assert(issues.some(i => i.id === 'publication_change_units_mismatch') && !issues.some(i => i.id === 'publication_projection_format_stale'), JSON.stringify(issues));
       materializeBlueprintReview(root, BLUEPRINT_ID);
-      fs.writeFileSync(generated.path, fs.readFileSync(generated.path, 'utf8').replace('component-blueprint-review@4', 'component-blueprint-review@1'));
+      fs.writeFileSync(generated.path, fs.readFileSync(generated.path, 'utf8').replace('component-blueprint-review@5', 'component-blueprint-review@1'));
       issues = runSeamCheck(root, { projection: generated.path }).issues;
       assert(issues.some(i => i.id === 'publication_projection_format_stale') && !issues.some(i => i.id === 'publication_change_units_mismatch'), JSON.stringify(issues));
-      fs.writeFileSync(generated.path, before.replace(/artifact_sha256: sha256:[a-f0-9]+/, 'artifact_sha256: sha256:' + '0'.repeat(64)).replace('component-blueprint-review@4', 'component-blueprint-review@1'));
+      fs.writeFileSync(generated.path, before.replace(/artifact_sha256: sha256:[a-f0-9]+/, 'artifact_sha256: sha256:' + '0'.repeat(64)).replace('component-blueprint-review@5', 'component-blueprint-review@1'));
       issues = runSeamCheck(root, { projection: generated.path }).issues;
       assert(issues.some(i => i.id === 'publication_derived_from_mismatch') && issues.some(i => i.id === 'publication_projection_format_stale') && issues.some(i => i.id === 'publication_change_units_mismatch'), '多原因未同时报告');
       fs.writeFileSync(cuPath, '[broken YAML');

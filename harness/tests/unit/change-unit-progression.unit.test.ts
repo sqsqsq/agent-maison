@@ -864,6 +864,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const ordinaryDecision = resolveComponentBlueprintRef(VALID_PROJECT, ordinaryDecisionRef).target as BlueprintRecord;
     const ordinary = clone(later);
     ordinary.change_unit_id = 'ordinary-ledger-provider';
+    ordinary.target_predicates.push(...base.target_predicates.filter(item => ['behavior', 'owner', 'consumer', 'recovery'].includes(item.role)).map(clone));
     ordinary.requires = [{ require_id: 'ordinary-contract', from_change_unit_id: 'ledger-refresh', provide_id: 'ledger-data-source-contract' }];
     ordinary.design_refs = ordinary.design_refs.map(ref => ref.target.kind === 'decision' ? clone(ordinaryDecisionRef) : ref);
     const ordinaryPath = path.join(VALID_PROJECT, 'doc', 'features', 'ledger-app-blueprint', 'ordinary-ledger-provider', 'change-unit.yaml');

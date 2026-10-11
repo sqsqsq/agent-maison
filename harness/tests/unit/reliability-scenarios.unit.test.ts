@@ -91,6 +91,7 @@ import {
   specFirstCuHooks,
   successorChain,
   withHost,
+  withFreshCuHost,
   withSnapshot,
 } from './lifecycle-evolution.unit.test';
 import { changeProjectedAcceptance, freezeAndTransfer, NEW_EXPECTED_RESULT, runIds as snapshotRunIds, supersede } from './successor-exit.unit.test';
@@ -1803,14 +1804,15 @@ type S15Key = 'b1-rejoin' | 'b1-stale-successor' | 'supervisor-stale-successor' 
 
 function runS15(key: S15Key): ScenarioRunner {
   return async (_entry, done) => {
-    await withHost(async s => {
+    const stale = key === 'b1-stale-successor' || key === 'supervisor-stale-successor';
+    await withFreshCuHost(async s => {
       const flow: RepairFlow = key === 'b1-rejoin' ? await s15RejoinFlow(s)
         : key === 'counter-unrepaired' ? await s15RejoinFlow(s, { repair: false })
         : key === 'b1-stale-successor' ? await s15StaleFlow(s, 'resend')
         : key === 'supervisor-stale-successor' ? await s15StaleFlow(s, 'supervisor')
         : await s15AuthorityFlow(s);
       const final = flow.runs.at(-1)!;
-      const expectedRuns = key === 'b1-stale-successor' || key === 'supervisor-stale-successor' ? 2 : 1;
+      const expectedRuns = stale ? 2 : 1;
       done({
         key, root: s.root, feature: flow.feature, frameworkRoot: s.frameworkRoot, runIds: flow.runs,
         // supervisor 分支里拉起命令由计划任务发出（测试代替计划任务把它跑起来，不是操作者动作）。
@@ -1818,8 +1820,8 @@ function runS15(key: S15Key): ScenarioRunner {
         acceptance: key === 'counter-unrepaired'
           ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：设计权威未修，保持停止' }
           : authorityAcceptance(s, flow.feature, final),
-        after: { run_id: flow.halted, event_index: flow.haltIndex },
-        hit: { ok: flow.haltIndex >= 0 && flow.haltClass === (key === 'b2-authority' ? 'B2' : 'B1'), evidence: flow.evidence },
+        after: { run_id: flow.halted!, event_index: flow.haltIndex! },
+        hit: { ok: flow.halted !== undefined && flow.haltIndex !== undefined && flow.haltIndex >= 0 && flow.haltClass === (stale ? 'device_not_ready' : key === 'b2-authority' ? 'B2' : 'B1'), evidence: flow.evidence },
         expectation: key === 'counter-unrepaired'
           ? (t) => ({
               met: !t.facts.claimed_complete && flow.runs.length === 1 && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,
@@ -1840,23 +1842,26 @@ type S16Key = 'b1-auto-repair' | 'stale-supervisor' | 'stale-resend' | 'counter-
 /** S16 无人值守 B1 自动接手（plan 9c3d7e1a §5.5、§6）：驱动与机制断言复用 design-authority-repair 套件的 S16 流程函数。 */
 function runS16(key: S16Key): ScenarioRunner {
   return async (_entry, done) => {
-    await withHost(async s => {
+    await withFreshCuHost(async s => {
       const flow: RepairFlow = key === 'b1-auto-repair' ? await s16MainFlow(s)
         : key === 'stale-supervisor' ? await s16StaleFlow(s, 'supervisor')
         : key === 'stale-resend' ? await s16StaleFlow(s, 'resend')
         : await s16NoPreauthFlow(s);
       const final = flow.runs.at(-1)!;
-      const expectedRuns = key === 'stale-supervisor' || key === 'stale-resend' ? 2 : 1;
-      const expectedRescues = key === 'stale-resend' ? 1 : 0;
+      const expectedRuns = 1;
+      const expectedRescues = 0;
+      const observationRun = flow.halted ?? flow.runs[0];
+      const observationIndex = flow.haltIndex ?? eventsOf(s.root, flow.feature, observationRun)
+        .findIndex(e => e.type === 'design_authority_repair' && e.stage === 'attempted');
       done({
         key, root: s.root, feature: flow.feature, frameworkRoot: s.frameworkRoot, runIds: flow.runs,
-        // 预授权与蓝图写坏都是故障之前的前提；supervisor 分支的拉起命令由计划任务发出（测试代替计划任务把它跑起来，不是操作者动作）。
+        // 预授权与蓝图写坏是前提；未来 plan 可重签的修复不产生停机或人工救援。
         interventions: flow.interventions.map(iv => ({ ...iv, actor: DESIGN_ACTOR })),
         acceptance: key === 'counter-no-preauth'
           ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：没有预授权，B1 停等设计 owner' }
           : authorityAcceptance(s, flow.feature, final),
-        after: { run_id: flow.halted, event_index: flow.haltIndex },
-        hit: { ok: flow.haltIndex >= 0 && flow.haltClass === 'B1', evidence: flow.evidence },
+        after: { run_id: observationRun, event_index: observationIndex },
+        hit: { ok: observationIndex >= 0 && flow.haltClass === 'B1', evidence: flow.evidence },
         expectation: key === 'counter-no-preauth'
           ? (t) => ({
               met: !t.facts.claimed_complete && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,

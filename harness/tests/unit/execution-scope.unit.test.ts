@@ -32,6 +32,7 @@ import { createHash } from 'crypto';
 import { stableStringify, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { setupGoalRuntimeHost, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
+import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { configureFeature } from './component-closure.unit.test';
@@ -60,11 +61,11 @@ import { uiSpecAbsPath } from '../../scripts/utils/ui-spec-shared';
 import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
-import type { AcceptanceSpec } from '../../scripts/utils/types';
+import type { AcceptanceSpec, CheckContext } from '../../scripts/utils/types';
 import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { applyScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
 import { applyInvalidationsToResume, deriveHaltValidationOnlyEligibility } from '../../scripts/goal-phase-runtime';
-import { isClosureOnlyRetryPending } from '../../scripts/utils/goal-runner-phase';
+import { isClosureOnlyRetryPending, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
@@ -208,7 +209,8 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
     const preparedCandidate = requestOnly && mode !== 'request-ut';
     const input = request(requestOnly ? [requestPhase] : testingOnly ? ['testing'] : ['direct'].includes(mode) || codingFirst ? ['coding', 'review', 'ut'] : ['spec'], requestOnly ? 'request' : 'feature');
     const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
-    const codeFile = path.join(root, '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
+    const codeFile = path.join(root, ['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode)
+      ? 'src/ledger/ClosureFixture.ts' : '02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets');
     const codeRel = path.relative(root, codeFile).replace(/\\/g, '/');
     const originalCode = fs.readFileSync(codeFile);
     // 写集授权只认受信设计来源 `contracts.files`（第七轮阻断 1：候选自带的 implementation
@@ -219,7 +221,7 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       declared.files = [codeRel];
       if (['revision-revoke', 'design-gap', 'design-gap-revert'].includes(mode)) {
         // These modes exercise real authorized source edits, so the existing owner resolver needs the actual module location.
-        declared.modules = [{ name: 'FinancialCard', layer: '02-Feature', package_path: '02-Feature/FinancialCard' }];
+        declared.modules = [{ name: 'ledger', layer: '02-Feature', package_path: 'src/ledger' }];
       }
       fs.writeFileSync(contractsFile, YAML.stringify(declared));
     }
@@ -300,7 +302,7 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
     } else {
       fs.writeFileSync(featureFilePath(root, feature, 'feature.yaml'), YAML.stringify({ execution_scope: input }));
     }
-    if (mode === 'direct') assert.deepStrictEqual(buildChangeUnitGoalHandoff(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit)).expectedChain, ['coding', 'review', 'ut']);
+    if (mode === 'direct') assert.deepStrictEqual(buildChangeUnitGoalHandoff(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit)).expectedChain, [...(missingMapping ? ['plan'] : []), 'coding', 'review', 'ut']);
     if (!mode.startsWith('detached')) {
     const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'), '--prepare-run', '--run-mode', 'attended', '--adapter', 'codex', '--feature', feature, '--run-id', 'p2-attended', '--requirement', 'fixture delivery', '--project-root', root, '--framework-root', frameworkRoot], { cwd: root, encoding: 'utf8', timeout: 30000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
     assert.equal(cli.status, 0, cli.stderr + cli.stdout);
@@ -329,9 +331,16 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
         // `design-gap-revert`：第一轮 coding 误改（触发 plan 裁决），plan 拒绝扩展契约后
         // 第二轮 coding **把文件改回原字节**——这正是 §5.1.1a 要保护的闭环。
         if (mode === 'design-gap-revert') { if (designGap) fs.writeFileSync(codeFile, originalCode); else fs.appendFileSync(codeFile, '\n// unjustified edit\n'); return; }
-        if (['direct', 'design-gap', 'revision-revoke'].includes(mode)) fs.appendFileSync(codeFile, '\n// authorized P2 implementation\n');
+        if (mode === 'revision-revoke' && !designGap) fs.appendFileSync(codeFile, '\nexport function refreshLedgerSnapshot(): string[] { return []; }\n');
+        else if (['direct', 'design-gap', 'revision-revoke'].includes(mode)) fs.appendFileSync(codeFile, '\n// authorized P2 implementation\n');
       },
       onHarnessSummary: ({ phase }) => {
+        if (missingMapping && phase === 'plan') {
+          const checks = checkChangeUnitFeatureProjection({ projectRoot: root, frameworkRoot, feature, phaseRule: {},
+            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature) } as CheckContext, 'plan');
+          assert(checks.some(check => check.status === 'FAIL' && check.id === 'change_unit_predicate_mapping_missing'), JSON.stringify(checks));
+          return { checks };
+        }
         // Three shapes of "not a new fact": a plain blocker, an offline device and a human-only
         // verdict. None of them may produce a revision (D2.3: PASS/FAIL never drives scope).
         if (mode === 'testing-fail') return { checks: [{ id: 'device_result_failed', category: 'structure', description: 'device evidence failed', severity: 'BLOCKER', status: 'FAIL', details: 'observed failure', suggestion: 'repair the actual failure' }] };
@@ -413,6 +422,10 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
           return;
         }
         if (invalidOutput && requestOnly) { fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'criteria: [{id: AC-BROKEN\n'); return; }
+        if (mode === 'revision-revoke' && designGap) {
+          fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'criteria: [{id: AC-DEVICE, priority: P1, ut_layer: device, desc: new refreshLedgerSnapshot API returns the current ledger snapshot, expected_result: empty ledger returns an empty list}]' + String.fromCharCode(10));
+          return;
+        }
         fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'), 'criteria: [{id: AC-DEVICE, priority: P1, ut_layer: device, desc: device verification}]' + String.fromCharCode(10));
       },
       afterHarnessPass: ({ phase, runId }) => {
@@ -420,10 +433,10 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
         // ——这正是生产里 R3（`designScopeRevisionChecks`）经 spec 的 script-report 发布新设计
         // 内容的那一步。§5.1.1a 的豁免只对**触发依据**那两个 kind 生效，真实设计输入一行不放宽，
         // 所以不重绑就会（正确地）判 `input binding stale`、完不成。
-        if (specGap && phase === 'spec') {
+        if ((specGap || mode === 'revision-revoke' && designGap) && phase === 'spec') {
           const freshAcceptance = liveBinding('ut', 'acceptance');
           const current = loadEffectiveExecutionScope(root, feature, runId)!;
-          const revision = request(['coding', 'review', 'ut'], 'feature');
+          const revision = request(specGap ? ['coding', 'review', 'ut'] : ['coding', 'review', 'ut', 'testing'], 'feature');
           revision.request.impact = input.request.impact;
           revision.facts = current.obligations.map(obligation => {
             const copy = structuredClone(obligation) as typeof revision.facts[number] & { satisfied_by?: unknown[] };
@@ -613,6 +626,15 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       }
       return;
     }
+    if (missingMapping) {
+      assert.notEqual(probe.exitCode, 0, '缺施工映射仍完成 CU Goal');
+      assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), '缺施工映射仍签发 Feature completion');
+      assert.equal(completionOf({ projectRoot: root, feature, expectedChain: ['plan', 'coding', 'review', 'ut'], expectedTrack: 'full', frameworkRoot }).verdict, 'INVALID');
+      const completion = observeChangeUnitCompletion(root, asChangeUnitArtifact(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit));
+      assert.equal(completion.state, 'ABSENT', JSON.stringify(completion));
+      assert(probe.events.some(event => event.type === 'phase_verdict' && event.phase === 'plan' && event.verdict !== 'PASS'), 'plan 未保留真实映射失败');
+      return;
+    }
     assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-5)));
     detachedStarted = true;
     if (mode === 'direct') {
@@ -632,7 +654,7 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       // §3 问题 4: every handoff-era assertion migrated to its run-internal equivalent; none dropped.
       const revisions = sourceEvents.filter(event => event.type === 'scope_revised');
       // revision-revoke applies three: #1 when spec closes, #2 when coding invalidates that closure,
-      // #3 when the re-run spec publishes its NEW closure evidence (the only thing that changed).
+      // #3 when the re-run spec absorbs the newly discovered API and publishes fresh acceptance evidence.
       // `spec-gap-revert` 有两条：① review 归因 spec 的修订；② spec 修复后重绑真实验收输入。
       assert.equal(revisions.length, mode === 'revision-revoke' ? 3 : specGap ? 2 : 1, 'duplicate scope revision');
       assert.equal(revisions[0].revision_index, 1, 'revision index must start at 1');
@@ -683,11 +705,14 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       assert.equal(sourceEvents.filter(event => event.type === 'run_created').length, 1, 'duplicate run birth');
       const revisionAt = sourceEvents.findIndex(event => event.type === 'scope_revised');
       const afterRevision = sourceEvents.slice(revisionAt).find(event => event.type === 'agent_invoke_start');
-      // Turn budget is continuous across the revision: the next invoke is the next sequence number,
-      // never a reset to i1. (`revision-precut` spends one extra turn on the interrupted spec run.)
-      // `spec-gap-revert` 的修订发生在 review（coding=i1、review=i2），所以下一轮是 i3；
-      // 既有模式的预期一行未改。
-      assert(afterRevision?.invoke_id.endsWith(['revision-precut', 'spec-gap-revert'].includes(mode) ? '-i3' : '-i2'), 'revision reset consumed turns: ' + afterRevision?.invoke_id);
+      // 施工映射检查可能前移 plan；以真实已消耗调用核验连续预算，不能靠固定 i2 掩盖重置。
+      const beforeRevision = sourceEvents.slice(0, revisionAt);
+      const turnsBefore = beforeRevision.filter(event => event.type === 'agent_invoke_start').length;
+      assert.equal(resolveResumedBudget(beforeRevision).totalTurns, turnsBefore);
+      assert(afterRevision?.invoke_id.endsWith(`-i${turnsBefore + 1}`), 'revision reset consumed turns: ' + afterRevision?.invoke_id);
+      const invokes = sourceEvents.filter(event => event.type === 'agent_invoke_start');
+      assert.deepStrictEqual(invokes.map(event => Number(/-i(\d+)$/.exec(event.invoke_id)?.[1])), invokes.map((_, index) => index + 1), '修订或恢复重置/复用了调用序号');
+      assert.equal(resolveResumedBudget(sourceEvents).totalTurns, invokes.length, '修订或恢复遗漏已消耗轮次');
       if (mode === 'design-gap-revert') {
         // §5.1.1a 的闭环：plan 拒绝扩展契约 → coding 撤回误改 → 责任阶段证据仍 fresh、完成仍 VALID。
         // ① plan 没有扩大写集（契约文件字节未变）
@@ -771,13 +796,9 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       fs.writeFileSync(featureFilePath(root, feature, 'feature-completion.json'), JSON.stringify(completionProjection));
     }
     const verified = completionOf({ projectRoot: root, feature, expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full' });
-    // plan b2d7f4e9：Feature↔CU 绑定核对是 cu- Feature 评估的一部分（不再是观察器的第二道门），
-    // 映射缺失时 Feature 本身也判未完成（plan 义务 uncovered/binding）。
-    assert.equal(verified.verdict, missingMapping ? 'INVALID' : 'VALID', JSON.stringify(verified));
+    assert.equal(verified.verdict, 'VALID', JSON.stringify(verified));
     const cu = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh');
     const cuCompletion = observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit));
-    // plan b2d7f4e9：记录可信、Feature↔CU 映射不完整 → 义务 uncovered/binding（INCOMPLETE），不是记录不可信。
-    if (missingMapping) { assert.equal(cuCompletion.state, 'INCOMPLETE'); assert(cuCompletion.reasons.some(reason => reason.includes('mapping'))); return; }
     assert.equal(cuCompletion.state, 'VALID', JSON.stringify(cuCompletion));
     assert.deepStrictEqual(cuCompletion.expectedChain, mode === 'direct' ? ['coding', 'review', 'ut']
       : designGapFamily ? ['plan', 'coding', 'review', 'ut']
@@ -785,6 +806,16 @@ async function runScopeScenario(mode: 'direct' | 'revision' | 'revision-cut' | '
       : mode === 'revision-revoke' ? ['spec', 'plan', 'coding', 'review', 'ut', 'testing']
       : ['spec', 'coding', 'review', 'ut', 'testing']);
     if (mode === 'direct') {
+      // 已成功的同一 Feature 证据与 completion 原件仍在，缺映射不能借它们信用 CU。
+      const mappedBytes = fs.readFileSync(contractsFile);
+      try {
+        const unmapped = YAML.parse(mappedBytes.toString('utf8')); unmapped.change_unit.predicate_mappings = [];
+        fs.writeFileSync(contractsFile, YAML.stringify(unmapped));
+        const notCredited = observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit));
+        assert.equal(notCredited.state, 'INCOMPLETE', JSON.stringify(notCredited));
+        assert(notCredited.reasons.some(reason => reason.includes('mapping')), JSON.stringify(notCredited));
+      } finally { fs.writeFileSync(contractsFile, mappedBytes); }
+      assert.equal(observeChangeUnitCompletion(root, asChangeUnitArtifact(cu.changeUnit)).state, 'VALID', '恢复真实映射后未恢复原有 CU credit');
       const previous = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
       const reuseInput = request(['coding', 'review', 'ut'], 'feature');
       reuseInput.facts = previous.obligations.map(obligation => obligation.applicability !== 'required' ? obligation : ({ ...obligation, satisfied_by: obligation.satisfied_by ?? [{ phase: obligation.owner_phase, run_id: 'p2-attended', evidence_manifest_aggregate: loadPhaseEvidenceManifest(root, feature, obligation.owner_phase)!.manifest.aggregate_sha256 }] }));

@@ -153,7 +153,8 @@ for (const mode of ['kill', 'exit-no-terminal'] as const) {
       assert.ok(!window.some(e => e.type === 'phase_backtrack_completed'), `普通 gate PASS 不得提前结束返修：${JSON.stringify(window)}`);
       assert.ok(window.some(e => e.type === 'phase_verdict' && e.phase === 'coding' && e.action === 'retry' && e.verdict !== 'PASS'), JSON.stringify(window));
       assert.ok(!window.some(e => e.type === 'agent_invoke_start'), '中断后不得越过 coding 去调用其它阶段');
-      assert.strictEqual(ends[2].completion_observed, true, '续跑由真实 turn.completed 解析判完成');
+      assert.strictEqual(ends[2].completion_observed, true,
+        `续跑由真实 turn.completed 解析判完成：${JSON.stringify({ ends, invokes: invokes.filter(i => i.phase === 'coding'), runEnd: ofType(events, 'run_end') })}`);
       const candidateId = String((requests[0].candidates as Array<{ id?: string }>)[0]?.id ?? '');
       assert.ok(candidateId && probe.codingPrompts[2].includes(candidateId), `续跑提示词仍须携带原返修任务 ${candidateId}`);
       const completedAt = events.findIndex(e => e.type === 'phase_backtrack_completed');

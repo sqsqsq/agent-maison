@@ -77,7 +77,7 @@ const CONTRACTS_SOURCES = (binding: ExecutionScope['obligations'][number]['basis
   binding.source.kind === 'artifact' ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts';
 
 /** Feature↔CU 精确绑定：contracts.yaml `change_unit_ref` 与 canonical CU 的 revision / artifact_sha256，及 ID-only 映射完整性。 */
-function changeUnitBindingIssues(projectRoot: string, feature: string, checkMappings: boolean): string[] {
+export function changeUnitBindingIssues(projectRoot: string, feature: string, checkMappings: boolean): string[] {
   const identity = tryParseCuFeatureId(feature);
   if (!identity) return [];
   let canonical: ReturnType<typeof loadCanonicalChangeUnit> | undefined;
