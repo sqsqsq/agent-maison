@@ -84,8 +84,27 @@ const SELFREPORT_COPYFLOOR_MIN_SCREENS = 2;
 /** VL fidelity 显著高于 score_floor 时触发复核 WARN */
 const SCORE_FLOOR_SENTINEL_GAP = 0.35;
 /** defects[] 枚举合法取值（v1 渲染缺陷枚举契约） */
-const VALID_DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'unexpected_render', 'other']);
-const VALID_DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
+export const VALID_DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'unexpected_render', 'other']);
+export const VALID_DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
+export const DEVICE_BBOX_CONTRACT = 'normalized [x,y,width,height] relative to this device_screenshot; exactly four finite numbers in [0,1], never pixel coordinates';
+
+export function visualFieldError(field: string, actual: unknown, expected: string): string {
+  const value = actual === undefined ? 'undefined' : JSON.stringify(actual, (_key, value) => typeof value === 'number' && !Number.isFinite(value) ? String(value) : value);
+  return `${field}: actual=${String(value).slice(0, 180)}; expected ${expected}`;
+}
+
+export function validateDefectBbox(value: unknown, field: string): string | null {
+  if (!Array.isArray(value) || value.length !== 4) return visualFieldError(field, value, DEVICE_BBOX_CONTRACT);
+  const bad = value.findIndex(n => typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 1);
+  return bad < 0 ? null : visualFieldError(`${field}[${bad}]`, value[bad], DEVICE_BBOX_CONTRACT);
+}
+
+export function validateMustFixRefs(value: unknown, length: number, field: string): string | null {
+  const expected = `zero-based integer indices into this screen's must_fix (length=${length}, ${length ? `0..${length - 1}` : 'no valid index; use []'})`;
+  if (!Array.isArray(value)) return visualFieldError(field, value, expected);
+  const bad = value.findIndex(n => typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n >= length);
+  return bad < 0 ? null : visualFieldError(`${field}[${bad}]`, value[bad], expected);
+}
 
 function ruleDesc(ctx: CheckContext): string {
   const checks = ctx.phaseRule.structure_checks as Record<string, { description: string }>;
@@ -799,13 +818,13 @@ export function validateVisualDiffJson(
             }
             const dd = d as Record<string, unknown>;
             if (typeof dd.class !== 'string' || !VALID_DEFECT_CLASSES.has(dd.class)) {
-              errors.push(`screens[${i}].defects[${j}].class 非法：${String(dd.class)}`);
+              errors.push(visualFieldError(`screens[${i}].defects[${j}].class`, dd.class, `class 非法，须为 ${[...VALID_DEFECT_CLASSES].join('|')}`));
             }
             if (typeof dd.severity !== 'string' || !VALID_DEFECT_SEVERITIES.has(dd.severity)) {
-              errors.push(`screens[${i}].defects[${j}].severity 非法：${String(dd.severity)}`);
+              errors.push(visualFieldError(`screens[${i}].defects[${j}].severity`, dd.severity, `severity 非法，须为 ${[...VALID_DEFECT_SEVERITIES].join('|')}`));
             }
             if (typeof dd.note !== 'string' || !dd.note.trim()) {
-              errors.push(`screens[${i}].defects[${j}].note 必填`);
+              errors.push(visualFieldError(`screens[${i}].defects[${j}].note`, dd.note, 'note 必填，non-empty impact/evidence description'));
             }
             if (dd.class === 'missing_render' && (typeof dd.ref_element !== 'string' || !dd.ref_element.trim())) {
               errors.push(`screens[${i}].defects[${j}] class=missing_render 须带 ref_element（参考图侧缺失元素在 spec/ref-elements.yaml 的 element_id）`);
@@ -814,13 +833,11 @@ export function validateVisualDiffJson(
               errors.push(`screens[${i}].defects[${j}] class=unexpected_render 须带 element 或 bbox（渲染出来的多余内容在哪）`);
             }
             if (dd.requirement_quote !== undefined && typeof dd.requirement_quote !== 'string') {
-              errors.push(`screens[${i}].defects[${j}].requirement_quote 须为字符串`);
+              errors.push(visualFieldError(`screens[${i}].defects[${j}].requirement_quote`, dd.requirement_quote, 'string'));
             }
             if (dd.bbox !== undefined && dd.bbox !== null) {
-              const bb = dd.bbox;
-              if (!Array.isArray(bb) || bb.length !== 4 || !bb.every(n => typeof n === 'number' && n >= 0 && n <= 1)) {
-                errors.push(`screens[${i}].defects[${j}].bbox 须为 4 个 [0,1] 数`);
-              }
+              const error = validateDefectBbox(dd.bbox, `screens[${i}].defects[${j}].bbox`);
+              if (error) errors.push(error);
             }
             // t0（f7a3d9c2）：转录溯源与 must_fix 锚点——可选字段，形状校验（legacy 兼容）
             if (dd.source !== undefined && dd.source !== null) {
@@ -843,12 +860,8 @@ export function validateVisualDiffJson(
             if (dd.must_fix_refs !== undefined && dd.must_fix_refs !== null) {
               const refs = dd.must_fix_refs;
               const mfLen = Array.isArray(row.must_fix) ? row.must_fix.length : 0;
-              if (
-                !Array.isArray(refs) ||
-                !refs.every(n => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < mfLen)
-              ) {
-                errors.push(`screens[${i}].defects[${j}].must_fix_refs 须为该屏 must_fix 合法下标数组（0..${Math.max(0, mfLen - 1)}）`);
-              }
+              const error = validateMustFixRefs(refs, mfLen, `screens[${i}].defects[${j}].must_fix_refs`);
+              if (error) errors.push(error);
             }
           }
         }

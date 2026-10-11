@@ -85,7 +85,7 @@ test('v1: 缺 note → 命中', () => {
 });
 
 test('v1: bbox 越界 → 命中', () => {
-  assert.ok(hasErr(validateErrors({ defects: [{ class: 'clipping', severity: 'major', note: 'x', bbox: [0.1, 0.2, 1.5, 0.1] }] }), 'bbox 须为 4 个'));
+  assert.ok(hasErr(validateErrors({ defects: [{ class: 'clipping', severity: 'major', note: 'x', bbox: [0.1, 0.2, 1.5, 0.1] }] }), 'bbox[2]: actual=1.5; expected normalized [x,y,width,height]'));
 });
 
 test('v1: defects 非数组 → 命中', () => {

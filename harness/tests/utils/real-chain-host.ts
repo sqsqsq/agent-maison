@@ -7,7 +7,7 @@
 // 造法由 plan §10.1 的 T0 实验钉死，**不得改回轻法**：
 //   N：Node 对模块路径做 realpath，junction 的 `framework/harness` 会被解开、
 //      子进程 `detectRepoLayout(__dirname)` 解析回源仓并往源仓写产物。故 harness
-//      必须**整拷**（`*.ts` + tsconfig* + package.json + 九个子目录），只 junction
+//      必须**整拷**（`*.ts` + tsconfig* + package.json + 八个子目录），只 junction
 //      `harness/node_modules`。`profiles/` 同样整拷——profile 侧模块用
 //      `createRequire('../../../harness/harness-runner.ts')`，junction 会让它们
 //      realpath 回源仓、与入口形成两套模块级状态。
@@ -64,7 +64,7 @@ export function provisionFrameworkUnder(hostRoot: string): { frameworkRoot: stri
       fs.copyFileSync(path.join(srcHarness, f), path.join(harness, f));
     }
   }
-  for (const d of ['scripts', 'schemas', 'templates', 'prompts', 'code-graph', 'framework', 'graph-extractor', 'state', 'trace']) {
+  for (const d of ['scripts', 'schemas', 'templates', 'prompts', 'code-graph', 'graph-extractor', 'state', 'trace']) {
     copyDir(path.join(srcHarness, d), path.join(harness, d));
   }
   link(path.join(srcHarness, 'node_modules'), path.join(harness, 'node_modules'));

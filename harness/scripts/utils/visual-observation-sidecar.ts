@@ -129,8 +129,9 @@ export function parseVisualObservationPayload(
   body: string,
   expected: { imageHash: string },
 ): { ok: true; observations: VisualObservationEntry[] } | { ok: false; reason: string } {
-  const doc = extractJsonObjectFromText(body);
-  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象' };
+  let parseError = '';
+  const doc = extractJsonObjectFromText(body, reason => { parseError = reason; });
+  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象：' + parseError };
   const hashes = doc.image_hashes;
   if (!Array.isArray(hashes) || !hashes.includes(expected.imageHash)) {
     return { ok: false, reason: `image_hashes 未回显当前图片 hash（${expected.imageHash}）` };

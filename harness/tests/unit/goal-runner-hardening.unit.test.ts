@@ -30,7 +30,6 @@ import {
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { killProcessTree } from '../../scripts/utils/agent-invoke';
 import {
-  isBudgetOnlyIdentityChange,
   resolveManifestDriftDecision,
   buildBacktrackTargetAbsentGuidance,
 } from '../../scripts/goal-runner';
@@ -250,7 +249,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const authorized = resolveManifestDriftDecision(dr);
       assert(authorized.rebaseApplied === true, 'override-manifest 授权须 rebase');
       assert(authorized.changedFields.join(',') === 'budget', `budget-only changedFields=${authorized.changedFields.join(',')}`);
-      assert(isBudgetOnlyIdentityChange(authorized.changedFields), '预算独变须命中 budget-only 判据');
 
       // 无漂移：稳定空数组（不得 undefined/null）
       const noneDrift = resolveManifestDriftDecision({
@@ -259,7 +257,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(noneDrift.rebaseApplied === false && noneDrift.halt === null, '无漂移不得 rebase/halt');
       assert(Array.isArray(noneDrift.changedFields) && noneDrift.changedFields.length === 0,
         `无漂移 changedFields 须为稳定空数组（实得 ${JSON.stringify(noneDrift.changedFields)}）`);
-      assert(!isBudgetOnlyIdentityChange(noneDrift.changedFields), '空变更不算 budget-only');
 
       // 无基线：同样稳定空数组
       const noBaseline = resolveManifestDriftDecision({ ...dr, birthFields: null });
@@ -277,10 +274,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         '顶层与 halt 内 changedFields 一致',
       );
       assert(unauthorized.changedFields.join(',') === 'budget', `未授权分支顶层 changedFields=${unauthorized.changedFields.join(',')}`);
+      const mixed = resolveManifestDriftDecision({ ...dr, currentFields: { ...withBudget, requirement: 'req2' } });
+      assert(mixed.rebaseApplied && mixed.changedFields.includes('budget') && mixed.changedFields.includes('requirement'), '整体授权仍记录预算与真实需求的混合变化，不享有预算专用路径');
 
-      // 非 budget-only（字段混变）不得命中 budget-only 判据
-      assert(!isBudgetOnlyIdentityChange(['budget', 'requirement']), '混合变更不算 budget-only');
-      assert(!isBudgetOnlyIdentityChange([]), '空变更不算 budget-only');
+
     },
   },
   {

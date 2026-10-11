@@ -1772,6 +1772,22 @@ Enforcement: `harness/scripts/utils/goal-run-lock.ts`, `harness/scripts/goal-run
 - **WHEN** a dry-run child hard-crashes leaving a stale feature lock with `run_mode: dry`
 - **THEN** a new real run SHALL start by taking over the stale lock without any `--resume` suggestion
 
+### Requirement: Budget-only authorization preserves completed upstream evidence
+
+A budget-only manifest edit SHALL continue through existing manifest authorization, identity rebase and cumulative budget resolution. It SHALL NOT proactively rerun upstream harness/agents or rewrite valid completed summaries, evidence manifests or receipts. New facts/evidence automatic sources SHALL not acquire historical run manifests as business dependencies; explicit business references retain their existing checks. Requirement, scope, source, environment and gate changes SHALL continue through their existing checks and owner recovery.
+
+Resume SHALL use the existing feature observation/assessment to consume an applicable current failed phase summary even when historical goal events still contain its PASS. Ordinary phase-only revalidation does not append a goal phase verdict; it must not make the next resume spend unrelated downstream calls before owner recovery. This does not grant a special old-attempt validation-only entitlement or introduce a second state machine.
+
+#### Scenario: authorized budget increase continues the unfinished goal
+
+- **WHEN** a current run exhausts its budget after closing upstream phases and an authorized budget-only resume increases its limit
+- **THEN** those upstream artifacts remain unchanged, unfinished work continues and cumulative turns/active runtime do not reset
+
+#### Scenario: phase-only revalidation replaces the current conclusion
+
+- **WHEN** a legal run-bound phase-only revalidation writes FAIL after the goal recorded PASS
+- **THEN** resume observes that failure and enters existing owner recovery before invoking an unrelated downstream phase
+
 ### Requirement: Wall-clock budget accumulates active runtime across resume sessions
 
 The run budget SHALL measure active execution time, not calendar span: prior activity is the sum of per-session durations partitioned by `run_start` events, where a session without `run_end` (crash/hard-kill) is conservatively credited up to one heartbeat cadence beyond its last event (capped by the next session start or the current process start — cumulative undercount SHALL be zero and per-session overcount SHALL not exceed one cadence), and dry sessions are excluded. The hard-deadline semantics (agent/harness/backoff pre-checks minus the finalize reserve) are unchanged; only the baseline becomes `sessionStart + max(0, wall − priorActive)`. Artifact-since consumers (partial-resume feed) SHALL keep the true first authoritative session start, never a synthetic time. Budget halts SHALL carry `halt_reason` and `halt_guidance` on the outcome, the `phase_halt` event and the console banner (and thus `run_end`), and the guidance SHALL name only real routes: a new run with an updated-budget manifest, or `--override-manifest`-authorized resume — never a bare restart.

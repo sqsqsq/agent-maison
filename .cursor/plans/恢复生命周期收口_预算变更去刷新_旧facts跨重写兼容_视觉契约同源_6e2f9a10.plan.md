@@ -12,7 +12,7 @@ todos:
       §2：删除 budget-only 全上游刷新及专用死代码，保留授权、身份 rebase、累计预算与普通恢复。
       将原测试改为当前格式下的行为验收；补一条普通 phase-only 重验造成事件/summary 分歧的入口回归，
       必要时只补既有观察/assess 接线，不实现旧 attempt 的专项只重验资格。
-    status: pending
+    status: completed
   - id: t2-stable-legacy-facts-view
     content: >
       已取消：用户已删除旧现场，本批不再开发旧 facts 中历史控制依赖的跨重写兼容或迁移。
@@ -22,7 +22,7 @@ todos:
     content: >
       §3：统一现有视觉 prompt、payload validator 的 bbox/下标/JSON 契约，保留准确解析诊断与一次有界纠错。
       按路标 §2.1 补 severity 三级定义及影响依据；分级效果在干净宿主观察，不新增模型评测体系。
-    status: pending
+    status: completed
   - id: t4-continuous-recovery-replay
     content: >
       已取消：独立旧混合态/长连续回放不再实施。当前格式的提额、累计预算、普通恢复入口验证并入 t1，
@@ -32,7 +32,7 @@ todos:
     content: >
       §4：同步受影响的现有规格与指引，完成目标验证和有界 review；稳定后集中完成候选门禁。
       复用 1dbe4fa4 指标与观察记录，保留历史失败事实，不将旧全量结果作为本批通过证据。
-    status: pending
+    status: in_progress
   - id: t6-host-clean-delivery-acceptance
     content: >
       §5：用已验证发布件在确认的干净代码基线上重跑原需求，与 272acb5f 的 h1 共用一次宿主运行。

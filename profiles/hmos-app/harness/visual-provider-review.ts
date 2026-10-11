@@ -40,6 +40,12 @@ import {
 import type { ProviderRef } from '../../../harness/scripts/utils/types';
 import {
   visualResidualDisposition,
+  DEVICE_BBOX_CONTRACT,
+  VALID_DEFECT_CLASSES,
+  VALID_DEFECT_SEVERITIES,
+  validateDefectBbox,
+  validateMustFixRefs,
+  visualFieldError,
   type VisualDiffDefect,
   type VisualDiffScreenEntry,
 } from './visual-diff-check';
@@ -198,6 +204,11 @@ export function buildVisualProviderReviewPrompt(
     '- Do NOT produce a verdict, a score, or a pass/fail judgement. That is the gate\'s job, not yours.',
     '- Do NOT write legacy `confirmed_by` or claim human authority; only report machine observations.',
     '- Anchor every defect to the fixes: `must_fix_refs` holds zero-based integer indices into that screen\'s `must_fix` (0 through length - 1).',
+    `- bbox: ${DEVICE_BBOX_CONTRACT}.`,
+    '- severity=blocker: concrete evidence shows that a required goal, key operation, navigation or state understanding cannot hold in the current scope/state.',
+    '- severity=major: an obvious visual or interaction deviation, while the main task can still be completed and information understood.',
+    '- severity=minor: a local detail deviation that does not affect operation, meaning or readability.',
+    '- note must state the actual impact, location/evidence and any uncertainty. An operation absent from one screenshot is not proof that it is unreachable; consider scrolling, keyboard dismissal and the applicable requirement.',
     '- When ui-spec required elements are listed, `region_attest.region` must be an exact id from that screen\'s ui-spec required elements; cover every listed id, not a free-text area name. Without a declared list, use a concrete area name.',
     '- class=missing_render MUST carry `ref_element`: the id of the reference-side element that is missing.',
     '- class=unexpected_render = something is rendered that the goal does not want. It MUST carry `element` (id of the rendered element, when it has one) or `bbox`;',
@@ -236,33 +247,26 @@ export function buildVisualProviderReviewPrompt(
   }
   lines.push(
     '',
-    'Reply with ONE JSON object and nothing else:',
-    '{',
-    `  "schema_version": "${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}",`,
-    ...(identity.runId ? [`  "run_id": "${identity.runId}",`] : []),
-    ...(identity.attemptId ? [`  "attempt_id": "${identity.attemptId}",`] : []),
-    `  "image_hashes": ${JSON.stringify(allHashes)},`,
-    '  "screens": [',
-    '    {',
-    '      "screen_id": "<one of the ids above>",',
-    '      "reference_image_hash": "<that screen\'s reference hash>",',
-    '      "evaluated_screenshot_hash": "<that screen\'s screenshot hash>",',
-    '      "must_fix": ["<minimal concrete fix>"],',
-    '      "defects": [{"class": "clipping|overlap|shape_mismatch|missing_render|unexpected_render|other",',
-    '                   "severity": "blocker|major|minor", "element": "<rendered element id; required except missing_render (ref_element) and unexpected_render (element or bbox)>",',
-    '                   "ref_element": "<reference element id; required for missing_render>",',
-    '                   "requirement_quote": "<verbatim goal sentence; optional, unexpected_render only>",',
-    '                   "note": "<what is wrong>", "must_fix_refs": [0]}]',
-    ...(identity.requireRegionAttest
-      ? [
-          '      , "region_attest": [{"region": "<required element id, or area name if none declared>", "verdict": "no_diff|diff_logged",',
-          '                           "method": "vl_screening"}]',
-          '      // region_attest is REQUIRED for any screen whose must_fix is empty (pixel contract).',
-        ]
-      : []),
-    '    }',
-    '  ]',
-    '}',
+    'Reply with ONE JSON object and nothing else. Allowed defect classes: ' + [...VALID_DEFECT_CLASSES].join(', ') + '.',
+    'The following is a valid FORMAT EXAMPLE using the current bindings, not observed findings. Replace its illustrative fixes/defects with your observations; use empty arrays if none. region_attest is required when must_fix is empty under the pixel contract.',
+    JSON.stringify({
+      schema_version: VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION,
+      ...(identity.runId ? { run_id: identity.runId } : {}),
+      ...(identity.attemptId ? { attempt_id: identity.attemptId } : {}),
+      image_hashes: allHashes,
+      screens: targets.map(t => ({
+        screen_id: t.screen_id,
+        reference_image_hash: t.refHash,
+        evaluated_screenshot_hash: t.shotHash,
+        must_fix: ['Restore the example element to match the reference'],
+        defects: [{ class: 'shape_mismatch', severity: 'major', element: t.mustHaveElements?.[0] ?? t.screen_id,
+          bbox: [0.1, 0.2, 0.3, 0.1], note: 'Example: element shape differs in this area, but the main task remains usable', must_fix_refs: [0] }],
+        ...(identity.requireRegionAttest ? {
+          region_attest: (t.mustHaveElements?.length ? t.mustHaveElements : [t.screen_id])
+            .map(region => ({ region, verdict: 'diff_logged', method: 'vl_screening' })),
+        } : {}),
+      })),
+    }, null, 2),
   );
   return lines.join('\n');
 }
@@ -282,8 +286,6 @@ export type ReviewPayloadResult =
   | { ok: true; screens: ReviewScreenPayload[] }
   | { ok: false; reason: string };
 
-const DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'unexpected_render', 'other']);
-const DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
 
 /**
  * 逐项校验。任何一条不成立即整份拒收（**部分可用**不是一个选项：半份评审会让
@@ -298,14 +300,15 @@ export function validateVisualProviderReviewPayload(
     requireRegionAttest: boolean;
   },
 ): ReviewPayloadResult {
-  const doc = extractJsonObjectFromText(body);
-  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象' };
+  let parseError = '';
+  const doc = extractJsonObjectFromText(body, reason => { parseError = reason; });
+  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象：' + parseError };
 
   // 冻结 schema 版本必须逐字回显——协议升版后旧形态载荷一律不采信（schema-invalid 即无效）。
   if (doc.schema_version !== VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION) {
     return {
       ok: false,
-      reason: `schema_version 不符（期望 ${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}，实际 ${String(doc.schema_version)}）`,
+      reason: visualFieldError('schema_version', doc.schema_version, `schema_version 不符，须为 ${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}`),
     };
   }
 
@@ -319,7 +322,7 @@ export function validateVisualProviderReviewPayload(
   const rawScreens = doc.screens;
   if (!Array.isArray(rawScreens) || rawScreens.length === 0) {
     // 空输出**绝不**等价「无缺陷」——本轮判未审查。
-    return { ok: false, reason: 'screens 缺失或为空（空输出不等于无缺陷）' };
+    return { ok: false, reason: visualFieldError('screens', rawScreens, 'screens 缺失或为空（空输出不等于无缺陷）；non-empty array covering all targets') };
   }
 
   const byId = new Map(expected.targets.map(t => [t.screen_id, t]));
@@ -328,72 +331,66 @@ export function validateVisualProviderReviewPayload(
 
   for (const [screenIndex, raw] of rawScreens.entries()) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return { ok: false, reason: `screens[${screenIndex}] 条目不是对象` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}]`, raw, 'object') };
     }
     const row = raw as Record<string, unknown>;
     const screenId = typeof row.screen_id === 'string' ? row.screen_id.trim() : '';
     const target = byId.get(screenId);
-    if (!target) return { ok: false, reason: `screens 含非目标屏：${screenId || '(空 screen_id)'}` };
-    if (seen.has(screenId)) return { ok: false, reason: `screens 重复屏：${screenId}` };
+    if (!target) return { ok: false, reason: visualFieldError(`screens[${screenIndex}].screen_id`, row.screen_id, `目标屏之一：${[...byId.keys()].join(', ')}`) };
+    if (seen.has(screenId)) return { ok: false, reason: visualFieldError(`screens[${screenIndex}].screen_id`, row.screen_id, 'screens 不得重复屏') };
     seen.add(screenId);
 
     if (row.reference_image_hash !== target.refHash) {
-      return { ok: false, reason: `${screenId} 参考图 hash 不符（期望 ${target.refHash}）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].reference_image_hash`, row.reference_image_hash, `参考图 hash 不符，须为 ${target.refHash}`) };
     }
     if (row.evaluated_screenshot_hash !== target.shotHash) {
-      return { ok: false, reason: `${screenId} 截图 hash 不符（期望 ${target.shotHash}）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].evaluated_screenshot_hash`, row.evaluated_screenshot_hash, `截图 hash 不符，须为 ${target.shotHash}`) };
     }
 
     const mustFixRaw = row.must_fix;
     if (!Array.isArray(mustFixRaw) || mustFixRaw.some(x => typeof x !== 'string' || !x.trim())) {
-      return { ok: false, reason: `${screenId} must_fix 须为字符串数组（可为空数组）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFixRaw, 'must_fix 须为非空字符串数组（可为空数组）') };
     }
     const mustFix = (mustFixRaw as string[]).map(s => s.trim());
 
     const defectsRaw = row.defects;
     if (!Array.isArray(defectsRaw)) {
-      return { ok: false, reason: `${screenId} defects 须为数组（可为空数组）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects`, defectsRaw, 'array (may be empty)') };
     }
     const defects: VisualDiffDefect[] = [];
     for (const [defectIndex, d] of defectsRaw.entries()) {
       if (!d || typeof d !== 'object' || Array.isArray(d)) {
-        return { ok: false, reason: `${screenId} screens[${screenIndex}].defects[${defectIndex}] 条目不是对象` };
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}]`, d, 'object') };
       }
       const dd = d as Record<string, unknown>;
-      if (typeof dd.class !== 'string' || !DEFECT_CLASSES.has(dd.class)) {
-        return { ok: false, reason: `${screenId} defect.class 非法：${String(dd.class)}` };
+      if (typeof dd.class !== 'string' || !VALID_DEFECT_CLASSES.has(dd.class)) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].class`, dd.class, `defect.class 非法，须为 ${[...VALID_DEFECT_CLASSES].join('|')}`) };
       }
-      if (typeof dd.severity !== 'string' || !DEFECT_SEVERITIES.has(dd.severity)) {
-        return { ok: false, reason: `${screenId} defect.severity 非法：${String(dd.severity)}` };
+      if (typeof dd.severity !== 'string' || !VALID_DEFECT_SEVERITIES.has(dd.severity)) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].severity`, dd.severity, `defect.severity 非法，须为 ${[...VALID_DEFECT_SEVERITIES].join('|')}`) };
       }
       if (typeof dd.note !== 'string' || !dd.note.trim()) {
-        return { ok: false, reason: `${screenId} defect.note 必填` };
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].note`, dd.note, 'defect.note 必填，non-empty impact/evidence description') };
       }
       let refs: number[] | undefined;
       if (dd.must_fix_refs !== undefined && dd.must_fix_refs !== null) {
         const r = dd.must_fix_refs;
-        if (
-          !Array.isArray(r) ||
-          !r.every(n => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < mustFix.length)
-        ) {
-          const badIndex = Array.isArray(r) ? r.findIndex(n => typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n >= mustFix.length) : null;
-          return { ok: false, reason: `${screenId} defect.must_fix_refs 越界或非整数数组；screens[${screenIndex}].defects[${defectIndex}].must_fix_refs${badIndex !== null ? `[${badIndex}]=${String((r as unknown[])[badIndex])}` : ''}（本屏 must_fix 长度=${mustFix.length}，索引从0起）` };
-        }
+        const error = validateMustFixRefs(r, mustFix.length, `screens[${screenIndex}].defects[${defectIndex}].must_fix_refs`);
+        if (error) return { ok: false, reason: `${screenId} defect.must_fix_refs 越界或非整数数组；${error}` };
         refs = r as number[];
       }
       let bbox: number[] | undefined;
       if (dd.bbox !== undefined && dd.bbox !== null) {
         const b = dd.bbox;
-        if (!Array.isArray(b) || b.length !== 4 || !b.every(n => typeof n === 'number' && n >= 0 && n <= 1)) {
-          return { ok: false, reason: `${screenId} defect.bbox 须为 4 个 [0,1] 数` };
-        }
+        const error = validateDefectBbox(b, `screens[${screenIndex}].defects[${defectIndex}].bbox`);
+        if (error) return { ok: false, reason: error };
         bbox = b as number[];
       }
       if (dd.requirement_quote !== undefined && dd.requirement_quote !== null && typeof dd.requirement_quote !== 'string') {
-        return { ok: false, reason: `${screenId} defect.requirement_quote 须为字符串` };
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].requirement_quote`, dd.requirement_quote, 'string') };
       }
       if (dd.class === 'unexpected_render' && !(typeof dd.element === 'string' && dd.element.trim()) && !bbox) {
-        return { ok: false, reason: `${screenId} defect class=unexpected_render 须带 element 或 bbox` };
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}]`, dd, 'unexpected_render 须带 element 或 bbox') };
       }
       defects.push({
         class: dd.class as VisualDiffDefect['class'],
@@ -417,30 +414,30 @@ export function validateVisualProviderReviewPayload(
     if (orphan.length > 0) {
       return {
         ok: false,
-        reason: `${screenId} 有 ${orphan.length} 条 must_fix 未被任何 defect 的 must_fix_refs 锚定（下标 ${orphan.join(',')}）`,
+        reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFix, `每条须被引用；未被任何 defect 的 must_fix_refs 锚定（下标 ${orphan.join(',')}）`),
       };
     }
 
     let regionAttest: ReviewScreenPayload['region_attest'];
     const attestRaw = row.region_attest;
     if (attestRaw !== undefined && attestRaw !== null) {
-      if (!Array.isArray(attestRaw)) return { ok: false, reason: `${screenId} region_attest 须为数组` };
+      if (!Array.isArray(attestRaw)) return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest`, attestRaw, 'array') };
       const rows: NonNullable<ReviewScreenPayload['region_attest']> = [];
       for (const [attestIndex, a] of attestRaw.entries()) {
         if (!a || typeof a !== 'object' || Array.isArray(a)) {
-          return { ok: false, reason: `${screenId} screens[${screenIndex}].region_attest[${attestIndex}] 条目不是对象` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}]`, a, 'object') };
         }
         const aa = a as Record<string, unknown>;
         if (typeof aa.region !== 'string' || !aa.region.trim()) {
-          return { ok: false, reason: `${screenId} screens[${screenIndex}].region_attest[${attestIndex}].region 必填` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}].region`, aa.region, 'non-empty region id') };
         }
         if (aa.verdict !== 'no_diff' && aa.verdict !== 'diff_logged') {
-          return { ok: false, reason: `${screenId} screens[${screenIndex}].region_attest[${attestIndex}].verdict 非法：${String(aa.verdict)}` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}].verdict`, aa.verdict, 'no_diff|diff_logged') };
         }
         // provider 只能以 vl_screening 举证——paired_crop_compare 需要 crop 产物（写工程），
         // legacy human method 也不属于只读 provider 的机器证据。
         if (aa.method !== 'vl_screening') {
-          return { ok: false, reason: `${screenId} screens[${screenIndex}].region_attest[${attestIndex}].method 只接受 vl_screening` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}].method`, aa.method, '只接受 vl_screening') };
         }
         rows.push({ region: aa.region.trim(), verdict: aa.verdict, method: 'vl_screening' });
       }
@@ -458,7 +455,7 @@ export function validateVisualProviderReviewPayload(
     if (expected.requireRegionAttest && mustFix.length === 0 && (regionAttest?.length ?? 0) === 0) {
       return {
         ok: false,
-        reason: `${screenId} 在 pixel 硬契约下 must_fix 为空却无 region_attest 举证`,
+        reason: visualFieldError(`screens[${screenIndex}].region_attest`, attestRaw, 'pixel 硬契约下 must_fix 为空却无 region_attest 举证；non-empty region_attest required'),
       };
     }
     if (expected.requireRegionAttest && isCleanPassCandidate && regionAttest) {
@@ -470,9 +467,7 @@ export function validateVisualProviderReviewPayload(
         if (missing.length > 0) {
           return {
             ok: false,
-            reason:
-              `${screenId} region_attest 未覆盖屏级 must_have_elements（缺 ` +
-              `${missing.join('/')}）`,
+            reason: visualFieldError(`screens[${screenIndex}].region_attest`, regionAttest, `region_attest 未覆盖屏级 must_have_elements（缺 ${missing.join('/')}）`),
           };
         }
       }
@@ -482,7 +477,7 @@ export function validateVisualProviderReviewPayload(
       if (orphan.length > 0) {
         return {
           ok: false,
-          reason: `${screenId} region_attest verdict=diff_logged 却无对应 defect/must_fix：${orphan.join(', ')}`,
+          reason: visualFieldError(`screens[${screenIndex}].region_attest`, regionAttest, `region_attest verdict=diff_logged 却无对应 defect/must_fix：${orphan.join(', ')}`),
         };
       }
     }
@@ -491,7 +486,7 @@ export function validateVisualProviderReviewPayload(
   }
 
   const missing = expected.targets.filter(t => !seen.has(t.screen_id)).map(t => t.screen_id);
-  if (missing.length > 0) return { ok: false, reason: `漏屏：${missing.join(', ')}` };
+  if (missing.length > 0) return { ok: false, reason: visualFieldError('screens', [...seen], `complete target coverage；漏屏：${missing.join(', ')}`) };
 
   return { ok: true, screens: out };
 }

@@ -380,6 +380,8 @@ import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import {
   assessFeature,
+  assessObservation,
+  observeFeatureState,
   type AssessAuthorizationContext,
   type AssessRecommendation,
 } from './utils/assess';
@@ -656,6 +658,7 @@ const LOCK_HEARTBEAT_MS = 60_000;
 const RESUME_COOLDOWN_MINUTES = 5;
 
 export interface SummaryJson {
+  run_id?: string;
   verdict?: HarnessVerdict;
   blocking_class?: string;
   failure_kind?: string;
@@ -1978,158 +1981,6 @@ function buildUnattendedExecutionBlock(
     ...deterministicDetectorLines,
   ];
   return [...(attended ? attendedModeLines : modeLines), ...redLineLines];
-}
-
-/**
- * e9d4b7a3 t5：budget-only 授权 rebase 后，**任何 review agent 启动之前**对受影响的
- * 已完成上游阶段执行一次**确定性 harness 刷新证据**（不启动 agent）——重放
- * 「599/600 撞墙 → 提预算 → resume」时，coding 等上游证据在预算 rebase 后重新闭环，
- * review 不再因 stale 白烧 invoke（i28/i29 实锤形态）。
- *
- * 复用既有执行原语：runHarnessPhase（gate+summary 重算）→ tryValidateReceipt →
- * finalizePhaseClosure（evidence manifest / 回执指针按当前 run 身份重新发布），与
- * 主循环 closure-only 段同一套函数，**不复制任何公式**。不做 verdict 推进：刷新只
- * 重发布证据，不产生新的 phase outcome。
- *
- * 二轮 review P1 修订：
- *  - **不伪造同阶段新 attempt**：旧回执仍绑定原 attempt（如 coding-i26），check-receipt
- *    对同阶段严格校验 claimed_attempt_id——伪造 refresh-* 必然 failed。本函数从 events
- *    恢复该 phase 的**原 attempt id** 复用于 harness/闭环节点（既有「跨阶段复验」语义：
- *    同 run 内用原 attempt 校验旧回执，不建 re-sign 系统）；events 中无法恢复 → 该阶段
- *    记为失败（fail-closed，不猜不造）。
- *  - **任一刷新失败 → review 前一次性 HALT**（调用方执行）：不得带着未刷新的真 stale
- *    证据继续烧 review（原样复发 i28/i29）。
- *  - 每阶段 wall 预算按绝对 deadline 逐次重算剩余（剩余≤0 即停），不再分配带 60 秒
- *    地板的均分预算（三阶段合计不得突破剩余 wall）。
- */
-async function refreshCompletedUpstreamEvidenceDeterministic(opts: {
-  projectRoot: string;
-  frameworkRoot: string;
-  manifest: GoalManifest;
-  chain: FeaturePhase[];
-  /** resume 起点（含）之前为已完成上游 */
-  chainStartIndex: number;
-  /** 绝对 wall deadline（与主循环 wallDeadlineMs 同源；逐阶段重算 remaining） */
-  wallDeadlineMs: number;
-  /** 当前 run 的历史事件（恢复各阶段原 attempt id；authoritative 视图） */
-  events: ReadonlyArray<{ type?: string; phase?: string; invoke_id?: string }>;
-  emit: (event: Record<string, unknown>) => void;
-}): Promise<string[]> {
-  const { projectRoot, frameworkRoot, manifest, chain } = opts;
-  const upstream = chain.slice(0, opts.chainStartIndex);
-  const completed = upstream.filter(ph => {
-    try {
-      return fs.existsSync(
-        path.join(receiptDirPath(projectRoot, manifest.feature, String(ph)), 'reports', 'summary.json'),
-      );
-    } catch {
-      return false;
-    }
-  });
-  if (completed.length === 0) return [];
-  opts.emit({
-    type: 'upstream_evidence_deterministic_refresh',
-    cause: 'budget_only_rebase',
-    phases: completed.map(String),
-  });
-  console.log(
-    `[goal-runner] budget-only rebase：对已完成上游阶段执行确定性 harness 刷新（不起 agent）：${completed.join(', ')}`,
-  );
-  const failures: string[] = [];
-  for (const ph of completed) {
-    const phase = ph;
-    // --- 原 attempt 身份恢复（不伪造同阶段新 attempt；缺失即 fail-closed）---
-    let originalAttempt: string | null = null;
-    for (let i = opts.events.length - 1; i >= 0; i--) {
-      const e = opts.events[i];
-      if ((e.type !== 'agent_invoke' && e.type !== 'agent_invoke_start') || e.phase !== phase) continue;
-      const m = String(e.invoke_id ?? '').match(/-(i\d+)$/);
-      originalAttempt = m ? m[1] : null;
-      break;
-    }
-    if (!originalAttempt) {
-      failures.push(`${phase}：events 中无法恢复该阶段原 attempt id——拒绝伪造新 attempt（回执 identity 校验必失败）`);
-      continue;
-    }
-    const remainingMs = opts.wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS;
-    if (remainingMs <= 0) {
-      failures.push(`${phase}：确定性刷新 wall 预算已耗尽（按绝对 deadline 重算，不得突破剩余预算）`);
-      break;
-    }
-    try {
-      // 与主循环同款 fresh 判定（summary mtime 窗口前后跃迁）——刷新必须真实重写证据
-      const beforeMtime = getSummaryMtime(readPhaseSummary(projectRoot, manifest.feature, phase).summaryAbsPath);
-      const harnessRun = await runHarnessPhase(
-        projectRoot,
-        frameworkRoot,
-        phase,
-        manifest.feature,
-        false,
-        manifest,
-        { runId: manifest.run_id, attemptId: originalAttempt },
-        remainingMs,
-      );
-      if (harnessRun.exitCode !== 0) {
-        failures.push(`${phase}：harness 刷新失败（${formatHarnessFailureTail(harnessRun.outputTail, 600) ?? '无输出'}）`);
-        continue;
-      }
-      const { summary, summaryAbsPath } = readPhaseSummary(projectRoot, manifest.feature, phase);
-      if (summary?.verdict !== 'PASS' || !isSummaryFresh(beforeMtime, getSummaryMtime(summaryAbsPath))) {
-        failures.push(`${phase}：harness 刷新后无 fresh PASS summary`);
-        continue;
-      }
-      assertGoalBoundary('closure_finalizer');
-      const receiptValidation = (injectedValidateReceipt ?? tryValidateReceipt)(
-        path.join(frameworkRoot, 'harness'),
-        projectRoot,
-        phase,
-        manifest.feature,
-        {
-          goalIdentity: {
-            runId: manifest.run_id, attemptId: originalAttempt, attemptPhase: String(phase),
-            ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
-          },
-        },
-      );
-      if (receiptValidation.status !== 'passed') {
-        failures.push(`${phase}：原 attempt（${originalAttempt}）receipt 复验未过（status=${receiptValidation.status}）`);
-        continue;
-      }
-      finalizePhaseClosure({
-        projectRoot,
-        frameworkRoot,
-        feature: manifest.feature,
-        phase,
-        goalRunId: manifest.run_id,
-        goalAttemptId: originalAttempt,
-        blockerCount: summary?.blockers?.length ?? 0,
-        persistPhaseState: () =>
-          syncPhaseStateOnReceiptPassStrict(
-            projectRoot,
-            manifest.feature,
-            phase,
-            receiptValidation,
-            { blocker_count: summary?.blockers?.length ?? 0, frameworkRoot },
-          ),
-        now: () => new Date(),
-      });
-    } catch (error) {
-      failures.push(`${phase}：${(error as Error).message.slice(0, 300)}`);
-    }
-  }
-  opts.emit({
-    type: 'upstream_evidence_deterministic_refresh_complete',
-    cause: 'budget_only_rebase',
-    phases: completed.map(String),
-    failures,
-  });
-  if (failures.length > 0) {
-    console.error(
-      `[goal-runner] budget-only rebase 确定性刷新存在失败（review 前一次性 halt，不烧 review invoke）：\n` +
-        failures.map(f => `  - ${f}`).join('\n'),
-    );
-  }
-  return failures;
 }
 
 /**
@@ -3648,9 +3499,7 @@ export function resolveManifestDriftDecision(args: {
   effectiveHash: string;
   rebaseApplied: boolean;
   rebaseAuthorizedBy: string | null;
-  /** e9d4b7a3 t5：**所有分支**的顶层字段级变更清单（无漂移=稳定空数组）——
-   * 授权 rebase 的分支此前把 diffManifestIdentityFields 结果丢弃，emit 只写 to_fields
-   * （完整哈希表非 diff）——budget-only 刷新判定无从谈起。 */
+  /** 顶层字段级变更清单；无漂移时为空数组，供授权审计。 */
   changedFields: string[];
   halt: {
     message: string;
@@ -3721,16 +3570,6 @@ export function resolveManifestDriftDecision(args: {
     rebaseApplied: true,
     rebaseAuthorizedBy: authAll ? 'override-manifest' : [...(authSet ?? [])].sort().join(','),
   };
-}
-
-/**
- * e9d4b7a3 t5：budget-only 授权 rebase 判定（precision 判据：非空 且 全部字段恰为 budget）。
- * 只有这种把 manifest 编辑降级为"纯预算提额、不影响任何产物语义"的 rebase 才允许
- * 确定性刷新上游证据；非 budget-only rebase（requirement/chain/fidelity 等变更）必须
- * 走正常 halt/重跑路径，不得顺带用刷新假装证据仍然可信。
- */
-export function isBudgetOnlyIdentityChange(changedFields: readonly string[]): boolean {
-  return changedFields.length === 1 && changedFields[0] === 'budget';
 }
 
 // ---------------------------------------------------------------------------
@@ -6740,8 +6579,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (manifestDrift.rebaseApplied) {
       // 基线承载事件（收口刀）：resolveManifestIdentityBaseline 消费本事件把出生基线
       // 前进到 to_fields——授权 rebase 过一次后，后续 resume 不再复报同一漂移
-      // e9d4b7a3 t5：同时写入 changed_fields（diff 而非完整哈希表）——budget-only
-      // rebase 的确定性刷新判定在 resume 起点读取本事件字段。
+      // 身份差异与授权一同留在 rebase 审计事件中。
       goalEvents.emit({
         type: 'manifest_identity_rebase',
         // plan 4e6fb3b6 §6.4：启动期金丝雀若已换过获准替代型号（它自己的 rebase 事件更早落盘），
@@ -7007,6 +6845,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
         resumePostAgentPhases.add(haltEligibility.phase);
         resumePostAgentAttemptIds[haltEligibility.phase] = haltEligibility.invoke_id;
       }
+      // Phase-only revalidation writes a current summary without a goal verdict event.
+      // Restore its failed phase before replay can spend an unrelated downstream call.
+      const observation = observeFeatureState({
+        projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id,
+        goalEnd: manifest.end_phase, minimumAssurance: manifest.minimum_assurance,
+      });
+      const failedCompleted = observation.phases.filter(p => {
+        const index = chain.indexOf(p.phase as FeaturePhase);
+        return index >= 0 && index < chainStartIndex && p.summary_state === 'current' && p.verdict === 'FAIL'
+          && readPhaseSummary(projectRoot, manifest.feature, p.phase as FeaturePhase).summary?.run_id === manifest.run_id;
+      });
+      if (failedCompleted.length) {
+        const assessed = assessObservation({ ...observation, phases: failedCompleted }, { mode: 'goal_mode' });
+        const failedIndex = chain.indexOf(assessed.recommendation.phase as FeaturePhase);
+        if (failedIndex >= 0 && failedIndex < chainStartIndex) {
+          chainStartIndex = failedIndex;
+          outcomes = outcomes.filter(o => chain.indexOf(o.phase) < failedIndex);
+        }
+      }
       if (resumePostAgentPhases.size > 0) {
         console.warn(
           `[goal-runner] resume：${[...resumePostAgentPhases].join(',')} 已完成 agent 执行` +
@@ -7130,61 +6987,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）；` +
           `回退 ${backtracksUsed} 次`,
       );
-    }
-
-    // e9d4b7a3 t5：**budget-only 授权 rebase**（--override-manifest 提额后 resume）——
-    // 在任何 review agent 启动之前，对受影响的已完成上游阶段执行一次确定性 harness
-    // 刷新证据（不起 agent）。重放「599/600 撞墙 → 提预算 → resume」时上游证据不再
-    // stale，review 不被白烧（i28/i29）。非 budget-only rebase / 无 rebase / dry-run
-    // 一律不走该路径（非 budget-only 漂移须 halt 或走正常重跑，不得用刷新假装可信）。
-    // 二轮 review P1：**任一刷新失败 → review 前一次性 HALT**（继续烧 review=原样
-    // 复发 i28/i29）；刷新只做 evidence 重发布，不伪造 attempt、不 re-sign、不加状态。
-    if (!dryRun && argv.resume && manifestDrift.rebaseApplied
-        && isBudgetOnlyIdentityChange(manifestDrift.changedFields)) {
-      const refreshFailures = await refreshCompletedUpstreamEvidenceDeterministic({
-        projectRoot,
-        frameworkRoot,
-        manifest,
-        chain,
-        chainStartIndex,
-        wallDeadlineMs,
-        events: startupEvents,
-        emit: (e) => goalEvents.emit(e),
-      });
-      if (refreshFailures.length > 0) {
-        halted = true;
-        const haltPhase = chain[chainStartIndex];
-        const guidance =
-          `budget-only rebase 后上游证据确定性刷新失败（${refreshFailures.length} 项，` +
-          `已在 review 之前 halt，未消耗任何 review invoke）：\n` +
-          refreshFailures.map(f => `  - ${f}`).join('\n') +
-          '\n处置：修复对应上游阶段证据（重跑其 harness 补齐 closure / 修复回执身份）后 --resume 继续。';
-        const disposition = decide(
-          { incident: 'upstream_closure_gap', phase: String(haltPhase), detail: guidance },
-          NO_AUTHORITY,
-          {
-            orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session',
-            invocation: 'resume',
-          },
-        );
-        console.error(`\n===== upstream_closure_gap =====\n${guidance}\n`);
-        goalEvents.emit({
-          type: 'phase_halt',
-          phase: haltPhase,
-          halt_reason: 'upstream_closure_gap',
-          halt_guidance: guidance,
-          detail: guidance,
-          ...runDispositionFields(disposition),
-        });
-        outcomes.push({
-          phase: haltPhase,
-          verdict: 'FAIL',
-          halted: true,
-          retries: 0,
-          halt_reason: 'upstream_closure_gap',
-          halt_guidance: guidance,
-        });
-      }
     }
 
     // T2(c)：wall 预算熔断统一发射器——reason+guidance 三处可见（phase_halt 事件/

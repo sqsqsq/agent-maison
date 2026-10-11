@@ -82,6 +82,8 @@ import {
   computeDefectFingerprint,
   isCriticEvidencePathBound,
   validateVisualDiffJson,
+  validateDefectBbox,
+  validateMustFixRefs,
   type VisualDiffDefect,
   type VisualDiffScreenEntry,
 } from '../../../profiles/hmos-app/harness/visual-diff-check';
@@ -674,7 +676,7 @@ test('t3 身份回显校验：run/attempt 逐字、image_hashes 集合齐等', (
   );
   assert.match(
     validateProviderIdentityEcho({ run_id: 'r1', attempt_id: 'a1' }, expected) ?? '',
-    /image_hashes 缺失/,
+    /image_hashes: actual=undefined; expected/,
   );
 });
 
@@ -857,8 +859,8 @@ test('33784ed1 A16 unexpected_render：提示词说明新类别；载荷校验�
     refElements: [{ element_id: 'result_nfc_card', disposition: 'excluded' }],
   });
   assert.match(prompt, /already rendered, report it as class=unexpected_render with that element id in `element` \(not in `ref_element`\)/);
-  assert.match(prompt, /"element": "<rendered element id; required except missing_render \(ref_element\) and unexpected_render \(element or bbox\)>"/);
-  assert.match(prompt, /"requirement_quote"/);
+  assert.match(prompt, /Every other class MUST carry `element`/);
+  assert.match(prompt, /`requirement_quote`/);
   const expected = { targets: [t1], runId: 'R', attemptId: 'A', requireRegionAttest: false };
   const withDefect = (defect: string) => goodPayload([t1]).replace(
     '{"class":"clipping","severity":"major","note":"被裁切","must_fix_refs":[0]}', defect);
@@ -1331,6 +1333,92 @@ function reviewReply(input: VisualProviderInvokeInput, body: string) {
       capture_method: 'stdout_json' as const, confidence: 'measured' as const } };
 }
 
+test('6e2f9a10 t3: prompt JSON 示例以真实目标/图片 hash/身份完整校验，bbox 与零基引用同源', () => {
+  const f = invalidatedScreenProject({ mustHaveElements: ['root', 'sms_next'] });
+  try {
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing' } as never;
+    const targets = collectReviewTargets(ctx, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+    assert.ok(targets.length && targets.every(t => t.shotHash === hashImageFile(t.shotAbs) && t.refHash === hashImageFile(t.refAbs)));
+    for (const requireRegionAttest of [true, false]) {
+      const identity = { runId: 'current-run', attemptId: 'i7', requireRegionAttest };
+      const prompt = buildVisualProviderReviewPrompt(targets, identity);
+      const example = prompt.slice(prompt.indexOf('\n{') + 1);
+      const result = validateVisualProviderReviewPayload(example, { targets, ...identity });
+      assert.strictEqual(result.ok, true, JSON.stringify(result));
+      assert.ok(JSON.parse(example).screens.every((screen: { defects: Array<{ bbox: number[]; must_fix_refs: number[] }> }) =>
+        screen.defects[0].bbox.join(',') === '0.1,0.2,0.3,0.1' && screen.defects[0].must_fix_refs.join(',') === '0'));
+      assert.match(prompt, /normalized \[x,y,width,height\].*device_screenshot/);
+      assert.match(prompt, /zero-based integer indices/);
+      assert.match(prompt, /severity=blocker: concrete evidence/);
+      assert.match(prompt, /severity=major:.*main task can still be completed/);
+      assert.match(prompt, /severity=minor:.*meaning or readability/);
+      assert.match(prompt, /one screenshot is not proof that it is unreachable/);
+      assert.ok(prompt.includes('note must state the actual impact, location/evidence and any uncertainty'));
+    }
+  } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
+test('6e2f9a10 t3: provider 与最终 visual-diff 共用 bbox/引用校验，错误含路径/实际值/期望', () => {
+  const target = mkTarget();
+  const field = 'screens[0].defects[0].bbox';
+  for (const bbox of [[8, 10, 20, 30], [-0.1, 0, 1, 1], [0, 0, 1.1, 1], [0, 0, 1], ['0', 0, 1, 1], [NaN, 0, 1, 1], [Infinity, 0, 1, 1]]) {
+    const reason = validateDefectBbox(bbox, field)!;
+    assert.ok(reason && reason.includes(field) && reason.includes('actual=') && reason.includes('expected normalized'));
+    const payload = JSON.parse(goodPayload([target]));
+    payload.screens[0].defects[0].bbox = bbox;
+    const provider = validateVisualProviderReviewPayload(JSON.stringify(payload), { targets: [target], requireRegionAttest: false });
+    assert.ok(!provider.ok && provider.reason.includes(field));
+    const disk = validateVisualDiffJson({ schema_version: '1.0', screens: [{ ...payload.screens[0], verdict: 'pending' }] }, '/proj');
+    assert.ok(disk.errors.includes(reason), '磁盘校验与 provider 的 bbox 定义来自同一真源');
+  }
+  for (const refs of [[1], [-1], [0.5], ['0'], '0']) {
+    const payload = JSON.parse(goodPayload([target]));
+    payload.screens[0].defects[0].must_fix_refs = refs;
+    const result = validateVisualProviderReviewPayload(JSON.stringify(payload), { targets: [target], requireRegionAttest: false });
+    const reason = validateMustFixRefs(refs, 1, 'screens[0].defects[0].must_fix_refs')!;
+    assert.ok(!result.ok && result.reason.includes(reason));
+    assert.match(reason, /actual=.*expected zero-based integer indices.*length=1, 0\.\.0/);
+    const disk = validateVisualDiffJson({ schema_version: '1.0', screens: [{ ...payload.screens[0], verdict: 'pending' }] }, '/proj');
+    assert.ok(disk.errors.includes(reason));
+  }
+  assert.match(validateMustFixRefs([0], 0, 'refs')!, /no valid index; use \[\]/);
+  assert.strictEqual(validateMustFixRefs([], 0, 'refs'), null);
+  const payload = JSON.parse(goodPayload([target]));
+  payload.screens[0].defects[0].severity = 'critical';
+  const invalid = validateVisualProviderReviewPayload(JSON.stringify(payload), { targets: [target], requireRegionAttest: false });
+  assert.ok(!invalid.ok && /screens\[0\]\.defects\[0\]\.severity: actual="critical"; expected/.test(invalid.reason));
+});
+
+test('6e2f9a10 t3: 坏 JSON 保留原生错误、候选与正文位置和有界片段，不计算表达式', async () => {
+  const f = invalidatedScreenProject();
+  try {
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', gateDeadlineMs: Date.now() + 30_000 } as never;
+    const targets = collectReviewTargets(ctx, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+    const good = goodPayload(targets);
+    const bad = good.replace('"must_fix_refs":[0]', '"must_fix_refs":[3 - 1]');
+    let native = '';
+    try { JSON.parse(bad); } catch (error) { native = (error as Error).message; }
+    const body = 'intro\n\x60\x60\x60json\n' + bad + '\n\x60\x60\x60\nend';
+    const invalid = validateVisualProviderReviewPayload(body, { targets, requireRegionAttest: false });
+    assert.ok(!invalid.ok && invalid.reason.includes(native) && invalid.reason.includes('fence[0]') && invalid.reason.includes('body position'));
+    const pos = /position (\d+)/.exec(native);
+    if (pos && !invalid.ok) assert.ok(invalid.reason.includes('body position ' + (body.indexOf(bad) + Number(pos[1]))));
+    let diagnosis = '';
+    extractJsonObjectFromText('{"padding":"' + 'q'.repeat(2000) + '","refs":[3 - 1]}', reason => { diagnosis = reason; });
+    assert.ok(!diagnosis.includes('q'.repeat(200)), '诊断只保留错误附近有界片段');
+    const calls: VisualProviderInvokeInput[] = [];
+    const result = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT, provider: { adapter: 'codex', model: 'frozen-m' }, runId: 'R', attemptId: 'A',
+      invoke: async input => { calls.push(input); return reviewReply(input, calls.length === 1 ? body : good); },
+    });
+    assert.strictEqual(result.kind, 'applied', JSON.stringify(result));
+    assert.strictEqual(calls.length, 2);
+    assert.ok(calls[1].prompt.includes(native) && calls[1].prompt.includes(body));
+    assert.deepStrictEqual(calls[1].imagePaths, calls[0].imagePaths);
+    assert.deepStrictEqual(calls[1].provider, calls[0].provider);
+    assert.strictEqual(calls[1].deadlineMs, calls[0].deadlineMs);
+  } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
+});
+
 test('t3 同 gate 非法refs原body与精确索引回实际provider，最多纠正一次；独立留证/usage，共享deadline', async () => {
   const f = invalidatedScreenProject();
   try {
@@ -1349,7 +1437,7 @@ test('t3 同 gate 非法refs原body与精确索引回实际provider，最多纠�
     assert.strictEqual(out.kind, 'applied', JSON.stringify(out));
     assert.strictEqual(inputs.length, 2);
     assert.ok(inputs[1].prompt.includes(invalid), '实际产出者收到原body');
-    assert.match(inputs[1].prompt, /screens\[0\]\.defects\[0\]\.must_fix_refs\[0\]=9/);
+    assert.match(inputs[1].prompt, /screens\[0\]\.defects\[0\]\.must_fix_refs\[0\]: actual=9/);
     assert.deepStrictEqual(inputs.map(input => input.provider), [{ adapter: 'codex', model: 'frozen-m' }, { adapter: 'codex', model: 'frozen-m' }]);
     assert.deepStrictEqual(inputs[1].imagePaths, inputs[0].imagePaths);
     assert.strictEqual(inputs[1].deadlineMs, inputs[0].deadlineMs);
