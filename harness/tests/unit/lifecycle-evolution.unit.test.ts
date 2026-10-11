@@ -28,6 +28,8 @@ import { createChangeUnitRef, enumerateCanonicalChangeUnits, loadCanonicalChange
 import { handWriteProjections } from './component-design-handoff.unit.test';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
+import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
+import { isFactsEstablishingPhase } from '../../scripts/utils/context-facts';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
@@ -290,7 +292,8 @@ export async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
   const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!;
   const pre = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot, scope: born });
   assert.strictEqual(pre.record.state, 'ok', brief(pre));
-  const expected = uncoveredOwnerPhases(pre);
+  const expected = born.phase_chain.map(String);
+  assert(expected.every(phase => uncoveredOwnerPhases(pre).includes(phase)), '出生链每个可执行阶段都必须对应未覆盖义务');
   assert(expected.length > 0, `前提：改动后应有 uncovered 义务：${brief(pre)}`);
   console.log(`[lifecycle-evolution] ${feature} pre-birth uncovered=${JSON.stringify(pre.obligations.filter(o => o.status === 'uncovered').map(o => `${o.id}@${o.owner_phase}/${o.class}`))}`);
 
@@ -324,7 +327,10 @@ export async function evolve(s: Snapshot, ev: Evolution): Promise<Outcome> {
 export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, Writer>>, after?: Partial<Record<Phase, Writer>>) {
   const hook = (phase: Phase) => (ctx: { runId: string; attempt: number }): void => {
     const first = loadFrozenExecutionScope(p.root, p.feature, ctx.runId)?.phase_chain[0];
-    p.runId = first === phase ? ctx.runId : factsIdentity(p, phase, ctx.runId);
+    const admission = [...loadAuthoritativeEvents(runFile(p.root, p.feature, ctx.runId, 'events.jsonl'))]
+      .reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase)?.facts_context;
+    const establishing = admission ? isFactsEstablishingPhase(phase, admission) : first === phase;
+    p.runId = establishing ? ctx.runId : factsIdentity(p, ctx.runId);
     writers[phase]?.(p, ctx.runId);
     after?.[phase]?.(p);
     if (ctx.attempt > 1) publishVerifier(p, phase);
@@ -339,14 +345,13 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
  * facts 身份位：real-chain 的 writer 每阶段都把 `run_id` 写成当前 run（源链同一 run，无差别）。
  * 后继 run 里，除建立阶段本身重跑外，事实走的是「经验证的已有基线」：基线段（含 `run_id`）一字不能动，
  * 只累积本阶段 delta（context-facts.ts `context_exploration_facts_baseline_stale`，run_id 核对对基线豁免）。
- * 真实 agent 的写法即如此，这里按同一规则给 writer 身份：建立阶段重跑 → 当前 run；否则沿用 facts 已记录的 run_id。
+ * 作者按本次准入决定是否建立：有已验证 baseline 时即使是链首也保留原身份；只有建立资格才用当前 run。
  */
-function factsIdentity(p: RealChainProject, phase: Phase, runId: string): string {
+function factsIdentity(p: RealChainProject, runId: string): string {
   const file = featureFilePath(p.root, p.feature, 'context/facts.md');
   const head = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/^##\s*phase_delta:/m)[0] : '';
   const recorded = /^run_id:\s*(\S+)\s*$/m.exec(head)?.[1];
-  const establishedBy = /^established_by:\s*(\S+)\s*$/m.exec(head)?.[1];
-  return !recorded || establishedBy === phase ? runId : recorded;
+  return recorded ?? runId;
 }
 
 /** 完成结论：新 completion 落后继 run 目录、整体 complete。失败时附各阶段结论便于归因。 */

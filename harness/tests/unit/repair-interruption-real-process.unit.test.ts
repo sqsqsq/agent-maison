@@ -38,7 +38,8 @@ type Mode = 'complete' | 'complete-then-linger' | 'exit-no-terminal' | 'kill';
 const COMPLETED_FIXTURE = path.join(__dirname, 'fixtures', 'codex-terminal-completed.real.jsonl');
 const EXECUTOR_SCRIPT = [
   "const fs = require('fs');",
-  'const [mode, fixture, ready] = process.argv.slice(2);',
+  'const [mode, fixture, ready, observed] = process.argv.slice(2);',
+  'function emit() {',
   "const lines = fs.readFileSync(fixture, 'utf8').split(/\\r?\\n/).filter(Boolean);",
   "const terminal = lines.find(l => l.includes('\"turn.completed\"'));",
   "process.stdout.write(lines.filter(l => l !== terminal).join('\\n') + '\\n');",
@@ -46,6 +47,15 @@ const EXECUTOR_SCRIPT = [
   "if (mode === 'kill') fs.writeFileSync(ready, String(process.pid));",
   "if (mode === 'kill' || mode === 'complete-then-linger') setInterval(() => {}, 1000);",
   "process.exitCode = mode === 'exit-no-terminal' ? 1 : 0;",
+  '}',
+  // A short-lived executor must remain queryable until the real containment observer returns.
+  "if (mode !== 'complete') emit(); else {",
+  '  const deadline = Date.now() + 10000;',
+  '  const wait = setInterval(() => {',
+  '    if (fs.existsSync(observed)) { clearInterval(wait); emit(); }',
+  '    else if (Date.now() >= deadline) { clearInterval(wait); process.exitCode = 1; }',
+  '  }, 10);',
+  '}',
   '',
 ].join('\n');
 
@@ -64,13 +74,14 @@ async function scriptedInvoke(cwd: string, o: AgentInvokeOptions, mode: Mode): P
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'repair-exec-'));
   const script = path.join(dir, 'scripted-executor.js');
   const ready = path.join(dir, 'ready');
+  const observed = path.join(dir, 'observed');
   fs.writeFileSync(script, EXECUTOR_SCRIPT, 'utf-8');
   let pid = 0;
   try {
     const running = invokeAgentHeadless(
-      { argv: [process.execPath, script, mode, COMPLETED_FIXTURE, ready], label: 'scripted-codex exec --json', adapterName: 'codex' },
+      { argv: [process.execPath, script, mode, COMPLETED_FIXTURE, ready, observed], label: 'scripted-codex exec --json', adapterName: 'codex' },
       cwd,
-      { ...o, onActiveChild: (child) => { pid = child.pid; o.onActiveChild?.(child); } },
+      { ...o, onActiveChild: (child) => { pid = child.pid; o.onActiveChild?.(child); fs.writeFileSync(observed, 'observed'); } },
     );
     if (mode !== 'kill') return await running;
     // 外部杀进程树（Windows 下 pid 是 guardian，KILL_ON_JOB_CLOSE 连带执行者）。就绪超时也照杀，保证有界。

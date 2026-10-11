@@ -708,7 +708,7 @@ export function resolveBirthExecutionScope(
  * 这里在该 supersede 上下文里按**当前输入**重生成候选（与 `--prepare-scope` 同一个 `buildFeatureScopeCandidate`，
  * 只在内存里、不写回 feature.yaml），再经 `resolveWithPriorEvidence` 复用既往阶段证据；不整份继承源 run 范围，
  * 也不读 feature 既有候选（其定义类满足依据绑定在派生文件刷新后即过期，会把 spec/plan 误排成执行阶段）。
- * 主 Agent 的四项输入从源 run 有效范围继承：完成终点、请求结果、请求动作（= 源 run 的完成链）、
+ * 主 Agent 的四项输入从源 run 有效范围继承：完成终点、请求结果、请求动作（完成链及必需定义的既有责任方）、
  * 影响判断（结论与理由原样，来源路径按当前字节重新绑定）；需求取合并增量后的最终文本。
  * feature 冻结记录在此**不作范围来源、不做候选漂移检查**，只作血缘核对：
  * 有记录时，当前转交对象必须就是本次 supersede 源，否则拒绝出生。
@@ -736,11 +736,17 @@ export function resolveSuccessorExecutionScope(
   const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
   const impact = previous.request_impact;
   const basisPaths = [...new Set((impact?.basis ?? []).flatMap(binding => binding.source_refs ?? []))];
+  // A fulfilled definition can lose reuse; retain its existing owner in successor recovery.
+  const requestedPhases = [...new Set([
+    ...executionCompletionPhases(previous),
+    ...previous.obligations.filter(obligation => obligation.applicability === 'required'
+      && ['acceptance-context', 'design-context'].includes(obligation.kind)).map(obligation => obligation.owner_phase),
+  ])];
   const candidate = buildFeatureScopeCandidate({
     projectRoot, frameworkRoot: root, feature,
     completionTarget: previous.completion_target,
     requestedResults: [...previous.requested_results],
-    requestedPhases: executionCompletionPhases(previous),
+    requestedPhases,
     ...(impact && basisPaths.length ? { impact: { userVisibleBehaviorChange: impact.user_visible_behavior_change, reason: impact.reason, basisPaths } } : {}),
     ...(requirement?.trim() ? { requirement } : {}),
   });

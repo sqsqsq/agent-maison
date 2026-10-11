@@ -299,7 +299,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     fs.writeFileSync(bpFile, YAML.stringify(bp));
     const contractsFile = featureFilePath(s.root, feature, 'contracts.yaml');
     const old = fs.readFileSync(contractsFile);
-    assert.throws(() => reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
+    const reconciled = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+    assert(reconciled.bumped.some(item => item.change_unit_id === 'ledger-refresh'), 'canonical CU 指针应独立升版');
     assert(fs.readFileSync(contractsFile).equals(old));
     fs.rmSync(contractsFile);
     reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
@@ -308,7 +309,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
     clearFrameworkConfigCache();
     const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!;
-    const expected = uncoveredOwnerPhases(assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot, scope: born }));
+    const expected = born.phase_chain.map(String);
     const { successor, error } = await supersede(s, feature, source, expected);
     assert(successor, `投影 invalid 不得拒绝出生：${error}`);
     const scope = successorScope(s, feature, successor!);
@@ -717,9 +718,31 @@ cases.push({ name: 'P3 t5 补充：已完成功能 + 原样重发同一需求 �
   assert.strictEqual(fs.readFileSync(runFile(s.root, feature, completed, 'events.jsonl'), 'utf8'), eventsBefore, '不得写事件');
 }) });
 
+cases.push({ name: '后继保留已满足定义的责任方：健康输入不额外执行；CU 升版后失效的施工绑定回 plan，未重签前不授权 coding', run: () => withSnapshot(async s => {
+  const feature = SNAPSHOT_CU_FEATURE;
+  const [source] = runIds(s.root, feature);
+  const manifest = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json'));
+  const workflow = resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot });
+  const before = resolveSuccessorExecutionScope(s.root, feature, workflow, s.frameworkRoot, manifest.requirement, source)!;
+  assert.deepStrictEqual(before.phase_chain, [], '健康定义不应因保留责任方而额外重跑');
+  const contractsFile = featureFilePath(s.root, feature, 'contracts.yaml');
+  const contracts = fs.readFileSync(contractsFile);
+  const blueprintFile = componentBlueprintPath(s.root, BLUEPRINT_ID);
+  const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8'));
+  blueprint.revision += 1;
+  for (const result of blueprint.derived_results ?? []) result.input_revision = blueprint.revision;
+  fs.writeFileSync(blueprintFile, YAML.stringify(blueprint));
+  reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
+  assert(contracts.equals(fs.readFileSync(contractsFile)), '未证明可安全刷新的旧阶段产物必须保留');
+  const recovered = resolveSuccessorExecutionScope(s.root, feature, workflow, s.frameworkRoot, manifest.requirement, source)!;
+  assert(recovered.phase_chain.includes('plan'), '失去复用的施工绑定必须回原定义责任方');
+  assert(!recovered.phase_chain.includes('coding'), '设计责任方尚未重签写集时不得授权 coding');
+}) });
+
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases) {
+  const only = process.env.SUCCESSOR_EXIT_ONLY?.split(',').map(prefix => prefix.trim()).filter(Boolean);
+  for (const c of cases.filter(test => !only?.length || only.some(prefix => test.name.startsWith(prefix)))) {
     try {
       await c.run();
       results.push({ name: `successor-exit: ${c.name}`, ok: true });

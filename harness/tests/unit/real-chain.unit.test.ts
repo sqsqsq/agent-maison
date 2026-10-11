@@ -50,6 +50,7 @@ import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, par
 import { loadEffectiveExecutionScope, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { authorCurrentCuPlan } from './component-design-handoff.unit.test';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -1139,10 +1140,13 @@ export async function cuBoundBlueprintScopeSeam(): Promise<void> {
     setModules(['ledger']);
     const inside = plan();
     assert(inside.state === 'resolved', `可修改集合内应放行：${inside.detail}`);
-    const shared = validateChangeUnitFeatureProjection(project.root, f.feature, inside.value as ContractsSpec, undefined, true, 'plan');
-    assert(!shared.issues.some(i => i.id === 'cu_scope_matches_blueprint'), `共享校验不应报越界：${JSON.stringify(shared.issues)}`);
+    writeHostFile(project.root, CU_SOURCE, 'export class LedgerFeature {}\n');
+    writeHostFile(project.root, CU_TEST, 'export {};\n');
+    const authored = authorCurrentCuPlan(project.root, asRecord(inside.value)!) as unknown as ContractsSpec;
+    const shared = validateChangeUnitFeatureProjection(project.root, f.feature, authored, undefined, true, 'plan');
+    assert(shared.issues.length === 0, `合法 plan 作者草稿应通过共享校验：${JSON.stringify(shared.issues)}`);
     const overflow = validateChangeUnitFeatureProjection(project.root, f.feature,
-      { ...(inside.value as ContractsSpec), modules: [...(inside.value as ContractsSpec).modules, { name: project.module, layer: '02-Feature', package_path: project.modulePath }] } as ContractsSpec,
+      { ...authored, modules: [...authored.modules, { name: project.module, layer: '02-Feature', package_path: project.modulePath }] } as ContractsSpec,
       undefined, true, 'plan');
     assert(overflow.issues.some(i => i.id === 'cu_scope_matches_blueprint' && i.route === 'reconcile_blueprint'), `共享校验应报 cu_scope_matches_blueprint：${JSON.stringify(overflow.issues)}`);
     setModules(['ledger', project.module]);

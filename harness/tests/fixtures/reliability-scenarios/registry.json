@@ -1201,10 +1201,9 @@
       "source_incident": "f829b8 之后（宿主蓝图升版致 CU 指针失配）",
       "premise": "已完成的 CU Feature：蓝图升一个 revision 且改动进投影的验收内容，生产调和原位升版 CU 指针并提交，再 --supersede 源 run",
       "driver_layer": "真实链路",
-      "coverage_note": "lifecycle-evolution evolve（真 harness 子进程跑后继链，authorHooks 覆盖默认失败执行器）；宿主快照基线 commit 用 git replace 近似（见 lifecycle-evolution withHost）；freezeAndTransfer 以生产 writer 补冻结记录属夹具。起后继的 --supersede 计为操作者动作，蓝图升版计为产品决策。 无影响阶段取 spec/plan：投影验收由调和原位刷新，设计阶段无须重跑；CU 源链 coding/review/ut 都消费被改的验收（实现、审查、UT 证据义务均 uncovered），不声明为无影响。",
+      "coverage_note": "lifecycle-evolution evolve（真 harness 子进程跑后继链，authorHooks 覆盖默认失败执行器）；宿主快照基线 commit 用 git replace 近似（见 lifecycle-evolution withHost）；freezeAndTransfer 以生产 writer 补冻结记录属夹具。起后继的 --supersede 计为操作者动作，蓝图升版计为产品决策。 当前调和只升 canonical CU；没有完整复用证明时保留阶段文件，变更验收与过期施工绑定必须由 spec/plan 重签，二者属于受影响阶段。CU 的 coding/review/ut 也消费被改的验收。无影响阶段取 testing：本 CU 的验收为 unit-only、无 UI 改动；testing 调用仍算无影响重跑，零次要求不变。历史 baseline 保留原记录，不作为本次通过证据。",
       "unaffected_phases": [
-        "spec",
-        "plan"
+        "testing"
       ],
       "expected": "正确完成，只重跑受影响阶段",
       "branches": [
@@ -1214,8 +1213,7 @@
           "premise": "改动进投影验收",
           "recoverable_fault": false,
           "unaffected_phases": [
-            "spec",
-            "plan"
+            "testing"
           ],
           "expected": "正确完成，只重跑受影响阶段",
           "assertion": "baseline_met",

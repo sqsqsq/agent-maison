@@ -42,6 +42,7 @@ import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-e
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
 import { loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { executionCompletionPhases } from '../../scripts/utils/execution-scope';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import type { CheckResult } from '../../scripts/utils/types';
 import {
@@ -95,7 +96,9 @@ import {
   withSnapshot,
 } from './lifecycle-evolution.unit.test';
 import { changeProjectedAcceptance, freezeAndTransfer, NEW_EXPECTED_RESULT, runIds as snapshotRunIds, supersede } from './successor-exit.unit.test';
-import { SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadHostSnapshot, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
+import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { changeUnconsumedBlueprintContent } from './phase-evidence-manifest.unit.test';
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { A2_DONE, A2_EXCLUDED, A2_QUOTE, a2Collect, a2NfcDefect, withA2Runtime } from './goal-runner-repair-convergence.unit.test';
@@ -786,6 +789,9 @@ const runS3: ScenarioRunner = async (_entry, done) => {
       },
     });
     const events = eventsOf(s.root, feature, o.successor);
+    const effective = loadEffectiveExecutionScope(s.root, feature, o.successor);
+    if (!effective) throw new Error('完成后必须有当前有效范围');
+    const completedPhases = [...new Set([...o.chain, ...executionCompletionPhases(effective)])];
     const supersedeIdx = indexOf(events, e => e.type === 'supersede');
     const acceptanceDoc = YAML.parse(readText(s.root, path.relative(s.root, featureFilePath(s.root, feature, 'acceptance.yaml')))) as { criteria?: Array<{ id: string; expected_result?: string }> } | null;
     const cu = readText(s.root, CU_SOURCE);
@@ -819,13 +825,13 @@ const runS3: ScenarioRunner = async (_entry, done) => {
     // S10 新格式：上面的后继已由当前代码写出新格式记录——再做一次纯身份升版（函数级）。
     if (s10Entry && s10Outcomes) {
       const collect10 = makeCollector(s10Entry, s10Outcomes);
-      const facts = identityDriftFacts(s, feature, o.successor, o.chain,
+      const facts = identityDriftFacts(s, feature, o.successor, completedPhases,
         () => bumpAndReconcile(s, changeUnconsumedBlueprintContent, 'blueprint: unconsumed wording'));
-      const reruns = facts.chain.filter(ph => o.chain.includes(ph)).length;
+      const reruns = facts.chain.filter(ph => completedPhases.includes(ph)).length;
       collect10({
         key: 'new-format',
         prediction: {
-          predicted_chain: facts.chain, executed_phases: o.chain, predicted_reruns: reruns,
+          predicted_chain: facts.chain, executed_phases: completedPhases, predicted_reruns: reruns,
           note: `函数级预判，未执行任务：出生链由 resolveSuccessorExecutionScope 预判；升版后完成结论=${facts.completeAfterDrift}；产品字节不变=${facts.productUnchanged}`,
           freshness: facts.freshness, complete_after_drift: facts.completeAfterDrift, product_unchanged: facts.productUnchanged,
         },
@@ -1746,20 +1752,25 @@ const DESIGN_ACTOR = 'reliability-scenarios（测试代码，设计 owner / 有�
 
 /** 独立验收：盘上验收与最终 run 绑定的验收都是当前设计权威的文本（只读产物与绑定，不读框架结论）。 */
 function authorityAcceptance(s: { root: string; frameworkRoot: string }, feature: string, runId: string): AcceptanceFact {
+  const blueprint = YAML.parse(readText(s.root, path.relative(s.root, componentBlueprintPath(s.root, BLUEPRINT_ID))));
+  const node = resolveBlueprintTarget(blueprint, { kind: 'node', id: 'ledger-domain', view_id: 'logical' }) as {
+    acceptance?: { criteria?: Array<{ id: string; expected_result: string }> };
+  } | undefined;
+  const expected = node?.acceptance?.criteria?.find(criterion => criterion.id === 'AC-1')?.expected_result;
   const onDisk = YAML.parse(readText(s.root, path.relative(s.root, featureFilePath(s.root, feature, 'acceptance.yaml')))) as { criteria: Array<{ id: string; expected_result: string }> };
-  const diskNew = onDisk.criteria.find(c => c.id === 'AC-1')?.expected_result === NEW_EXPECTED_RESULT;
+  const diskAligned = typeof expected === 'string' && !!expected.trim() && onDisk.criteria.find(c => c.id === 'AC-1')?.expected_result === expected;
   clearFrameworkConfigCache();
-  let boundNew = false;
+  let boundAligned = false;
   try {
     const effective = loadEffectiveExecutionScope(s.root, feature, runId);
     const bound = effective
       ? readScopeAcceptance(s.root, { facts: effective.obligations } as unknown as Parameters<typeof readScopeAcceptance>[1], { feature, frameworkRoot: s.frameworkRoot })
       : null;
-    boundNew = bound?.value.criteria.find(c => c.id === 'AC-1')?.expected_result === NEW_EXPECTED_RESULT;
-  } catch { boundNew = false; }
-  return diskNew && boundNew
+    boundAligned = typeof expected === 'string' && !!expected.trim() && bound?.value.criteria.find(c => c.id === 'AC-1')?.expected_result === expected;
+  } catch { boundAligned = false; }
+  return diskAligned && boundAligned
     ? { result: 'pass', actor: 'reliability-scenarios', basis: '盘上 acceptance 与最终 run 绑定的验收均为当前设计权威的文本' }
-    : { result: 'fail', actor: 'reliability-scenarios', basis: `盘上为权威文本=${diskNew}，最终 run 绑定为权威文本=${boundNew}` };
+    : { result: 'fail', actor: 'reliability-scenarios', basis: `盘上为权威文本=${diskAligned}，最终 run 绑定为权威文本=${boundAligned}` };
 }
 
 function runS14(key: S14Key): ScenarioRunner {
@@ -2049,6 +2060,23 @@ const SELF_CHECKS: Array<{ name: string; run: (registry: Map<string, RegistryEnt
       } finally {
         fs.rmSync(host, { recursive: true, force: true });
       }
+    },
+  },
+  {
+    name: '自检当前设计权威：原验收文本可通过；产物偏离当前权威时失败，不借用其他场景常量',
+    run: () => {
+      const snapshot = loadHostSnapshot();
+      try {
+        const feature = SNAPSHOT_CU_FEATURE;
+        const source = snapshotRunIds(snapshot.root, feature)[0];
+        const accepted = authorityAcceptance(snapshot, feature, source);
+        assert(accepted.result === 'pass', accepted.basis ?? '当前设计权威独立验收未通过');
+        const file = featureFilePath(snapshot.root, feature, 'acceptance.yaml');
+        const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
+        doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-1').expected_result = 'not the authorized result';
+        fs.writeFileSync(file, YAML.stringify(doc));
+        assert(authorityAcceptance(snapshot, feature, source).result === 'fail', '偏离当前权威的产物不得判通过');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(snapshot.root, { recursive: true, force: true }); }
     },
   },
 ];
