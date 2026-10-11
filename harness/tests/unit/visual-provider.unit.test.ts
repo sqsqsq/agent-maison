@@ -950,6 +950,12 @@ test('t5 pixel 硬契约：must_fix 为空却无 region_attest → 拒收；meth
   );
   assert.strictEqual(okAttest.ok, true);
 
+  const orphanDiff = validateVisualProviderReviewPayload(
+    mk({ must_fix: [], defects: [], region_attest: [{ region: '顶部', verdict: 'diff_logged', method: 'vl_screening' }] }),
+    base,
+  );
+  assert.strictEqual(orphanDiff.ok, false, '干净屏每条 attest 必须使用 no_diff');
+
   const badMethod = validateVisualProviderReviewPayload(
     mk({ must_fix: [], defects: [], region_attest: [{ region: '顶部', verdict: 'no_diff', method: 'human' }] }),
     base,
@@ -1354,6 +1360,13 @@ test('6e2f9a10 t3: prompt JSON 示例以真实目标/图片 hash/身份完整校
       assert.match(prompt, /severity=minor:.*meaning or readability/);
       assert.match(prompt, /one screenshot is not proof that it is unreachable/);
       assert.ok(prompt.includes('note must state the actual impact, location/evidence and any uncertainty'));
+      if (requireRegionAttest) {
+        assert.ok(prompt.includes('`no_diff` (no actual difference in the region)'));
+        assert.ok(prompt.includes('`diff_logged` (only when this screen has a corresponding defect/must_fix)'));
+        assert.ok(prompt.includes('When both `must_fix` and `defects` are empty, every attest must use `no_diff`'));
+        assert.ok(prompt.includes('`region_attest.method` must be `vl_screening`'));
+        assert.ok(prompt.includes('Do not invent defects to satisfy an attest'));
+      }
     }
   } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
 });

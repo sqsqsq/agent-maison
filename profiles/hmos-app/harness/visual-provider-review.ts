@@ -210,6 +210,8 @@ export function buildVisualProviderReviewPrompt(
     '- severity=minor: a local detail deviation that does not affect operation, meaning or readability.',
     '- note must state the actual impact, location/evidence and any uncertainty. An operation absent from one screenshot is not proof that it is unreachable; consider scrolling, keyboard dismissal and the applicable requirement.',
     '- When ui-spec required elements are listed, `region_attest.region` must be an exact id from that screen\'s ui-spec required elements; cover every listed id, not a free-text area name. Without a declared list, use a concrete area name.',
+    '- `region_attest.verdict` must be `no_diff` (no actual difference in the region) or `diff_logged` (only when this screen has a corresponding defect/must_fix).',
+    '- When both `must_fix` and `defects` are empty, every attest must use `no_diff`. `region_attest.method` must be `vl_screening`. Do not invent defects to satisfy an attest.',
     '- class=missing_render MUST carry `ref_element`: the id of the reference-side element that is missing.',
     '- class=unexpected_render = something is rendered that the goal does not want. It MUST carry `element` (id of the rendered element, when it has one) or `bbox`;',
     '  add `requirement_quote` when a sentence of the goal says it is not wanted (copy it verbatim).',
