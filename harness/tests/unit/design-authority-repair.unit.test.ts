@@ -45,7 +45,7 @@ import { evaluateDeviceReadinessProbe, runDeviceReadinessGate } from '../../scri
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import type { CheckContext } from '../../scripts/utils/types';
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
-import { handWriteProjections } from './component-design-handoff.unit.test';
+import { authorCurrentCuPlan, handWriteProjections } from './component-design-handoff.unit.test';
 import {
   BLUEPRINT_ID, assess, authorHooks, brief, bumpBlueprint, cachedPrefix, commit, handWrittenCompletion, prepareFreshCuRequest, project, specFirstCuHooks, successorChain, withFreshCuHost, withHost, withSnapshot,
 } from './lifecycle-evolution.unit.test';
@@ -104,15 +104,6 @@ function ledgerDomain(bp: Record<string, unknown>): Ev {
   assert(hit, '快照蓝图缺 ledger-domain');
   return hit!;
 }
-/** plan 责任方按当前设计权威改写手写 contracts（只补权威新增的授权文件，保留其余手写内容）。 */
-function alignContracts(s: Snapshot, feature: string): void {
-  const file = featureFilePath(s.root, feature, 'contracts.yaml');
-  const doc = YAML.parse(fs.readFileSync(file, 'utf8'));
-  if (doc.files.includes(NEW_CONTRACT_FILE)) return;
-  doc.files.push(NEW_CONTRACT_FILE);
-  fs.writeFileSync(file, YAML.stringify(doc));
-}
-
 export interface StaleRun { successor: string; events: Ev[]; error?: string; planInvokes: number; injected: boolean }
 
 /**
@@ -139,11 +130,23 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
   const expected = predict(completed);
   assert(expected[0] === 'spec' && expected.includes('plan'), `前提：出生链含 spec 与 plan：${JSON.stringify(expected)}`);
   const hooks = specFirstCuHooks(p, true);
+  // 作者材料来自注入故障前仍有效的设计输入；故意坏掉的窗口由真实 gate 判断，不让 provider assert 抢先中断。
+  const approved = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'contracts', 'pure');
+  assert.strictEqual(approved.state, 'resolved', approved.detail);
+  const approvedAcceptance = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure');
+  assert.strictEqual(approvedAcceptance.state, 'resolved', approvedAcceptance.detail);
+  const approvedContracts = structuredClone(approved.value) as Ev;
+  const approvedCases = structuredClone(approved.artifacts?.['use-cases@1']) as Ev | undefined;
   let injected = false;
   let planInvokes = 0;
   const before = new Set(runIds(s.root, feature));
   const next = await supersede(s, feature, completed, expected, {
     ...hooks,
+    onSpec: ctx => {
+      writeDoc(featureFilePath(s.root, feature, 'acceptance.yaml'), { ...(structuredClone(approvedAcceptance.value) as Ev), source: 'spec:approved-ledger-design' });
+      p.runId = ctx.runId; writeCuFacts(p, 'spec');
+      if (ctx.attempt > 1) publishVerifier(p, 'spec');
+    },
     onPlan: ctx => {
       planInvokes += 1;
       // spec 已过门、run 的绑定已冻结；plan 首轮进行中，设计 owner 在另一会话把蓝图升了一个 admitted revision（run 外动作）。
@@ -154,8 +157,11 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
         clearFrameworkConfigCache();
         opts.onFirstPlan?.();
       }
-      alignContracts(s, feature);
-      hooks.onPlan(ctx);
+      const authored = { ...authorCurrentCuPlan(s.root, approvedContracts), source: 'plan:approved-ledger-design' };
+      writeDoc(featureFilePath(s.root, feature, 'contracts.yaml'), authored);
+      if (approvedCases) writeDoc(featureFilePath(s.root, feature, 'use-cases.yaml'), { ...approvedCases, source: 'plan:approved-ledger-design' });
+      p.runId = ctx.runId; writeCuFacts(p, 'plan');
+      if (ctx.attempt > 1) publishVerifier(p, 'plan');
       opts.afterPlanWrites?.();
     },
   });
@@ -1453,6 +1459,14 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert(!/external_condition_ready/.test(JSON.stringify(first)), `探针未就绪时不得算外部条件已就绪：${JSON.stringify(first).slice(0, 600)}`);
       // 只修 B1 那条（经 readiness 调和）→ 另一条仍阻断 → 未就绪。
       repairViaReadiness(s, node => restoreNode(node, saved!), 'blueprint: acceptance back to machine structure');
+      // 无等价 proof 时调和只升 canonical；plan 持原锁重签当前引用，越界模块仍原样保留给真实 B2 门判断。
+      const rebind = tryAcquireLock(featureLockPath(s, CU), { run_id: 'plan-owner-rebind' });
+      assert(rebind, '停放后 plan 作者才能取得重签锁');
+      try {
+        const prior = readDoc(contractsFile);
+        writeDoc(contractsFile, authorCurrentCuPlan(s.root, prior));
+        assert(readDoc(contractsFile).modules.some((module: Ev) => module.name === 'OutsideModule'), '重签引用不得修掉所测 B2 范围越界');
+      } finally { releaseLock(featureLockPath(s, CU), rebind!.ownerId); }
       const one = probe();
       assert(!one.ready && !/authoritative_content_aligned/.test(one.reason!) && /cu_scope_matches_blueprint/.test(one.reason!), `只修一条不得就绪：${JSON.stringify(one)}`);
       const held = decide();
