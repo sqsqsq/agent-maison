@@ -29,9 +29,9 @@ function assertOptionalView(blueprint: BlueprintRecord, viewId: string | undefin
 export function resolveBlueprintTarget(
   blueprint: BlueprintRecord,
   target: ComponentBlueprintRef['target'],
-): unknown {
+): BlueprintRecord {
   const viewId = target.view_id;
-  let resolved: unknown;
+  let resolved: BlueprintRecord | undefined;
   switch (target.kind) {
     case 'blueprint':
       if (target.id !== blueprint.blueprint_id) {
@@ -59,7 +59,7 @@ export function resolveBlueprintTarget(
       assertOptionalView(blueprint, viewId, 'relation');
       resolved = findById(blueprint.relations, target.id, 'relation_id');
       if (resolved) {
-        const relation = resolved as BlueprintRecord;
+        const relation = resolved;
         const addresses = stableAddressIndex(blueprint);
         for (const endpoint of ['from', 'to'] as const) {
           if (!nonEmptyString(relation[endpoint]) || !addresses.has(relation[endpoint])) {

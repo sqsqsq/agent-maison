@@ -24,6 +24,8 @@ import {
 export interface ChangeUnitValidationContext {
   projectRoot?: string;
   canonicalPath?: string;
+  /** 展示可传 canonical 快照解析器；默认仍完整校验外部来源。 */
+  resolveBlueprintRef?: typeof resolveComponentBlueprintRef;
 }
 
 function loadChangeUnitSchema(): Record<string, unknown> {
@@ -102,7 +104,7 @@ function validateProvenanceSource(
     return;
   }
   try {
-    const resolved = resolveComponentBlueprintRef(context.projectRoot, ownerRef);
+    const resolved = (context.resolveBlueprintRef ?? resolveComponentBlueprintRef)(context.projectRoot, ownerRef);
     const ownerSourceRef = `${path.relative(context.projectRoot, resolved.canonicalPath).replace(/\\/g, '/')}#blueprint:${ownerRef.blueprint_id}`;
     const sourceRef = String(provenance.source_ref ?? '');
     if (sourceRef === ownerSourceRef) return;

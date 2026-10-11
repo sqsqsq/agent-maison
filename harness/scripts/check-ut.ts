@@ -159,8 +159,8 @@ function utSuggestionPaths(ctx: CheckContext): {
   testabilityAuditTemplateRel: string;
   branchExampleTestRel: string;
 } {
-  const rel = (key: UtTemplateKey): string =>
-    resolveUtTemplateRef(ctx.projectRoot, ctx.resolvedProfile.name, key).rel;
+  const profileName = ctx.resolvedProfile?.name ?? loadFrameworkConfig(ctx.projectRoot).project_profile.name;
+  const rel = (key: UtTemplateKey): string => resolveUtTemplateRef(ctx.projectRoot, profileName, key).rel;
   return {
     useCasesSchemaTemplateRel: rel('use_cases_schema'),
     mockPlanSchemaTemplateRel: rel('mock_plan_schema'),

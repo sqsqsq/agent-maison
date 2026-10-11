@@ -22,19 +22,18 @@ export function generateMermaidViewGraph(blueprint: BlueprintRecord, viewId: str
   if (!view) throw new Error(`view_id=${viewId} 不存在。`);
   const nodes = asRecords(view.nodes);
   const nodeRefs = nodes.map(node => `view:${viewId}/node:${String(node.node_id)}`);
-  const nodeIds = new Set(nodes.map(node => String(node.node_id)));
+  const nodeAddresses = new Set(nodeRefs);
   const relations = asRecords(blueprint.relations).filter(relation => {
     const from = String(relation.from ?? '');
     const to = String(relation.to ?? '');
-    return [...nodeIds].some(id => from === `view:${viewId}/node:${id}` || to === `view:${viewId}/node:${id}`);
+    return nodeAddresses.has(from) && nodeAddresses.has(to);
   });
-  const alias = new Map(nodes.map((node, index) => [String(node.node_id), `n${index + 1}`]));
+  const alias = new Map(nodeRefs.map((address, index) => [address, `n${index + 1}`]));
+  const label = (value: unknown): string => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\|/g, '&#124;').replace(/[\r\n]/g, ' ');
   const lines = ['flowchart TD'];
-  nodes.forEach(node => lines.push(`  ${alias.get(String(node.node_id))}["${String(node.label ?? node.node_id).replace(/"/g, "'")}"]`));
+  nodes.forEach(node => lines.push(`  ${alias.get(`view:${viewId}/node:${node.node_id}`)}["${label(node.label ?? node.node_id)}"]`));
   relations.forEach(relation => {
-    const fromId = String(relation.from).split('/node:')[1];
-    const toId = String(relation.to).split('/node:')[1];
-    if (alias.has(fromId) && alias.has(toId)) lines.push(`  ${alias.get(fromId)} -->|${String(relation.relation_type)}| ${alias.get(toId)}`);
+    lines.push(`  ${alias.get(String(relation.from))} -->|${label(relation.relation_type)}| ${alias.get(String(relation.to))}`);
   });
   return {
     graph_id: `graph:${viewId}`,

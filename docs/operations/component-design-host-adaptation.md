@@ -27,12 +27,30 @@ AgentMaison 从 3.1 起把**部件演进蓝图**定位为"每项正式需求在�
 checker 不自动升 revision；只有被接受的新事实、权威裁决或冲突解决才按既有规则修订。
 用户要求完整交接时，admitted 且 0 CU 的蓝图经既有设计准备流程首次分解；已有 CU 复用，
 不重复创建。局部请求不强制分解或交接；完整交接仍要求 admitted 蓝图、1..N canonical CU、
-`design_refs` 与 readiness。两者均不自动启动施工或闭环。
+`design_refs`、readiness 与当前人读文档链接。两者均不自动启动施工或闭环。
 
 | 谁 | 负责什么 |
 |---|---|
 | **宿主** | 从你们自己的需求系统**获取**原始材料、按你们的规定**脱敏**、把结果**物化**成项目内的文件；接收 Maison 输出的评审投影并装配成你们的评审 / 归档件；把评审结论按结构化格式送回 |
 | **Maison** | 按请求创建或继续设计；完整交接时使蓝图 admitted、首次分解或复用 1..N canonical Change Unit 并派生 readiness；输出确定性的评审投影，被接受的新事实或授权裁决按既有调和规则生成新 revision |
+
+### 1.1 设计期内容与下游分工
+
+设计 owner 在 canonical 蓝图完成 4+1：场景（+1）与旅程、逻辑边界和模型、运行顺序与分支/恢复、开发目录/文件与组件、适用部署落点和外部配套；同时写清选择与被否方案、质量属性、数据生命周期和验收。实读应能回答需求/范围、当前问题、工作方案、模块责任、选择依据、CU 交付与安全中间态、风险验收七问。详细程度取决于真实关切，不按行数压缩必要细节。
+
+会被 CU 引用的设计目标在设计期写入已有 `acceptance`、`contracts`、`use_cases` 结构。验收含 AC/BD/NFR、优先级、步骤/预期、分层与 focus；契约含类型/接口、组件、目录/文件、状态与完整 CU 映射；用例含阶段、主路径/分支及预期。来源权威仍按既有 provenance 校验。`contracts.files` 是唯一施工写集，目录表、`touches`、图和 `source_ref` 都不能扩大它；`change_unit_ref` 由投影注入，不在蓝图手填自指 hash。
+
+引用一个目标即整体继承其三类内容。共享目标 S 只放所有引用者都承担的验收、合法写集和用例；CU-A 引 S+A、CU-B 引 S+B，专属 AC/BD/NFR、files 和完整 `change_unit` 映射放 A/B。数组沿已有行身份去重并合并，同身份不同内容拒绝；对象只接受完全相同内容，不逐键拼接。`module_dependencies`、`navigation`、`resource_keys`、`change_unit`、acceptance 的 `flows` 等对象分别集中在本 CU 一个目标。不能按 predicate 隐藏误继承的验收或文件，合法先后写同一文件不自动判错。
+
+六类可选表达为背景/目标/范围、被否方案、术语含义、场景旅程、部署参与方/上线协同、质量属性/数据生命周期，位置与形状见 [P1 写作约定](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图)。缺失显示“未记录”，形状错误由原 validator 给 WARN，不增加缺字段门禁、不改 schema。模型字段的可选 `description/source_ref` 字符串沿现有加载/投影透传，非字符串显示“未能表达”；来源只引用设计期已有材料，不把未来施工文件当输入。
+
+没有 ui-spec 依据时，P0 真机验收保留步骤、预期、分层与 focus，不编 `linked_flow`、checkpoint、屏幕流程或元素 ID。spec 得到真实 UI 依据后，只补未声明的键，保留原权威预期并通过现有对齐与 P0 检查。spec/plan 直接消费已有 typed 投影，只补本职责缺失内容；需要改变已声明权威时回设计 owner 修订。叙述文件只按 `required_outputs` 产出，存量合法手写文件不强制迁移或静默覆盖。精确消费和物化边界见[蓝图设计输入](../concepts/blueprint-design-inputs.md)。
+
+### 1.2 部署视图与外部参与方
+
+deployment 是否适用依据部件固有的运行拓扑：平台、进程、独立持久化和外部边界；不随单次需求切换。适用性与本次 `evolution_impact` 正交，适用 deployment 仍进入已有独立质询；不适用保留依据。适用时所有场景（含纯本地场景）的 `deployment_refs` 都要指向本部件实际运行节点，外部节点不能代替本部件落点。
+
+云服务、HA、配置台等外部节点只记录当前事实，`current_state = target_state`，不声明变化。蓝图根级 contracts 只登记本部件实际消费/提供的接口，由消费 CU 的 `design_refs` 认领契约及指向外部节点的 relation，并承担本部件这一侧的证据。外部方自己的施工中本部件不消费的部分，阻挡切片时用既有 gap 与 CU blocker 说明解除条件，其余写 `coordination/rollout`，不建根级 contract、不冒充本部件 CU 已完成外部施工。rollout 表示配套顺序，不转成 `requires` 或执行授权。
 
 **Maison 明确不关心、也不应知道**：内网需求单号、访问 token、内网 URL、评审系统 API、归档
 接口、你们的权限模型、归档时点。这些全部留在宿主侧。Maison 只认：
@@ -152,7 +170,7 @@ npm run check:component-blueprint -- \
 | 发布件内 schema（SSOT） | **复用** `framework/harness/schemas/app-component-blueprint.schema.json`（**没有平行的 publication schema**） |
 | renderer | `framework/harness/scripts/utils/blueprint-review-projection.ts`（确定性、单向派生） |
 | 产物 | 工作区内 `<features_dir>/<blueprint_id>/blueprint/component-blueprint.review.md` |
-| 校验入口 | `check:component-blueprint` 的 `--projection <path>` 模式 |
+| 生成与校验入口 | `check:component-blueprint --write-review` 默认本地生成；`--projection <path>` 同源校验 |
 
 ```bash
 npm run check:component-blueprint -- \
@@ -163,7 +181,15 @@ npm run check:component-blueprint -- \
 
 ### 4.2 你拿到什么
 
-投影是 Markdown，头部 frontmatter 精确绑定被评审的 revision：
+默认本地文档由 Maison 生成：
+
+```bash
+npm run check:component-blueprint -- --project-root <宿主工程根> --blueprint <blueprint-id> --write-review
+```
+
+写入 resolver 定位的蓝图同目录，不支持第二输出路径。只有当前可解析、身份有效的蓝图即可生成；草稿显示准入与缺口，检查失败仍按原结论退出。无参 checker 只读展示文档当前/过期/缺失及重建命令；`--write-review` 不与材料模式混用。内容变化后的调用结束前重建，包含局部修改、草稿和质询写回；不升 revision、不重签或重做设计。接受、readiness、整批持锁指针调和与 B1 自动刷新；文档失败只披露和重建，不影响原业务结论。
+
+投影是 Markdown，头部 frontmatter 精确绑定蓝图身份和当前有效 CU 内容：
 
 ```yaml
 ---
@@ -174,33 +200,43 @@ derived_from:
   revision: <n>
   source_fingerprint: sha256:<…>
   artifact_sha256: sha256:<…>
-projection: component-blueprint-review@1
+  change_units:
+    - change_unit_id: <unit-id>
+      binding: bound
+      identity_neutral_digest: <digest> # 仅 canonical 能确定原架构相关集合时提供
+projection: component-blueprint-review@4
 ---
 ```
 
-正文包含设计视图（含 `Applicability` 与 `Evolution impact` 两个**正交**维度）、运行时数据流、
-权威契约、跨视图关系、独立质询、准入与决策/缺口。
+正文按概述、场景（+1）、逻辑、运行、开发、部署、取舍、质量属性/合规、验收、施工拆分、风险/待决项和编号速查组织。模型字段/枚举、接口参数/返回、完整有序步骤/分支、异常恢复、被否方案和 AC/BD/NFR 使用专用表格，不递归 dump 对象或把完整对象压成 JSON。内容只来自 canonical 蓝图与 CU，外部材料须先由设计 owner 消费形成设计事实；renderer 不读取需求原文、Feature 的 use-cases.yaml 或外部 catalog 自行补设计。
 
-启用工程惯例后，蓝图实际采用的 convention id/source_ref 会由同一 renderer 输出为
-`Adopted conventions` 节；仍经同一 `--projection` 校验，宿主不补造另一份惯例正文。
-未启用时只有 canonical `providers[]` 中的 `conventions-knowledge` 卡诚实标记不可用，投影不凑空节。
+Maison 直接从 canonical CU 收集目的、交付、模块/touches、显式依赖、约束和安全中间态，精确 supersedes 生成已替代小节。整份蓝图按承载目标展示 typed 内容；逐 CU 与生产投影共用纯选取/合并逻辑，显示实际继承的 AC/BD/NFR 和 `contracts.files` 声明集合及合并冲突，固定说明“是否通过交接校验见 readiness”。追溯表只列真实直接引用，不裁决覆盖。readiness/run/完成状态不进设计正文，完成情况链接既有 closure 投影。
 
-### 4.3 铁律：Story 投影零新事实
+逻辑、开发、部署结构图复用已有图模块，只画显式关系并按完整地址区分跨视图同名节点；CU 依赖图只画 `requires`。无效 canonical 图不展示并披露原因，图不替代结构化设计。端到端时序使用完整有序步骤和分支表，本轮不生成时序图或代码骨架。
 
-- 投影是 canonical YAML 的**单向确定性派生物**。宿主可以重排版式、翻译、套模板生成 Story
-  Document；**不能在其中新增、改写或删除设计事实**；
-- 宿主可以在 Story Document 后面附加 CU / spec 等**施工附件**，但**附件不成为部件内设计的
-  事实来源**——下一次评审、调和与闭环只认 canonical 蓝图；
-- 校验会用同一 renderer 重算并比对：不一致即 `publication_projection_added_facts`；
-  `derived_from` 未精确绑定 revision 即 `publication_derived_from_mismatch`；
-- 宿主没接这条接缝 → **诚实降级**（没有人读投影），核心蓝图链不受影响，但不得宣称已归档。
+owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，合并集合标“待指针升版后显示”，不填假摘要、不承诺 carry-forward。当前精确绑定的 CU 若某层级相关性须靠外部 catalog 才能确定，则省略中立摘要，精确绑定与声明集合仍展示；原摘要算法/字段不变，不把省略变成新增来源缺口或阻断。单项坏 CU 不妨碍其余设计展示，缺口附 id/路径/原因；生成成功不等于来源完整或准入通过。内部刷新与外层补生成按整个尝试最终状态汇总，实际写入路径保留。
+
+### 4.3 交接 readiness 的独立结论
+
+指针调和非 busy 后，readiness 对全部未退役（含已完成旧 CU）且原设计判定 constructable 的单元，复用 `deriveBlueprintSkillInput` 默认只读模式完整检查 acceptance/contracts/use_cases。另一类 absent 不漏掉已声明的坏 use_cases；不传 pure，手写 use-cases 与投影冲突仍提前报 `authority_use_cases_conflict`。absent 提示“设计期未写入，将由 spec/plan 补”并明确责任，不新增缺字段机器门禁；已声明的坏形状、来源、写集、映射或冲突为 invalid，复用原原因使 perUnit blocked/not-ready，不等运行中再首次发现。
+
+校验不物化 Feature 产物、不产 phase PASS/receipt、不重启旧 CU、不选择施工。`prepare-blueprint-design` CLI 是写入口，不能充当只读校验。已物化 CU 的调和刷新先失败时，沿用 `change_unit_blueprint_ref_bump_rejected` 异常与整批指针/派生文件回滚；不回滚用户已修订的 canonical 蓝图，也不伪装正常 readiness 成功。文档结果与该结论分别报告。
+
+### 4.4 铁律：投影相对蓝图与 CU 零新事实
+
+- 投影是 canonical 蓝图与 CU 的单向确定性派生物。宿主自由重排/翻译的 Story Document 是外部附件，不交给 canonical 投影一致性校验，不反向成为设计权威。
+- 宿主仍可附 spec 等附件；部件设计权威继续在蓝图，CU 保持施工契约职责。
+- 同一收集/renderer 全文比对，蓝图变化为 `publication_derived_from_mismatch`，CU 集合/内容变化为 `publication_change_units_mismatch`，旧格式为 `publication_projection_format_stale`；可同时报告。相同来源/格式正文不同为 `publication_projection_content_mismatch`，不推断新增事实或格式升级。来源缺口为 `publication_change_units_unresolved`，不能声称来源完整。
+- 上述差异从当前 canonical 重建即可；旧 @1 格式不用修改 canonical revision。宿主没接外部接缝时，本地文档仍默认交付，外部归档诚实降级。
 
 **归档时点由宿主决定**，Maison 不管。
 
-### 4.4 随包样例
+### 4.5 随包样例
 
 - 有效：[`samples/blueprint-review-projection.valid.md`](samples/blueprint-review-projection.valid.md)
 - 无效（投影新增设计事实）：[`samples/blueprint-review-projection.invalid-added-fact.md`](samples/blueprint-review-projection.invalid-added-fact.md)
+
+完整样例由一个充实的框架表达夹具生成，展示两个 CU 共享/专属目标与 4+1 细节；它不是真实需求，不能替代宿主下一项正式需求从设计写作、只读校验到下游实际投影消费的验收。
 
 ---
 
@@ -283,13 +319,13 @@ revision N（被评审）
 3. 校验：check:component-blueprint --materialization …            ← 接缝 1
 4. Maison：/component-design <blueprint-id>
      · 正式性确认（上游已标 formal_requirement → 直接采信）
-     · 建立蓝图 → 独立质询 → 调和 → admitted
-       （小需求得到薄蓝图；未触发的义务是空集，不用空章节凑）
+     · 完成 4+1 与目标上的 acceptance/contracts/use_cases → 独立质询 → 调和 → admitted
+       （按真实影响展开必要细节；未触发的义务是空集，不用空章节凑）
      · 设计准备子流程：0 CU 入口 → 1 个候选 → validator 原子写 1 个 canonical CU
-     · readiness → 返回设计交接结果
+     · 默认只读 readiness 完整校验 → 返回当前人读文档链接与独立交接结论
 5. 施工：/change-unit-progression（该 CU 按 L1 lite 或 L2 full 分档施工）
 6. 闭环：/component-closure（跨单元组装边为空集合法，退化为追溯核对）
-7.（可选）宿主：读评审投影装配 Story Document                      ← 接缝 2
+7. Maison：默认本地文档已生成并链接；（可选）宿主装配 Story Document                      ← 接缝 2
 8.（可选）宿主：评审结论回灌，授权裁决生成新 revision              ← 接缝 3
 ```
 
@@ -361,6 +397,10 @@ extension Skill
 - [ ] 故意让同一 `item_id` 出现两份不同字节 → fail-closed，不是后写取胜
 - [ ] 正式需求缺物化材料时，你的流程会**停下**并报 blocker，而不是凭转述继续
 - [ ] 评审投影通过 `--projection` 校验（正例 PASS）
+- [ ] 新需求实读 4+1 各视图与模型/接口/步骤/分支/验收子表，七问能由实际内容回答，图表关系与 CU 一致
+- [ ] 两 CU 引用共享/专属目标时，各自实际继承的验收与 files 可核对，对象冲突没有被逐键拼接或隐藏
+- [ ] readiness 的默认完整检查与文档声明集合分别报告；后续 spec/plan 实际消费同源 typed 内容，来源戳与规范化物化内容可核对
+- [ ] 适用的 P0 真机 UI 关联来自真实 ui-spec，只补缺键且保留原验收预期；表达夹具不代替这项真实宿主证据
 - [ ] 在投影里加一句 canonical 中不存在的设计结论 → 校验 FAIL
 - [ ] 投影装配出的 Story Document **没有**成为下一轮设计的输入
 - [ ] 反馈清单通过 `--feedback` 校验（正例 PASS）
@@ -399,7 +439,8 @@ npm run check:component-closure -- --project-root <root> --blueprint <id>
 | `materialization_source_unresolvable` | `source_ref` 用了绝对路径、项目外路径，或 `#fragment` 在文件里不存在 | 改成项目内相对路径；fragment 必须是文件内真实出现的文本 |
 | `materialization_source_hash_mismatch` | 物化后又改了文件，hash 没重算 | 重算 hash；不要用 `source_revision` 顶替内容 hash |
 | `materialization_authority_missing` | 只填了 `formality` 没填 `owner` | 两者都要——`owner` 是"谁负责"，`formality` 是"上游怎么分类" |
-| `publication_projection_added_facts` | Story Document 模板往投影里塞了额外结论 | 额外内容放在**投影之外**的附件里；投影本身保持零新事实 |
+| `publication_projection_content_mismatch` | 相同来源/格式的投影正文不同 | 从 canonical 蓝图/CU 重建；自由 Story Document 作为外部附件 |
+| `publication_change_units_mismatch` / `publication_projection_format_stale` | CU 内容/集合或 renderer 格式变更 | 执行 --write-review，无需改 canonical revision |
 | `publication_derived_from_mismatch` | 用了旧 revision 的投影，或手改了 frontmatter | 重新生成投影 |
 | `review_feedback_authority_insufficient` | 评审系统只给了"同意/不同意"，没有 owner+role 或没有 rationale | 补齐；补不齐就老实标成 `opinion` |
 | `review_feedback_stale_source_revision` | 评审是针对 revision N 做的，期间蓝图已到 N+1 | 反馈必须针对当前 revision；先重新评审，或让裁决方确认在新 revision 上仍成立 |

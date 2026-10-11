@@ -8,7 +8,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。
 
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature，同级归档/同名前缀条目仅旁证；目录不存在须快速失败提示先创建；输入缺失（至少 `spec.md`）须报告并回到 spec 阶段补齐。
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature，同级归档/同名前缀条目仅旁证；目录不存在须快速失败提示先创建；实际必要验收输入缺失须报告并回 spec 补齐，旧 1.0 调用仍要求 `spec.md`。
 
 ## 条件加载索引
 
@@ -30,7 +30,7 @@
 
 coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.md 双源分叉。
 
-**CU-bound Feature**：先解析 `contracts.change_unit.change_unit_ref`，Feature id 必须为 canonical CU identity 的确定性派生值。`contracts.change_unit` 只按 canonical predicate/provide/design ref ID 映射 implementation/symbol/test，不复制 CU/蓝图正文；运行时施工细节只写既有 `contracts.state_management`。新事实若推翻蓝图，返回 P1 调和，不在 plan 首次发明部件 owner、主链或外部契约。
+**CU-bound Feature**：先解析 `contracts.change_unit.change_unit_ref`，Feature id 必须为 canonical CU identity 的确定性派生值。设计期已有 acceptance/contracts/use_cases 时直接消费 typed 投影，只补本职责未声明的施工细节，不手写重做；叙述文件只按 required_outputs 产出。`contracts.change_unit` 只按 canonical predicate/provide/design ref ID 映射 implementation/symbol/test，不复制 CU/蓝图正文；运行时施工细节只写既有 `contracts.state_management`。新事实若推翻蓝图，返回 P1 调和，不在 plan 首次发明部件 owner、主链或外部契约。
 
 ## 触发条件
 
@@ -46,12 +46,12 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 
 | 输入项 | 必需 |
 |--------|------|
-| spec.md | ✅ |
+| spec.md（旧 1.0 调用；1.1 使用实际 resolved typed 输入与 required_outputs） | ✅ |
 | 功能模块名称 | ✅ |
 | doc/architecture.md | ✅ |
 | 当前工程代码（AI 自动读取） | ✅ |
 
-缺 spec.md → 提示先跑 spec 阶段。
+旧 1.0 调用缺 spec.md → 提示先跑 spec；1.1 不因缺未请求的叙述文件重做已有设计。
 
 ## 层边界（BLOCKER）
 
@@ -59,7 +59,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 
 ## 流程骨架
 
-1. **读取分析 spec**：功能清单/页面列表/业务流程/数据实体/验收标准 → 功能点清单。
+1. **读取有效设计输入**：typed 验收/契约/用例，或旧调用的 spec；功能清单/页面列表/业务流程/数据实体/验收标准 → 功能点清单，已有权威设计只消费。
 2. **读架构文档 & 分析工程结构**：`doc/architecture.md` 已有模块/依赖/公共能力 → 交叉验证代码现状 → 确定新建/修改模块。
 3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，功能拆分与 Scope 冻结前完成，C4）：必读 spec/acceptance/architecture/catalog/config + Step 2 规划的源码路径；`paths.conventions` 文件存在时必读全文并选择真正适用的 id。index 文件存在时须按 reference 的「组件选型施工投影」节读取资产并投影蓝图决定。追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: plan` 节（无新增事实写 "none"，不得留空）。**plan 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
 4. **Scope 继承与扩展提议**（详见 reference）：继承 spec Scope 并冻结 `in_scope_modules`；扩展须走提议流程经 `plan.scope_expansion` 用户确认。CU-bound：`in_scope_modules` = 蓝图可修改模块集合、`expansions_with_user_approval` 为空，不用 `plan.scope_expansion`，范围扩大走蓝图 revision。

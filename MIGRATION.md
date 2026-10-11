@@ -2,6 +2,18 @@
 
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
+## 3.1.0：蓝图人读设计文档默认交付与修订同步
+
+默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @4），按 4+1 展示需求/旅程、模型与接口、运行顺序/分支/恢复、开发落点、适用部署、取舍、质量、验收及 canonical CU 拆分。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿也能生成并如实标示准入；默认 checker 只读输出状态。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
+
+新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属内容和完整 change_unit 映射放独占目标；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
+
+背景/目标/范围、被否方案、术语含义、旅程、部署参与方/协同、质量/数据生命周期六类表达均可选，缺失显示“未记录”，坏形状只 WARN，蓝图 schema 不变。模型字段可选 description/source_ref 透传说明与已有来源，不授予写权限。文档只读取 canonical 蓝图/CU，逐 CU 展示纯合并所得声明集合并注明“是否通过交接校验见 readiness”；readiness 独立复用默认只读投影完整检查，absent 明确补设计责任，invalid 按原原因 not-ready，不以 pure 跳过已有 use-cases 冲突。
+
+运行 spec 时的 acceptance 派生也共用目标选取/合并，会更早暴露 contracts/use_cases 的来源或合并冲突及用例坏 schema；这不只影响 readiness，既有 B1/B2 分类与恢复规则不变。
+
+deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决，不随需求切换。外部节点只记 current=target 的当前事实；根级契约和指向外部节点的 relation 由消费 CU 认领本部件侧证据，未消费的外部施工用 gap/blocker 或 coordination/rollout 表达。适用时纯本地场景也引用本部件运行节点。结构图只画已有显式关系，无效图披露原因；时序由步骤/分支表表达，不生成时序图或代码骨架。字段形状、交接失败处理与完整夹具样例见[宿主适配指南](docs/operations/component-design-host-adaptation.md)和[蓝图设计输入](docs/concepts/blueprint-design-inputs.md)。夹具样例不代表真实宿主验收。
+
 ## 3.1.0：运行配置退出业务内容证据，输入阻塞先回责任阶段（plan 8d4e6a21）
 
 集成 Maison 校验后的发布件即可生效，无须手改旧 run、facts、回执或证据哈希。
@@ -144,7 +156,7 @@
     都以既有违规停机 `backtrack_target_absent` 终止 run；工程文件只检测不还原，被改的事件文件由框架整份写回"调用前字节 + 框架本次
     写入的行"；只有检出具体改动时才有带路径与哈希的 `phase_write_violation`；调用的子进程没能证明已结束时不做核对、
     不发布、不启动下一次调用，以既有停机 `agent_containment_unresolved` 终止 run（不挂设计探针）；发布后评审投影
-    `component-blueprint.review.md` 过期、不自动重生成。两次调用计入调用次数与墙钟，不重置预算。`authority_cu_mapping_stale` 的修法是
+    `component-blueprint.review.md` 在同锁内自动重建；失败或来源缺口如实披露，不改变原修复/探针结论。两次调用计入调用次数与墙钟，不重置预算。`authority_cu_mapping_stale` 的修法是
     删掉蓝图里可省略的 `contracts.change_unit.change_unit_ref`（由投影按当前 CU 填入），不是改指当前 CU。
   - **探针就绪算一种变化**（`external_condition_ready`，接续决策的第七种）：对所有带探针的停机（设备、能力预检、候选写回、设计权威）
     都适用，条件修好后无人值守的重发不再等 5 分钟冷却；探针没就绪时只是这一种变化不成立，其它变化与冷却仍按既有规则判断

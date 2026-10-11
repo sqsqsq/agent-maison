@@ -10,8 +10,26 @@ P3 使用 `derive.blueprint-acceptance` 和 `derive.blueprint-contracts`，返�
 - 术语映射归蓝图：`discovery.facts` 的 `term:<术语>` 事实（`source_kind: glossary|catalog`，`canonical_module` 为获准模块）在 component-design 一次确认；spec 术语映射表只投影、不再问人。
 - 模块范围归蓝图：可修改模块集合只由 CU `touches` 解析到的 development 节点 `module` 派生；spec/plan 的 Scope 只投影，`contracts.modules` 越出即 `cu_scope_matches_blueprint` 失败，范围扩大回 component-design。
 - 架构影响项归蓝图：每项一条 `architecture_impact` 决策（`add_module` / `retire_module` / `move_module` / `responsibility_rewrite` / `dependency_edge` / `dsl_other`）；`dependency_edge` 施工前须已裁决且当前 DSL 已达目标许可，模块增删迁与职责改写由 closure 归位到 catalog，`dsl_other` 只登记。plan 只投影决策 id，不判定、不写 DSL。
-- spec 负责补清行为、预期、边界和验收分层。验收 ID 必须为稳定 AC/BD ID，并在 canonical CU predicate 的 `verification_refs` 明确引用，例如 `acceptance:AC-1`。引用只建立映射；步骤、预期、关注点仍必须是真实内容。
-- plan 负责当前切片精确文件、类型、接口、runtime 生命周期和用例。不得从 touches 扩张写集、猜测事务边界或 DTO 映射。
+- component-design 在设计期给可引用目标写入 acceptance/contracts/use_cases：ID、优先级、步骤、预期、分层/focus、精确写集、类型/签名、生命周期和用例分支均来自已消费事实与权威裁决。spec/plan 优先直接消费已有投影，只补真正缺失的内容；不手写重做另一套验收、契约或用例。
+- spec 补缺行为/验收与真实 UI 流程，plan 补缺当前切片施工/用例。验收 ID 在 canonical CU predicate 的 verification_refs 明确引用（如 acceptance:AC-1）；引用仅建立映射。touches 不扩大 contracts.files，目录表/来源也不授写权限，不猜事务/DTO。
+
+## 设计期挂载与共同继承
+
+acceptance 挂 scenarios/logical 等设计目标；contracts 挂 development 节点和 runtime flow；use_cases 挂 runtime flow。目标 provenance 保留已有 authoritative 要求。引用目标后内容整体参与该 CU 合并：数组沿 `[module,file,holder,id??name??class??data]` 行身份去重、同身份不同内容报 authority_content_conflict；对象只在内容完全相同时接受，不逐键拼接。
+
+CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，A/B 专属 AC/BD/NFR、files、完整 change_unit 映射放独占目标。module_dependencies/navigation/resource_keys/change_unit/acceptance.flows 等对象集中在该 CU 一个目标，不拆开等自动拼接。误把 A 映射放 S，B 有不同映射时为 authority_content_conflict；B 未声明自身映射时按实际检查报 change_unit_predicate_mapping_unknown/missing。合法先后写同文件不新增门禁，不能按 predicate 隐藏误继承的 AC/文件。
+
+普通 AC/BD 身份只含 id，故单次 CU 投影内唯一；推荐全蓝图稳定唯一，跨目标同 ID 不同内容按目标来源披露，不新增全蓝图唯一门禁。contracts.data_models.fields.description/source_ref 为可选说明/来源，现有加载和投影透传，schema 不变。目录来自 modules[].package_path/layer、依赖来自 contracts 根级 module_dependencies、写集仅 files。
+
+无 ui-spec 依据时保留 P0 ID/优先级/步骤/预期/ut_layer/focus，不写 linked_flow/checkpoint/屏幕流程；spec 得到真实 UI 依据后只补未声明键，已有权威预期不改，按原 checkAuthoritativeContentAligned 与 P0 门检查。不得编元素 ID、删 acceptance 或修改门禁。
+
+## 完整交接的只读前置检查
+
+deriveDesignPreparationReadiness 在原指针调和后，对全部未退役（含已完成）且原 constructable CU 调用 deriveBlueprintSkillInput 的**默认只读模式**。acceptance/contracts/use_cases 分别检查，另一类 absent 不漏坏用例；不传 pure，既有手写 use-cases 冲突仍以 authority_use_cases_conflict 提前报出。absent 交回原 spec/plan 补设计责任且不加门禁；invalid 复用现有原因使 perUnit blocked/not-ready。
+
+检查不物化 sidecar、不写 phase 证据、不选 CU 或开始 Goal。prepare-blueprint-design CLI 是下面的写入口。已物化 CU 调和刷新先失败会抛 change_unit_blueprint_ref_bump_rejected 并保持整批指针/派生文件原字节，沿原异常与回滚，不能伪装 readiness 成功或正常 not-ready。
+
+完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 显示与生产投影共用目标选取/合并逻辑所得声明集合，**是否通过交接校验见 readiness**。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；这些来源的真实校验仍在上述默认 readiness 路径。canonical 能确定架构相关集合时沿用原中立摘要，若相关性须靠外部 catalog 才能确定，则省略摘要并保留精确 CU 绑定与声明集合，不承诺 carry-forward。待升版 CU 的合并集合标“待指针升版后显示”。字段 absent 明确“设计期未写入，将由 spec/plan 补”；可选表达形状 WARN 不变成业务阻断。样例是框架表达夹具，不代表真实宿主验收。
 
 ## 施工映射
 

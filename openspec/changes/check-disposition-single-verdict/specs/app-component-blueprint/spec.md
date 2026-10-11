@@ -10,7 +10,7 @@
 - 新 revision（旧值 + 1）与修订依据 MUST 由运行时登记在蓝图既有的根 `provenance`：`source_kind: design_repair_unattended`、`source_ref` 指向预授权键、`source_revision` 指向旧 revision、`observed_at` 为登记时间、`extraction_method` 列出被修的检查与原因码（这五个字段由运行时覆盖写入，根 `provenance` 其余字段保留）；不新增字段。既有 P1 派生结论 MUST 按既有调和规则标 `stale` 并保留原输入 revision，MUST NOT 批量改版本冒充重算；
 - 发布前 MUST 对将要发布的那份字节的解析结果做真实校验，`context` 用真实宿主根与 canonical 路径（草稿目录不作 projectRoot）；有 BLOCKER 或准入不是 `pass` 即不发布。发布前任何失败 MUST 丢弃草稿，canonical 字节不变。发布是单文件 temp→rename，rename 前 MUST 复核 canonical 字节仍等于复制时的基线，不等即不发布；
 - 编写或质询调用改了草稿之外的文件（含蓝图 `source_ref` 引用的文件——即使在 `context/`、`reports/` 下，以及蓝图工作区里各 run 的事件、manifest 等运行记录），或改动无从核实（含编写调用让蓝图新引用了调用前没核对的文件）时 MUST NOT 发布，按既有越界写入违规处置（核对范围与事件文件的整文件写回见 `goal-runner`）；对工程文件这是检测，不承诺还原；
-- rename 成功即发布边界，此后任何失败 MUST NOT 回滚蓝图；发布成功不等于修复成功。同目录的评审投影 `component-blueprint.review.md` 随之过期，只披露、不自动重生成。
+- rename 成功即发布边界，此后任何失败 MUST NOT 回滚蓝图；发布成功不等于修复成功。同目录的评审投影 `component-blueprint.review.md` 在 canonical 发布及同锁调和尝试后由共享物化函数刷新（由 human-readable-blueprint-delivery 替代原仅标 stale 行为）。展示失败不回滚发布、不改变调和/探针结论，披露最终状态、来源缺口与重建入口。
 
 Enforcement: `harness/scripts/utils/design-repair-unattended.ts`, `harness/scripts/utils/blueprint-admission.ts`, `harness/scripts/utils/component-blueprint-validator.ts`, `skills/reference/design-repair-unattended.md`
 

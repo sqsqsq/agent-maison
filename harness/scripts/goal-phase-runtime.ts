@@ -1649,7 +1649,7 @@ export function designRepairBrief(opts: {
  */
 export function reconcilePointerInRun(opts: {
   projectRoot: string; feature: string; heldFeatureLock?: HeldFeatureLock | null;
-}): { ok: boolean; blueprintId: string; reason: string } & Pick<BlueprintRefReconciliation, 'bumped' | 'skipped'> {
+}): { ok: boolean; blueprintId: string; reason: string } & Pick<BlueprintRefReconciliation, 'bumped' | 'skipped' | 'reviewDocument'> {
   const { blueprintId, changeUnitId } = parseChangeUnitFeatureId(opts.feature);
   try {
     const result = reconcileChangeUnitBlueprintRefs(opts.projectRoot, blueprintId, { heldFeatureLocks: opts.heldFeatureLock ? [opts.heldFeatureLock] : [] });
@@ -1657,7 +1657,7 @@ export function reconcilePointerInRun(opts: {
     const reason = result.busy
       ?? (own ? `本 CU 被调和器跳过：${own.reasons.join('；')}`
         : result.bumped.some((item) => item.change_unit_id === changeUnitId) ? '本 CU 指针已原位升版' : '本 CU 指针已是当前蓝图身份');
-    return { ok: !result.busy && !own, blueprintId, bumped: result.bumped, skipped: result.skipped, reason };
+    return { ok: !result.busy && !own, blueprintId, bumped: result.bumped, skipped: result.skipped, reason, reviewDocument: result.reviewDocument };
   } catch (error) {
     return { ok: false, blueprintId, bumped: [], skipped: [], reason: `调和失败：${(error as Error).message}` };
   }
@@ -10568,6 +10568,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             type: 'design_authority_repair', phase, blueprint_id: pointerReconcile.blueprintId, action: 'pointer_reconcile',
             outcome: pointerReconcile.ok ? 'reconciled' : 'not_reconciled',
             bumped: pointerReconcile.bumped, skipped: pointerReconcile.skipped, reason: pointerReconcile.reason,
+            review_document: pointerReconcile.reviewDocument,
           });
         }
 

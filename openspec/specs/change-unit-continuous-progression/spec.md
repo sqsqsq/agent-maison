@@ -388,6 +388,7 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 - **接受**：只有 consumer validator MAY 接受候选，且**全仓 MUST 只有一个 canonical CU 写入实现**——单候选接受 MUST 是批量接受的 1 元包装，MUST NOT 保留第二份 provenance/schema/design-gate/落盘逻辑；设计准备段只做入口/readiness 编排并委托该唯一 consumer。它 MUST 校验 schema、canonical identity、设计闭包（设计可施工门）、provenance 与来源权威，全部通过后 MUST **原子**写出 1..N canonical `change-unit@1`：任一候选不通过即整批拒绝且一个字节都不落盘；写入中途失败 MUST 回滚本批已落盘目标。
 - **重复接受 fail-closed**：目标 canonical 文件已存在时 MUST 拒绝，MUST NOT 覆盖。契约变化 MUST 走新的 `change_unit_id` + `supersedes`；蓝图升版造成的指针漂移由下一条原位升版处理，不经再接受。
 - **指针原位升版**：派生 readiness 前，设计准备段 MUST 按「Reconciliation re-resolves stable targets without a semantic diff engine」执行三处蓝图指针原位升版；它 MUST 复用同一 canonical 校验与同一落盘原语（整批校验后写、中途失败回滚），MUST NOT 改动契约字段，不构成第二套写入机制。
+- **完整只读内容检查**：指针调和非 busy 后，readiness MUST 对全部未退役（包括已完成）且原设计判定 constructable 的 CU，复用 deriveBlueprintSkillInput 默认只读路径检查已声明 acceptance/contracts/use_cases，MUST NOT 传 pure 跳过手写 use-cases 与投影冲突。三类内容 MUST 分别检查，另一类 absent 不得漏掉已声明的非法 use_cases；MUST 保持 validateChangeUnitDesign 原职责、不形成投影循环。absent MUST 披露“设计期未写入，将由 spec/plan 补”及责任，不新增缺字段门禁；invalid MUST 使用已有原因将 perUnit 判 blocked、交接 not-ready，不新增检查 ID、停机原因或持久状态。校验 MUST NOT 物化 sidecar/Feature 产物、写 phase PASS/receipt、选择或重启 CU。
 - **终点**：派生 design gate / readiness 并返回后续施工入口。子流程 MUST **停在 selector 与 Goal Mode 执行之前**，MUST NOT 选择 CU、启动 run 或触碰 P3 closure。
 - **施工段前提不放宽**：selector 与 Goal Mode 施工段 MUST 仍要求至少一个 canonical CU；设计准备段的入口放宽 MUST NOT 传导到施工段。
 
@@ -421,7 +422,34 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 - **WHEN** 设计准备段尚未写出任何 canonical CU，调用方试图进入 selector 或 Goal Mode
 - **THEN** 施工段入口必须拒绝并说明至少需要一个 canonical CU
 
+#### Scenario: Declared invalid content is checked before construction
+
+- **WHEN** 一类 typed 内容 absent，而同一 CU 已声明的 use_cases 形状或语义非法
+- **THEN** readiness MUST 检查并返回原 invalid 原因，perUnit 为 blocked，不把非法声明当 absent，也不等 Goal run 首次发现
+
+#### Scenario: Completed active units and conflicting handwritten use cases remain checked
+
+- **WHEN** 未退役旧 CU 已完成且原设计 constructable，调和后手写 use-cases 与新权威投影仍冲突
+- **THEN** 默认只读检查 MUST 提前返回 authority_use_cases_conflict，不改文件、不跳过旧 CU、不重启旧 run
+
+#### Scenario: Materialized refresh fails before readiness
+
+- **WHEN** 已物化 CU 的指针调和刷新因新内容非法先抛 change_unit_blueprint_ref_bump_rejected
+- **THEN** 原异常 MUST 传播且整批指针/派生文件保留原字节，用户已修订 canonical 蓝图不回滚；MUST NOT 伪装正常 readiness 成功或正常 not-ready 返回
+
 > **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/utils/change-unit-provider-boundary.ts`, `harness/scripts/utils/change-unit-progress-loop.ts`, `skills/project/change-unit-progression/SKILL.md`, `skills/project/component-design/SKILL.md`
+
+CU 接受成功、非 busy readiness、B1 发布后 SHALL 刷新人读文档；唯一 reconcileHeldBlueprintRefs MUST 在整批 bumped 成功后持锁刷新，覆盖运行中 reconcilePointerInRun。文档失败 MUST NOT 改变 accepted/readiness/bumped/recovered 或回滚设计。结果 SHALL 汇总内部与外层生成的最终状态和实际写入路径，不把外层未重写误报未交付。
+
+#### Scenario: Stale owner pointer retains the unit contract
+- **WHEN** 蓝图已改而 CU owner 指针待升版
+- **THEN** 文档 SHALL 保留 CU 自身交付、依赖、约束、中间态与阻塞项，派生模块/链接标待升版、合并声明集合标“待指针升版后显示”，摘要不填假值；整批调和后 SHALL 自动刷新为当前绑定
+
+#### Scenario: Display failure does not halt construction recovery
+- **WHEN** 文档写入失败或单 CU 来源不可解析
+- **THEN** SHALL 保留 canonical 与原业务结论，披露来源缺口与重建入口；不得新增 halt reason
+
+> **Enforced by:** harness/scripts/utils/change-unit-design-preparation.ts、harness/scripts/utils/design-repair-unattended.ts、harness/scripts/utils/goal-phase-runtime.ts
 
 ### Requirement: CU-bound lite Features reuse the contracts change_unit sidecar
 

@@ -110,7 +110,7 @@ function featureInput(
   };
 }
 
-function inspectRetirement(
+export function inspectRetirement(
   units: ReadonlyArray<Pick<RawClosureUnit, 'ref' | 'changeUnit'>>,
   issues: ComponentClosureIssue[],
 ): Map<string, string> {

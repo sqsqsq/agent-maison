@@ -20,6 +20,7 @@ import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint
  *   不评估，故不进入 flow scope。
  */
 export function requiredQuestioningScopes(blueprint: BlueprintRecord): Map<string, string> {
+  // 同一 scope 内审查 4+1 深度、共享继承/写集与本侧外部证据，不增平行 scope/缺字段门。
   const scopes = new Map<string, string>();
   for (const view of asRecords(blueprint.design_views)) {
     if (!isApplicableView(view)) continue;

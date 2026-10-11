@@ -273,6 +273,8 @@ export interface ContractsSpec {
       type: string;
       required: boolean;
       default?: string;
+      description?: string;
+      source_ref?: string;
     }>;
     computed_properties?: Array<{
       name: string;

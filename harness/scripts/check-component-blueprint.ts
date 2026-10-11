@@ -11,6 +11,7 @@ import {
 import { validateComponentBlueprint } from './utils/component-blueprint-validator';
 import { profileHasDesignLens } from './utils/blueprint-provider-boundary';
 import { loadFrameworkConfig } from '../config';
+import { inspectBlueprintReview, materializeBlueprintReview } from './utils/blueprint-review-materialization';
 import {
   validateBlueprintReviewFeedback,
   validateBlueprintReviewPublication,
@@ -28,6 +29,7 @@ interface CliArgs {
   /** M7 seam 3：宿主结构化评审反馈（blueprint-review-feedback@1）JSON 路径。 */
   feedback?: string;
   json?: boolean;
+  'write-review'?: boolean;
 }
 
 export function checkCanonicalComponentBlueprint(projectRoot: string, blueprintId: string) {
@@ -114,8 +116,8 @@ export function checkHostSeamMaterials(
     modes.push('blueprint-review-publication');
     issues.push(...validateBlueprintReviewPublication(
       fs.readFileSync(args.projection, 'utf8'),
-      loaded.blueprint,
-      loaded.artifactSha256,
+      projectRoot,
+      String(loaded.blueprint.blueprint_id),
     ));
   }
   if (args.feedback) {
@@ -131,15 +133,16 @@ export function checkHostSeamMaterials(
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
     string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback'],
-    boolean: ['json'],
+    boolean: ['json', 'write-review'],
     default: { 'project-root': process.cwd(), json: false },
   });
   if (!args.blueprint) {
     console.error('用法：check-component-blueprint --project-root <root> --blueprint <blueprint-id> [--ref <json>]'
-      + ' [--materialization <path>] [--projection <path>] [--feedback <path>] [--json]');
+      + ' [--write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
     process.exit(2);
   }
   try {
+    if (args['write-review'] && (args.materialization || args.projection || args.feedback || args.ref)) throw new Error('--write-review 是独立生成模式，不能与 --ref/--materialization/--projection/--feedback 混用。');
     // 只跑 materialization 时不加载 canonical blueprint：物化发生在建立蓝图之前。
     // projection / feedback / ref 模式仍要求蓝图存在（它们本质上就是对某个 revision 的操作）。
     const materializationOnly = Boolean(args.materialization) && !args.projection && !args.feedback && !args.ref;
@@ -172,6 +175,8 @@ function main(): void {
     const seams = checkHostSeamMaterials(args['project-root']!, result, args);
     result.issues.push(...seams.issues);
     const failed = result.issues.some(item => item.severity === 'BLOCKER');
+    const reviewDocument = args['write-review'] ? materializeBlueprintReview(args['project-root']!, args.blueprint) : inspectBlueprintReview(args['project-root']!, args.blueprint);
+    const reviewFailed = args['write-review'] && reviewDocument.status === 'failed';
     if (args.json) {
       console.log(JSON.stringify({
         status: failed ? 'FAIL' : 'PASS',
@@ -181,6 +186,7 @@ function main(): void {
         resolved_target: resolvedTarget,
         host_seam_modes: seams.modes,
         issues: result.issues,
+        review_document: reviewDocument,
       }, null, 2));
     } else if (failed) {
       console.error(`❌ Component blueprint FAIL (${result.issues.length} issues)`);
@@ -191,7 +197,10 @@ function main(): void {
       console.log(`   artifact_sha256=${result.artifactSha256}`);
       if (seams.modes.length > 0) console.log(`   host_seam_modes=${seams.modes.join(', ')}`);
     }
-    process.exit(failed ? 1 : 0);
+    if (!args.json) console.log(`   review_document=${reviewDocument.status} ${reviewDocument.path}\n   重建：${reviewDocument.rebuildCommand}`
+      + ('reason' in reviewDocument && reviewDocument.reason ? `\n   原因：${reviewDocument.reason}` : '')
+      + ('sourceGaps' in reviewDocument && reviewDocument.sourceGaps?.length ? `\n   来源缺口：${reviewDocument.sourceGaps.join('；')}` : ''));
+    process.exit(failed || reviewFailed ? 1 : 0);
   } catch (error) {
     const code = error instanceof ComponentBlueprintResolutionError ? error.code : 'component_blueprint_check_failed';
     const payload = { status: 'FAIL', issues: [{ id: code, severity: 'BLOCKER', path: '$', message: (error as Error).message }] };

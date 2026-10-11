@@ -11,6 +11,7 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import { BlueprintReviewResult, materializeBlueprintReview, summarizeBlueprintReviewResults } from './blueprint-review-materialization';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { deriveBlueprintAdmission } from './blueprint-admission';
@@ -275,6 +276,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
   input.registerLockRelease(locks.release);
   const release = (): void => { locks.release(); input.registerLockRelease(null); };
   let published: { revision: number } | undefined;
+  let reviewDocument: BlueprintReviewResult | undefined;
   const evidence: Record<string, unknown> = {};
   try {
     // 记账：attempted 落盘成功后才派发（appendFileSync 抛错即整次尝试中止、不调用 adapter）。
@@ -416,6 +418,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     let reconciled = false;
     try {
       const result = reconcileHeldBlueprintRefs(projectRoot, blueprintId, locks);
+      reviewDocument = result.reviewDocument;
       const own = result.skipped.find(item => item.change_unit_id === changeUnitId);
       reconciled = !result.busy && !own && result.bumped.some(item => item.change_unit_id === changeUnitId);
       reconcileNote = result.busy ?? (own ? `本 CU 被调和器跳过：${own.reasons.join('；')}` : reconciled ? '本 CU 指针已升到新 revision' : '本 CU 未被升版');
@@ -423,8 +426,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     } catch (error) {
       reconcileNote = `调和失败：${(error as Error).message}`;
     }
+    reviewDocument = summarizeBlueprintReviewResults(reviewDocument, materializeBlueprintReview(projectRoot, blueprintId));
     release();
-    const common = { ...base, stage: 'published', new_revision: revision, files: [canonicalRel], review_projection_stale: true, ...evidence };
+    const common = { ...base, stage: 'published', new_revision: revision,
+      files: [canonicalRel, ...(reviewDocument?.writtenPaths ?? []).map(file => path.relative(projectRoot, file).replace(/\\/g, '/'))],
+      review_projection_stale: reviewDocument?.status === 'failed' || !!reviewDocument?.sourceGaps.length, review_document: reviewDocument, ...evidence };
     if (!reconciled) {
       const reason = `已发布 rev ${revision}、调和未完成：${reconcileNote}`;
       input.emit({ ...common, outcome: 'unrecovered', failed_step: 'reconcile', reason });
@@ -446,7 +452,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     if (published) {
       // 发布之后的意外：不回滚、不落入草稿失败分支。
       const reason = `已发布 rev ${published.revision}、之后失败：${failure.message}`;
-      input.emit({ ...base, stage: 'published', new_revision: published.revision, files: [canonicalRel], outcome: 'unrecovered', failed_step: failure.step, reason, ...evidence });
+      input.emit({ ...base, stage: 'published', new_revision: published.revision,
+        files: [canonicalRel, ...(reviewDocument?.writtenPaths ?? []).map(file => path.relative(projectRoot, file).replace(/\\/g, '/'))],
+        review_document: reviewDocument, review_projection_stale: !reviewDocument || reviewDocument.status === 'failed' || !!reviewDocument.sourceGaps.length,
+        outcome: 'unrecovered', failed_step: failure.step, reason, ...evidence });
       return { outcome: 'published', recovered: false, step: failure.step, revision: published.revision, reason };
     }
     fs.rmSync(path.join(projectRoot, input.reportDir, 'design-repair'), { recursive: true, force: true });

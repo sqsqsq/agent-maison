@@ -85,6 +85,33 @@ export function validateComponentBlueprintUpstream(
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);
+  out.push(...diagnoseBlueprintPresentationShape(blueprint));
+  return out;
+}
+
+/** 六类可选设计表达的形状诊断；缺失/空数组合法，坏形状也仅 WARN。 */
+export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): BlueprintIssue[] {
+  const out: BlueprintIssue[] = [];
+  const string = { type: 'string' };
+  const strings = { type: 'array', items: string };
+  const rows = (properties: BlueprintRecord): BlueprintRecord => ({ type: 'array', items: { type: 'object', properties, required: Object.keys(properties) } });
+  const check = (value: unknown, at: string, properties: BlueprintRecord): void => {
+    if (value === undefined) return;
+    for (const violation of validateLiteSchema(value, { type: 'object', properties }, undefined, at)) out.push(issue('blueprint_presentation_shape_invalid', violation.path, violation.message, 'WARN'));
+  };
+  check(blueprint.review_summary, '$.review_summary', { background: string, problem: string, goals: rows({ goal_id: string, statement: string, success_measures: strings }), positioning: string, in_scope: strings, non_goals: strings });
+  check(blueprint, '$', { quality_attributes: rows({ qa_id: string, category: string, requirement: string, landing: string, source_ref: string, verification_refs: strings }), data_domains: rows({ data_domain_id: string, usage: string, retention: string, isolation: string, cleanup: string, security: string }) });
+  asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).forEach((decision, i) => check(decision, `$.decisions_and_gaps.decisions[${i}]`, { alternatives: rows({ option: string, rejected_reason: string, defect: string }) }));
+  asRecords(asRecord(blueprint.discovery)?.facts).forEach((fact, i) => {
+    if (String(fact.subject).startsWith('term:') && asRecord(fact.value)) check(fact.value, `$.discovery.facts[${i}].value`, { meaning: string });
+  });
+  asRecords(blueprint.design_views).forEach((view, i) => {
+    if (view.view_id === 'scenarios') asRecords(view.nodes).forEach((node, j) => check(node, `$.design_views[${i}].nodes[${j}]`, { journey_steps: rows({ step_id: string, stage: string, user_action: string, system_behavior: string, preconditions: strings }), path_variants: rows({ user_type: string, difference: string }) }));
+    if (view.view_id === 'deployment') {
+      check(view, `$.design_views[${i}]`, { rollout: rows({ order: { type: 'number' }, unit: string, depends_on: strings, note: string }), coordination: rows({ counterpart: string, relation: string }) });
+      asRecords(view.nodes).forEach((node, j) => check(node, `$.design_views[${i}].nodes[${j}]`, { responsibilities: strings, inputs: strings, outputs: strings, not_responsible_for: strings, failure_impact: string }));
+    }
+  });
   return out;
 }
 

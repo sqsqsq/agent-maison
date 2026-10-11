@@ -61,6 +61,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
   { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
   { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },
+  { id: 'blueprint-review-design', modulePath: './unit/blueprint-review-design.unit.test' },
   { id: 'execution-scope', modulePath: './unit/execution-scope.unit.test' },
   { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
   { id: 'knowledge-context', modulePath: './unit/knowledge-context.unit.test' },

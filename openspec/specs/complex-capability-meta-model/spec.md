@@ -4,7 +4,6 @@
 TBD - created by archiving change complex-capability-meta-model. Update Purpose after archive.
 > 动态工作流 g1 已对齐目标规范；新协议的生产接线与验收由 P1–P7 分别完成。
 > 本次规范修改不表示动态运行能力已上线，旧运行仍依出生协议兼容。
-
 ## Requirements
 ### Requirement: Parent-goal declaration validation
 
@@ -422,8 +421,8 @@ MUST NOT 合并：
   blueprint builder 直接规范化为同一 `currentScopeItem`，MUST NOT 强制额外制造一份 provider
   manifest。无论哪条路径，MUST NOT 无来源、凭模型转述生成 scope item。
 - `blueprint-review-publication`：输出**指定 admitted blueprint revision** 的评审投影，供宿主
-  装配 Story Document / 归档件。投影 `derived_from` MUST 精确指向该 revision，内容 MUST 零新
-  设计事实；宿主可在其后附加 CU/spec 等施工附件，但附件 MUST NOT 成为部件内设计的事实来源。
+  装配 Story Document / 归档件。投影 `derived_from` MUST 精确指向该 revision，内容 MUST 相对 canonical 蓝图与 CU 零新
+  设计事实；Maison 派生同页 CU 拆分，宿主仍可附 spec 等附件，但附件 MUST NOT 成为部件内设计的事实来源。
 - `blueprint-review-feedback`：结构化评审反馈 MUST 区分**意见 / 事实补充 / 建议 / 授权裁决**
   四类。只有同时具备 authority、source revision 与明确决策语义的反馈才 MAY 进入
   `decided_with_authority`；合法反馈 MUST 经既有 reconciliation 生成**新** revision，
@@ -451,11 +450,19 @@ renderer MUST NOT 兼任 feedback provider。
 
 #### Scenario: 投影试图新增设计事实被拒绝
 
-- **WHEN** 评审投影包含 canonical 蓝图中不存在的设计事实
+- **WHEN** 评审投影包含 canonical 蓝图与 CU 中不存在的设计事实
 - **THEN** 投影校验 MUST 失败；宿主附件 MUST NOT 被当作部件内设计的事实来源
 
 > **Enforced by:** 本 capability spec 作为 P1 change 三张接缝 Seam Card 的准入约束；
 > 发布态机器契约与校验入口由 P1 change 与发布件内 schema/checker 承载
+
+默认本地交付 SHALL 由 Maison 从 canonical 蓝图与 CU 派生同页 4+1 设计、施工拆分、质量与验收，相对两者零新事实；宿主无需自拼 CU 附件，仍可附 spec 等外部附件。设计期 SHALL 在原目标写入 acceptance/contracts/use_cases，按原对象增加六类可选表达；来源与目标态裁决仍归原设计 owner，renderer MUST NOT 读外部原文补设计或创建独立文档权威。草稿本地展示不宣称正式 admitted publication，readiness/run/完成结论 MUST 独立报告。投影与 feedback 的权责继续独立。
+
+#### Scenario: CU decomposition is included by Maison
+- **WHEN** 宿主接收当前设计交付
+- **THEN** Maison SHALL 同页呈现有效 CU、精确替代、显式依赖、安全中间态和需求直接引用，MUST NOT 依赖宿主拼装 CU 正文或输出覆盖结论
+
+> **Enforced by:** harness/scripts/utils/blueprint-review-projection.ts、harness/scripts/utils/blueprint-host-seams.ts、docs/operations/component-design-host-adaptation.md
 
 ### Requirement: Design lens coverage is declared honestly per component type
 
@@ -475,7 +482,9 @@ MUST 返回明确的 unsupported / missing design lens 失败，MUST NOT 把 Ser
 
 ### Requirement: Applicable construction obligations preserve layered completion
 
-蓝图 MUST 保持正式需求目标与共同决策权威，CU MUST 保持当前切片与目标谓词；spec/plan 只补本次未满足的验收/施工设计义务。已有合法完整内容可经施工投影承接，MUST NOT 为阶段形式重写共同设计或生成空文件。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
+蓝图 MUST 保持正式需求目标与共同决策权威，设计期在可引用目标写入已有 acceptance/contracts/use_cases；CU MUST 保持当前切片、目标谓词与 design_refs。spec/plan MUST 直接消费已有合法 typed 投影，只补本次未声明的本职责验收/施工细节，叙述文件仅按 required_outputs 产出，MUST NOT 为阶段形式重写共同设计或生成空文件。P0 真机验收无 UI 依据时保留设计验收，真实 UI 流程/检查点由 spec 不冲突补充；改变已声明权威内容 MUST 回原设计 owner。信息/格式承接 MUST NOT 代替真实授权与先行控制事实。
+
+目标被 design_refs 引用后，其三类内容 MUST 整体进入该 CU 合并；共享目标只承载所有引用者共同承担的内容，专属映射、验收与写集 MUST 放独占目标。数组按原行身份合并、冲突拒绝；对象 MUST 只接受完整相等声明，不能逐键拼接或按 predicate 过滤。文档的纯声明集合 MUST NOT 被当作通过完整只读 readiness 的授权或产品完成证明；absent 明确原补设计责任，已声明 invalid 复用原原因返回 not-ready，不新增缺字段门禁。
 
 独立 Skill 完成只表示请求职责完成；Feature 完成 MUST 由同一有效范围、适用目标与既有真实运行证据验证，不以末段名称或阶段自报完成判定。CU MUST 只消费独立验证的 VALID completion 和当前 CU 映射；Component closure MUST 继续检查共同决策、目标覆盖与真实组装义务；跨部件能力完成仍归上游。合法无蓝图维护/专项入口 MUST NOT 被强造蓝图、Code Graph 或 CU。
 
@@ -486,6 +495,11 @@ MUST 返回明确的 unsupported / missing design lens 失败，MUST NOT 把 Ser
 #### Scenario: Design-only request stops at design
 - **WHEN** 用户只授权设计，尚未请求实现
 - **THEN** 设计结果 MUST 不自动创建施工 run 或被解释为 Feature/CU 已交付
+
+#### Scenario: Shared design is inherited without creating a second authority
+
+- **WHEN** 两个 CU 分别引用共享目标 S 与专属目标 A/B
+- **THEN** 两者 MUST 分别消费 S+A、S+B 的真实合并内容；文档展示声明，readiness 校验完整来源/语义，后续 spec/plan 消费同一 typed 投影，不手写另一份设计真源
 
 > **Enforced by:** 父 goal §8/§9 与本规范；后续动态工作流 P2/P3/P7 在
 > `harness/scripts/utils/verify-feature-completion.ts`、

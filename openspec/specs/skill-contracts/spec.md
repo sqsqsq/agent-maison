@@ -49,6 +49,27 @@ be enforced later by the phase runner because static validation has no check res
 - **WHEN** two capabilities active in the same execution scope declare the same ID
 - **THEN** the consistency gate MUST fail before phase execution
 
+### Requirement: Design skills consume typed blueprint projections
+
+spec and plan SHALL directly consume existing typed acceptance, construction and use-case content from artifacts or registered blueprint providers, preserving its canonical authority and binding. They SHALL only fill content missing within their responsibility and SHALL NOT manually recreate existing authoritative design. Changes to already declared authority SHALL return to the original design owner. Narrative formatting checks SHALL apply only to narrative outputs requested in required_outputs for composable calls; they SHALL NOT cause empty spec.md or plan.md placeholders. Semantic, source, write-set, visual, runtime and mapping checks MUST remain active when applicable. A design-only request MUST NOT start implementation.
+
+Without a real ui-spec basis, design-authored P0 device acceptance SHALL retain its ID, priority, steps, expected results, verification layer and focus, without inventing linked_flow, checkpoints, screen flows or element IDs. Once spec has that real basis it MAY add undeclared UI fields through the existing non-conflicting supplementation path, preserving all declared authoritative fields and passing existing alignment and P0 checks. Supplementation SHALL NOT delete acceptance or weaken those checks.
+
+Enforcement: `harness/scripts/utils/capability-resolution.ts`, `harness/scripts/utils/blueprint-skill-projection.ts`, `harness/scripts/check-spec.ts`, `harness/scripts/check-plan.ts`, `skills/feature/spec/contract.yaml`, `skills/feature/plan/contract.yaml`, `docs/concepts/blueprint-design-inputs.md`.
+
+#### Scenario: Typed design exists without narrative documents
+- **WHEN** the current invocation has valid typed acceptance and construction inputs and does not request spec.md or plan.md
+- **THEN** missing narrative files SHALL NOT block machine-content validation or cause placeholder reports; the stages SHALL consume the existing design
+
+#### Scenario: Required content is unknown
+- **WHEN** a blueprint reference lacks exact expected results, verification layers or construction fields
+- **THEN** resolution SHALL report the missing responsibility rather than inventing content or declaring it not applicable
+
+#### Scenario: Spec supplements P0 UI detail without changing design acceptance
+- **WHEN** real ui-spec content becomes available after typed acceptance was projected with no UI association
+- **THEN** spec MAY add only missing UI flow and checkpoint fields and SHALL pass the existing authoritative alignment and P0 checks
+- **AND** changing a declared expected result SHALL fail alignment; declaring an incomplete flow association in the blueprint SHALL remain invalid
+
 ### Requirement: Equivalent inputs retain content provenance and responsibility
 
 输入 SHALL 复用 artifact/derive 与静态 provider；resolved MUST 含可消费内容和真实来源，只有 refs 不算满足。absent 可继续下一来源；invalid 或显式新事实冲突 MUST NOT 被 fallback 掩盖。代码只证明现状或 characterization，MUST NOT 自动成为用户预期或外部授权。确定性投影只能提取已明确内容，语义缺口 MUST 回责任 Skill。当前 required 义务的必要输入缺失 MUST blocked；optional 缺失诚实降级，unknown MUST NOT 视为 not_applicable。

@@ -16,6 +16,7 @@ import {
 } from '../../scripts/utils/component-blueprint-path';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
+import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
 import { generateMermaidViewGraph } from '../../scripts/utils/blueprint-graph-generator';
 import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
@@ -561,27 +562,58 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('review Markdown is a one-way derived projection with full binding', () => {
     const loaded = loadCanonicalBlueprint(VALID_PROJECT, 'ledger-app-blueprint');
-    const markdown = renderBlueprintReviewMarkdown(loaded.blueprint, loaded.artifactSha256);
+    const markdown = renderBlueprintReviewMarkdown(loaded.blueprint, loaded.artifactSha256, collectBlueprintReviewInputs(VALID_PROJECT, loaded));
     for (const expected of [
       'derived_from:',
       'component_id: ledger',
       'blueprint_id: ledger-app-blueprint',
       `artifact_sha256: ${loaded.artifactSha256}`,
-      '## Design views',
-      '- Current:',
-      '- Target:',
-      '- Delta:',
-      '## Runtime data flows',
-      '## Authority contracts',
-      '## Cross-view relations',
-      '## Independent questioning',
-      '## Admission',
-      'Derived projection only',
+      '## 3 逻辑视图',
+      '## 2 场景视图（+1）',
+      '| 适用性 | 本次影响 | 当前 | 目标 | 变化/依据 |',
+      '| 设计对象 | 模块/责任方 | 当前 | 目标 | 依据 |',
+      '## 4 运行时视图',
+      '### 本部件实际消费或提供的操作与 DTO',
+      '## 各视图的显式联系',
+      '## 附录：独立质询',
+      '## 11 风险与待决项',
+      '单向派生物',
     ]) {
       assert(markdown.includes(expected), `projection 缺 ${expected}`);
     }
     const fixtureProjection = fs.readFileSync(path.join(path.dirname(VALID_PATH), 'component-blueprint.review.md'), 'utf8');
-    assert(fixtureProjection === markdown, '评审 Markdown fixture 必须由 canonical YAML 确定性派生');
+    assert(fixtureProjection !== markdown && fixtureProjection.includes('projection: component-blueprint-review@3'), '旧 Ledger 文档保留作旧格式回归，不重生成原夹具');
+    assert(markdown.includes('projection: component-blueprint-review@4'), '新输出使用完整 4+1 格式');
+  }));
+
+  results.push(test('review presentation selects business fields: DTO tables, ordered flow, decisions and unchanged evidence, without recursive metadata', () => {
+    const bp = validBlueprint();
+    makeViewVerifiedUnchanged(bp, 'development', ['src/ledger/LedgerRepository.ts']);
+    findView(bp, 'logical').current_state = ['Existing repository', 'Existing create operation'];
+    const contract = asRecords(bp.contracts)[0]!;
+    asRecords(asRecord(contract.request_dto)?.fields)[0]!.provenance = { source_kind: 'hidden-source-kind', observed_at: 'hidden-time', evidence_strength: 'hidden-strength' };
+    const flow = runtimeFlow(bp);
+    asRecords(flow.subscriptions)[0]!.publication_ref = 'publication:ledger-changed';
+    flow.viewpoint_contract = { arbitrary: { nested: 'hidden-viewpoint' } };
+    asRecords(asRecord(bp.discovery)?.facts)[0]!.fact_id = 'hidden-fact-id';
+    asRecords(asRecord(asRecord(bp.review_summary)?.questioning)?.items)[0]!.question_id = 'hidden-question-id';
+    asRecord(bp.discovery)!.frontier = { fingerprint: 'hidden-frontier' };
+    const decisions = asRecords(asRecord(bp.decisions_and_gaps)?.decisions);
+    decisions.push({ decision_id: 'move-ledger', kind: 'architecture_impact', change: 'move_module', module: 'ledger', from_layer: 'old-layer', to_layer: 'new-layer', rationale: 'owner remains stable', status: 'decided', owner: 'architecture-owner' });
+    asRecord(bp.decisions_and_gaps)!.decisions = decisions;
+    const markdown = renderBlueprintReviewMarkdown(bp, 'sha256:' + 'a'.repeat(64));
+    const body = markdown.replace(/^---\n[\s\S]*?\n---\n/, '');
+    for (const hidden of ['hidden-source-kind', 'hidden-time', 'hidden-strength', 'hidden-viewpoint', 'hidden-fact-id', 'hidden-question-id', 'hidden-frontier', 'observed_at', 'viewpoint_contract', 'source_fingerprint', 'identity_neutral_digest', '<details>', '条目 1']) {
+      assert(!body.includes(hidden), `递归/机器元数据残留：${hidden}`);
+    }
+    for (const kept of ['| 字段 | 类型 | 必需 | 可空 | 语义 |', '| amount | decimal-string | true | false | signed ledger amount |', 'CreateEntryResponseV1', 'LedgerEntry.parent', '核实未变：src/ledger/LedgerRepository.ts', 'old-layer → new-layer', 'owner remains stable', 'Existing repository；Existing create operation', 'LedgerDataSource', 'App composition root', 'Surface source failure and preserve prior projection.', '再次提取条件', '| 范围 | 问题 | 裁决 | 回答 |']) {
+      assert(markdown.includes(kept), `评审业务信息缺失：${kept}`);
+    }
+    const section = body.slice(body.indexOf('## 4 运行时视图'), body.indexOf('## 5 开发视图'));
+    const sequence = ['触发：', '首次加载：', '权威状态：', '写入与发布：', '订阅与消费者：', '失败与恢复：', '生命周期：'];
+    const positions = sequence.map(label => section.indexOf(label));
+    assert(positions.every((position, index) => position >= 0 && (!index || position > positions[index - 1]!)), `流程顺序错误：${positions}`);
+    assert(section.includes('publication:ledger-changed') && section.includes('remove observer token') && section.includes('rebuild store from repository'), '发布/清理/恢复链路丢失');
   }));
 
   results.push(test('generated graph parser is conditional and cannot replace structured completeness', () => {

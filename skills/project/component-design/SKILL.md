@@ -89,7 +89,9 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求形成薄蓝图，未触发义务按合法空集/不适用表达，不凑空章节。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，明确共享/专属目标、六类可选细节及无 UI 依据的 P0 补充分工。
+
+内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求按实际影响展开必要细节，未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
@@ -113,7 +115,7 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 
 ### 4. Readiness 与后续施工入口（终点）
 
-派生每个 CU 的设计可施工门与 readiness，输出设计交付结果与下一步建议：
+派生全部未退役 CU（含已完成旧 CU）的设计可施工门与 readiness；原 constructable 项调用默认只读 typed 投影检查，absent 如实列补设计责任，invalid 使用现有原因 blocked；不传 pure、不物化 Feature、不重启旧 CU。调和刷新先失败沿原异常/整批回滚。输出设计交付结果与下一步建议：
 
 - 施工：[`/change-unit-progression`](../change-unit-progression/SKILL.md)
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
@@ -121,25 +123,20 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 **边界（BLOCKER）**：本 Skill **停在设计交接**——设计阶段不启动 run：不进入 P2 selector、不进入施工
 循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内创建真实 attended Goal；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 无人值守时框架派出的 B1 修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
 
-### 5.（可选）评审投影与反馈回灌
+### 5. 默认本地人读文档与可选宿主接入
 
-- **publication（Maison → 宿主，optional）**：输出指定 admitted revision 的确定性评审投影
-  （`component-blueprint.review.md`），供宿主装配 Story Document / 归档件。投影 `derived_from`
-  精确指向该 revision、**零新设计事实**；宿主可在其后附加 CU/spec 施工附件，但**附件不成为
-  部件内设计的事实来源**。宿主未接该接缝 → 诚实降级，不宣称已归档。校验：`--projection <path>`。
-- **feedback（宿主 → Maison，optional）**：结构化评审反馈必须区分**意见 / 事实补充 / 建议 /
-  授权裁决**四类。只有同时具备 `authority`、`source_revision` 与明确 `decision` 语义的
-  `authoritative_ruling` 才能进入 `decided_with_authority`。**校验只判候选资格，不代表已被
-  接受**——是否接受由蓝图 write owner 裁决；被接受的事实补充与授权裁决才按既有 reconciliation
-  生成**新** revision，**不得回写旧 revision**；意见与建议永不触发 revision 递进。契约 schema
-  `framework/harness/schemas/blueprint-review-feedback.schema.json`；校验：`--feedback <path>`。
+完整交接默认交付同目录 `component-blueprint.review.md`，同页展示蓝图与 canonical CU 的设计、拆分与风险验收。**本次改了 canonical 蓝图/CU 内容，结束前必须执行 `check:component-blueprint --write-review`**（草稿、质询写回、局部修改、新增/替代同规则）；CU 仍经既有 consumer 接受。
+
+最终回复链接当前文档并概述变化/未决项，单独报告 readiness；文档失败如实说明未交付/过期，仅重试物化、不改变原接受或施工结论。只读请求不落盘；当生成、刷新或检查文档时读 [P1 工作流 §5](../../reference/app-component-blueprint-workflow.md#5-写作检查与本地交付) 的命令、写作与失败细则。
+
+- **publication（Maison → 宿主，optional）**：输出指定 admitted revision 的确定性评审投影 （同一 `component-blueprint.review.md`），供宿主装配 Story Document / 归档件。投影 `derived_from` 精确绑定蓝图与有效 CU 内容、**相对两者零新设计事实**；宿主仍可附 spec 等附件，但**附件不成为 部件内设计的事实来源**。宿主未接该接缝 → 诚实降级，不宣称已归档。校验：`--projection <path>`。
+- **feedback（宿主 → Maison，optional）**：结构化评审反馈必须区分**意见 / 事实补充 / 建议 / 授权裁决**四类。只有同时具备 `authority`、`source_revision` 与明确 `decision` 语义的 `authoritative_ruling` 才能进入 `decided_with_authority`。**校验只判候选资格，不代表已被 接受**——是否接受由蓝图 write owner 裁决；被接受的事实补充与授权裁决才按既有 reconciliation 生成**新** revision，**不得回写旧 revision**；意见与建议永不触发 revision 递进。契约 schema `framework/harness/schemas/blueprint-review-feedback.schema.json`；校验：`--feedback <path>`。
 
 ## 完成边界
 
 局部操作完成只报告本次请求的结果及剩余设计缺口，不等于设计交接完成。
 
-设计交接完成 = **admitted blueprint + 已分解 1..N canonical CU + 每个 CU 建立 `design_refs`
-引用 + 后续施工 readiness**。
+设计交接完成 = **admitted blueprint + 已分解 1..N canonical CU + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness + 当前人读文档及链接**。
 
 注意分层：**合法 `component-blueprint@1` 的判据不含 CU 数量**（P1 不反向依赖 P2）——
 `admitted blueprint + 0 CU` 是合法状态、是设计准备子流程的入口；"完整设计交付"才要求 CU。

@@ -13,7 +13,6 @@
 //
 // 不新增 CLI、状态、registry、跨单元 ledger，也不新增第二套 CU 写入机制。
 
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
@@ -26,20 +25,20 @@ import {
   deriveChangeUnitFeatureId,
   enumerateCanonicalChangeUnits,
   loadCanonicalChangeUnit,
-  parseChangeUnitFeatureId,
-  resolveChangeUnitRef,
 } from './change-unit-path';
 import { FEATURE_LOCK_NAME, readLockRecord, releaseLock, tryAcquireLock } from './goal-run-lock';
-import { stableStringify } from './phase-evidence-manifest';
 import {
   BLUEPRINT_PROJECTION_FILES,
+  deriveBlueprintSkillInput,
+  type BlueprintProjectionKind,
+  type BlueprintSkillProjection,
   inspectProjectionStamps,
   materializeBlueprintSkillInputs,
   type ProjectionRefresh,
 } from './blueprint-skill-projection';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
-import { deriveModifiableModules, relevantArchitectureImpactDecisions } from './change-unit-feature-projection';
-import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, sha256Bytes } from './component-blueprint-path';
+import { deriveModifiableModules } from './change-unit-feature-projection';
+import { loadCanonicalBlueprint, sha256Bytes } from './component-blueprint-path';
 import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
 import { asRecord } from './component-blueprint-model';
 import { ChangeUnitArtifact, ChangeUnitRecord, changeUnitRecords } from './change-unit-model';
@@ -52,6 +51,8 @@ import {
   acceptChangeUnitCandidates,
   writeCanonicalChangeUnit,
 } from './change-unit-provider-boundary';
+import { blueprintIdentityPointers, currentBlueprintIdentity, ownerBlueprintPointerIsStale } from './change-unit-blueprint-identity';
+import { BlueprintReviewResult, materializeBlueprintReview, summarizeBlueprintReviewResults } from './blueprint-review-materialization';
 
 export interface DesignPreparationEntry {
   /** 是否可以进入设计准备段。admitted blueprint + 0 CU 是**合法**入口。 */
@@ -124,6 +125,7 @@ export { ChangeUnitCandidateRejected as ChangeUnitDecompositionRejected } from '
 export interface AcceptedDecomposition {
   accepted: ReturnType<typeof loadCanonicalChangeUnit>[];
   changeUnitIds: string[];
+  reviewDocument: BlueprintReviewResult;
 }
 
 /**
@@ -150,6 +152,7 @@ export function acceptChangeUnitDecomposition(
   return {
     accepted,
     changeUnitIds: accepted.map(loaded => String(loaded.changeUnit.change_unit_id)).sort(),
+    reviewDocument: materializeBlueprintReview(projectRoot, blueprintId),
   };
 }
 
@@ -158,6 +161,7 @@ export interface BlueprintRefReconciliation {
   skipped: Array<{ change_unit_id: string; reasons: string[] }>;
   /** 竞争退出（plan 9c3d7e1a §4.2）：蓝图锁或某个待写 feature 的锁被另一执行者持有——一个字节未写，bumped / skipped 为空。 */
   busy?: string;
+  reviewDocument?: BlueprintReviewResult;
 }
 
 /** 调用方已持有的 feature 锁（goal 运行时对本 feature）：借给调和器，调和器不再取（`tryAcquireLock` 不支持同 owner 重入）也不释放。 */
@@ -166,111 +170,9 @@ export interface HeldFeatureLock { path: string; ownerId: string }
 export const BLUEPRINT_RECONCILE_LOCK_NAME = '.blueprint-reconcile.lock';
 export const RECONCILE_BUSY_HINT = '另一执行者正在写入，竞争解除后重发同一请求即可，不需要改设计内容';
 
-/** CU 内全部蓝图身份指针：component_blueprint_ref、design_refs[]、touches[].design_ref。 */
-function blueprintIdentityPointers(cu: ChangeUnitRecord): Array<Record<string, unknown> | undefined> {
-  return [
-    asRecord(cu.component_blueprint_ref),
-    ...(Array.isArray(cu.design_refs) ? cu.design_refs.map(ref => asRecord(ref)) : []),
-    ...changeUnitRecords(cu.touches).map(touch => asRecord(touch.design_ref)),
-  ];
-}
-
 const IDENTITY_KEYS = ['revision', 'source_fingerprint', 'artifact_sha256'] as const;
-const currentBlueprintIdentity = (current: ReturnType<typeof loadCanonicalBlueprint>) => ({
-  revision: Number(current.blueprint.revision),
-  source_fingerprint: String(current.blueprint.source_fingerprint),
-  artifact_sha256: current.artifactSha256,
-});
 
-/**
- * plan c4e7a9b2 §3.4 B2：「已证明业务内容相同」的唯一等价判据。登记的引用换成它经精确解析器解析到的
- * 当前权威内容（引用自身去掉身份三键），再对整份值做 stableStringify 哈希：
- *  · change-unit@1：所有权引用 `component_blueprint_ref` 不展开，只中立化为 {blueprint_id, component_id}；
- *    消费目标 `design_refs[]` / `touches[].design_ref` 展开为解析到的 target 内容（含 module）；`supersedes` 经
- *    `resolveChangeUnitRef` 展开为被引 CU 的同一中立视图；顶层 `revision` 中立化；另纳入授权边界——与施工门同一谓词
- *    （`relevantArchitectureImpactDecisions`）选出的、作用于本 CU 可修改模块的 architecture_impact 决策内容。
- *  · acceptance@1 / contracts@1 / use-cases@1：`change_unit.change_unit_ref` 展开为 CU 中立视图，其余
- *    `component-blueprint@1` 精确引用展开为 target 内容；`derive.blueprint-*` 来源戳的两个 sha 须等于当前
- *    canonical CU / 蓝图 sha，中立化为 `derive.blueprint-<kind>`。
- * 无引用无来源戳的值 = 全值哈希（同一 stableStringify 口径）。未登记 artifact、任一引用解析失败 → null
- *（不能证明等价，调用方回落全值 / 字节口径）。
- */
-export function identityNeutralDigest(projectRoot: string, artifactId: string, parsed: unknown): string | null {
-  try {
-    const view = artifactId === 'change-unit@1' ? neutralChangeUnit(projectRoot, parsed)
-      : Object.prototype.hasOwnProperty.call(BLUEPRINT_PROJECTION_FILES, artifactId) ? neutralFeatureArtifact(projectRoot, parsed) : undefined;
-    return view === undefined ? null : crypto.createHash('sha256').update(stableStringify(view)).digest('hex');
-  } catch {
-    return null;
-  }
-}
-
-const withoutIdentity = (ref: unknown): Record<string, unknown> =>
-  Object.fromEntries(Object.entries(asRecord(ref) ?? {}).filter(([key]) => !(IDENTITY_KEYS as readonly string[]).includes(key)));
-
-// ponytail: 进程内按「工程根 + 蓝图字节 + 引用」缓存精确解析结果（不落盘）；蓝图外文件变化不使缓存失效，上限=进程生命周期。
-const resolvedBlueprintRefs = new Map<string, ReturnType<typeof resolveComponentBlueprintRef>>();
-function resolveBlueprintRefCached(projectRoot: string, ref: unknown): ReturnType<typeof resolveComponentBlueprintRef> {
-  const bytes = fs.readFileSync(componentBlueprintPath(projectRoot, String(asRecord(ref)?.blueprint_id)));
-  const key = [projectRoot, sha256Bytes(bytes), stableStringify(ref)].join('\0');
-  if (!resolvedBlueprintRefs.has(key)) resolvedBlueprintRefs.set(key, resolveComponentBlueprintRef(projectRoot, ref));
-  return resolvedBlueprintRefs.get(key)!;
-}
-function expandBlueprintRef(projectRoot: string, ref: unknown): unknown {
-  return { ref: withoutIdentity(ref), content: resolveBlueprintRefCached(projectRoot, ref).target };
-}
-
-function expandChangeUnitRef(projectRoot: string, ref: unknown): unknown {
-  return { ref: withoutIdentity(ref), content: neutralChangeUnit(projectRoot, resolveChangeUnitRef(projectRoot, ref).changeUnit) };
-}
-
-function neutralChangeUnit(projectRoot: string, parsed: unknown): Record<string, unknown> {
-  const cu = asRecord(parsed);
-  if (!cu) throw new Error('change-unit@1 须为 map');
-  const { revision: _revision, ...view } = cu;
-  const owner = asRecord(cu.component_blueprint_ref);
-  view.component_blueprint_ref = { blueprint_id: owner?.blueprint_id, component_id: owner?.component_id };
-  if (Array.isArray(cu.design_refs)) view.design_refs = cu.design_refs.map(ref => expandBlueprintRef(projectRoot, ref));
-  if (Array.isArray(cu.touches)) {
-    view.touches = cu.touches.map(touch => {
-      const record = asRecord(touch);
-      return record?.design_ref === undefined ? touch : { ...record, design_ref: expandBlueprintRef(projectRoot, record.design_ref) };
-    });
-  }
-  if (cu.supersedes !== undefined) view.supersedes = expandChangeUnitRef(projectRoot, cu.supersedes);
-  // 授权边界：作用于本 CU 可修改模块的 architecture_impact 决策（与施工门同一相关性谓词），即使不在 design_refs 里。
-  const artifact = cu as unknown as ChangeUnitArtifact;
-  const designDecisionIds = (Array.isArray(cu.design_refs) ? cu.design_refs : []).map(ref => asRecord(asRecord(ref)?.target))
-    .filter(target => target?.kind === 'decision').map(target => String(target!.id));
-  view.relevant_architecture_impact = relevantArchitectureImpactDecisions(projectRoot, resolveBlueprintRefCached(projectRoot, cu.component_blueprint_ref).blueprint,
-    deriveModifiableModules(projectRoot, artifact), designDecisionIds).map(withoutIdentity);  return view;
-}
-
-const PROJECTION_STAMP = /^derive\.blueprint-(acceptance|contracts):(sha256:[0-9a-f]{64}):(sha256:[0-9a-f]{64})$/;
-function neutralFeatureArtifact(projectRoot: string, parsed: unknown): unknown {
-  const walk = (node: unknown): unknown => {
-    if (Array.isArray(node)) return node.map(walk);
-    const record = asRecord(node);
-    if (!record) return node;
-    if (record.artifact === 'component-blueprint@1') return expandBlueprintRef(projectRoot, record);
-    return Object.fromEntries(Object.entries(record).map(([key, child]) => [key, walk(child)]));
-  };
-  const view = asRecord(walk(parsed));
-  if (!view) return parsed;
-  const cuRef = asRecord(asRecord(parsed)?.change_unit)?.change_unit_ref;
-  if (cuRef !== undefined) view.change_unit = { ...asRecord(view.change_unit), change_unit_ref: expandChangeUnitRef(projectRoot, cuRef) };
-  if (typeof view.source === 'string' && view.source.startsWith('derive.blueprint-')) {
-    const stamp = PROJECTION_STAMP.exec(view.source);
-    const identity = parseChangeUnitFeatureId(String(view.feature));
-    if (!stamp
-      || loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).artifactSha256 !== stamp[2]
-      || loadCanonicalBlueprint(projectRoot, identity.blueprintId).artifactSha256 !== stamp[3]) {
-      throw new Error('派生投影来源戳不指向当前 canonical CU / 蓝图');
-    }
-    view.source = `derive.blueprint-${stamp[1]}`;
-  }
-  return view;
-}
+export { identityNeutralDigest } from './identity-neutral-digest';
 
 const DERIVED_PROJECTION_FILES = Object.values(BLUEPRINT_PROJECTION_FILES);
 const NOT_MACHINE_OWNED = 'derived_projection_not_machine_owned: 既有派生投影的来源戳不指向升版前 CU/蓝图，须人工处理（确认无人工决策后删除该 feature 的 acceptance/contracts/use-cases 三份派生文件，再重新调和）';
@@ -412,15 +314,16 @@ export function reconcileHeldBlueprintRefs(projectRoot: string, blueprintId: str
     outside.push(...pending.filter(changeUnitId => !locks.lockedChangeUnitIds.has(changeUnitId)));
     return outside.length === 0;
   });
+  if (result?.bumped.length) result.reviewDocument = materializeBlueprintReview(projectRoot, blueprintId);
   return result ?? { bumped: [], skipped: [], busy: `${RECONCILE_BUSY_HINT}（取锁之后蓝图或 CU 又有变化，${blueprintId}/${outside.join('、')} 不在已持锁范围内）` };
 }
 
 /** 本批可能被写到的 CU：owner 指针身份不等于当前蓝图身份的（含随后会被跳过的——取锁宁多勿少）。蓝图不可加载时调和器不写任何东西。 */
-function staleOwnerChangeUnitIds(projectRoot: string, blueprintId: string): string[] {
-  let identity: string;
-  try { identity = identityKey(currentBlueprintIdentity(loadCanonicalBlueprint(projectRoot, blueprintId))); } catch { return []; }
+export function staleOwnerChangeUnitIds(projectRoot: string, blueprintId: string): string[] {
+  let identity: ReturnType<typeof currentBlueprintIdentity>;
+  try { identity = currentBlueprintIdentity(loadCanonicalBlueprint(projectRoot, blueprintId)); } catch { return []; }
   return enumerateCanonicalChangeUnits(projectRoot, blueprintId)
-    .filter(loaded => identityKey(blueprintIdentityPointers(loaded.changeUnit)[0]) !== identity)
+    .filter(loaded => ownerBlueprintPointerIsStale(loaded.changeUnit, identity))
     .map(loaded => String(loaded.changeUnit.change_unit_id));
 }
 
@@ -598,8 +501,14 @@ export interface DesignPreparationReadiness {
   ready: boolean;
   /** 派生前的蓝图指针原位升版结果（reconcileChangeUnitBlueprintRefs），供 agent 看见升了谁、跳过谁及原因。 */
   blueprintRefs: BlueprintRefReconciliation;
+  reviewDocument?: BlueprintReviewResult;
   changeUnitIds: string[];
-  perUnit: Array<{ changeUnitId: string; verdict: string; issueIds: string[] }>;
+  perUnit: Array<{
+    changeUnitId: string;
+    verdict: string;
+    issueIds: string[];
+    projectionIssues: Array<Pick<BlueprintSkillProjection, 'codes' | 'detail'> & { kind: BlueprintProjectionKind }>;
+  }>;
   /** 恒为 false —— 设计准备段不进入 selector、Goal Mode 施工循环与 P3 closure。 */
   entersConstruction: false;
   nextEntry: 'change-unit-progression' | 'component-design';
@@ -616,22 +525,30 @@ export function deriveDesignPreparationReadiness(
   const blueprintRefs = reconcileChangeUnitBlueprintRefs(projectRoot, blueprintId);
   // 竞争退出：没有调和就不派生 readiness（按旧指针算出的结论不可用）——报忙，由调用方稍后重试。
   if (blueprintRefs.busy) return { ready: false, blueprintRefs, changeUnitIds: [], perUnit: [], entersConstruction: false, nextEntry: 'component-design' };
+  const reviewDocument = summarizeBlueprintReviewResults(blueprintRefs.reviewDocument, materializeBlueprintReview(projectRoot, blueprintId));
   // 只对活动 CU 要求可施工：被精确 supersede 的历史 CU 已退役，不重新施工（与 closure 同一退役判定）。
   const retired = retiredChangeUnitIds(projectRoot, blueprintId);
   const units = enumerateCanonicalChangeUnits(projectRoot, blueprintId)
     .filter(loaded => !retired.has(String(loaded.changeUnit.change_unit_id)));
   const perUnit = units.map(loaded => {
     const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
+    const projectionIssues = design.verdict === 'constructable'
+      ? (['acceptance', 'contracts'] as const).flatMap(kind => {
+        const projection = deriveBlueprintSkillInput(projectRoot, deriveChangeUnitFeatureId(blueprintId, String(loaded.changeUnit.change_unit_id)), resolveProbeFrameworkRoot(projectRoot, __dirname), kind);
+        return projection.state === 'invalid' ? [{ kind, codes: projection.codes ?? [], detail: projection.detail }] : [];
+      }) : [];
     return {
       changeUnitId: String(loaded.changeUnit.change_unit_id),
-      verdict: design.verdict as string,
-      issueIds: design.issues.map(item => item.id),
+      verdict: projectionIssues.length ? 'blocked' : design.verdict as string,
+      issueIds: [...new Set([...design.issues.map(item => item.id), ...projectionIssues.flatMap(item => item.codes)])],
+      projectionIssues,
     };
   }).sort((a, b) => (a.changeUnitId < b.changeUnitId ? -1 : a.changeUnitId > b.changeUnitId ? 1 : 0));
   const ready = perUnit.length > 0 && perUnit.every(item => item.verdict === 'constructable');
   return {
     ready,
     blueprintRefs,
+    reviewDocument,
     changeUnitIds: perUnit.map(item => item.changeUnitId),
     perUnit,
     entersConstruction: false,

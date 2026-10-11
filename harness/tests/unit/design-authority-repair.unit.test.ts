@@ -26,6 +26,7 @@ import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonical
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { checkAuthoritativeContentAligned, classifyDesignAuthorityCodes, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
+import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
 import { blockerIssues, validateComponentBlueprint, validateComponentBlueprintUpstream } from '../../scripts/utils/component-blueprint-validator';
 import { deriveBlueprintAdmission } from '../../scripts/utils/blueprint-admission';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
@@ -2116,6 +2117,41 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     },
   },
 ];
+
+for (const finalFailure of [false, true]) cases.push({
+  name: `review-delivery B1 ${finalFailure ? '最后补生成失败仍保留内部实际写入路径且 recovered 不变' : '内部持锁刷新后外层同字节不重写，最终仍记已刷新与实际 files'}`,
+  run: () => withHost(async s => {
+    const materialization = require('../../scripts/utils/blueprint-review-materialization') as typeof import('../../scripts/utils/blueprint-review-materialization');
+    const real = materialization.materializeBlueprintReview;
+    const nodeFs = require('fs') as typeof fs; const rename = nodeFs.renameSync;
+    const reviewPath = blueprintReviewPath(s.root, BLUEPRINT_ID);
+    let calls = 0; let writes = 0; let held = false;
+    try {
+      const b = await s16Born(s, { beforeBirth: async () => {
+        nodeFs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+          if (String(to) === reviewPath) {
+            writes++;
+            held = fs.existsSync(path.join(featureFilePath(s.root, BLUEPRINT_ID, ''), BLUEPRINT_RECONCILE_LOCK_NAME)) && fs.existsSync(featureLockPath(s, CU));
+          }
+          return rename(from, to);
+        }) as typeof fs.renameSync;
+        materialization.materializeBlueprintReview = (root, id) => {
+          calls++;
+          if (finalFailure && calls === 2) return { path: reviewPath, status: 'failed', writtenPaths: [], sourceGaps: [], reason: 'injected final materialization failure', rebuildCommand: 'check:component-blueprint --write-review' };
+          return real(root, id);
+        };
+      } });
+      const published = contentRepairs(b.events).find(e => e.stage === 'published');
+      assert(published?.outcome === 'recovered' && published.review_document?.status === (finalFailure ? 'failed' : 'refreshed'), describeS16(b));
+      assert(calls === 2 && writes === 1 && held, `应为内部持锁刷新一次+外层补生成：${JSON.stringify({calls,writes,held})}`);
+      assert(published.files.includes(path.relative(s.root, reviewPath).split(path.sep).join('/')) && published.review_document.writtenPaths.includes(reviewPath), JSON.stringify(published));
+      assert(published.review_projection_stale === finalFailure, '最终状态被外层是否写入或内层成功掩盖');
+      assert(pointsAtCurrentBlueprint(s, CU) && inspectBlueprintReview(s.root, BLUEPRINT_ID).status === 'current', '原调和或真实文档被破坏');
+      assertAttemptCleanedUp(s);
+      assertCompletedBy(s, b.feature, b.runId, 'B1 文档不参与 recovered');
+    } finally { materialization.materializeBlueprintReview = real; nodeFs.renameSync = rename; }
+  }),
+});
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const only = process.env.DESIGN_AUTHORITY_REPAIR_ONLY;

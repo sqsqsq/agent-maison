@@ -105,6 +105,7 @@ export function createAppLens(
   answers: Record<(typeof APP_LENS_QUESTIONS)[number], BlueprintRecord>,
   runtimeFlowTriggerAssessment: BlueprintRecord,
 ): BlueprintRecord {
+  // 作者按各根问题的真实依据完成 4+1 与目标 typed 细节；lens 不补事实或自授权。
   return { ...answers, runtime_flow_trigger_assessment: runtimeFlowTriggerAssessment };
 }
 

@@ -29,6 +29,8 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 - `blueprint_id` 是路径键；`component_id` 只做所有权/一致性核验。requires/provides、carry-forward 与 ready set 全部限定同一 `blueprint_id` 工作区，跨工作区 CU（含同部件早期演进）不满足依赖。
 - Resolve workflow track and expected phase chain from the existing workflow/track SSOT. Goal Mode events, receipts, evidence and verified feature completion remain execution truth.
 
+设计准备交接默认返回 `reviewDocument`，同页文档由 Maison 从蓝图与 canonical CU 生成，宿主无需拼 CU 附件。接受批次后即生成；共同持锁调和在整批 bumped 后刷新，readiness 非 busy 时补生成（busy 不写）。文档失败不改变 accepted/readiness/bumped；结果按整个尝试最终状态汇总，内部写入不能因外层同字节而漏报。直接修改 canonical 设计内容后结束前执行 `check:component-blueprint --write-review`；草稿、局部修改、质询写回同规则，CU 新增/替代仍只能经 consumer 接受。目的、谓词与中间态用项目语言写清每个单元实际交付，七问写作自检见 component-design。
+
 ## Progression
 
 1. Re-derive completion (`ABSENT|VALID|INCOMPLETE|INVALID` from `assessFeature`; `INCOMPLETE` lists the uncovered obligations), current blueprint target admission, exact requires/provides, blocker probes and ready candidates from formal artifacts.

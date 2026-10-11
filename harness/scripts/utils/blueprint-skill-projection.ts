@@ -9,6 +9,9 @@ import { resolveExecutionScope, findSubtractedRequiredObligations, type Executio
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
+import { resolveBlueprintTarget } from './blueprint-addressing';
+import type { ComponentBlueprintRef } from './component-blueprint-model';
+import type { ChangeUnitArtifact } from './change-unit-model';
 import { componentBlueprintPath, resolveComponentBlueprintRef } from './component-blueprint-path';
 import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact, changeUnitPath, BLUEPRINT_REF_STALE_ISSUE } from './change-unit-path';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
@@ -136,6 +139,7 @@ function canonical(value: unknown): string {
   const sort = (v: unknown): unknown => Array.isArray(v) ? v.map(sort) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, sort(x)])) : v;
   return JSON.stringify(sort(value));
 }
+export function projectionContentEqual(left: unknown, right: unknown): boolean { return canonical(left) === canonical(right); }
 
 /**
  * plan b2d7f4e9 t2c/t2d：CU 指针原位升版时，来源戳指向升版前身份（`changeUnitSha` / `blueprintSha`）的派生文件
@@ -171,10 +175,55 @@ export function inspectProjectionStamps(projectRoot: string, feature: string, re
 }
 
 /** 投影合并与 A1 对齐共用的记录身份（plan c4e7a9b2 §3.1）：`[module, file, holder, id ?? name ?? class ?? data]`。 */
-function projectionRowIdentity(row: unknown): string | undefined {
+export function projectionRowIdentity(row: unknown): string | undefined {
   const record = asRecord(row);
   const id = record?.id ?? record?.name ?? record?.class ?? record?.data;
   return id === undefined ? undefined : canonical([record?.module, record?.file, record?.holder, id]);
+}
+
+export interface BlueprintContentTarget { ref: ComponentBlueprintRef; target: BlueprintRecord }
+export class BlueprintContentError extends Error {
+  constructor(public readonly code: string, message: string, public readonly locations: DesignAuthorityLocation[] = []) { super(message); }
+}
+
+/** 同一目标被引用即整体继承；数组按原行身份合并，对象只接受完整相等。无 IO/门禁/授权裁决。 */
+export function mergeBlueprintTargetContent(selected: BlueprintContentTarget[], field: 'acceptance' | 'contracts' | 'use_cases'): BlueprintRecord | undefined {
+  const parts = selected.filter(({ target }) => target[field] !== undefined);
+  if (!parts.length) return undefined;
+  const locate = (part: BlueprintContentTarget, at: string = field): DesignAuthorityLocation => ({ blueprint_id: part.ref.blueprint_id, target: part.ref.target, field: at });
+  const result: BlueprintRecord = {};
+  for (const part of parts) {
+    if (asRecord(part.target.provenance)?.evidence_strength !== 'authoritative') throw new BlueprintContentError('authority_target_provenance_missing', `component-design: ${part.ref.target.id} 缺获准来源`, [locate(part)]);
+    const record = asRecord(part.target[field]);
+    if (!record) {
+      const prose = typeof part.target[field] === 'string' && !!(part.target[field] as string).trim();
+      const locations = selected.flatMap(item => (['acceptance', 'contracts', 'use_cases'] as const).flatMap(key => typeof item.target[key] === 'string' && !!(item.target[key] as string).trim() ? [locate(item, key)] : []));
+      throw new BlueprintContentError(prose ? 'authority_content_not_machine_structure' : 'authority_content_missing', `${field} 必须是机器结构；文本需交责任 Skill 澄清`, prose ? locations : [locate(part)]);
+    }
+    for (const [key, value] of Object.entries(record)) {
+      if (!(key in result)) result[key] = structuredClone(value);
+      else if (Array.isArray(result[key]) && Array.isArray(value)) {
+        const rows = result[key] as unknown[];
+        for (const item of value) {
+          if (rows.some(old => canonical(old) === canonical(item))) continue;
+          const id = projectionRowIdentity(item);
+          if (id && rows.some(old => projectionRowIdentity(old) === id)) throw new BlueprintContentError('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 同一标识内容冲突`, parts.map(item => locate(item, `${field}.${key}`)));
+          rows.push(structuredClone(item));
+        }
+      } else if (canonical(result[key]) !== canonical(value)) throw new BlueprintContentError('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 存在冲突`, parts.map(item => locate(item, `${field}.${key}`)));
+    }
+  }
+  return result;
+}
+
+/** 原投影与人读文档唯一的目标选取/合并内核；完整身份与语义检查仍在 derive 中。 */
+export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: ChangeUnitArtifact): { selected: BlueprintContentTarget[]; acceptance?: BlueprintRecord; contracts?: BlueprintRecord; useCases?: BlueprintRecord } {
+  const selected = cu.design_refs.map(ref => {
+    const content = structuredClone(resolveBlueprintTarget(blueprint, ref.target));
+    if (ref.target.kind === 'flow') for (const state of asRecords(asRecord(content.contracts)?.state_management)) if (state.design_ref === undefined) state.design_ref = ref;
+    return { ref, target: content };
+  });
+  return { selected, acceptance: mergeBlueprintTargetContent(selected, 'acceptance'), contracts: mergeBlueprintTargetContent(selected, 'contracts'), useCases: mergeBlueprintTargetContent(selected, 'use_cases') };
 }
 
 /**
@@ -226,55 +275,21 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     for (const file of blueprintSourceRefFiles(projectRoot, parent.blueprint)) depend(file);
     const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
     if (design.verdict !== 'constructable') fail(design.issues.map(i => i.id), `component-design: ${design.issues.map(i => i.message).join('; ')}`);
-    const selected = cu.design_refs.map(ref => {
-      const resolved = resolveComponentBlueprintRef(projectRoot, ref); depend(resolved.canonicalPath);
-      const target = asRecord(resolved.target);
-      if (!target || ((target[kind] !== undefined || target.use_cases !== undefined) && asRecord(target.provenance)?.evidence_strength !== 'authoritative')) fail('authority_target_provenance_missing', `component-design: ${ref.target.id} 缺获准来源`);
-      const content = structuredClone(target);
-      if (ref.target.kind === 'flow') for (const state of asRecords(asRecord(content.contracts)?.state_management)) {
-        if (state.design_ref === undefined) state.design_ref = ref;
-      }
-      return { ref, target: content };
-    });
+    for (const ref of cu.design_refs) depend(resolveComponentBlueprintRef(projectRoot, ref).canonicalPath);
+    const bundle = selectBlueprintSkillContent(parent.blueprint, cu);
+    const selected = bundle.selected;
     const locate = (field: string, hit: (target: BlueprintRecord) => boolean): DesignAuthorityLocation[] => selected.filter(({ target }) => hit(target)).map(({ ref }) => ({
       blueprint_id: ref.blueprint_id, target: { kind: ref.target.kind, ...(ref.target.view_id !== undefined ? { view_id: ref.target.view_id } : {}), id: ref.target.id }, field,
     }));
-    // 写成文字的位置：本 CU 所选目标里三个机器内容字段中所有写成文字的（同一类缺陷、同一原文依据，一次修完）。
-    const proseLocations = (): DesignAuthorityLocation[] => (['acceptance', 'contracts', 'use_cases'] as const)
-      .flatMap(field => locate(field, target => typeof target[field] === 'string' && !!(target[field] as string).trim()));
-    const merge = (field: string): BlueprintRecord | undefined => {
-      const parts = selected.flatMap(({ target }) => target[field] === undefined ? [] : [target[field]]);
-      if (!parts.length) return undefined;
-      const result: BlueprintRecord = {};
-      for (const part of parts) {
-        const record = asRecord(part);
-        // 写成了一段文字 = 有原文可依、改回机器结构即可；null / 数字 / 空串 / 数组等没有可恢复的内容，是缺内容。
-        if (!record) {
-          const prose = typeof part === 'string' && !!part.trim();
-          fail(prose ? 'authority_content_not_machine_structure' : 'authority_content_missing', `${field} 必须是机器结构；文本需交责任 Skill 澄清`, prose ? proseLocations() : []);
-        }
-        for (const [key, value] of Object.entries(record)) {
-          if (!(key in result)) result[key] = structuredClone(value);
-          else if (Array.isArray(result[key]) && Array.isArray(value)) {
-            for (const item of value) {
-              const rows = result[key] as unknown[];
-              if (rows.some(old => canonical(old) === canonical(item))) continue;
-              const id = projectionRowIdentity(item);
-              if (id && rows.some(old => projectionRowIdentity(old) === id)) fail('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 同一标识内容冲突`);
-              rows.push(structuredClone(item));
-            }
-          } else if (canonical(result[key]) !== canonical(value)) fail('authority_content_conflict', `component-design/外部 owner: ${field}.${key} 存在冲突`);
-        }
-      }
-      return result;
-    };
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
-    const acceptance = merge('acceptance');
-    const construction = kind === 'contracts' ? merge('contracts') : undefined;
-    const useCases = merge('use_cases');
+    const acceptance = bundle.acceptance;
+    const construction = kind === 'contracts' ? bundle.contracts : undefined;
+    const useCases = bundle.useCases;
     const raw = kind === 'acceptance' ? acceptance : construction;
-    if (!raw) return { state: 'absent', dependencies, detail: `${kind === 'acceptance' ? 'spec' : 'plan'}: 缺精确 ${kind} 内容，design_refs/verification_refs 不等价于设计` };
-    raw.feature = feature; raw.source = source;
+    const absent: BlueprintSkillProjection = { state: 'absent', dependencies, detail: `${kind === 'acceptance' ? 'spec' : 'plan'}: 缺精确 ${kind} 内容，design_refs/verification_refs 不等价于设计` };
+    if (!acceptance && !construction && !useCases) return absent;
+    if (raw) { raw.feature = feature; raw.source = source; }
+    if (acceptance) { acceptance.feature = feature; acceptance.source = `derive.blueprint-acceptance:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`; }
     if (construction) {
       const mappings = asRecord(construction.change_unit);
       if (!mappings) fail('authority_cu_mapping_missing', 'plan: 缺获准 CU 施工/测试 ID 映射，不能从 touches 或 verification_refs 猜造');
@@ -290,14 +305,20 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       for (const mapping of asRecords(mappings.design_ref_mappings)) {
         const reference = cu.design_refs.find(ref => canonical(ref.target) === canonical(mapping.design_ref));
         if (reference) mapping.design_ref = structuredClone(reference);
+        else if (asRecord(mapping.design_ref) && !asRecord(asRecord(mapping.design_ref)?.target)) mapping.design_ref = { ...structuredClone(cu.component_blueprint_ref), target: structuredClone(mapping.design_ref) };
       }
     }
-    if (useCases) useCases.source = `derive.blueprint-contracts:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
+    if (useCases) { useCases.feature = feature; useCases.source = `derive.blueprint-contracts:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`; }
     const artifacts: Record<string, unknown> = { ...(acceptance ? { 'acceptance@1': acceptance } : {}), ...(construction ? { 'contracts@1': construction } : {}), ...(useCases ? { 'use-cases@1': useCases } : {}) };
     const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, { context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] }, phase: 'plan', values: {}, artifacts });
     if (parsed.shape_issues?.length) fail('authority_projection_shape_invalid', parsed.shape_issues.join('; '));
+    const projectionContext = { projectRoot, frameworkRoot, feature, featureSpec: parsed, phaseRule: {} } as CheckContext;
+    if (parsed.useCases && !construction) {
+      const failures = checkUseCaseSpecSchema(projectionContext).filter(check => check.status === 'FAIL');
+      if (failures.length) fail('authority_construction_content_incomplete', 'plan: ' + failures.map(check => check.details).join('; '));
+    }
     if (parsed.acceptance) {
-      const ctx = { projectRoot, feature, featureSpec: parsed } as CheckContext;
+      const ctx = projectionContext;
       const content = checkAcceptanceContent(ctx);
       if (content.some(check => check.status === 'FAIL')) fail('authority_acceptance_content_invalid', 'spec: ' + content.map(check => check.details).join('; '));
       const covered = new Set([...parsed.acceptance.criteria, ...(parsed.acceptance.boundaries ?? [])].map(item => item.id.toUpperCase()));
@@ -306,9 +327,9 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       const failures = [...checkAcceptanceUtLayerComplete(ctx, (_c, _s, id) => id), ...checkAcceptanceDeviceFocusPresent(ctx, (_c, _s, id) => id), ...checkAcceptanceLinkedUseCases(ctx), ...evaluateAcceptanceFlowStructure(projectRoot, feature, parsed.acceptance)].filter(check => check.status === 'FAIL');
       if (failures.length) fail('authority_acceptance_content_invalid', 'spec: ' + failures.map(check => check.details).join('; '));
     }
-    if (kind === 'contracts') {
+    if (construction) {
       const contracts = parsed.contracts!;
-      const contentIssues = checkTypedConstructionContent({ projectRoot, feature, featureSpec: parsed, phaseRule: {} } as CheckContext).filter(check => check.status === 'FAIL');
+      const contentIssues = checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL');
       if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));
       if (!contracts.files?.length) fail('authority_contract_files_missing', 'plan: contracts.files 缺少明确授权文件；touches 不构成授权');
       const closure = resolveContractFileReferences(projectRoot, contracts);
@@ -326,10 +347,12 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
         if (!refresh &&canonical(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8'))) !== canonical(parsed.useCases)) fail('authority_use_cases_conflict', 'plan: 既有 use-cases.yaml 与获准投影冲突');
       }
     }
+    if (!raw) return absent;
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
   } catch (error) {
     // 解析器错误（ChangeUnitResolutionError / ComponentBlueprintResolutionError / FeatureIdentityError）自带 code；未编码的抛错留空（分类默认 B2）。
     const thrown = (error as { code?: unknown }).code;
+    if (error instanceof BlueprintContentError) locations = error.locations;
     return { state: 'invalid', dependencies, detail: String(error), reason, codes: codes.length ? codes : typeof thrown === 'string' ? [thrown] : [], ...(locations.length ? { locations } : {}) };
   }
 }

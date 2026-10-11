@@ -25,7 +25,7 @@ import {
 import { validateLiteSchema } from './lite-json-schema';
 import { stableAddressIndex } from './blueprint-addressing';
 import { CurrentScopeItem, validateCurrentScopeItemShape } from './blueprint-requirement-traceability';
-import { renderBlueprintReviewMarkdown } from './blueprint-review-projection';
+import { blueprintReviewDifferences, loadBlueprintReviewSource } from './blueprint-review-materialization';
 
 export const MATERIALIZATION_ARTIFACT = 'requirement-source-materialization@1' as const;
 export const REVIEW_FEEDBACK_ARTIFACT = 'blueprint-review-feedback@1' as const;
@@ -155,29 +155,15 @@ export function declaredFormalRequirementItems(value: unknown): string[] {
  */
 export function validateBlueprintReviewPublication(
   projection: string,
-  blueprint: BlueprintRecord,
-  artifactSha256: string,
+  projectRoot: string,
+  blueprintId: string,
 ): BlueprintIssue[] {
-  let expected: string;
   try {
-    expected = renderBlueprintReviewMarkdown(blueprint, artifactSha256);
-  } catch (error) {
-    return [issue('publication_projection_render_failed', '$', (error as Error).message)];
-  }
-  if (projection === expected) return [];
-  const expectedHeader = `  artifact_sha256: ${artifactSha256}`;
-  if (!projection.includes(expectedHeader)) {
-    return [issue(
-      'publication_derived_from_mismatch',
-      '$.derived_from',
-      `投影未精确绑定被评审 revision：缺 ${expectedHeader}。`,
-    )];
-  }
-  return [issue(
-    'publication_projection_added_facts',
-    '$',
-    '评审投影与 canonical YAML 的确定性派生结果不一致：投影是零新事实的单向派生物，不得新增、改写或删除设计事实。',
-  )];
+    const source = loadBlueprintReviewSource(projectRoot, blueprintId);
+    const issues = blueprintReviewDifferences(projection, source).map(reason => issue(reason.id, '$', reason.message));
+    if (source.inputs.sourceGaps.length) issues.push(issue('publication_change_units_unresolved', '$.derived_from.change_units', `CU 来源不完整：${source.inputs.sourceGaps.join('；')}。`));
+    return issues;
+  } catch (error) { return [issue('publication_projection_render_failed', '$', (error as Error).message)]; }
 }
 
 // ---------------------------------------------------------------------------

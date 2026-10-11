@@ -19,6 +19,8 @@ import { asRecord, asRecords } from '../../scripts/utils/component-blueprint-mod
 import { componentBlueprintPath, loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
+import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
+import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
 
@@ -203,13 +205,14 @@ test('same convention id traverses canonical blueprint/projection/CU contracts/r
   const issues = validateComponentBlueprint(bp, { projectRoot: root, canonicalPath: bpPath });
   assert(!issues.some(i => i.severity === 'BLOCKER'), JSON.stringify(issues));
   const loaded = loadCanonicalBlueprint(root, 'ledger-app-blueprint');
-  const projection = renderBlueprintReviewMarkdown(bp, loaded.artifactSha256); assert(projection.includes('repository-fields — knowledge/practices.md#repository-fields'));
+  reconcileChangeUnitBlueprintRefs(root, 'ledger-app-blueprint');
+  const projection = loadBlueprintReviewSource(root, 'ledger-app-blueprint').markdown; assert(projection.includes('repository-fields — knowledge/practices.md#repository-fields'));
   const projectionPath = path.join(path.dirname(bpPath), 'component-blueprint.review.md');
   write(root, path.relative(root, projectionPath), projection);
   const checked = checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint');
   assert.equal(checkHostSeamMaterials(root, checked, { projection: projectionPath }).issues.length, 0);
-  write(root, path.relative(root, projectionPath), projection.replace('repository-fields —', 'invented-convention —'));
-  assert(checkHostSeamMaterials(root, checked, { projection: projectionPath }).issues.some(i => i.id === 'publication_projection_added_facts'));
+  write(root, path.relative(root, projectionPath), projection.replace('knowledge/practices.md#repository-fields', 'knowledge/practices.md#invented-convention'));
+  assert(checkHostSeamMaterials(root, checked, { projection: projectionPath }).issues.some(i => i.id === 'publication_projection_content_mismatch'));
   const cu = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh');
   // Rebind existing refs after a legitimate fixture revision, preserving the shared resolver.
   const ownerRef = asRecord(cu.changeUnit.component_blueprint_ref)!;

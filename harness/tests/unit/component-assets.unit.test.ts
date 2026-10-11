@@ -26,6 +26,8 @@ import { validateBlueprintProviders } from '../../scripts/utils/blueprint-provid
 import { validateBlueprintAdmission } from '../../scripts/utils/blueprint-admission';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
+import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
+import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -302,13 +304,14 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
   normalized.contracts!.change_unit!.design_ref_mappings = [];
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
-  const review = renderBlueprintReviewMarkdown(bp, loaded.artifactSha256);
-  for (const field of ['target_ref=', 'asset_resolution=reuse', `component_ref=${ID}`, 'rationale=']) assert(review.includes(field), field);
+  reconcileChangeUnitBlueprintRefs(root, 'ledger-app-blueprint');
+  const review = loadBlueprintReviewSource(root, 'ledger-app-blueprint').markdown;
+  for (const field of ['选型目标：', '选型结果：reuse', `组件：${ID}`, '理由']) assert(review.includes(field), field);
   const output = path.join(path.dirname(file), 'component-blueprint.review.md'); write(root, path.relative(root, output), review);
   const checked = checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint');
   assert.equal(checkHostSeamMaterials(root, checked, { projection: output }).issues.length, 0);
-  write(root, path.relative(root, output), review.replace('asset_resolution=reuse', 'asset_resolution=custom'));
-  assert(checkHostSeamMaterials(root, checked, { projection: output }).issues.some(i => i.id === 'publication_projection_added_facts'));
+  write(root, path.relative(root, output), review.replace('选型结果：reuse', '选型结果：custom'));
+  assert(checkHostSeamMaterials(root, checked, { projection: output }).issues.some(i => i.id === 'publication_projection_content_mismatch'));
 }));
 
 test('R1 必阻断选型进入最终 verdict/summary，诊断 MAJOR 与 WARN 不升级', () => setup(root => {

@@ -7,6 +7,7 @@ import {
   nonEmptyString,
 } from './component-blueprint-model';
 import { blueprintRefAddress } from './change-unit-model';
+import { ownersForAddress } from './change-unit-addressing';
 import { isApplicableView, isChangedView, nodeDeclaresChange } from './blueprint-views';
 import { ResolvedComponentClosureInputs } from './component-closure-inputs';
 import { ClosureEvidenceLevel, compareCodePoint, stableSortStrings } from './component-closure-model';
@@ -48,11 +49,6 @@ function obligation(
 // 不在 P3 另写一份会漂移的副本。
 const changedNode = nodeDeclaresChange;
 
-function ownersForAddress(inputs: ResolvedComponentClosureInputs, address: string): string[] {
-  return stableSortStrings(inputs.currentUnits
-    .filter(unit => unit.changeUnit.design_refs.some(ref => blueprintRefAddress(ref) === address))
-    .map(unit => unit.changeUnit.change_unit_id));
-}
 
 function addBlueprintObligations(
   inputs: ResolvedComponentClosureInputs,
@@ -80,7 +76,7 @@ function addBlueprintObligations(
       const nodeId = getId(node, 'node_id');
       if (!nodeId) continue;
       const address = `view:${viewId}/node:${nodeId}`;
-      const owners = ownersForAddress(inputs, address);
+      const owners = ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address);
       const construction = viewChanged && (changedNode(node) || owners.length > 0);
       out.push(obligation(`blueprint-node:${viewId}:${nodeId}`, construction ? 'blueprint_target_node' : 'blueprint_current_fact', {
         source_refs: nonEmptyString(asRecord(node.provenance)?.source_ref) ? [String(asRecord(node.provenance)?.source_ref)] : [],
@@ -98,7 +94,7 @@ function addBlueprintObligations(
     const address = `relation:${id}`;
     out.push(obligation(`blueprint-relation:${id}`, 'cross_view_relation', {
       blueprint_refs: [address, ...asStrings([relation.from, relation.to])],
-      owner_hint_change_unit_ids: ownersForAddress(inputs, address),
+      owner_hint_change_unit_ids: ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address),
       evidence_level: 'integration_combination',
       mapping_kind: 'design',
       mapping_id: address,
@@ -116,12 +112,12 @@ function addBlueprintObligations(
         source_refs: [...asStrings(flow.evidence_refs), ...asStrings(flow.verification_refs)],
         evidence_refs: asStrings(flow.verification_refs),
         blueprint_refs: [address],
-        owner_hint_change_unit_ids: ownersForAddress(inputs, address),
+        owner_hint_change_unit_ids: ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address),
         evidence_level: asRecords(flow.consumers).length > 0 ? 'ui_device' : 'integration_combination',
         mapping_kind: 'design',
         mapping_id: address,
       }));
-      const owners = ownersForAddress(inputs, address);
+      const owners = ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address);
       asRecords(flow.triggers).forEach((item, index) => {
         const localId = getId(item, 'trigger_id') || `${String(item.kind ?? 'trigger')}-${index}`;
         const localAddress = `${address}/trigger:${localId}`;
@@ -226,7 +222,7 @@ function addBlueprintObligations(
     const seam = decision.kind === 'evolution_candidate'
       && decision.status === 'decided_with_authority'
       && decision.human_decision === 'establish_seam';
-    const owners = ownersForAddress(inputs, address);
+    const owners = ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address);
     const factOnly = decision.status === 'not_applicable' && owners.length === 0;
     const assemblyKinds = new Set(['migration', 'compatibility', 'feature_flag', 'dual_write', 'temporary_asset', 'controlled_fake', 'residual_risk']);
     const decisionKind = seam
@@ -280,7 +276,7 @@ function addBlueprintObligations(
     out.push(obligation(`contract:${id}`, 'authority_contract', {
       source_refs: [String(asRecord(contract.operation)?.source_ref ?? '')].filter(Boolean),
       blueprint_refs: [address],
-      owner_hint_change_unit_ids: ownersForAddress(inputs, address),
+      owner_hint_change_unit_ids: ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address),
       evidence_level: 'unit_contract',
       mapping_kind: 'design',
       mapping_id: address,
@@ -289,7 +285,7 @@ function addBlueprintObligations(
       out.push(obligation(`contract-nfr:${id}`, 'nfr', {
         source_refs: [String(asRecord(contract.nfr)?.source_ref ?? '')].filter(Boolean),
         blueprint_refs: [address],
-        owner_hint_change_unit_ids: ownersForAddress(inputs, address),
+        owner_hint_change_unit_ids: ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), address),
         evidence_level: 'integration_combination',
         mapping_kind: 'design',
         mapping_id: address,
@@ -487,7 +483,7 @@ export function deriveComponentClosureObligations(
 ): ComponentClosureObligation[] {
   const out: ComponentClosureObligation[] = [];
   for (const requirement of inputs.manifest.requirements) {
-    const owners = stableSortStrings(requirement.blueprint_refs.flatMap(ref => ownersForAddress(inputs, ref)));
+    const owners = stableSortStrings(requirement.blueprint_refs.flatMap(ref => ownersForAddress(inputs.currentUnits.map(unit => unit.changeUnit), ref)));
     out.push(obligation(`source:${requirement.kind}:${requirement.item_id}`, `source_${requirement.kind}`, {
       source_refs: [requirement.source_ref],
       blueprint_refs: requirement.blueprint_refs,

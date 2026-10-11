@@ -40,7 +40,7 @@ capabilities:
 
 `PhaseInputContext` 是 P2/P6 交给共享内核的调用参数，不是新持久状态：subject、已判定的义务、required_outputs、可选 expected_bindings/invalidated_sources。Feature 使用真实 Feature identity，request 使用 request_sha256，两者互斥。绑定不匹配或上游明确宣告来源失效时 blocked，回原有 stale/correction 责任路径；不在解析器内重规划。
 
-artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive 返回实际内容而不是“project_root 可用”标志：requirement 只读当前调用文本，test-targets/codebase 只读显式且项目内的目标文件，adhoc-cases 使用既有用例归一化内核。静态 `DERIVE_PROVIDER_TYPES` 声明返回类型，1.1 每个 fallback 分支必须同类型；文本需求不能作为 acceptance 的等价替代。`derive.blueprint-acceptance/contracts` 的实际字段映射由 P3 实现，不在 P1 注册假 provider。
+artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive 返回实际内容而不是“project_root 可用”标志：requirement 只读当前调用文本，test-targets/codebase 只读显式且项目内的目标文件，adhoc-cases 使用既有用例归一化内核。静态 `DERIVE_PROVIDER_TYPES` 声明返回类型，1.1 每个 fallback 分支必须同类型；文本需求不能作为 acceptance 的等价替代。`derive.blueprint-acceptance/contracts` 复用 P3 的 typed 投影，直接消费设计期在 canonical 目标写入的 acceptance/contracts/use_cases，完整挂载、合并、只读校验与物化职责见[蓝图设计输入](blueprint-design-inputs.md)。
 
 Feature 调用把读取面拆成 `codeTargets` 与 `testTargets`：前者来自冻结 contracts/CU、当前有效义务及已核实 Research，后者再按 profile 的 UT 根识别；两者都只是调用期输入，不授予写权限。verification-only review/UT 不需要 implementation 义务也能读取 contracts 指定的现存产品源码。`contracts.files` 中由本阶段或后继阶段负责创建的缺失文件保留为授权产出，不拖垮同组现存输入；到了下游仍缺失时照常 blocked。
 

@@ -16,13 +16,17 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { spawnSync } from 'child_process';
+import { createBlueprintReviewDesignFixture } from '../fixtures/blueprint-review-design';
 import { BlueprintRecord, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { componentBlueprintPath, loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
+import { loadBlueprintReviewSource, materializeBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
 import {
   declaredFormalRequirementItems,
   materializedScopeItems,
+  validateBlueprintReviewPublication,
   validateBlueprintReviewFeedback,
   validateRequirementSourceMaterialization,
 } from '../../scripts/utils/blueprint-host-seams';
@@ -60,6 +64,11 @@ function samplePath(name: string): string {
   const abs = path.join(SAMPLES_DIR, name);
   assert(fs.existsSync(abs), `随包样例缺失（必须落发布件包含路径 docs/operations/samples/）：${abs}`);
   return abs;
+}
+
+function withReviewProject(run: (projectRoot: string) => void): void {
+  const fixture = createBlueprintReviewDesignFixture();
+  try { run(fixture.root); } finally { fs.rmSync(fixture.root, { recursive: true, force: true }); }
 }
 
 /** 生产入口：与 CLI 完全同一条路径，不在测试里重实现校验编排。 */
@@ -209,7 +218,7 @@ export function runAll(): UnitCaseResult[] {
   }));
 
   results.push(test('sample: valid review projection matches the deterministic renderer byte for byte', () => {
-    withProject(projectRoot => {
+    withReviewProject(projectRoot => {
       const seam = runSeamCheck(projectRoot, { projection: samplePath('blueprint-review-projection.valid.md') });
       assert(seam.modes.includes('blueprint-review-publication'), '未进入 publication 校验模式');
       assert(seam.issues.length === 0, `有效投影样例被误拒：${seam.issues.map(item => item.id).join(', ')}`);
@@ -217,10 +226,10 @@ export function runAll(): UnitCaseResult[] {
   }));
 
   results.push(test('sample: a projection that adds a design fact is rejected', () => {
-    withProject(projectRoot => {
+    withReviewProject(projectRoot => {
       const seam = runSeamCheck(projectRoot, { projection: samplePath('blueprint-review-projection.invalid-added-fact.md') });
       assert(
-        seam.issues.some(item => item.id === 'publication_projection_added_facts'),
+        seam.issues.some(item => item.id === 'publication_projection_content_mismatch'),
         `投影新增设计事实未被拒绝：${seam.issues.map(item => item.id).join(', ')}`,
       );
     });
@@ -481,6 +490,72 @@ export function runAll(): UnitCaseResult[] {
     );
   }));
 
+
+  results.push(test('publication: blueprint, CU content and format rebuild causes are distinct; complete sources remain required', () => {
+    withProject(root => {
+      const generated = materializeBlueprintReview(root, BLUEPRINT_ID);
+      const before = fs.readFileSync(generated.path, 'utf8');
+      const cuPath = path.join(path.dirname(path.dirname(componentBlueprintPath(root, BLUEPRINT_ID))), 'ledger-refresh', 'change-unit.yaml');
+      const cu = YAML.parse(fs.readFileSync(cuPath, 'utf8'));
+      cu.purpose += ' modified';
+      fs.writeFileSync(cuPath, YAML.stringify(cu));
+      let issues = runSeamCheck(root, { projection: generated.path }).issues;
+      assert(issues.some(i => i.id === 'publication_change_units_mismatch') && !issues.some(i => i.id === 'publication_projection_format_stale'), JSON.stringify(issues));
+      materializeBlueprintReview(root, BLUEPRINT_ID);
+      fs.writeFileSync(generated.path, fs.readFileSync(generated.path, 'utf8').replace('component-blueprint-review@4', 'component-blueprint-review@1'));
+      issues = runSeamCheck(root, { projection: generated.path }).issues;
+      assert(issues.some(i => i.id === 'publication_projection_format_stale') && !issues.some(i => i.id === 'publication_change_units_mismatch'), JSON.stringify(issues));
+      fs.writeFileSync(generated.path, before.replace(/artifact_sha256: sha256:[a-f0-9]+/, 'artifact_sha256: sha256:' + '0'.repeat(64)).replace('component-blueprint-review@4', 'component-blueprint-review@1'));
+      issues = runSeamCheck(root, { projection: generated.path }).issues;
+      assert(issues.some(i => i.id === 'publication_derived_from_mismatch') && issues.some(i => i.id === 'publication_projection_format_stale') && issues.some(i => i.id === 'publication_change_units_mismatch'), '多原因未同时报告');
+      fs.writeFileSync(cuPath, '[broken YAML');
+      const incomplete = materializeBlueprintReview(root, BLUEPRINT_ID);
+      assert(incomplete.status === 'refreshed' && incomplete.sourceGaps.length, '单 CU 损坏妨碍生成');
+      assert(runSeamCheck(root, { projection: generated.path }).issues.some(i => i.id === 'publication_change_units_unresolved'), '相同全文被误认来源完整');
+      assert(loadBlueprintReviewSource(root, BLUEPRINT_ID).markdown === fs.readFileSync(generated.path, 'utf8'), '生成/发布未共用收集链');
+    });
+  }));
+
+  results.push(test('publication API always loads the supplied host CU context, including an explicitly empty collection', () => {
+    withProject(root => {
+      const source = loadBlueprintReviewSource(root, BLUEPRINT_ID);
+      assert(validateBlueprintReviewPublication(source.markdown, root, BLUEPRINT_ID).length === 0, '真实 CU 上下文未通过');
+      const emptyProjection = renderBlueprintReviewMarkdown(source.loaded.blueprint, source.loaded.artifactSha256);
+      assert(validateBlueprintReviewPublication(emptyProjection, root, BLUEPRINT_ID).some(i => i.id === 'publication_change_units_mismatch'), '存在 CU 时接受了空集合回退');
+      for (const unit of source.inputs.units) fs.rmSync(path.dirname(unit.canonicalPath), { recursive: true });
+      const empty = loadBlueprintReviewSource(root, BLUEPRINT_ID);
+      assert(empty.inputs.units.length === 0 && validateBlueprintReviewPublication(empty.markdown, root, BLUEPRINT_ID).length === 0, '真实空集合被误拒');
+      assert(validateBlueprintReviewPublication(empty.markdown, root, 'missing-blueprint').some(i => i.id === 'publication_projection_render_failed'), '调用方蓝图 id 没有进入解析');
+    });
+  }));
+
+  results.push(test('CLI: write-review generates/reuses same path, draft check still fails, mode mixing is rejected and default inspection stays read-only', () => {
+    withProject(root => {
+      const source = loadBlueprintReviewSource(root, BLUEPRINT_ID);
+      const target = source.loaded.canonicalPath.replace('component-blueprint.yaml', 'component-blueprint.review.md');
+      fs.rmSync(target, { force: true });
+      const invoke = (...args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
+        path.join(FRAMEWORK_ROOT, 'harness/scripts/check-component-blueprint.ts'), '--project-root', root, '--blueprint', BLUEPRINT_ID, '--json', ...args],
+      { cwd: path.join(FRAMEWORK_ROOT, 'harness'), encoding: 'utf8' });
+      const created = invoke('--write-review');
+      assert(created.status === 0, created.stdout + created.stderr);
+      const report = JSON.parse(created.stdout);
+      assert(report.status === 'PASS' && report.review_document.status === 'refreshed' && report.review_document.path === target, created.stdout);
+      const before = fs.statSync(target).mtimeMs;
+      const inspected = invoke();
+      assert(inspected.status === 0 && JSON.parse(inspected.stdout).review_document.status === 'current' && fs.statSync(target).mtimeMs === before, '默认检查写了文件');
+      const mixed = invoke('--write-review', '--projection', target);
+      assert(mixed.status === 1 && mixed.stdout.includes('不能与'), mixed.stdout);
+      const bp = source.loaded.blueprint;
+      asRecord(asRecord(bp.review_summary)?.admission)!.status = 'blocker';
+      fs.writeFileSync(source.loaded.canonicalPath, YAML.stringify(bp));
+      const original = fs.readFileSync(source.loaded.canonicalPath);
+      const draft = invoke('--write-review');
+      const draftReport = JSON.parse(draft.stdout);
+      assert(draft.status === 1 && draftReport.status === 'FAIL' && draftReport.review_document.status === 'refreshed' && fs.readFileSync(target, 'utf8').includes('准入 blocker'), draft.stdout);
+      assert(fs.readFileSync(source.loaded.canonicalPath).equals(original), '生成改了草稿或准入');
+    });
+  }));
   return results;
 }
 

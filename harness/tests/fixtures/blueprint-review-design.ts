@@ -1,0 +1,208 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import * as YAML from 'yaml';
+import { createHash } from 'crypto';
+import { asRecord, asRecords, BlueprintRecord, ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
+import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { requiredQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
+import { fingerprintDiscoverySources } from '../../scripts/utils/blueprint-discovery';
+import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-traceability';
+
+/** 唯一充实变体，渲染、交接与 docs 共用；是表达夹具，不是真实需求。 */
+export function createBlueprintReviewDesignFixture(root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-review-design-'))) {
+  fs.cpSync(path.join(__dirname, 'component-blueprint/valid'), root, { recursive: true });
+  fs.symlinkSync(path.resolve(__dirname, '../../..'), path.join(root, 'framework'), process.platform === 'win32' ? 'junction' : 'dir');
+  const workspace = path.join(root, 'doc/features/ledger-app-blueprint');
+  const blueprintFile = path.join(workspace, 'blueprint/component-blueprint.yaml');
+  const blueprint = YAML.parse(fs.readFileSync(blueprintFile, 'utf8'));
+  const read = (name: string) => YAML.parse(fs.readFileSync(path.join(__dirname, 'blueprint-design-inputs', name + '.yaml'), 'utf8'));
+  const a = YAML.parse(fs.readFileSync(path.join(workspace, 'ledger-refresh/change-unit.yaml'), 'utf8'));
+  for (const dir of fs.readdirSync(workspace, { withFileTypes: true })) if (dir.isDirectory() && dir.name !== 'blueprint') fs.rmSync(path.join(workspace, dir.name), { recursive: true, force: true });
+  const b = structuredClone(a);
+  b.change_unit_id = 'ledger-report'; b.priority = 20; b.purpose = '独立交付本地账页报表读取，复用共同金额模型，保留账目刷新切片的安全中间态。';
+  b.target_predicates.forEach((p: BlueprintRecord) => { p.predicate_id += '-report'; p.description = `报表切片：${p.description}`; });
+  b.provides[0].provide_id = 'ledger-report-slice'; b.provides[0].description = '报表加载、缓存快照和失败回退可以独立施工。';
+  b.target_predicates.forEach((p: BlueprintRecord) => { p.provide_ids = ['ledger-report-slice']; });
+  a.purpose = '持久化提交先于发布，首次加载与订阅重放一致，失败时保留上一份账目快照。';
+  a.safe_intermediate_state.description = '刷新切片独立构建；报表切片未上线时，现有账页仍能从 Repository 恢复并刷新。';
+  b.safe_intermediate_state.description = '报表未接入时保持既有账页；报表失败仅展示上次缓存，不改变持久账目。';
+  const views = asRecords(blueprint.design_views);
+  const view = (id: string) => views.find(v => v.view_id === id)!;
+  const authoritative = { ...blueprint.provenance, evidence_strength: 'authoritative', extraction_method: 'approved-design-fixture' };
+  const shared: BlueprintRecord = { node_id: 'review-common', label: '共同金额与账户隔离约束', owner: 'ledger-team', current_state: '金额为十进制字符串，按账号隔离。', target_state: '两切片共享上述契约。', provenance: authoritative, verification_refs: ['test/ledger/closure.test.ts#verifyChangeUnit'] };
+  asRecords(view('logical').nodes).forEach(node => { node.label = '账目领域'; node.target_state = '稳定账目投影，提交成功后消费者才能读取。'; });
+  (view('logical').nodes as BlueprintRecord[]).push(shared);
+  const reportDomain = { ...structuredClone(asRecords(view('logical').nodes)[0]), node_id: 'report-domain', label: '本地报表领域', current_state: '已有只读账目集合。', target_state: '提供按月聚合的只读快照。' };
+  (view('logical').nodes as BlueprintRecord[]).push(reportDomain);
+  const devA = asRecords(view('development').nodes)[0];
+  devA.provenance = authoritative; devA.label = '账目刷新模块';
+  const devB: BlueprintRecord = { ...structuredClone(devA), node_id: 'ledger-report-module', label: '账页报表模块', design_basis_refs: ['view:logical/node:report-domain'], current_state: '报表直接读取数组。', target_state: '报表消费独立只读缓存。' };
+  (view('development').nodes as BlueprintRecord[]).push(devB);
+  const flowA = asRecords(view('runtime').runtime_data_flows)[0]; flowA.provenance = authoritative;
+  flowA.name = '账目提交、发布与恢复';
+  const flowB = structuredClone(flowA);
+  flowB.flow_id = 'ledger-report-flow'; flowB.name = '报表首次读取与快照更新'; flowB.data_domain_refs = ['data-domain:ledger-report'];
+  flowB.external_contract_refs = ['contract:read-report-v1']; flowB.logical_contract_refs = ['contract:read-report-v1']; flowB.development_owner_ref = 'view:development/node:ledger-report-module';
+  for (const node of asRecords(view('runtime').nodes)) {
+    const copy = { ...structuredClone(node), node_id: `${node.node_id}-report`, label: `${node.label}Report`, design_basis_refs: ['view:logical/node:report-domain'], current_state: '只读账目集合。', target_state: '按月聚合的只读快照。' };
+    (view('runtime').nodes as BlueprintRecord[]).push(copy);
+  }
+  asRecord(flowB.source_of_truth)!.authority = 'view:runtime/node:ledger-repository-report';
+  asRecord(flowB.source_of_truth)!.projections_and_caches = ['view:runtime/node:ledger-store-report'];
+  asRecord(flowB.state_owner)!.ref = 'view:runtime/node:ledger-repository-report';
+  (view('runtime').runtime_data_flows as BlueprintRecord[]).push(flowB);
+  const deployment = view('deployment');
+  Object.assign(deployment, { applicability: 'applicable', evolution_impact: 'changed', current_state: '一个 App 进程、独立持久化及账目服务接口边界。', target_state: '保持固有拓扑，刷新与报表在各自本地消费点落盘。', delta: '明确两个本地切片落点及端云配套。', decisions_and_gaps: ['decision:seam-shape'], verification_refs: ['test/ledger/closure.test.ts#verifyDeploymentTopology'] });
+  delete deployment.applicability_evidence;
+  const local = (id: string, label: string) => ({ node_id: id, label, owner: 'ledger-team', current_state: '现有 App 进程', target_state: `${label}接入该进程`, responsibilities: ['本部件侧实现与回归'], inputs: ['登录账号、账目快照'], outputs: ['本地消费者快照'], not_responsible_for: ['云侧存储实现', '运营台配置施工'], failure_impact: '只保留上一份快照并显示重试入口。', provenance: authoritative, verification_refs: ['test/ledger/closure.test.ts#verifyDeploymentTopology'] });
+  deployment.nodes = [local('local-ledger', '账目刷新运行落点'), local('local-report', '纯本地报表运行落点'), { node_id: 'ledger-service', label: '账目服务（外部事实）', owner: 'service-owner', current_state: '已提供 createEntry v1', target_state: '已提供 createEntry v1', responsibilities: ['提供获准 API'], inputs: ['金额、币种、请求 ID'], outputs: ['稳定 entry_id 或错误码'], not_responsible_for: ['本部件缓存和 UI 发布'], failure_impact: '本地旧快照仍可消费，写操作失败不发布。', provenance: authoritative, verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'] }];
+  deployment.rollout = [{ order: 1, unit: '账目服务 v1', depends_on: [], note: '现有接口保持兼容；外部施工不属于 CU。' }, { order: 2, unit: '账目刷新', depends_on: ['账目服务 v1'], note: '完成本侧接口回归后上线。' }, { order: 3, unit: '本地报表', depends_on: ['账目刷新'], note: '配套顺序不自动变成 CU requires。' }];
+  deployment.coordination = [{ counterpart: '运营配置台', relation: '负责入口开放配置；本部件不消费其施工，未创建根级 contract。' }];
+  const scenarioA = asRecords(view('scenarios').nodes)[0];
+  Object.assign(scenarioA, { label: '记一笔后跨消费者刷新', current_state: '登录用户手动记账。', target_state: '账页消费已提交快照，重启仍一致。', logical_refs: ['view:logical/node:ledger-domain'], deployment_refs: ['view:deployment/node:local-ledger'], journey_steps: [{ step_id: 'J-A1', stage: '进入', user_action: '登录后打开账页', system_behavior: '先读取持久快照，再建立重放订阅', preconditions: ['账号已登录'] }, { step_id: 'J-A2', stage: '提交', user_action: '输入有效金额并确认', system_behavior: '持久化成功后发布；失败保留旧快照', preconditions: ['服务可用', '金额大于 0'] }, { step_id: 'J-A3', stage: '恢复', user_action: '退出并重启 App', system_behavior: '重建缓存并消费 Repository 最新已提交快照', preconditions: ['已有持久账目'] }], path_variants: [{ user_type: '首次使用', difference: '没有本地数据时显示空状态，等待首次成功提交。' }, { user_type: '已有账目', difference: '离线可查看旧快照，写失败不清空。' }] });
+  const scenarioB = { ...structuredClone(scenarioA), node_id: 'report-scenario', label: '纯本地读取月度报表', logical_refs: ['view:logical/node:report-domain'], runtime_refs: ['view:runtime/flow:ledger-report-flow'], development_owner_ref: 'view:development/node:ledger-report-module', deployment_refs: ['view:deployment/node:local-report'], journey_steps: [{ step_id: 'J-B1', stage: '读取', user_action: '选择已有月份', system_behavior: '本地聚合后发布只读报表快照', preconditions: ['本地有该月账目'] }], path_variants: [{ user_type: '无该月账目', difference: '返回空报表，不请求外部服务。' }] };
+  (view('scenarios').nodes as BlueprintRecord[]).push(scenarioB);
+  const contractB = structuredClone(blueprint.contracts[0]); contractB.contract_id = 'read-report-v1'; contractB.needed_by = 'cu-ledger-report';
+  contractB.operation.direction = 'app-to-local-report'; contractB.operation.operation_id = 'readReport';
+  // 本地接口仍使用既有 contract 模型；来源是样本中的明确接口定义。
+  fs.writeFileSync(path.join(root, 'contracts/report-api.yaml'), YAML.stringify({ operations: { readReport: { operation_id: 'readReport', direction: 'app-to-local-report', version: 'v1' } } }));
+  contractB.operation.source_ref = 'contracts/report-api.yaml#/operations/readReport';
+  blueprint.contracts.push(contractB);
+  const relations = asRecords(blueprint.relations);
+  relations.push({ ...structuredClone(relations[0]), relation_id: 'report-repository-publishes-store', from: 'view:runtime/node:ledger-repository-report', to: 'view:runtime/node:ledger-store-report' }, { ...structuredClone(relations[1]), relation_id: 'report-domain-owned-by-module', from: 'view:logical/node:report-domain', to: 'view:development/node:ledger-report-module' }, { ...structuredClone(relations[1]), relation_id: 'local-ledger-consumes-service', from: 'view:deployment/node:local-ledger', to: 'view:deployment/node:ledger-service', relation_type: 'consumes_api' });
+  blueprint.relations = relations;
+  Object.assign(blueprint.review_summary, { title: 'Ledger 完整设计表达样本（非真实需求）', background: '原先各消费者自行拉取，持久化与缓存发布先后不清，重启后容易看见不同余额。', problem: '提交与发布之间没有可审查的责任边界，报表又复用了一份可变数组。', summary: '以 Repository 为持久账目真源，Store 重放已提交快照；刷新与只读报表拆为两个 CU，共享金额与账号隔离契约。', positioning: '本批交付数据及运行语义，不承担首页布局或云侧内部实现。', goals: [{ goal_id: 'G-1', statement: '所有消费者读取同一份已提交账目', success_measures: ['AC-1 与 AC-2 通过', 'BD-2 验证写失败不发布'] }, { goal_id: 'G-2', statement: '报表独立消费而不改变账目', success_measures: ['AC-3 通过', 'BD-3 验证空月份'] }], in_scope: ['ledger 模块中的持久化、快照发布与本地报表消费'], non_goals: ['首页视觉实现', '云侧内部存储与运营配置台施工', '未来多进程同步'] });
+  const decision = asRecords(blueprint.decisions_and_gaps.decisions)[0];
+  decision.rationale = 'Repository 提交先于发布，重放 Store 统一首次加载与更新；直接宿主实现足以承担当前两个本地切片。';
+  decision.alternatives = [{ option: '每个页面独立拉取并写缓存', rejected_reason: '提交与显示顺序不可统一', defect: '重启、订阅建立期间可能看到旧余额' }, { option: '立刻抽出 Maison provider', rejected_reason: '尚无跨宿主变体证据', defect: '增加接缝维护面而没有实际复用' }];
+  blueprint.quality_attributes = [{ qa_id: 'QA-1', category: '一致性', requirement: '已提交状态才可发布', landing: 'Repository → Store', source_ref: 'requirements/ledger.md#REQ-LEDGER-REFRESH', verification_refs: ['AC-1', 'BD-2'] }, { qa_id: 'QA-2', category: '兼容与隐私', requirement: '单进程恢复且账号隔离，退出登录清理缓存', landing: 'App 生命周期与 LedgerShared', source_ref: 'requirements/ledger.md#REQ-LEDGER-REFRESH', verification_refs: ['BD-1', 'NFR-1'] }];
+  blueprint.data_domains = [{ data_domain_id: 'data-domain:ledger-entry', usage: '已提交账目与账页快照', retention: '持久账目按宿主留存政策，缓存随会话', isolation: '账号隔离', cleanup: '退出登录清缓存', security: '敏感金额不记录到日志' }, { data_domain_id: 'data-domain:ledger-report', usage: '只读月度报表', retention: '当前会话', isolation: '随账号与月份隔离', cleanup: '账号切换时丢弃', security: '不复制跨账号账目' }];
+  flowA.data_domain_refs = ['data-domain:ledger-entry'];
+  const facts = asRecords(blueprint.discovery.facts);
+  facts.push({ fact_id: 'term-ledger', subject: 'term:账目', value: { meaning: '当前登录账号已经持久化提交的金额记录。', canonical_module: 'ledger', confidence: 'high', easily_confused_with: ['报表缓存'] }, provenance: { ...authoritative, source_kind: 'glossary', source_ref: 'doc/glossary.yaml#账目', extraction_method: 'user_confirmed' } });
+  blueprint.discovery.facts = facts;
+  const fingerprint = fingerprintDiscoverySources(facts, currentScopeItems(blueprint));
+  blueprint.source_fingerprint = fingerprint; blueprint.discovery.source_fingerprint = fingerprint;
+  blueprint.derived_results.forEach((result: BlueprintRecord) => { result.source_fingerprint = fingerprint; });
+  const q = blueprint.review_summary.questioning;
+  for (const [scope, kind] of requiredQuestioningScopes(blueprint)) if (!q.items.some((item: BlueprintRecord) => item.scope_ref === scope)) q.items.push({ ...structuredClone(q.items[0]), question_id: `q-${q.items.length}`, scope_ref: scope, scope_kind: kind, question: '本侧设计、外部事实与施工责任是否闭合？', answer: '外部节点未改变；本地场景分别有进程落点，契约与关系由消费 CU 承担本侧证据。' });
+  const baseRef = { ...a.component_blueprint_ref, source_fingerprint: fingerprint };
+  const ref = (target: ComponentBlueprintRef['target']) => ({ ...baseRef, target });
+  a.design_refs.push(ref({ kind: 'node', view_id: 'logical', id: 'review-common' }), ref({ kind: 'node', view_id: 'deployment', id: 'local-ledger' }), ref({ kind: 'node', view_id: 'deployment', id: 'ledger-service' }), ref({ kind: 'relation', id: 'local-ledger-consumes-service' }));
+  b.design_refs = [ref({ kind: 'node', view_id: 'logical', id: 'review-common' }), ref({ kind: 'node', view_id: 'logical', id: 'report-domain' }), ref({ kind: 'node', view_id: 'runtime', id: 'ledger-repository-report' }), ref({ kind: 'node', view_id: 'runtime', id: 'ledger-store-report' }), ref({ kind: 'flow', view_id: 'runtime', id: 'ledger-report-flow' }), ref({ kind: 'node', view_id: 'development', id: 'ledger-report-module' }), ref({ kind: 'node', view_id: 'scenarios', id: 'report-scenario' }), ref({ kind: 'node', view_id: 'deployment', id: 'local-report' }), ref({ kind: 'contract', id: 'read-report-v1' }), ref({ kind: 'relation', id: 'report-repository-publishes-store' }), ref({ kind: 'relation', id: 'report-domain-owned-by-module' }), ref({ kind: 'decision', id: 'seam-shape' })];
+  b.touches[0].design_ref = b.design_refs.find((r: ComponentBlueprintRef) => r.target.id === 'ledger-report-module');
+  const ac = (id: string, description: string, device = false) => ({ id, prd_function: null, priority: 'P0', description, testable: true, verification_steps: ['建立账号内测试数据', '执行本切片动作并检查结果'], expected_result: description, ut_layer: device ? 'device' : 'unit', ...(device ? { device_focus: '账页显示新余额且重启后保留' } : { ut_focus: '持久化、发布与账号隔离' }) });
+  const bd = (id: string, scenario: string, expected: string) => ({ id, prd_exception: scenario, description: scenario, scenario, priority: 'P1', handling: expected, expected_behavior: expected, ut_layer: 'unit', ut_focus: '状态保持与恢复' });
+  const nfr = (id: string, metric: string) => ({ id, metric, threshold: '<= 500', unit: 'ms', description: metric, ut_layer: 'unit', ut_focus: '可重复的计时样本' });
+  shared.acceptance = { version: '1', criteria: [ac('AC-1', '金额保留十进制字符串，两个切片只读取当前账号')], boundaries: [bd('BD-1', '账号切换', '旧账号缓存全部丢弃')], performance: [nfr('NFR-1', '本地首次读取时间')] };
+  devA.acceptance = { version: '1', criteria: [ac('AC-2', '提交成功后账页显示新余额，重启后保持一致', true)], boundaries: [bd('BD-2', '持久化失败', '保留旧快照，不发布新余额')], performance: [nfr('NFR-2', '提交到消费者可见时间')] };
+  devB.acceptance = { version: '1', criteria: [ac('AC-3', '月度报表等于本地已提交账目聚合')], boundaries: [bd('BD-3', '月份无账目', '返回空报表，不修改账目')], performance: [nfr('NFR-3', '本地报表聚合时间')] };
+  shared.contracts = { version: '1', files: ['src/ledger/LedgerShared.ets'], data_models: [{ name: 'Amount', kind: 'interface', module: 'ledger', file: 'src/ledger/LedgerShared.ets', fields: [{ name: 'minorUnits', type: 'string', required: true, description: '整数分的十进制字符串，禁止浮点金额；最大长度由获准接口定义。', source_ref: 'contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0' }] }] };
+  const construction = (cu: typeof a, file: string, test: string) => ({ ...read('contracts'), feature: undefined, source: undefined, modules: [{ name: 'ledger', layer: '02-Feature', format: 'source', change_type: 'modify', package_path: 'src/ledger' }], module_dependencies: { ledger: [] }, files: [file, test], change_unit: { predicate_mappings: cu.target_predicates.map((p: BlueprintRecord) => ({ predicate_id: p.predicate_id, implementation_refs: ['planned:' + file], test_refs: ['planned:' + test] })), provide_mappings: cu.provides.map((p: BlueprintRecord) => ({ provide_id: p.provide_id, implementation_refs: ['planned:' + file], test_refs: ['planned:' + test] })), design_ref_mappings: cu.design_refs.map((r: ComponentBlueprintRef) => ({ design_ref: r.target, implementation_refs: ['planned:' + file], verification_refs: ['planned:' + test] })) } });
+  devA.contracts = construction(a, 'src/ledger/LedgerFeature.ets', 'test/ledger/LedgerFeature.test.ets');
+  const ca = devA.contracts as BlueprintRecord;
+  (ca.files as string[]).push('src/ledger/LedgerEntry.ets', 'src/ledger/LedgerRepository.ets', 'src/ledger/LedgerStore.ets');
+  ca.data_models = [{ name: 'LedgerEntry', module: 'ledger', file: 'src/ledger/LedgerEntry.ets', kind: 'interface', fields: [{ name: 'id', type: 'string', required: true, description: '稳定账目 ID，提交后不可改变。', source_ref: 'contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1/fields/0' }, { name: 'amount', type: 'Amount', required: true, description: '共享金额模型，单位分。', source_ref: 'contract:create-entry-v1' }] }, { name: 'LedgerStage', module: 'ledger', file: 'src/ledger/LedgerEntry.ets', kind: 'enum', fields: [], values: [{ name: 'COLD', value: 'cold' }, { name: 'CURRENT', value: 'current' }] }];
+  ca.interfaces = [{ module: 'ledger', layer: 'data', file: 'src/ledger/LedgerRepository.ets', class: 'LedgerRepository', methods: [{ name: 'commit', params: [{ name: 'entry', type: 'LedgerEntry' }], return: 'Promise<LedgerEntry>', async: true, description: '原子持久化成功后返回；失败抛错，缓存不发布。' }, { name: 'load', params: [], return: 'Promise<LedgerEntry[]>', async: true, description: '按当前账号读取已提交集合。' }] }];
+  ca.components = [{ name: 'LedgerStore', module: 'ledger', file: 'src/ledger/LedgerStore.ets', kind: 'state-owner', description: '重放最近已提交快照，订阅清理归生命周期 owner。', state: [{ name: 'stage', type: 'LedgerStage', decorator: 'none' }], events: [{ name: 'snapshot', description: '持久化成功后只发布一次。' }] }];
+  devB.contracts = construction(b, 'src/ledger/LedgerReport.ets', 'test/ledger/LedgerReport.test.ets');
+  for (const [cu, flow, file, label] of [[a, flowA, 'src/ledger/LedgerFeature.ets', '2'], [b, flowB, 'src/ledger/LedgerReport.ets', '3']] as const) {
+    cu.target_predicates.forEach((p: BlueprintRecord) => { (p.verification_refs as string[]).push('acceptance:AC-' + label); });
+    const runtime = read('runtime'); runtime.state_management[0].owner_ref = asRecord(flow.state_owner)!.ref; runtime.state_management[0].contract_refs = flow.logical_contract_refs;
+    runtime.state_management[0].data = label === '2' ? 'ledger' : 'report'; runtime.state_management[0].ordered_steps = ['读取账号隔离的持久集合', '提交或聚合成功后生成不可变快照', '发布快照后由订阅者消费', '失败保留旧快照；重启重新加载'];
+    flow.contracts = runtime;
+    const cases = read('use-cases'); cases.feature = deriveChangeUnitFeatureId('ledger-app-blueprint', String(cu.change_unit_id)); cases.use_cases[0].id = label === '2' ? 'ledger-refresh' : 'ledger-report'; cases.use_cases[0].description = label === '2' ? '提交、发布与恢复' : '纯本地月度聚合'; cases.use_cases[0].coordinator_file = file;
+    cases.use_cases[0].state_model.phases = ['initial-load', 'committed', 'published', 'recovered'];
+    cases.use_cases[0].data_boundaries = [{ name: 'repository', type: 'LedgerRepository', kind: 'storage', methods: [{ name: 'load', params: [], returns: 'LedgerEntry[]', async: true }] }];
+    cases.use_cases[0].branches = [{ id: 'success', scenario: '有效账号与已提交数据', user_sequence: ['flow.load', 'flow.commit', 'flow.publish'], expected_phase_seq: ['initial-load', 'committed', 'published'], expected_port_calls: ['repository.load', 'repository.commit'], expected_state: { stage: 'published', snapshot: '本次提交的不可变集合' }, linked_acceptance: ['AC-' + label] }, { id: 'failure', scenario: '本地数据不可用或写失败', user_sequence: ['flow.load'], not_called: ['flow.publish'], expected_phase_seq: ['initial-load', 'recovered'], expected_state: { snapshot: '上一份快照' }, linked_acceptance: ['BD-' + label] }];
+    flow.use_cases = cases;
+  }
+  const viewText: Record<string, string[]> = {
+    logical: ['定义账目、金额与本地报表的能力边界。', '已存在账目实体和提交操作。', '账目与只读报表各有契约，共享金额和账号隔离约束。', '冻结本侧接口与明确领域模型。'],
+    runtime: ['说明首次加载、发布、订阅、恢复的责任与先后顺序。', '账页读取持久账目并自行建立订阅。', '提交后发布不可变账目快照；报表本地聚合后发布独立快照。', '明确重放与失败保留旧快照。'],
+    development: ['将两个切片分配到 ledger 模块的明确目录和文件。', '文件按技术类型混放。', 'Repository、Store、报表读取各有明确职责和接口。', '复用共同金额定义；其余写集按 CU 专属目标声明。'],
+    scenarios: ['从用户动作追到领域对象、运行流与真实进程落点。', '已有记账与按月查看入口。', '记账更新与纯本地报表分别可追溯和验收。', '补齐首次使用、账号切换、失败和重启路径。'],
+  };
+  for (const [id, [purpose, current_state, target_state, delta]] of Object.entries(viewText)) Object.assign(view(id), { purpose, current_state, target_state, delta });
+  asRecords(view('runtime').nodes).forEach(node => Object.assign(node, { current_state: String(node.node_id).includes('store') ? '消费者各自保留可变缓存。' : '已持久化的账号内账目。', target_state: String(node.node_id).includes('report') ? '只读报表快照；不回写账目。' : String(node.node_id).includes('store') ? '重放最近已提交的不可变快照。' : '持久化提交成功才允许发布。' }));
+  Object.assign(scenarioB, { current_state: '用户已有按月查看需求。', target_state: '离线读取当前账号的月度报表，空月份返回空集合。' });
+  blueprint.decisions_and_gaps.decisions = blueprint.decisions_and_gaps.decisions.filter((d: BlueprintRecord) => d.decision_id !== 'deployment-na');
+  const answers: Record<string, string> = {
+    module_boundaries: 'ledger 模块承担本地持久化、快照和只读报表；云侧内部存储与运营配置不属于本批。',
+    capability_seams: '当前直接消费宿主 Repository，尚无跨宿主变体证据；保留原 keep_direct 决定。',
+    feature_flags: '本批不改变入口开关；运营配置台按已有配套协同开放入口。',
+    data_producers_consumers: 'Repository 生产已提交账目，LedgerStore 消费账页快照，ReportStore 消费本地聚合快照。',
+    lifecycle_triggers: '冷启动、恢复、页面建立/解除、账号切换和进程重建有明确读取与清理路径；本批无后台写入。',
+    state_owners: 'Repository 拥有持久账目；各 Store 只拥有可丢弃的消费者投影，不反向写成真源。',
+    initialization: '先读取账号内持久集合，再建立可重放订阅；没有历史数据时返回空集合。',
+    publication_subscription: '持久化成功或本地聚合完成后发布；订阅建立重放最新快照，解除时清理 observer。',
+    ui_refresh: '账页只展示已提交快照；报表刷新独立进行，失败保留上次缓存；此样本没有视觉布局设计。',
+    process_recovery: '重建 Repository/Store 并重新加载；不凭旧内存快照证明提交完成。',
+  };
+  for (const [key, answer] of Object.entries(answers)) blueprint.app_lens[key] = { ...structuredClone(blueprint.app_lens[key]), answer };
+  Object.assign(contractB.operation, { operation_id: 'readReport', direction: 'app-to-local-report', source_ref: 'contracts/report-api.yaml#/operations/readReport' });
+  contractB.request_dto = { dto_id: 'ReportRequestV1', source_ref: 'contracts/report-api.yaml#/dtos/ReportRequestV1', verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'], fields: [{ field_id: 'month', type: 'yyyy-MM', required: true, nullable: false, semantics: '按当前账号查询的月份', source_ref: 'contracts/report-api.yaml#/dtos/ReportRequestV1/fields/0', provenance: authoritative }] };
+  contractB.response_dto = { dto_id: 'ReportResponseV1', source_ref: 'contracts/report-api.yaml#/dtos/ReportResponseV1', verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'], fields: [{ field_id: 'total', type: 'decimal-string', required: true, nullable: false, semantics: '该月已提交账目合计，单位分', source_ref: 'contracts/report-api.yaml#/dtos/ReportResponseV1/fields/0', provenance: authoritative }] };
+  contractB.mappings = [{ mapping_id: 'report-month', kind: 'direct', source_fields: ['month'], target_field: 'ReportRequest.month', rule: '保持 yyyy-MM 格式，不跨账号查询。', source_ref: 'mappings/read-report.yaml#/mappings/report-month', provenance: authoritative, verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'] }, { mapping_id: 'report-total', kind: 'direct', source_fields: ['total'], target_field: 'LedgerReportSnapshot.total', rule: '保留十进制字符串，不经浮点数转换。', source_ref: 'mappings/read-report.yaml#/mappings/report-total', provenance: authoritative, verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'] }];
+  contractB.errors = { source_ref: 'contracts/report-api.yaml#/errors/readReport', verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'], items: { storage_unavailable: '保留上一份报表快照并报告重试，不写账目' } };
+  contractB.idempotency = { source_ref: 'contracts/report-api.yaml#/idempotency/readReport', verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'], rule: '同一账号、月份和账目版本得到相同只读快照。' };
+  contractB.nfr = { source_ref: 'contracts/report-api.yaml#/nfr/readReport', verification_refs: ['test/ledger/closure.test.ts#verifyExternalContract'], requirements: { isolation: '不读取其它账号账目', freshness: '仅使用已提交数据' } };
+  const sourceOnly = (value: unknown): unknown => Array.isArray(value) ? value.map(sourceOnly) : asRecord(value) ? Object.fromEntries(Object.entries(asRecord(value)!).filter(([key]) => !['provenance', 'source_ref', 'verification_refs'].includes(key)).map(([key, child]) => [key, sourceOnly(child)])) : value;
+  fs.writeFileSync(path.join(root, 'contracts/report-api.yaml'), YAML.stringify({ operations: { readReport: sourceOnly(contractB.operation) }, dtos: { ReportRequestV1: sourceOnly(contractB.request_dto), ReportResponseV1: sourceOnly(contractB.response_dto) }, errors: { readReport: sourceOnly(contractB.errors) }, idempotency: { readReport: sourceOnly(contractB.idempotency) }, nfr: { readReport: sourceOnly(contractB.nfr) } }));
+  fs.writeFileSync(path.join(root, 'mappings/read-report.yaml'), YAML.stringify({ mappings: Object.fromEntries(contractB.mappings.map((m: BlueprintRecord) => [m.mapping_id, sourceOnly(m)])) }));
+  Object.assign(asRecord(flowB.source_of_truth)!, { persistence: '账号内已提交账目；报表缓存不回写账目。', reconciliation: '账目版本更新后重新聚合，不调用远程写接口。' });
+  asRecord(flowB.initial_load)!.strategy = '本地读取并按月份聚合'; asRecord(flowB.initial_load)!.data_scope = '当前账号、当前月份';
+  asRecord(flowB.state_owner)!.states = ['empty', 'current', 'stale'];
+  Object.assign(asRecords(flowB.mutations)[0], { mutation_id: 'aggregate-report', kind: 'user', persistence_ref: 'contract:read-report-v1', publication_ref: 'publication:report-ready' });
+  delete asRecords(flowB.mutations)[0].persistence_ref;
+  asRecords(flowB.publications)[0].publication_id = 'report-ready'; asRecords(flowB.publications)[0].snapshot = '按月聚合的不可变报表';
+  Object.assign(asRecords(flowB.subscriptions)[0], { subscription_id: 'report-panel-subscription', consumer_ref: 'consumer:report-panel', publication_ref: 'publication:report-ready' });
+  Object.assign(asRecords(flowB.consumers)[0], { consumer_id: 'report-panel', update_ref: 'publication:report-ready' });
+  Object.assign(asRecord(flowB.failure_recovery)!, { persistence_failure: '本地读取失败时保留旧报表', subscription_failure: '重新读取并聚合', process_recreation: '丢弃会话缓存后重新聚合' });
+  const reportRuntime = asRecords(asRecord(flowB.contracts)!.state_management)[0];
+  reportRuntime.holder = 'LedgerReportStore'; reportRuntime.ordered_steps = ['读取当前账号已提交账目', '按月份聚合金额', '发布不可变报表快照', '失败保留旧报表；账号切换丢弃缓存'];
+  for (const field of ['mutations', 'publications', 'subscriptions', 'consumers']) reportRuntime[field] = structuredClone(flowB[field]);
+  const reportCases = asRecords(asRecord(flowB.use_cases)!.use_cases)[0];
+  reportCases.coordinator = 'LedgerReport.run'; reportCases.state_model = { phases: ['initial-load', 'aggregated', 'published', 'retained'] };
+  reportCases.branches = [{ id: 'success', scenario: '当前账号该月存在已提交账目', user_sequence: ['flow.load', 'flow.aggregate', 'flow.publish'], expected_phase_seq: ['initial-load', 'aggregated', 'published'], expected_port_calls: ['repository.load'], expected_state: { total: '该月已提交金额总和' }, not_called: ['repository.commit'], linked_acceptance: ['AC-3'] }, { id: 'empty', scenario: '该月无账目', user_sequence: ['flow.load', 'flow.aggregate'], expected_phase_seq: ['initial-load', 'aggregated'], expected_state: { total: '0' }, not_called: ['repository.commit'], linked_acceptance: ['BD-3'] }];
+  const reportContracts = devB.contracts as BlueprintRecord;
+  (reportContracts.files as string[]).push('src/ledger/LedgerReportModel.ets');
+  reportContracts.data_models = [{ name: 'LedgerReportSnapshot', module: 'ledger', file: 'src/ledger/LedgerReportModel.ets', kind: 'interface', fields: [{ name: 'month', type: 'string', required: true, description: 'yyyy-MM，当前账号的查询月份。', source_ref: 'contract:read-report-v1' }, { name: 'total', type: 'Amount', required: true, description: '单位分，仅聚合已提交账目。', source_ref: 'contract:read-report-v1' }] }];
+  for (const [flow, report] of [[flowA, false], [flowB, true]] as const) {
+    asRecords(flow.triggers).forEach(trigger => Object.assign(trigger, { timing: report ? '用户按月查看或账目快照更新后' : '用户提交账目或进程重建后', idempotency: report ? '按账号、月份、账目版本去重聚合' : '按账号和请求 ID 去重提交' }));
+    Object.assign(asRecord(flow.initial_load)!, { freshness: '读取当前 Repository 版本后建立重放订阅', ...(report ? {} : { strategy: '先读取持久快照，再建立订阅', data_scope: '当前登录账号的账目' }) });
+    if (!report) asRecord(flow.source_of_truth)!.reconciliation = '已提交 Repository 版本为准；失败写操作不发布。';
+    asRecords(flow.subscriptions).forEach(s => Object.assign(s, { attach: '首次加载后建立订阅', detach: '页面卸载或账号切换', replay_or_snapshot: report ? '最近已聚合的报表' : '最近已提交的账目', cleanup: '移除 observer token', ordering: '按 Repository 版本顺序消费' }));
+    if (!report) Object.assign(asRecord(flow.failure_recovery)!, { persistence_failure: '保留旧快照并提供重试入口', subscription_failure: '重载 Repository 快照后重建订阅', process_recreation: '从持久账目重建 Store' });
+    asRecords(asRecord(flow.contracts)!.state_management).forEach(s => { s.failure_recovery = { strategy: report ? '重新聚合或保留上次报表' : '重新读取已提交持久快照' }; });
+  }
+  const roleMeaning: Record<string, string> = { behavior: '交付可观察行为与精确预期', owner: '持久状态和缓存投影责任清楚', consumer: '消费者读取本侧有效快照', contract: '消费已获准的本侧接口与映射', provider: '宿主提供直接 Repository 实现', recovery: '失败与进程重建有明确恢复路径' };
+  for (const cu of [a, b]) cu.target_predicates.forEach((p: BlueprintRecord) => { p.description = `${cu.change_unit_id === 'ledger-refresh' ? '账目刷新' : '只读报表'}：${roleMeaning[String(p.role)]}`; });
+  q.items.forEach((item: BlueprintRecord) => {
+    const scope = String(item.scope_ref); item.question = `核实 ${scope} 的设计依据与责任是否闭合？`;
+    if (scope.startsWith('app_lens:')) item.answer = answers[scope.slice('app_lens:'.length)];
+    else if (scope.startsWith('view:')) item.answer = String(view(scope.slice(5)).target_state);
+    else if (scope.startsWith('flow:')) item.answer = scope.includes('report') ? '先读取本地账目，再按月聚合并发布；失败保留报表，绝不提交账目。' : '先持久化提交，再发布快照并通知消费者；重启重新加载。';
+    else if (scope.startsWith('relation:')) { const relation = relations.find(r => r.relation_id === scope.slice(9))!; item.answer = `${relation.from} 通过 ${relation.relation_type} 关联 ${relation.to}，对应消费 CU 承担本侧证据。`; }
+    else item.answer = '账目是当前账号已提交金额记录，映射 ledger；报表缓存是可丢弃的投影，不能当持久真源。';
+  });
+  const cuFiles = [path.join(workspace, 'ledger-refresh/change-unit.yaml'), path.join(workspace, 'ledger-report/change-unit.yaml')];
+  const bind = () => {
+    const bytes = fs.readFileSync(blueprintFile); const hash = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+    const bp = YAML.parse(bytes.toString('utf8'));
+    for (const file of cuFiles) {
+      const cu = YAML.parse(fs.readFileSync(file, 'utf8'));
+      const walk = (value: unknown): void => {
+        if (!value || typeof value !== 'object') return;
+        if ((value as BlueprintRecord).artifact === 'component-blueprint@1') Object.assign(value, { revision: bp.revision, source_fingerprint: bp.source_fingerprint, artifact_sha256: hash });
+        for (const child of Object.values(value)) walk(child);
+      };
+      walk(cu); fs.writeFileSync(file, YAML.stringify(cu));
+    }
+  };
+  fs.writeFileSync(blueprintFile, YAML.stringify(blueprint));
+  [a, b].forEach((cu, i) => { fs.mkdirSync(path.dirname(cuFiles[i]), { recursive: true }); fs.writeFileSync(cuFiles[i], YAML.stringify(cu)); });
+  bind();
+  return { root, blueprintFile, cuFiles, feature: deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh'), reportFeature: deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-report'), bind };
+}

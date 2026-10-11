@@ -482,10 +482,10 @@ function requireSidecarForChangeUnitFeature(
  * plan a3c7e9d1 t2：「可修改模块集合」**只从 CU touches[].design_ref** 经既有 addressing resolver
  * 解析到 development 节点取 `module` 去重（design_refs 只是设计依赖闭包）；resolver 同一 stale 语义，失败即抛。
  */
-export function deriveModifiableModules(projectRoot: string, cu: ChangeUnitArtifact): string[] {
+export function deriveModifiableModules(projectRoot: string, cu: ChangeUnitArtifact, resolveRef: typeof resolveComponentBlueprintRef = resolveComponentBlueprintRef): string[] {
   const modules = new Set<string>();
   for (const touch of cu.touches ?? []) {
-    const node = asRecord(resolveComponentBlueprintRef(projectRoot, touch.design_ref).target);
+    const node = asRecord(resolveRef(projectRoot, touch.design_ref).target);
     if (!nonEmptyString(node?.module)) throw new Error(`${blueprintRefAddress(touch.design_ref)} 缺 module，无法派生可修改模块集合；回 /component-design 补齐。`);
     modules.add(node!.module as string);
   }
@@ -509,6 +509,11 @@ export function relevantArchitectureImpactDecisions(
 ): BlueprintRecord[] {
   const admitted = resolveAdmittedModules(projectRoot, blueprint);
   const touched = new Set([...modifiable, ...modifiable.map(name => admitted.modules.get(name)).filter((l): l is string => Boolean(l))]);
+  return selectRelevantArchitectureImpactDecisions(blueprint, touched, designDecisionIds);
+}
+
+/** 施工门、摘要与纯展示共用同一相关性谓词；touched 的层归属仍由原责任方提供。 */
+export function selectRelevantArchitectureImpactDecisions(blueprint: BlueprintRecord, touched: ReadonlySet<string>, designDecisionIds: string[]): BlueprintRecord[] {
   return asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).filter(decision => decision.kind === 'architecture_impact'
     && MACHINE_CHECKED_ARCHITECTURE_CHANGES.includes(String(decision.change ?? ''))
     && (designDecisionIds.includes(String(decision.decision_id ?? '?')) || architectureImpactEndpoints(decision).some(name => touched.has(name))));
