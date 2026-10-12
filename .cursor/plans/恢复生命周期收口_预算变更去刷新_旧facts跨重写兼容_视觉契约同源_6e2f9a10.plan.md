@@ -126,3 +126,21 @@ todos:
 ## 7. 修订记录
 
 2026-10-11：根据用户放弃旧现场、面向未来的裁决缩小范围。原方案中依赖旧 facts/旧 run 的兼容与回放待办标 cancelled；阶段状态分歧另有现行生产路径，缩为 t1 的单个入口回归。真实验收改为干净宿主共验，历史事故说明保留为设计依据。本次仅修订文档，四项实施待办 pending、两项 cancelled，未改运行时代码或执行宿主。
+
+## 8. 实施记录
+
+### 2026-10-11：开发、评审与候选验证的实际路径（N2）
+
+- 历史证据已随 worktree 清理保留到仓根 `dist/6e2f9a10-worktree-archive/validation/`，摘要为 `final-validation.json`；该摘要记录的是当时工作树状态，其中“尚未合入主干”现已过时，不能作为当前 Git 状态。实现随后已合入主干。
+- 两次单命令 `candidate:build` 均失败：`aac73393` 为 **5364 通过、26 失败**；`b18b2c84` 为 **5382 通过、7 失败**。原始日志和失败结果保留，未改写为通过。
+- 第二次余下 7 项由测试修订解决；相对该次全量，1236 个发布源文件字节不变。复用不受影响的 **5336** 项结果，完整重跑三个受影响套件 **53/53**（blueprint-review-design 19、feature-assessment 15、check-disposition-consumers 19），合计有效结果 **5389 通过、0 未解决失败**。这不表示第一次的 26 项都只需改测试。
+- typecheck、OpenSpec、fixtures **46/46**、pack、release verify 及消费者生命周期 smoke 均通过；smoke 为 8 项覆盖、1 项已退休、0 pending。Astra、Claude 最终评审均 PASS，必须修复项为 0；Astra P3 非阻断意见保留。证据复用和分步续验也经评审核对。
+- 此次是**分步完成候选验证，不是单命令 `candidate:build` 通过**。历史候选 ZIP SHA256 为 `e07fd9ea9ed1b9c4468e2d40f107b4876f7a2dada53d85f2da33c8d9c1b00ab6`，源提交为 `b383331e`；候选现保留在 `dist/6e2f9a10-worktree-archive/candidates/`。未执行正式发布提升；t6 干净宿主验收仍 pending。
+
+### 2026-10-11：S1 / N1 窄返修
+
+- S1：示例 `must_fix` / `note` 收为共享常量；validator 仅对去除首尾空白后与常量完全一致的文本拒收，沿现有一次纠错处理。测试保留示例 JSON、bbox、零基引用及真实身份绑定验证，分别拒绝两种占位文本，并确认替换为实际观察后完整校验通过。
+- N1：当前 summary FAIL 导致恢复起点前移时，同步清除该阶段及后续阶段的 `resumePostAgentPhases` / `resumePostAgentAttemptIds`。在既有正式 phase-only 重验入口回归中增加下游已 settled、待闭环的事件夹具，核对回退后重新调用 review 且不复用旧 attempt。
+- 本轮按用户要求不打包。旧候选不含这两处生产修复，不把它作为返修后的包。验证结果另在本节据实补录，不改既定目标和 t6 状态。
+
+2026-10-12 验证完成：目标 visual-provider **85/85**、N1 正式重验入口 **1/1** 通过；随后 `cd harness && npm test` **EXIT=0**，typecheck 通过、默认 unit **5275/5275**、fixtures **46/46**。全量中的 visual-provider 为 85/85、goal-runner-testing-integrity 为 160/160；6 个 release-only 套件依默认 runner 规则未执行，不声称完成 release 验证。首次 `npm test` 在新增测试的 TypeScript 断言类型处退出，修正后重新运行得到上述结果；历史失败日志仍保留。日志位于 `dist/6e2f9a10-followup/`（`s1-target.log`、`n1-target.log`、`npm-test.log`、`npm-test-final.log` 及退出码文件）。本轮仅自检 S1/N1 及直接回归，未新增独立模型评审；前述 Astra/Claude PASS 属原候选验证。未打包、未执行宿主验收。

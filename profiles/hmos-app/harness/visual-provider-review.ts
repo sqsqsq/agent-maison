@@ -51,6 +51,8 @@ import {
 } from './visual-diff-check';
 
 export const VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION = '1.0';
+export const VISUAL_REVIEW_EXAMPLE_MUST_FIX = 'Restore the example element to match the reference';
+export const VISUAL_REVIEW_EXAMPLE_NOTE = 'Example: element shape differs in this area, but the main task remains usable';
 
 // ---------------------------------------------------------------------------
 // 目标屏与输入装配
@@ -260,9 +262,9 @@ export function buildVisualProviderReviewPrompt(
         screen_id: t.screen_id,
         reference_image_hash: t.refHash,
         evaluated_screenshot_hash: t.shotHash,
-        must_fix: ['Restore the example element to match the reference'],
+        must_fix: [VISUAL_REVIEW_EXAMPLE_MUST_FIX],
         defects: [{ class: 'shape_mismatch', severity: 'major', element: t.mustHaveElements?.[0] ?? t.screen_id,
-          bbox: [0.1, 0.2, 0.3, 0.1], note: 'Example: element shape differs in this area, but the main task remains usable', must_fix_refs: [0] }],
+          bbox: [0.1, 0.2, 0.3, 0.1], note: VISUAL_REVIEW_EXAMPLE_NOTE, must_fix_refs: [0] }],
         ...(identity.requireRegionAttest ? {
           region_attest: (t.mustHaveElements?.length ? t.mustHaveElements : [t.screen_id])
             .map(region => ({ region, verdict: 'diff_logged', method: 'vl_screening' })),
@@ -354,6 +356,9 @@ export function validateVisualProviderReviewPayload(
       return { ok: false, reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFixRaw, 'must_fix 须为非空字符串数组（可为空数组）') };
     }
     const mustFix = (mustFixRaw as string[]).map(s => s.trim());
+    if (mustFix.includes(VISUAL_REVIEW_EXAMPLE_MUST_FIX)) {
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFix, '照抄格式示例；请填写实际观察，无缺陷时使用空数组') };
+    }
 
     const defectsRaw = row.defects;
     if (!Array.isArray(defectsRaw)) {
@@ -373,6 +378,9 @@ export function validateVisualProviderReviewPayload(
       }
       if (typeof dd.note !== 'string' || !dd.note.trim()) {
         return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].note`, dd.note, 'defect.note 必填，non-empty impact/evidence description') };
+      }
+      if (dd.note.trim() === VISUAL_REVIEW_EXAMPLE_NOTE) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].note`, dd.note, '照抄格式示例；请填写实际影响与定位，无缺陷时使用空数组') };
       }
       let refs: number[] | undefined;
       if (dd.must_fix_refs !== undefined && dd.must_fix_refs !== null) {

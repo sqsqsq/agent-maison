@@ -1978,6 +1978,17 @@ test('6e2f9a10 t1: 正式 phase-only revalidate 产生 events PASS / summary FAI
     assert(revalidate.status === 1 && summary.verdict === 'FAIL', '真实 phase-only checker 产生 FAIL：' + revalidate.stdout.slice(-1200) + revalidate.stderr.slice(-600));
     assert(summary.run_id === runId && !summary.blockers.some((b: { id?: string }) => /authority|identity|scope_missing/.test(b.id ?? '')), '重验归属当前 run，未绕权威守卫');
     assert(eventBytes.equals(fs.readFileSync(eventsAbs)), '普通重验不追加 phase_verdict，事件仍保留既有 PASS');
+    // A downstream invocation had settled before stopping at closure; its old eligibility
+    // must not survive the newly discovered upstream failure.
+    const awaitingReview = [
+      { type: 'agent_invoke_start', phase: 'review', invoke_id: 'review-i5' },
+      { type: 'agent_process_settled', phase: 'review', invoke_id: 'review-i5', exit_code: 0 },
+      { type: 'harness_end', phase: 'review', invoke_id: 'review-i5', exit_code: 0 },
+      { type: 'phase_halt', phase: 'review', run_disposition: 'WAITING', halt_reason: 'upstream_closure_gap' },
+    ];
+    fs.appendFileSync(eventsAbs, awaitingReview.map(event => JSON.stringify({ ts: new Date().toISOString(), ...event })).join('\n') + '\n');
+    assert(deriveHaltValidationOnlyEligibility([...first.events, ...awaitingReview])?.invoke_id === 'review-i5',
+      '前置：下游 review 确有待消费的原 attempt 只重验资格');
     // Repair the input, preserving the checker's FAIL: only a new owner check can replace it.
     fs.writeFileSync(sourceAbs, sourceBytes);
     const manifestAbs = path.join(first.reportDir, 'manifest.json');
@@ -1988,6 +1999,12 @@ test('6e2f9a10 t1: 正式 phase-only revalidate 产生 events PASS / summary FAI
     assert(resumed.reportDir === first.reportDir && resumed.events.filter(e => e.type === 'run_created').length === 1,
       '沿原 run 恢复，不起后继或新状态');
     assert(resumed.invokedPhases[0] === 'coding', '必须先恢复真实责任，不先消耗 review/ut：' + resumed.invokedPhases.join(','));
+    const resumeEvent = [...resumed.events].reverse().find(e => e.type === 'resume');
+    assert(!!resumeEvent, '续跑必须记录恢复起点');
+    assert(!(resumeEvent?.post_agent_phases as string[] | undefined)?.includes('review'), '上游回退必须清除下游旧的只重验资格');
+    assert(resumed.invokedPhases.includes('review'), 'coding 返修后 review 必须重新执行 agent');
+    const resumedEvents = resumed.events.slice(resumed.events.lastIndexOf(resumeEvent!));
+    assert(!resumedEvents.some(e => e.phase === 'review' && e.invoke_id === 'review-i5'), '不得消费下游旧 attempt 身份');
     const repaired = JSON.parse(fs.readFileSync(featureFilePath(cu.root, cu.feature, 'coding/reports/summary.json'), 'utf8'));
     assert(repaired.verdict === 'PASS' && repaired.closure_status === 'closed', '输入还原后仍须沿 coding 作者/checker 重新验证，不能沿用旧事件 PASS');
     assert(runEndStatus(resumed.events) === 'COMPLETED' || runEndStatus(resumed.events) === 'CHAIN_SLICE_COMPLETED', '修复后当前任务完成：' + runEndStatus(resumed.events));

@@ -1607,3 +1607,9 @@ L2b 的断言全部成立：
 3. halt_reason/run_wait_kind 沿用既有 `adapter_cli_hard_failure`（adjudication class external → WAITING/external），未改成宿主本次的 human；未新造分类枚举。
 4. run_end 的 `error` 对所有 HALTED 主收口生效（取 halt_guidance 首行），不只适配器类；仅诊断，不参与裁决。
 5. Codex review P2（已处理，只改注释）：`agent-invoke.ts`、`goal-runner-phase.ts`、`goal-phase-runtime.ts` 三处旧注释仍说 terminal_error_excerpt「纯诊断、不进 classifier」，与本笔接线矛盾；改为「不进 settle/retry/api_disconnected/failure classifier，唯一例外是 exit≠0 时 resolveInvokeHardCliFailure 的 400 信封 + 实采措辞表」，并注明 run_end.error 仅诊断。typecheck EXIT=0，host-runtime-truth 25/0。
+
+### 2026-10-11：successor 定义责任方修复来源与验证补录（N3）
+
+在 6e2f9a10 候选验证中发现：CU 升版使原有定义证据失去复用资格后，successor 若只继承完成链，会丢失仍必需的验收/设计定义责任方。修复提交 `2d6d249f` 经 `cherry-pick -x` 合入主干为 `1148f2af`：`resolveSuccessorExecutionScope` 保留源范围 required acceptance-context / design-context 的既有 owner，由原解析器决定复用或重签；同时同步 `correction-routing` 规格及受影响测试，未新增授权或预算机制。本条记录该实现归属与实际来源，不重写本 plan 原设计或声称新增宿主验收。
+
+历史验证材料位于 `dist/6e2f9a10-worktree-archive/validation/`：`repair-successor-exit-A1-7-definition.log` 为 **2/2 PASS**，覆盖健康定义不额外执行、施工绑定失效回 plan、重签前不授权 coding；typecheck 与后续候选验证通过情况见 6e2f9a10 §8。第二次全量的余下 7 项为其他测试旧断言，最终按 5336 项复用 + 53 项重跑收口，不能表述为一次单命令全绿。本轮只补来源与验证记录，未再修改 successor 代码或规格。

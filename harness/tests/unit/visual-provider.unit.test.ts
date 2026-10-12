@@ -74,6 +74,8 @@ import {
   resetDelegatedRoundState,
   runVisualProviderReview,
   validateVisualProviderReviewPayload,
+  VISUAL_REVIEW_EXAMPLE_MUST_FIX,
+  VISUAL_REVIEW_EXAMPLE_NOTE,
   writeDelegatedCriticReceipt,
   type ReviewTargetScreen,
 } from '../../../profiles/hmos-app/harness/visual-provider-review';
@@ -1339,7 +1341,7 @@ function reviewReply(input: VisualProviderInvokeInput, body: string) {
       capture_method: 'stdout_json' as const, confidence: 'measured' as const } };
 }
 
-test('6e2f9a10 t3: prompt JSON 示例以真实目标/图片 hash/身份完整校验，bbox 与零基引用同源', () => {
+test('6e2f9a10 t3: prompt JSON 示例绑定真实身份，拒绝照抄占位文本，实际观察完整校验通过', () => {
   const f = invalidatedScreenProject({ mustHaveElements: ['root', 'sms_next'] });
   try {
     const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing' } as never;
@@ -1349,7 +1351,20 @@ test('6e2f9a10 t3: prompt JSON 示例以真实目标/图片 hash/身份完整校
       const identity = { runId: 'current-run', attemptId: 'i7', requireRegionAttest };
       const prompt = buildVisualProviderReviewPrompt(targets, identity);
       const example = prompt.slice(prompt.indexOf('\n{') + 1);
-      const result = validateVisualProviderReviewPayload(example, { targets, ...identity });
+      const copied = validateVisualProviderReviewPayload(example, { targets, ...identity });
+      assert.ok(!copied.ok && copied.reason.includes('must_fix') && copied.reason.includes('照抄格式示例'));
+      const observed = JSON.parse(example);
+      for (const screen of observed.screens) {
+        assert.strictEqual(screen.must_fix[0], VISUAL_REVIEW_EXAMPLE_MUST_FIX);
+        assert.strictEqual(screen.defects[0].note, VISUAL_REVIEW_EXAMPLE_NOTE);
+        screen.must_fix[0] = 'Reduce the header corner radius to match the reference';
+      }
+      const copiedNote = validateVisualProviderReviewPayload(JSON.stringify(observed), { targets, ...identity });
+      assert.ok(!copiedNote.ok && copiedNote.reason.includes('.note') && copiedNote.reason.includes('照抄格式示例'));
+      for (const screen of observed.screens) {
+        screen.defects[0].note = 'Header corners are rounder than the reference; text and navigation remain readable';
+      }
+      const result = validateVisualProviderReviewPayload(JSON.stringify(observed), { targets, ...identity });
       assert.strictEqual(result.ok, true, JSON.stringify(result));
       assert.ok(JSON.parse(example).screens.every((screen: { defects: Array<{ bbox: number[]; must_fix_refs: number[] }> }) =>
         screen.defects[0].bbox.join(',') === '0.1,0.2,0.3,0.1' && screen.defects[0].must_fix_refs.join(',') === '0'));

@@ -6862,6 +6862,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (failedIndex >= 0 && failedIndex < chainStartIndex) {
           chainStartIndex = failedIndex;
           outcomes = outcomes.filter(o => chain.indexOf(o.phase) < failedIndex);
+          for (const invalidatedPhase of chain.slice(failedIndex)) {
+            resumePostAgentPhases.delete(invalidatedPhase);
+            delete resumePostAgentAttemptIds[invalidatedPhase];
+          }
         }
       }
       if (resumePostAgentPhases.size > 0) {
