@@ -15,6 +15,7 @@ import { assessFeature, type AssessedObligation, type FeatureAssessment } from '
 import { executionScopeEvidenceIssues, generateFeatureCompletion } from '../../scripts/utils/verify-feature-completion';
 import { observeChangeUnitCompletion, resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
 import { asChangeUnitArtifact, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
+import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import type { ExecutionScope } from '../../scripts/utils/execution-scope';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { seedCleanCompletionChain } from '../utils/completion-chain-seed';
@@ -79,7 +80,7 @@ const scopeOf = (over: Partial<ExecutionScope>): ExecutionScope => ({
 });
 
 // ---- plan c4e7a9b2 A1：手写产物按稳定 ID 对齐规范化投影 -------------------------------------------------
-// 夹具 = 快照 + 真实输入产生作者阶段产物；设计真变先拒绝，再由 plan 作者重建当前映射。
+// 夹具 = 快照 + 真实输入产生作者阶段产物；canonical 独立升版、保留未证明可刷新的阶段文件，再由 plan 作者重建当前映射。
 // successor 出生范围（resolveSuccessorExecutionScope）与 assessFeature，不直接调比较函数。
 const BLUEPRINT_ID = 'ledger-app-blueprint';
 export function bumpAndReconcile(root: string, mutate: (bp: Record<string, unknown>) => void): void {
@@ -90,14 +91,16 @@ export function bumpAndReconcile(root: string, mutate: (bp: Record<string, unkno
   mutate(bp);
   fs.writeFileSync(file, YAML.stringify(bp));
   const contractsFile = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'contracts.yaml');
-  const before = fs.readFileSync(contractsFile);
+  const files = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(root, SNAPSHOT_CU_FEATURE, name));
+  const before = files.map(file => fs.readFileSync(file));
   const cu = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
-  assert.throws(() => reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID), /内容未变|无法证明|内容变化/);
-  assert(fs.readFileSync(contractsFile).equals(before) && fs.readFileSync(cu.canonicalPath).equals(cu.bytes));
-  fs.rmSync(contractsFile);
   const r = reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
-  assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length, JSON.stringify(r));
-  fs.writeFileSync(contractsFile, YAML.stringify(authorCurrentCuPlan(root, YAML.parse(before.toString('utf8')))));
+  assert(r.bumped.some(b => b.change_unit_id === 'ledger-refresh') && !r.skipped.length && !r.busy, JSON.stringify(r));
+  const current = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
+  assert.strictEqual(current.changeUnit.revision, Number(cu.changeUnit.revision) + 1);
+  assert.deepStrictEqual(validateChangeUnit(current.changeUnit, { projectRoot: root, canonicalPath: current.canonicalPath }), []);
+  files.forEach((file, i) => assert(fs.readFileSync(file).equals(before[i]), `未证明可安全刷新时阶段文件被覆盖：${file}`));
+  fs.writeFileSync(contractsFile, YAML.stringify(authorCurrentCuPlan(root, YAML.parse(before[1].toString('utf8')))));
   clearFrameworkConfigCache();
 }
 function ledgerDomain(bp: Record<string, unknown>): Record<string, any> {

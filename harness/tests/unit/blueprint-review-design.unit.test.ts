@@ -12,6 +12,7 @@ import { loadBlueprintReviewSource, blueprintReviewDifferences, materializeBluep
 import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, selectBlueprintSkillContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
 import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
+import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { validateCrossViewRelations } from '../../scripts/utils/blueprint-cross-view';
 import { generateMermaidViewGraph, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { identityNeutralDigest } from '../../scripts/utils/identity-neutral-digest';
@@ -229,12 +230,27 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     fs.appendFileSync(path.join(f.root, 'doc/module-catalog.yaml'), '\n# 外部层归属仍不作为展示输入\n'); assert.equal(render(f), text);
     const strictBefore = identityNeutralDigest(f.root, 'change-unit@1', inputs.units[0].unit); assert(strictBefore); assert.equal(identityNeutralDigest(f.root, 'change-unit@1', inputs.units[0].unit), strictBefore);
   } },
-  { name: 'materialized invalid revision fails in reconciliation before readiness and rolls all CU/projection bytes back', run(f) {
+  { name: 'materialized invalid projection preserves stage bytes while valid canonical identities advance; readiness returns to component-design', run(f) {
     for (const feature of [f.feature, f.reportFeature]) materializeBlueprintSkillInputs(f.root, feature, frameworkRoot);
-    const files = [...f.cuFiles, ...[f.feature, f.reportFeature].flatMap(feature => ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(f.root, feature, name)))]; const before = files.map(file => fs.readFileSync(file));
+    const files = [f.feature, f.reportFeature].flatMap(feature => ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(f.root, feature, name))); const before = files.map(file => fs.readFileSync(file));
+    const revisions = f.cuFiles.map(file => Number(YAML.parse(fs.readFileSync(file, 'utf8')).revision));
     update(f, bp => { bp.revision = Number(bp.revision) + 1; for (const r of asRecords(bp.derived_results)) r.input_revision = bp.revision; target(bp, 'ledger-refresh-flow').use_cases = 'bad use case'; }, false);
-    assert.throws(() => deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'), (error: unknown) => (error as { code: string }).code === 'change_unit_blueprint_ref_bump_rejected');
+    const ready = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint');
+    assert.equal(ready.blueprintRefs.bumped.length, 2, JSON.stringify(ready.blueprintRefs));
+    assert.deepStrictEqual(ready.blueprintRefs.skipped, []); assert(!ready.blueprintRefs.busy);
+    f.cuFiles.forEach((file, i) => {
+      const cu = YAML.parse(fs.readFileSync(file, 'utf8'));
+      assert.equal(cu.revision, revisions[i] + 1);
+      assert.deepStrictEqual(validateChangeUnit(cu, { projectRoot: f.root, canonicalPath: file }), []);
+    });
     files.forEach((file, i) => assert(fs.readFileSync(file).equals(before[i]), file));
+    const unit = ready.perUnit.find(u => u.changeUnitId === 'ledger-refresh')!;
+    assert(!ready.ready && unit.verdict === 'blocked' && unit.issueIds.includes('authority_content_not_machine_structure'), JSON.stringify(ready));
+    assert.equal(ready.nextEntry, 'component-design'); assert.equal(ready.entersConstruction, false);
+    const ctx = { projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', phaseRule: {},
+      featureSpec: new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature) } as CheckContext;
+    const gate = checkAuthoritativeContentAligned(ctx, 'contracts');
+    assert(gate.some(check => check.status === 'FAIL' && check.repair_owner === 'external' && check.details.includes('authority_projection_invalid')), JSON.stringify(gate));
   } },
   { name: 'real closure owns external consumed interface and relation on our side; local report has a deployment landing', run(f) {
     const bp = blueprint(f); assert.deepStrictEqual(validateCrossViewRelations(bp), []);
