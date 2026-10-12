@@ -1,3 +1,4 @@
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 import * as fs from 'fs';
 import * as path from 'path';
 import { clearFrameworkConfigCache } from '../../config';
@@ -471,6 +472,7 @@ const cases: TestCase[] = [
           fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf8');
           fs.mkdirSync(path.join(root, ...row.featuresDir.split('/'), ...row.physical.split('/')), { recursive: true });
           clearFrameworkConfigCache();
+          freezeExistingGoalDelivery(root, row.feature);
           const prepared = prepareGoalModeRun({
             projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: row.feature,
             runId: 'matrix-run', adapter: 'codex', requirement: 'matrix requirement',

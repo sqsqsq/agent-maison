@@ -2136,3 +2136,12 @@ Enforcement: `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/fi
 - **THEN** the three images form the shared discovery set used by OCR pre-scan, the phase prompt's
   authoritative paths, `derive.visual-reference` dependencies, receipt production and verification;
   if the agent's spec omits one of them, verification SHALL fail
+
+### Requirement: Fresh delivery uses the existing design handoff
+
+Fresh launcher and runtime birth SHALL share the design preparation decision specified in `complex-capability-meta-model`. Raw detach without feature.yaml SHALL return executable same-session steps before creating any flat run/manifest/log directory or spawning a child. Valid continuation/frozen scopes and resolvable canonical CU identity SHALL retain their original entry; generic profiles and single-duty request endpoints SHALL NOT be redirected. Preparation SHALL NOT project a HALTED run or add a halt reason.
+
+#### Scenario: Fresh delivery respects the existing handoff boundary
+
+- **WHEN** a fresh manifest-only launch specifies complete spec/plan delivery without a canonical CU or valid prior task
+- **THEN** launcher and runtime SHALL use the effective manifest/CLI request to return design steps before any flat run or child is created

@@ -505,3 +505,18 @@ MUST 返回明确的 unsupported / missing design lens 失败，MUST NOT 把 Ser
 > `harness/scripts/utils/verify-feature-completion.ts`、
 > `harness/scripts/utils/change-unit-completion.ts` 和
 > `harness/scripts/utils/component-closure-obligations.ts` 接线。
+
+### Requirement: Fresh delivery uses the existing design handoff
+
+For a profile with `profileHasDesignLens`, a new complete Feature containing spec/plan duties without a resolvable canonical CU or valid task/frozen scope SHALL return executable same-session design steps before prepare-scope writes a flat candidate or fresh Goal creates a run, manifest or detached launcher directory. The current main Agent SHALL complete component-design and independent questioning, call `check:change-unit --accept-candidates <file> --json` with existing `ChangeUnitCandidate[]`, and consume readiness plus derived canonical Feature ids through the existing P2 ready-set/selector before the chosen attended/detached Goal entry. Existing/already accepted CUs SHALL use `--readiness`, including its existing pointer reconciliation and review document materialization side effects. The two new operations SHALL be mutually exclusive and reject `--unit`; default canonical CU checking SHALL retain its output and exit behavior. Accepted ids/paths SHALL remain visible if subsequent readiness is not ready, busy or fails (including design failures); the command SHALL provide the readiness retry and SHALL NOT claim construction is ready in that case. Document failures SHALL be disclosed separately with an independent rebuild command and SHALL NOT change accepted/readiness/bumped. This preparation SHALL NOT invoke a model, create a HALTED run, add a host bridge callback or alter authorization/budget contracts. Generic profiles, single-duty request endpoints, valid prior tasks and plan-specific mapping supplements SHALL retain existing paths.
+
+#### Scenario: Raw detach continues from a requirement in the same session
+
+- **WHEN** a design-lens complete delivery asks for unattended execution with no blueprint, CU or feature.yaml
+- **THEN** raw detach and prepare-scope SHALL return the same actionable design steps without creating a flat run or candidate
+- **AND** the authorized main Agent SHALL complete design, admission, candidate acceptance/readiness, prepare the selected canonical CU Feature scope and start the original Goal entry without asking the user to restate the request
+
+#### Scenario: A single-duty request or generic profile stays on its original path
+
+- **WHEN** the endpoint is a single-duty request or the resolved profile has no design lens
+- **THEN** the preparation branch SHALL NOT expand its endpoint or require unsupported component-design

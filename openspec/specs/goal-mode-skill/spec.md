@@ -270,3 +270,12 @@ Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/reference/agents-entry
 
 - **WHEN** a native goal spans spec through testing
 - **THEN** each phase runs in its own executor and the main context only accumulates six summary paths and terminal blocks
+
+### Requirement: Fresh delivery uses the existing design handoff
+
+The main Agent SHALL honor the fresh design handoff in `complex-capability-meta-model` before starting Goal. A preparation result SHALL be consumed in the same authorized session: component-design, public CU acceptance/readiness, existing P2 selection and scope preparation, then the chosen attended or detached entry. Initial design SHALL remain in the main Agent/Skill; host bridge attachment SHALL NOT acquire a run-birth design callback. User departure SHALL select detached execution only after ready CU handoff, retaining existing confirmations and budget accounting.
+
+#### Scenario: Fresh delivery respects the existing handoff boundary
+
+- **WHEN** a design-lens new complete delivery returns a design preparation result
+- **THEN** the authorized main Agent SHALL complete the design handoff in the same session before starting the selected ready CU in attended or detached mode

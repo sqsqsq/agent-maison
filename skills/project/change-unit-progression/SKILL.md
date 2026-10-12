@@ -23,7 +23,7 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 
 ## Authority and entry
 
-- Run `check:change-unit`（`--blueprint <blueprint_id> --unit <change_unit_id>`）for each **new decomposition candidate** before deriving readiness. Existing canonical CUs go straight to readiness, which reconciles stale blueprint pointers before judging constructability. Only the consumer validator accepts temporary candidates; schema, identity, design closure, existing runtime roles, provenance and source authority are checked before atomic batch writing. Existing canonical paths still reject ordinary re-accept. 同一未完成活动 CU 无运行或已停住时可经 consumer 内容修订，保留 ID/Feature/目录并 revision +1；running 返回 busy。资格及事务细则见[蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)。
+- 首次分解只写临时 JSON 数组 `[{providerId, artifact}]`，调用 `npm run check:change-unit -- --project-root <host> --blueprint <id> --accept-candidates <file> --json` 接受并派生 readiness。已有 canonical CU 或接受后未就绪调用同命令的 `--readiness`（替换 `--accept-candidates <file>`）；其含指针调和与文档物化，不是纯只读。原 `--unit <id>` 仅检查已有 canonical CU，不能检查临时候选。消费返回的 accepted 事实与 canonical Feature id；未就绪按具体问题修复并重派生，不重复接受，不手填 Feature identity。schema、identity、设计闭包、provenance 与来源权威由唯一 consumer 原子校验/写入。重复接受仍 fail-closed；未完成活动 CU 的内容修订沿既有 consumer 接点，保留 ID/Feature/目录与累计预算，running 返回 busy，见[蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)。
 - Read CU intent, predicates, provides and design targets from the canonical artifact. Read component design from `component_blueprint_ref`; never copy either definition into a Feature.
 - Derive the Feature identity from `(blueprint_id, change_unit_id)`：逻辑 id = `cu-` + base64url 编码，物理路径 = `<features_dir>/<blueprint_id>/<change_unit_id>`（经框架 SSOT 解析，不手工拼接）。`contracts.change_unit` contains only ID mappings; `contracts.state_management` remains the sole runtime-construction authority.
 - `blueprint_id` 是路径键；`component_id` 只做所有权/一致性核验。requires/provides、carry-forward 与 ready set 全部限定同一 `blueprint_id` 工作区，跨工作区 CU（含同部件早期演进）不满足依赖。
@@ -43,7 +43,7 @@ Blueprint/CU identity drift makes mappings and readiness stale. Pure pointer rec
 
 ## Boundaries
 
-- Standalone Features without `change_unit_ref` keep their existing workflow and are not P2 errors.
+- Generic profile、单职责 request 与有效存量 standalone Feature 保留原流程。具备 design lens 的新完整 Feature 含 spec/plan 定义职责时，出生前回当前主 Agent 完成 component-design/CU 交接；未冻结候选不算有效既有任务。
 - `ready_for_component_closure` is only a handoff to later P3 evaluation. Never create or claim component closure here.
 - Do not add a registry, ledger, lock, daemon, semantic-diff/invalidates engine, dynamic Provider loader or second recovery authority.
 - The first release assumes one main Agent/process. If multiple writers become a real requirement, stop and propose a separate change.

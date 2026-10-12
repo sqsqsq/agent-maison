@@ -1,3 +1,4 @@
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 // ============================================================================
 // goal-product-preflight.unit.test.ts — goal 启动前置检查的真实 runner 行为（review P1）
 // ============================================================================
@@ -88,6 +89,7 @@ function setupMultiCandidateHost(): { root: string } {
   writeFile(root, `doc/features/${FEATURE}/plan/plan.md`, '# plan\n');
   writeFile(root, `doc/features/${FEATURE}/contracts.yaml`,
     `feature: ${FEATURE}\nfiles:\n  - 02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets\n`);
+  freezeExistingGoalDelivery(root, FEATURE);
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'init']);
   return { root };

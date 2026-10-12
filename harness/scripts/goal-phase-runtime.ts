@@ -6,6 +6,7 @@ import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal } from './utils/feature-track';
 import { resolveBirthScopeForManifest, resolveSuccessorExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { featureFilePath } from '../config';
+import { designDeliveryNextStep } from './utils/design-delivery-entry';
 // ============================================================================
 // Goal phase runtime (fenced session/process owner) — deterministic multi-phase orchestrator
 // ============================================================================
@@ -725,6 +726,20 @@ function toManifestCliArgv(argv: minimist.ParsedArgs): ManifestCliArgv {
     'override-end': Boolean(argv['override-end']),
     'override-manifest': Boolean(argv['override-manifest']),
   };
+}
+
+/** Same file loader and authorized overrides as fresh manifest birth; no run is written. */
+function resolveDesignDeliveryRequest(argv: minimist.ParsedArgs, projectRoot: string) {
+  const requirement = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot });
+  const cli = toManifestCliArgv(argv);
+  if (requirement.text !== undefined) cli.requirement = requirement.text;
+  if (requirement.sources.length) cli.requirement_source_files = requirement.sources;
+  const check = validateManifestCliOverrides(cli);
+  if (!check.ok) throw new Error(check.message);
+  if (!argv.manifest) return { startPhase: cli.start, endPhase: cli.end, requirement: requirement.text, requirementSourceFiles: requirement.sources };
+  const manifest = loadGoalManifestFile(String(argv.manifest), projectRoot);
+  applyManifestCliOverrides(manifest, cli);
+  return { startPhase: manifest.start_phase, endPhase: manifest.end_phase, requirement: manifest.requirement, requirementSourceFiles: manifest.requirement_source_files };
 }
 
 function guardNestedGoalRunner(): void {
@@ -4551,6 +4566,10 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
     return 1;
   }
   const feature = raw.feature;
+  if (!raw.isResume && !raw.dryRun && !normalizeSupersedeTargets(argv.supersede).length && !argv['attach-created']) {
+    const next = designDeliveryNextStep({ projectRoot, frameworkRoot: layout.frameworkRoot, feature, ...resolveDesignDeliveryRequest(argv, projectRoot) });
+    if (next) { console.log(JSON.stringify(next, null, 2)); return 0; }
+  }
   let isResume = raw.isResume;
   let runId = raw.runId ?? newRunId();
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
@@ -5003,6 +5022,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const launchFeature = (() => {
     try { return resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot).feature; } catch { return undefined; /* 下方同一解析会如实报错 */ }
   })();
+  if (!argv.resume && !attachCreatedRunId && !argv['dry-run'] && !normalizeSupersedeTargets(argv.supersede).length && launchFeature) {
+    const next = designDeliveryNextStep({ projectRoot, frameworkRoot, feature: launchFeature, ...resolveDesignDeliveryRequest({ ...argv, requirement: argv['requirement-file'] ? undefined : argv.requirement }, projectRoot) });
+    if (next) { console.log(JSON.stringify(next, null, 2)); return 0; }
+  }
   const plainContinuation = !argv['dry-run'] && launchFeature
     ? decideLaunchContinuation(argv, projectRoot, launchFeature, {
         plain: true, requirementSources: manifestArgv.requirement_source_files, attended: executorMode === 'attended',

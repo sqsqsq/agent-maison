@@ -96,11 +96,13 @@ current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
 仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
-**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，
-不执行该 Skill 的施工流程。实现入口为
-[`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)：
-`evaluateDesignPreparationEntry` 读取准入与已有单元，`acceptChangeUnitDecomposition` 委托唯一
-consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交接结果。
+**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。主 Agent 写 JSON 数组 `[{providerId, artifact}]` 到临时候选文件，然后在 `framework/harness` 调用公开 consumer 命令；`--accept-candidates` 相对路径按 `--project-root` 解析：
+```bash
+npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates <candidates.json> --json
+npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --readiness --json
+```
+
+已有 CU 或接受成功但未就绪时只用 `--readiness`，不重复接受。结果分别报告 accepted ids/paths、readiness/perUnit/原因、人读文档与 canonical Feature id；readiness 含既有指针调和与文档物化副作用。内部实现见 [`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)，宿主无需 import TS 或写交接脚本。
 
 1. 入口 = admitted blueprint —— **canonical CU 数量为 0 是合法入口**；
 2. decomposition provider / 设计者只提出**临时候选**（内存 / 临时报告）；
@@ -121,7 +123,7 @@ consumer validator 接受候选，`deriveDesignPreparationReadiness` 派生交�
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
 
 **边界（BLOCKER）**：本 Skill **停在设计交接**——设计阶段不启动 run：不进入 P2 selector、不进入施工
-循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内创建真实 attended Goal；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 无人值守时框架派出的 B1 修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
+循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内按用户选择启动 attended 或 detached Goal；无人值守的初始设计仍先在当前主 Agent 会话完成，ready 后才 detach；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 无人值守时框架派出的 B1 修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
 
 ### 5. 默认本地人读文档与可选宿主接入
 

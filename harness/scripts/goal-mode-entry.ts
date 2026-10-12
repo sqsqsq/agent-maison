@@ -56,6 +56,7 @@ import { resolveFeatureTrack } from './utils/runtime-policy';
 import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
 import { loadInertLegacyFidelityIntentSsot } from './utils/fidelity-shared';
+import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './utils/design-delivery-entry';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
@@ -126,6 +127,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
         },
       });
   if (continuation.kind === 'hold') throw new Error(`[goal-mode-entry] ${continuation.guidance}`);
+  const next = designDeliveryNextStep({ ...options, feature });
+  if (next) throw new DesignDeliveryPreparationRequired(next);
   if (continuation.kind === 'rejoin') {
     const existing = loadGoalManifestFromRun(options.projectRoot, continuation.runId, {
       feature, featuresDir: relFeaturesDir(options.projectRoot),
@@ -564,6 +567,12 @@ async function main(): Promise<void> {
       return;
     }
     const impactBasis = list(argv['impact-basis']);
+    const source = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot });
+    const next = designDeliveryNextStep({ projectRoot, frameworkRoot, feature, completionTarget, requestedPhases, requirement: source.text, requirementSourceFiles: source.sources });
+    if (next) {
+      console.log(JSON.stringify(next, null, 2));
+      return;
+    }
     const impactReason = String(argv['impact-reason'] ?? '').trim();
     // `--impact-behavior-change` 裸传（无值）时 minimist 给空字符串——那是**传了但没给值**，
     // 不是没传。用 hasOwnProperty 区分，传了空值一律拒绝，不当成「未提供」静默放过。
@@ -680,6 +689,10 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   void main().catch((error) => {
+    if (error instanceof DesignDeliveryPreparationRequired) {
+      console.log(JSON.stringify(error.result, null, 2));
+      return;
+    }
     console.error(`[goal-mode-entry] ${(error as Error).message}`);
     process.exitCode = 1;
   });

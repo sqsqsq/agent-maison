@@ -1,6 +1,6 @@
 # Goal Mode 运维细则（条件加载：实际启动/监控 goal run 时读）
 
-> SSOT 索引见 [`skills/project/goal-mode/SKILL.md`](../project/goal-mode/SKILL.md)。本文承载该 Skill 的可执行命令、host bridge 协议与事故知识；主文档只负责触发与安全边界。
+> SSOT 索引见 [`skills/project/goal-mode/SKILL.md`](../project/goal-mode/SKILL.md)。本文承载该 Skill 的可执行命令、host bridge 协议与事故知识；主文档只负责触发与安全边界。 `--prepare-scope`、fresh attended 与 raw detach 返回 `design_preparation_required` 时，尚未创建平铺候选/run/manifest；即使没有 feature.yaml，返回结果也包含当前材料路径和可执行下一步。主 Agent 按 [统一入口](../../docs/operations/project-entry.md) 在同一会话完成设计，使用 [component-design 的公开接受/readiness 命令](../project/component-design/SKILL.md#3-分解为-1n-canonical-change-unit经-p2-设计准备子流程) 接续。只有拿到 ready CU 后才使用下文的 Goal 启动命令和握手；准备输出不表示后台已运行。
 
 ## 运行身份（RESOLVED_ADAPTER）解析阶梯
 

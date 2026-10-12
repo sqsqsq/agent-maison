@@ -1,3 +1,4 @@
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 // ============================================================================
 // goal-post-harness-drift.unit.test.ts — post-harness 源码漂移的**运行时**回归
 // ----------------------------------------------------------------------------
@@ -60,6 +61,7 @@ export function runAll(): UnitCaseResult[] {
 
   const feature = 'ut-post-harness-drift';
   const host = setupMinimalHost(feature, 'hmos-app');
+  freezeExistingGoalDelivery(host, feature);
   try {
     run('post-harness 源码漂移 → 单次裁决：不回退、不 halt，run 跑完并如实披露', () => {
       const out = runDriver('ut_source_drift_post_harness', feature, host);

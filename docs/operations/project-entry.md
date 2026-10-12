@@ -1,5 +1,7 @@
 # 项目请求与统一入口
 
+具备 design lens 的新完整 Feature（非 canonical CU、含 spec/plan 定义职责、无有效 run/冻结范围）在 `--prepare-scope` 与 fresh Goal 出生前共用设计分流；raw detach 即使还没有 feature.yaml 也先返回 `design_preparation_required`，不创建平铺 run/manifest。它是准备结果，不是已运行任务的 HALTED。当前主 Agent 在同一会话按 component-design 完成蓝图、独立质询，调用 `check:change-unit --accept-candidates <file> --json`（已有/已接受 CU 用 `--readiness --json`），沿 P2 ready-set/selector 消费返回的 canonical Feature id 后继续范围准备与用户选择的 attended/detached Goal。纯准备不调用模型；完整交付已授权时不得把下一步转给用户就结束。设计专项保持设计终点，真实人类授权/凭据/必要决定仍按原确认契约；设计成本沿原记录与 Goal 预算一起披露。generic、单职责 request、合法存量恢复保留旧路；已有蓝图/CU 下的 plan 映射补充仍归 plan。
+
 入口 ID 和路径只查 [skills.index](../../skills/skills.index.yaml)，phase/checker 查活动 workflow。下表是职责说明，不是第二份路由或执行配置。项目动作使用现有 CLI 参数，不创建 invocation 文件、Feature、CU 或 Goal 来承载无关操作。
 
 | Skill / global phase | 本次输入与原生入口 | 产出与停止点 |
@@ -23,7 +25,7 @@
 
 ## 主 Agent 与子 Skill
 
-自然语言由主 Agent 按根入口的正式性判据解释：判类先答两问（本轮**范围** / **验收语义**），并**先查已有依据**（既有 acceptance、蓝图、catalog 与约束知识）；查到即复用，查完仍缺才只就该缺口询问。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。需要编译或跑测试的校验经框架执行器，不裸调工具链。显式 Skill 只授权本次职责；查看、局部设计、完整设计分别到对应终点。只读请求不因存在可补资料而写盘。设计 Skill 返回 readiness/缺口；只有用户已授权完整实现，外层才沿既有 CU 入口创建或恢复真实 attended Goal，复用 P2 范围计算、P4 coding/review 与 P5 验证。
+自然语言由主 Agent 按根入口的正式性判据解释：判类先答两问（本轮**范围** / **验收语义**），并**先查已有依据**（既有 acceptance、蓝图、catalog 与约束知识）；查到即复用，查完仍缺才只就该缺口询问。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。需要编译或跑测试的校验经框架执行器，不裸调工具链。显式 Skill 只授权本次职责；查看、局部设计、完整设计分别到对应终点。只读请求不因存在可补资料而写盘。设计 Skill 返回 readiness/缺口；只有用户已授权完整实现，外层才沿既有 CU 入口按用户选择创建或恢复 attended/detached Goal，复用 P2 范围计算、P4 coding/review 与 P5 验证。
 
 无 Feature 的局部 review/UT/testing 使用已交付的 [request CLI](request-harness.md)，结果隔离在显式报告目录，不能伪造 Feature 或借用活跃 Feature 证据；**落笔写测试之前先跑 `--prepare-request` 确认落点与载体**。完整实现根据实际义务安排验证，未知责任保留 unresolved，不因输入可解析就宣称验收通过。
 

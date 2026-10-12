@@ -695,7 +695,7 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   const derived = deriveDefinitionContext(ctx, workflow, input.requestedPhases);
   const contracts = derived.contracts;
   const acceptance = derived.acceptance;
-  // 无蓝图合法入口（非 CU feature）：设计 / 验收产物都还不存在时，来源就只有需求本身。
+  // generic / 单职责 request / 合法存量的无蓝图兜底；design-lens 新完整交付已在公开出生入口分流。
   // 需求绑定同样走既有 resolver（`derive.requirement`，带 inputContext 时返回需求文本作解析值），
   // **不自造 provider**、不伪造蓝图。
   // provenance：**始终**生成需求绑定——它是「这份候选为哪句需求而算」的机器凭据，

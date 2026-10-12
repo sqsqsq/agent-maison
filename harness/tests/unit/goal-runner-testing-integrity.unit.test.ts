@@ -19,6 +19,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
@@ -158,7 +159,7 @@ export function writeFile(root: string, rel: string, content: string): void {
 }
 
 /** 最小可跑宿主（git 仅为 layout 惯例保留；v23 快照已不依赖 git） */
-export function setupGoalRuntimeHost(adapter = 'cursor'): { root: string } {
+export function setupGoalRuntimeHost(adapter = 'cursor', existingDelivery = true): { root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-v23-'));
   git(root, ['init', '-q']);
   git(root, ['config', 'user.email', 't@t']);
@@ -229,6 +230,11 @@ export function setupGoalRuntimeHost(adapter = 'cursor'): { root: string } {
   ].join('\n'));
   writeFile(root, `doc/features/${FEATURE}/contracts.yaml`,
     `feature: ${FEATURE}\nmodules:\n  - name: FinancialCard\n    package_path: 02-Feature/FinancialCard\nfiles:\n  - ${PRODUCT_FILE}\n`);
+  // These stage tests resume an existing standalone delivery, not a new design request.
+  // Freeze its explicitly requested duties with the production scope resolver/writer.
+  if (existingDelivery) {
+    freezeExistingGoalDelivery(root, FEATURE);
+  }
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'init']);
   return { root };
@@ -1296,7 +1302,7 @@ test('corrupt phase-boundary handoff mailbox is quarantined and headless run rea
 for (const guardian of ['gone', 'unknown'] as const) {
   test(`b1b2 Windows startup guardian ${guardian}: real reconciliation reaches non-first UT facts admission`, async () => {
     if (process.platform !== 'win32') return;
-    const { root } = setupHost();
+    const { root } = setupHost(undefined, false);
     const fw = frameworkDeclaringTsSources();
     try {
       fs.writeFileSync(path.join(fw, 'profiles/hmos-app/harness/coding-host-rules.js'), `exports.profileCodingHost={...require(${JSON.stringify(path.join(REPO_ROOT, 'profiles/hmos-app/harness/coding-host-rules.ts').replace(/\\/g, '/'))}).profileCodingHost,sourceFileSuffixes:['.ets']};\n`);
@@ -1386,7 +1392,7 @@ for (const mode of ['research', 'delta', 'legacy', 'carry2', 'carry3'] as const)
   const legacy = mode === 'legacy';
   const carryInvokes = mode === 'carry2' ? 2 : mode === 'carry3' ? 3 : 0;
   test(`t5 runtime原attempt恢复：${carryInvokes ? `同phase${carryInvokes} invoke承接` : legacy ? '旧context缺失须真实重建' : inherited ? '授权delta' : '新Research配置来源'} gate与finalizer同源且旧调用不重计`, async () => {
-    const { root } = setupHost();
+    const { root } = setupHost(undefined, false);
     const fw = frameworkDeclaringTsSources();
     try {
       const generic = path.join(fw, 'profiles/generic');
@@ -6360,7 +6366,7 @@ for (const { genuineSourceChange, completeEvidence } of [
   { genuineSourceChange: false, completeEvidence: false },
 ]) {
   test(`8d4e6a21 连续回放：旧控制依赖 + 正式 provider override/rebase${genuineSourceChange ? ' + genuine-source-change 实际责任恢复' : ' 保留原业务证据'} → 新 provider review ${completeEvidence ? '完整恢复' : '缺证据 PARTIAL 反例'}`, async () => {
-    const { root } = setupHost('codex');
+    const { root } = setupHost('codex', false);
     const research = 'doc/research/provider-recovery.md';
     const facts = `doc/features/${FEATURE}/context/facts.md`;
     let restored = false;

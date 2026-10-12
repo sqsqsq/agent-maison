@@ -585,3 +585,13 @@ For architecture_impact decisions relevant to a CU (referenced by its design_ref
 
 > **Enforced by:** `harness/scripts/utils/change-unit-feature-projection.ts`, `harness/scripts/utils/component-assets.ts`, `harness/scripts/utils/config-builder.ts`, `specs/phase-rules/plan-rules.yaml`, `harness/tests/unit/change-unit-progression.unit.test.ts`, `harness/tests/unit/config-builder.unit.test.ts`
 
+
+### Requirement: Fresh delivery uses the existing design handoff
+
+`check:change-unit` SHALL expose the existing design preparation consumer using mutually exclusive `--accept-candidates <file>` and `--readiness`, as specified in `complex-capability-meta-model`. Candidates SHALL remain the existing JSON `ChangeUnitCandidate[]`; the command SHALL preserve atomic acceptance, repeated acceptance rejection and canonical identity derivation. Readiness SHALL retain pointer reconciliation/document side effects and accepted facts on subsequent failure, and SHALL NOT start Goal or bypass ready-set/selector dependencies. Default `--unit` checking SHALL stay compatible; mixing it with the new operations SHALL be a usage error.
+
+#### Scenario: Fresh delivery respects the existing handoff boundary
+
+- **WHEN** candidates have been accepted but readiness is busy or fails
+- **THEN** the command SHALL retain accepted identities and return a readiness retry without repeating acceptance
+- **AND** ready ids SHALL come from the existing ready-set, excluding retired or dependency-blocked CUs

@@ -1,3 +1,4 @@
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 // ============================================================================
 // goal-park-resume.unit.test.ts — 恢复场景的行为面（e5d8a2c4 步骤 1"铺红"）
 // ----------------------------------------------------------------------------
@@ -86,6 +87,7 @@ export function runAll(): UnitCaseResult[] {
   };
 
   const host = setupMinimalHost('recovery-park', 'hmos-app');
+  freezeExistingGoalDelivery(host, 'recovery-park');
   let runId: string | null = null;
   try {
     run('恢复场景/park：四阶段 PASS → ut/testing 设备停放 PARTIAL', () => {

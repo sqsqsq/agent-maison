@@ -11,7 +11,7 @@
 //   - 重复接受 fail-closed；
 //   - 终点 = design gate / readiness，**停在 selector 与 Goal Mode 执行之前**。
 //
-// 不新增 CLI、状态、registry、跨单元 ledger，也不新增第二套 CU 写入机制。
+// check:change-unit 暴露本实现；不新增状态、registry、跨单元 ledger 或第二套 CU 写入机制。
 
 import * as fs from 'fs';
 import * as path from 'path';
