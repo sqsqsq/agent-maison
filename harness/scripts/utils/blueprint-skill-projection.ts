@@ -305,10 +305,10 @@ export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown)
 
 /**
  * Copy only explicit machine content selected by the canonical CU; never infer from refs/touches.
- * `refresh === 'pure'`（plan c4e7a9b2 §3.1 纯投影读取）：只跳过「既有 use-cases.yaml 与投影冲突」一处——
- * 那是拿待比较的阶段产物反向校验权威；canonical CU/design 来源、投影门与规范化照跑。
+ * 投影只读取 canonical CU/design 来源；阶段产物由责任阶段的对齐门与 materialize writer 检查，
+ * 不拿待比较的 use-cases.yaml 反向判定设计权威是否有效。
  */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, refresh?: ProjectionRefresh | 'pure'): BlueprintSkillProjection {
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, _refresh?: ProjectionRefresh | 'pure'): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     if (!dependencies.some(dep => dep.path === file)) dependencies.push({ path: file, exists: fs.existsSync(file), sha256: fs.existsSync(file) ? digest(file) : null, role: 'artifact' });
@@ -376,20 +376,6 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
     const normalized = { ...(parsed.acceptance ? { 'acceptance@1': parsed.acceptance } : {}), ...(parsed.contracts ? { 'contracts@1': parsed.contracts } : {}), ...(parsed.useCases ? { 'use-cases@1': parsed.useCases } : {}) };
-    if (parsed.useCases) {
-      const existing = resolveFeatureArtifact(projectRoot, feature, 'use-cases.yaml');
-      if (existing.exists) {
-        // Stage output is checked for alignment, but is not a source of this design projection.
-        // Recording it here makes plan's first legitimate write invalidate its acceptance input.
-        // 刷新模式由唯一 writer 在覆盖前核对同一文件的来源戳（hasPreBumpStamp），此处不重复判；纯投影读取不拿手写产物校验权威。
-        if (!refresh) {
-          const current = normalizeUseCasePortCalls(YAML.parse(fs.readFileSync(existing.actualPath, 'utf8')));
-          const oldSource = asRecord(current.value)?.source;
-          const staleStage = typeof oldSource === 'string' && oldSource.startsWith('derive.blueprint-contracts:') && oldSource !== parsed.useCases.source;
-          if (!staleStage && (current.issues.length || compareAuthoritativeContent(parsed.useCases, current.value).state !== 'aligned')) fail('authority_use_cases_conflict', 'plan: 既有 use-cases.yaml 与获准投影冲突');
-        }
-      }
-    }
     if (!raw) return { ...absent, artifacts: normalized };
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
   } catch (error) {
@@ -481,11 +467,14 @@ export function authoritativeContentDrift(projectRoot: string, feature: string, 
   if (projected.state === 'invalid') return { state: 'invalid', detail: projected.detail ?? 'blueprint projection invalid', reason: projected.reason ?? 'other', codes: projected.codes ?? [], ...(projected.locations ? { locations: projected.locations } : {}) };
   const primary = projected.artifacts?.[`${kind}@1`];
   const drift = primary ? compareAuthoritativeContent(primary, record) : { state: 'aligned' as const };
-  if (!outputs || !projected.artifacts?.['use-cases@1']) return primary ? drift : { state: 'not_applicable' };
-  const cases = compareAuthoritativeContent(projected.artifacts['use-cases@1'], outputs.useCases);
+  if (kind !== 'contracts' || !projected.artifacts?.['use-cases@1']) return primary ? drift : { state: 'not_applicable' };
+  // Scope/assessment calls have the bound contracts value; include the real plan output as well.
+  // Checkers supply their already-loaded output so both consumers share the same alignment.
+  const useCases = outputs ? outputs.useCases : new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).useCases;
+  const cases = compareAuthoritativeContent(projected.artifacts['use-cases@1'], useCases);
   const items = [...(drift.state === 'drift' ? drift.items : []), ...(cases.state === 'drift' ? cases.items.map(item => ({ ...item, id: `use_cases:${item.id}` })) : [])];
   const expected = asRecord(projected.artifacts['use-cases@1']);
-  const actual = asRecord(outputs.useCases);
+  const actual = asRecord(useCases);
   if (String(actual?.source ?? '').startsWith('derive.blueprint-') && (actual?.source !== expected?.source || actual?.feature !== expected?.feature)) items.push({ id: 'use_cases', field: 'source', expected: expected?.source, actual: actual?.source });
   return items.length ? { state: 'drift', items } : { state: 'aligned' };
 }
@@ -607,7 +596,7 @@ const DESIGN_AUTHORITY_CLASS_ROWS: ReadonlyArray<readonly [DesignRepairClass, De
   ['B2', 'blueprint', '蓝图里该处的机器内容为空或不是可恢复的内容（null、数字等）：缺内容，需要设计 owner 给出', ['authority_content_missing']],
   ['B2', 'blueprint', '投影规范化报形状问题（含缺必填路径、路径越界等没有确定替代值的情形）：需要设计 owner 判断怎么补', ['authority_projection_shape_invalid']],
   ['B2', 'blueprint', 'design_ref 目标带验收 / 契约 / 用例却缺权威来源：需要取得权威来源', ['authority_target_provenance_missing']],
-  ['B2', 'blueprint', '多个 design_ref 目标的同一内容互相冲突：需要有权者裁决保留哪一份', ['authority_content_conflict', 'authority_use_cases_conflict']],
+  ['B2', 'blueprint', '多个 design_ref 目标的同一内容互相冲突：需要有权者裁决保留哪一份', ['authority_content_conflict']],
   ['B2', 'blueprint', '蓝图验收内容未过内容门或 CU predicate 缺验收映射：需要补全验收定义', ['authority_acceptance_content_invalid', 'authority_predicate_acceptance_unmapped']],
   ['B2', 'blueprint', '蓝图施工契约不完整（类型签名 / 授权写集 / 写集闭合）：需要设计 owner 补写集与契约', ['authority_construction_content_incomplete', 'authority_contract_files_missing', 'authority_contract_write_set_open']],
   // ---- B2：canonical CU 的加载与解析（§1 #1–#2；change-unit-path）----

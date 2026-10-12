@@ -25,11 +25,11 @@ CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，
 
 ## 完整交接的只读前置检查
 
-deriveDesignPreparationReadiness 在原指针调和后，对全部未退役（含已完成）且原 constructable CU 调用 deriveBlueprintSkillInput 的**默认只读模式**。acceptance/contracts/use_cases 分别检查，另一类 absent 不漏坏用例；不传 pure，既有手写 use-cases 冲突仍以 authority_use_cases_conflict 提前报出。absent 交回原 spec/plan 补设计责任且不加门禁；invalid 复用现有原因使 perUnit blocked/not-ready。
+deriveDesignPreparationReadiness 在原指针调和后，对全部未退役（含已完成）且原 constructable CU 调用 deriveBlueprintSkillInput 的**默认只读模式**。acceptance/contracts/use_cases 分别检查 canonical 内容，另一类 absent 不漏坏用例；Feature 的 use-cases.yaml 不反向参与设计投影。阶段用例未对齐当前设计时，由既有定义缺口和 plan 对齐门安排 plan 重建，不判成蓝图冲突。absent 交回原 spec/plan 补设计责任且不加门禁；canonical 内容 invalid 复用现有原因使 perUnit blocked/not-ready。
 
 检查不物化 sidecar、不写 phase 证据、不选 CU 或开始 Goal。**正常交接不运行 prepare-blueprint-design 来提前创建 Feature 文件**；spec/plan 直接消费 provider 推导输入并各写本阶段产物。未来 plan 的 change_unit 映射缺失不阻断设计 readiness，设计投影存在也不证明 plan 完成；没有有效映射仍须安排 plan。Feature 无法安全刷新不阻挡合法 canonical 指针升版；其旧文件保留，由既有绑定/定义缺口安排 spec/plan。canonical 校验与真实写入失败仍沿原异常和整批回滚。
 
-完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 显示与生产投影共用目标选取/合并逻辑所得声明集合，**是否通过交接校验见 readiness**。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；这些来源的真实校验仍在上述默认 readiness 路径。canonical 能确定架构相关集合时沿用原中立摘要，若相关性须靠外部 catalog 才能确定，则省略摘要并保留精确 CU 绑定与声明集合，不承诺 carry-forward。待升版 CU 的合并集合标“待指针升版后显示”。字段 absent 明确“设计期未写入，将由 spec/plan 补”；可选表达形状 WARN 不变成业务阻断。样例是框架表达夹具，不代表真实宿主验收。
+完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 显示与生产投影共用目标选取/合并逻辑所得声明集合，**是否通过交接校验见 readiness**。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；设计来源按默认 readiness 路径检查，阶段用例按 plan 对齐门检查。canonical 能确定架构相关集合时沿用原中立摘要，若相关性须靠外部 catalog 才能确定，则省略摘要并保留精确 CU 绑定与声明集合，不承诺 carry-forward。待升版 CU 的合并集合标“待指针升版后显示”。字段 absent 明确“设计期未写入，将由 spec/plan 补”；可选表达形状 WARN 不变成业务阻断。样例是框架表达夹具，不代表真实宿主验收。
 
 ## 施工映射
 

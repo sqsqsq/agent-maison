@@ -157,13 +157,16 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(!unit.issueIds.includes('authority_projection_shape_invalid'));
     assert.deepStrictEqual(unit.projectionIssues, [{ kind: 'contracts', codes: [], detail: projected.detail }]);
   } },
-  { name: 'default readiness reports existing use-cases conflict while canonical document and publication stay unchanged', run(f) {
+  { name: 'default readiness checks canonical content while plan owns conflicting author use-cases', run(f) {
     const before = render(f); const source = loadBlueprintReviewSource(f.root, 'ledger-app-blueprint');
     fs.writeFileSync(featureFilePath(f.root, f.feature, 'use-cases.yaml'), YAML.stringify({ schema_version: '2', feature: f.feature, use_cases: [] }));
     assert.equal(render(f), before); assert.deepStrictEqual(blueprintReviewDifferences(before, loadBlueprintReviewSource(f.root, 'ledger-app-blueprint')), []);
-    const ready = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'); const unit = ready.perUnit.find(u => u.changeUnitId === 'ledger-refresh')!; assert(unit.issueIds.includes('authority_use_cases_conflict'));
+    const ready = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'); const unit = ready.perUnit.find(u => u.changeUnitId === 'ledger-refresh')!; assert(ready.ready && unit.verdict !== 'blocked', JSON.stringify(unit));
     const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
-    assert(unit.projectionIssues.some(i => i.kind === 'contracts' && i.codes?.includes('authority_use_cases_conflict') && i.detail === projected.detail));
+    assert.equal(projected.state, 'resolved', projected.detail);
+    const spec = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature);
+    const checks = checkAuthoritativeContentAligned({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', phaseRule: {}, featureSpec: { ...spec, contracts: projected.value } } as CheckContext, 'contracts');
+    assert(checks.some(check => check.status === 'FAIL' && check.repair_owner !== 'external'), JSON.stringify(checks));
     fs.appendFileSync(path.join(f.root, 'requirements/ledger.md'), '\n外部原文追加但尚未修订蓝图\n');
     assert.equal(render(f), before); assert.deepStrictEqual(blueprintReviewDifferences(before, loadBlueprintReviewSource(f.root, 'ledger-app-blueprint')), []);
     assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance').state, 'invalid');

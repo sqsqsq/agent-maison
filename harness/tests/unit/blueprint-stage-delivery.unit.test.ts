@@ -8,7 +8,7 @@ import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, checkAuthor
 import { deriveDesignPreparationReadiness, reconcileChangeUnitBlueprintRefs, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
 import { normalizeUseCasePortCalls, SpecLoader } from '../../scripts/utils/spec-loader';
 import { resolveCapabilityInputs, readBoundInput } from '../../scripts/utils/capability-resolution';
-import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
+import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint, definitionAuthorityGap } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun, decideRunContinuation } from '../../scripts/utils/goal-run-creation';
@@ -180,7 +180,14 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert.deepStrictEqual(readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' }, acceptance.binding), acceptance.value);
     const conflicting = structuredClone(contracts.artifacts!['use-cases@1']) as any;
     conflicting.use_cases[0].coordinator = 'wrong.coordinator'; write(f, 'use-cases.yaml', conflicting);
-    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance').state, 'invalid');
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance').state, 'resolved');
+    assert.deepStrictEqual(readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' }, acceptance.binding), acceptance.value);
+    const spec = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature);
+    const checks = checkAuthoritativeContentAligned({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featureSpec: spec, phaseRule: {} } as CheckContext, 'contracts');
+    assert(checks.some(check => check.status === 'FAIL' && check.repair_owner !== 'external'), JSON.stringify(checks));
+    const before = fs.readFileSync(featureFilePath(f.root, f.feature, 'use-cases.yaml'));
+    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), /use-cases.yaml.*冲突/);
+    assert(fs.readFileSync(featureFilePath(f.root, f.feature, 'use-cases.yaml')).equals(before));
   } },
   { name: 'design handoff is read-only and CU mappings belong to plan rather than blueprint projections', run(f) {
     const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
@@ -339,8 +346,8 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert.deepStrictEqual(materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, { changeUnitSha: previous.artifactSha256, blueprintSha }), []);
     assert(fs.readFileSync(featureFilePath(f.root, f.feature, 'acceptance.yaml')).equals(before));
   } },
-  { name: 'a preserved stale use-case artifact cannot turn a valid canonical design change into a design-owner conflict', run(f) {
-    stagePlan(f); freeze(f);
+  ...[false, true].map(authorOwned => ({ name: `a preserved ${authorOwned ? 'author' : 'stamped'} use-case artifact cannot turn a valid canonical design change into a design-owner conflict`, run(f: Fixture) {
+    stagePlan(f, authorOwned); freeze(f);
     const file = featureFilePath(f.root, f.feature, 'use-cases.yaml'); const before = fs.readFileSync(file);
     const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     for (const view of bp.design_views) for (const node of view.nodes ?? []) if (node.use_cases) {
@@ -355,11 +362,29 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert.equal(projected.state, 'resolved', JSON.stringify({ codes: projected.codes, detail: projected.detail }));
     assert(deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint').ready);
     const input = resolve(f, 'ut').inputs!.values.use_cases;
-    assert.equal(input.state, 'invalid'); if (input.state === 'invalid') assert(input.detail.startsWith('plan:'), input.detail);
+    if (authorOwned) {
+      assert.equal(input.state, 'resolved', 'the author file remains a real stage artifact');
+      // Rebuild current contracts so a stale CU mapping cannot hide the independent use-case gap.
+      write(f, 'contracts.yaml', { ...planContracts(f), source: 'plan:ledger-request' });
+      assert(definitionAuthorityGap({ projectRoot: f.root, frameworkRoot, feature: f.feature }, 'contracts')?.includes('use_cases:'));
+      const spec = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature);
+      const checks = checkAuthoritativeContentAligned({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featureSpec: spec, phaseRule: {} } as CheckContext, 'contracts');
+      assert(checks.some(check => check.status === 'FAIL' && check.repair_owner !== 'external'), JSON.stringify(checks));
+      assert(fs.readFileSync(file).equals(before), 'alignment must not rewrite the author artifact');
+    } else {
+      assert.equal(input.state, 'invalid'); if (input.state === 'invalid') assert(input.detail.startsWith('plan:'), input.detail);
+    }
     const prepared = prepareFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: f.feature, completionTarget: 'feature', requestedResults: ['approved ledger work'],
       requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'], requirement: 'deliver approved ledger design', overwrite: true });
     assert(prepared.scope.phase_chain.includes('plan'));
-  } },
+    if (authorOwned) {
+      write(f, 'use-cases.yaml', { ...(structuredClone(projected.artifacts!['use-cases@1']) as any), source: 'plan:ledger-request' });
+      assert.equal(definitionAuthorityGap({ projectRoot: f.root, frameworkRoot, feature: f.feature }, 'contracts'), undefined);
+      const repaired = resolve(f, 'ut').inputs!.values.use_cases;
+      assert.equal(repaired.state, 'resolved');
+      if (repaired.state === 'resolved') assert((repaired.value as any).use_cases[0].state_model.phases.includes('recovered'));
+    }
+  } })),
   { name: 'runtime role omissions are rejected before any candidate is accepted', run(f) {
     const artifact = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit);
     fs.unlinkSync(f.cuFile);

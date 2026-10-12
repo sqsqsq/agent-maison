@@ -401,7 +401,7 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 - **接受**：只有 consumer validator MAY 接受候选，且**全仓 MUST 只有一个 canonical CU 写入实现**——单候选接受 MUST 是批量接受的 1 元包装，MUST NOT 保留第二份 provenance/schema/design-gate/落盘逻辑；设计准备段只做入口/readiness 编排并委托该唯一 consumer。它 MUST 校验 schema、canonical identity、设计闭包（设计可施工门）、provenance 与来源权威，全部通过后 MUST **原子**写出 1..N canonical `change-unit@1`：任一候选不通过即整批拒绝且一个字节都不落盘；写入中途失败 MUST 回滚本批已落盘目标。
 - **重复接受 fail-closed**：目标 canonical 文件已存在时 MUST 拒绝，MUST NOT 覆盖。未完成内容修订 SHALL 使用上文显式 consumer 接点，不改变普通接受语义；蓝图升版造成的纯指针漂移仍由原位升版处理。
 - **指针原位升版**：派生 readiness 前，设计准备段 MUST 按「Reconciliation re-resolves stable targets without a semantic diff engine」执行三处蓝图指针原位升版；它 MUST 复用同一 canonical 校验与同一落盘原语（整批校验后写、中途失败回滚），MUST NOT 改动契约字段，不构成第二套写入机制。
-- **完整只读内容检查**：指针调和非 busy 后，readiness MUST 对全部未退役（包括已完成）且原设计判定 constructable 的 CU，复用 deriveBlueprintSkillInput 默认只读路径检查已声明 acceptance/contracts/use_cases，MUST NOT 传 pure 跳过手写 use-cases 与投影冲突。三类内容 MUST 分别检查，另一类 absent 不得漏掉已声明的非法 use_cases；MUST 保持 validateChangeUnitDesign 原职责、不形成投影循环。absent MUST 披露“设计期未写入，将由 spec/plan 补”及责任，不新增缺字段门禁；invalid MUST 使用已有原因将 perUnit 判 blocked、交接 not-ready，不新增检查 ID、停机原因或持久状态。校验 MUST NOT 物化 sidecar/Feature 产物、写 phase PASS/receipt、选择或重启 CU。
+- **完整只读内容检查**：指针调和非 busy 后，readiness MUST 对全部未退役（包括已完成）且原设计判定 constructable 的 CU，复用 deriveBlueprintSkillInput 默认只读路径检查蓝图/CU 已声明的 acceptance/contracts/use_cases，MUST NOT 用阶段自产物反向判定设计合法性；阶段用例与当前投影的差异 SHALL 交原 plan 对齐门及定义缺口。三类内容 MUST 分别检查，另一类 absent 不得漏掉蓝图已声明的非法 use_cases；MUST 保持 validateChangeUnitDesign 原职责、不形成投影循环。absent MUST 披露“设计期未写入，将由 spec/plan 补”及责任，不新增缺字段门禁；invalid MUST 使用已有原因将 perUnit 判 blocked、交接 not-ready，不新增检查 ID、停机原因或持久状态。校验 MUST NOT 物化 sidecar/Feature 产物、写 phase PASS/receipt、选择或重启 CU。
 - **终点**：派生 design gate / readiness 并返回后续施工入口。子流程 MUST **停在 selector 与 Goal Mode 执行之前**，MUST NOT 选择 CU、启动 run 或触碰 P3 closure。
 - **施工段前提不放宽**：selector 与 Goal Mode 施工段 MUST 仍要求至少一个 canonical CU；设计准备段的入口放宽 MUST NOT 传导到施工段。
 
@@ -440,15 +440,15 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 - **WHEN** 一类 typed 内容 absent，而同一 CU 已声明的 use_cases 形状或语义非法
 - **THEN** readiness MUST 检查并返回原 invalid 原因，perUnit 为 blocked，不把非法声明当 absent，也不等 Goal run 首次发现
 
-#### Scenario: Completed active units and conflicting handwritten use cases remain checked
+#### Scenario: Completed active units retain canonical checks while plan owns conflicting use-case outputs
 
 - **WHEN** 未退役旧 CU 已完成且原设计 constructable，调和后手写 use-cases 与新权威投影仍冲突
-- **THEN** 默认只读检查 MUST 提前返回 authority_use_cases_conflict，不改文件、不跳过旧 CU、不重启旧 run
+- **THEN** 默认设计推导/readiness MUST 继续检查当前 canonical CU 与蓝图，不拿阶段用例反向判定设计非法；真实用例冲突 MUST 由 plan 的权威字段对齐门和既有定义缺口承担，不改文件、不跳过旧 CU、不擅自重启旧 run
 
-#### Scenario: A stale stamped stage file is not a canonical design conflict
+#### Scenario: A stale stamped or author-owned stage file is not a canonical design conflict
 
-- **WHEN** 当前 canonical 设计有效，保留的 use-cases 带原 derive 来源戳且该戳已过期
-- **THEN** 默认设计推导/readiness MUST NOT 把旧阶段文件判为 authority_use_cases_conflict；真实 artifact resolver MUST 将该文件交 plan 重建。当前来源戳或作者产物的真实冲突 SHALL 保持原检查
+- **WHEN** 当前 canonical 设计有效，保留的 use-cases 带过期 derive 来源戳，或为尚未按新设计重建的作者产物
+- **THEN** 默认设计推导/readiness MUST 仅依赖蓝图与 CU；带戳文件 SHALL 经真实 artifact resolver 回 plan，作者产物 SHALL 经 plan 字段对齐及既有定义缺口回 plan，即使 contracts 已重建也不得漏掉用例差异。蓝图来源之间的真实冲突 SHALL 保持原设计检查，阶段作者产物的真实冲突 SHALL 保持 plan 对齐检查，materialize SHALL 不覆盖冲突文件
 
 #### Scenario: Unproved Feature refresh preserves stage bytes without blocking canonical reconciliation
 

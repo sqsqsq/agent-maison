@@ -222,9 +222,9 @@ owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，
 
 ### 4.3 交接 readiness 的独立结论
 
-指针调和非 busy 后，readiness 对全部未退役（含已完成旧 CU）且原设计判定 constructable 的单元，复用 `deriveBlueprintSkillInput` 默认只读模式完整检查 acceptance/contracts/use_cases。另一类 absent 不漏掉已声明的坏 use_cases；不传 pure，手写 use-cases 与投影冲突仍提前报 `authority_use_cases_conflict`。absent 提示“设计期未写入，将由 spec/plan 补”并明确责任，不新增缺字段机器门禁；已声明的坏形状、来源、写集、映射或冲突为 invalid，复用原原因使 perUnit blocked/not-ready，不等运行中再首次发现。
+指针调和非 busy 后，readiness 对全部未退役（含已完成旧 CU）且原设计判定 constructable 的单元，复用 `deriveBlueprintSkillInput` 默认只读模式完整检查 canonical acceptance/contracts/use_cases。另一类 absent 不漏掉已声明的坏 use_cases；Feature 的阶段用例不反向参与设计投影，未对齐当前设计时由既有定义缺口和 plan 对齐门交 plan 重建。absent 提示“设计期未写入，将由 spec/plan 补”并明确责任，不新增缺字段机器门禁；canonical 已声明的坏形状、来源、写集或冲突为 invalid，复用原原因使 perUnit blocked/not-ready，不等运行中再首次发现。
 
-校验不物化 Feature 产物、不产 phase PASS/receipt、不重启旧 CU、不选择施工。未来 plan 映射缺失不阻断设计交接，设计投影也不证明 plan 已完成。prepare-blueprint-design 只保留显式物化兼容用途。已有物化文件调和刷新先失败时，沿用 change_unit_blueprint_ref_bump_rejected 异常与整批指针/派生文件回滚；不回滚用户已修订的 canonical 蓝图，也不伪装正常 readiness 成功。文档结果与该结论分别报告。
+校验不物化 Feature 产物、不产 phase PASS/receipt、不重启旧 CU、不选择施工。未来 plan 映射缺失不阻断设计交接，设计投影也不证明 plan 已完成。prepare-blueprint-design 保留显式投影导出用途。不能证明 Feature 可安全刷新时保留原文件，合法 canonical CU 指针照常升版，由既有绑定或定义缺口安排 spec/plan；真实写入失败或依赖并发变化仍沿原事务回滚。不回滚用户已修订的 canonical 蓝图，文档结果与 readiness 结论分别报告。
 
 ### 4.4 铁律：投影相对蓝图与 CU 零新事实
 

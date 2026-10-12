@@ -135,7 +135,7 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 完整交接默认交付同目录 `component-blueprint.review.md`，同页展示蓝图与 canonical CU 的需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
 
-交接 readiness 在指针调和非 busy 后，对全部未退役（含已完成）且原设计 constructable 的 CU 调用现有 deriveBlueprintSkillInput 默认只读模式，分别检查已声明 acceptance/contracts/use_cases；不传 pure，以便当前来源戳产物和手写 use-cases.yaml 的真实冲突仍提前报告，过期来源戳产物交 plan 重建。absent 不新增缺字段门禁，明确缺口与 spec/plan 补设计责任；canonical 内容 invalid 复用现有 authority_* 原因令 perUnit blocked/not-ready。另一类 absent 不得漏掉坏 use_cases，未来 plan 映射缺失不使设计未就绪。正常交接不物化 Feature acceptance/contracts/use-cases，不产 phase PASS/receipt；spec/plan 直接消费推导输入并各写本阶段产物，投影带用例时 plan 必须写 use-cases.yaml 供业务 UT，required_outputs 不只看文件已存在。prepare-blueprint-design CLI 保留当前投影导出用途，不承担未发布旧交接数据的迁移兼容。
+交接 readiness 在指针调和非 busy 后，对全部未退役（含已完成）且原设计 constructable 的 CU 调用现有 deriveBlueprintSkillInput 默认只读模式，分别检查 canonical acceptance/contracts/use_cases。Feature 的阶段 use-cases.yaml 不反向参与设计投影；它与当前设计未对齐时，由既有定义缺口和 plan 对齐门交 plan 重建，不要求设计 owner 修正已合法的蓝图。absent 不新增缺字段门禁，明确缺口与 spec/plan 补设计责任；canonical 内容 invalid 复用现有 authority_* 原因令 perUnit blocked/not-ready。另一类 absent 不得漏掉坏 use_cases，未来 plan 映射缺失不使设计未就绪。正常交接不物化 Feature acceptance/contracts/use-cases，不产 phase PASS/receipt；spec/plan 直接消费推导输入并各写本阶段产物，投影带用例时 plan 必须写 use-cases.yaml 供业务 UT，required_outputs 不只看文件已存在。prepare-blueprint-design CLI 保留当前投影导出用途，不承担未发布旧交接数据的迁移兼容。
 
 当前 spec/plan 的带戳产物可作不冲突补充。canonical CU 通过原校验后指针照常升版；只有冻结的完整绑定能证明设计/CU 契约等价时，才更新该 Feature 来源身份并保留补充原字节。plan 尚未冻结、重写后未再次冻结，或内容变化不能证明等价时，该 Feature 文件保持原字节，由既有绑定/输入缺口交回 spec/plan，不让兄弟 CU 因缺少冻结记录阻断整批升版。真实写入失败和依赖并发变化仍按原事务回滚；readiness 继续只读评估，不选择 CU 或启动 Goal。
 
