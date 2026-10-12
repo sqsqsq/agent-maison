@@ -32,7 +32,7 @@ todos:
     content: >
       §4：同步受影响的现有规格与指引，完成目标验证和有界 review；稳定后集中完成候选门禁。
       复用 1dbe4fa4 指标与观察记录，保留历史失败事实，不将旧全量结果作为本批通过证据。
-    status: in_progress
+    status: completed
   - id: t6-host-clean-delivery-acceptance
     content: >
       §5：用已验证发布件在确认的干净代码基线上重跑原需求，与 272acb5f 的 h1 共用一次宿主运行。
