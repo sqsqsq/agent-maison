@@ -4,7 +4,7 @@
 
 ## 3.1.0：蓝图人读设计文档默认交付与修订同步
 
-默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @5），按 4+1 展示需求/旅程、模型与接口、运行顺序/分支/恢复、开发落点、适用部署、取舍、质量、验收及 canonical CU 拆分。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿也能生成并如实标示准入；默认 checker 只读输出状态。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
+默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @6），按 4+1 展示需求/旅程、模型与接口、运行顺序/分支/恢复、开发落点、适用部署、取舍、质量、验收及 canonical CU 拆分。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿也能生成并如实标示准入；默认 checker 只读输出状态。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
 
 新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属验收/files/用例放独占目标；整个 contracts.change_unit 归 plan 在 Feature 生成；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
 
@@ -20,7 +20,13 @@ SpecLoader 只在本阶段 `required_outputs` 声明的文件上优先读实体�
 
 蓝图/CU 能力此前未发布；本节是 3.1.0 新能力说明，不提供未发布 CU 旧冻结格式的迁移兼容。3.0.0 通用 Feature/requirement/路径恢复及 derive.codebase 已发布输入的顺序兼容保持。
 
-背景/目标/范围、被否方案、术语含义、旅程、部署参与方/协同、质量/数据生命周期六类表达均可选，缺失显示“未记录”，坏形状只 WARN，蓝图 schema 不变。模型字段可选 description/source_ref 透传说明与已有来源，不授予写权限。文档只读取 canonical 蓝图/CU，逐 CU 展示纯合并所得声明集合并注明“是否通过交接校验见 readiness”；readiness 独立复用默认只读投影完整检查，absent 明确补设计责任，invalid 按原原因 not-ready，不以 pure 跳过已有 use-cases 冲突。
+背景/目标/范围、被否方案、术语含义、旅程、部署参与方/协同、质量/数据生命周期六类表达仍可选，坏形状只 WARN，蓝图 schema 不变。真正缺失每节集中一行，明确未知/不适用分开；有值不能假报“未记录”，false/0 保留，不产空表/整空列，陌生业务键只展一层而非递归 dump。模型字段可选 description/source_ref 保持透传，不授予写权限。文档只读取 canonical 蓝图/CU；readiness 同样检查 canonical 内容，absent 列补设计责任，invalid 按原原因 not-ready。阶段 use-cases 未对齐由原定义缺口/plan 对齐门处理，不反校验蓝图；已删除 pure 模式。
+
+人读交付保留原 4+1 顺序，概述末用已有内容给方案总览及跨视图图，运行阶段图只连各分支 expected_phase_seq 相邻项并标分支，不按 phases 排列连 Success→Failure；图仍使用现有 flowchart/parser。页面清单、集中截图及 journey_steps 完成后去向表表达本批导航上限，不推断路由或从共享动作生成页面导航图。每张已登记图片只展示一次，其他位置链接；renderer 不把外部图片字节作为新设计或新绑定输入。
+
+完整 AC/BD/NFR 仅文档第 9 章，展示身份为来源目标加编号，两个目标各自 AC-1 保留；完整 files 清单仅开发视图一次，CU 链接保留实际范围。正文标签使用已有可读名称/短 ID，框架状态中文化，锚点/链接目标保留；机制声明文首集中一次，原内部地址可留追溯附录，不改 API/类型/自由业务状态语义。
+
+新设计沿现有 [P1 写作问题](skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 补深：术语 meaning 由 glossary 说明结合需求提炼，sample_usage 仅作消歧；表级契约与 data_domains.security/既有叙述说明库名/版本、安全/加密、主键唯一、升级与敏感字段。真实失败/中断先核已有 boundaries/failure_recovery，再补确实缺失项，不给 mock 编外部故障；错误/幂等键及涉及跨会话重复卡时的策略/主键明确。quality_attributes 对兼容、安全隐私、UX 深浅色/无障碍、打点、性能给实际结论，不涉及给理由、不凑阈值；App lens/质询也用项目语言。这些是现有写作与质询深化，不增加机器字段/门禁、不削弱原 typed/来源/授权检查；重建旧文档不会自动补缺失设计，真实效果仍需宿主实读。
 
 运行 spec 时的 acceptance 派生也共用目标选取/合并，会更早暴露 contracts/use_cases 的来源或合并冲突及用例坏 schema；这不只影响 readiness，既有 B1/B2 分类与恢复规则不变。
 

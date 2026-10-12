@@ -8,47 +8,69 @@ import { blueprintRefAddress } from './change-unit-model';
 import { BlueprintReviewInputs, ReviewChangeUnit, reviewChangeUnitBindings } from './blueprint-review-inputs';
 import { BlueprintContentError, mergeBlueprintTargetContent, projectionContentEqual, projectionRowIdentity, selectBlueprintSkillContent } from './blueprint-skill-projection';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
-import { generateMermaidViewGraph, validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
+import { generateMermaidViewGraph, generateMermaidRelationGraph, generateMermaidPhaseGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { diagnoseBlueprintPresentationShape } from './component-blueprint-validator';
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import { normalizeUseCasePortCalls } from './spec-loader';
 
-export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@5';
+export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@6';
 
-function prose(value: unknown): string {
-  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : '未记录';
+const PRESENTATION_METADATA = new Set(['provenance', 'source_ref', 'source_refs', 'verification_refs', 'evidence_refs', 'artifact_sha256', 'source_fingerprint']);
+const SUMMARY_KEYS = new Set(['semantics', 'description', 'rule', 'answer', 'summary']);
+const isScalar = (value: unknown): boolean => ['string', 'number', 'boolean'].includes(typeof value);
+const absent = (value: unknown): boolean => value === undefined || value === null || value === '' || value === '未记录' || value === '—';
+/** 一层业务键值；更深结构只说明已声明，不能伪装成缺失。 */
+function prose(value: unknown, structural = false): string {
+  if (isScalar(value)) return String(value);
+  if (value === undefined || value === null) return '未记录';
+  if (Array.isArray(value)) return value.map(item => isScalar(item) ? String(item) : '已声明（结构未展开）').join('；') || '空列表';
+  const record = asRecord(value);
+  if (!record) return '未能表达（值类型不支持）';
+  const entries = Object.entries(record).filter(([key]) => !structural || !PRESENTATION_METADATA.has(key));
+  return entries.map(([key, entry]) => {
+    const valueText = isScalar(entry) ? String(entry) : Array.isArray(entry) && entry.every(isScalar) ? entry.map(String).join('；') || '空列表' : absent(entry) ? '未记录' : '已声明（结构未展开）';
+    return entries.length === 1 && SUMMARY_KEYS.has(key) ? valueText : `${key}：${valueText}`;
+  }).join('；') || '已声明（仅来源信息）';
 }
+
 function text(value: unknown): string {
   return prose(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/([\\`*_[\]])/g, '\\$1');
 }
-function cell(value: unknown): string { return text(value).replace(/\|/g, '&#124;').replace(/\r?\n/g, '<br>'); }
-function refs(value: unknown): string { return asStrings(value).join('；') || '—'; }
+function cell(value: unknown): string {
+  return prose(value).split(/(\[[^\]\n]+\]\(#[^)]+\))/g).map(part => /^\[[^\]\n]+\]\(#[^)]+\)$/.test(part) ? part : text(part)).join('').replace(/\|/g, '&#124;').replace(/\r?\n/g, '<br>');
+}
+function refs(value: unknown): string { return value === undefined || value === null ? '—' : prose(value); }
 /** 已知语义字段的短句；不展开结构/来源元数据。 */
 function meaning(value: unknown): string {
-  if (Array.isArray(value)) return value.filter(item => ['string', 'number', 'boolean'].includes(typeof item)).map(prose).join('；') || '未记录';
-  const record = asRecord(value);
-  return record ? prose(record.semantics ?? record.description ?? record.rule ?? record.answer ?? record.summary) : prose(value);
+  return prose(value, true);
 }
 /** errors.items / nfr.requirements 的业务键值集合只读一层。 */
 function namedMeanings(value: unknown): string {
-  return asRecord(value) ? Object.entries(asRecord(value)!).map(([name, entry]) => `${name}：${meaning(entry)}`).join('；')
-    : asRecords(value).length ? asRecords(value).map(entry => meaning(entry)).join('；') : meaning(value);
+  return prose(value);
 }
 function declaredMeaning(value: unknown): string {
-  if (value === undefined) return '未记录';
-  if (['string', 'number', 'boolean'].includes(typeof value)) return prose(value);
-  if (Array.isArray(value) && value.every(item => ['string', 'number', 'boolean'].includes(typeof item))) return value.map(prose).join('；') || '—';
+  return prose(value, true);
+}
+function contractMeaning(value: unknown, collection: string): string {
   const record = asRecord(value);
-  const description = record?.semantics ?? record?.description ?? record?.rule ?? record?.summary;
-  if (['string', 'number', 'boolean'].includes(typeof description)) return prose(description);
-  if (Array.isArray(description) && description.every(item => ['string', 'number', 'boolean'].includes(typeof item))) return description.map(prose).join('；') || '—';
-  return '未能表达（已声明的结构不支持）';
+  if (!record || record[collection] === undefined) return meaning(value);
+  return Object.entries(record).filter(([key]) => !PRESENTATION_METADATA.has(key)).map(([key, entry]) => key === collection ? namedMeanings(entry) : `${key}：${declaredMeaning(entry)}`).join('；');
 }
 export function blueprintReviewAnchor(address: string): string { return `design-${Buffer.from(address).toString('hex')}`; }
 function anchor(address: string): string { return `<a id="${blueprintReviewAnchor(address)}"></a>`; }
-function designLink(address: string): string { return `[${cell(address)}](#${blueprintReviewAnchor(address)})`; }
+function designLink(address: string, label = address.split(':').pop()!): string { return `[${cell(label)}](#${blueprintReviewAnchor(address)})`; }
+function enumText(value: unknown, labels: Record<string, string>): string { return labels[String(value)] ?? prose(value); }
+const APPLICABILITY = { applicable: '适用', not_applicable: '不适用', unknown: '待确认' };
+const IMPACT = { changed: '有变化', verified_unchanged: '已核实未变', unknown: '待确认' };
+const ROLES = { owner: '主责', consumer: '消费方', contract: '契约责任', provider: '提供方', recovery: '恢复责任', behavior: '行为责任' };
+const KINDS = { page: '页面', component: '组件', dialog: '对话框', interface: '接口', class: '类', enum: '枚举', source: '源码', entry: '入口', progress: '过程', result: '结果', storage: '存储', system: '系统', passive: '被动接收' };
+const DISPOSITIONS = { answered_with_evidence: '已据证回答', decided_with_authority: '已授权裁决', open_decision: '待决', blocker: '阻塞', not_applicable: '不适用', unknown: '待确认', resolved: '已解决', pass: '通过', passive: '被动覆盖', covered: '已覆盖' };
 function table(headers: string[], rows: unknown[][]): string[] {
-  return [`| ${headers.join(' | ')} |`, `| ${headers.map(() => '---').join(' | ')} |`, ...rows.map(row => `| ${row.map(cell).join(' | ')} |`), ''];
+  if (!rows.length) return [];
+  const columns = headers.map((_, i) => i).filter(i => rows.some(row => !absent(row[i])));
+  if (!columns.length) return [];
+  const missing = headers.flatMap((header, i) => rows.some(row => absent(row[i])) ? headers.length === 2 && i === 1 ? rows.filter(row => absent(row[i])).map(row => `${prose(row[0])}（${header}）`) : [header] : []);
+  return [`| ${columns.map(i => headers[i]).join(' | ')} |`, `| ${columns.map(() => '---').join(' | ')} |`, ...rows.map(row => `| ${columns.map(i => absent(row[i]) ? '—' : cell(row[i])).join(' | ')} |`), '', ...(missing.length ? [`<!-- review-missing:${missing.join('、')} -->`] : [])];
 }
 function directReviewUnits(inputs: BlueprintReviewInputs) {
   return inputs.units.filter(item => !item.retiredBy && item.unit).map(item => ({ ...item.unit!, design_refs: asRecords(item.unit!.design_refs).flatMap(ref => {
@@ -56,47 +78,55 @@ function directReviewUnits(inputs: BlueprintReviewInputs) {
   }) }));
 }
 function acceptanceFocus(row: BlueprintRecord): string {
-  return `${prose(row.ut_layer)}；${[row.ut_focus === undefined ? undefined : `UT：${prose(row.ut_focus)}`, row.device_focus === undefined ? undefined : `device：${prose(row.device_focus)}`].filter(Boolean).join('；') || '未记录关注点'}`;
+  return `${enumText(row.ut_layer, { unit: '单元测试', device: '真机', both: '单测与真机' })}；${[row.ut_focus === undefined ? undefined : `UT：${prose(row.ut_focus)}`, row.device_focus === undefined ? undefined : `device：${prose(row.device_focus)}`].filter(Boolean).join('；') || '未记录关注点'}`;
 }
 
 function renderUnit(item: ReviewChangeUnit, blueprint: BlueprintRecord): string[] {
   const lines = [`### ${text(item.id)}`, ''];
   if (!item.unit) return [...lines, 'CU 无法解析，见来源缺口。', ''];
   const cu = item.unit;
+  let bundle: ReturnType<typeof selectBlueprintSkillContent> | undefined; let mergeError: unknown;
+  if (item.binding === 'bound') try { bundle = selectBlueprintSkillContent(blueprint, cu); } catch (error) { mergeError = error; }
+  const acceptanceLinks = acceptanceLinksFor(bundle?.selected.flatMap(({ ref, target }) => {
+    const value = asRecord(target.acceptance); return value ? [{ address: blueprintRefAddress(ref), value }] : [];
+  }) ?? [], blueprint);
   lines.push(text(cu.purpose), '', `来源绑定：${item.binding === 'bound' ? '已绑定' : item.binding === 'pending' ? '待指针升版；不承诺可以 carry-forward' : '未解析/未绑定'}。`, '',
-    '交付结果：', '', ...table(['谓词', '职责', '交付语义', '提供项', '验证关注'], asRecords(cu.target_predicates).map(p => [p.predicate_id, p.role, p.description, refs(p.provide_ids), refs(p.verification_refs)])),
+    '交付结果：', '', ...table(['谓词', '职责', '交付语义', '提供项', '验证关注'], asRecords(cu.target_predicates).map(p => [p.predicate_id, enumText(p.role, ROLES), p.description, refs(p.provide_ids), acceptanceLinks(p.verification_refs)])),
     ...table(['提供项', '交付说明'], asRecords(cu.provides).map(p => [p.provide_id, p.description])));
   const requires = asRecords(cu.requires);
   lines.push('显式依赖：', '', ...(requires.length ? table(['依赖', '上游 CU', '上游提供项'], requires.map(r => [r.require_id, r.from_change_unit_id, r.provide_id])) : ['未声明上游依赖；不从目录、purpose 或数组顺序推断施工顺序。', '']),
     `可修改模块：${item.binding === 'pending' ? '待指针升版后显示' : item.modules?.map(text).join('；') || '未解析，见来源缺口'}。`,
-    '此范围不替代或扩大 Feature contracts.files 的写授权。', '',
-    ...table(['修改责任方', '写入范围', '设计引用'], asRecords(cu.touches).map(touch => [touch.owner, refs(touch.write_refs),
+    '',
+    ...table(['修改责任方', '写入范围', '设计引用'], asRecords(cu.touches).map(touch => [touch.owner, asStrings(touch.write_refs).map(file => {
+      const declared = [...stableAddressIndex(blueprint).values()].some(target => asStrings(asRecord(target.contracts)?.files).includes(file));
+      return declared ? designLink(`file:${file}`, file.slice(file.lastIndexOf('/') + 1)) : prose(file);
+    }).join('；'),
       item.binding === 'pending' ? '待指针升版后显示' : asRecord(touch.design_ref)?.target ? blueprintRefAddress(touch.design_ref as never) : '无法解析'])));
   for (const [key, title] of [['preconditions', '前置条件'], ['preserved_invariants', '保留约束']] as const) {
     const entries = asRecords(cu[key]);
     if (entries.length) lines.push(`${title}：`, '', ...table(['说明', '依据'], entries.map(entry => [entry.description, refs(entry.source_refs ?? entry.evidence_refs)])));
   }
   const safe = asRecord(cu.safe_intermediate_state);
-  lines.push(`安全中间态：${text(safe?.description)}`, `构建：${text(refs(safe?.build_validation_refs))}；兼容：${text(refs(safe?.compatibility_refs))}；恢复：${text(refs(safe?.recovery_refs))}`, '');
+  lines.push(`安全中间态：${text(safe?.description)}`, `构建：${text(refs(safe?.build_validation_refs))}；兼容：${text(refs(safe?.compatibility_refs))}；恢复：${acceptanceLinks(safe?.recovery_refs)}`, '');
   const blockers = asRecords(cu.blockers);
   if (blockers.length) lines.push('设计与执行阻塞项：', '', ...table(['阻塞项', '阶段', '责任方', '原因', '解除条件'], blockers.map(b => [b.blocker_id, b.gate, b.owner, b.reason, b.unlock_condition])));
   else lines.push('设计与执行阻塞项：无。', '');
-  lines.push('设计引用：', '', ...(item.binding === 'pending' ? ['待指针升版后显示。'] : item.designAddresses.map(address => `- ${designLink(address)}`)), '', `验证关注：${text(refs(cu.verification_refs))}`, '');
-  lines.push('合并所得声明集合；是否通过交接校验见 readiness。', '');
+  lines.push('设计引用：', '', ...(item.binding === 'pending' ? ['待指针升版后显示。'] : item.designAddresses.map(address => `- ${designLink(address)}`)), '', `验证关注：${acceptanceLinks(cu.verification_refs)}`, '');
+  lines.push('合并所得声明集合：', '');
   if (item.binding === 'pending') lines.push('待指针升版后显示。', '');
   else if (item.binding !== 'bound') lines.push('未绑定，不能列出可靠的合并声明集合。', '');
-  else try {
-    const bundle = selectBlueprintSkillContent(blueprint, cu);
+  else if (bundle) {
+    const inherited = (field: string, key: string): string => bundle.selected.flatMap(({ ref, target }) => asRecords(asRecord(target[field])?.[key]).map(row => designLink(`acceptance:${blueprintRefAddress(ref)}/${key}:${row.id}`, String(row.id)))).join('；');
+    const writeSets = bundle.selected.filter(({ target }) => asStrings(asRecord(target.contracts)?.files).length).map(({ ref, target }) => designLink(`writes:${blueprintRefAddress(ref)}`, `${String(target.label ?? target.name ?? ref.target.id)}写集`)).join('；');
     lines.push(...table(['内容', '本 CU 整体继承的编号/文件'], [
-      ['AC', asRecords(bundle.acceptance?.criteria).map(row => prose(row.id)).join('；') || '设计期未写入，将由 spec 补'],
-      ['BD', asRecords(bundle.acceptance?.boundaries).map(row => prose(row.id)).join('；') || '未记录'],
-      ['NFR', asRecords(bundle.acceptance?.performance).map(row => prose(row.id)).join('；') || '未记录'],
-      ['contracts.files 声明写集', refs(bundle.contracts?.files)],
+      ['AC', inherited('acceptance', 'criteria') || '设计期未写入，将由 spec 补'],
+      ['BD', inherited('acceptance', 'boundaries') || '未记录'],
+      ['NFR', inherited('acceptance', 'performance') || '未记录'],
+      ['contracts.files 声明写集', `${asStrings(bundle.contracts?.files).length} 个文件；${writeSets || '设计期未写入，将由 plan 补'}`],
       ['用例', asRecords(bundle.useCases?.use_cases).map(row => prose(row.id)).join('；') || '设计期未写入，将由 plan 补'],
     ]));
     if (!bundle.contracts) lines.push('设计期未写入 contracts，将由 plan 补。', '');
-    else lines.push('施工/测试落点映射由 plan 在 Feature contracts.change_unit 中产出；设计声明不代表映射已通过。', '');
-  } catch (error) { lines.push(`合并无效：${text(error instanceof BlueprintContentError ? error.code : '无法解析')} · ${text((error as Error).message)}。不展示部分成功集合。`, ''); }
+  } else lines.push(`合并无效：${text(mergeError instanceof BlueprintContentError ? mergeError.code : '无法解析')} · ${text((mergeError as Error)?.message)}。不展示部分成功集合。`, '');
   return lines;
 }
 
@@ -115,7 +145,7 @@ function decisionConclusion(decision: BlueprintRecord): string {
   return meaning(decision.resolution ?? decision.decision ?? decision.conclusion ?? decision.description ?? decision.target_state);
 }
 
-function renderFlow(flow: BlueprintRecord, viewId: unknown): string[] {
+function renderFlow(flow: BlueprintRecord, viewId: unknown, acceptanceLinks: (value: unknown) => string): string[] {
   const load = asRecord(flow.initial_load); const truth = asRecord(flow.source_of_truth); const state = asRecord(flow.state_owner); const recovery = asRecord(flow.failure_recovery);
   const lines = [anchor(`view:${viewId}/flow:${flow.flow_id}`), `### ${text(flow.name ?? flow.flow_id)}`, '',
     `数据域：${text(refs(flow.data_domain_refs))}；契约：${text(refs(flow.external_contract_refs))}；开发责任：${text(flow.development_owner_ref)}`, '',
@@ -140,12 +170,12 @@ function renderFlow(flow: BlueprintRecord, viewId: unknown): string[] {
   lines.push(...table(['消费者', '首次加载', '更新', '消费语义'], asRecords(flow.consumers).map(c => [c.consumer_id, c.initial_load_ref, c.update_ref, declaredMeaning(c.consumption)])),
     `失败与恢复：${text(recovery?.recovery_id)}`, '',
     ...table(['恢复关切', '处理'], [['策略', recovery?.strategy], ['失败处理', recovery?.handling], ['重试', recovery?.retry], ['持久化失败', recovery?.persistence_failure], ['订阅失败', recovery?.subscription_failure], ['进程重建', recovery?.process_recreation]].filter(([, value]) => value !== undefined).map(([label, value]) => [label, declaredMeaning(value)])),
-    '生命周期：', '', ...table(['场景', '覆盖裁决', '依据'], Object.entries(asRecord(flow.lifecycle_coverage) ?? {}).map(([name, item]) => [name, asRecord(item)?.status, refs(asRecord(item)?.evidence_refs)])),
-    `验证关注：${text(refs(flow.verification_refs))}`, '');
+    '生命周期：', '', ...table(['场景', '覆盖裁决', '依据'], Object.entries(asRecord(flow.lifecycle_coverage) ?? {}).map(([name, item]) => [name, enumText(asRecord(item)?.status, DISPOSITIONS), refs(asRecord(item)?.evidence_refs)])),
+    `验证关注：${acceptanceLinks(flow.verification_refs)}`, '');
   return lines;
 }
 
-function renderContract(contract: BlueprintRecord): string[] {
+function renderContract(contract: BlueprintRecord, acceptanceLinks: (value: unknown) => string, sourceRootRelative = ''): string[] {
   const operation = asRecord(contract.operation);
   const lines = [anchor(`contract:${contract.contract_id}`), `### ${text(contract.contract_id)}`, '',
     `操作：${text(operation?.operation_id)} · ${text(operation?.version)} · ${text(operation?.direction)}；责任方 ${text(contract.owner)}；需要方 ${text(contract.needed_by)}`, ''];
@@ -154,10 +184,17 @@ function renderContract(contract: BlueprintRecord): string[] {
     if (dto) lines.push(`**${title} DTO：${text(dto.dto_id)}**`, '', ...table(['字段', '类型', '必需', '可空', '语义'], asRecords(dto.fields).map(f => [f.field_id, f.type, f.required, f.nullable, f.semantics])));
   }
   const mappings = asRecords(contract.mappings);
-  if (mappings.length) lines.push('映射：', '', ...table(['映射', '类型', '源字段', '目标字段', '规则'], mappings.map(m => [m.mapping_id, m.kind, refs(m.source_fields), m.target_field, m.rule])));
-  const errors = asRecord(contract.errors); const nfr = asRecord(contract.nfr);
-  lines.push(`错误：${text(errors?.semantics ?? namedMeanings(errors?.items))}`,
-    `幂等：${text(meaning(contract.idempotency))}`, `非功能要求：${text(nfr?.semantics ?? namedMeanings(nfr?.requirements))}`, '');
+  if (mappings.length) lines.push('映射：', '', ...table(['映射', '类型', '源字段', '目标字段', '规则'], mappings.map(m => [m.mapping_id, enumText(m.kind, { direct: '直接映射', derivation: '推导映射', rename: '重命名' }), refs(m.source_fields), m.target_field, m.rule])));
+  for (const [key, title, collection] of [['errors', '错误', 'items'], ['idempotency', '幂等', ''], ['nfr', '非功能要求', 'requirements']] as const) {
+    const value = asRecord(contract[key]);
+    lines.push(`${title}：${text(collection ? contractMeaning(contract[key], collection) : meaning(contract[key]))}`);
+    if (typeof value?.source_ref === 'string') {
+      const ref = value.source_ref; const url = encodeURI(/^[a-z]+:\/\//i.test(ref) ? ref : `${sourceRootRelative ? `${sourceRootRelative}/` : ''}${ref}`).replace(/\(/g, '%28').replace(/\)/g, '%29');
+      lines.push(`来源：[${text(ref.slice(ref.lastIndexOf('/') + 1))}](${url})`);
+    } else if (value?.source_ref !== undefined) lines.push(`来源：${text(value.source_ref)}`);
+    if (value?.verification_refs !== undefined) lines.push(`验证：${acceptanceLinks(value.verification_refs)}`);
+  }
+  lines.push('');
   return lines;
 }
 
@@ -168,6 +205,13 @@ const APP_QUESTIONS: Record<string, string> = {
 };
 
 interface ReviewContent { address: string; field: 'acceptance' | 'contracts' | 'use_cases'; value: BlueprintRecord }
+function acceptanceLinksFor(content: Pick<ReviewContent, 'address' | 'value'>[], blueprint: BlueprintRecord): (value: unknown) => string {
+  const index = stableAddressIndex(blueprint);
+  return value => prose(value).replace(/(?:acceptance:)?\b((?:AC|BD|NFR)-?\d+)\b/g, (raw, id: string) => {
+    const matches = content.flatMap(item => ['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(item.value[key]).filter(row => row.id === id).map(() => ({ address: item.address, key }))));
+    return matches.map(match => designLink(`acceptance:${match.address}/${match.key}:${id}`, matches.length > 1 ? `${id}（${String(index.get(match.address)?.label ?? match.address.split(':').pop())}）` : id)).join('、') || raw;
+  });
+}
 function readReviewContent(blueprint: BlueprintRecord): { content: ReviewContent[]; diagnostics: string[] } {
   const content: ReviewContent[] = []; const diagnostics: string[] = [];
   const seen = new Map<string, { address: string; row: unknown }>();
@@ -206,7 +250,7 @@ function renderView(view: BlueprintRecord | undefined, blueprint: BlueprintRecor
   if (!view) return ['该视图未记录。', ''];
   const nodes = asRecords(view.nodes);
   const lines = [anchor(`view:${view.view_id}`), text(view.purpose), '',
-    ...table(['适用性', '本次影响', '当前', '目标', '变化/依据'], [[view.applicability, view.evolution_impact ?? '—', meaning(view.current_state), meaning(view.target_state), view.applicability === 'not_applicable' ? refs(asRecord(view.applicability_evidence)?.evidence_refs) : view.evolution_impact === 'verified_unchanged' ? refs(asRecord(view.unchanged_evidence)?.evidence_refs) : meaning(view.delta)]]),
+    ...table(['适用性', '本次影响', '当前', '目标', '变化/依据'], [[enumText(view.applicability, APPLICABILITY), enumText(view.evolution_impact, IMPACT), meaning(view.current_state), meaning(view.target_state), view.applicability === 'not_applicable' ? refs(asRecord(view.applicability_evidence)?.evidence_refs) : view.evolution_impact === 'verified_unchanged' ? refs(asRecord(view.unchanged_evidence)?.evidence_refs) : meaning(view.delta)]]),
     nodes.map(node => anchor(`view:${view.view_id}/node:${node.node_id}`)).join('')];
   if (view.applicability === 'not_applicable') return [...lines, '该视图不适用；保留上述依据，不能随单次需求自行切换适用性。', ''];
   if (view.evolution_impact === 'verified_unchanged') return [...lines, `核实未变：${text(asRecord(view.unchanged_evidence)?.current_state_ref)}。`, ''];
@@ -226,7 +270,7 @@ function renderView(view: BlueprintRecord | undefined, blueprint: BlueprintRecor
 function renderModels(value: BlueprintRecord): string[] {
   const lines: string[] = [];
   for (const model of asRecords(value.data_models)) {
-    lines.push(`#### ${text(model.name)} · ${text(model.kind)}`, '', `模块 ${text(model.module)}；文件 ${text(model.file)}`, '',
+    lines.push(`#### ${text(model.name)} · ${text(enumText(model.kind, KINDS))}`, '', `模块 ${text(model.module)}；文件 ${text(model.file)}`, '',
       ...table(['字段', '类型', '必需', '默认值', '约束/说明', '来源'], asRecords(model.fields).map(f => [f.name, f.type, f.required, f.default ?? '—',
         f.description === undefined ? '未记录' : typeof f.description === 'string' ? f.description : '未能表达（description 非字符串）',
         f.source_ref === undefined ? '未记录' : typeof f.source_ref === 'string' ? f.source_ref : '未能表达（source_ref 非字符串）'])));
@@ -235,20 +279,26 @@ function renderModels(value: BlueprintRecord): string[] {
   }
   return lines;
 }
-function renderUseCases(value: BlueprintRecord): string[] {
+function renderUseCases(value: BlueprintRecord, acceptanceLinks: (value: unknown) => string): string[] {
   const lines: string[] = [];
   const normalized = normalizeUseCasePortCalls(value);
   if (normalized.issues.length) lines.push('用例调用声明无效：', '', ...normalized.issues.map(issue => `- ${text(issue)}`), '');
   for (const uc of asRecords(normalized.value.use_cases)) {
     lines.push(`#### 用例 ${text(uc.id)}`, '', text(uc.description), '', `编排入口：${text(uc.coordinator)}；文件 ${text(uc.coordinator_file ?? '未记录')}`, '',
-      ...table(['阶段顺序', '阶段'], asStrings(asRecord(uc.state_model)?.phases).map((phase, i) => [i + 1, phase])));
+      ...table(['状态集合'], asStrings(asRecord(uc.state_model)?.phases).map(phase => [phase])));
+    try {
+      const graph = generateMermaidPhaseGraph(uc); const invalid = parseMermaidSubset(graph.content);
+      if (invalid) lines.push(`阶段图无效，未展示：${text(invalid)}`, '');
+      else if (graph.edges.length) lines.push('阶段流转（边标签为分支）：', '', '```mermaid', graph.content.trimEnd(), '```', '');
+      else lines.push('未声明阶段相邻流转；只列已有阶段。', '');
+    } catch (error) { lines.push(`阶段图无效，未展示：${text((error as Error).message)}`, ''); }
     if (asRecords(asRecord(uc.state_model)?.fields).length) lines.push(...table(['状态字段', '类型'], asRecords(asRecord(uc.state_model)?.fields).map(f => [f.name, f.type])));
-    for (const binding of asRecords(uc.ui_bindings)) lines.push(`UI 边界：${text(binding.ui)} · ${text(binding.role)}；订阅 ${text(refs(binding.subscribes))}`, '',
+    for (const binding of asRecords(uc.ui_bindings)) lines.push(`UI 边界：${text(binding.ui)} · ${text(enumText(binding.role, KINDS))}；订阅 ${text(refs(binding.subscribes))}`, '',
       ...table(['用户动作', '调用符号'], asRecords(binding.user_actions).map(a => [a.trigger, a.calls])));
     for (const boundary of asRecords(uc.data_boundaries)) lines.push(`数据边界：${text(boundary.name)} · ${text(boundary.type)} · ${text(boundary.kind)}`, '',
       ...table(['方法', '参数', '返回', '异步'], asRecords(boundary.methods).map(m => [m.name, refs(m.params), m.returns, m.async])));
     lines.push('主路径及分支去向：', '', ...table(['分支', '条件', '动作顺序', '阶段去向', '端口调用', '预期状态', '不得调用', '关联验收'],
-      asRecords(uc.branches).map(b => [b.id, b.scenario, refs(b.user_sequence), refs(b.expected_phase_seq), refs(b.expected_port_calls), namedMeanings(b.expected_state), refs(b.not_called), refs(b.linked_acceptance)])));
+      asRecords(uc.branches).map(b => [b.id, b.scenario, refs(b.user_sequence), refs(b.expected_phase_seq), refs(b.expected_port_calls), namedMeanings(b.expected_state), refs(b.not_called), acceptanceLinks(b.linked_acceptance)])));
     const conflicted = asRecords(uc.branches).filter(b => b.expected_boundary_calls !== undefined);
     if (conflicted.length) lines.push(...table(['分支', '冲突的旧调用声明'], conflicted.map(b => [b.id, refs(b.expected_boundary_calls)])));
     const details = asRecords(uc.branches).filter(b => b.cloud_stubs || b.local_stubs || b.local_expect);
@@ -259,7 +309,9 @@ function renderUseCases(value: BlueprintRecord): string[] {
 function renderAcceptance(value: BlueprintRecord, inputs: BlueprintReviewInputs, address: string): string[] {
   const owners = new Set(ownersForAddress(directReviewUnits(inputs), address));
   const predicates = (id: unknown): string => inputs.units.filter(u => !u.retiredBy && owners.has(u.id)).flatMap(u => asRecords(u.unit?.target_predicates).filter(p => asStrings(p.verification_refs).flatMap(extractAcceptanceIdRefs).includes(String(id).toUpperCase())).map(p => `${u.id}/${p.predicate_id}`)).join('；') || '未登记直接谓词引用';
-  const lines = ['功能验收：', '', ...table(['AC', '优先级/功能', '验收标准', '验证步骤（按序）', '预期', '分层/关注点', '已有流程关联', 'CU 谓词直接引用'],
+  const lines = [
+    ...['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(value[key]).map(row => anchor(`acceptance:${address}/${key}:${row.id}`))),
+    '功能验收：', '', ...table(['AC', '优先级/功能', '验收标准', '验证步骤（按序）', '预期', '分层/关注点', '已有流程关联', 'CU 谓词直接引用'],
     asRecords(value.criteria).map(c => [c.id, `${prose(c.priority)} / ${prose(c.prd_function ?? '—')}`, c.description, asStrings(c.verification_steps).map((s, i) => `${i + 1}. ${s}`).join('\n'), c.expected_result,
       acceptanceFocus(c), c.linked_flow ? `${c.linked_flow}/${prose(c.linked_branch ?? '—')}` : '未声明；无 UI 依据时由 spec 不冲突补充', predicates(c.id)]))];
   if (asRecords(value.boundaries).length) lines.push('边界验收：', '', ...table(['BD', '优先级', '异常场景', '处理', '可见结果/预期', '分层/关注点', 'CU 谓词直接引用'],
@@ -267,6 +319,71 @@ function renderAcceptance(value: BlueprintRecord, inputs: BlueprintReviewInputs,
   if (asRecords(value.performance).length) lines.push('质量阈值：', '', ...table(['NFR', '指标', '阈值', '单位', '说明', '分层/关注点'],
     asRecords(value.performance).map(p => [p.id, p.metric, p.threshold, p.unit, p.description, acceptanceFocus(p)])));
   return lines;
+}
+
+function registeredImages(blueprint: BlueprintRecord): string[] {
+  const images = new Set<string>();
+  const walk = (value: unknown, source = false): void => {
+    if (typeof value === 'string') { if (source && /\.(png|jpe?g|gif|webp)(?:#.*)?$/i.test(value)) images.add(value.split('#')[0]); return; }
+    if (Array.isArray(value)) { value.forEach(item => walk(item, source)); return; }
+    const record = asRecord(value);
+    if (record) for (const [key, entry] of Object.entries(record)) walk(entry, ['source_ref', 'source_refs', 'evidence_refs'].includes(key));
+  };
+  walk(blueprint); return [...images].sort();
+}
+
+/** 可见标签与可追溯位置分开；缺项按当前小节集中，不改变原诊断。 */
+function finishPresentation(lines: string[], blueprint: BlueprintRecord): string {
+  const index = stableAddressIndex(blueprint);
+  const viewNames: Record<string, string> = { logical: '逻辑视图', runtime: '运行时视图', development: '开发视图', deployment: '部署视图', scenarios: '场景视图' };
+  const labels = new Map([...index].map(([address, row]) => [address, String(row.label ?? row.name ?? (address.startsWith('view:') && !address.includes('/') ? viewNames[String(row.view_id)] : undefined) ?? address.split(':').pop())]));
+  for (const view of asRecords(blueprint.design_views)) for (const flow of asRecords(view.runtime_data_flows)) {
+    const local = (prefix: string, row: BlueprintRecord | undefined, key: string) => { if (typeof row?.[key] === 'string') labels.set(`${prefix}:${row[key]}`, String(row.label ?? row.name ?? row[key])); };
+    local('initial-load', asRecord(flow.initial_load), 'initial_load_id'); local('recovery', asRecord(flow.failure_recovery), 'recovery_id');
+    for (const row of asRecords(flow.publications)) local('publication', row, 'publication_id');
+    for (const row of asRecords(flow.consumers)) local('consumer', row, 'consumer_id');
+  }
+  for (const row of currentScopeItems(blueprint)) labels.set(`requirement:${row.item_id}`, row.item_id);
+  for (const row of asRecords(blueprint.data_domains)) if (typeof row.data_domain_id === 'string') labels.set(row.data_domain_id.startsWith('data-domain:') ? row.data_domain_id : `data-domain:${row.data_domain_id}`, String(row.label ?? row.name ?? row.data_domain_id.replace(/^data-domain:/, '')));
+  const anchorLabels = new Map([...labels].map(([address, label]) => [blueprintReviewAnchor(address), label]));
+  const addresses = [...labels.keys()].sort((a, b) => b.length - a.length);
+  const expression = new RegExp(addresses.map(address => address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  const output: string[] = []; let appendix = false; let code = false; let heading = ''; const missing = new Set<string>(); const unregistered = new Set<string>();
+  const flush = () => { if (missing.size) output.push(`未记录：${[...missing].join('；')}。`, ''); missing.clear(); };
+  const bodyStart = lines[0] === '---' ? lines.indexOf('---', 1) + 1 : 0;
+  for (const [lineIndex, original] of lines.entries()) {
+    let line = original;
+    if (lineIndex < bodyStart) { output.push(line); continue; }
+    if (line.startsWith('设计内容来源：')) flush();
+    if (/^#{2,6} /.test(line)) { flush(); heading = line.replace(/^#+ /, ''); if (line.startsWith('## 附录')) appendix = true; }
+    const marker = /^<!-- review-missing:(.+) -->$/.exec(line);
+    if (marker) { marker[1].split('、').forEach(value => missing.add(value)); continue; }
+    if (line.startsWith('```')) code = !code;
+    if (!appendix && !code && line.includes('未记录') && !line.startsWith('|')) {
+      if (/^[^；：\n]*未记录[。；]/.test(line)) { missing.add(line.split(/[。；]/)[0].replace('未记录', '').trim() || heading); continue; }
+      line = line.replace(/未记录/g, (_, offset: number) => {
+        const prefix = line.slice(0, offset).split(/[；\n]/).pop()!.replace(/\[[^\]]+\]\([^)]+\)/g, '').trim();
+        missing.add(`${prefix || heading}`); return '—';
+      });
+    }
+    if (!appendix && !code && !line.startsWith('<a ') && !line.startsWith('---') && !line.startsWith('    ')) {
+      line = line.split(/(\[[^\]\n]*\]\([^)]*\)|<a id="[^"]+"><\/a>)/g).map(part => {
+        const link = /^\[([^\]\n]*)\]\(#(design-[0-9a-f]+)\)$/.exec(part);
+        if (link) return anchorLabels.has(link[2]) ? `[${cell(anchorLabels.get(link[2]))}](#${link[2]})` : part;
+        if (/^\[.*\]\(.*\)$/.test(part) || part.startsWith('<a ')) return part;
+        return part.replace(expression, address => {
+          if (index.has(address)) return designLink(address, labels.get(address));
+          unregistered.add(address); return text(labels.get(address));
+        }).split(/(\[[^\]\n]*\]\([^)]*\))/g).map(fragment => /^\[.*\]\(.*\)$/.test(fragment) ? fragment : fragment.replace(/\b(?:view:[A-Za-z0-9_-]+(?:\/(?:node|flow):[A-Za-z0-9_.-]+)?|(?:contract|relation|decision|gap|publication|recovery|initial-load|requirement|consumer|data-domain):[A-Za-z0-9_.-]+)/g, address => {
+          unregistered.add(address); return /^(?:publication|recovery|initial-load|requirement|consumer|data-domain):/.test(address) ? text(address.split(':').pop()) : `${text(address.split(':').pop())}（地址未登记，见附录）`;
+        })).join('');
+      }).join('');
+    }
+    output.push(line);
+  }
+  flush();
+  if (unregistered.size) output.push('## 附录：正文引用地址', '', ...[...unregistered].map(address => `- ${text(address)}：${text(labels.get(address) ?? address.split(':').pop())}`), '');
+  return output.join('\n');
 }
 
 /** 4+1 正文只消费 canonical 蓝图与 CU，不运行完整投影检查或读 Feature 产物。 */
@@ -278,18 +395,27 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const directUnits = directReviewUnits(inputs);
   const claimedBy = (address: string): string => ownersForAddress(directUnits, address).map(id => `${id}${current.find(item => item.id === id)?.binding === 'pending' ? '（待升版）' : ''}`).join('；') || '无 CU 直接引用';
   const { content, diagnostics } = readReviewContent(blueprint); const typed = (field: ReviewContent['field']) => content.filter(item => item.field === field);
+  const acceptanceLinks = acceptanceLinksFor(typed('acceptance'), blueprint);
   const origin = (item: ReviewContent) => `设计内容来源：${designLink(item.address)} · ${text(item.field)}`;
   const lines: string[] = ['---', YAML.stringify({ derived_from: { artifact: blueprint.artifact, component_id: blueprint.component_id, blueprint_id: blueprint.blueprint_id,
     revision: blueprint.revision, source_fingerprint: blueprint.source_fingerprint, artifact_sha256: artifactSha256, change_units: reviewChangeUnitBindings(inputs) }, projection: BLUEPRINT_REVIEW_FORMAT }).trimEnd(), '---', '',
     `# ${text(review.title ?? blueprint.component_id)}`, '', anchor(`blueprint:${blueprint.blueprint_id}`),
-    `部件 ${text(blueprint.component_id)} · 蓝图 ${text(blueprint.blueprint_id)} · revision ${text(blueprint.revision)} · 准入 ${text(admission?.status)}`, '',
-    '阅读顺序：概述 → 场景（+1）→ 逻辑、运行、开发、部署 → 取舍、质量与验收 → 施工拆分。各视图通过稳定设计地址、契约和 CU 引用相连。', '',
+    `部件 ${text(blueprint.component_id)} · 蓝图 ${text(blueprint.blueprint_id)} · revision ${text(blueprint.revision)} · 准入 ${text(enumText(admission?.status, DISPOSITIONS))}`, '',
+    '阅读顺序：概述 → 场景（+1）→ 逻辑、运行、开发、部署 → 取舍、质量与验收 → 施工拆分。正文使用可读标签，原地址见追溯附录。', '',
+    '阅读说明：本文根据蓝图与施工单元生成，展示已登记设计，来源身份保留在文首。验收全文见第 9 章，写集见第 5 章；各 CU 展示实际继承的声明与对应链接。是否通过设计交接见 readiness，施工授权、映射与完成结论仍由原责任阶段确认。', '',
     '## 1 概述', '', ...table(['关切', '设计说明'], [['背景', review.background], ['问题', review.problem], ['本次改变', review.summary], ['整体定位', review.positioning], ['范围', meaning(review.in_scope)], ['不做什么', meaning(review.non_goals)]]),
-    '### 目标与成功衡量', '', ...(asRecords(review.goals).length ? table(['目标', '目标说明', '成功衡量'], asRecords(review.goals).map(g => [g.goal_id, g.statement, refs(g.success_measures)])) : ['未记录；由设计责任方补充，不按生成成功推定目标充分。', ''])];
+    '### 目标与成功衡量', '', ...(asRecords(review.goals).length ? table(['目标', '目标说明', '成功衡量'], asRecords(review.goals).map(g => [g.goal_id, g.statement, acceptanceLinks(g.success_measures)])) : ['未记录；由设计责任方补充，不按生成成功推定目标充分。', ''])];
   const facts = asRecords(asRecord(blueprint.discovery)?.facts); const terms = facts.filter(f => String(f.subject).startsWith('term:'));
   lines.push('### 术语', '', ...(terms.length ? table(['术语', '含义', '模块', '易混项', '确认依据'], terms.map(f => [String(f.subject).slice(5), asRecord(f.value)?.meaning, asRecord(f.value)?.canonical_module, refs(asRecord(f.value)?.easily_confused_with), asRecord(f.provenance)?.source_ref])) : ['术语含义未记录；不从名称推测。', '']));
   const conventions = [...new Set(facts.filter(f => asRecord(f.provenance)?.source_kind === 'convention').map(f => String(asRecord(f.provenance)?.source_ref)).filter(ref => ref !== 'undefined'))].sort();
   if (conventions.length) lines.push('已采用的工程惯例：', '', ...conventions.map(ref => `- ${text(ref.slice(ref.lastIndexOf('#') + 1))} — ${text(ref)}`), '');
+  lines.push('### 方案总览', '', text(review.summary), '');
+  try {
+    const graph = generateMermaidRelationGraph(blueprint); const issues = validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [graph] });
+    if (issues.length) lines.push('整体关系图无效，未展示：', '', ...issues.map(issue => `- ${text(issue.message)}`), '');
+    else if (graph.relation_refs.length) lines.push('```mermaid', graph.content.trimEnd(), '```', '');
+    else lines.push('未声明跨视图显式关系。', '');
+  } catch (error) { lines.push(`整体关系图无效，未展示：${text((error as Error).message)}`, ''); }
   lines.push('## 2 场景视图（+1）', '', ...renderView(view('scenarios'), blueprint));
   for (const s of asRecords(view('scenarios')?.nodes)) {
     lines.push(`### ${text(s.label ?? s.node_id)}`, '', ...table(['旅程步骤', '阶段', '前置条件', '用户动作', '系统行为'], asRecords(s.journey_steps).map(j => [j.step_id, j.stage, refs(j.preconditions), j.user_action, j.system_behavior])));
@@ -297,13 +423,27 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     if (asRecords(s.path_variants).length) lines.push(...table(['适用人群/路径', '差异'], asRecords(s.path_variants).map(p => [p.user_type, p.difference])));
     lines.push(...table(['逻辑对象/契约', '运行流', '开发落点', '部署落点'], [[refs(s.logical_refs), refs(s.runtime_refs), s.development_owner_ref, refs(s.deployment_refs)]]));
   }
+  lines.push('### 页面与交互', '');
+  const pages = typed('contracts').flatMap(item => asRecords(item.value.components).filter(component => component.kind === 'page').map(component => [component.name, enumText(component.kind, KINDS), component.description, component.file]));
+  if (pages.length) lines.push(...table(['页面', '类型', '职责', '开发文件'], pages));
+  else lines.push('页面组件未记录。', '');
+  const bindings = typed('use_cases').flatMap(item => asRecords(item.value.use_cases).flatMap(uc => asRecords(uc.ui_bindings).map(binding => [binding.ui, enumText(binding.role, KINDS), asRecords(binding.user_actions).map(action => `${prose(action.trigger)} → ${prose(action.calls)}`).join('；')])));
+  if (bindings.length) lines.push(...table(['界面/交互', '职责', '用户动作与调用'], bindings));
+  const images = registeredImages(blueprint);
+  for (const image of images) {
+    const caption = image.slice(image.lastIndexOf('/') + 1).replace(/\.[^.]+$/, '');
+    const url = encodeURI(`${inputs.sourceRootRelative ? `${inputs.sourceRootRelative}/` : ''}${image}`).replace(/\(/g, '%28').replace(/\)/g, '%29');
+    lines.push(anchor(`image:${image}`), `![${text(caption)}](${url})`, '');
+  }
+  const finishes = asRecords(view('scenarios')?.nodes).flatMap(s => asRecords(s.journey_steps).filter(j => /完成|finish|complete/i.test(prose(j.user_action))).map(j => [s.label ?? s.node_id, j.step_id, j.stage, j.user_action, j.system_behavior]));
+  lines.push('### 完成后去向（旅程原文）', '', ...(finishes.length ? table(['场景', '旅程步骤', '阶段', '完成动作', '系统行为/去向'], finishes) : ['旅程未记录明确完成动作及去向。', '']));
   const scope = currentScopeItems(blueprint); lines.push('### 需求追溯总表', '');
   if (!scope.length) lines.push('未记录 current scope；不自行推断需求范围。', '');
   else {
     const mappings = new Map(requirementTraceability(blueprint).map(item => [item.item_id, item.blueprint_refs]));
-    lines.push(...table(['需求项', '类型', '原始来源'], scope.map(item => [item.item_id, item.kind, item.source_ref])),
-      ...scope.map(item => `- ${text(item.item_id)}：[来源](${encodeURI(`${inputs.sourceRootRelative ? `${inputs.sourceRootRelative}/` : ''}${item.source_ref}`).replace(/\(/g, '%28').replace(/\)/g, '%29')})`), '',
-      '只列登记地址的直接引用者；覆盖结论由 component closure 负责。', '', '| 需求项 | 蓝图登记地址 | 当前 CU 直接引用 |', '| --- | --- | --- |');
+    lines.push(...table(['需求项', '类型', '原始来源'], scope.map(item => [item.item_id, item.kind, images.includes(item.source_ref.split('#')[0]) ? designLink(`image:${item.source_ref.split('#')[0]}`, '截图来源') : item.source_ref])),
+      ...scope.map(item => `- ${text(item.item_id)}：${images.includes(item.source_ref.split('#')[0]) ? designLink(`image:${item.source_ref.split('#')[0]}`, '截图来源') : `[来源](${encodeURI(`${inputs.sourceRootRelative ? `${inputs.sourceRootRelative}/` : ''}${item.source_ref}`).replace(/\(/g, '%28').replace(/\)/g, '%29')})`}`), '',
+      '| 需求项 | 蓝图登记地址 | 当前 CU 直接引用 |', '| --- | --- | --- |');
     for (const item of scope) {
       const addresses = mappings.get(item.item_id) ?? [];
       if (!addresses.length) lines.push(`| ${cell(item.item_id)} | 未登记 | 无 CU 直接引用 |`);
@@ -312,13 +452,22 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     lines.push('');
   }
   lines.push('## 3 逻辑视图', '', ...renderView(view('logical'), blueprint, true), '### 领域模型、字段与枚举', '');
-  for (const item of typed('contracts').filter(i => asRecords(i.value.data_models).length)) lines.push(origin(item), '', ...renderModels(item.value));
+  const modelGroups: { model: BlueprintRecord; sources: ReviewContent[] }[] = [];
+  for (const item of typed('contracts')) for (const model of asRecords(item.value.data_models)) {
+    const existing = modelGroups.find(group => projectionRowIdentity(group.model) === projectionRowIdentity(model) && projectionContentEqual(group.model, model));
+    if (existing) existing.sources.push(item); else modelGroups.push({ model, sources: [item] });
+  }
+  for (const group of modelGroups) lines.push(...group.sources.map(item => anchor(`model:${item.address}/${group.model.name}`)), group.sources.map(origin).join('；'), '', ...renderModels({ data_models: [group.model] }));
   if (!typed('contracts').some(i => asRecords(i.value.data_models).length)) lines.push('设计期未写入领域模型，将由 plan 补；不从 DTO 推断另一份持久化模型。', '');
   const contracts = asRecords(blueprint.contracts); lines.push('### 本部件实际消费或提供的操作与 DTO', '');
-  for (const c of contracts) lines.push(...renderContract(c));
+  for (const c of contracts) {
+    const owners = new Set(ownersForAddress(directUnits, `contract:${c.contract_id}`));
+    const inheritedAddresses = new Set(current.filter(unit => unit.binding === 'bound' && owners.has(unit.id)).flatMap(unit => unit.designAddresses));
+    lines.push(...renderContract(c, acceptanceLinksFor(typed('acceptance').filter(item => inheritedAddresses.has(item.address)), blueprint), inputs.sourceRootRelative));
+  }
   if (!contracts.length) lines.push('未记录接口契约。', '');
   lines.push('## 4 运行时视图', '', ...renderView(view('runtime'), blueprint, true));
-  for (const flow of asRecords(view('runtime')?.runtime_data_flows)) lines.push(...renderFlow(flow, 'runtime'));
+  for (const flow of asRecords(view('runtime')?.runtime_data_flows)) lines.push(...renderFlow(flow, 'runtime', acceptanceLinks));
   for (const item of typed('contracts').filter(i => asRecords(i.value.state_management).length)) {
     lines.push(origin(item), '', '### 施工状态与有序步骤', '');
     for (const s of asRecords(item.value.state_management)) lines.push(`状态 ${text(s.data)}；持有者 ${text(s.holder)}；作用域 ${text(s.scope)}；责任方 ${text(s.owner_ref)}`, '',
@@ -326,11 +475,16 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
       ...table(['失败/恢复场景', '处理'], Object.entries(asRecord(s.failure_recovery) ?? {}).map(([k, v]) => [k, meaning(v)])));
   }
   lines.push('### 用例、数据边界与分支', '');
-  for (const item of typed('use_cases')) lines.push(origin(item), '', ...renderUseCases(item.value));
+  for (const item of typed('use_cases')) lines.push(origin(item), '', ...renderUseCases(item.value, acceptanceLinks));
   if (!typed('use_cases').length) lines.push('设计期未写入 use_cases，将由 plan 按真实义务补充。', '');
   lines.push('### 异常与恢复', '');
-  for (const item of typed('acceptance').filter(i => asRecords(i.value.boundaries).length)) lines.push(origin(item), '', ...table(['边界', '异常场景', '系统行为', '可见结果/预期', '验证关注'], asRecords(item.value.boundaries).map(b => [b.id, b.scenario, b.handling, b.expected_behavior, acceptanceFocus(b)])));
+  for (const item of typed('acceptance').filter(i => asRecords(i.value.boundaries).length)) lines.push(origin(item), '', `边界验收：${asRecords(item.value.boundaries).map(b => designLink(`acceptance:${item.address}/boundaries:${b.id}`, String(b.id))).join('；')}`, '');
   lines.push('## 5 开发视图', '', ...renderView(view('development'), blueprint, true), '模型与持久化字段见 [逻辑视图](#3-逻辑视图)；运行编排见 [运行时视图](#4-运行时视图)。未声明的索引、事务、存储配置不由 renderer 推断。', '');
+  const files = [...new Set(typed('contracts').flatMap(item => asStrings(item.value.files)))];
+  if (files.length) {
+    lines.push('### 声明文件（完整施工写集）', '', ...files.map(file => anchor(`file:${file}`)), ...table(['文件', '声明责任目标'], files.map(file => [file, typed('contracts').filter(item => asStrings(item.value.files).includes(file)).map(item => designLink(item.address)).join('；')])));
+    for (const item of typed('contracts').filter(item => asStrings(item.value.files).length)) lines.push(anchor(`writes:${item.address}`), `目标写集：${designLink(item.address)}；${asStrings(item.value.files).map(file => designLink(`file:${file}`, file.slice(file.lastIndexOf('/') + 1))).join('；')}`, '');
+  }
   const storageContracts = contracts.filter(c => c.table_schema !== undefined);
   if (storageContracts.length) lines.push('### 持久化表结构', '', '表结构来自根级接口契约；领域模型见逻辑视图，存储约束和编码保留此处原始声明。', '');
   for (const c of storageContracts) {
@@ -343,32 +497,31 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   for (const item of typed('contracts')) {
     const c = item.value;
     if (!['modules', 'files', 'interfaces', 'components', 'integration_points'].some(k => Array.isArray(c[k]) && (c[k] as unknown[]).length)) continue;
-    lines.push(origin(item), '', ...table(['模块', 'DSL 分层', '形式', '变化', '目录'], asRecords(c.modules).map(m => [m.name, m.layer, m.format, m.change_type, m.package_path])));
+    lines.push(origin(item), '', ...table(['模块', 'DSL 分层', '形式', '变化', '目录'], asRecords(c.modules).map(m => [m.name, m.layer, enumText(m.format, KINDS), enumText(m.change_type, { add: '新增', modify: '修改', delete: '删除', new: '新增' }), m.package_path])));
     if (asRecord(c.module_dependencies)) lines.push('根级 module_dependencies：', '', ...table(['模块', '依赖模块'], Object.entries(asRecord(c.module_dependencies)!).map(([m, deps]) => [m, refs(deps)])));
-    if (asStrings(c.files).length) lines.push('声明文件（唯一施工写集）：', '', ...table(['文件'], asStrings(c.files).map(file => [file])));
-    for (const i of asRecords(c.interfaces)) lines.push(`接口 ${text(i.class)} · ${text(i.module)} / ${text(i.layer)} · ${text(i.file)}`, '', ...table(['方法', '参数', '返回', '异步', '职责/失败语义'], asRecords(i.methods).map(m => [m.name, asRecords(m.params).map(p => `${p.name}: ${p.type}`).join('；'), m.return, m.async, m.description])));
+    for (const i of asRecords(c.interfaces)) lines.push(`接口 ${text(i.class)} · ${text(i.module)} / ${text(i.layer)} · ${text(i.file)}`, '', ...table(['方法', '参数', '返回', '异步', '职责/失败语义'], asRecords(i.methods).map(m => [m.name, Array.isArray(m.params) ? m.params.length ? asRecords(m.params).map(p => `${p.name}: ${p.type}`).join('；') : '空列表' : m.params === undefined ? undefined : declaredMeaning(m.params), m.return, m.async, m.description])));
     for (const cpt of asRecords(c.components)) {
-      lines.push(`组件 ${text(cpt.name)} · ${text(cpt.kind)} · ${text(cpt.file)}`, '', text(cpt.description), '', ...table(['状态/属性', '类型', '宿主声明'], [...asRecords(cpt.state), ...asRecords(cpt.props)].map(s => [s.name, s.type, s.decorator])));
+      lines.push(`组件 ${text(cpt.name)} · ${text(enumText(cpt.kind, KINDS))} · ${text(cpt.file)}`, '', text(cpt.description), '', ...table(['状态/属性', '类型', '宿主声明'], [...asRecords(cpt.state), ...asRecords(cpt.props)].map(s => [s.name, s.type, s.decorator])));
       if (asRecords(cpt.events).length) lines.push(...table(['事件', '职责'], asRecords(cpt.events).map(e => [e.name, e.description])));
       if (asStrings(cpt.children).length) lines.push(`子组件：${text(refs(cpt.children))}`, '');
     }
     if (asRecords(c.integration_points).length) lines.push(...table(['消费模块', '提供模块', '需修改', '入口'], asRecords(c.integration_points).map(i => [i.consumer_module, i.provider_module, i.requires_modification, i.entry_symbol])));
   }
   const dg = asRecord(blueprint.decisions_and_gaps); const decisions = asRecords(dg?.decisions); const architecture = decisions.filter(d => ['architecture_impact', 'component_asset_selection'].includes(String(d.kind)));
-  if (architecture.length) lines.push('### 已有 DSL 演进与组件选型', '', ...table(['决策', '结论', '依据'], architecture.map(d => [d.decision_id, decisionConclusion(d), d.rationale])));
+  if (architecture.length) lines.push('### 已有 DSL 演进与组件选型', '', ...table(['决策', '主责说明'], architecture.map(d => [d.decision_id, designLink(`decision:${d.decision_id}`)])));
   lines.push('## 6 部署视图', '', ...renderView(view('deployment'), blueprint, true));
   const deployment = view('deployment');
   if (deployment?.applicability === 'applicable') lines.push('### 本部件落点与外部参与方', '', ...table(['参与方', '职责', '输入', '输出', '不负责范围', '失败影响'], asRecords(deployment.nodes).map(n => [n.label ?? n.node_id, refs(n.responsibilities), refs(n.inputs), refs(n.outputs), refs(n.not_responsible_for), n.failure_impact])),
-    '### 外部契约与关系的本侧责任', '', '外部节点只记录当前事实；契约及关系由消费 CU 的 design_refs 认领本部件这一侧证据。外部方自己的未消费施工以 gap/blocker 或协同表达。', '', ...table(['契约', '责任方', '本侧需要方', '认领 CU'], contracts.map(c => [c.contract_id, c.owner, c.needed_by, claimedBy(`contract:${c.contract_id}`)])),
+    '### 外部契约与关系的本侧责任', '', ...table(['契约', '责任方', '本侧需要方', '认领 CU'], contracts.map(c => [c.contract_id, c.owner, c.needed_by, claimedBy(`contract:${c.contract_id}`)])),
     '### 配套协同', '', ...(asRecords(deployment.coordination).length ? table(['对方', '配套关系'], asRecords(deployment.coordination).map(c => [c.counterpart, c.relation])) : ['未记录。', '']),
-    '### 上线顺序', '', ...(asRecords(deployment.rollout).length ? table(['顺序', '部件/单元', '配套前提', '说明'], asRecords(deployment.rollout).map(r => [r.order, r.unit, refs(r.depends_on), r.note])) : ['未记录。', '']), '上述顺序不自动转换为 CU requires 或施工授权；兼容约束见质量属性与 CU 安全中间态。', '');
+    '### 上线顺序', '', ...(asRecords(deployment.rollout).length ? table(['顺序', '部件/单元', '配套前提', '说明'], asRecords(deployment.rollout).map(r => [r.order, r.unit, refs(r.depends_on), r.note])) : ['未记录。', '']));
   const relations = asRecords(blueprint.relations); lines.push('## 各视图的显式联系', '', relations.map(r => anchor(`relation:${r.relation_id}`)).join(''), ...table(['关系', '起点', '终点', '类型', '责任方', '认领 CU'], relations.map(r => [r.relation_id, r.from, r.to, r.relation_type, r.owner, claimedBy(`relation:${r.relation_id}`)])));
   lines.push('## 7 方案取舍', '');
   if (!decisions.length) lines.push('未记录决策及被否方案。', '');
-  for (const d of decisions) lines.push(anchor(`decision:${d.decision_id}`), `### ${text(d.decision_id)}`, '', ...table(['关切', '结论'], [['类型', d.kind ?? '—'], ['选了什么', decisionConclusion(d)], ['理由', d.rationale], ['状态/责任方', `${prose(d.status)} / ${prose(d.owner)}`]]), '被否方案：', '', ...(asRecords(d.alternatives).length ? table(['方案', '被否理由', '缺陷/代价'], asRecords(d.alternatives).map(a => [a.option, a.rejected_reason, a.defect])) : ['未记录；不推测被否选择。', '']));
-  lines.push('## 8 质量属性与合规', '', ...(asRecords(blueprint.quality_attributes).length ? table(['要求', '类别', '要求说明', '落点', '来源', '验证引用'], asRecords(blueprint.quality_attributes).map(q => [q.qa_id, q.category, q.requirement, q.landing, q.source_ref, refs(q.verification_refs)])) : ['部件级质量属性未记录；精确阈值见已有 NFR。', '']),
+  for (const d of decisions) lines.push(anchor(`decision:${d.decision_id}`), `### ${text(d.label ?? d.name ?? d.decision_id)}`, '', ...table(['关切', '结论'], [['类型', enumText(d.kind, { component_asset_selection: '组件选型', architecture_impact: '架构影响', evolution_candidate: '演进候选', residual_risk: '残余风险' })], ['选了什么', decisionConclusion(d)], ['理由', d.rationale], ['状态/责任方', `${enumText(d.status, DISPOSITIONS)} / ${prose(d.owner)}`]]), '被否方案：', '', ...(asRecords(d.alternatives).length ? table(['方案', '被否理由', '缺陷/代价'], asRecords(d.alternatives).map(a => [a.option, a.rejected_reason, a.defect])) : ['未记录；不推测被否选择。', '']));
+  lines.push('## 8 质量属性与合规', '', ...(asRecords(blueprint.quality_attributes).length ? table(['要求', '类别', '要求说明', '落点', '来源', '验证引用'], asRecords(blueprint.quality_attributes).map(q => [q.qa_id, q.category, q.requirement, q.landing, q.source_ref, acceptanceLinks(q.verification_refs)])) : ['部件级质量属性未记录；精确阈值见已有 NFR。', '']),
     '### 数据用途与生命周期', '', ...(asRecords(blueprint.data_domains).length ? table(['数据域', '用途', '有效期', '隔离', '清理', '安全', '使用流'], asRecords(blueprint.data_domains).map(d => [d.data_domain_id, d.usage, d.retention, d.isolation, d.cleanup, d.security, asRecords(view('runtime')?.runtime_data_flows).filter(f => asStrings(f.data_domain_refs).includes(String(d.data_domain_id))).map(f => prose(f.name ?? f.flow_id)).join('；') || '未登记使用流'])) : ['数据生命周期未记录。', '']));
-  lines.push('## 9 质量与验收', '', '以下是目标声明的验收内容及直接谓词引用；不冒充 component closure 的覆盖裁决。', '');
+  lines.push('## 9 质量与验收', '');
   for (const item of typed('acceptance')) lines.push(origin(item), '', ...renderAcceptance(item.value, inputs, item.address));
   if (!typed('acceptance').length) lines.push('设计期未写入 acceptance，将由 spec 补；不能把 absence 或文档成功当作设计充分。', '');
   if (diagnostics.length) lines.push('### 结构化内容无效或冲突', '', ...diagnostics.map(d => `- ${text(d)}`), '');
@@ -383,15 +536,17 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
       lines.push(`${text(item.id)} → ${text(item.retiredBy)}`, '', ...table(['谓词', '替代前', '替代后'], [...new Set([...before.keys(), ...after.keys()])].sort().flatMap(id => { const old = before.get(id); const next = after.get(id); return old && next && summarize(old) === summarize(next) ? [] : [[id, old ? summarize(old) : '新增', next ? summarize(next) : '删除']]; })));
     }
   }
-  lines.push('## 11 风险与待决项', '', `准入 ${text(admission?.status)}；切片 ${text(asRecord(admission?.current_slice)?.slice_id)}；阻塞 ${text(refs(admission?.blocker_refs))}`, '');
-  const gaps = asRecords(dg?.gaps); if (gaps.length) lines.push(gaps.map(g => anchor(`gap:${g.gap_id}`)).join(''), ...table(['缺口', '状态', '责任方', '需要方', '解除条件'], gaps.map(g => [g.gap_id, g.status, g.owner, g.needed_by, g.unlock_condition])));
-  const risks = decisions.filter(d => d.kind === 'residual_risk' || ['open_decision', 'blocker'].includes(String(d.status))); if (risks.length) lines.push(...table(['风险/待决项', '说明', '状态', '责任方'], risks.map(d => [d.decision_id, decisionConclusion(d), d.status, d.owner])));
-  const unavailable = asRecords(blueprint.providers).filter(p => p.available !== true || ['unknown', 'degraded'].includes(String(p.missing_disposition))); if (unavailable.length) lines.push('### 来源不可用与降级影响', '', ...table(['来源能力', '可用', '实际处置'], unavailable.map(p => [p.provider_id, p.available, p.missing_disposition ?? '未记录'])));
+  lines.push('## 11 风险与待决项', '', `准入 ${text(enumText(admission?.status, DISPOSITIONS))}；切片 ${text(asRecord(admission?.current_slice)?.slice_id)}；阻塞 ${text(refs(admission?.blocker_refs))}`, '');
+  const gaps = asRecords(dg?.gaps); if (gaps.length) lines.push(gaps.map(g => anchor(`gap:${g.gap_id}`)).join(''), ...table(['缺口', '状态', '责任方', '需要方', '解除条件'], gaps.map(g => [g.gap_id, enumText(g.status, DISPOSITIONS), g.owner, g.needed_by, g.unlock_condition])));
+  const risks = decisions.filter(d => d.kind === 'residual_risk' || ['open_decision', 'blocker'].includes(String(d.status))); if (risks.length) lines.push(...table(['风险/待决项', '主责说明', '状态', '责任方'], risks.map(d => [d.decision_id, designLink(`decision:${d.decision_id}`), enumText(d.status, DISPOSITIONS), d.owner])));
+  const unavailable = asRecords(blueprint.providers).filter(p => p.available !== true || ['unknown', 'degraded'].includes(String(p.missing_disposition))); if (unavailable.length) lines.push('### 来源不可用与降级影响', '', ...table(['来源能力', '可用', '实际处置'], unavailable.map(p => [p.provider_id, p.available, enumText(p.missing_disposition, { unknown: '待确认', degraded: '已降级', not_applicable: '不适用' })])));
   const presentationIssues = diagnoseBlueprintPresentationShape(blueprint); if (presentationIssues.length) lines.push('### 可选表达未能完整显示（非阻断）', '', ...presentationIssues.map(i => `- ${text(i.path)}：${text(i.message)}`), '');
   if (inputs.sourceGaps.length) lines.push('### CU 来源缺口', '', ...inputs.sourceGaps.map(g => `- ${text(g)}`), '', '以上直接引用与合并声明不能作为完整覆盖证明。', '');
-  const lens = asRecord(blueprint.app_lens); if (lens) lines.push('## 附录：App 根问题', '', ...table(['问题', '回答', '裁决', '依据'], Object.entries(APP_QUESTIONS).filter(([key]) => asRecord(lens[key])).map(([key, question]) => [question, meaning(asRecord(lens[key])?.answer), asRecord(lens[key])?.disposition, refs(asRecord(lens[key])?.evidence_refs)])));
-  const questioning = asRecord(review.questioning); if (questioning) lines.push('## 附录：独立质询', '', ...table(['范围', '问题', '裁决', '回答'], asRecords(questioning.items).map(q => [q.scope_ref, q.question, q.disposition, q.answer ?? '未记录'])));
-  lines.push('## 附录：编号速查', '', ...table(['编号', '含义/类别', '主责来源'], content.flatMap(i => i.field === 'acceptance' ? ['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(i.value[key]).map(row => [row.id, row.description ?? row.metric, i.address])) : i.field === 'contracts' ? asRecords(i.value.data_models).map(row => [row.name, '领域模型', i.address]) : asRecords(i.value.use_cases).map(row => [row.id, row.description ?? '用例', i.address]))),
-    '## 附录：稳定设计地址', '', ...[...stableAddressIndex(blueprint).keys()].map(address => `- ${designLink(address)}`), '', '通过 /component-design 提出意见；授权裁决仍沿既有 feedback 接缝处理。', ...(inputs.closureExists ? ['施工完成情况见 [component closure](component-closure.md)。'] : []), '', '> 本文为 canonical 蓝图与 CU 的单向派生物，可重建；不作为人工批准记录或第二设计真源。', '');
-  return lines.join('\n');
+  const lens = asRecord(blueprint.app_lens); if (lens) lines.push('## 附录：App 根问题', '', ...table(['问题', '回答', '裁决', '依据'], Object.entries(APP_QUESTIONS).filter(([key]) => asRecord(lens[key])).map(([key, question]) => [question, meaning(asRecord(lens[key])?.answer), enumText(asRecord(lens[key])?.disposition, DISPOSITIONS), refs(asRecord(lens[key])?.evidence_refs)])));
+  const questioning = asRecord(review.questioning); if (questioning) lines.push('## 附录：独立质询', '', ...table(['范围', '问题', '裁决', '回答'], asRecords(questioning.items).map(q => [q.scope_ref, q.question, enumText(q.disposition, DISPOSITIONS), q.answer ?? '未记录'])));
+  lines.push('## 附录：编号速查', '', ...table(['编号', '类别', '主责来源'], content.flatMap(i => i.field === 'acceptance' ? ['criteria', 'boundaries', 'performance'].flatMap(key => asRecords(i.value[key]).map(row => [row.id, key === 'criteria' ? '功能验收' : key === 'boundaries' ? '边界验收' : '质量阈值', designLink(`acceptance:${i.address}/${key}:${row.id}`, row.id as string)])) : i.field === 'contracts' ? asRecords(i.value.data_models).map(row => [row.name, '领域模型', designLink(`model:${i.address}/${row.name}`, row.name as string)]) : asRecords(i.value.use_cases).map(row => [row.id, '用例', designLink(i.address)]))),
+    '## 附录：稳定设计地址', '', ...[...stableAddressIndex(blueprint).keys()].map(address => `- ${text(address)}：${designLink(address)}`), '', '通过 /component-design 提出意见。', ...(inputs.closureExists ? ['施工完成情况见 [component closure](component-closure.md)。'] : []), '');
+  const renderedAnchors = new Set(lines.join('\n').match(/<a id="[^"]+"><\/a>/g));
+  for (const address of stableAddressIndex(blueprint).keys()) if (!renderedAnchors.has(anchor(address))) lines.push(anchor(address));
+  return finishPresentation(lines, blueprint);
 }

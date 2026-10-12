@@ -42,11 +42,13 @@ checker 不自动升 revision；只有被接受的新事实、权威裁决或冲
 
 引用一个目标即整体继承其设计内容。共享目标 S 只放所有引用者都承担的验收、合法写集和用例；CU-A 引 S+A、CU-B 引 S+B，专属 AC/BD/NFR、files 和用例放 A/B。数组沿已有行身份去重并合并，同身份不同内容拒绝；对象只接受完全相同内容，不逐键拼接。`module_dependencies`、`navigation`、`resource_keys`、acceptance 的 `flows` 等对象分别集中在一个承载目标。存量蓝图 change_unit 不参与共同设计合并；当前 Feature 映射仍由 plan 原门校验。设计节点保持语义稳定，不因 CU 替代或修订复制版本节点。不能按 predicate 隐藏误继承的验收或文件，合法先后写同一文件不自动判错。
 
-六类可选表达为背景/目标/范围、被否方案、术语含义、场景旅程、部署参与方/上线协同、质量属性/数据生命周期，位置与形状见 [P1 写作约定](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图)。缺失显示“未记录”，形状错误由原 validator 给 WARN，不增加缺字段门禁、不改 schema。模型字段的可选 `description/source_ref` 字符串沿现有加载/投影透传，非字符串显示“未能表达”；来源只引用设计期已有材料，不把未来施工文件当输入。
+六类可选表达为背景/目标/范围、被否方案、术语含义、场景旅程、部署参与方/上线协同、质量属性/数据生命周期，位置与形状见 [P1 写作约定](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图)。真正缺失每节一行集中提示，明确未知/不适用分别保留；形状错误由原 validator 给 WARN，不增加缺字段门禁、不改 schema。模型字段的可选 `description/source_ref` 沿现有加载/投影透传，展示保留有值事实、真实非法形状如实说明；来源只引用设计期已有材料，不把未来施工文件当输入。
 
 没有 ui-spec 依据时，P0 真机验收保留步骤、预期、分层与 focus，不编 `linked_flow`、checkpoint、屏幕流程或元素 ID。spec 得到真实 UI 依据后，只补未声明的键，保留原权威预期并通过现有对齐与 P0 检查。**正常交接不提前物化 Feature 文件**，spec/plan 直接消费已有 typed 推导输入，各写本阶段产物；投影带用例时 plan 必须写 use-cases.yaml 供真实业务 UT，required_outputs 不只看文件存在。带戳旧文件的合法补充只是兼容兜底，不删戳绕过；设计/CU 内容未变才仅更新来源身份，保留业务和补充字节，真内容变化退责任，不合并。叙述文件只按 required_outputs 产出，合法手写文件不强制迁移。精确边界见[蓝图设计输入](../concepts/blueprint-design-inputs.md)。
 
-标题与本次改变分别写 review_summary.title/summary，通用决策选择写 conclusion、rationale 解释原因；term.meaning 复用来源定义，模型字段 description 表达约束/单位。发布 payload、失败 handling/retry 和根契约 table_schema 的列/约束/默认值/JSON 编码由专用表格展示，原文存在就不能假报未记录。
+标题与本次改变分别写 review_summary.title/summary，概述末在既有叙述中连起总体方案；通用决策选择写 conclusion、rationale 解释原因。term.value.meaning 结合 glossary 说明与需求语境提炼，sample_usage 是消歧示例而非定义；模型字段 description 表达约束/单位。发布 payload、失败 handling/retry 和根 contracts[].table_schema 的列/约束/默认值/JSON 编码由专用表格展示，原文存在就不能假报未记录。
+
+设计 owner/App lens/独立质询沿现有问题检查存储的库名/版本、安全级别/是否加密、主键唯一、升级及敏感字段（table_schema + data_domains.security + 既有叙述）；逐项核真实依赖失败与用户中断，已有 selection/OTP 等内容归 boundaries/failure_recovery，真缺才补，不为 mock 编外部故障。错误/幂等键、涉及跨会话重复卡时的策略与主键明确；quality_attributes 对兼容、安全隐私、UX 深浅色/无障碍、打点/性能给实际结论，不涉及给理由，不凑量化阈值。包括 App lens 与质询在内的新叙述用项目语言。这些不增加机器字段/scope/阻断，也不降级现有 typed、来源、授权及 P0 检查。
 
 同一未完成交付的活动 CU 仅在无运行或已停住时，经 consumer 内容修订接点提交旧精确 ref 与候选，保留 ID/Feature/目录、框架 revision +1；running/锁竞争 busy，普通重复接受仍拒绝。历史完成、成功终局缺投影及损坏记录不冒充未完成，退役前身不改；修订后停住 run 沿既有 binding 缺口回 plan，保留历史与累计预算，不自动改旧产物或启动施工。完成后新增工作及拆分/合并/迁移才用新身份。
 
@@ -208,15 +210,19 @@ derived_from:
     - change_unit_id: <unit-id>
       binding: bound
       identity_neutral_digest: <digest> # 仅 canonical 能确定原架构相关集合时提供
-projection: component-blueprint-review@4
+projection: component-blueprint-review@6
 ---
 ```
 
 正文按概述、场景（+1）、逻辑、运行、开发、部署、取舍、质量属性/合规、验收、施工拆分、风险/待决项和编号速查组织。模型字段/枚举、接口参数/返回、完整有序步骤/分支、异常恢复、被否方案和 AC/BD/NFR 使用专用表格，不递归 dump 对象或把完整对象压成 JSON。内容只来自 canonical 蓝图与 CU，外部材料须先由设计 owner 消费形成设计事实；renderer 不读取需求原文、Feature 的 use-cases.yaml 或外部 catalog 自行补设计。
 
-Maison 直接从 canonical CU 收集目的、交付、模块/touches、显式依赖、约束和安全中间态，精确 supersedes 生成已替代小节。整份蓝图按承载目标展示 typed 内容；逐 CU 与生产投影共用纯选取/合并逻辑，显示实际继承的 AC/BD/NFR 和 `contracts.files` 声明集合及合并冲突，固定说明“是否通过交接校验见 readiness”。追溯表只列真实直接引用，不裁决覆盖。readiness/run/完成状态不进设计正文，完成情况链接既有 closure 投影。
+Maison 直接从 canonical CU 收集目的、交付、模块/touches、显式依赖、约束和安全中间态，精确 supersedes 生成已替代小节。逐 CU 与生产投影共用纯选取/合并逻辑，保留实际继承范围与合并冲突；完整 AC/BD/NFR 仅文档第 9 章，展示身份为来源目标加条目编号，两个目标各自 AC-1 保留；完整 files 清单仅开发视图一次，CU 以编号/链接追溯范围。文首阅读说明集中一次“是否通过交接校验见 readiness”等机制声明；可读标签优先已有 label/name/含义、缺时短 ID，框架状态枚举中文化，API/类型/自由业务状态保原名，不推断业务结论。稳定锚点/链接目标保留，原内部地址可留追溯附录；需求追溯只列真实直接引用、不裁决覆盖。readiness/run/完成状态独立，完成情况链接原 closure 投影。
 
-逻辑、开发、部署结构图复用已有图模块，只画显式关系并按完整地址区分跨视图同名节点；CU 依赖图只画 `requires`。无效 canonical 图不展示并披露原因，图不替代结构化设计。端到端时序使用完整有序步骤和分支表，本轮不生成时序图或代码骨架。
+单元格统一取值保留 string/number/bool/list，false/0 非空；已知业务键用专用格式，陌生业务键一层键值、不递归 dump，深层已有声明暂未展开如实说明。按所在结构排除机制元数据，来源/验证引用保留；不产空表/整空列，每节一行集中源缺项，缺失不冒充不适用。
+
+概述末总览及跨视图图只用既有 canonical 叙述/relations；运行阶段节点取 state_model.phases，边只各 branch.expected_phase_seq 相邻项且标 branch，不按 phases 排列连 Success→Failure。两图复用现有 flowchart/parser 并逐边追来源；逻辑/开发/部署结构图仍限显式关系，完整地址区分同名节点，CU 依赖图只画 requires。无效 canonical 图不展示并披露原因，图不替代结构化设计；不生成时序图或代码骨架。
+
+页面清单来自 components.kind/useCases.ui_bindings；场景视图集中页面与交互截图，每张已登记图片一次，追溯表等其它位置链接；journey_steps 中 J5/JR1/JR2 等完成后去向文本保留。本批不生成页面导航图：navigation 只有 config_files，不从共享动作连页面边或由文字去向推路由；真实实读仍不清楚才另讨论结构化导航数据。renderer 只输出已登记图片引用，不读外部图像字节作新设计事实/新绑定输入；隔离验收副本复制图片并保相对路径，以实际可见确认。重建/夹具通过不证明新写作充分，真实效果仍需干净需求实读七问。
 
 owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，合并集合标“待指针升版后显示”，不填假摘要、不承诺 carry-forward。当前精确绑定的 CU 若某层级相关性须靠外部 catalog 才能确定，则省略中立摘要，精确绑定与声明集合仍展示；原摘要算法/字段不变，不把省略变成新增来源缺口或阻断。单项坏 CU 不妨碍其余设计展示，缺口附 id/路径/原因；生成成功不等于来源完整或准入通过。内部刷新与外层补生成按整个尝试最终状态汇总，实际写入路径保留。
 
@@ -238,7 +244,7 @@ owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，
 ### 4.5 随包样例
 
 - 有效：[`samples/blueprint-review-projection.valid.md`](samples/blueprint-review-projection.valid.md)
-- 无效（投影新增设计事实）：[`samples/blueprint-review-projection.invalid-added-fact.md`](samples/blueprint-review-projection.invalid-added-fact.md)
+- 历史无效样例（投影新增设计事实，保留旧 @5 格式，单独校验同时报格式过期）：[`samples/blueprint-review-projection.invalid-added-fact.md`](samples/blueprint-review-projection.invalid-added-fact.md)；当前正文新增事实反例由测试在当前有效投影上追加事实后验证。
 
 完整样例由一个充实的框架表达夹具生成，展示两个 CU 共享/专属目标与 4+1 细节；它不是真实需求，不能替代宿主下一项正式需求从设计写作、只读校验到下游实际投影消费的验收。
 

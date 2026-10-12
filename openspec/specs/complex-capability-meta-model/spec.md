@@ -458,6 +458,8 @@ renderer MUST NOT 兼任 feedback provider。
 
 默认本地交付 SHALL 由 Maison 从 canonical 蓝图与 CU 派生同页 4+1 设计、施工拆分、质量与验收，相对两者零新事实；宿主无需自拼 CU 附件，仍可附 spec 等外部附件。设计期 SHALL 在原目标写入 acceptance/contracts/use_cases，按原对象增加六类可选表达；来源与目标态裁决仍归原设计 owner，renderer MUST NOT 读外部原文补设计或创建独立文档权威。草稿本地展示不宣称正式 admitted publication，readiness/run/完成结论 MUST 独立报告。投影与 feedback 的权责继续独立。
 
+人读取值/主责章节与设计写作深度 SHALL 遵循 app-component-blueprint 的同一契约：有值不假报缺失、不产空表，验收按来源目标加编号只完整展示一次、CU 链接保留实际范围；方案总览、分支阶段图与跨视图图只编排 canonical 内容/显式边，页面清单/截图/既有旅程去向表不推断导航路由。renderer 只输出已登记图片引用，外部图像字节 MUST NOT 成为新设计事实或新绑定输入。写作与原 scope 质询 SHALL 深化术语、存储、真实失败/中断、错误/幂等和质量结论并使用项目语言，MUST NOT 增加机器字段/scope/阻断或削弱既有 typed/来源/授权检查；夹具重渲染不代替真实宿主实读验收。
+
 #### Scenario: CU decomposition is included by Maison
 - **WHEN** 宿主接收当前设计交付
 - **THEN** Maison SHALL 同页呈现有效 CU、精确替代、显式依赖、安全中间态和需求直接引用，MUST NOT 依赖宿主拼装 CU 正文或输出覆盖结论

@@ -89,7 +89,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，写可读 title/本次改变 summary、通用 conclusion/理由 rationale、术语 meaning 与字段 description；整个 contracts.change_unit 交 plan，交接不物化 Feature。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，补实术语、存储、真实失败/中断、错误/幂等与质量结论；App lens/质询用项目语言，细则沿同页，整个 contracts.change_unit 交 plan，交接不物化 Feature。
 
 内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求按实际影响展开必要细节，未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
@@ -117,7 +117,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 
 ### 4. Readiness 与后续施工入口（终点）
 
-派生全部未退役 CU（含已完成旧 CU）的设计可施工门与 readiness；原 constructable 项调用默认只读 typed 投影检查，absent 如实列补设计责任，invalid 使用现有原因 blocked；不传 pure、不物化 Feature、不重启旧 CU。调和刷新先失败沿原异常/整批回滚。输出设计交付结果与下一步建议：
+派生全部未退役 CU（含已完成旧 CU）的设计可施工门与 readiness；原 constructable 项只读检查 canonical typed 内容，absent 列补设计责任，invalid 按原原因 blocked；阶段用例未对齐交 plan，不反校验蓝图、不物化 Feature、不重启旧 CU。Feature 无安全刷新依据保留旧文件，canonical 合法指针照升；真正 canonical/I/O 失败按原事务。输出设计交付结果与下一步建议：
 
 - 施工：[`/change-unit-progression`](../change-unit-progression/SKILL.md)
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)

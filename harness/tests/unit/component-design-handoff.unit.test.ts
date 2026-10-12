@@ -1010,7 +1010,7 @@ export function runAll(): UnitCaseResult[] {
       const first = materializeBlueprintReview(root, BLUEPRINT_ID);
       assert(first.status === 'refreshed' && first.writtenPaths.length === 1, JSON.stringify(first));
       const output = fs.readFileSync(first.path, 'utf8');
-      assert(output.includes('尚未拆分') && output.includes('准入 blocker') && output.includes('草稿：背景'), '草稿状态/0 CU 不实');
+      assert(output.includes('尚未拆分') && output.includes('准入 阻塞') && output.includes('草稿：背景'), '草稿状态/0 CU 不实');
       assert(fs.readFileSync(file).equals(before), '生成修改了蓝图');
       const mtime = fs.statSync(first.path).mtimeMs;
       const again = materializeBlueprintReview(root, BLUEPRINT_ID);
@@ -1158,7 +1158,12 @@ export function runAll(): UnitCaseResult[] {
       assert(text.includes('&lt;test&gt;') && text.includes('\\`literal\\`'), 'Markdown 叙述转义失败');
       const links = [...text.matchAll(/\]\(#(design-[a-f0-9]+)\)/g)].map(m => m[1]);
       assert(links.length > 0 && links.every(id => text.includes(`id="${id}"`)), '稳定地址链接没有对应锚点');
-      assert(source.inputs.units.length > 0 && !text.includes('已覆盖'), '设计投影冒充覆盖结论');
+      const traceability = text.slice(text.indexOf('### 需求追溯总表'), text.indexOf('## 3 逻辑视图'));
+      const construction = text.slice(text.indexOf('## 10 施工拆分'), text.indexOf('## 11 风险'));
+      assert(source.inputs.units.length > 0 && !traceability.includes('已覆盖') && !construction.includes('已覆盖'), '需求追溯/施工认领冒充覆盖结论');
+      const lifecycleCovered = asRecords(source.loaded.blueprint.design_views).flatMap(view => asRecords(view.runtime_data_flows)).some(flow => Object.values(asRecord(flow.lifecycle_coverage) ?? {}).some(item => asRecord(item)?.status === 'covered'));
+      const runtime = text.slice(text.indexOf('## 4 运行时视图'), text.indexOf('## 5 开发视图'));
+      assert(lifecycleCovered && runtime.includes('| 已覆盖 |'), '原生命周期 covered 声明丢失');
     });
     withProject(root => {
       const text = loadBlueprintReviewSource(root, BLUEPRINT_ID).markdown;

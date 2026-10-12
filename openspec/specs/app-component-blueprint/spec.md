@@ -224,11 +224,15 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 设计期 MUST 在将被 CU 引用的 canonical 目标上写入已有 `acceptance`、`contracts`、`use_cases` 结构，保持既有 provenance 权威、类型/版本与检查；spec/plan MUST 直接消费已有 typed 投影，只补本职责未声明的内容。无 ui-spec 依据时，P0 真机条目 MUST 保留 ID、优先级、步骤、预期、分层与 focus，MUST NOT 编造 linked_flow、checkpoint、屏幕流程或元素 ID；spec 得到真实 UI 依据后 MAY 只补未声明键，MUST 保留原权威预期并通过原对齐与 P0 检查。缺 typed 内容的存量蓝图 MUST 如实显示“设计期未写入，将由 spec/plan 补”，MUST NOT 因本批缺字段新增机器门禁或强制迁移合法手写产物。
 
-写作 SHALL 用 review_summary.title 表达可读需求标题，summary 说明本次改变；通用决策获准选择写 conclusion，rationale 只解释原因，特定 kind 保留自身结论字段。term.meaning 和模型字段 description SHALL 依已消费来源写入。renderer SHALL 用专用发布载荷、失败处理/重试与持久化字段表展示 publications.payload、failure_recovery.handling/retry、根 contracts.table_schema 的 table/columns、name/type/from/encoding/source_ref 及既有 NOT NULL/UNIQUE/default 语义，不把已有值假报未记录。已知业务对象只作有限字段/列表展示，未知结构 SHALL 标未能表达，不递归 dump 元数据。用例新写 expected_port_calls，旧 expected_boundary_calls SHALL 由同一加载/归一化内核兼容；两键冲突 SHALL 披露且不得静默丢失。
+写作 SHALL 用 review_summary.title 表达可读需求标题，summary 说明本次改变，概述末用已有叙述串起场景、模块、运行、开发与部署方案；真缺叙述 SHALL 在设计期补既有 review_summary，不新增字段或由 renderer 造事实。通用决策获准选择写 conclusion，rationale 只解释原因，特定 kind 保留自身结论字段。term.value.meaning SHALL 由 glossary 已有说明结合需求语境提炼，sample_usage SHALL 仅作示例消歧而非机械当定义；模型字段 description SHALL 依已消费来源写入。App lens 与质询问题/结论 SHALL 使用项目语言，保留 API/类型/路径原名。
+
+设计 owner、App lens 与独立质询 SHALL 在原问题/scope 内逐项核真实设计深度：根 contracts[].table_schema 的表/列/约束结合 data_domains.security 与既有叙述说明实际库名/版本、安全级别/是否加密、主键唯一、升级和敏感字段；真实依赖失败与用户中断先核已有 boundaries/failure_recovery、真实缺失才补，mock SHALL NOT 编外部故障/新业务；约定错误、幂等键与范围，以及涉及跨会话重复卡时的策略/主键 SHALL 明确；现有 quality_attributes SHALL 对兼容、安全隐私、UX 深浅色/无障碍、打点、性能给实际结论，不涉及给理由，不凑量化阈值。此为写作/质询要求，MUST NOT 新增数据库配置字段、requiredQuestioningScopes 项或机器阻断，MUST NOT 降级既有 typed/来源/授权检查。真实效果由干净需求实读七问验收，隔离重渲染不证明写作充分。
+
+renderer SHALL 用专用格式展示 publications.payload、failure_recovery.handling/retry、根 contracts[].table_schema 及原约束/默认值，不把已有值假报未记录。所有单元格 SHALL 共用取值规则，string/number/bool/list 保真，false/0 非空；已知业务键沿原格式，陌生业务键只一层键值、不递归 dump，深层声明未展开 SHALL 如实说明范围。机制元数据 SHALL 按所在结构排除，来源/验证引用保留原列，MUST NOT 全局删除同名业务键。用例新写 expected_port_calls，旧 expected_boundary_calls SHALL 由同一加载/归一化内核兼容；两键冲突 SHALL 披露且不得静默丢失。
 
 当前 CU 的精确绑定与合法 supersedes 历史 SHALL 分开判定：精确退役关系成立时，前身旧蓝图指针不能中立展开 SHALL 仅表示不能证明等价，不隐藏当前合并集合、不把退役 pending 混入当前 publication sourceGaps。坏 hash、缺前身、断链或当前坏 ref SHALL 继续披露，不重写历史指针或新增快照仓库。
 
-以下六类 MUST 作为原对象的可选表达扩展，数组 MAY 为空、缺失 MUST 显示未记录。存在但形状错误 MUST 由现有 validator 给出带位置/原因的 WARN，MUST NOT 经 schema、CU sourceGaps 或 readiness 间接阻断；蓝图 schema MUST 保持不变，既有强契约检查 MUST NOT 降级：
+以下六类保留原对象的可选表达，数组 MAY 为空；真正缺失 MUST 每节一行集中说明，明确未知、明确不适用与缺失 MUST 分开，空值 MUST NOT 推不适用，MUST NOT 产表头空表/整空列。存在但形状错误 MUST 由现有 validator 给出带位置/原因的 WARN，MUST NOT 经 schema、CU sourceGaps 或 readiness 间接阻断；蓝图 schema MUST 保持不变，既有强契约检查 MUST NOT 降级：
 
 | 位置 | 可选形状 |
 | --- | --- |
@@ -239,11 +243,11 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 | deployment 节点/视图 | 节点 responsibilities/inputs/outputs/not_responsible_for: string[]、failure_impact: string；视图 rollout: [{order: number, unit: string, depends_on: string[], note: string}]、coordination: [{counterpart: string, relation: string}] |
 | 蓝图根 | quality_attributes: [{qa_id: string, category: string, requirement: string, landing: string, source_ref: string, verification_refs: string[]}]；data_domains: [{data_domain_id: string, usage: string, retention: string, isolation: string, cleanup: string, security: string}] |
 
-flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MUST 留在已有 acceptance，不另维护 NFR 真源。`contracts.data_models[].fields[]` MAY 携带可选字符串 description/source_ref，现有加载/投影 MUST 透传；renderer 对非字符串只显示“未能表达”，MUST NOT 新增 schema/validator。所有新增 source_ref MUST 只引用设计期已有来源，MUST NOT 把未来施工文件当输入或授予写权限。本批 MUST NOT 新建独立文档权威、artifact/协议、审批门禁、代码骨架或时序图。
+flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MUST 留在已有 acceptance，不另维护 NFR 真源。`contracts.data_models[].fields[]` MAY 携带可选字符串 description/source_ref，现有加载/投影 MUST 透传；展示 SHALL 保留有值事实，真实非法形状如实诊断，MUST NOT 新增 schema/validator。所有新增 source_ref MUST 只引用设计期已有来源，MUST NOT 把未来施工文件当输入或授予写权限。本批 MUST NOT 新建独立文档权威、artifact/协议、审批门禁、代码骨架或时序图。
 
-文档 MUST 只读取 canonical 蓝图/CU，按目标展示完整 typed 细节，逐 CU 与生产投影共用纯目标选取/合并逻辑展示实际继承的 AC/BD/NFR 和 contracts.files 声明集合及冲突，并注明“是否通过交接校验见 readiness”。MUST NOT 读取 Feature use-cases.yaml、需求原文或外部 catalog 反向设计、运行完整投影门或按 predicate/touches 估算集合。待升版 CU MUST 保留自身施工契约，合并集合标“待指针升版后显示”；canonical 无法独立确定架构相关集合时 MAY 省略中立摘要并保留精确绑定，不改原摘要算法、不新增来源缺口、不宣称 carry-forward。
+文档 MUST 只读取 canonical 蓝图/CU，按目标展示 typed 细节，逐 CU 与生产投影共用纯目标选取/合并逻辑保留实际继承范围及冲突。验收展示身份 SHALL 为“来源目标 + 条目编号”，不同目标各自 AC-1 MUST 保留而非裸编号全局去重；完整 AC/BD/NFR 只在文档第 9 章、完整 contracts.files 清单只在开发视图一次，其余编号/链接 SHALL 保留 CU 精确范围。“是否通过交接校验见 readiness”等机制声明 SHALL 文首阅读说明集中一次，可读链接标签优先已有 label/name/含义、缺时短 ID，锚点/链接目标 MUST 保留，原内部地址 MAY 留追溯附录。框架状态枚举 SHALL 用中文，API/类型/自由业务状态名 MAY 保原名，不凭名称补业务结论。MUST NOT 读取 Feature use-cases.yaml、需求原文或外部 catalog 反向设计、运行完整投影门或按 predicate/touches 估算集合。待升版 CU MUST 保留自身施工契约，合并集合标“待指针升版后显示”；canonical 无法独立确定架构相关集合时 MAY 省略中立摘要并保留精确绑定，不改原摘要算法、不新增来源缺口、不宣称 carry-forward。
 
-正文 MUST 用专用字段/枚举/接口/步骤/分支/异常/取舍/验收表展示既有细节，不递归 dump 原始对象。结构图 MUST 复用已有图模块，只消费显式关系并按完整稳定地址区分端点；无效 canonical 图 MUST 不展示且披露原因。readiness/run/完成状态 MUST 留在独立结果或原 closure 投影，不进入设计正文；内部 fingerprint、provider 行为卡和来源机制元数据 MUST NOT 充当设计内容。
+正文 MUST 用专用字段/枚举/接口/步骤/分支/异常/取舍/验收表展示既有细节，不递归 dump 原始对象。概述跨视图图 SHALL 只用 canonical relations 显式边；运行阶段图节点 SHALL 取 state_model.phases，边只各 branch.expected_phase_seq 相邻项且标 branch，MUST NOT 按 phases 排列连 Success→Failure。两图 MUST 复用现有 flowchart/parser、逐边可追分支/关系；其它结构图仍只消费显式关系，按完整稳定地址区分端点，无效 canonical 图 MUST 不展示且披露原因。页面清单 SHALL 取 components.kind/useCases.ui_bindings，集中场景页面/交互截图，每张已登记图片一次、追溯表等位置链接；journey_steps 完成后去向文本 SHALL 保留。本批 MUST NOT 生成页面导航图：navigation 只有 config_files，不因共享动作连页面边、不由文字去向推路由；真实实读仍不足才另讨论结构化导航数据。renderer SHALL 只输出已登记图片引用，MUST NOT 将外部图像字节作为新设计事实/新绑定输入；隔离验收副本 SHALL 保图片相对路径并确认实际可见。readiness/run/完成状态 MUST 独立；内部 fingerprint/provider 行为卡不得充当设计内容。
 
 #### Scenario: Draft and complete local delivery
 - **WHEN** 当前 canonical 蓝图可解析但未准入，或完整设计交接完成
@@ -252,12 +256,12 @@ flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MU
 #### Scenario: Optional presentation fields do not become a new handoff gate
 
 - **WHEN** 存量蓝图缺少六类可选字段，或其中字段形状错误
-- **THEN** 文档 MUST 表达未记录或未能表达，形状错误只给 WARN；已有 typed 内容非法仍 MUST 经原 readiness 处理，不能被展示宽容豁免
+- **THEN** 文档 MUST 集中表达真正缺失，已有值和深层未展开声明不得假报未记录，形状错误只给 WARN；已有 typed 内容非法仍 MUST 经原 readiness 处理，不能被展示宽容豁免
 
 #### Scenario: Canonical content controls the review document
 
 - **WHEN** canonical 蓝图与 CU 字节未变，但 Feature use-cases.yaml 或需求原文改变
-- **THEN** 文档字节与同源发布比对 MUST 保持不变；完整只读 readiness MUST 继续检查实际依赖，不能从文档生成成功推导交接通过
+- **THEN** 文档字节与同源发布比对 MUST 保持不变；只读 readiness MUST 检查 canonical 设计来源，Feature 阶段用例对齐 MUST 留在 plan 原门，不能从文档生成成功推导交接通过
 
 > **Enforced by:** skills/project/component-design/SKILL.md、skills/reference/app-component-blueprint-workflow.md、harness/scripts/check-component-blueprint.ts、harness/scripts/utils/blueprint-review-projection.ts
 
@@ -267,9 +271,9 @@ Blueprint projection SHALL use canonical CU design references and existing revis
 
 Projection and the review document SHALL share one target selection and content merge function. Selecting a target SHALL inherit its whole typed content. Arrays SHALL merge by the existing projection row identity, deduplicating identical content and rejecting conflicting content with authority_content_conflict. Object-valued keys SHALL only accept identical complete declarations and SHALL NOT merge per key. Shared targets SHALL contain only content all referencing units should inherit; exclusive acceptance, files and use cases SHALL belong to targets referenced only by their unit. Stable design nodes SHALL NOT be copied or versioned to carry a revised or replacement CU mapping. Predicates and touches SHALL NOT filter inherited content or expand authorization. Legitimate sequential writes to the same file SHALL NOT introduce a new overlap gate.
 
-Design readiness SHALL reuse the default read-only projection checks for all non-retired constructable units, including completed units, without materializing artifacts or skipping handwritten use-cases conflicts through pure mode. Each declared content kind SHALL be checked even when another is absent. Absent content SHALL identify the existing spec/plan responsibility without a new missing-field gate; declared invalid structure, authority, design write sets or conflicts SHALL reuse existing reasons and return not-ready. The review document SHALL only show canonical declarations and merge conflicts, with the statement that handoff validation is reported by readiness.
+Design readiness SHALL reuse canonical-only read-only projection checks for all non-retired constructable units, including completed units, without materializing artifacts. Feature use-cases SHALL NOT reverse-validate canonical authority; existing definition gaps and plan alignment SHALL return unaligned stage content to plan. The removed pure mode SHALL NOT be reintroduced. Each declared content kind SHALL be checked even when another is absent. Absent content SHALL identify the existing spec/plan responsibility without a new missing-field gate; declared invalid canonical structure, authority, design write sets or conflicts SHALL reuse existing reasons and return not-ready. The review document SHALL only show canonical declarations and merge conflicts, with handoff validation explained once in the opening reading note.
 
-Normal handoff SHALL NOT materialize Feature acceptance/contracts/use-cases files; spec and plan SHALL consume derived inputs and write their own outputs. Explicit materialization remains a compatibility path. Source-stamped files SHALL permit non-conflicting stage supplementation under the same authoritative alignment used by handwritten content. Refresh SHALL only update source/reference identity when unchanged design and CU contract content is provable, preserving business and supplementary bytes; real content changes or unavailable equivalence SHALL return to the responsible stage without merging or overwriting. Materialization MUST validate the complete candidate and sources before writing through existing artifact paths and MUST reject conflicts with existing decisions. Equivalent files SHALL not be rewritten; valid handwritten files SHALL not be silently migrated or overwritten. Source stamps, normalized content and canonical CU bindings SHALL remain verifiable through the same existing path.
+Normal handoff SHALL NOT materialize Feature acceptance/contracts/use-cases files; spec and plan SHALL consume derived inputs and write their own outputs. Explicit materialization remains a current projection export, not an unpublished legacy-CU migration path. Source-stamped files SHALL permit non-conflicting stage supplementation under the same authoritative alignment used by handwritten content. Refresh SHALL only update source/reference identity when unchanged design and CU contract content is provable, preserving business and supplementary bytes; real content changes or unavailable equivalence SHALL retain that Feature's old files and return to the responsible stage without merging or overwriting, while legal canonical pointers and sibling units continue. Canonical invalidity and real I/O/CAS failures SHALL retain existing transactional failure behavior. Materialization MUST validate the complete candidate and sources before writing through existing artifact paths and MUST reject conflicts with existing decisions. Equivalent files SHALL not be rewritten; valid handwritten files SHALL not be silently migrated or overwritten. Source stamps, normalized content and canonical CU bindings SHALL remain verifiable through the same existing path.
 
 Enforcement: `harness/scripts/utils/blueprint-skill-projection.ts`, `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/prepare-blueprint-design.ts`, `harness/scripts/utils/change-unit-feature-projection.ts`, `harness/scripts/utils/check-acceptance.ts`, `harness/scripts/utils/contract-reference-closure.ts`.
 

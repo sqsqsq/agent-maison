@@ -19,7 +19,7 @@ acceptance 挂 scenarios/logical 等设计目标；contracts 挂 development 节
 
 CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，A/B 专属 AC/BD/NFR、files、用例放独占目标。module_dependencies/navigation/resource_keys/acceptance.flows 等对象集中在一个承载目标，不拆开等自动拼接。整个 change_unit 不在设计期编写，也不进入设计内容投影；每个 Feature 的专属映射交 plan，缺失、未知谓词、过期身份或越权文件仍由原施工门拒绝。合法先后写同文件不新增门禁，不能按 predicate 隐藏误继承的 AC/文件，也不因 CU 修订/替代复制稳定设计节点。
 
-普通 AC/BD 身份只含 id，故单次 CU 投影内唯一；推荐全蓝图稳定唯一，跨目标同 ID 不同内容按目标来源披露，不新增全蓝图唯一门禁。contracts.data_models.fields.description/source_ref 为可选说明/来源，现有加载和投影透传，schema 不变。目录来自 modules[].package_path/layer、依赖来自 contracts 根级 module_dependencies、写集仅 files。
+普通 AC/BD 的机器行身份只含 id，故单次 CU 投影内唯一；投影合并/冲突规则不变。人读展示身份为“来源目标 + 条目编号”，不同目标各自 AC-1 都保留，不按裸编号全蓝图去重，不新增唯一门禁。contracts.data_models.fields.description/source_ref 为可选说明/来源，现有加载和投影透传，schema 不变。目录来自 modules[].package_path/layer、依赖来自 contracts 根级 module_dependencies、写集仅 files。
 
 无 ui-spec 依据时保留 P0 ID/优先级/步骤/预期/ut_layer/focus，不写 linked_flow/checkpoint/屏幕流程；spec 得到真实 UI 依据后只补未声明键，已有权威预期不改，按原 checkAuthoritativeContentAligned 与 P0 门检查。不得编元素 ID、删 acceptance 或修改门禁。
 
@@ -29,7 +29,11 @@ deriveDesignPreparationReadiness 在原指针调和后，对全部未退役（�
 
 检查不物化 sidecar、不写 phase 证据、不选 CU 或开始 Goal。**正常交接不运行 prepare-blueprint-design 来提前创建 Feature 文件**；spec/plan 直接消费 provider 推导输入并各写本阶段产物。未来 plan 的 change_unit 映射缺失不阻断设计 readiness，设计投影存在也不证明 plan 完成；没有有效映射仍须安排 plan。Feature 无法安全刷新不阻挡合法 canonical 指针升版；其旧文件保留，由既有绑定/定义缺口安排 spec/plan。canonical 校验与真实写入失败仍沿原异常和整批回滚。
 
-完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 显示与生产投影共用目标选取/合并逻辑所得声明集合，**是否通过交接校验见 readiness**。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；设计来源按默认 readiness 路径检查，阶段用例按 plan 对齐门检查。canonical 能确定架构相关集合时沿用原中立摘要，若相关性须靠外部 catalog 才能确定，则省略摘要并保留精确 CU 绑定与声明集合，不承诺 carry-forward。待升版 CU 的合并集合标“待指针升版后显示”。字段 absent 明确“设计期未写入，将由 spec/plan 补”；可选表达形状 WARN 不变成业务阻断。样例是框架表达夹具，不代表真实宿主验收。
+完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 用生产投影共用目标选取/合并逻辑保留实际声明范围。完整 AC/BD/NFR 仅文档第 9 章、完整 files 清单仅开发视图一次，CU 用编号/链接追溯范围与冲突；“是否通过交接校验见 readiness”等机制声明文首集中一次，正文可读标签保留锚点/链接目标，追溯附录可留原地址。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；设计来源按默认 readiness 路径检查，阶段用例按 plan 对齐门检查。canonical 能确定架构相关集合时沿用原中立摘要，否则省略摘要而保留精确 CU 绑定/声明，不承诺 carry-forward。待升版集合标“待指针升版后显示”；typed absent 明确“设计期未写入，将由 spec/plan 补”，可选表达 WARN 不变成业务阻断。
+
+所有单元格共用 string/number/bool/list 保真规则，false/0 非空，陌生业务键只一层键值；机制元数据按所在结构排除，来源/验证引用保留。有值不假报未记录，深层声明暂未展开如实说明；不产空表/整空列，每节一行集中真实缺项，明确未知/不适用与缺失分开。概述总览/跨视图图只取已有 canonical 叙述与 relations；运行阶段图节点取 state_model.phases、边只各 branch.expected_phase_seq 相邻项并标 branch，复用现有 parser，不按 phases 顺序串 Success→Failure。页面清单、已登记图片和 journey_steps 去向表是本批导航表达上限，不生成页面导航图或从共享动作连边；图片只输出引用，不把外部图像字节作为新设计/绑定输入。隔离副本保图片相对路径并验证实际可见。
+
+设计深度沿 [P1 既有写作/质询问题](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 补术语含义、表级存储/安全/升级、真实失败与用户中断、错误/幂等及质量结论，App lens/质询用项目语言，不新增字段/机器阻断、不削弱原检查。示例或当前材料重渲染只证明忠实展示；缺失设计不会被 renderer 补成事实，写作真实效果仍需真实宿主干净需求实读。
 
 ## 施工映射
 

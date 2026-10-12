@@ -577,13 +577,13 @@ export function runAll(): UnitCaseResult[] {
       '## 各视图的显式联系',
       '## 附录：独立质询',
       '## 11 风险与待决项',
-      '单向派生物',
+      '本文根据蓝图与施工单元生成，展示已登记设计',
     ]) {
       assert(markdown.includes(expected), `projection 缺 ${expected}`);
     }
     const fixtureProjection = fs.readFileSync(path.join(path.dirname(VALID_PATH), 'component-blueprint.review.md'), 'utf8');
     assert(fixtureProjection !== markdown && fixtureProjection.includes('projection: component-blueprint-review@3'), '旧 Ledger 文档保留作旧格式回归，不重生成原夹具');
-    assert(markdown.includes('projection: component-blueprint-review@5'), '新输出使用默认设计交付格式');
+    assert(markdown.includes('projection: component-blueprint-review@6'), '新输出使用默认设计交付格式');
   }));
 
   results.push(test('review presentation selects business fields: DTO tables, ordered flow, decisions and unchanged evidence, without recursive metadata', () => {
@@ -613,7 +613,9 @@ export function runAll(): UnitCaseResult[] {
     const sequence = ['触发：', '首次加载：', '权威状态：', '写入与发布：', '订阅与消费者：', '失败与恢复：', '生命周期：'];
     const positions = sequence.map(label => section.indexOf(label));
     assert(positions.every((position, index) => position >= 0 && (!index || position > positions[index - 1]!)), `流程顺序错误：${positions}`);
-    assert(section.includes('publication:ledger-changed') && section.includes('remove observer token') && section.includes('rebuild store from repository'), '发布/清理/恢复链路丢失');
+    assert(section.includes('ledger-changed') && !section.includes('publication:ledger-changed') && section.includes('remove observer token') && section.includes('rebuild store from repository'), '发布/清理/恢复链路丢失');
+    const referenceAppendix = body.slice(body.indexOf('## 附录：正文引用地址'));
+    assert(referenceAppendix.includes('publication:ledger-changed'), '原发布引用未保留在追溯附录');
   }));
 
   results.push(test('generated graph parser is conditional and cannot replace structured completeness', () => {
