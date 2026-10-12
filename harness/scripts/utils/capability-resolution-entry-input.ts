@@ -634,7 +634,7 @@ export function resolveCapabilityResolutionEntryInput(
       );
       const inventory = loadArtifactInventory(frameworkRoot);
       const projectedUseCases = options.phase === 'plan'
-        ? deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts', 'pure').artifacts?.['use-cases@1']
+        ? deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts').artifacts?.['use-cases@1']
         : undefined;
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
         const base = path.basename(name);

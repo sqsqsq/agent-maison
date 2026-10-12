@@ -131,9 +131,9 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
   assert(expected[0] === 'spec' && expected.includes('plan'), `前提：出生链含 spec 与 plan：${JSON.stringify(expected)}`);
   const hooks = specFirstCuHooks(p, true);
   // 作者材料来自注入故障前仍有效的设计输入；故意坏掉的窗口由真实 gate 判断，不让 provider assert 抢先中断。
-  const approved = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'contracts', 'pure');
+  const approved = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'contracts');
   assert.strictEqual(approved.state, 'resolved', approved.detail);
-  const approvedAcceptance = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure');
+  const approvedAcceptance = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance');
   assert.strictEqual(approvedAcceptance.state, 'resolved', approvedAcceptance.detail);
   const approvedContracts = structuredClone(approved.value) as Ev;
   const approvedCases = structuredClone(approved.artifacts?.['use-cases@1']) as Ev | undefined;
@@ -364,7 +364,7 @@ async function haltAfterBirthAtSpec(s: Snapshot, completed: string | undefined, 
       birthManifest ??= fs.readFileSync(runFile(s.root, feature, ctx.runId, 'manifest.json'));
       if (!completed) {
         if (!specDraft) {
-          const input = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure');
+          const input = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance');
           assert.strictEqual(input.state, 'resolved', input.detail);
           specDraft = { ...(structuredClone(input.value) as Ev), source: 'spec:fixture-ledger-request' };
         }
@@ -437,7 +437,7 @@ function authorsForContinuation(s: Snapshot, feature: string): Record<string, un
       reestablished.add(ctx.runId);
       fs.rmSync(featureFilePath(s.root, feature, 'context/facts.md'), { force: true });
     }
-    if (key === 'onSpec' && deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure').state !== 'resolved') {
+    if (key === 'onSpec' && deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance').state !== 'resolved') {
       p.runId = ctx.runId;
       writeCuSpecDraft(p);
     } else (bySpec ? specLed : codingLed)[key](ctx);
@@ -503,7 +503,7 @@ function assertCompletedBy(s: Snapshot, feature: string, runId: string, label: s
   assert(endOf(events)?.status === 'CHAIN_SLICE_COMPLETED' && final.complete && final.record.state !== 'absent' && final.record.run_id === runId,
     `${label}：任务应由 run ${runId} 正确完成：${JSON.stringify(verdictsOf(events))} halt=${JSON.stringify(haltOf(events)?.reason)} end=${JSON.stringify(endOf(events))}\n${brief(final)}`);
   const onDisk = YAML.parse(fs.readFileSync(featureFilePath(s.root, feature, 'acceptance.yaml'), 'utf8')) as { criteria: Array<{ id: string; expected_result: string }> };
-  const authoritative = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure');
+  const authoritative = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance');
   assert.strictEqual(authoritative.state, 'resolved', `${label}：当前验收权威必须可用：${authoritative.detail}`);
   const expected = (authoritative.value as Ev).criteria.find((c: Ev) => c.id === 'AC-1')?.expected_result;
   assert.strictEqual(typeof expected, 'string', `${label}：当前权威须声明 AC-1 的 expected_result`);
@@ -1175,7 +1175,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert.strictEqual(pointerStaleCandidate(s.root, feature), false, '未升版时不是调和候选');
       bumpBlueprint(s);
       clearFrameworkConfigCache();
-      const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure');
+      const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance');
       assert(projected.state === 'invalid' && projected.reason === 'blueprint_ref_stale', JSON.stringify({ state: projected.state, reason: projected.reason, detail: projected.detail }));
       assert.strictEqual(pointerStaleCandidate(s.root, feature), true);
       const gate = checkAuthoritativeContentAligned(checkCtx(s, feature), 'acceptance').find(c => c.id === 'authoritative_content_aligned');
@@ -1201,7 +1201,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const again = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
       assert(again.bumped.some(b => b.change_unit_id === CU), JSON.stringify(again));
       clearFrameworkConfigCache();
-      const broken = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance', 'pure');
+      const broken = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'acceptance');
       assert(broken.state === 'invalid' && broken.reason === 'other', JSON.stringify({ state: broken.state, reason: broken.reason, detail: broken.detail }));
       assert.strictEqual(pointerStaleCandidate(s.root, feature), false, '内容坏不是调和候选');
       const gate2 = checkAuthoritativeContentAligned(checkCtx(s, feature), 'acceptance').find(c => c.id === 'authoritative_content_aligned');
@@ -1360,7 +1360,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
         assert(r.bumped.some(b => b.change_unit_id === CU) && !r.skipped.some(x => x.change_unit_id === CU), JSON.stringify(r));
         clearFrameworkConfigCache();
-        const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, kind, 'pure');
+        const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, kind);
         assert.strictEqual(projected.state, 'invalid', `前提：投影无效：${JSON.stringify({ state: projected.state, detail: projected.detail })}`);
         return { codes: projected.codes ?? [], cls: classifyDesignAuthorityCodes(projected.codes ?? []).class, detail: String(projected.detail), locations: projected.locations };
       };
@@ -1399,7 +1399,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert(r.bumped.some(b => b.change_unit_id === CU) && !r.skipped.some(x => x.change_unit_id === CU), JSON.stringify(r));
         clearFrameworkConfigCache();
         const before = fs.readFileSync(blueprintFile(s));
-        const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'contracts', 'pure');
+        const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'contracts');
         assert.strictEqual(projected.state, 'resolved', projected.detail);
         assert.strictEqual((projected.value as Ev).change_unit, undefined, '专属映射不再来自蓝图');
         assert(!projected.codes?.some(code => code.startsWith('authority_cu_mapping')), JSON.stringify(projected.codes));

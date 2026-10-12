@@ -229,7 +229,7 @@ function resolveArtifact(
         const sourceFeature = feature ?? (typeof value.feature === 'string' ? value.feature : undefined);
         if (sourceFeature === undefined) return { state: 'invalid', dependencies, detail: 'blueprint projection requires its explicit source subject' };
         const kind = value.source.startsWith('derive.blueprint-acceptance:') ? 'acceptance' : 'contracts';
-        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind, 'pure');
+        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind);
         dependencies.push(...projected.dependencies);
         projectedValue = projected.artifacts?.[source.artifact];
         if (projected.state === 'invalid') return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection invalid; return to design owner' };

@@ -308,7 +308,7 @@ export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown)
  * 投影只读取 canonical CU/design 来源；阶段产物由责任阶段的对齐门与 materialize writer 检查，
  * 不拿待比较的 use-cases.yaml 反向判定设计权威是否有效。
  */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, _refresh?: ProjectionRefresh | 'pure'): BlueprintSkillProjection {
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     if (!dependencies.some(dep => dep.path === file)) dependencies.push({ path: file, exists: fs.existsSync(file), sha256: fs.existsSync(file) ? digest(file) : null, role: 'artifact' });
@@ -462,7 +462,7 @@ export function compareAuthoritativeContent(projected: unknown, actual: unknown)
 export function authoritativeContentDrift(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, handwritten: unknown, outputs?: { useCases: unknown }): AuthoritativeContentDrift {
   const record = asRecord(handwritten);
   if (!record) return { state: 'not_applicable' };
-  const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind, 'pure');
+  const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind);
   if (projected.state === 'absent' && !projected.artifacts?.['use-cases@1']) return { state: 'not_applicable' };
   if (projected.state === 'invalid') return { state: 'invalid', detail: projected.detail ?? 'blueprint projection invalid', reason: projected.reason ?? 'other', codes: projected.codes ?? [], ...(projected.locations ? { locations: projected.locations } : {}) };
   const primary = projected.artifacts?.[`${kind}@1`];
@@ -507,8 +507,8 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
  * 无安全刷新依据时复核依赖后保留整个 Feature，返回空写集，由阶段 owner 重建。写出中途失败仍回滚本次已写文件。
  */
 export function materializeBlueprintSkillInputs(projectRoot: string, feature: string, frameworkRoot: string, refresh?: ProjectionRefresh): string[] {
-  const acceptance = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance', refresh);
-  const contracts = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts', refresh);
+  const acceptance = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance');
+  const contracts = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts');
   const verifyDependencies = (): void => {
     for (const dep of [...acceptance.dependencies, ...contracts.dependencies]) if (fs.existsSync(dep.path) !== dep.exists || (dep.exists && digest(dep.path) !== dep.sha256)) throw new Error('blueprint projection stale; return to design owner');
   };

@@ -52,7 +52,7 @@ function reject(f: Fixture, rows: ChangeUnitContentRevision[], message?: RegExp)
   unchanged(before);
 }
 function writeStageOutputs(f: Fixture, id: string): string[] {
-  const projected = deriveBlueprintSkillInput(f.root, feature(id), frameworkRoot, 'contracts', 'pure');
+  const projected = deriveBlueprintSkillInput(f.root, feature(id), frameworkRoot, 'contracts');
   assert.equal(projected.state, 'resolved', projected.detail);
   const contracts = structuredClone(projected.value as ContractsSpec);
   const loaded = loadCanonicalChangeUnit(f.root, blueprintId, id); const cu = asChangeUnitArtifact(loaded.changeUnit);

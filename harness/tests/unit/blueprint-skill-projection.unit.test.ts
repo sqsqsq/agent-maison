@@ -70,7 +70,7 @@ export function fixture(root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-
 
 /** 模拟 plan 从已批准设计与当前 CU 生成真实 Feature 施工映射。 */
 export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { change_unit: NonNullable<ContractsSpec['change_unit']> } {
-  const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts', 'pure');
+  const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
   assert.equal(projected.state, 'resolved', projected.detail);
   const loaded = loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh');
   const cu = asChangeUnitArtifact(loaded.changeUnit);

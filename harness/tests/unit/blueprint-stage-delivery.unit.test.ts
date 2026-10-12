@@ -60,8 +60,8 @@ function consumerFixture(f: Fixture): Fixture {
 function stagePlan(f: Fixture, authorOwned = false): void {
   const loaded = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
   const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', loaded.change_unit_id).changeUnit);
-  const accepted = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance', 'pure');
-  const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts', 'pure');
+  const accepted = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance');
+  const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
   assert(accepted.state === 'resolved' && projected.state === 'resolved', accepted.detail ?? projected.detail);
   const refs = { implementation_refs: ['planned:src/ledger/LedgerFeature.ets'], test_refs: ['planned:test/ledger/LedgerFeature.test.ets'] };
   const contracts = { ...(structuredClone(projected.value) as any), change_unit: {
@@ -175,7 +175,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   { name: 'plan writing its own use-cases does not change the frozen acceptance design source', run(f) {
     const acceptance = resolve(f, 'plan').inputs!.values.acceptance;
     assert(acceptance.state === 'resolved');
-    const contracts = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts', 'pure');
+    const contracts = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
     write(f, 'contracts.yaml', planContracts(f)); write(f, 'use-cases.yaml', contracts.artifacts!['use-cases@1']);
     assert.deepStrictEqual(readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' }, acceptance.binding), acceptance.value);
     const conflicting = structuredClone(contracts.artifacts!['use-cases@1']) as any;

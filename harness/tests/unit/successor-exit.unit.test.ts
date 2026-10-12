@@ -310,6 +310,9 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     clearFrameworkConfigCache();
     const born = resolveSuccessorExecutionScope(s.root, feature, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!;
     const expected = born.phase_chain.map(String);
+    const assessment = assess(s, feature);
+    const uncoveredOwners = uncoveredOwnerPhases(assessment);
+    for (const phase of expected) assert(uncoveredOwners.includes(phase), `${phase} 缺少评估入口独立判定的未覆盖 required 义务：${JSON.stringify(assessment.obligations)}`);
     const { successor, error } = await supersede(s, feature, source, expected);
     assert(successor, `投影 invalid 不得拒绝出生：${error}`);
     const scope = successorScope(s, feature, successor!);

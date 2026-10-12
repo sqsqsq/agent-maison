@@ -1266,8 +1266,8 @@ export function authorCurrentCuPlan(root: string, design: BlueprintRecord): Blue
 
 /** 作者直接消费设计输入新建无戳阶段产物；不读取或改标现存物化文件。 */
 export function handWriteProjections(root: string, tamperRef?: (ref: BlueprintRecord) => void): void {
-  const acceptance = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, FRAMEWORK_ROOT, 'acceptance', 'pure');
-  const contracts = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, FRAMEWORK_ROOT, 'contracts', 'pure');
+  const acceptance = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, FRAMEWORK_ROOT, 'acceptance');
+  const contracts = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, FRAMEWORK_ROOT, 'contracts');
   assert(acceptance.state === 'resolved' && contracts.state === 'resolved', acceptance.detail ?? contracts.detail ?? '设计输入不可用');
   const authored = {
     'acceptance.yaml': acceptance.value,

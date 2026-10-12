@@ -1257,7 +1257,7 @@ export function seedCuBoundHost(project: RealChainProject): { cu: RealChainProje
 }
 
 export function writeCuSpecMaterials(p: RealChainProject): void {
-  const projected = deriveBlueprintSkillInput(p.root, p.feature, p.frameworkRoot, 'acceptance', 'pure');
+  const projected = deriveBlueprintSkillInput(p.root, p.feature, p.frameworkRoot, 'acceptance');
   assert(projected.state === 'resolved', projected.detail ?? 'acceptance projection absent');
   writeHostFile(p.root, `${cuRel(p)}/acceptance.yaml`, YAML.stringify(projected.value));
   writeCuFacts(p, 'spec');
@@ -1274,7 +1274,7 @@ export function writeCuSpecDraft(p: RealChainProject): void {
 
 /** plan 作者从同一设计输入与当前 CU 写出映射及真实用例文件。 */
 export function writeCuPlanMaterials(p: RealChainProject): void {
-  const projected = deriveBlueprintSkillInput(p.root, p.feature, p.frameworkRoot, 'contracts', 'pure');
+  const projected = deriveBlueprintSkillInput(p.root, p.feature, p.frameworkRoot, 'contracts');
   assert(projected.state === 'resolved', projected.detail ?? 'contracts projection absent');
   const identity = parseChangeUnitFeatureId(p.feature);
   const loaded = loadCanonicalChangeUnit(p.root, identity.blueprintId, identity.changeUnitId);
