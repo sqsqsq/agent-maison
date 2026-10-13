@@ -20,13 +20,21 @@
 ## 命令（在 harness/ 下运行）
 
 ```bash
-npx ts-node --transpile-only tests/fixtures/host-snapshot-3.1.0/generate.ts --verify   # ★1：换根加载 + goal-status
+npx ts-node --transpile-only tests/fixtures/host-snapshot-3.1.0/generate.ts --verify   # 旧 gate 失效 → 正式迁移 → goal-status
 npx ts-node --transpile-only tests/fixtures/host-snapshot-3.1.0/generate.ts            # 重生成（只能在钉住提交上跑）
 ```
 
 - **生成器**：复用 `real-chain.unit.test.ts` 的 `seedCuBoundHost`、`runDemoCardChain`、`runCuBoundChain`、`goalStatusFeatureLine`，两条链都经 `runGoalRuntimeChain(realHarness)` 真跑。
 - **生成根原址自检**：两个 Feature 都判 `verify=VALID` 后才捕获快照。
-- **`--verify`**：把快照复制到仓外 tmp 根，provision **当前**框架，再经公开入口 `goal-status`（生产 `assessFeature`）判两个 Feature。
+- **`--verify`**：把快照复制到仓外 tmp 根，provision **当前**框架，先准确识别旧 review 指纹失效，再按 [MIGRATION.md 的 c6a3d918 步骤](../../../../MIGRATION.md#310review-规则变化后的证据重验c6a3d918) 对两个 Feature 走既有正式 successor/真实 harness/完成核验，最后经 `goal-status` 判当前完成。旧 `project/` 与 completion 原件保持，不重生成。
+
+## c6a3d918：显式迁移前提
+
+`loadHostSnapshot()` 仍只装入原快照；当前规则下历史记录可为 `record=ok`，review 义务却是 uncovered，不能继续假定无重验即 VALID。独立用例同时检查这两个事实和旧原件字节不变。
+
+恢复/预算/评估用例需要当前完成时，显式调用 `migrate.ts::loadMigratedHostSnapshot(features)`。它仅在测试副本用原 requirement 与可信完成 run 起 successor，真跑当前 review gate/闭环并生成新 completion；fresh 阶段照核复用，未手写 PASS 或修补哈希。每个 worker/所需 Feature 集合只准备一次，再给各用例隔离副本；这不是生产缓存，也不改变原加载器。
+
+快照排除了 `.git`，无法提供原 Git 对象：测试副本建立实际 Git 基线，使用既有、带新 run 审计的 `--rebaseline-to <exact HEAD>`，不编辑旧 manifest。准备生成的 Git 随测试副本复制，以保持新基线可达；真实宿主历史可达时不需要 rebaseline。agent/verifier 传输与设备仍是既有测试替身；当前 gate/closure 与 completion 是生产路径产物，prior PASS 复用时照实保留语义未重验披露。
 
 ## 重生成规则
 

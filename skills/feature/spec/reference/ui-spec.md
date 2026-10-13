@@ -246,7 +246,7 @@ ui-spec 生成后、进 plan 前：
   > 该组件的 `file` 列入 `contracts.files`。这条链是**硬地板**（`visual_parity_coverage`，
   > 不受 `coding.visual_parity_enforcement` 降级）；组件怎么实现由宿主自己决定。
   > `block` 字段已从 ui-spec schema 删除，写了会被 schema 校验判非法字段。
-- **图标/logo/插画**：走既有 `placeholder: true` + `asset-manifest.yaml` 机制，禁止声称"已核对视觉外观"；
+- **图标/logo/插画**：优先复用代码/资源引用已明确用途的工程素材（`acquisition: repo_ref`）；缺失或用途无法确定时才走既有 `placeholder: true` + `asset-manifest.yaml` 机制并披露。复用仍保持 `verified: unverified`，禁止声称"已核对视觉外观"；
   盲档下**禁止声明 `acquisition: crop`**（`blind_crop_prohibition` BLOCKER——盲模型不能执行/自证裁剪；
   用户/外部工具已裁好的可信产物按 c1-c3 条件放行），占位由 coding 期按 role 生成可见语义占位
   （brand_logo→文字头像 / illustration→中性插画框 / system_symbol→SymbolGlyph，禁空白 PNG）。

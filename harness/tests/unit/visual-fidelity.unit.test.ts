@@ -1,3 +1,4 @@
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 // ============================================================================
 // visual-fidelity.unit.test.ts — 视觉保真 review 修复回归
 // ============================================================================
@@ -34,6 +35,7 @@ import {
   collectReviewTargets,
   validateVisualProviderReviewPayload,
 } from '../../../profiles/hmos-app/harness/visual-provider-review';
+import { buildCapabilityBlock } from '../../scripts/goal-phase-runtime';
 import { deriveVisualDebt } from '../../scripts/utils/visual-debt';
 import { collectUiSpecGateConfirmedScreens } from '../../../profiles/hmos-app/harness/ui-spec-gate';
 import {
@@ -184,7 +186,7 @@ function writeHeaderOnlyPng(outPath: string, w: number, h: number): void {
   fs.writeFileSync(outPath, Buffer.concat([sig, ihdr, iend]));
 }
 
-export function runAll(): UnitCaseResult[] {
+function executeCases(selector?: string): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   // plan 07a41ec6 T10③：无 delegated 视觉 provider 时 region_attest / critic 回执类证明按 SKIP 处理。
   // 本套件校验的是这些证明在 **provider 在场** 时的判据，故整套声明一个测试 provider（名字刻意不与任何回执 adapter 相同）。
@@ -199,6 +201,7 @@ export function runAll(): UnitCaseResult[] {
     else process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = prevProviderModel;
   };
   const run = (name: string, fn: () => void) => {
+    if (!matchesUnitCase(name, selector)) return;
     try {
       fn();
       results.push({ name, ok: true });
@@ -2873,6 +2876,34 @@ export function runAll(): UnitCaseResult[] {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  run('c6a3d918 blind approximate repo_ref stays real; absent asset stays unverified placeholder', () => {
+    const root = mkProject();
+    try {
+      const advisory = { hasVision: false, assetAcquisitionMode: 'approximate', ocrJsonPaths: [], referenceImagePaths: [], toolEventProvenance: 'none', effectiveFidelity: 'reference_only', ocrAvailable: false, fidelityClamped: false } as unknown as Parameters<typeof buildCapabilityBlock>[0];
+      const prompt = buildCapabilityBlock(advisory).join('\n');
+      if (!prompt.includes('acquisition: repo_ref') || !prompt.includes('verified: unverified')) throw new Error('素材复用提示缺失');
+      const specDir = path.join(root, 'doc', 'features', 'bank-card', 'spec');
+      fs.writeFileSync(path.join(specDir, 'spec.md'), '```yaml\nui_change: new_or_changed\n```');
+      const asset = path.join(root, 'logo.svg');
+      fs.writeFileSync(asset, '<svg xmlns="http://www.w3.org/2000/svg"><text>Bank</text></svg>');
+      fs.writeFileSync(path.join(root, 'BrandHeader.ets'), "Image($rawfile('logo.svg')) // existing bank header logo reference\n");
+      const uiPath = path.join(specDir, 'ui-spec.yaml');
+      for (const available of [true, false]) {
+        const body = [ 'schema_version: "1.0"', 'verified: unverified',
+          'screens: [{id: home, priority: P0, root: {type: navigation_frame, order: 0, children: [{id: bank_logo, type: content_display, order: 0, asset_ref: logo}]}}]', 'tokens: {}', 'assets:',
+          '  - key: logo', `    acquisition: ${available ? 'repo_ref' : 'placeholder'}`,
+          ...(available ? ['    resolved_path: logo.svg'] : ['    placeholder: true', '    rationale: 无可用素材']) ].join('\n');
+        fs.writeFileSync(uiPath, body);
+        const results = checkAssetAcquisition(baseCtx(root, { fidelityTarget: 'reference_only', effectiveAssetAcquisitionMode: 'approximate' }));
+        const loaded = loadUiSpecFile(uiPath)!;
+        if (loaded.verified !== 'unverified' || loaded.assets![0].acquisition !== (available ? 'repo_ref' : 'placeholder')) throw new Error('消费者改写素材/验真语义');
+        if (available && (loaded.assets![0].placeholder || loaded.assets![0].resolved_path !== 'logo.svg')) throw new Error('可用 repo_ref 被占位');
+        if (!available && !loaded.assets![0].placeholder) throw new Error('缺素材未披露占位');
+        if (results.some(r => r.status === 'FAIL')) throw new Error(JSON.stringify(results));
+      }
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
 
   // G4 防误判：brand_logo 显式标 placeholder → 走占位诚实路径，不判 impersonation
@@ -6388,3 +6419,6 @@ export function runAll(): UnitCaseResult[] {
   restoreProviderEnv();
   return results;
 }
+
+export const runAll = () => executeCases();
+export const runSelectedCases = (selector?: string) => selectedUnitCases(executeCases(selector), selector, []);

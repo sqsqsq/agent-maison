@@ -684,7 +684,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       const template = read('templates/AGENTS.md.template');
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.includes(AUTHORITY_CONTINUATION_SENTENCE), `AGENTS 模板 §4.0 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);
-      assert(read('docs/operations/project-entry.md').includes(AUTHORITY_CONTINUATION_SENTENCE), `project-entry 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);
+      const projectAuthority = AUTHORITY_CONTINUATION_SENTENCE.replace('策展语义、预算、', '策展语义、未获授权的预算调整、');
+      assert(read('docs/operations/project-entry.md').includes(projectAuthority), `project-entry 缺交付授权延续及未获授权预算确认边界：\n${projectAuthority}`);
     },
   },
   {

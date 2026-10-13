@@ -9,7 +9,10 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
+import { loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 import { runlessCompletionThenRevision, setupRunlessProject } from './execution-scope.unit.test';
 import {
   assessObservation,
@@ -38,7 +41,7 @@ export interface UnitCaseResult {
 
 interface Case {
   name: string;
-  run: () => void;
+  run: () => void | Promise<void>;
 }
 
 const H = 'a'.repeat(64);
@@ -321,8 +324,8 @@ const cases: Case[] = [
   {
     // plan c4e7a9b2 §3.5 / §6 D-2：无 run 时推荐以完成评估入口为准，CLI stdout 与 next.json 同源。
     name: 'D-2 无 run CLI：评估判 uncovered 在 coding（spec 由输入绑定复用、spec summary 缺）→ run_phase coding（不是 spec），next.json 与 stdout 一致',
-    run: () => {
-      const s = loadHostSnapshot();
+    run: async () => {
+      const s = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
       try {
         const feature = SNAPSHOT_CU_FEATURE;
         clearFrameworkConfigCache();
@@ -371,8 +374,8 @@ const cases: Case[] = [
   {
     // plan a2f7c9e4 §3.4：宿主 d6d31d 同形（记录 VALID、CU 出生链 coding→review→ut、spec summary 缺）。
     name: 'a2f7c9e4 无 run：完成评估已 VALID → feature_completed/VALIDATED、无授权请求、gaps 空、观察链取记录 run 范围；渲染 none、driver advance、不授权执行',
-    run: () => {
-      const s = loadHostSnapshot();
+    run: async () => {
+      const s = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
       try {
         clearFrameworkConfigCache();
         const feature = SNAPSHOT_CU_FEATURE;
@@ -382,7 +385,10 @@ const cases: Case[] = [
         assert(r.feature_completion === 'VALIDATED' && r.run_status_candidate === 'CHAIN_SLICE_COMPLETED', `${r.feature_completion}/${r.run_status_candidate}`);
         assert(r.gaps.length === 0, `已完成不得保留缺口：${JSON.stringify(r.gaps)}`);
         const chain = r.observed.phases.map(p => p.phase);
-        assert(JSON.stringify(chain) === '["coding","review","ut"]', `观察链须为记录 run 的执行范围：${JSON.stringify(chain)}`);
+        const recordRun = JSON.parse(fs.readFileSync(path.join(s.root, JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'feature-completion.json'), 'utf8')).original_path), 'utf8')).run_id;
+        const scope = loadEffectiveExecutionScope(s.root, feature, recordRun)!;
+        assert(JSON.stringify(scope.phase_chain) === '["review"]' && JSON.stringify(scope.reused_phases.map(p => p.phase)) === '["coding","ut"]', '前提：正式迁移只执行 review、复用 coding/UT');
+        assert(JSON.stringify(chain) === '["coding","ut","review"]', `观察范围须含记录中的真实复用与本次执行：${JSON.stringify(chain)}`);
         const rendered = formatAssessNextStep(r, { phase: 'ut', mode: 'manual', status: 'PASS/closed' });
         assert(rendered.includes('recommendation=feature_completed') && rendered.includes('authorization=none'), rendered);
         const action = selectRunnerActionFromAssess({
@@ -403,8 +409,8 @@ const cases: Case[] = [
   },
   {
     name: 'a2f7c9e4 反例：完成原件校验失败（义务仍覆盖）→ 仍推荐 validate_feature_completion/REQUIRES_VALIDATION；删掉完成记录 → 不输出已完成投影',
-    run: () => {
-      const s = loadHostSnapshot();
+    run: async () => {
+      const s = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
       try {
         clearFrameworkConfigCache();
         const feature = SNAPSHOT_CU_FEATURE;
@@ -412,7 +418,7 @@ const cases: Case[] = [
         const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
         const originalFile = path.join(s.root, projection.original_path);
         const original = JSON.parse(fs.readFileSync(originalFile, 'utf8'));
-        original.phases[1].run_id = '20260101T000000Z-f0f0f0';
+        original.phases[0].run_id = '20260101T000000Z-f0f0f0';
         const text = JSON.stringify(original, null, 2) + '\n';
         fs.writeFileSync(originalFile, text);
         fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
@@ -777,13 +783,19 @@ const cases: Case[] = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
-  return cases.map((testCase) => {
+async function executeCases(selector?: string): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = [];
+  for (const testCase of cases) {
+    if (!matchesUnitCase(testCase.name, selector)) continue;
     try {
-      testCase.run();
-      return { name: testCase.name, ok: true };
+      await testCase.run();
+      results.push({ name: testCase.name, ok: true });
     } catch (error) {
-      return { name: testCase.name, ok: false, error: (error as Error).message };
+      results.push({ name: testCase.name, ok: false, error: (error as Error).message });
     }
-  });
+  }
+  return results;
 }
+
+export const runAll = () => executeCases();
+export const runSelectedCases = async (selector?: string) => selectedUnitCases(await executeCases(selector), selector, []);

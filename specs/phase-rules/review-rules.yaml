@@ -38,7 +38,7 @@ structure_checks:
   conditional_pass_closure:
     description: >
       「有条件通过」闭环门禁（goal-fakepass-hardening 洞⑥）：结论=有条件通过 且 问题表
-      存在未标记 已关闭/已修复 的 MAJOR → BLOCKER FAIL，review 不得闭环推进并回责任阶段修复。
+      存在必须返修且未标记 已关闭/已修复 的 MAJOR → BLOCKER FAIL，review 不得闭环推进并回责任阶段修复。
       legacy conditional_review_authorization receipt 可读但不改变 verdict。LLM verifier 的 PASS
       只证报告可信，不被消费为产品 PASS。
 
@@ -86,7 +86,7 @@ structure_checks:
     description: >
       问题分类必须来自预定义类别：
       分层违规、接口不一致、资源引用、命名规范、
-      硬编码、逻辑错误、异常处理、性能、安全、其他
+      硬编码、逻辑错误、异常处理、性能、安全、视觉保真、其他
     severity: MAJOR
     rule:
       section: "问题清单"
@@ -101,6 +101,7 @@ structure_checks:
         - "异常处理"
         - "性能"
         - "安全"
+        - "视觉保真"
         - "其他"
 
   statistics_summary:
@@ -123,7 +124,9 @@ structure_checks:
   conclusion_with_verdict:
     description: >
       「结论」章节必须包含明确的审查结论：通过 / 有条件通过 / 不通过，
-      且不通过时必须说明 BLOCKER 数量
+      且不通过时必须说明真实失败。原始问题统计保持真实数量；有效 best_effort 的非关键视觉保真 MAJOR 可披露，
+      不计入必须返修项，仅剩这类项时通过/有条件通过均可。hard、功能 MAJOR 与 BLOCKER 不豁免；
+      缺失或损坏的有效保真目标不得当作宽松授权，误报先更正原报告再重验
     severity: BLOCKER
     rule:
       section: "结论"
@@ -147,7 +150,7 @@ structure_checks:
       且引用执行证据——素材验真（asset-crop-validation/contact-sheet）、可见文案 diff（visible_text/豁免表复核）、
       结构声明台账逐条复核（P1-4②·c9e2a7f4：引用 coding/structure-conformance.yaml，打开 implemented_by
       对应 struct 源码验证 how 属实，pixel_1to1 P0 全条目不许抽查——台账自报面的唯一人审关口）、
-      must_have 覆盖。pixel_1to1 下四类证据**全覆盖**（不许抽查）→ 缺任一 FAIL BLOCKER；非 pixel_1to1
+      must_have 覆盖。hard pixel_1to1 下适用证据类别全覆盖（不许抽查）→ 缺任一 FAIL BLOCKER；repo_ref 不强造 crop 证据；非 hard pixel_1to1
       至少一类。review 不重跑度量、消费 spec/coding 落盘报告。
       round6 实证（RC6）：review 五维 checklist 无一条看图，废图+乱布局"有条件通过"。
       诚实边界：本 check 只核"证据被引用"，引用真实性归当前 AI verifier
@@ -181,10 +184,12 @@ semantic_checks:
       问题描述必须与实际代码缺陷匹配
     severity: BLOCKER
     ai_prompt_hint: >
-      抽样验证问题清单中的若干项：
+      逐条验证未关闭 BLOCKER/MAJOR；MINOR/INFO 可抽样：
       (1) 引用的文件路径是否存在；
       (2) 问题描述是否与实际代码匹配；
-      (3) 严重程度评级是否合理
+      (3) 分类及严重程度是否与实际影响、有效范围、保真严格度一致；
+      有效 defer/excluded 逐条核对登记和原文引文，错误登记回 spec，误报先更正原报告。
+      有效 best_effort 非关键视觉保真 MAJOR 可披露；hard、功能 MAJOR 和 BLOCKER 保留，统计不清零
 
   fix_recommendation_actionable:
     description: >

@@ -1,4 +1,9 @@
 #!/usr/bin/env ts-node
+import { parseVerifierRequest } from './utils/verifier-request';
+import { findUnreadableDiagnosisChecks } from './utils/repair-candidates';
+import { validateProjectRelativePath } from './utils/project-relative-path';
+import { loadVerifierEvidence } from './utils/verifier-evidence';
+import { diffChangedFiles, resolveEffectiveDiffBaseline } from './utils/git-diff';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
 import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
@@ -372,6 +377,7 @@ import {
   formatRepairEvidenceRefs,
   formatRepairLocalDiagnosis,
   serializeBacktrackRepairCandidate,
+  scopeRevisionInputFromRepairCandidates,
   roundFingerprintOfCandidates,
   type RepairCandidate,
 } from './utils/repair-candidates';
@@ -674,6 +680,8 @@ export interface SummaryJson {
   next_action?: string;
   /** D2（plan 3a7f9c12）：诊断请求的两个路径——失败回喂据此给出可执行动作。 */
   verifier_request?: string;
+  verifier_subject_id?: string;
+  report_validity?: 'PASS' | 'FAIL' | 'UNVERIFIED';
   verifier_report?: string;
   blockers?: Array<{
     id?: string;
@@ -1756,6 +1764,39 @@ export interface CapabilityAdvisory {
   toolEventProvenance: 'none' | 'structured_events' | 'session_transcript';
 }
 
+/** Existing snapshots/events are the prior-review source; the diff is context, never a gate filter. */
+export function buildRereviewContext(projectRoot: string, manifest: GoalManifest, events: readonly GoalRunEvent[], frameworkRoot: string): string {
+  let report: string | null = path.join(projectRoot, manifest.report_dir, 'phases', 'review', 'harness', 'review-report.md');
+  let priorEvents = events;
+  if (!events.some(event => event.type === 'phase_verdict' && event.phase === 'review') && !fs.existsSync(report)) {
+    if (!manifest.successor_of) return '';
+    try {
+      const predecessor = loadGoalManifestFromRun(projectRoot, manifest.successor_of, {
+        feature: manifest.feature, featuresDir: loadFrameworkConfig(projectRoot).paths.features_dir,
+      });
+      report = path.join(projectRoot, predecessor.report_dir, 'phases', 'review', 'harness', 'review-report.md');
+      priorEvents = loadAuthoritativeEvents(path.join(projectRoot, predecessor.report_dir, 'events.jsonl'));
+    } catch { report = null; priorEvents = []; }
+  }
+  let prior: string | null = null;
+  try { if (report && fs.existsSync(report)) prior = fs.readFileSync(report, 'utf-8'); } catch { /* unreadable prior is disclosed below */ }
+  const backtrack = [...priorEvents].reverse().find(event => event.type === 'phase_backtrack_requested');
+  const candidates = (backtrack as { candidates?: unknown } | undefined)?.candidates;
+  const baseline = resolveEffectiveDiffBaseline(projectRoot, manifest.feature, manifest.run_id);
+  const diff = baseline.available ? diffChangedFiles({ projectRoot, baseRef: baseline.baseSha }) : null;
+  const evidence = loadVerifierEvidence(projectRoot, manifest.feature, 'review', { frameworkRoot });
+  return [ '\n## Re-review: previous findings and direct effects',
+    'Check whether existing findings were corrected and whether the actual changes introduce direct regressions. Do not restart an unbounded polish audit on a new attempt.',
+    'A real defect outside the diff can still block; the file list is context, not an authorization or filtering gate. New blockers need concrete evidence and why the previous review could not reasonably discover them.',
+    'Visual disclosure uses the same classification/strictness rules as ordinary review. Refuted or inflated findings require correcting the original report before revalidation; verifier PASS never replaces a negative product verdict.',
+    `Prior report snapshot: ${prior === null ? 'missing; no prior findings are invented' : path.relative(projectRoot, report!).replace(/\\/g, '/')}`,
+    ...(prior === null ? [] : [prior]),
+    `Current repair candidates from the latest backtrack: ${Array.isArray(candidates) ? JSON.stringify(candidates) : 'unavailable'}`,
+    `Actual changed files against the run baseline (includes working tree): ${diff?.executed && !diff.baseIsFallback ? JSON.stringify(diff.changedFiles) : 'unavailable; do not infer PASS from missing/empty diff'}`,
+    `Current verifier evidence: ${evidence.ok ? `subject=${evidence.evidence.subject_id}, verdict=${evidence.evidence.verdict}` : 'not currently valid; historical observations are not current verification'}`,
+    'Keep the true issue counts and disclose unresolved optional differences; do not write a second visual debt ledger.', '' ].join('\n');
+}
+
 /**
  * E0：能力感知 phase prompt 块——案B chrys 实证：agent 收到的 phase prompt 里此前零降级
  * 信息，SKILL 又写死"必须用强 VL 模型"，盲 agent 会硬闯任务而非按能力工作法收口。
@@ -1875,8 +1916,10 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
               : []),
           ]
         : [
-            '- Icons/logos/illustrations: use placeholder assets + asset-manifest.yaml (existing mechanism) — do NOT',
-            '  claim to have visually verified their appearance.',
+            '- Icons/logos/illustrations: first reuse existing project assets as `acquisition: repo_ref` when their',
+            '  purpose is established by code/resource references. No vision does not mean no usable assets.',
+            '  Only when an asset is missing or its purpose cannot be established, use placeholder assets +',
+            '  asset-manifest.yaml and disclose the gap. Keep `verified: unverified`; reuse is NOT visual verification.',
           ]),
       '- Anything you genuinely cannot determine without seeing the image: register it in the structured',
       '  blind-review pending list (see phase SKILL reference/ui-spec.md「盲档工作法」) instead of guessing',
@@ -7728,7 +7771,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
           // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
           executorMode === 'attended',
-        ) + (factsRebuildReason ? `\n## Facts admission / actual source reconstruction\n${factsRebuildReason}\nRead the current sources and rebuild canonical facts; changing run_id alone is not reconstruction.\n` : phaseFactsContext?.baseline
+        ) + (phase === 'review' ? buildRereviewContext(projectRoot, manifest, loadAuthoritativeEvents(eventsPath), frameworkRoot) : '') + (factsRebuildReason ? `\n## Facts admission / actual source reconstruction\n${factsRebuildReason}\nRead the current sources and rebuild canonical facts; changing run_id alone is not reconstruction.\n` : phaseFactsContext?.baseline
           ? `\n## Validated facts baseline\nPreserve the baseline body and its original identity. For current owned source targets within this phase's write boundary, registering each changed or newly created source in a path | fact | impact table in ## phase_delta: ${phase} is recommended; missing exact rows disclose weaker traceability and do not block the phase. Prefer project-relative paths; equivalent absolute paths, backslashes, ./ and repeated same-phase sections are recognized. Existing unexplored targets and requirement/contracts/config or unauthorized-source drift remain strict. Do not rewrite the baseline, even when this run starts at or backtracks to ${phase}.\n` : '') +
           // v23 F1：回退后 coding 注入缺陷必做段——闭环最后一段电线（没有它，coding
           // 回去了也不知道修什么 → 原样重跑 → 熔断）
@@ -9054,6 +9097,66 @@ Goal runner — tool-agnostic multi-phase orchestrator
               : 'changed'; // 含快照不可核实 → fail-closed 回落全量
         }
 
+        /** 链外 adapter 调用：沿用 agent_invoke_start / end 计次（phase = 不属于阶段链的用途标识），每次调用前查剩余次数与墙钟，接既有收容与中断杀进程。 */
+        const invokeOutOfChain = async (purpose: DesignRepairPurpose | 'verifier_format_repair', text: string): Promise<DesignRepairInvokeOutcome> => {
+          const label = purpose === 'verifier_format_repair' ? `${phase}-verifier-format-repair` : designRepairInvokeLabel(purpose);
+          const elapsed = priorActiveMs + (Date.now() - sessionStartMs);
+          const budgetNow = checkRunBudget(totalTurns, manifest.budget.max_total_turns, elapsed, wallMs);
+          const timeoutMs = Math.min(effectiveAgentTimeoutMs, remainingWallMs());
+          if (budgetNow !== 'ok' || !(timeoutMs > 0)) {
+            return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
+          }
+          totalTurns++;
+          const outOfChainId = purpose === 'verifier_format_repair' ? `${label}-${visualAttemptId}` : `${label}-i${totalTurns}`;
+          const dir = path.join(projectRoot, manifest.report_dir, 'phases', label, outOfChainId);
+          fs.mkdirSync(dir, { recursive: true });
+          const promptFile = path.join(dir, 'prompt.md');
+          fs.writeFileSync(promptFile, text, 'utf-8');
+          const logFile = path.join(dir, 'agent-output.log');
+          const outOfChainPlan = resolveHeadlessInvokePlan(manifest.adapter!, cap.capability!, manifest.unattended, text, {
+            PROMPT_FILE: promptFile, PROMPT: text, SKILL_PATH: purpose === 'verifier_format_repair' ? phaseSkillPath(frameworkRoot, phase) : path.join(frameworkRoot, 'skills', 'reference', 'design-repair-unattended.md'),
+            PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label,
+          }, manifest.adapter_model_pin?.value, sessionBinary?.binary ?? null);
+          goalEvents.emit({ type: 'agent_invoke_start', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, command: outOfChainPlan.label, effective_timeout_ms: timeoutMs });
+          flushProgress();
+          const token = `${manifest.run_id}/${outOfChainId}`;
+          const contained = process.platform === 'win32' ? { runId: manifest.run_id, invokeId: outOfChainId } : null;
+          let containmentError = null as string | null;
+          let containmentStillAlive = false;
+          const result = await (injectedInvokeAgent ?? invokeAgentHeadless)(outOfChainPlan, projectRoot, {
+            timeoutMs, deadlineMs: Date.now() + timeoutMs, outputLogPath: logFile, containment: contained,
+            extraEnv: purpose === 'verifier_format_repair' ? { ...phaseChildEnv,
+              MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: visualAttemptId, MAISON_GOAL_ATTEMPT_PHASE: String(phase),
+            } : {
+              MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: `i${totalTurns}`, MAISON_GOAL_ATTEMPT_PHASE: label,
+              ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}),
+            },
+            onActiveChild: ({ pid, kill }) => {
+              activeAgentKill = async () => { await kill(); };
+              if (contained && pid > 0) {
+                const bound = bindGuardianOrKill(pid, token);
+                if (!bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
+                goalEvents.emit({ type: 'agent_process_bound', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, pid, started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable, token });
+              }
+            },
+            onChildExit: () => { activeAgentKill = null; },
+          });
+          activeAgentKill = null;
+          // 与阶段调用同一处置（plan c6a9e4d2 P0-2）：绑定失败且 guardian 未证明消失——不落 invoke_end / settled（旧进程仍可能在野，
+          // 留给恢复对账），也不按普通失败收口；由决策梯走既有 agent_containment_unresolved 停机。
+          if (containmentError && containmentStillAlive) {
+            return { started: true, ok: false, containmentUnresolved: true, detail: `guardian 绑定失败且未证明消失：${containmentError}` };
+          }
+          goalEvents.emit({
+            type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, exit_code: result.exitCode,
+            duration_ms: result.duration_ms, timed_out: result.timed_out, kill_attempted: result.kill_attempted, effective_timeout_ms: timeoutMs,
+            ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}),
+          });
+          if (contained && !containmentError) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
+          flushProgress();
+          const ok = result.exitCode === 0 && result.timed_out !== true && !containmentError;
+          return { started: true, ok, detail: containmentError ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}` };
+        };
         const harnessRun = await runHarnessPhase(
           projectRoot,
           frameworkRoot,
@@ -9073,8 +9176,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 校验源改为 plan closure 的 evidence manifest（盘上自证，无需跨进程锚）。
           { ...gateDeviceEnv },
         );
-        const harnessExit = harnessRun.exitCode;
-        const harnessEndedAtMs = Date.now();
+        let harnessExit = harnessRun.exitCode;
+        let harnessEndedAtMs = Date.now();
         priorHarnessFailure = harnessExit === 0
           ? undefined
           : formatHarnessFailureTail(harnessRun.outputTail) ??
@@ -9155,6 +9258,59 @@ Goal runner — tool-agnostic multi-phase orchestrator
         );
         const summaryMtimeAfter = getSummaryMtime(summaryAbsPath);
         const freshSummary = isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
+
+        // One formatting recovery per original attempt; invoke_start consumes the opportunity even after a crash.
+        if (!dryRun && freshSummary && summary?.next_action === 'run_verifier_for_repair' && !invoke.timed_out && (phase === 'review' || phase === 'ut')) {
+          const repairInvokeId = `${phase}-verifier-format-repair-${visualAttemptId}`;
+          const formatEvents = loadAuthoritativeEvents(eventsPath);
+          const lastVerdict = formatEvents.map(event => event.type === 'phase_verdict' && event.phase === phase).lastIndexOf(true);
+          const used = formatEvents.some((event, index) => {
+            const invocation = event as GoalRunEvent & { purpose?: string; chain_phase?: string };
+            return event.type === 'agent_invoke_start' && (event.invoke_id === repairInvokeId
+              || (index > lastVerdict && invocation.purpose === 'verifier_format_repair' && invocation.chain_phase === phase));
+          });
+          const requestPath = summary.verifier_request;
+          const reportPath = summary.verifier_report;
+          const requestAbs = requestPath ? path.resolve(projectRoot, validateProjectRelativePath(projectRoot, requestPath, 'verifier request')) : null;
+          const requestText = requestAbs && fs.existsSync(requestAbs) ? fs.readFileSync(requestAbs, 'utf-8') : null;
+          const request = parseVerifierRequest(requestText);
+          const evidence = loadVerifierEvidence(projectRoot, manifest.feature, String(phase), { frameworkRoot });
+          const reviewArtifact = phase === 'review' ? resolveFeatureArtifact(projectRoot, manifest.feature, 'review-report.md') : null;
+          const reviewText = reviewArtifact?.exists ? fs.readFileSync(reviewArtifact.actualPath, 'utf-8') : null;
+          const diagnoses = evidence.ok ? findUnreadableDiagnosisChecks(String(phase), evidence.evidence.report_text,
+            reviewText === null ? undefined : { reportText: reviewText })
+            : evidence.code === 'block_unparseable' || evidence.code === 'verdict_inconsistent' ? [evidence.message] : [];
+          if (!used && request && request.subject_id === summary.verifier_subject_id && request.phase === phase
+            && request.feature === manifest.feature && summary.next_action === 'run_verifier_for_repair' && diagnoses.length && reportPath) {
+            const prompt = [ 'Repair only the verifier reply format for the CURRENT attempt. Do not edit product source or the original review report.',
+              `Existing goal context: run_id=${manifest.run_id}, phase=${phase}, attempt_id=${visualAttemptId}.`,
+              `Diagnostics: ${diagnoses.join('; ')}`,
+              'Read the existing raw reply and preserve valid individual confirmed/refuted/unclear judgments. Do not re-request a legal refuted/unclear just to change its conclusion.',
+              'If the raw reply contains the missing information, restore the exact transcript. Otherwise invoke the existing verifier ONCE using the complete current request JSON below as its Task prompt, then write its complete reply verbatim.',
+              `Only write this verifier report: ${reportPath}. No new request, subject, registry or debt ledger. This invocation and its time count toward the existing run budget.`,
+              requestText! ].join('\n');
+            const recovered = await invokeOutOfChain('verifier_format_repair', prompt);
+            if (recovered.containmentUnresolved) {
+              halted = true; phaseDone = true;
+              goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'agent_containment_unresolved', detail: recovered.detail });
+              outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'agent_containment_unresolved' });
+              break;
+            }
+            if (recovered.started) {
+              const recheck = await runHarnessPhase(projectRoot, frameworkRoot, phase, manifest.feature, dryRun, manifest,
+                { runId: manifest.run_id, attemptId: visualAttemptId }, remainingWallMs(), { ...gateDeviceEnv });
+              harnessExit = recheck.exitCode; harnessEndedAtMs = Date.now();
+              priorHarnessFailure = harnessExit === 0 ? undefined : formatHarnessFailureTail(recheck.outputTail) ?? `Harness exited with code ${harnessExit}.`;
+              goalEvents.emit({ type: 'harness_end', phase, exit_code: harnessExit, invoke_id: invokeId, timed_out: recheck.timedOut || undefined });
+              if (recheck.timedOut) {
+                halted = true; phaseDone = true;
+                goalEvents.emit({ type: 'budget_wall_clock', phase });
+                outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'budget_wall_clock' }); break;
+              }
+              ({ summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(projectRoot, manifest.feature, phase));
+            }
+          }
+        }
 
         // M1 t1.5/t1.6（adjudicated-repair-loop，review 修复）：回退链完成收口——补发
         // phase_backtrack_completed（移到回退链真正完成之后，修 :7592 时序；repair/scope
@@ -9418,6 +9574,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
         }
         const verdict = resolved.verdict;
+        if (!dryRun && phase === 'review' && freshSummary) snapshotPhaseHarness(projectRoot, manifest.feature, phase, manifest.report_dir, frameworkRoot);
         // framework-identity-boundary 2.4：当前 attempt 的所有裁决面只消费这一份投影。
         // 原始 summary 仍可供 verdict/closure/visual receipt 与历史报告展示，但旧
         // framework integrity blocker 不得再进入 meta/signature/repair/reconcile/event。
@@ -9674,64 +9831,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (!authorized) return false;
           const signature = designRepairSignature(manifest.feature, String(phase), designBriefNow().items);
           return !designRepairAttempted([...ancestorBudgetEvents, ...loadAuthoritativeEvents(eventsPath)], signature);
-        };
-        /** 链外 adapter 调用：沿用 agent_invoke_start / end 计次（phase = 不属于阶段链的用途标识），每次调用前查剩余次数与墙钟，接既有收容与中断杀进程。 */
-        const invokeOutOfChain = async (purpose: DesignRepairPurpose, text: string): Promise<DesignRepairInvokeOutcome> => {
-          const label = designRepairInvokeLabel(purpose);
-          const elapsed = priorActiveMs + (Date.now() - sessionStartMs);
-          const budgetNow = checkRunBudget(totalTurns, manifest.budget.max_total_turns, elapsed, wallMs);
-          const timeoutMs = Math.min(effectiveAgentTimeoutMs, remainingWallMs());
-          if (budgetNow !== 'ok' || !(timeoutMs > 0)) {
-            return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
-          }
-          totalTurns++;
-          const outOfChainId = `${label}-i${totalTurns}`;
-          const dir = path.join(projectRoot, manifest.report_dir, 'phases', label, outOfChainId);
-          fs.mkdirSync(dir, { recursive: true });
-          const promptFile = path.join(dir, 'prompt.md');
-          fs.writeFileSync(promptFile, text, 'utf-8');
-          const logFile = path.join(dir, 'agent-output.log');
-          const outOfChainPlan = resolveHeadlessInvokePlan(manifest.adapter!, cap.capability!, manifest.unattended, text, {
-            PROMPT_FILE: promptFile, PROMPT: text, SKILL_PATH: path.join(frameworkRoot, 'skills', 'reference', 'design-repair-unattended.md'),
-            PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label,
-          }, manifest.adapter_model_pin?.value, sessionBinary?.binary ?? null);
-          goalEvents.emit({ type: 'agent_invoke_start', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, command: outOfChainPlan.label, effective_timeout_ms: timeoutMs });
-          flushProgress();
-          const token = `${manifest.run_id}/${outOfChainId}`;
-          const contained = process.platform === 'win32' ? { runId: manifest.run_id, invokeId: outOfChainId } : null;
-          let containmentError = null as string | null;
-          let containmentStillAlive = false;
-          const result = await (injectedInvokeAgent ?? invokeAgentHeadless)(outOfChainPlan, projectRoot, {
-            timeoutMs, deadlineMs: Date.now() + timeoutMs, outputLogPath: logFile, containment: contained,
-            extraEnv: {
-              MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: `i${totalTurns}`, MAISON_GOAL_ATTEMPT_PHASE: label,
-              ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}),
-            },
-            onActiveChild: ({ pid, kill }) => {
-              activeAgentKill = async () => { await kill(); };
-              if (contained && pid > 0) {
-                const bound = bindGuardianOrKill(pid, token);
-                if (!bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
-                goalEvents.emit({ type: 'agent_process_bound', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, pid, started_at_ms: bound.identity.startedAtMs, executable: bound.identity.executable, token });
-              }
-            },
-            onChildExit: () => { activeAgentKill = null; },
-          });
-          activeAgentKill = null;
-          // 与阶段调用同一处置（plan c6a9e4d2 P0-2）：绑定失败且 guardian 未证明消失——不落 invoke_end / settled（旧进程仍可能在野，
-          // 留给恢复对账），也不按普通失败收口；由决策梯走既有 agent_containment_unresolved 停机。
-          if (containmentError && containmentStillAlive) {
-            return { started: true, ok: false, containmentUnresolved: true, detail: `guardian 绑定失败且未证明消失：${containmentError}` };
-          }
-          goalEvents.emit({
-            type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, exit_code: result.exitCode,
-            duration_ms: result.duration_ms, timed_out: result.timed_out, kill_attempted: result.kill_attempted, effective_timeout_ms: timeoutMs,
-            ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}),
-          });
-          if (contained && !containmentError) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
-          flushProgress();
-          const ok = result.exitCode === 0 && result.timed_out !== true && !containmentError;
-          return { started: true, ok, detail: containmentError ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}` };
         };
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
@@ -10479,13 +10578,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, 'utf8')) as { checks?: Array<{ id?: string; scope_revision_input?: ExecutionScopeInput }> } : {};
           const proposalChecks = (report.checks ?? []).filter(check => check.scope_revision_input);
           const proposals = proposalChecks.map(check => check.scope_revision_input!);
+          if (!proposals.length && summaryRepairCandidates.length) {
+            const repairRevision = scopeRevisionInputFromRepairCandidates(summaryRepairCandidates, { projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id });
+            if (repairRevision) proposals.push(repairRevision.input);
+          }
           pendingScopeRevisionCheckId = proposalChecks[0]?.id;
           // D2.7 / 批次 3 阻断 6：提案校验走**与 feature 路径同一个**
           // `resolveScopeRevisionProposal`——单提案、请求边界、已完成阶段补证明、impact
           // 继承与修正、失效 satisfied_by 剔除、「范围变了必须有新来源」全部同源实现。
           const old = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath));
-          const completed = new Set(verdict === 'PASS' && !resolved.advance_blocked && outcomes.every(outcome => outcome.verdict === 'PASS' && !outcome.halted)
-            ? [...outcomes.map(outcome => String(outcome.phase)), String(phase)] : []);
+          const completed = new Set([
+            ...outcomes.filter(outcome => outcome.verdict === 'PASS' && !outcome.halted && !outcome.advance_blocked).map(outcome => String(outcome.phase)),
+            ...(verdict === 'PASS' && !resolved.advance_blocked ? [String(phase)] : []),
+          ]);
           const revisionOutcome = resolveScopeRevisionProposal({
             projectRoot,
             frameworkRoot,
@@ -10496,6 +10601,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // 授权边界取**出生冻结链**（`old` 是应用过修订的有效链，会缩短）。
             authorizedPhases: validateExecutionScope(manifest.execution_scope).phase_chain,
             completedPhases: completed,
+            repairCandidates: summaryRepairCandidates,
             currentRunId: manifest.run_id,
             requirement: manifest.requirement,
           });

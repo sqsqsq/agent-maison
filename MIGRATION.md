@@ -22,7 +22,11 @@ SpecLoader 只在本阶段 `required_outputs` 声明的文件上优先读实体�
 
 背景/目标/范围、被否方案、术语含义、旅程、部署参与方/协同、质量/数据生命周期六类表达仍可选，坏形状只 WARN，蓝图 schema 不变。真正缺失每节集中一行，明确未知/不适用分开；有值不能假报“未记录”，false/0 保留，不产空表/整空列，陌生业务键只展一层而非递归 dump。模型字段可选 description/source_ref 保持透传，不授予写权限。文档只读取 canonical 蓝图/CU；readiness 同样检查 canonical 内容，absent 列补设计责任，invalid 按原原因 not-ready。阶段 use-cases 未对齐由原定义缺口/plan 对齐门处理，不反校验蓝图；已删除 pure 模式。
 
-人读交付保留原 4+1 顺序，概述末用已有内容给方案总览及跨视图图，运行阶段图只连各分支 expected_phase_seq 相邻项并标分支，不按 phases 排列连 Success→Failure；图仍使用现有 flowchart/parser。页面清单、集中截图及 journey_steps 完成后去向表表达本批导航上限，不推断路由或从共享动作生成页面导航图。每张已登记图片只展示一次，其他位置链接；renderer 不把外部图片字节作为新设计或新绑定输入。
+人读交付保留原 4+1 顺序；三类确定性图分别来自 canonical relations（概述）、各分支 expected_phase_seq 相邻项（阶段）和 contracts 根级 module_dependencies（模块）。阶段按起止对去重保留全部分支来源，首分支只具名作展示基准，不假定到 Success 已含完成；模块图保留真实声明与未知依赖模块、不合成冲突并集。复用 flowchart/parser，不从 phases 排列造边。页面清单、集中截图及 journey_steps 完成后去向表不推路由；每张登记图片一次，renderer 不读外部图片字节作新设计/绑定输入。
+
+完整调用在设计期写入 flow contracts.state_management[].ordered_steps（仍为 string[]）：页面→业务对象→Repository→实际 helper/数据库，逐条明确 caller/callee、参数/结果、等待/回调、关键失败和完成/导航/消费者，typed 接口与根存储契约同源。设计 agent 同次生成既有 generated_graphs sequenceDiagram，原 runtime 独立质询核图文一致；graph_id 对应 derived_results.result_id，复用原 revision/指纹/状态，事实变化按原修订重生成。renderer 只校验展示，不从 user_sequence/expected_port_calls 猜调用者，不新建交互字段/schema/独立图真源或每箭头顶层 relation。
+
+支持的时序语法及短例见 [P1 时序写作](skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。时序图自身超子集/端点/块/坏地址均 WARN，原流程说明原因且不展示、不影响 admission/readiness；flowchart 原级别不变，真实 canonical/契约/来源检查不削弱。缺派生结果或 stale 的时序图提示重建、不展示；缺图不加门也不证明人读完整。根 table_schema 同时读取旧单表及库级 tables[]，保留库名/版本/安全/加密、列 description、主键、约束、升级与来源，约定见[蓝图设计输入](docs/concepts/blueprint-design-inputs.md#存储内容约定)。designOnly 不检查未来 plan.design_ref_mappings 所支撑的 componentProjectionErrors，plan 及后续完整保留原组件映射门。
 
 完整 AC/BD/NFR 仅文档第 9 章，展示身份为来源目标加编号，两个目标各自 AC-1 保留；完整 files 清单仅开发视图一次，CU 链接保留实际范围。正文标签使用已有可读名称/短 ID，框架状态中文化，锚点/链接目标保留；机制声明文首集中一次，原内部地址可留追溯附录，不改 API/类型/自由业务状态语义。
 
@@ -30,7 +34,9 @@ SpecLoader 只在本阶段 `required_outputs` 声明的文件上优先读实体�
 
 运行 spec 时的 acceptance 派生也共用目标选取/合并，会更早暴露 contracts/use_cases 的来源或合并冲突及用例坏 schema；这不只影响 readiness，既有 B1/B2 分类与恢复规则不变。
 
-deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决，不随需求切换。外部节点只记 current=target 的当前事实；根级契约和指向外部节点的 relation 由消费 CU 认领本部件侧证据，未消费的外部施工用 gap/blocker 或 coordination/rollout 表达。适用时纯本地场景也引用本部件运行节点。结构图只画已有显式关系，无效图披露原因；时序由步骤/分支表表达，不生成时序图或代码骨架。字段形状、交接失败处理与完整夹具样例见[宿主适配指南](docs/operations/component-design-host-adaptation.md)和[蓝图设计输入](docs/concepts/blueprint-design-inputs.md)。夹具样例不代表真实宿主验收。
+deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决，不随需求切换。外部节点只记 current=target 的当前事实；根级契约和指向外部节点的 relation 由消费 CU 认领本部件侧证据，未消费的外部施工用 gap/blocker 或 coordination/rollout 表达。适用时纯本地场景也引用本部件运行节点。结构图只画已有显式关系、无效图披露原因；代码骨架不入蓝图。字段形状、交接失败与样例见[宿主适配指南](docs/operations/component-design-host-adaptation.md)和[蓝图设计输入](docs/concepts/blueprint-design-inputs.md)。
+
+正文去重只复用已证明同源等价的 DTO/模型/UI/恢复/验收/写集，保留 required/nullable 等差异、来源与每 CU 精确 files；不全局删同值列、不按同名判等。显式空对象/数组为“无”，false/0 保真，缺项后处理只消费 renderer 标记、不改作者文本；框架枚举按所在字段中文化，API/业务状态原样。隔离 A 保宿主 canonical/CU/图片原样、只验展示；B 明确另存补调用步骤/图的设计变体，不能把 B 增量混入 A 或宣称原样无数据凭空四图。用户集成发布件后在原宿主定向补时序、走原质询/修订复检文档/readiness，保留其它有效设计，不重置重做；设计专项仍不代表端到端产品已验收。
 
 ## 3.1.0：运行配置退出业务内容证据，输入阻塞先回责任阶段（plan 8d4e6a21）
 
@@ -110,10 +116,49 @@ deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决
 - 阶段 evidence 现在区分源码责任：合法 coding/UT 产出可推进此前 Research 观察，测试文件变化不再反向作废 coding/review；未归属源码、需求或 contracts 漂移仍照常 stale。旧 manifest 没有责任字段时不会被猜测洗绿，重跑责任阶段即可生成新证据。相同 UT 覆盖结论重复生成时，`ac-coverage.json` 保持原字节与时间，verifier subject 不因时钟单独换代。
 - 下游 capability 缺少由上游阶段生产的输入时，恢复现在读取既有 `SourceAttempt.upstream_producer` 并回实际 owner；没有链内 owner 的 absent 继续作为可诊断输入缺口，不冒充 framework bug。测试自有返修只重跑受影响阶段，真实产品/契约变化与显式重跑仍会扩大必要重验范围。
 - `goal-runner --detach` 返回前会做一次最长 10 秒的启动确认，JSON 新增 `startup`：区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`。仅 pid/目录不再冒充健康；确认超时不会杀仍活跃 child，早退保留当前日志尾并非零退出。detached `--attach-created` 现在与 `--resume` 一样由共享输入解析锁定既有 run_id，不再生成第二个随机身份。
-- 完成后修正改走 successor：`goal-runner --supersede <完成 run>` 在该 supersede 上下文按当前输入重解析出生范围（既往阶段证据经同一核验复用，只跑未覆盖义务的责任阶段），不再整份继承源 run 范围；新 completion 落后继 run 目录，旧原件保留；feature 冻结记录的转交改为追加式 `transfers[]`（旧单值 `transferred_to` 照读）。`--revalidate` 仍只做在途机械重验、不签发 completion；无 run 的 feature 完成先追加范围修订再起新 run，`--supersede` 对它拒绝。已完成 CU 在蓝图升版后由 design-preparation readiness 原位升版指针（契约不变即同一 CU）；completion 的 STALE 裁决词改为评估入口 `assessFeature` 的 uncovered 义务清单。旧产物零迁移。
+- 完成后修正改走 successor：`goal-runner --supersede <完成 run>` 在该 supersede 上下文按当前输入重解析出生范围（既往阶段证据经同一核验复用，只跑未覆盖义务的责任阶段），不再整份继承源 run 范围；新 completion 落后继 run 目录，旧原件保留；feature 冻结记录的转交改为追加式 `transfers[]`（旧单值 `transferred_to` 照读）。`--revalidate` 仍只做在途机械重验、不签发 completion；无 run 的 feature 完成先追加范围修订再起新 run，`--supersede` 对它拒绝。已完成 CU 在蓝图升版后由 design-preparation readiness 原位升版指针（契约不变即同一 CU）；completion 的 STALE 裁决词改为评估入口 `assessFeature` 的 uncovered 义务清单。原始需求/施工产物不批量改写；阶段规则变化后的证据重验见下一节。
 - 框架发布前以上一版宿主产物为兼容基线：影响已完成产物的规则变更，会在本文件给出可执行的迁移步骤；没有对应条目即表示升级无需宿主动作。
 
 入口细则见 [项目请求](docs/operations/project-entry.md)、[专项 CLI](docs/operations/request-harness.md) 和 [输入协议](docs/concepts/skill-contracts.md)。本节描述迁移行为，不表示当前候选已经正式发布。
+
+## 3.1.0：review 规则变化后的证据重验（c6a3d918）
+
+本批另有一项新增发布就绪投影：spec 的 `fidelity_deferrals` 非空时，任一阶段 summary 均显示 `release_readiness=BLOCKED`，直到 spec 撤掉延后登记；阶段推进与正常完成不受该投影影响。该语义本身无需迁移动作，也不宣称视觉已经验真。它与下述 review gate 指纹变化需要正式重验是两件独立的事。
+
+本批 review 分类/视觉差异规则改变了 gate_fingerprint。旧 completion 原件可以仍是可信历史事实（record=ok），同时当前 review 义务为 uncovered；旧 PASS 不代表新规则已验。保留旧 run 与 completion，不编辑指纹/哈希、不清空报告、不重生成历史产物。
+
+以下从宿主的 `framework/harness/` 执行，`<feature>` 是正常 Feature/CU 身份；先用评估结果核对旧原件是否可信、实际失效的责任阶段与 manifest 路径：
+
+```powershell
+npx ts-node scripts/assess.ts --feature <feature> --project-root ../.. --framework-root ..
+npx ts-node scripts/goal-status.ts --feature <feature>
+```
+
+**在途、尚未完成的 run**：有源码/报告修正后，沿原 run 恢复；仅需机械重验时使用原入口与其真实身份。下例从 review 重验已跑过的下游；遇到真实 FAIL/输入缺口就停，按输出回责任阶段修复。
+
+```powershell
+$env:MAISON_GOAL_RUN_ID = "<active-run-id>"
+npx ts-node harness-runner.ts --revalidate --feature <feature> --from review
+Remove-Item Env:MAISON_GOAL_RUN_ID
+```
+
+退出 0 只表示这次脚本/闭环重验完成，**不签发 Feature completion**。读取 `revalidation.json` 和 summary：沿用既往语义审查时会披露 `semantic_not_reverified` / `completed_with_prior_review`；需要新的语义裁决时按正式责任阶段/verifier 执行，不能把机械重验当模型重新验真。
+
+**已有可信完成、现在需要当前有效完成**：明确授权本次升级重验，用原 manifest 的完整 requirement 起 successor；不向旧完成 run 追加“完成”。本批只有 review 指纹失效、其它义务 fresh 时，实际出生链为 review：
+
+```powershell
+$gateMigrationManifest = Get-Content "<source-manifest-path>" -Raw | ConvertFrom-Json
+npx ts-node scripts/goal-runner.ts --feature <feature> --supersede <completed-run-id> --requirement $gateMigrationManifest.requirement --start review --end review --adapter <active-adapter> --foreground-ok
+npx ts-node scripts/goal-status.ts --feature <feature>
+```
+
+起止必须符合当前重解析范围；若评估还列出其它失效义务，使用其实际首尾，保留必要下游重验与真实回修，不强截成 review。runner 在本次责任阶段执行、正式 gate/闭环通过后，经既有完成核验生成后继 run 目录中的新 completion，并更新只读投影；旧原件字节不变。以新原件 `verify=VALID` / 评估 `complete=true` 为完成依据，不能仅看阶段 PASS 或 run 的切片状态。
+
+调用与活跃时间照既有预算累计；可信历史完成是否形成交付周期边界仍由原预算规则决定，当前 gate 失效不是篡改历史完成，也不是免费重试许可。失败 run 继续累计和熔断，不能反复换 run 清零。
+
+真实宿主保有历史 Git 对象时继承原 lineage 基线。归档副本缺 `.git` 或旧对象不可达时，先恢复可信仓库历史；无法恢复且操作者明确接受新问责基线时，使用既有 `--supersede <old-run-id> --rebaseline-to <当前 exact HEAD>`，审计只落新 run，不回填旧 SHA。测试快照刻意不含 `.git`：只在临时副本建立实际 Git 基线并显式走该入口，原 `project/` 与旧凭证保持。没有可信基线/授权仍失败，不豁免。
+
+本批在原 3.1.0 快照副本上已验证平铺和 CU 两种 successor 迁移；只重跑 review，复用有效阶段。在途 `--revalidate` 为既有路径，本批未另做该路径的迁移实测。上述命令保留既有孤儿 run 与授权守卫，遇到相关拦截按其正式恢复指引处理。现有闭环允许沿用 prior verifier PASS 时会诚实披露未重新语义审查；测试使用既有 agent/设备调用替身，不替代真实宿主语义验收。成本为责任阶段调用、真实脚本/闭环与最终完成核验；源码/契约变化会增加实际必要重验，不能承诺固定耗时。
 
 ## 3.1.0：派生输入基线与 goal 正式收口
 

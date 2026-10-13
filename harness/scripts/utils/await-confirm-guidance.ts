@@ -178,7 +178,7 @@ export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts):
     `【${feature} · run ${runId} · ${phase}】run 预算已耗尽（${kind}，${spent}）。`,
     `影响：${feature} 停在 ${phase} 阶段，本 run 的剩余阶段未执行；已完成的阶段结果保留。`,
     '预算按活跃执行时间累计（停机等待不计入）——本次熔断是真实消耗，不是隔夜钟漂。',
-    '谁能修：有权决定预算的人（通常是你）——硬预算框架不会自行增加。',
+    '谁能修：预算有权者；runner 不自行增额。用户已明确无人值守＋不要询问＋授权完整交付时，主 Agent 可显式提高默认额度并沿现有入口恢复；用户单独总上限不可突破，累计消耗与无进展熔断不重置。',
     '',
     '怎么恢复：调大本 run manifest.json 的 budget.wall_clock_minutes / budget.max_total_turns，然后带 --override-manifest 重新发起同一请求，',
     '  或显式续跑本 run（已填好）：',

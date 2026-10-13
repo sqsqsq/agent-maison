@@ -47,8 +47,8 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 | 命名规范 / 硬编码字符串 | `coding-rules.yaml` | MAJOR |
 | 异常处理 / 业务逻辑正确性 | `acceptance.yaml` / `plan.md` | MAJOR |
 | 数据所有权 / 模拟数据隔离 | `coding-rules.yaml` | MAJOR/MINOR |
-| 视觉保真治理 | spec `fidelity_target`/`fidelity_deferrals` + `fidelity_governance` | BLOCKER（`pixel_1to1` defer 须人类签字） |
-| **视觉保真**（详见 reference） | spec/coding 落盘的确定性报告 | BLOCKER（`visual_fidelity_review`，证据全覆盖） |
+| 视觉保真治理 | spec `fidelity_target`/`fidelity_deferrals` + `fidelity_governance` | 按有效范围、严格度与实际影响；有效 best_effort defer 披露债务，hard 不允许以人签豁免 |
+| **视觉保真**（详见 reference） | spec/coding 落盘的确定性报告 | 按严格度（hard pixel 下适用证据全覆盖）；repo_ref 不强造 crop 证据，覆盖要求不抬细节严重级别 |
 
 ## 输入
 
@@ -71,7 +71,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 2. **Research Sub-Phase**（审查前完成）：读取全部目标源码及适用对照。入口指定 review 为首阶段且无有效 facts 时建立绑定本次身份/基线的 facts；有有效基线时才追加 `## phase_delta: review`（无新增写 "none"）。专项使用 request facts/reportDir，不触碰活跃 Feature 的 facts、attestation、receipt 或 events。复杂问题的独立质询仍按既有要求执行。
 3. **系统化审查**（5 子维度，详见 reference）：架构合规性（BLOCKER）→ 接口一致性（BLOCKER）→ 编码规范（MAJOR）→ 业务逻辑（MAJOR）→ 数据层（MAJOR/MINOR）；UI 需求另做视觉保真维度（详见 reference，pixel_1to1 P0 全覆盖不许抽查）。
    惯例文件存在时还须执行 reference「工程惯例核对」：以目标文件集合核对全部条目，输出全量台账；适用条目打开范例，存量违反降为 advisory。重复意见只能建议 `/conventions-bootstrap` 升格，不直接写惯例文件。
-4. **生成审查报告**：模板 `templates/review-report-template.md`，**必须包含 6 章节**：审查范围 / 审查方法 / 问题清单（编号+严重程度+分类+描述+涉及文件+修复建议）/ 问题统计 / 修复建议摘要 / 结论。问题分类用预定义类别（分层违规/接口不一致/资源引用/命名规范/硬编码/逻辑错误/异常处理/性能/安全/其他）。严重程度：BLOCKER（架构分层违规/接口签名不一致/文件缺失/资源引用缺失）/ MAJOR（命名/硬编码/异常处理/逻辑错误）/ MINOR（模拟数据隔离/风格/注释）/ INFO（改进建议）。结论：BLOCKER>0→不通过；BLOCKER=0 且 MAJOR>0→有条件通过；均 0→通过。
+4. **生成审查报告**：模板 `templates/review-report-template.md`，**必须包含 6 章节**：审查范围 / 审查方法 / 问题清单（编号+严重程度+分类+描述+涉及文件+修复建议）/ 问题统计 / 修复建议摘要 / 结论。问题分类用预定义类别（分层违规/接口不一致/资源引用/命名规范/硬编码/逻辑错误/异常处理/性能/安全/视觉保真/其他）。严重程度：BLOCKER（架构分层违规/接口签名不一致/文件缺失/资源引用缺失）/ MAJOR（命名/硬编码/异常处理/逻辑错误）/ MINOR（模拟数据隔离/风格/注释）/ INFO（改进建议）。结论：BLOCKER>0→不通过；必须返修的 MAJOR 未闭合不得推进；仅有效 best_effort 非关键视觉保真 MAJOR 时通过/有条件通过均可，保留统计与未关闭状态；hard、功能 MAJOR、BLOCKER 不豁免。
 5. **质量门禁自检**（10 项：审查范围明确/问题清单六列格式/严重程度四级值域/分类值域/统计一致/修复建议可操作/结论一致性/涉及文件真实存在/问题有代码证据/元数据齐全）：不通过定位问题自动修正重检。
 6. **输出与归档**：Feature 使用既有报告与 attestation 路径及单写者规则；专项只写 prepare 返回的 reportDir/review_report。两者均记录实际覆盖与基线，review 完成不代表未完成的实现/测试义务已完成；新实现须审查其当前基线，旧 PASS 不得代替。根因归设计时沿原归因回退，不统一塞给 coding。
 
@@ -104,12 +104,12 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 负面审查的逐条验证须覆盖每个未关闭 BLOCKER/MAJOR。缺行、重复冲突、非法 verdict 或 evidence 与当前行不符时，
 按 `readiness_signals` 中 `id=verifier_repair_diagnosis` 的精确问题修报告：只有本轮实际签发了 request 才投给该 verifier。
-合法 refuted/unclear 保留原判断，不因为零候选强制改成 confirmed。carried/disabled 或混合资格不足时不补造 request，
+合法 refuted/unclear 保留原判断，不因为零候选强制改成 confirmed。 当前 Goal attempt 的格式缺口先如实保留原回复并返回 runtime，由既有调用路径最多自动纠错一次；不在阶段内另叠重投循环。纠错调用与时间照计，重进不重新发放机会；其它条目错误不清掉逐条绑定有效的 confirmed。carried/disabled 或混合资格不足时不补造 request，
 先修当前阶段能合法修的资格原因；用户禁用配置不自动更改。拒修在案的旧 subject 无法重确认，真实 FAIL/open 不由人签放行。
 
 **closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
-1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或"有条件通过"，开发者需修复代码后重新执行 coding → code-review。
+1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或仍有必须返修的 MAJOR，交正确责任阶段修复后复审；被 verifier 驳回的误报须先更正原报告，不能直接洗绿。允许披露的视觉差异不派 coding，review 不另写债务账，不预签 testing 的视觉 PASS/release READY。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落，不自行推导或补写跨阶段建议；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

@@ -678,3 +678,7 @@ npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
 ```
 
 失败时查 `goal-runs/<run-id>/goal-report.md` 的「外部输入或权限」段与 `events.jsonl` 的 `agent_interaction_required`；仅真实外部前置条件允许停放，质量问题不得由人工确认放行。
+
+## 默认额度与用户总上限
+
+只有用户明确同时选择“无人值守＋不要询问＋授权完整交付”，主 Agent 才可在读取原始有效请求及已有更正后，显式提高框架默认额度，并通过现有 manifest / `--override-manifest` / `budget_changed` 继续同一 run。普通静默、“继续”或局部任务不授予该权；用户另行指定的最终时间、轮次或费用总上限不可突破，授权不能证明或冲突时保持原边界。runner 到当前生效额度仍照常停，不自动循环增额；lineage 累计消耗不清零，提额不解除 no_progress_guard、重复回退、外部条件或其它授权。最终回复按现有 manifest 与 budget_changed 披露每次扩容前后值、原因、授权依据及累计消耗；费用只在有可靠数据时给数值。不增加参数、授权字段或预算账本。

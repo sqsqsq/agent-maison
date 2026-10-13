@@ -4,7 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { featurePhaseReportsDir } from '../../config';
+import { featurePhaseReportsDir, resolveFeatureArtifact } from '../../config';
 import type { FeaturePhase } from './phase-transition-policy';
 import { loadVerifierEvidence, loadVerifierEvidenceForSubject } from './verifier-evidence';
 
@@ -20,6 +20,7 @@ export const PHASE_SNAPSHOT_FILES = [
   'merged-report.md',
   'verifier.report.md',
   'trace.json',
+  'review-report.md',
 ] as const;
 
 /** 由 loader 选出当前 subject 后再复制（不参与固定名直读）。 */
@@ -69,7 +70,8 @@ export function snapshotPhaseHarness(
 
   for (const file of PHASE_SNAPSHOT_FILES) {
     if (SUBJECT_SCOPED_SNAPSHOT_FILES.has(file)) continue;
-    copyInto(path.join(srcDir, file), file);
+    if (file === 'review-report.md' && phase !== 'review') { snapshot_files[file] = null; continue; }
+    copyInto(file === 'review-report.md' ? resolveFeatureArtifact(projectRoot, feature, file).actualPath : path.join(srcDir, file), file);
   }
 
   // 源文件**直接取 loader 这一次的结果**，不再另读一次 summary（review 五轮 P1）。

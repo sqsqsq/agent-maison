@@ -1,3 +1,4 @@
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -75,7 +76,9 @@ const VALID_PROJECT = path.resolve(__dirname, '..', 'fixtures', 'component-bluep
 const VALID_CU_PATH = path.join(VALID_PROJECT, 'doc', 'features', 'ledger-app-blueprint', 'ledger-refresh', 'change-unit.yaml');
 const CHANGE_UNIT_FIXTURES = path.resolve(__dirname, '..', 'fixtures', 'change-unit');
 
+let caseSelector: string | undefined;
 function test(name: string, body: () => void): UnitCaseResult {
+  if (!matchesUnitCase(name, caseSelector)) return { name, ok: true };
   try {
     body();
     return { name, ok: true };
@@ -85,6 +88,7 @@ function test(name: string, body: () => void): UnitCaseResult {
 }
 
 async function asyncTest(name: string, body: () => Promise<void>): Promise<UnitCaseResult> {
+  if (!matchesUnitCase(name, caseSelector)) return { name, ok: true };
   try {
     await body();
     return { name, ok: true };
@@ -435,6 +439,27 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, loaded.contracts, fixture.acceptance, true, 'ut', fixture.dags);
       assert(result.issues.length === 0, `完整施工投影失败：${result.issues.map(item => item.id).join(', ')}`);
       assert(result.useCasesRequired && result.dagRequired, '复杂运行时义务未机械派生');
+    });
+  }));
+
+  results.push(test('c6a3d918 UT planned refs consume real files and symbols without rewriting contracts', () => {
+    withTempProject(projectRoot => {
+      const fixture = projectionContracts(projectRoot);
+      for (const mapping of fixture.contracts.change_unit!.predicate_mappings) {
+        mapping.implementation_refs = mapping.implementation_refs.map(ref => `planned:${ref}`);
+        mapping.test_refs = mapping.test_refs.map(ref => `planned:${ref}`);
+      }
+      bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
+      const before = JSON.stringify(fixture.contracts);
+      const check = () => validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'ut', fixture.dags);
+      assert(check().issues.length === 0, 'planned 已落地引用应通过 UT');
+      assert(JSON.stringify(fixture.contracts) === before, '不得改冻结契约');
+      fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['planned:src/ledger/LedgerFeature.ets#NotRealSymbol'];
+      expectIssue(check().issues.map(item => item.id), 'change_unit_mapping_symbol_missing');
+      fixture.contracts.change_unit!.predicate_mappings[0].test_refs = ['planned:test/ledger/NotReal.test.ets'];
+      expectIssue(check().issues.map(item => item.id), 'change_unit_mapping_file_missing');
+      fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['planned:../outside.ets'];
+      expectIssue(check().issues.map(item => item.id), 'change_unit_mapping_path_invalid');
     });
   }));
 
@@ -1607,4 +1632,10 @@ function writeArchitecture(projectRoot: string, mutate?: (dsl: ArchitectureDsl) 
   mutate?.(architecture);
   fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ project_profile: { name: 'hmos-app' }, architecture }), 'utf8');
   clearFrameworkConfigCache();
+}
+
+export async function runSelectedCases(selector?: string) {
+  caseSelector = selector;
+  try { return selectedUnitCases((await runAll()).filter(r => matchesUnitCase(r.name, selector)), selector, []); }
+  finally { caseSelector = undefined; }
 }

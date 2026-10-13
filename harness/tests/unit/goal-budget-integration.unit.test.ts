@@ -37,6 +37,7 @@ import { buildSupersedeAuditEvent, createGoalRun } from '../../scripts/utils/goa
 import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import { computeManifestIdentityFields, type GoalManifest } from '../../scripts/utils/goal-manifest';
 import { loadHostSnapshot, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { completionOriginal, readJson, runFile, runIds, supersede } from './successor-exit.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
@@ -145,11 +146,11 @@ function progressAndHeartbeatTurns(s: Snapshot, runId: string): { progress: numb
   return { progress, heartbeat: resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() }).totalTurns };
 }
 
-async function withAe92d8(run: (s: Snapshot, source: string) => Promise<void>): Promise<void> {
-  const s = loadHostSnapshot();
+async function withAe92d8(run: (s: Snapshot, source: string) => Promise<void>, currentCompletion = false): Promise<void> {
+  const s = currentCompletion ? await loadMigratedHostSnapshot([B1_FEATURE]) : loadHostSnapshot();
   try {
     clearFrameworkConfigCache();
-    const [source] = runIds(s.root, B1_FEATURE);
+    const source = readJson<{ run_id: string }>(completionOriginal(s, B1_FEATURE)).run_id;
     addSourceBacktrack(s, source);
     seedFailedRun(s, source, RUN_N, [], N_TURNS);
     seedFailedRun(s, source, RUN_O, [source, RUN_N], O_TURNS);
@@ -191,7 +192,7 @@ const b1Cases: TestCase[] = [
       const { progress, heartbeat } = progressAndHeartbeatTurns(s, successor);
       assert(progress === N_TURNS + O_TURNS + own, `progress.json turns_used 应为 N+O+本 run=${N_TURNS + O_TURNS + own}，实得 ${progress}`);
       assert(heartbeat === progress, `heartbeat 与 progress.json 应同源：${heartbeat} vs ${progress}`);
-    }),
+    }, true),
   },
   {
     name: 'B1-2 F 完成原件被篡改（record broken）→ 不设边界，按现状全链折叠',
@@ -242,17 +243,17 @@ const b1Cases: TestCase[] = [
       const own = countType(eventsOf(s, successor), 'agent_invoke_start');
       const { progress, heartbeat } = progressAndHeartbeatTurns(s, successor);
       assert(progress === N_TURNS + O_TURNS + own && heartbeat === progress, `resume 后 progress/heartbeat 应为 ${N_TURNS + O_TURNS + own}：${progress}/${heartbeat}`);
-    }),
+    }, true),
   },
   {
     // plan a2f7c9e4 §3.1 反例①：宿主 d6d31d 形状——本周期 run 用满来源的 30 次后经 --override-manifest 授权到 42，后继出生时取本周期最新授权值，
     // 不再整份继承合同来源（F）的 30 而零调用停机；后继再起一次仍是 42。
     name: 'a2f7c9e4 B1-5 本周期授权 42：O 用满 30 次后授权到 42 → 后继上限 42、首次调用不因来源的 30 停；从后继再起一次仍 42',
     run: async () => {
-      const s = loadHostSnapshot();
+      const s = await loadMigratedHostSnapshot([B1_FEATURE]);
       try {
         clearFrameworkConfigCache();
-        const [source] = runIds(s.root, B1_FEATURE);
+        const source = readJson<{ run_id: string }>(completionOriginal(s, B1_FEATURE)).run_id;
         seedFailedRun(s, source, RUN_N, [], N_TURNS);
         seedFailedRun(s, source, RUN_O, [source, RUN_N], 30);
         const oFile = runFile(s.root, B1_FEATURE, RUN_O, 'manifest.json');

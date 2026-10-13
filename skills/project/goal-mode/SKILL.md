@@ -75,3 +75,7 @@
 - goal agent、attended/detached executor 与 supervisor 永不得构造 `--rebaseline-to`；该参数只属于 goal runtime 外的操作者管理命令，详见运行手册。
 - 不得把 INCOMPLETE 软化为 PASS，不得在 Skill 内新增阶段顺序或 verdict→next-phase 表。
 - 子代理（verifier / phase-executor）的结果只能同步等待，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。
+
+## 默认额度与用户总上限
+
+明确“无人值守＋不要询问＋完整交付”时，主 Agent 可显式调整默认额度并沿现有 manifest/--override-manifest 恢复同一 run；普通静默不授予提额权。先核原始请求与更正，用户总上限不破，runner 照停，累计消耗和无进展熔断不重置。最终回复依据 manifest/budget_changed 披露逐次前后额度、原因、授权与累计消耗；完整口径见 [运行细则](../../reference/goal-mode-operations.md)。

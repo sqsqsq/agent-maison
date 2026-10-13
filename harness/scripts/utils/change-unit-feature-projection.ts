@@ -131,10 +131,6 @@ function checkConstructionRefs(
       out.push(issue('change_unit_mapping_path_invalid', (error as Error).message));
       continue;
     }
-    if (planned && !plannedAllowed && phase !== 'coding' && phase !== 'review') {
-      out.push(issue('change_unit_mapping_planned_ref_not_allowed', `${owner} 的 ${role} ref=${rawRef} 在 ${phase} 阶段必须已有真实消费落点。`));
-      continue;
-    }
     // A frozen planned path becomes checkable through its real file/symbol, not a contract rewrite.
     if (planned && plannedAllowed) continue;
     const absolute = path.resolve(projectRoot, normalized);
@@ -659,8 +655,10 @@ export function validateChangeUnitFeatureProjection(
       issues.push(issue('change_unit_definition_copied', `contracts.change_unit 不得复制 canonical ${forbidden}。`));
     }
   }
-  if (!options.designOnly) issues.push(...changeUnitMappingIssues(projectRoot, section!, cu, phase));
-  issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+  if (!options.designOnly) {
+    issues.push(...changeUnitMappingIssues(projectRoot, section!, cu, phase));
+    issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+  }
   const warnings: string[] = [];
   try {
     const modifiable = deriveModifiableModules(projectRoot, cu);
@@ -728,6 +726,10 @@ export function checkChangeUnitFeatureProjection(
       severity: 'BLOCKER' as const,
       status: 'FAIL' as const,
       details: item.message,
+      ...(phase === 'ut' && item.id === 'change_unit_use_cases_required' ? {
+        repair_owner: 'plan' as const,
+        affected_files: [path.relative(ctx.projectRoot, featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')).replace(/\\/g, '/')],
+      } : {}),
       // route=reconcile_blueprint 的责任在链外设计 owner：与 authoritative_content_aligned 无效分支同一字段，goal 首次即停交设计 owner。
       ...(item.route === 'reconcile_blueprint' ? { repair_owner: 'external' as const, structured: { kind: 'design_authority', reason: item.reason ?? 'other', codes: item.codes ?? [item.id] } } : {}),
       suggestion: item.route === 'reconcile_blueprint'

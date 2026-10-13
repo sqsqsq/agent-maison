@@ -60,7 +60,7 @@ advisory」块，声明本次 agent 是否具备视觉能力（`Vision: YES/NO`�
 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。**无视觉能力
 （NO，盲档）**：不得假装看图/凭空描述截图内容（幻觉）——改走
 [../feature/spec/reference/ui-spec.md「盲档工作法」](../feature/spec/reference/ui-spec.md)：
-OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标走 placeholder，无法判定项登记待
+OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标优先复用用途由代码/资源引用明确的 repo_ref，缺失或用途不明才 placeholder；复用仍写 verified: unverified，无法判定项登记待
 复核清单；`fidelity_target` 会被能力自动钳制，无需手动改声明。交互式（非 headless）会话若模型
 本身具备视觉能力，仍按原「必须用强 VL」执行——本分档只影响**确认没有视觉能力**的场景，不是
 "可以偷懒降级"的许可。**交互式能力实测（I1，无 goal-runner 自动注入能力块时）**：不再靠"自己

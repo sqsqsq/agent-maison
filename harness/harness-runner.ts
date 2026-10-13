@@ -124,8 +124,11 @@ import {
   ensurePersonalSetup,
 } from './scripts/utils/personal-setup-gate';
 import {
+  parseReviewIssueRows,
+  reviewIssueRequiresRepair,
   buildSummaryRepairCandidates,
-  loadRepairDeclineState,
+  reviewRepairVerificationContext,
+  extractFailureClassification,
   findUnreadableDiagnosisChecks,
   scopeRevisionInputFromRepairCandidates,
   writeScopeRevisionInputToScriptReport,
@@ -2139,6 +2142,18 @@ export function writeRunSummaryBase(
   // legacy receipt 不参与；未清偿债务 → visual 轴 UNVERIFIED/needs_fix
   //（advance 不受影响——visual 非推进阻断轴，等价性保持；release 由此 BLOCKED）。
   applyVisualDebtPipeline(projectRoot, report, lattice);
+  // Existing handoff deferrals remain the source; review disclosure never verifies device visuals.
+  const fidelityDeferrals = resolveFidelityContextFromFeature(projectRoot, report.feature).fidelityDeferrals;
+  const fidelity = loadFidelityIntentSsot(projectRoot, report.feature);
+  const disclosedReviewVisual = report.phase === 'review' && parseReviewIssueRows(readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md') ?? '')
+    .some(row => row.classification === '视觉保真' && row.severity === 'MAJOR' && !/已关闭|已修复|closed|fixed/i.test(row.state)
+      && !reviewIssueRequiresRepair(row, fidelity));
+  if (fidelityDeferrals.length || disclosedReviewVisual) {
+    lattice.release_readiness = 'BLOCKED';
+    readinessSignals.push({ id: 'visual_debt_disclosure', status: 'unknown',
+      message: `保留视觉差异/未验披露：${fidelityDeferrals.map(entry => entry.element_id).join(', ') || 'review 可披露视觉 MAJOR'}；阶段检查不构成设备视觉验真，release 仍 BLOCKED。` });
+  }
+
   // S7 二轮 P1-6：asset 域债务 revision 落盘（继承指纹链 2 的上游锚点——testing 期
   // resolveAssetAxisInheritance 重算比对；债务管线刚写完盘，此处读的是本轮定稿态）。
   let assetDebtRevision: string | undefined;
@@ -2207,12 +2222,8 @@ export function writeRunSummaryBase(
   );
   const reviewReportText = report.phase === 'review'
     ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md') : null;
-  const repairDeclines = report.phase === 'review' && carriedVerifierSubjectId !== null && process.env.MAISON_GOAL_RUN_ID?.trim()
-    ? loadRepairDeclineState(projectRoot, report.feature, process.env.MAISON_GOAL_RUN_ID.trim()) : undefined;
-  const declinedFingerprints = repairDeclines ? new Set([...repairDeclines]
-    .filter(([, state]) => state.declined_rounds > 0).map(([fp]) => fp)) : undefined;
-  const declinedIssues = repairDeclines ? [...new Set(repairDeclines.values())]
-    .filter(state => state.declined_rounds > 0).map(({ id, summary }) => ({ id, summary })) : undefined;
+  const { declinedFingerprints, declinedIssues } = reviewRepairVerificationContext(projectRoot, report.feature,
+    report.phase === 'review' ? process.env.MAISON_GOAL_RUN_ID?.trim() : undefined, carriedVerifierSubjectId === null);
   // D3/D4（codex 一轮 medium）：终态自洽 ≠ 正文可采信。诊断轮的必需检查项读不出来
   // （表格/YAML 缺项、冲突、占位）时**不得**落回"先修原始 blocker"——那条路让重复
   // harness 反复复用同一份坏正文、恒零候选。仍走 run_verifier_for_repair（NEXT 在该
@@ -2348,6 +2359,7 @@ export function writeRunSummaryBase(
     // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
     // 源码正则冒充接线验证已被 codex 二轮冻结项③点名禁止）
     const repairCandidates = buildSummaryRepairCandidates({
+      reviewFidelity: loadFidelityIntentSsot(projectRoot, report.feature),
       phase: report.phase,
       checks: report.checks,
       reportValidity: lattice.report_validity,
@@ -2366,7 +2378,7 @@ export function writeRunSummaryBase(
     // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
     console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
   }
-  // D0.3：已归属 spec/plan 的候选 → 同 run 范围修订输入，回写进**磁盘** script-report.json。
+  // D0.3：设计归属与链外 coding 候选 → 同 run 范围修订输入，回写进**磁盘** script-report.json。
   // 位置不动（本轮 verifier subject 已锚定），因此 PASS / FAIL 两轮都到得了这里。
   // **刻意在上面的 best-effort catch 之外**：载体写不成 = runtime 看不到修订输入，
   // 静默吞掉会让「summary 有候选、范围却永远不修订」这种半截状态活下来。
@@ -2977,11 +2989,7 @@ function decideNextAction(
   return 'fix_blockers_then_rerun';
 }
 
-/** 归因文本回退解析（**全仓唯一**"失败归因：xxx"实现）；导出供测试与 D1 判据注入，禁止复制第二份。 */
-export function extractFailureClassification(details: string): string | undefined {
-  const match = details.match(/失败归因：([a-zA-Z0-9_]+)/);
-  return match?.[1];
-}
+export { extractFailureClassification } from './scripts/utils/repair-candidates';
 
 function excerpt(text: string, max: number): string {
   const compact = text.replace(/\r/g, '').trim();

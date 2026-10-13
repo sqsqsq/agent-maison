@@ -1,7 +1,7 @@
 // feature-assessment.unit.test.ts — plan b2d7f4e9 §3.1 / t1：唯一评估入口 assessFeature
 //
 // 夹具只用两类真实产物，不注入 verdict：
-//   · 上一版宿主快照（host-snapshot-3.1.0，real-chain 生产链产出，换目录加载）；
+//   · 上一版宿主快照（原样识别失效；需当前完成时显式用正式 successor 迁移的副本）；
 //   · completion-chain-seed（生产 writer 造 legacy 1.1 完成事实）+ 显式传入的合法范围。
 
 import assert from 'assert';
@@ -18,6 +18,7 @@ import { asChangeUnitArtifact, loadCanonicalChangeUnit } from '../../scripts/uti
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import type { ExecutionScope } from '../../scripts/utils/execution-scope';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { seedCleanCompletionChain } from '../utils/completion-chain-seed';
 import type { UnitCaseResult } from '../run-unit';
 import * as YAML from 'yaml';
@@ -31,8 +32,8 @@ import { resolveWorkflowSpec } from '../../workflow-loader';
 import { handWriteProjections, authorCurrentCuPlan } from './component-design-handoff.unit.test';
 import { changeProjectedAcceptance } from './successor-exit.unit.test';
 
-function withSnapshot(run: (root: string, frameworkRoot: string) => void): void {
-  const snapshot = loadHostSnapshot();
+async function withSnapshot(run: (root: string, frameworkRoot: string) => void, currentCompletion = false): Promise<void> {
+  const snapshot = currentCompletion ? await loadMigratedHostSnapshot() : loadHostSnapshot();
   try {
     clearFrameworkConfigCache();
     run(snapshot.root, snapshot.frameworkRoot);
@@ -159,8 +160,19 @@ const planGate = (root: string, fw: string) => checkChangeUnitFeatureProjection(
   featureSpec: new SpecLoader(root, undefined, undefined, fw).loadFeatureSpec(SNAPSHOT_CU_FEATURE),
 } as unknown as CheckContext, 'plan').find(check => check.id === 'authoritative_content_aligned');
 
-const cases: Array<{ name: string; run: () => void }> = [
-  { name: '★1 上一版快照换目录加载：两个已完成 Feature record ok、义务全覆盖、complete', run: () => withSnapshot((root, fw) => {
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  { name: '★1 原快照换目录加载：历史原件仍 record ok，当前 review gate 失效且不改旧原件', run: () => withSnapshot((root, fw) => {
+    for (const feature of [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]) {
+      const projection = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'feature-completion.json'), 'utf8'));
+      const original = path.join(root, projection.original_path); const bytes = fs.readFileSync(original);
+      const a = assessOnSnapshot(root, fw, feature);
+      assert.strictEqual(a.record.state, 'ok', `${feature}：${brief(a)}`);
+      assert(a.obligations.some(o => o.owner_phase === 'review' && o.status === 'uncovered' && o.reason?.includes('gate_fingerprint')), brief(a));
+      assert.strictEqual(a.complete, false, '旧 review 指纹不得冒充当前门禁通过');
+      assert(fs.readFileSync(original).equals(bytes), '失效识别不得改写历史完成');
+    }
+  }) },
+  { name: '★1 正式迁移后：两个 Feature 当前原件 record ok、义务全覆盖、complete', run: () => withSnapshot((root, fw) => {
     for (const feature of [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]) {
       const a = assessOnSnapshot(root, fw, feature);
       assert.strictEqual(a.record.state, 'ok', `${feature}：${brief(a)}`);
@@ -168,7 +180,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.deepStrictEqual(a.blocking, []);
       assert.strictEqual(a.complete, true, `${feature}：${brief(a)}`);
     }
-  }) },
+  }, true) },
   { name: '执行结果按 owner_phase 摊回：CU 施工源码后改 → coding 义务 uncovered，记录仍可信', run: () => withSnapshot((root, fw) => {
     fs.appendFileSync(path.join(root, 'src', 'ledger', 'LedgerFeature.ets'), '\n// changed after completion\n');
     const a = assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE);
@@ -197,7 +209,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     const projection = JSON.parse(fs.readFileSync(projectionFile, 'utf8'));
     const originalFile = path.join(root, projection.original_path);
     const original = JSON.parse(fs.readFileSync(originalFile, 'utf8'));
-    original.phases[1].run_id = '20260101T000000Z-f0f0f0';
+    original.phases[0].run_id = '20260101T000000Z-f0f0f0';
     const text = JSON.stringify(original, null, 2) + '\n';
     fs.writeFileSync(originalFile, text);
     fs.writeFileSync(projectionFile, JSON.stringify({ ...projection, original_sha256: crypto.createHash('sha256').update(text, 'utf-8').digest('hex') }));
@@ -206,7 +218,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     assert(a.record.state === 'broken' && a.record.reasons.some(r => r.includes('20260101T000000Z-f0f0f0')), brief(a));
     assert(a.obligations.every(o => o.status === 'covered'), brief(a));
     assert.strictEqual(a.complete, false);
-  }) },
+  }, true) },
   { name: '#18 只改 acceptance.yaml（CU 链首为 coding）→ 验收义务 uncovered/binding；coding 义务不得被判 uncovered/result', run: () => withSnapshot((root, fw) => {
     const acceptance = featureFilePath(root, SNAPSHOT_CU_FEATURE, 'acceptance.yaml');
     fs.appendFileSync(acceptance, '# reviewer note: wording only\nextra_note: changed\n');
@@ -374,13 +386,15 @@ const cases: Array<{ name: string; run: () => void }> = [
   }) },
 ];
 
-export function runAll(): UnitCaseResult[] {
-  return cases.map(c => {
+export async function runAll(): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = [];
+  for (const c of cases) {
     try {
-      c.run();
-      return { name: `feature-assessment: ${c.name}`, ok: true };
+      await c.run();
+      results.push({ name: `feature-assessment: ${c.name}`, ok: true });
     } catch (err) {
-      return { name: `feature-assessment: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message };
+      results.push({ name: `feature-assessment: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
     }
-  });
+  }
+  return results;
 }

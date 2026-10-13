@@ -443,9 +443,8 @@ export async function runGoalRuntimeChain(
      * 保留为 legacy 用例（桩内手写 summary）。
      */
     onHarnessSummary?: (ctx: { phase: string; attempt: number }) =>
-      | { blockers: Array<Record<string, unknown>> }
-      | { checks: CheckResult[] }
-      | null;
+      { blockers: Array<Record<string, unknown>> } | { checks: CheckResult[]; writerOptions?: Parameters<typeof writeRunSummaryBase>[3] } | null
+      | Promise<{ checks: CheckResult[]; writerOptions?: Parameters<typeof writeRunSummaryBase>[3] } | null>;
     /** 真实 runtime 接缝：harness 非零退出但不改报告，用于复现盘上 summary 仍是上一轮。 */
     onHarnessFailureWithoutSummary?: (ctx: { phase: string; attempt: number }) => string | null;
     /** 按 (attemptId, phase) 注入 receipt 复验 failed/missing；默认校验仍绑定真实 attempt。 */
@@ -579,7 +578,7 @@ export async function runGoalRuntimeChain(
       if (phase === 'plan') opts.onPlan?.(ctx);
       if (phase === 'ut') opts.onUt?.(ctx);
       if (phase === 'review') opts.onReview?.(ctx);
-      if (opts.onOutOfChain && phase.startsWith('design-repair-')) {
+      if (opts.onOutOfChain && (phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
         const { activeChildPid, ...override } = (await opts.onOutOfChain(ctx)) ?? {};
         // 替身 adapter 报告它起的子进程（真实 adapter 在 spawn 后调用 onActiveChild；运行时据此做收容绑定核验）。
         if (typeof activeChildPid === 'number') {
@@ -672,7 +671,7 @@ export async function runGoalRuntimeChain(
       if (currentFailure) {
         return { exitCode: 1, timedOut: false, outputTail: currentFailure };
       }
-      let failOverride = opts.onHarnessSummary?.({ phase: String(ph), attempt: harnessAttempt });
+      let failOverride = await opts.onHarnessSummary?.({ phase: String(ph), attempt: harnessAttempt });
       let admittedFacts: import('../../scripts/utils/context-facts').FactsInvocationContext | undefined;
       if (opts.checkFactsAdmission) {
         try {
@@ -776,7 +775,7 @@ export async function runGoalRuntimeChain(
           // 生产 writer 落盘（真实 lattice/blockers/candidates 派生 + validateSummaryV11 +
           // atomicWriteJson）——不再手写 summary.json
           if (opts.frameworkRoot) fs.writeFileSync(path.join(failDir, 'script-report.json'), JSON.stringify(scriptReport));
-          writeRunSummaryBase(pr, scriptReport, _fr);
+          writeRunSummaryBase(pr, scriptReport, _fr, failOverride.writerOptions);
           return { exitCode: 1, timedOut: false };
         }
         const blockers = buildSummaryBlockers(rawChecks, TEST_EXCERPT, TEST_FAILURE_CLASSIFICATION);
@@ -6952,6 +6951,196 @@ test('b7d2e9f4 §3.3 orphaned_session：只有出生事件的 run 挂着过期 s
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered'] as const) cases.push({
+  name: `c6a3d918 verifier format recovery ${variant}: bounded attempt and real budget/candidate consumption`,
+  run: async () => {
+    const { root } = setupGoalRuntimeHost('codex');
+    try {
+      const feature = FEATURE;
+      const reviewBody = [ '# Review', '## 问题清单',
+        '| 编号 | 严重程度 | 分类 | 涉及文件 | 修复建议 | 状态 |', '|---|---|---|---|---|---|',
+        '| CR-1 | MAJOR | 逻辑错误 | src/logic.ts | 修复真实逻辑 | 未关闭 |',
+        '| CR-2 | MAJOR | 逻辑错误 | src/logic.ts | 不应扩至100家 | 未关闭 |',
+        '## 结论', '**审查结论**: 不通过' ].join('\n');
+      writeFile(root, 'src/logic.ts', 'export const result = false;');
+      writeFile(root, `doc/features/${feature}/review/review-report.md`, reviewBody);
+      let reportRel = '', subject = '', corrections = 0, rereviewPrompt = '', reviewGates = 0, interrupted = false;
+      const terminal = () => '\n' + (require('../utils/verifier-evidence-fixture') as typeof import('../utils/verifier-evidence-fixture')).renderResultBlock(subject, 'PASS', 0);
+      const one = '- issue: CR-1\n  verdict: confirmed\n  evidence: logic.ts | 修复真实逻辑';
+      const refuted = '- issue: CR-2\n  verdict: refuted\n  evidence: logic.ts | 不应扩至100家';
+      const options = {
+        freshStartPhase: 'spec' as const, freshEndPhase: 'review', adapter: 'codex', freshBudget: { max_total_turns: 5 },
+        freshRequirement: 'review existing logic',
+        onReview: ({ attempt, prompt }: AgentCtx) => { if (attempt > 1) rereviewPrompt = prompt; },
+        afterHarnessPass: ({ phase }: { phase: string }) => {
+          if (phase !== 'review') return;
+          reviewGates++;
+          const dir = featureFilePath(root, feature, 'review/reports'); fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'ai-prompt.md'), 'Verify the actual current report; preserve individual judgments.');
+          const checks: CheckResult[] = [
+            { id: 'conclusion_with_verdict', category: 'structure', description: 'valid report', details: '合法问题报告', severity: 'BLOCKER', status: 'PASS' },
+            { id: 'negative_verdict_closure', category: 'structure', description: 'negative product verdict remains', details: '产品不通过，须逐条验证真实缺陷', severity: 'BLOCKER', status: 'FAIL' },
+          ];
+          const report = { phase: 'review', feature, timestamp: new Date().toISOString(), project_root: root, assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+            checks, summary: { verdict: 'FAIL', total: 2, pass: 1, fail: 1, warn: 0, skip: 0, blockers: 1 } } as ScriptReport;
+          fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report));
+          let written = writeRunSummaryBase(root, report, REPO_ROOT, { verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'harness/prompts/verify-review.md', message: 'existing declared verifier' } });
+          reportRel = written.verifier_report!; subject = written.verifier_subject_id!;
+          if (!fs.existsSync(path.join(root, reportRel))) {
+            writeFile(root, reportRel, '```issue-verification\n' + (variant === 'refuted'
+              ? one.replace('confirmed', 'refuted') + '\n' + refuted
+              : one + '\n- issue: CR-2\n  verdict: confirmed') + '\n```' + terminal());
+            written = writeRunSummaryBase(root, report, REPO_ROOT, { verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'harness/prompts/verify-review.md', message: 'existing declared verifier' } });
+          }
+          if (variant === 'reentered' && reviewGates === 2 && !interrupted) { interrupted = true; throw new Error('cut after the format invocation before verdict'); }
+        },
+        onOutOfChain: () => {
+          corrections++;
+          writeFile(root, reportRel, '```issue-verification\n' + one + '\n' + ((variant === 'still-bad' || variant === 'reentered') ? '- issue: CR-2\n  verdict: confirmed' : refuted) + '\n```' + terminal());
+        },
+      };
+      let probe = await runGoalRuntimeChain(root, options);
+      if (variant === 'reentered') {
+        assert(interrupted && probe.events.some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '未命中重进窗口');
+        const resumedRunId = path.basename(probe.reportDir);
+        const manifestPath = path.join(probe.reportDir, 'manifest.json');
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        manifest.budget.max_total_turns = 7; fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+        probe = await runGoalRuntimeChain(root, { ...options, resume: resumedRunId, resumeExtraArgs: ['--override-manifest'] });
+        assert(corrections === 1, '同 attempt 重进重新发放格式纠错机会');
+      }
+      assert(!probe.events.slice(probe.events.map(event => event.type).lastIndexOf('run_start')).some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '最终不得以异常结束');
+      const repairStarts = probe.events.filter(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair');
+      assert(repairStarts.length === (variant === 'refuted' ? 0 : 1), JSON.stringify(repairStarts));
+      assert(corrections === repairStarts.length, '纠错调用事件丢失');
+      if (variant === 'refuted') {
+        assert(rereviewPrompt.includes('Re-review: previous findings') && rereviewPrompt.includes('不应扩至100家'), 'runtime 未消费真实上轮报告');
+        assert(rereviewPrompt.includes('src/logic.ts') && rereviewPrompt.includes('Actual changed files') && rereviewPrompt.includes('Current repair candidates'), 'runtime 缺实际改动/候选上下文');
+      }
+      const consumed = resolveResumedBudget(probe.events);
+      assert(consumed.totalTurns === probe.events.filter(event => event.type === 'agent_invoke_start').length, '纠错调用未计预算');
+      const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'review/reports/summary.json'), 'utf-8'));
+      assert(summary.verdict === 'FAIL', '格式恢复不得洗绿负面原报告');
+      assert((summary.repair_candidates ?? []).map((candidate: { id: string }) => candidate.id).join() === (variant === 'refuted' ? '' : 'CR-1'), '局部坏条目清空了有效 confirmed');
+    } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  },
+});
+
+test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with release BLOCKED', async () => {
+  const { root } = setupGoalRuntimeHost('codex');
+  const feature = FEATURE;
+  try {
+    const { initializeFidelityRouting } = await import('../../scripts/utils/goal-preflight');
+    const checker = (await import('../../scripts/check-review')).default;
+    const spec = featureFilePath(root, feature, 'spec/spec.md');
+    fs.writeFileSync(spec, '# UI\n```yaml\nui_change: new_or_changed\nfidelity_deferrals:\n  - element_id: bank-search\n    reason: 搜索区域有效延后\n```');
+    writeFile(root, `doc/features/${feature}/spec/ui-spec.yaml`, 'schema_version: "1.0"\nverified: unverified\nscreens: [{id: home, priority: P1, root: {type: navigation_frame, order: 0}}]\ntokens: {}\nassets: []');
+    writeFile(root, `doc/features/${feature}/spec/ref-elements.yaml`, 'elements: [{element_id: bank-search, disposition: defer}]');
+    const reportBody = '# Review\n## 审查范围\nmodule source\n## 审查方法\n视觉保真：可见文案复核；设备视觉尚未验证。\n## 问题清单\n| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 | 状态 |\n|---|---|---|---|---|---|---|\n| CR-STYLE | MAJOR | 视觉保真 | 协议颜色细节 | src/logic.ts | 披露颜色差异 | 未关闭 |\n## 问题统计\nBLOCKER: 0 MAJOR: 1 MINOR: 0 INFO: 0\n## 修复建议摘要\n仅披露，testing 尚未验真\n## 结论\n**审查结论**: 有条件通过';
+    writeFile(root, 'src/logic.ts', 'export const color = "blue";');
+    writeFile(root, `doc/features/${feature}/review/review-report.md`, reportBody);
+    initializeFidelityRouting({ projectRoot: root, frameworkRoot: REPO_ROOT, feature, requirement: '尽量完成 UI，允许搜索区域延后',
+      featuresDirRel: 'doc/features', executionIdentity: 'repair1', requirementProvenance: 'explicit_cli' });
+    const functional: CheckResult = { id: 'spec_file_exists', category: 'structure', description: 'transport returned phase artifacts', details: 'test executor', severity: 'BLOCKER', status: 'PASS' };
+    const probe = await runGoalRuntimeChain(root, { adapter: 'codex', freshRequirement: '尽量完成 UI，允许搜索区域延后',
+      onHarnessSummary: async ({ phase }) => {
+        if (phase === 'review') {
+          const ctx = { phase: 'review', feature, projectRoot: root, frameworkRoot: REPO_ROOT, phaseRule: { structure_checks: {}, traceability_checks: {} },
+            featureSpec: { feature }, fidelityTarget: 'reference_only', acceptanceStrictness: 'best_effort' } as unknown as CheckContext;
+          const checks = await checker.check(ctx);
+          const passChecks = checks.filter(check => ['conclusion_with_verdict', 'conditional_pass_closure', 'negative_verdict_closure', 'visual_fidelity_review', 'statistics_summary'].includes(check.id));
+          const dir = featureFilePath(root, feature, 'review/reports'); fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'ai-prompt.md'), 'Review allowed visual disclosure without inventing a repair.');
+          const verifierPlan = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: 'harness/prompts/verify-review.md', message: 'normal PASS path' };
+          const report = { phase: 'review', feature, project_root: root, timestamp: new Date().toISOString(), assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+            checks: passChecks, summary: { total: passChecks.length, pass: passChecks.length, fail: 0, warn: 0, skip: 0, blockers: 0, verdict: 'PASS' } } as ScriptReport;
+          const summary = writeRunSummaryBase(root, report, REPO_ROOT, { verifierPlan });
+          const { renderResultBlock } = await import('../utils/verifier-evidence-fixture');
+          writeFile(root, summary.verifier_report!, renderResultBlock(summary.verifier_subject_id!, 'PASS', 0));
+          return { checks: passChecks, writerOptions: { verifierPlan } };
+        }
+        return { checks: [functional, { id: 'visual_diff', category: 'structure', description: 'clean implemented-scope testing transport', details: 'no device residual reported', severity: 'MAJOR', status: 'PASS' }] };
+      },
+    });
+    assert(probe.exitCode === 0 && !probe.events.some(event => event.type === 'run_end' && ['PARTIAL', 'HALTED', 'INTERRUPTED'].includes(String(event.status))), JSON.stringify(probe.events.slice(-5)));
+    assert(fs.existsSync(path.join(probe.reportDir, 'feature-completion.json')), '真实完成核验没有生成 completion');
+    assert(!probe.events.some(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair'), '普通 PASS 视觉披露不得被误发格式纠错');
+    const { collectCleanPassIssues } = await import('../../scripts/utils/verify-feature-completion');
+    assert(collectCleanPassIssues({ projectRoot: root, frameworkRoot: REPO_ROOT, feature, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }).length === 0, '真实 run 完成消费仍存在缺口');
+    for (const phase of ['review', 'testing']) {
+      const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, `${phase}/reports/summary.json`), 'utf-8'));
+      assert(summary.release_readiness === 'BLOCKED', '差异不得假称可发布');
+      assert(summary.readiness_signals.some((signal: { id: string; status: string }) => signal.id === 'visual_debt_disclosure' && signal.status === 'unknown'), '未验披露丢失');
+      assert(summary.quality_axes.visual.resolution?.class !== 'needs_fix', '可披露差异不得成为永久 completion 缺陷');
+    }
+    assert(fs.readFileSync(featureFilePath(root, feature, 'review/review-report.md'), 'utf-8').includes('MAJOR: 1'), '原始统计被清零');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'request-missing'] as const) test(`repair1 R3 UT UNVERIFIED ${variant} uses D1 and budgeted bounded format recovery`, async () => {
+  const { root } = setupGoalRuntimeHost('codex');
+  const feature = FEATURE;
+  const { UT_REAL_ASSERTION_CHECK } = await import('./repair-candidates.unit.test');
+  const { renderResultBlock } = await import('../utils/verifier-evidence-fixture');
+  let corrections = 0, gates = 0, cut = false, reportRel = '', subject = '';
+  try {
+    const checks = [{ id: 'ut_hvigor_build', category: 'structure', severity: 'BLOCKER', status: 'PASS', description: 'native compile complete', details: 'compile passed' },
+      { ...UT_REAL_ASSERTION_CHECK, category: 'structure', description: '真实断言失败的生产格式器与归因' }] as CheckResult[];
+    const plan = { mode: 'enabled' as const, reason: 'policy_required' as const, verifier_prompt: 'harness/prompts/verify-ut.md', message: 'D1 existing declaration' };
+    const body = (valid: boolean) => '| id | status |\n|---|---|\n| end_to_end_driving | ' + (variant === 'refuted' ? 'FAIL' : 'PASS') + ' |\n'
+      + (valid ? '| business_assertion_value | PASS |\n' : '');
+    const options: NonNullable<Parameters<typeof runGoalRuntimeChain>[1]> = {
+      adapter: 'codex', freshStartPhase: 'spec' as const, freshEndPhase: 'ut', freshRequirement: 'verify existing assertions', freshBudget: { max_total_turns: 6 },
+      onHarnessSummary: ({ phase }: { phase: string }) => {
+        if (phase !== 'ut') return null;
+        gates++;
+        const dir = featureFilePath(root, feature, 'ut/reports'); fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'ai-prompt.md'), 'Verify UT end_to_end_driving and business_assertion_value for actual failing assertions.');
+        const report = { phase: 'ut', feature, project_root: root, timestamp: new Date().toISOString(), assurance: 'full',
+          capability_resolutions: [], capability_resolution_contract_fingerprint: null, checks,
+          summary: { total: 2, pass: 1, fail: 1, warn: 0, skip: 0, blockers: 1, verdict: 'FAIL' } } as ScriptReport;
+        fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report));
+        let summary = writeRunSummaryBase(root, report, REPO_ROOT, { verifierPlan: plan });
+        assert(summary.report_validity === 'UNVERIFIED', '不能用伪造 PASS 遮掉真实 UT summary 形状');
+        subject = summary.verifier_subject_id!; reportRel = summary.verifier_report!;
+        if (!fs.existsSync(path.join(root, reportRel))) {
+          writeFile(root, reportRel, body(variant === 'refuted') + renderResultBlock(subject, variant === 'refuted' ? 'FAIL' : 'PASS', variant === 'refuted' ? 1 : 0));
+          summary = writeRunSummaryBase(root, report, REPO_ROOT, { verifierPlan: plan });
+        }
+        if (variant !== 'refuted' && (gates === 1 || variant !== 'corrected')) assert(summary.next_action === 'run_verifier_for_repair', '格式缺项须 D1 诊断动作');
+        if (variant === 'reentered' && gates === 2 && !cut) { cut = true; throw new Error('cut after UT format invocation'); }
+        return { checks, writerOptions: { verifierPlan: plan } };
+      },
+      onOutOfChain: ({ prompt, goalAttemptId }: AgentCtx) => {
+        corrections++;
+        assert(!prompt.includes('Then run the existing') && Boolean(goalAttemptId), '子 Agent 不应重复跑 harness，仍须原 attempt 身份');
+        writeFile(root, reportRel, body(variant === 'corrected') + renderResultBlock(subject, 'PASS', 0));
+      },
+    };
+    if (variant === 'request-missing') options.onHarnessFailureWithoutSummary = ({ phase, attempt }) => {
+      if (phase !== 'ut') return null;
+      options.onHarnessSummary!({ phase, attempt }); // 先用真实 writer 形成 D1 summary，再模拟 request 文件丢失。
+      const issued = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'ut/reports/summary.json'), 'utf8'));
+      assert(issued.next_action === 'run_verifier_for_repair' && issued.verifier_request, '缺失用例必须是已有 D1 request');
+      fs.unlinkSync(path.join(root, issued.verifier_request));
+      return 'verifier request missing after current summary publication';
+    };
+    let probe = await runGoalRuntimeChain(root, options);
+    if (variant === 'reentered') {
+      assert(cut, '未覆盖 UT 恢复窗口');
+      const manifestPath = path.join(probe.reportDir, 'manifest.json'); const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      manifest.budget.max_total_turns = 8; fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      probe = await runGoalRuntimeChain(root, { ...options, resume: path.basename(probe.reportDir), resumeExtraArgs: ['--override-manifest'] });
+    }
+    assert(corrections === (variant === 'refuted' || variant === 'request-missing' ? 0 : 1), `UT ${variant} corrections=${corrections}`);
+    assert(probe.exitCode !== 0 && !probe.events.slice(probe.events.map(event => event.type).lastIndexOf('run_start')).some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '真实失败必须准确退出而非异常/洗绿');
+    assert(resolveResumedBudget(probe.events).totalTurns === probe.events.filter(event => event.type === 'agent_invoke_start').length, '纠错或恢复漏预算');
+    const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'ut/reports/summary.json'), 'utf8'));
+    assert(summary.report_validity === 'UNVERIFIED' && summary.verdict === 'FAIL', '产品真实 FAIL/UT 合法未验形状不得改变');
+    assert((summary.repair_candidates ?? []).some((candidate: { id: string }) => candidate.id === 'ut_product_assertion_failure') === (variant === 'corrected'), '实际 UT 候选消费者与逐项语义状态不一致');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 type IntegrityGroup = 'budget' | 'revalidate' | 'early' | 'late';

@@ -17,6 +17,7 @@ import { resolveCapabilityResolutionEntryInput } from './capability-resolution-e
 import { writeReviewClosureAttestation } from './closure-attestation';
 import {
   collectRequirementSsotPaths,
+  loadFidelityIntentSsot,
   computeRunRequirementSha,
   computeRequirementShaFromText,
   resolveCurrentRequirementSource,
@@ -34,6 +35,8 @@ import { isPidAlive } from './goal-run-lock';
 import { validateProjectRelativePath } from './project-relative-path';
 import {
   buildSummaryRepairCandidates,
+  reviewRepairVerificationContext,
+  extractFailureClassification,
   scopeRevisionInputFromRepairCandidates,
   writeScopeRevisionInputToScriptReport,
   type RepairCandidateCheckInput,
@@ -574,61 +577,6 @@ export function hasStagedPhaseClosure(input: {
  * Final commit point is the staged-summary rename. Anything before it may leave
  * recomputable evidence, but canonical summary remains open and cannot advance.
  */
-function finalizePhaseClosureUnlocked(
-  opts: FinalizePhaseClosureOptions,
-): FinalizePhaseClosureResult {
-  const reportsDir = featurePhaseReportsDir(
-    opts.projectRoot,
-    opts.feature,
-    opts.phase,
-    opts.frameworkRoot,
-  );
-  const summaryPath = path.join(reportsDir, 'summary.json');
-  const current = readSummary(summaryPath);
-  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(current.parsed.schema_version))) {
-    throw new Error(
-      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；` +
-        `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
-    );
-  }
-  if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0) {
-    throw new Error(
-      `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`,
-    );
-  }
-  if (!current.parsed.assurance) {
-    throw new Error('summary.assurance 缺失；须重跑 harness 或执行显式验证迁移');
-  }
-  if (current.parsed.assurance === 'blocked') {
-    throw new Error('blocked capability assurance 不得提交 PASS closure');
-  }
-  if (
-    current.parsed.closure_status === 'closed' &&
-    current.parsed.closure_commit?.schema_version === '1.0'
-  ) {
-    const currentSha = sha256Bytes(current.raw);
-    const manifestRel = current.parsed.closure_commit.evidence_manifest_path;
-    if (!evidenceBindingMatches(opts, summaryPath, currentSha, manifestRel)) {
-      throw new Error(
-        'closed summary 与既有 evidence binding 不一致；禁止按当前字节重新绑定，须失效并回退责任阶段',
-      );
-    }
-    const phaseStateError = syncPhaseStateAfterClosure(opts);
-    const receiptProjectionError = projectReceiptAfterClosure(opts);
-    return {
-      transitioned: false,
-      evidence_rebound: false,
-      closure_fingerprint: currentSha,
-      summary: current.parsed,
-      manifest_path: manifestRel,
-      ...(phaseStateError ? { phase_state_error: phaseStateError } : {}),
-      ...(receiptProjectionError ? { receipt_projection_error: receiptProjectionError } : {}),
-    };
-  }
-
-  const recovered = recoverPartialPublication(opts, reportsDir, summaryPath);
-  if (recovered) return recovered;
-
 /**
  * 闭环冻结前重算 verifier 依赖的 repair_candidates（plan a9d4e7c2 P1-5）。
  *
@@ -688,21 +636,83 @@ function recomputeClosureRepairCandidates(
         ...(repairOwner ? { repair_owner: repairOwner } : {}),
         ...(typeof c.coding_candidate === 'boolean' ? { coding_candidate: c.coding_candidate } : {}),
         ...(Array.isArray(c.affected_files) ? { affected_files: c.affected_files as string[] } : {}),
+        ...(c.structured !== undefined ? { structured: c.structured } : {}),
       };
     });
     const candidates = buildSummaryRepairCandidates({
+      reviewFidelity: loadFidelityIntentSsot(opts.projectRoot, opts.feature),
       phase: String(opts.phase),
       checks: candidateChecks,
+      parseClassificationFromDetails: extractFailureClassification,
+      ...reviewRepairVerificationContext(opts.projectRoot, opts.feature,
+        opts.phase === 'review' ? opts.goalRunId?.trim() || base.run_id?.trim() : undefined, Boolean(base.verifier_request)),
       reportValidity: (base.report_validity ?? 'PASS') as 'PASS' | 'FAIL' | 'UNVERIFIED',
       reviewReportText,
       verifierReportText,
     });
-    return candidates.length > 0 ? candidates : base.repair_candidates;
+    return candidates;
   } catch {
     // best-effort：重算失败不阻断闭环提交，保留 base 已有候选。
     return base.repair_candidates;
   }
 }
+
+function finalizePhaseClosureUnlocked(
+  opts: FinalizePhaseClosureOptions,
+): FinalizePhaseClosureResult {
+  const reportsDir = featurePhaseReportsDir(
+    opts.projectRoot,
+    opts.feature,
+    opts.phase,
+    opts.frameworkRoot,
+  );
+  const summaryPath = path.join(reportsDir, 'summary.json');
+  const current = readSummary(summaryPath);
+  if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(current.parsed.schema_version))) {
+    throw new Error(
+      `legacy summary ${current.parsed.schema_version} 只能标为 legacy_unverified；` +
+        `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
+    );
+  }
+  if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0) {
+    throw new Error(
+      `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`,
+    );
+  }
+  if (!current.parsed.assurance) {
+    throw new Error('summary.assurance 缺失；须重跑 harness 或执行显式验证迁移');
+  }
+  if (current.parsed.assurance === 'blocked') {
+    throw new Error('blocked capability assurance 不得提交 PASS closure');
+  }
+  if (
+    current.parsed.closure_status === 'closed' &&
+    current.parsed.closure_commit?.schema_version === '1.0'
+  ) {
+    const currentSha = sha256Bytes(current.raw);
+    const manifestRel = current.parsed.closure_commit.evidence_manifest_path;
+    if (!evidenceBindingMatches(opts, summaryPath, currentSha, manifestRel)) {
+      throw new Error(
+        'closed summary 与既有 evidence binding 不一致；禁止按当前字节重新绑定，须失效并回退责任阶段',
+      );
+    }
+    const phaseStateError = syncPhaseStateAfterClosure(opts);
+    const receiptProjectionError = projectReceiptAfterClosure(opts);
+    return {
+      transitioned: false,
+      evidence_rebound: false,
+      closure_fingerprint: currentSha,
+      summary: current.parsed,
+      manifest_path: manifestRel,
+      ...(phaseStateError ? { phase_state_error: phaseStateError } : {}),
+      ...(receiptProjectionError ? { receipt_projection_error: receiptProjectionError } : {}),
+    };
+  }
+
+  const recovered = recoverPartialPublication(opts, reportsDir, summaryPath);
+  if (recovered) return recovered;
+
+
 
   const committedAt = (opts.now ? opts.now() : new Date()).toISOString();
   const manifestAbs = phaseEvidenceManifestPath(
@@ -743,7 +753,7 @@ function recomputeClosureRepairCandidates(
     // verifier 字段；这里绝不把 1.3 回写成 1.2（旧写法会让 open→closed 悄悄降代，
     // 下游 upstream gate / attestation 立刻把刚闭环的阶段判成上一代）。
     ...current.parsed,
-    ...(closureRepairCandidates && closureRepairCandidates.length > 0
+    ...(closureRepairCandidates !== undefined
       ? { repair_candidates: closureRepairCandidates }
       : {}),
     receipt_status: 'passed',
@@ -827,3 +837,5 @@ export function finalizePhaseClosure(
     () => finalizePhaseClosureUnlocked(opts),
   );
 }
+
+export const __testing_recomputeClosureRepairCandidates = recomputeClosureRepairCandidates;

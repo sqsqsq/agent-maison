@@ -27,6 +27,7 @@ import { buildGoalManifestFromInput, computeManifestIdentityFields, mergeSuccess
 import { computeRequirementShaFromText, computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { goalRunEvents, requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { sealLegacyInvokes } from './goal-park-resume.unit.test';
 import { handWriteProjections } from './component-design-handoff.unit.test';
@@ -49,6 +50,13 @@ async function withSnapshot(run: (s: Snapshot) => Promise<void>): Promise<void> 
     clearFrameworkConfigCache();
     fs.rmSync(snapshot.root, { recursive: true, force: true });
   }
+}
+
+// These consumers explicitly require a current valid completion, not the raw historical fixture.
+async function withCurrentSnapshot(feature: string, run: (s: Snapshot) => Promise<void>): Promise<void> {
+  const s = await loadMigratedHostSnapshot([feature]);
+  try { clearFrameworkConfigCache(); await run(s); }
+  finally { clearFrameworkConfigCache(); fs.rmSync(s.root, { recursive: true, force: true }); }
 }
 
 export const runIds = (root: string, feature: string): string[] => {
@@ -209,9 +217,9 @@ async function star2(s: Snapshot, mutate?: (bp: Record<string, unknown>) => void
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
   { name: '★2 蓝图升版 → CU 指针原位升版 → --supersede 完成 run：出生链 = 评估入口 uncovered 的责任阶段，转交追加式、旧 completion 字节不变', run: () => withSnapshot(s => star2(s)) },
   { name: '★2 变体 蓝图升版同时改了进投影的内容（ledger-domain 验收 expected_result）→ 投影刷新为新内容，successor 同样出生、不含 spec/plan', run: () => withSnapshot(s => star2(s, changeProjectedAcceptance)) },
-  { name: '#9 证据损坏（删 ut evidence manifest）→ 后继只跑 ut；其余阶段复用源 run 证据，引用经同一核验', run: () => withSnapshot(async s => {
+  { name: 'migration baseline: #9 证据损坏（删 ut evidence manifest）→ 后继只跑 ut；其余阶段复用源 run 证据，引用经同一核验', run: () => withCurrentSnapshot(SNAPSHOT_FLAT_FEATURE, async s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
-    const [source] = runIds(s.root, feature);
+    const source = readJson<{ run_id: string }>(completionOriginal(s, feature)).run_id;
     fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
     const a = assess(s, feature);
     assert.strictEqual(a.record.state, 'ok', JSON.stringify(a.record));
@@ -229,7 +237,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     }
     for (const reuse of scope.reused_phases) {
       for (const ref of reuse.evidence_refs) {
-        assert.strictEqual(ref.run_id, source, `${reuse.phase} 复用引用不是源 run`);
+        const inherited = loadFrozenExecutionScope(s.root, feature, source)!.reused_phases.find(item => item.phase === reuse.phase)?.evidence_refs.find(item => item.evidence_manifest_aggregate === ref.evidence_manifest_aggregate);
+        assert.strictEqual(ref.run_id, inherited?.run_id ?? source, `${reuse.phase} 复用引用不是当前完成范围内的真实来源`);
         assert.strictEqual(ref.evidence_manifest_aggregate, loadPhaseEvidenceManifest(s.root, feature, reuse.phase)!.manifest.aggregate_sha256);
       }
     }
@@ -256,9 +265,9 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert.deepStrictEqual(scope.phase_chain, expected);
     console.log(`[successor-exit] #8 actual phase_chain=${JSON.stringify(scope.phase_chain)}`);
   }) },
-  { name: '需求增量（codex r1 P1-3）只改显式需求、不预改产物 → 后继出生链非空，且等于评估入口按最终需求判 uncovered 的责任阶段', run: () => withSnapshot(async s => {
+  { name: 'migration baseline: 需求增量（codex r1 P1-3）只改显式需求、不预改产物 → 后继出生链非空，且等于评估入口按最终需求判 uncovered 的责任阶段', run: () => withCurrentSnapshot(SNAPSHOT_FLAT_FEATURE, async s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
-    const [source] = runIds(s.root, feature);
+    const source = readJson<{ run_id: string }>(completionOriginal(s, feature)).run_id;
     const sourceRequirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
     const increment = '查询超时由 3s 改为 5s（非视觉行为调整）';
     const finalRequirement = mergeSuccessorRequirement(sourceRequirement, increment);
@@ -399,9 +408,9 @@ cases.push(
 // plan 4e6fb3b6 §7.3 / A13：已有范围转交——持有者是一个中断的后继；重发同一请求（三个公开入口，不带技术旗标）即重新接入它，
 // 不再被出生范围解析以"范围已转交"拒绝。
 for (const entry of ['foreground', 'detach', 'attended'] as const) {
-  cases.push({ name: `P3 t5 A13 ${entry}：已有范围转交（持有者中断）→ 重发同一请求即重新接入持有者并完成，不需要技术旗标`, run: () => withSnapshot(async s => {
+  cases.push({ name: `migration baseline: P3 t5 A13 ${entry}：已有范围转交（持有者中断）→ 重发同一请求即重新接入持有者并完成，不需要技术旗标`, run: () => withCurrentSnapshot(SNAPSHOT_FLAT_FEATURE, async s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
-    const [source] = runIds(s.root, feature);
+    const source = readJson<{ run_id: string }>(completionOriginal(s, feature)).run_id;
     freezeAndTransfer(s, feature, source);
     fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
     const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json')).requirement;
@@ -722,9 +731,9 @@ cases.push({ name: 'P3 t5 补充：已完成功能 + 原样重发同一需求 �
   assert.strictEqual(fs.readFileSync(runFile(s.root, feature, completed, 'events.jsonl'), 'utf8'), eventsBefore, '不得写事件');
 }) });
 
-cases.push({ name: '后继保留已满足定义的责任方：健康输入不额外执行；CU 升版后失效的施工绑定回 plan，未重签前不授权 coding', run: () => withSnapshot(async s => {
+cases.push({ name: 'migration baseline: 后继保留已满足定义的责任方：健康输入不额外执行；CU 升版后失效的施工绑定回 plan，未重签前不授权 coding', run: () => withCurrentSnapshot(SNAPSHOT_CU_FEATURE, async s => {
   const feature = SNAPSHOT_CU_FEATURE;
-  const [source] = runIds(s.root, feature);
+  const source = readJson<{ run_id: string }>(completionOriginal(s, feature)).run_id;
   const manifest = readJson<{ requirement: string }>(runFile(s.root, feature, source, 'manifest.json'));
   const workflow = resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot });
   const before = resolveSuccessorExecutionScope(s.root, feature, workflow, s.frameworkRoot, manifest.requirement, source)!;

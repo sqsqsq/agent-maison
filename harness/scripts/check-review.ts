@@ -13,7 +13,9 @@
 // 语义级检查由 AI Harness (verify-review.md) 完成，不在本脚本范围内。
 // ============================================================================
 
-import { isHardPixelContract } from './utils/fidelity-shared';
+import { loadFidelityIntentSsot, isHardPixelContract } from './utils/fidelity-shared';
+import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { parseReviewIssueRows, reviewIssueRequiresRepair } from './utils/repair-candidates';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -285,7 +287,7 @@ function checkIssueCategoryValues(ctx: CheckContext<'feature' | 'request'>, repo
 
   const allowed = new Set([
     '分层违规', '接口不一致', '资源引用', '命名规范',
-    '硬编码', '逻辑错误', '异常处理', '性能', '安全', '其他',
+    '硬编码', '逻辑错误', '异常处理', '性能', '安全', '视觉保真', '其他',
   ]);
 
   const values = table.rows.map(r => (r[catCol] || '').trim());
@@ -557,6 +559,11 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
     }];
   }
 
+  const required = parseReviewIssueRows(report).filter(row => reviewIssueRequiresRepair(row, ctx.subject === 'request' ? null : loadFidelityIntentSsot(ctx.projectRoot, ctx.feature)));
+  if (foundVerdict === '通过' && required.length > 0) {
+    return [{ id: 'conclusion_with_verdict', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
+      severity: 'BLOCKER', status: 'FAIL', details: `仍有 ${required.length} 项必须返修，不能声明通过。`, suggestion: '修复真实缺陷后复审；误报须更正原报告再重验。' }];
+  }
   const table = getIssueTable(report);
   if (table) {
     const severityCol = table.headers.findIndex(h =>
@@ -722,14 +729,14 @@ function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report
 
   const categories = table.rows.map(r => (r[catCol] || '').trim()).filter(Boolean);
   const traceable = categories.filter(c => c in categoryToRule);
-  const total = categories.length;
+  const total = categories.filter(c => c !== '视觉保真').length;
 
   if (total === 0) {
     return [{
       id: 'issue_to_coding_rule', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'issue_to_coding_rule'),
       severity: 'MINOR', status: 'SKIP',
-      details: '问题清单无分类数据。',
+      details: categories.length ? '视觉保真分类消费保真严格度，不强求 coding-rules 映射。' : '问题清单无分类数据。',
     }];
   }
 
@@ -864,9 +871,17 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
   const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
   const pixel = isHardPixelContract(ctx); // post-impl2 P1-4：视觉评审维度抬升=裁决类，只在 hard contract 生效
 
-  const hasDimension = /视觉保真|视觉维度|visual[\s_-]?fidelity/i.test(report);
-  const missingEvidence = VISUAL_REVIEW_EVIDENCE.filter(e => !e.re.test(report));
-  const evidenceHit = VISUAL_REVIEW_EVIDENCE.length - missingEvidence.length;
+  const hasDimension = getSectionContent(report, '视觉保真') !== null
+    || /视觉保真|视觉维度|visual[\s_-]?fidelity/i.test(getSectionContent(report, '审查方法') ?? getSectionContent(report, '审查维度') ?? '');
+  const uiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const applicableEvidence = VISUAL_REVIEW_EVIDENCE.filter((_, index) => {
+    if (!uiSpec) return true;
+    if (index === 0) return (uiSpec.assets ?? []).some(asset => asset.acquisition === 'crop' && !asset.placeholder);
+    if (index === 3) return uiSpec.screens.some(screen => screen.must_have_elements?.length);
+    return true;
+  });
+  const missingEvidence = applicableEvidence.filter(e => !e.re.test(report));
+  const evidenceHit = applicableEvidence.length - missingEvidence.length;
   const boundaryNote =
     '【诚实边界】本 check 只确定性核"维度存在+证据被引用"；引用真实性由当前 AI verifier 的 issue_accuracy 与 item-level 证据绑定复验。';
 
@@ -899,7 +914,7 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
     description: desc,
     severity: 'MAJOR',
     status: 'PASS',
-    details: `视觉保真维度存在，证据类别 ${evidenceHit}/${VISUAL_REVIEW_EVIDENCE.length} 命中${pixel ? '（pixel_1to1 全覆盖）' : ''}。\n${boundaryNote}`,
+    details: `视觉保真维度存在，证据类别 ${evidenceHit}/${applicableEvidence.length} 个适用类别命中${pixel ? '（pixel_1to1 全覆盖）' : ''}。\n${boundaryNote}`,
     affected_files: [reportRel],
   }];
 }
@@ -1186,23 +1201,13 @@ function checkConditionalPassClosure(ctx: CheckContext<'feature' | 'request'>, r
   if (verdict !== '有条件通过') {
     return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: `结论=${verdict ?? '未声明'}，本门禁不适用。` }];
   }
-  const table = getIssueTable(report);
-  let openMajors = 0;
-  if (table) {
-    const iSev = table.headers.findIndex((h) => h.includes('严重程度') || h.includes('严重等级'));
-    const iState = table.headers.findIndex((h) => h.includes('状态'));
-    for (const row of table.rows) {
-      const sev = iSev >= 0 ? (row[iSev] ?? '').trim() : '';
-      if (sev !== 'MAJOR') continue;
-      const state = iState >= 0 ? (row[iState] ?? '').trim() : '';
-      if (!/已关闭|已修复|closed|fixed/i.test(state)) openMajors++;
-    }
-  }
+  const openMajors = parseReviewIssueRows(report).filter(row => row.severity === 'MAJOR'
+    && reviewIssueRequiresRepair(row, ctx.subject === 'request' ? null : loadFidelityIntentSsot(ctx.projectRoot, ctx.feature))).length;
   if (openMajors === 0) {
     return [{
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'PASS',
-      details: '有条件通过但全部 MAJOR 已标记关闭（问题表状态列）。',
+      details: '必须返修的 MAJOR 已闭合；允许披露的视觉 MAJOR 保留原始统计与未关闭状态。',
     }];
   }
   return [{

@@ -14,7 +14,7 @@ cases:
   - { id: missing-construction-test, surface: projection, mutator: missing-construction-test, expected_issue: change_unit_mapping_file_missing }
   - { id: missing-construction-verification, surface: projection, mutator: missing-construction-verification, expected_issue: change_unit_mapping_file_missing }
   - { id: invented-runtime-chain, surface: projection, mutator: invented-runtime-chain, expected_issue: change_unit_runtime_stable_id_mismatch }
-  - { id: planned-impl-ref-at-ut, surface: projection, mutator: planned-impl-ref-at-ut, expected_issue: change_unit_mapping_planned_ref_not_allowed }
+  - { id: planned-impl-ref-at-ut, surface: projection, mutator: planned-impl-ref-at-ut, expected_issue: change_unit_mapping_file_missing }
   - { id: duplicate-predicate-mapping, surface: projection, mutator: duplicate-predicate-mapping, expected_issue: change_unit_predicate_mapping_duplicate }
   - { id: unknown-predicate-mapping, surface: projection, mutator: unknown-predicate-mapping, expected_issue: change_unit_predicate_mapping_unknown }
   - { id: incomplete-predicate-mapping, surface: projection, mutator: incomplete-predicate-mapping, expected_issue: change_unit_predicate_mapping_incomplete }

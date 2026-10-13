@@ -2,18 +2,18 @@
 
 > SSOT 索引见 [`skills/feature/code-review/SKILL.md`](../feature/code-review/SKILL.md)。本文承载视觉保真维度执行定义（pixel_1to1 相关）与 Step 2 各审查子维度的完整检查项；触发/门禁清单/闭环判定仍以主文档为准。
 
-## 视觉保真维度执行定义（UI 需求必做，pixel_1to1 核心红线）
+## 视觉保真维度执行定义（UI 需求必做，pixel_1to1 覆盖要求与实际影响分开）
 
 **不重跑度量，消费落盘产物**；pixel_1to1 P0 **全覆盖不许抽查**（非 pixel_1to1 或 P1 屏可抽查）：
 
-1. **素材验真核验**：打开 `spec/reports/asset-crop-validation.json` 确认全部 crop `verified`；对照 `spec/reports/asset-contact-sheet-*.png` 逐张人核裁图与红框对应（3 秒/张）；有 failed/pending/真人翻案留痕的逐条确认处置。
+1. **素材验真核验**：仅有 crop 时打开 `spec/reports/asset-crop-validation.json` 核验适用 crop 的真实状态；repo_ref 核对代码/资源用途与已有素材，不强造 crop 证据；对照 `spec/reports/asset-contact-sheet-*.png` 逐张人核裁图与红框对应（3 秒/张）；有 failed/pending/真人翻案留痕的逐条确认处置。
 2. **可见文案 diff 复核**：核对 coding 门禁 `visible_text_whitelist` 结果；若存在 `coding/visible-text-exemptions.yaml`，**逐条复核豁免 rationale 是否正当**（豁免是自报面，review 是唯一人审关口）。
 3. **结构声明台账逐条复核**：打开 `coding/structure-conformance.yaml`，对**每一条** entry（pixel_1to1 P0 全条目核对，**不许抽查**）：①打开 `implemented_by` 对应 struct 源码，验证 `how` 描述属实；②对照参考原图确认该结构声明本身与原图一致。台账是 coding 自报面，review 必须独立逐条复核；门禁 `structure_declaration_ledger` 只保"逐条表过态+struct 真实存在"，登记真实性还须由本阶段证据与后续 device 机器信号共同闭环。复核结论逐条写进 review-report.md 并引用台账路径。
 4. **must_have_elements 覆盖**：全部 must_have 与变更屏在源码有真实承载（消费 `visual_parity` 结果，不重扫）。
 
-把各项核对结论+引用的报告路径写进 review-report.md 的「视觉保真」维度章节；pixel_1to1 下缺任一类证据引用，`visual_fidelity_review` 判 FAIL。
+把各项核对结论+引用的报告路径写进 review-report.md 的「视觉保真」维度章节；hard pixel_1to1 下缺任一适用证据引用，`visual_fidelity_review` 判 FAIL。
 
-**在线高保真**：review harness 消费 lock/快照做 fidelity 治理签字（ratchet/deferrals），不对图、不联网；像素对图仅在 device-testing。
+**处置同源**：复用有效保真目标、ref-elements 与排除引文/延后读取；有效 defer/excluded 由 verifier 逐条核验，不派 coding 实现已排除或合法延后项。错误登记回 spec。目标名不抬严重级别，关键操作/理解受阻仍是 BLOCKER；best_effort 非关键视觉 MAJOR 只披露，hard 保留。review 不写第二份债务账，设备残差由 testing 记录，未执行 testing 保持视觉未验证。
 
 ## 工程惯例核对（文件存在时）
 

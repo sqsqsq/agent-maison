@@ -620,6 +620,7 @@ export function resolveCapabilityResolutionEntryInput(
         owner === options.phase
         || (phaseIndex >= 0 && scope.phase_chain.indexOf(owner) > phaseIndex)
         || producesContracts
+        || (['spec', 'plan'].includes(options.phase) && scope.reused_phases.some(reuse => reuse.phase === owner))
         // 观察期（出生链只有 spec/plan）：owner 阶段**还没进链**，`indexOf` 恒为 -1，上面三条
         // 全不成立 → 研究源码一个 owner 都盖不上，coding 一改就把 spec/plan 判 stale
         // （plan b5c1e9d7 §2 C）。资格只取冻结范围自己的字段，两个条件缺一不可：

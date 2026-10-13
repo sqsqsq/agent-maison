@@ -169,6 +169,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature {feat
 
 优先读 `summary.json`，禁止用 `grep` 解析完整控制台日志。
 
+verifier 格式缺口须保留原回复和精确诊断；Goal 内返回 runtime，沿本 attempt 既有 request/subject 最多自动纠错一次，不另叠阶段内重投循环。合法 refuted/unclear 不因结论不利而重投；每次调用与时间照计，恢复不重发机会。真实设计/use-case 缺口回既有 plan 责任链，不能改冻结契约去掉 planned 前缀规避真实核验。
+
 ## 阶段闭环判定（全局入口 §5.1）
 
 **closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：

@@ -22,12 +22,15 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as path from 'path';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { createHash } from 'crypto';
 import { extractTables, getSectionContent, extractDeclaredVerdict } from './markdown-parser';
 import { mapCategoryToChainPhase, type CorrectionCategory } from './correction-routing';
 import type { ExecutionScopeInput } from './execution-scope';
 import type { GoalRunEvent } from './goal-runner-phase';
 import { isBlockingCheck, resultBasisOwner } from './check-disposition';
+import type { FidelityIntentSsot } from './fidelity-shared';
 
 /** 可产回退候选的责任类别（verification 无回退语义） */
 export type RepairOwnerCategory = Exclude<CorrectionCategory, 'verification'>;
@@ -204,6 +207,7 @@ export function parseIssueVerificationBlock(text: string): {
 // ---------------------------------------------------------------------------
 
 export interface ReviewCandidateInput {
+  reviewFidelity?: ReviewFidelity | null;
   /** review-report.md 全文 */
   reportText: string;
   /** verifier.report.md 全文（缺失传 null——零 candidate） */
@@ -223,7 +227,8 @@ export interface ReviewCandidateInput {
   verifierSubjectCurrent?: boolean;
 }
 
-interface IssueRow {
+export interface ReviewIssueRow {
+  classification: string;
   id: string;
   severity: string;
   state: string;
@@ -231,7 +236,7 @@ interface IssueRow {
   summary: string;
 }
 
-function parseIssueRows(reportText: string): IssueRow[] {
+export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
   const section = getSectionContent(reportText, '问题清单');
   if (!section) return [];
   const tables = extractTables(section);
@@ -241,6 +246,7 @@ function parseIssueRows(reportText: string): IssueRow[] {
   const iId = col(h => h.trim() === 'ID' || h.includes('编号'));
   const iSev = col(h => h.includes('严重程度') || h.includes('严重等级'));
   const iState = col(h => h.includes('状态'));
+  const iCategory = col(h => h.includes('分类'));
   const iFiles = col(h => h.includes('涉及文件'));
   const iFix = col(h => h.includes('修复建议'));
   const iDesc = col(h => h.includes('问题描述') || h.includes('描述'));
@@ -248,6 +254,7 @@ function parseIssueRows(reportText: string): IssueRow[] {
   return table.rows.map(row => ({
     id: (row[iId] ?? '').trim(),
     severity: (row[iSev] ?? '').trim(),
+    classification: iCategory >= 0 ? (row[iCategory] ?? '').trim() : '',
     state: iState >= 0 ? (row[iState] ?? '').trim() : '',
     files: normalizeReviewFiles((row[iFiles] ?? '')
       .split(/[,，;；\s]+/)
@@ -288,9 +295,18 @@ function isVerificationEvidenceCurrent(
   return ev.includes(current);
 }
 
-function openReviewIssues(reportText: string): IssueRow[] {
-  return parseIssueRows(reportText).filter(row => (row.severity === 'BLOCKER' || row.severity === 'MAJOR')
-    && !/已关闭|已修复|closed|fixed/i.test(row.state));
+export type ReviewFidelity = Pick<FidelityIntentSsot, 'effective_fidelity' | 'acceptance_strictness'>;
+
+/** Classification is verified by the existing issue verifier; missing fidelity never grants disclosure. */
+export function reviewIssueRequiresRepair(row: ReviewIssueRow, fidelity?: ReviewFidelity | null): boolean {
+  if (!['BLOCKER', 'MAJOR'].includes(row.severity) || /已关闭|已修复|closed|fixed/i.test(row.state)) return false;
+  return !(row.classification === '视觉保真' && row.severity === 'MAJOR'
+    && fidelity?.acceptance_strictness === 'best_effort'
+    && ['pixel_1to1', 'semantic_layout', 'reference_only'].includes(fidelity.effective_fidelity));
+}
+
+function openReviewIssues(reportText: string, fidelity?: ReviewFidelity | null): ReviewIssueRow[] {
+  return parseReviewIssueRows(reportText).filter(row => reviewIssueRequiresRepair(row, fidelity));
 }
 
 export interface ReviewDiagnosisContext {
@@ -302,7 +318,7 @@ export interface ReviewDiagnosisContext {
 
 /** 候选生产与失败诊断同一判据；合法 refuted/unclear 不因 verdict 本身被重投。 */
 function reviewIssueDiagnosis(
-  row: IssueRow,
+  row: ReviewIssueRow,
   entries: readonly IssueVerificationEntry[],
   context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent'>,
 ): string | null {
@@ -338,7 +354,7 @@ export function collectReviewRepairCandidates(input: ReviewCandidateInput): Repa
   const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
   if (!verification.ok) return [];
   const out: RepairCandidate[] = [];
-  for (const row of openReviewIssues(input.reportText)) {
+  for (const row of openReviewIssues(input.reportText, input.reviewFidelity)) {
     if (reviewIssueDiagnosis(row, verification.entries, input)) continue;
     if (verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'confirmed') continue;
     const category = deriveCategoryFromFiles(row.files);
@@ -514,6 +530,7 @@ export function findUnreadableDiagnosisChecks(
     );
   }
   if (phase === 'review') {
+    if (review && openReviewIssues(review.reportText).length === 0) return [];
     const verification = parseIssueVerificationBlock(verifierReportText);
     if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
     return review ? openReviewIssues(review.reportText)
@@ -527,6 +544,7 @@ export function findUnreadableDiagnosisChecks(
 // ---------------------------------------------------------------------------
 
 export interface PhaseCandidateInput {
+  reviewFidelity?: ReviewFidelity | null;
   phase: string;
   /** review-report.md 全文（review 阶段；其余 null） */
   reviewReportText: string | null;
@@ -574,6 +592,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
   if (input.phase === 'review' && input.reviewReportText) {
     out.push(...collectReviewRepairCandidates({
       reportText: input.reviewReportText,
+      reviewFidelity: input.reviewFidelity,
       verifierReportText: input.verifierReportText,
       // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸
       reportValidityBlocked: input.reportValidity !== 'PASS',
@@ -594,6 +613,14 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
         affectedFiles: scope.affected_files,
       });
       if (c) out.push(c);
+    }
+  }
+  if (input.phase === 'ut') {
+    for (const check of input.checks.filter(c => c.status === 'FAIL' && c.repair_owner === 'plan')) {
+      const files = normalizeFiles(check.affected_files ?? []);
+      const summary = normalizeSummary(check.details ?? check.id);
+      out.push({ id: check.id, category: 'plan', files, summary,
+        item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: 'ut' });
     }
   }
   if (input.phase === 'ut' && input.verifierReportText) {
@@ -725,6 +752,7 @@ export interface RepairCandidateCheckInput {
 }
 
 export interface SummaryRepairCandidatesInput {
+  reviewFidelity?: ReviewFidelity | null;
   phase: string;
   checks: readonly RepairCandidateCheckInput[];
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
@@ -751,6 +779,7 @@ export function buildSummaryRepairCandidates(
   return collectPhaseRepairCandidates({
     phase: input.phase,
     reviewReportText: input.reviewReportText,
+    reviewFidelity: input.reviewFidelity,
     verifierReportText: input.verifierReportText,
     reportValidity: input.reportValidity,
     declinedFingerprints: input.declinedFingerprints,
@@ -1197,15 +1226,16 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
 // 单向数据流：**输入 = 既有归属层产出的候选，输出 = 设计事实**。这里不新增 check id、
 // 不动 CHECK_ID_OWNER_REGISTRY、不判断意图——机器分不出「获准目标确有设计缺口」与
 // 「coding 改错了文件」，那一步由 plan 的独立裁决兜底（D0.3 原文：修订提议不预设结论）。
-// 触发条件只有一条：候选 category ∈ {spec, plan} 且 source_phase ∈ {coding, review}。
+// 触发条件只有一条：设计归属候选，以及完整交付中已出链的 coding 候选；source_phase ∈ {coding, review, ut, testing}。
 
 /** 允许产出修订输入的来源阶段（写集越界类未注册归属，结构上到不了这里）。 */
-const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review']);
+const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review', 'ut', 'testing']);
 
 /** 候选类别 → 它要求的设计事实种类（review 归因 spec 时是验收定义）。 */
-const SCOPE_REVISION_FACT_KIND: Readonly<Record<'spec' | 'plan', string>> = Object.freeze({
+const SCOPE_REVISION_FACT_KIND: Readonly<Record<RepairOwnerCategory, string>> = Object.freeze({
   plan: 'design-decision',
   spec: 'acceptance-definition',
+  coding: 'implementation',
 });
 
 export interface ScopeRevisionInputContext {
@@ -1227,7 +1257,7 @@ export function scopeRevisionInputFromRepairCandidates(
   ctx: ScopeRevisionInputContext,
 ): { input: ExecutionScopeInput; candidateIds: string[] } | null {
   const owned = candidates.filter(candidate =>
-    (candidate.category === 'spec' || candidate.category === 'plan')
+    (candidate.category === 'spec' || candidate.category === 'plan' || candidate.category === 'coding')
     && SCOPE_REVISION_SOURCE_PHASES.has(candidate.source_phase)
     && candidate.files.length > 0);
   if (!owned.length) return null;
@@ -1235,7 +1265,7 @@ export function scopeRevisionInputFromRepairCandidates(
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { OBLIGATION_PROVIDERS } = require('./execution-scope') as typeof import('./execution-scope');
-  const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+  const { resolveCapabilityInputs, readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
   /* eslint-enable @typescript-eslint/no-require-imports */
   // 第五轮必修 1：无 run 时**不能**直接返回 null——那样 D0.3 的修订触发在交互路径上整条失效
   //（无 run 出口读到的提案永远是空）。统一入口自己按载体选来源：有 run 读 run 的有效范围，
@@ -1247,25 +1277,59 @@ export function scopeRevisionInputFromRepairCandidates(
   // 范围里证明不了责任阶段就不产提议（fail-closed），不猜。
   const ownerPhase = (kind: string): string | undefined => {
     const family = Object.values(OBLIGATION_PROVIDERS).find(kinds => kinds.includes(kind)) ?? [];
-    return scope.obligations.find(obligation => family.includes(obligation.kind))?.owner_phase;
+    const known = scope.obligations.find(obligation => family.includes(obligation.kind))?.owner_phase;
+    if (known || scope.completion_target !== 'feature') return known;
+    // Full delivery already authorizes the real workflow owner; a narrowed chain is not a new permission boundary.
+    const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+    const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+    const workflow = loadWorkflowSpec(ctx.frameworkRoot, loadFrameworkConfig(ctx.projectRoot).active_workflow ?? 'spec-driven');
+    return workflow.artifacts.find(artifact => artifact.scope === 'feature'
+      && (OBLIGATION_PROVIDERS[artifact.obligation_provider_id ?? ''] ?? []).includes(kind))?.id;
   };
 
   const facts = scope.obligations.map(obligation => structuredClone(obligation) as ExecutionScopeInput['facts'][number]);
   const responsible: string[] = [];
   const candidateIds: string[] = [];
   for (const candidate of owned) {
-    const kind = SCOPE_REVISION_FACT_KIND[candidate.category as 'spec' | 'plan'];
+    const kind = SCOPE_REVISION_FACT_KIND[candidate.category];
     const phase = ownerPhase(kind);
     if (!phase) continue;
+    if (candidate.category === 'coding' && (!runId || scope.completion_target !== 'feature' || scope.phase_chain.includes(phase))) continue;
     const id = `${kind}:${candidate.id}`;
     if (facts.some(fact => fact.id === id)) continue;
-    // 触发文件绑定走生产解析器，指纹与 §4.1.0 的核验同源（不自行拼 InputBinding）。
+    let targets = [...candidate.files];
+    let invalidated: string[] = [];
+    if (candidate.category === 'coding') {
+      // UT 的 affected_files 是诊断落点（可含 ohosTest 目录/占位），不代表实现源码或写集。
+      // 候选只触发修订；实现事实复用本 run 已有实现依据，重新解析当前源码指纹。
+      const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, scope);
+      const sourceFiles = (files: string[]): string[] => [...new Set(files.map(file => resolveDependencyPath(ctx.projectRoot, file, legacyRoot))
+        .filter(file => {
+          if (!isInsideProjectRoot(ctx.projectRoot, file)) return false;
+          try { return fs.statSync(file).isFile(); } catch { return false; }
+        }).map(file => path.relative(ctx.projectRoot, file).replace(/\\/g, '/')))];
+      targets = sourceFiles(scope.obligations.filter(obligation => obligation.kind === 'implementation')
+        .flatMap(obligation => obligation.basis.filter(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.codebase')
+          .flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive').map(dep => dep.path))));
+      if (!targets.length) {
+        try { targets = sourceFiles(readRunBoundContracts(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, runId).files ?? []); }
+        catch { continue; } // 既有实现与受信契约都无真实源码依据时，不凭诊断猜写集。
+      }
+      if (!targets.length) continue;
+      const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+      const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+      const workflow = loadWorkflowSpec(ctx.frameworkRoot, loadFrameworkConfig(ctx.projectRoot).active_workflow ?? 'spec-driven');
+      invalidated = resolveInvalidatablePhases({ chain: workflow.artifacts.filter(artifact => artifact.scope === 'feature').map(artifact => artifact.id),
+        hasActionable: false, candidateCategories: ['coding'], track: 'full' });
+    }
+    // 文件绑定走生产解析器，指纹与 §4.1.0 的核验同源（不自行拼 InputBinding）。
     const resolved = resolveCapabilityInputs({
       projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase, track: 'full',
-      testTargets: [...candidate.files],
+      testTargets: targets,
       inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
     }).inputs?.values?.codebase;
     if (!resolved || resolved.state !== 'resolved') continue;
+    for (const fact of facts) if (scope.obligations.some(obligation => obligation.id === fact.id && invalidated.includes(obligation.owner_phase))) delete fact.satisfied_by;
     facts.push({
       id, kind, applicability: 'required',
       // 语义是「这项发现需要责任阶段裁决」，不是「机器已证明该扩展合理」——
@@ -1328,4 +1392,18 @@ export function writeScopeRevisionInputToScriptReport(
   carrier.scope_revision_input = input;
   fs.writeFileSync(scriptReportPath, JSON.stringify(report, null, 2), 'utf-8');
   return 'written';
+}
+
+/** 归因文本回退解析（**全仓唯一**"失败归因：xxx"实现）；导出供测试与 D1 判据注入，禁止复制第二份。 */
+export function extractFailureClassification(details: string): string | undefined {
+  const match = details.match(/失败归因：([a-zA-Z0-9_]+)/);
+  return match?.[1];
+}
+
+/** Shared current/carried-subject input for writer and closure recomputation. */
+export function reviewRepairVerificationContext(projectRoot: string, feature: string, runId: string | undefined, verifierSubjectCurrent: boolean): Pick<ReviewCandidateInput, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent'> {
+  const declines = !verifierSubjectCurrent && runId ? loadRepairDeclineState(projectRoot, feature, runId) : undefined;
+  return { verifierSubjectCurrent,
+    declinedFingerprints: declines ? new Set([...declines].filter(([, state]) => state.declined_rounds > 0).map(([fp]) => fp)) : undefined,
+    declinedIssues: declines ? [...new Set(declines.values())].filter(state => state.declined_rounds > 0).map(({ id, summary }) => ({ id, summary })) : undefined };
 }

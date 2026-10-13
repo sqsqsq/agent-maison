@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { createBlueprintReviewDesignFixture } from '../fixtures/blueprint-review-design';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { featureFilePath, clearFrameworkConfigCache } from '../../config';
 import { asChangeUnitArtifact, createChangeUnitRef, deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { acceptChangeUnitCandidates, ChangeUnitCandidateRejected } from '../../scripts/utils/change-unit-provider-boundary';
@@ -224,14 +225,14 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   } },
 ];
 
-export function runAll(): UnitCaseResult[] {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = cases.map(test => {
     const f = createBlueprintReviewDesignFixture();
     try { clearFrameworkConfigCache(); test.run(f); return { name: test.name, ok: true }; }
     catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; }
     finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
   });
-  const historical = loadHostSnapshot();
+  const historical = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
   const name = 'real historical completion cannot become unfinished through stale/broken/missing projections or a retained successful terminal';
   try {
     const loaded = loadCanonicalChangeUnit(historical.root, blueprintId, 'ledger-refresh'); const cu = asChangeUnitArtifact(loaded.changeUnit);

@@ -2,7 +2,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { createBlueprintReviewDesignFixture, hostBlueprintReviewFields } from '../fixtures/blueprint-review-design';
+import { createBlueprintReviewDesignFixture, hostBlueprintReviewFields, libraryBlueprintReviewSchema } from '../fixtures/blueprint-review-design';
 import { asRecord, asRecords, asStrings, BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
 import { loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef } from '../../scripts/utils/change-unit-path';
@@ -21,7 +21,8 @@ import { featureFilePath } from '../../config';
 import { SpecLoader, normalizeUseCasePortCalls } from '../../scripts/utils/spec-loader';
 import { evaluateComponentClosure } from '../../scripts/utils/component-closure-validator';
 import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
-import { loadHostSnapshot } from '../fixtures/host-snapshot-3.1.0/generate';
+import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
+import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import type { CheckContext, AcceptanceSpec } from '../../scripts/utils/types';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
@@ -44,7 +45,9 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const text = renderBlueprintReviewMarkdown(bp, 'sha256:readability', { units: [], sourceGaps: [], closureExists: false, sourceRootRelative: path.relative(path.dirname(f.blueprintFile), f.root).replace(/\\/g, '/') });
     for (const fact of ['failure：失败保留原记录', 'behavior：单次提交只写一次', 'durability：提交后持久化', 'privacy：完整号不写日志', '| enabled | false |', '| count | 0 |', '| list | false；0 |', 'inner：已声明（结构未展开）', 'provenance：这是业务状态键']) assert(text.includes(fact), fact);
     assert(!text.includes('hidden-structural-marker')); assert(text.includes('contracts/ledger-api.yaml#/idempotency'));
-    assert(text.includes(`[route\\_map.json](#${blueprintReviewAnchor('file:src/ledger/route_map.json')})`), '文件标签只转义一次');
+    assert(text.includes('| src/ledger/route\\_map.json |'), '完整文件清单保留路径且只转义一次');
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); f.bind();
+    assert(render(f).includes(`[route\\_map.json](#${blueprintReviewAnchor('file:src/ledger/route_map.json')})`), 'CU 精确文件链接标签只转义一次');
     const body = text.slice(text.indexOf('## 1 概述'), text.indexOf('## 附录')).replace(/\]\([^)]*\)/g, ']');
     assert(!/\b(?:view|contract|relation|decision|publication|recovery|initial-load|requirement|consumer|data-domain):/.test(body));
     assert(!/^\|[^\n]+\|\n\|(?: --- \|)+\n(?=\n|#)/m.test(text));
@@ -64,18 +67,20 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const text = renderBlueprintReviewMarkdown(bp, 'sha256:source-layout');
     const header = YAML.parse(/^---\n([\s\S]*?)\n---/.exec(text)![1]); assert.equal(header.derived_from.source_fingerprint, bp.source_fingerprint);
     const models = text.slice(text.indexOf('### 领域模型、字段与枚举'), text.indexOf('### 本部件实际消费或提供的操作与 DTO'));
-    const nextModelSource = models.indexOf(`设计内容来源：[账目刷新模块](#${blueprintReviewAnchor('view:development/node:ledger-module')})`);
-    assert(models.indexOf('未记录：默认值。') >= 0 && models.indexOf('未记录：默认值。') < nextModelSource, models);
+    const nextModelSource = models.indexOf(`内容承载于：[账目刷新模块](#${blueprintReviewAnchor('view:development/node:ledger-module')})`);
+    const modelMissing = /^未记录：.*默认值.*。$/m.exec(models);
+    assert(modelMissing && modelMissing.index < nextModelSource, models);
     const runtime = text.slice(text.indexOf('### 报表首次读取与快照更新'), text.indexOf('## 5 开发视图'));
-    const nextStateSource = runtime.indexOf(`设计内容来源：[账目提交、发布与恢复](#${blueprintReviewAnchor('view:runtime/flow:ledger-refresh-flow')})`);
+    const nextStateSource = runtime.indexOf(`内容承载于：[账目提交、发布与恢复](#${blueprintReviewAnchor('view:runtime/flow:ledger-refresh-flow')})`);
     const flowMissing = /^未记录：.*消费语义.*$/m.exec(runtime);
     assert(flowMissing && flowMissing.index < nextStateSource, runtime);
-    assert(!text.includes('| covered |')); assert(text.includes('| 已覆盖 |'));
+    assert(!text.includes('| covered |')); assert(text.includes('已覆盖'));
     assert(!text.includes('publication:') || text.indexOf('publication:') > text.indexOf('## 附录'));
   } },
   { name: 'phase and overview edges trace only explicit branch adjacency or relation with distinct complete addresses', run(f) {
     const uc = asRecords(asRecord(asRecord(hostBlueprintReviewFields().flow)!.use_cases)!.use_cases)[0];
     const graph = generateMermaidPhaseGraph(uc); assert.equal(parseMermaidSubset(graph.content), undefined);
+    assert.equal(graph.content.split('\n').filter(line => line.includes('-->')).length, new Set(graph.edges.map(edge => JSON.stringify([edge.from, edge.to]))).size, '相同阶段转移只画一次');
     assert(!graph.edges.some(edge => edge.from === 'Success' && edge.to === 'Failure'));
     for (const edge of graph.edges) {
       const source = asRecords(uc.branches).find(branch => branch.id === edge.branch)!; const sequence = asStrings(source.expected_phase_seq);
@@ -108,6 +113,94 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(!text.includes('用例调用声明无效')); assert(text.includes('尚未拆分'));
     assert(JSON.stringify(originalFlow.use_cases).includes('expected_boundary_calls'), '原样保存旧字段，未先适配夹具');
   } },
+  { name: 'library storage preserves ten columns, descriptions, keys and actual schema settings without altering author missing prose', run(f) {
+    const bp = blueprint(f); const schema = libraryBlueprintReviewSchema();
+    bp.contracts = [{ contract_id: 'wallet-store', label: '卡片库（未记录旧版）', operation: { operation_id: 'save', direction: 'client_to_local_rdb' }, table_schema: schema }];
+    asRecord(bp.review_summary)!.title = '未记录也要照原文保留';
+    asRecord(bp.review_summary)!.summary = '作者说明：旧库未记录升级，但新库声明v1。';
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:library');
+    for (const fact of ['# 未记录也要照原文保留', '作者说明：旧库未记录升级，但新库声明v1。', '#### 卡片库（未记录旧版）', '| 数据库 | wallet\\_cards.db |', '| 版本 | 1 |', '| 安全级别 | S4 |', '| 加密 | 是 |', '客户端到本地数据库', 'PRIMARY KEY', 'v0事务建表后置v1', '##### 表 cards']) assert(text.includes(fact), fact);
+    assert(!text.includes('#### —')); assert(!text.includes('columns 未能表达'));
+    const stored = asRecords(schema.tables)[0];
+    for (const column of asRecords(stored.columns)) { assert(text.includes(String(column.name).replace(/_/g, '\\_')), String(column.name)); assert(text.includes(String(column.description)), String(column.description)); }
+    const source = String(stored.source_ref); assert(text.includes(source));
+    const second = { name: 'audit', columns: [{ name: 'created', type: 'INTEGER', description: '审计时刻', default: 0 }], primary_key: [], source_ref: 'contracts/audit.yaml' };
+    (schema.tables as unknown[]).push(second);
+    const multi = renderBlueprintReviewMarkdown(bp, 'sha256:library'); assert(multi.includes('##### 表 audit')); assert(multi.includes('审计时刻')); assert(multi.includes('| 主键 | 无 |')); assert(multi.includes('contracts/audit.yaml'));
+  } },
+  { name: 'equivalent DTO fields reuse one domain model but preserve nullable, required, defaults and all source identities', run(f) {
+    const bp = blueprint(f); const contract = asRecords(bp.contracts)[0];
+    const model = { name: 'WalletCardRecord', module: 'ledger', file: 'src/ledger/LedgerEntry.ets', kind: 'interface', fields: ['account', 'number', 'bank'].map(name => ({ name, type: 'string', required: true, description: `共同语义${name}`, source_ref: `models.yaml#${name}` })) };
+    asRecord(target(bp, 'ledger-module').contracts)!.data_models = [model];
+    const dto = { dto_id: model.name, source_ref: 'contracts/input.yaml', fields: model.fields.map(field => ({ field_id: field.name, type: field.type, semantics: field.description, nullable: false, source_ref: `input.yaml#${field.name}` })) };
+    contract.request_dto = dto; contract.response_dto = { ...structuredClone(dto), source_ref: 'contracts/output.yaml', fields: dto.fields.map(field => ({ ...field, required: false, default: '默认银行卡', source_ref: `output.yaml#${field.field_id}` })) };
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:dto');
+    for (const field of model.fields) {
+      assert.equal(text.split(field.description).length - 1, 1, field.description);
+      for (const source of [`models.yaml#${field.name}`, `input.yaml#${field.name}`, `output.yaml#${field.name}`]) assert(text.includes(source), source);
+    }
+    assert(text.includes('全表共同可空：否')); assert(text.includes('全表共同必需：否')); assert(text.includes('必需与可空是独立声明')); assert(text.includes('默认银行卡'));
+    (dto.fields[0] as BlueprintRecord).nullable = true;
+    const nullable = renderBlueprintReviewMarkdown(bp, 'sha256:dto'); assert(nullable.includes('| account | 是 | input.yaml#account |'), nullable);
+    dto.fields[0].semantics = '真正不同的请求含义';
+    const different = renderBlueprintReviewMarkdown(bp, 'sha256:dto'); assert(different.includes('真正不同的请求含义')); assert(different.includes('| account | string | 是 |'));
+    const duplicate = structuredClone(model); duplicate.module = 'other'; duplicate.file = 'src/other/WalletCardRecord.ets';
+    (asRecord(target(bp, 'ledger-module').contracts)!.data_models as unknown[]).push(duplicate);
+    dto.fields[0].semantics = model.fields[0].description;
+    const ambiguous = renderBlueprintReviewMarkdown(bp, 'sha256:dto'); assert(ambiguous.split(model.fields[0].description).length - 1 >= 3, '同名多个不同来源模型不能擅自选择一个');
+  } },
+  { name: 'UI, recovery and exact focus deduplicate only their owning content while repeated fields and file scopes remain traceable', run(f) {
+    const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
+    const uc = asRecords(asRecord(flow.use_cases)!.use_cases)[0];
+    uc.ui_bindings = [{ ui: 'SharedPage', role: 'entry', subscribes: [], user_actions: [{ trigger: '唯一主责动作', calls: 'SharedPage.submit' }] }];
+    const reportFlow = target(bp, 'ledger-report-flow');
+    const reportUseCase = asRecords(asRecord(reportFlow.use_cases)!.use_cases)[0];
+    reportUseCase.ui_bindings = [{ ui: 'SharedPage', role: 'result', subscribes: ['reported'], user_actions: [{ trigger: '不同来源动作', calls: 'SharedPage.done' }] }];
+    flow.failure_recovery = { recovery_id: 'shared-recovery', handling: '唯一恢复说明', retry: '唯一重试说明' };
+    asRecords(asRecord(flow.contracts)!.state_management)[0].failure_recovery = structuredClone(flow.failure_recovery);
+    const ac = asRecords(asRecord(target(bp, 'ledger-module').acceptance)!.criteria)[0]; ac.ut_focus = ac.expected_result; ac.device_focus = String(ac.expected_result) + '（真机补充）';
+    const decision = asRecords(asRecord(bp.decisions_and_gaps)!.decisions)[0]; decision.alternatives = [{ option: '方案甲', rejected_reason: '完全相同代价', defect: '完全相同代价' }, { option: '方案乙', rejected_reason: '另一相同代价', defect: '另一相同代价' }];
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:dedup');
+    assert.equal(text.split('唯一主责动作').length - 1, 1); assert.equal(text.split('不同来源动作').length - 1, 1); assert(!text.includes('UI 边界：SharedPage')); assert(text.includes('界面职责、动作、调用与订阅见'));
+    assert.equal(text.split('唯一恢复说明').length - 1, 1); assert(text.includes('失败与恢复见')); assert(text.includes('（真机补充）')); assert(!text.includes(`UT：${ac.expected_result}`));
+    assert(text.includes('| 方案 | 被否理由/代价 |')); assert.equal(text.split('完全相同代价').length - 1, 1);
+    assert(!text.includes('目标写集：')); assert(text.includes('| 文件 | 声明目标 |')); assert(text.includes(blueprintReviewAnchor('writes:view:development/node:ledger-module')));
+    assert(text.includes('内容承载于：')); assert(!text.includes('设计内容来源：'));
+    asRecords(decision.alternatives)[1].defect = '确实不同代价';
+    asRecords(asRecord(flow.contracts)!.state_management)[0].failure_recovery = { handling: '不同恢复处理', retry: '不同恢复重试' };
+    const different = renderBlueprintReviewMarkdown(bp, 'sha256:dedup'); assert(different.includes('| 方案 | 被否理由 | 缺陷/代价 |')); assert(different.includes('不同恢复处理')); assert(different.includes('| 处理 |'));
+  } },
+  { name: 'saved current sequence content displays beside its flow without relation refs or invented calls and stale graphs only request rebuild', run(f) {
+    const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
+    const graph = { graph_id: 'ledger-sequence', format: 'mermaid', source_view_id: 'runtime', content: 'sequenceDiagram\nparticipant Page as 页面\nparticipant Repo as 存储\nPage->>Repo: 保存记录\nRepo-->>Page: 已确认\n', node_refs: ['view:runtime/flow:ledger-refresh-flow', 'contract:create-entry-v1'], relation_refs: [] };
+    bp.generated_graphs = [graph]; bp.derived_results = [{ result_id: graph.graph_id, input_revision: bp.revision, source_fingerprint: bp.source_fingerprint, decision_fingerprint: bp.decision_fingerprint, status: 'current' }];
+    const current = renderBlueprintReviewMarkdown(bp, 'sha256:sequence'); assert(current.includes(graph.content.trimEnd())); assert(current.indexOf(graph.content.trimEnd()) > current.indexOf(`### ${flow.name}`)); assert(current.indexOf(graph.content.trimEnd()) < current.indexOf('### 施工状态与有序步骤'));
+    graph.content = 'sequenceDiagram\nparticipant Page\nPage->>Missing: 保存记录';
+    const bad = renderBlueprintReviewMarkdown(bp, 'sha256:sequence'); assert(bad.includes('无效，未展示（非阻断）')); assert(!bad.includes('Page->>Missing')); assert(bad.includes('repository.commit'));
+    graph.content = 'sequenceDiagram\nparticipant Page\nparticipant Repo\nPage->>Repo: 保存记录';
+    asRecords(bp.derived_results)[0].status = 'stale';
+    const stale = renderBlueprintReviewMarkdown(bp, 'sha256:sequence'); assert(stale.includes('已过期')); assert(!stale.includes(graph.content));
+    bp.derived_results = [];
+    const absent = renderBlueprintReviewMarkdown(bp, 'sha256:sequence'); assert(absent.includes('未记录对应派生结果')); assert(!absent.includes(graph.content));
+    bp.generated_graphs = [];
+    const notInvented = renderBlueprintReviewMarkdown(bp, 'sha256:sequence'); assert(!notInvented.includes('sequenceDiagram')); assert(notInvented.includes('repository.commit'));
+  } },
+  { name: 'module graphs trace each typed source without merging conflicts and explanatory compression preserves distinct source and identity columns', run(f) {
+    const bp = blueprint(f); const contracts = asRecord(target(bp, 'ledger-module').contracts)!;
+    contracts.module_dependencies = { ledger: ['account', 'storage'] };
+    const report = asRecord(target(bp, 'ledger-report-module').contracts)!; report.module_dependencies = { ledger: ['report-storage'] };
+    const logical = asRecords(bp.design_views).find(v => v.view_id === 'logical')!;
+    const names = ['first', 'second', 'third'];
+    logical.nodes = names.map(node_id => ({ node_id, label: node_id, current_state: `当前${node_id}`, target_state: `目标${node_id}`, design_basis_refs: ['contracts/shared.yaml'], owner: 'shared' }));
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:module');
+    for (const fact of ['account', 'storage', 'report-storage', '全表共同依据：contracts/shared.yaml', 'view:development/node:ledger-module.contracts.module_dependencies.ledger[0]', 'view:development/node:ledger-report-module.contracts.module_dependencies.ledger[0]']) assert(text.includes(fact), fact);
+    const graphs = [...text.matchAll(/```mermaid\n([\s\S]*?)\n```/g)].map(match => match[1]);
+    assert(graphs.some(graph => graph.includes('account') && graph.includes('storage') && !graph.includes('report-storage')));
+    assert(graphs.some(graph => graph.includes('report-storage') && !graph.includes('account')));
+    for (const name of names) assert(text.includes(`| ${name} |`)); assert(text.includes('当前first') && text.includes('目标third'), '身份及不同当前/目标不能提到共同说明');
+    asRecords(logical.nodes)[1].design_basis_refs = ['contracts/different.yaml'];
+    const distinct = renderBlueprintReviewMarkdown(bp, 'sha256:module'); assert(distinct.includes('| 依据 |') || distinct.includes('目标 | 依据 |')); assert(!distinct.includes('全表共同依据：contracts/shared.yaml'));
+  } },
   { name: 'known payload values use a dedicated table, unknown shapes and conflicting aliases are disclosed', run(f) {
     const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
     asRecords(flow.publications)[0].payload = { balance: '已提交金额', stage: ['committed', 'published'], nested: { unknown: { value: 1 } }, provenance: { source_ref: 'internal-provider-marker' } };
@@ -122,6 +215,33 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(text.includes('nested | unknown：已声明（结构未展开）')); assert(text.includes('失败处理 | unknown：true')); assert(!text.includes('internal-provider-marker'));
     assert(text.includes('用例调用声明无效')); assert(text.includes('use\\_cases[0].branches[0]') || text.includes('use\\_cases\\[0\\].branches\\[0\\]'));
     assert(text.includes('other.call')); assert(text.includes('repository.commit'));
+  } },
+  { name: 'explicit empty and null business expectations stay distinct from absent declarations and source-only metadata', run(f) {
+    const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
+    const branches = asRecords(asRecords(asRecord(flow.use_cases)!.use_cases)[0].branches);
+    branches[0].expected_state = { otp: '', errorCode: '', selectedCard: null, enabled: false, count: 0, values: [null, '', false, 0] };
+    branches[0].cloud_stubs = {}; branches[0].local_stubs = {};
+    branches[1].expected_state = {};
+    branches[1].cloud_stubs = {}; branches[1].local_stubs = {};
+    asRecords(flow.publications)[0].payload = { empty: '', nil: null, values: [null, '', false, 0] };
+    asRecords(bp.contracts)[0].errors = { source_ref: 'contracts/source-only.yaml' };
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:explicit-values');
+    for (const fact of ['otp：""', 'errorCode：""', 'selectedCard：null', 'enabled：false', 'count：0', 'values：null；""；false；0', '| empty | "" |', '| nil | null |', '| values | null；""；false；0 |', '| 预期状态 | 无 |']) assert(text.includes(fact), fact);
+    const cases = text.slice(text.indexOf('### 用例、数据边界与分支'), text.indexOf('### 异常与恢复'));
+    assert(!cases.includes('已声明（仅来源信息）')); assert(!cases.includes('selectedCard：未记录'));
+    assert(text.includes('错误：已声明（仅来源信息）'), '只有实际来源元数据的结构仍与显式空对象区分');
+  } },
+  { name: 'host-derived acceptance links preserve empty split boundaries and adjacent links while whole empty cells remain explicit', run(f) {
+    const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
+    const hostFlow = asRecord(hostBlueprintReviewFields().flow)!;
+    flow.use_cases = structuredClone(hostFlow.use_cases); flow.publications = structuredClone(hostFlow.publications);
+    const link = `[AC-1](#${blueprintReviewAnchor('acceptance:view:logical/node:review-common/criteria:AC-1')})`;
+    asRecords(flow.publications)[0].payload = { only: link, leading: `${link}后文`, trailing: `前文${link}`, adjacent: `${link}${link}`, empty: '' };
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:link-boundaries');
+    for (const row of [`| only | ${link} |`, `| leading | ${link}后文 |`, `| trailing | 前文${link} |`, `| adjacent | ${link}${link} |`, '| empty | "" |']) assert(text.includes(row), row);
+    assert.equal((text.match(/""\[/g) ?? []).length, 0, '链接首端不能把 split 空片段变成显式空字符串');
+    assert.equal((text.match(/\)""/g) ?? []).length, 0, '链接末端及相邻链接不能引入引号');
+    assert(text.includes('cards.saveBankCard') && text.includes('[AC-2](#design-'), '实际宿主调用及验收链接仍可读');
   } },
   { name: 'generic decision conclusion and rationale are independent without inferred authority', run(f) {
     const bp = blueprint(f); const decision = { decision_id: 'generic-choice', conclusion: '使用本地持久化', rationale: '离线也需读取', status: 'decided_with_authority', owner: 'ledger-team' };
@@ -158,8 +278,8 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const reportUnit = text.slice(text.indexOf('### ledger-report'), text.indexOf('## 11 风险'));
     assert(refreshUnit.includes(ownAnchor) && !refreshUnit.includes(reportAnchor), refreshUnit);
     assert(reportUnit.includes(reportAnchor) && !reportUnit.includes(ownAnchor), reportUnit);
-    const ownContract = text.slice(text.indexOf('### create-entry-v1'), text.indexOf('### read-report-v1'));
-    const reportContract = text.slice(text.indexOf('### read-report-v1'), text.indexOf('## 4 运行时视图'));
+    const ownContract = text.slice(text.indexOf('#### create-entry-v1'), text.indexOf('#### read-report-v1'));
+    const reportContract = text.slice(text.indexOf('#### read-report-v1'), text.indexOf('## 4 运行时视图'));
     assert(ownContract.includes(ownAnchor) && !ownContract.includes(reportAnchor)); assert(reportContract.includes(reportAnchor) && !reportContract.includes(ownAnchor));
   } },
   { name: 'one rich fixture yields 4+1 detail, true shared/exclusive inheritance and read-only handoff', run(f) {
@@ -360,13 +480,13 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     bp.relations = [{ relation_id: 'foreign', from: 'view:development/node:same', to: 'view:logical/node:local', relation_type: 'foreign' }, { relation_id: 'local', from: 'view:logical/node:same', to: 'view:logical/node:local', relation_type: 'local' }];
     const graph = generateMermaidViewGraph(bp, 'logical'); assert.deepStrictEqual(graph.relation_refs, ['relation:local']); assert(!graph.content.includes('foreign')); assert(graph.content.includes('&quot;'));
     bp.generated_graphs = [graph]; assert(!validateGeneratedBlueprintGraphs(bp).some(i => i.id === 'blueprint_generated_graph_parse_failed'));
-    update(f, actual => { asRecords(actual.generated_graphs)[0].content = 'sequenceDiagram\nparticipant invalid'; });
-    const text = render(f); assert(text.includes('结构图无效，未展示')); assert(!text.includes('participant invalid'));
+    update(f, actual => { asRecords(actual.generated_graphs)[0].content = 'sequenceDiagram\nparticipant invalid\ninvalid->>missing: 未声明端点'; });
+    const text = render(f); assert(text.includes('无效，未展示（非阻断）')); assert(!text.includes('participant invalid'));
   } },
 ];
-export function runAll() {
+export async function runAll() {
   const results = cases.map(c => { const f = createBlueprintReviewDesignFixture(); try { c.run(f); return { name: c.name, ok: true }; } catch (error) { return { name: c.name, ok: false, error: (error as Error).stack }; } finally { fs.rmSync(f.root, { recursive: true, force: true }); } });
-  const old = loadHostSnapshot();
+  const old = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
   const name = 'previously completed but non-retired CU is still checked after authoritative content becomes invalid';
   try {
     const loaded = loadCanonicalChangeUnit(old.root, 'ledger-app-blueprint', 'ledger-refresh');

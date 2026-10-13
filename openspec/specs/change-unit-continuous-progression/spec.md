@@ -394,6 +394,8 @@ required provider 缺失 MUST 形成结构化 blocker；optional provider 缺失
 
 ### Requirement: Design preparation accepts an admitted blueprint with zero change units
 
+Design-only projection SHALL skip componentProjectionErrors because it depends on future plan design_ref_mappings; a legal typed UI design with a component index SHALL NOT require contracts.change_unit during readiness. Plan and later consumers SHALL preserve the full existing component mapping checks, and existing component selection design checks SHALL remain active without a replacement design gate.
+
 P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由谁创建"的责任空档。它 MUST 完全复用上表 `CU decomposition` Seam Card 的既有机制（provider 只产临时候选 → consumer validator 校验后写 canonical），MUST NOT 新增第二套 CU 写入机制、第二个状态机或新 CLI。
 
 - **入口**：admitted blueprint。**初始 canonical CU 数量为 0 MUST 是合法入口**，MUST NOT 判为推进故障；推进决策 MUST 把该情形与"有 CU 但无 ready"区分开。
@@ -595,3 +597,12 @@ For architecture_impact decisions relevant to a CU (referenced by its design_ref
 - **WHEN** candidates have been accepted but readiness is busy or fails
 - **THEN** the command SHALL retain accepted identities and return a readiness retry without repeating acceptance
 - **AND** ready ids SHALL come from the existing ready-set, excluding retired or dependency-blocked CUs
+
+### Requirement: UT consumes the real target of a planned construction reference
+
+UT SHALL strip planned: before the existing safe path/file/symbol validation for references required to exist. Existing targets SHALL pass without rewriting frozen canonical CU/contracts; absent or unsafe files and missing symbols SHALL still fail. Spec/plan references allowed to remain planned SHALL keep their prior semantics. A real plan-owned use-case definition gap discovered at UT SHALL use the existing repair owner, candidate and scope revision chain, rather than forcing a new run.
+
+#### Scenario: A frozen planned file and symbol have materialized
+
+- **WHEN** UT checks a planned file#symbol whose real safe file and symbol exist
+- **THEN** it SHALL pass without changing contract bytes; removing that file or symbol SHALL still fail

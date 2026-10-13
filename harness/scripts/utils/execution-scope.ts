@@ -448,6 +448,26 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       for (const o of obligations.filter(o => o.owner_phase === gap.owner && o.applicability === 'required' && !o.satisfied_by?.length)) unresolved.push({ obligation_id: o.id, owner: gap.owner, reason: gap.reason, needed_by: [gap.owner] });
     }
   }
+  // If an unknown duty removes its owner, its actual downstream consumers cannot remain executable.
+  const unavailable = new Map<string, ExecutionScope['unresolved'][number]>();
+  for (const gap of unresolved) for (const blocked of gap.needed_by) {
+    if (!needed.has(blocked)) unavailable.set(blocked, gap);
+  }
+  let removed: boolean;
+  do {
+    removed = false;
+    for (const phase of [...needed]) {
+      const predecessors = [...(phases.get(phase)?.requires ?? []), ...(input.control_edges ?? []).filter(edge => edge.after === phase).map(edge => edge.before)];
+      const missing = predecessors.find(before => unavailable.has(before)
+        && obligations.some(o => o.owner_phase === before && o.applicability !== 'not_applicable' && !o.satisfied_by?.length));
+      if (!missing) continue;
+      const cause = unavailable.get(missing)!;
+      needed.delete(phase); unavailable.set(phase, cause); removed = true;
+      for (const obligation of obligations.filter(o => o.owner_phase === phase && o.applicability === 'required' && !o.satisfied_by?.length)) {
+        unresolved.push({ obligation_id: obligation.id, owner: cause.owner, reason: cause.reason, needed_by: [phase] });
+      }
+    }
+  } while (removed);
   const edges = (input.control_edges ?? []).filter(edge => needed.has(edge.after));
   for (const edge of edges) if (!phases.has(edge.before) || !phases.has(edge.after) || !edge.basis.length) fail('控制边缺少合法阶段或真实依据');
   for (const edge of edges) if (!needed.has(edge.before) && !obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'evidence_manifest_aggregate' in ref && ref.phase === edge.before))) fail(`真实控制前置尚未满足：${edge.before} → ${edge.after}`);

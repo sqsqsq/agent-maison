@@ -858,6 +858,7 @@ export function resolveScopeRevisionProposal(input: {
    * `ExecutionScope` 没有 `requested_phases` 字段，故由调用方把冻结那一份链传进来。
    */
   authorizedPhases: readonly string[];
+  repairCandidates?: readonly import('./repair-candidates').RepairCandidate[];
   completedPhases?: ReadonlySet<string>;
   currentRunId?: string;
   requirement?: string;
@@ -922,6 +923,13 @@ export function resolveScopeRevisionProposal(input: {
   }
   const resolved = resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts);
   if (executionScopeFingerprint(resolved) === executionScopeFingerprint(previous)) return null;
-  if (!hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '')) throw new Error('[execution-scope] revision requires new sourced facts');
+  const confirmedCoding = previous.completion_target === 'feature' && input.repairCandidates?.some(candidate => {
+    const fact = proposal.facts.find(item => item.id === `implementation:${candidate.id}` && item.kind === 'implementation' && item.applicability === 'required');
+    const owner = resolved.obligations.find(item => item.id === fact?.id)?.owner_phase;
+    return candidate.category === 'coding' && candidate.files.length > 0 && owner && !previous.phase_chain.includes(owner)
+      && fact?.basis.length && !previous.obligations.some(item => item.id === fact.id);
+  });
+  // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
+  if (!hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedCoding) throw new Error('[execution-scope] revision requires new sourced facts');
   return { scope: resolved, input: proposal };
 }

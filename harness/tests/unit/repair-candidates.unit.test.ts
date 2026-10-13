@@ -202,7 +202,7 @@ const REAL_ASSERTION_MODULE: UtHvigorTestFailureModule = (() => {
 })();
 
 /** 由生产格式器与生产归因判据组装的 check（与 checkUtHvigorTest 最终返回同形）。 */
-const UT_REAL_ASSERTION_CHECK = (() => {
+export const UT_REAL_ASSERTION_CHECK = (() => {
   const formatted = buildUtHvigorTestFailDetails([REAL_ASSERTION_MODULE]);
   return {
     id: 'ut_hvigor_test',

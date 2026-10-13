@@ -62,3 +62,12 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/effective-
 
 - **WHEN** a consumer feature contains old policy-downgrade and unverified-attestation rows
 - **THEN** a new run ignores them and derives behavior only from current execution evidence
+
+### Requirement: Blind approximate work reuses known project assets honestly
+
+With no vision and approximate acquisition, runtime/spec/coding guidance SHALL first reuse repo_ref assets whose purpose is established by code or resource references. Only missing or unidentified assets MAY use disclosed placeholders. Reuse SHALL retain verified: unverified and SHALL NOT claim visual verification; existing auto_crop and explicit required-asset contracts SHALL remain unchanged.
+
+#### Scenario: A blind model has an existing logo with a known purpose
+
+- **WHEN** the project already references the logo for the required role
+- **THEN** repo_ref SHALL remain a real asset; lack of another usable asset MAY yield an explicit unverified placeholder

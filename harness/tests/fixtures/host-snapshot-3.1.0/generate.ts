@@ -36,7 +36,7 @@ const OUT = path.join(__dirname, 'project');
  *  `.git` 不能嵌进本仓，`fake-deveco/` 是父进程 preflight 的假工具链，`build/` 是 device_test.build 替身落的 .hap。 */
 const EXCLUDED_TOP = new Set(['framework', '.git', 'fake-deveco', 'build']);
 
-function copyTree(src: string, dst: string, top: boolean): void {
+export function copyTree(src: string, dst: string, top: boolean): void {
   fs.mkdirSync(dst, { recursive: true });
   for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
     if (top && EXCLUDED_TOP.has(ent.name)) continue;
@@ -105,10 +105,14 @@ export function loadHostSnapshot(into?: string): { root: string; frameworkRoot: 
 }
 
 /** ★1 基线：经公开入口 `goal-status` 读快照中两个 Feature 的完成状态（生产 `assessFeature`）。 */
-function verifyBaseline(): void {
+async function verifyBaseline(): Promise<void> {
   const s = loadHostSnapshot();
   let ok = true;
+  // 规则已变，先准确识别旧 gate 失效，再按已登记迁移取得当前完成；原 project/ 不改。
+  const { migrateHostSnapshot } = await import('./migrate');
   for (const feature of [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]) {
+    console.log(`${feature} before migration: ${goalStatusFeatureLine(s, feature)}`);
+    await migrateHostSnapshot(s, feature);
     const line = goalStatusFeatureLine(s, feature);
     console.log(`${feature}: ${line}`);
     ok = ok && line.startsWith('feature_status=FEATURE_COMPLETED (verify=VALID');
@@ -119,6 +123,6 @@ function verifyBaseline(): void {
 }
 
 if (require.main === module) {
-  if (process.argv.includes('--verify')) verifyBaseline();
+  if (process.argv.includes('--verify')) verifyBaseline().catch(e => { console.error(e); process.exit(1); });
   else main().catch(e => { console.error(e); process.exit(1); });
 }

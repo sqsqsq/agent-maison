@@ -73,7 +73,7 @@
   3. 若某个关键维度完全未审查（未在方法中声明且问题清单无相关分类），标为 FAIL
   4. 特别关注：架构分层和 plan.md 一致性是否被充分审查
   5. UI 需求特别关注：「视觉保真」维度引用的产物路径是否真实存在、结论是否与产物一致
-     （抽样打开 asset-crop-validation.json / 豁免表核对，防"声称看过"——脚本门禁 visual_fidelity_review
+     （只核适用类别；repo_ref 不强造 crop 证据，无 must_have 声明不强造其产物；抽样打开适用 asset-crop-validation.json / 豁免表核对，防"声称看过"——脚本门禁 visual_fidelity_review
      只核证据被引用，真实性靠本检查兜）
 
 ### 检查 2: 问题准确性 (issue_accuracy)
@@ -86,6 +86,10 @@
      a. 验证「涉及文件」路径是否在上下文源代码中存在
      b. 验证「问题描述」是否与实际代码匹配——阅读对应源代码，确认问题确实存在
      c. 验证「严重程度」评级是否合理（对照 review-rules.yaml 中的分级标准）
+  - 逐条同时核对分类、实际影响与有效 fidelity-intent 严格度。只有“视觉保真”承载视觉差异；功能/数据错误不得误分类。BLOCKER 保留关键操作或理解受阻等真实影响，不能单凭 P0/pixel_1to1 目标名抬级。
+  - 与机器共享处置：有效 best_effort 下非关键“视觉保真/MAJOR”允许披露，原始统计与未关闭状态保留，通过/有条件通过均接受，不派 coding；hard、功能 MAJOR 和 BLOCKER 保持。目标缺失/损坏不能授权披露。
+  - 逐条消费 spec/ref-elements.yaml、已有 fidelity_deferrals 和 excluded 原文引文。有效 defer/excluded 不要求 coding 实现；错误登记指向 spec；无依据 excluded 不放行。不得新写债务账或预签 testing 视觉 PASS。
+  - 误报、虚高严重度或分类错误判 refuted 并指明原报告需要的更正；负面结论必须由报告责任方先更正再重验，verifier PASS 不改写产品裁决。
   3. 若发现某条问题是误报（代码实际上是正确的但被标记为问题），标记为误报
   4. 误报率计算：误报数 / 验证数
      - 误报率 ≤ 10%: PASS
@@ -157,7 +161,7 @@
   2. 阅读「结论」章节中的审查结论
   3. 验证一致性：
      - BLOCKER > 0 → 结论必须为"不通过"
-     - BLOCKER = 0 且 MAJOR > 0 → 结论应为"有条件通过"
+     - BLOCKER = 0 且仍有必须返修的 MAJOR → 结论可为"有条件通过"但不得推进；仅剩允许披露的视觉 MAJOR → "通过"/"有条件通过"均接受
      - BLOCKER = 0 且 MAJOR = 0 → 结论应为"通过"
   4. 若不一致，判为 FAIL
   5. 同时检查：标为 BLOCKER 的问题是否确实达到 BLOCKER 级别

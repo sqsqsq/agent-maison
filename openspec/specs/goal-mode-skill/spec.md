@@ -279,3 +279,17 @@ The main Agent SHALL honor the fresh design handoff in `complex-capability-meta-
 
 - **WHEN** a design-lens new complete delivery returns a design preparation result
 - **THEN** the authorized main Agent SHALL complete the design handoff in the same session before starting the selected ready CU in attended or detached mode
+
+### Requirement: Explicit unattended full-delivery authorization permits default budget expansion
+
+只有明确无人值守＋不要询问＋授权完整交付时，主 Agent SHALL 可在核对原始有效请求和更正后通过现有 manifest/--override-manifest 显式提高默认额度并继续同一 run。普通静默或局部请求 SHALL NOT 获得该权；用户单独指定的最终时间、轮次或费用总上限 SHALL 不可突破。runner SHALL 到当前额度照常停，累计资源与 no_progress_guard 等熔断 SHALL 不重置。主 Agent 最终回复 SHALL 用现有 manifest/budget_changed 披露每次前后额度、原因、授权依据及累计消耗；不增加参数、字段、账本或自动无限提额循环。
+
+#### Scenario: Authorized default expansion retains a separate user cap
+
+- **WHEN** 用户明确无人值守、不要询问并授权完整交付，且默认额度耗尽但用户指定的总上限仍有余额
+- **THEN** 主 Agent MAY 显式调整默认额度并沿现有入口恢复同一 run，记录 budget_changed 并在最终回复说明；不得超总上限或清累计/解除熔断
+
+#### Scenario: Silence is insufficient authority
+
+- **WHEN** 用户只有静默、继续或局部任务请求
+- **THEN** 默认预算扩容 SHALL 仍按既有授权边界处理

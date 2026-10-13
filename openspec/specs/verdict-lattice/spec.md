@@ -70,3 +70,12 @@ Enforcement: `harness/scripts/utils/{quality-axes,verify-feature-completion}.ts`
 
 - **WHEN** verify-feature-completion evaluates a chain whose review summary is schema 1.0 verdict=PASS while the review report verdict was 不通过
 - **THEN** the completion SHALL NOT be VALID on that lineage without a re-run under the current gate fingerprint
+
+### Requirement: Review disclosure preserves visual uncertainty and real statistics
+
+Review SHALL use the same classification/fidelity disposition for verdict consistency, conditional closure and repair candidates. Valid best_effort non-critical 视觉保真 MAJOR differences SHALL keep their original counts and open state and MAY advance with either 通过 or 有条件通过. Hard, functional MAJOR and BLOCKER SHALL remain unresolved until repaired. An unchanged 不通过 SHALL still fail even when a verifier refutes its claims: the report owner must correct it first. This batch adds the projection of non-empty spec fidelity_deferrals to release BLOCKED in every phase until spec removes the deferral registration; this projection SHALL NOT affect normal completion and itself requires no migration. Newly disclosed review visuals SHALL also project release BLOCKED and disclose unverified device visuals through the existing readiness signals, without converting intermediate-phase disclosure into a mandatory needs_fix axis or creating a second debt ledger. Testing SHALL retain its existing final visual judgement.
+
+#### Scenario: An allowed visual MAJOR is disclosed without pre-signing testing
+
+- **WHEN** a valid best_effort report only contains an open visual MAJOR
+- **THEN** conclusion and closure SHALL accept pass or conditional pass and generate no coding candidate, while the original MAJOR count remains one and device visuals remain unverified
