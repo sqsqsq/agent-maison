@@ -50,6 +50,8 @@ checker 不自动升 revision；只有被接受的新事实、权威裁决或冲
 
 设计 owner/App lens/独立质询沿现有问题检查存储的库名/版本、安全级别/是否加密、主键唯一、升级及敏感字段（table_schema + data_domains.security + 既有叙述）；逐项核真实依赖失败与用户中断，已有 selection/OTP 等内容归 boundaries/failure_recovery，真缺才补，不为 mock 编外部故障。错误/幂等键、涉及跨会话重复卡时的策略与主键明确；quality_attributes 对兼容、安全隐私、UX 深浅色/无障碍、打点/性能给实际结论，不涉及给理由，不凑量化阈值。包括 App lens 与质询在内的新叙述用项目语言。这些不增加机器字段/scope/阻断，也不降级现有 typed、来源、授权及 P0 检查。
 
+完整调用由设计 owner 在现有 flow contracts.state_management[].ordered_steps 字符串写明页面→业务对象→Repository→实际 helper/数据库，以及真实 caller/callee、参数/结果、等待/回调、失败分叉和完成/导航/消费者。typed 接口与根存储契约提供同源细节；table_schema 保留单表与库级 tables[]，精确内容约定见[存储内容约定](../concepts/blueprint-design-inputs.md#存储内容约定)。设计 agent 同次生成 generated_graphs 的 sequenceDiagram，graph_id 对应 derived_results.result_id、复用原版本/指纹/状态，原 runtime scope 独立质询核图文一致。图派生非权威，不新增交互 schema 或每箭头 relation；renderer 不从测试动作/端口顺序猜 caller。支持语法与短例见 [P1 时序写作](../../skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。
+
 同一未完成交付的活动 CU 仅在无运行或已停住时，经 consumer 内容修订接点提交旧精确 ref 与候选，保留 ID/Feature/目录、框架 revision +1；running/锁竞争 busy，普通重复接受仍拒绝。历史完成、成功终局缺投影及损坏记录不冒充未完成，退役前身不改；修订后停住 run 沿既有 binding 缺口回 plan，保留历史与累计预算，不自动改旧产物或启动施工。完成后新增工作及拆分/合并/迁移才用新身份。
 
 ### 1.2 部署视图与外部参与方
@@ -220,9 +222,11 @@ Maison 直接从 canonical CU 收集目的、交付、模块/touches、显式依
 
 单元格统一取值保留 string/number/bool/list，false/0 非空；已知业务键用专用格式，陌生业务键一层键值、不递归 dump，深层已有声明暂未展开如实说明。按所在结构排除机制元数据，来源/验证引用保留；不产空表/整空列，每节一行集中源缺项，缺失不冒充不适用。
 
-概述末总览及跨视图图只用既有 canonical 叙述/relations；运行阶段节点取 state_model.phases，边只各 branch.expected_phase_seq 相邻项且标 branch，不按 phases 排列连 Success→Failure。两图复用现有 flowchart/parser 并逐边追来源；逻辑/开发/部署结构图仍限显式关系，完整地址区分同名节点，CU 依赖图只画 requires。无效 canonical 图不展示并披露原因，图不替代结构化设计；不生成时序图或代码骨架。
+概述跨视图图只用 canonical relations；运行阶段图只连各 branch.expected_phase_seq 相邻项，按起止对去重保留分支来源，首分支作具名基准，不把到 Success 当完整完成；模块图只 contracts 根级 module_dependencies，已声明模块补层级/变化、其它仅名称，不合成冲突并集。三类图复用 flowchart/parser，逐边追真实来源，不造稳定地址；结构图按完整地址区分同名节点、CU 依赖只 requires。完整时序展示设计期生成的 generated_graphs，relation_refs 可为空。超子集/端点/块/坏地址等时序图自身问题一律 WARN、原流程说明且不展示，不经 sourceGaps/invalid 影响准入/readiness；flowchart 原级别不变。缺对应派生结果或 stale 的时序图提示重建、不展示，缺图不加门也不证明人读完整。代码骨架不入蓝图。
 
-页面清单来自 components.kind/useCases.ui_bindings；场景视图集中页面与交互截图，每张已登记图片一次，追溯表等其它位置链接；journey_steps 中 J5/JR1/JR2 等完成后去向文本保留。本批不生成页面导航图：navigation 只有 config_files，不从共享动作连页面边或由文字去向推路由；真实实读仍不清楚才另讨论结构化导航数据。renderer 只输出已登记图片引用，不读外部图像字节作新设计事实/新绑定输入；隔离验收副本复制图片并保相对路径，以实际可见确认。重建/夹具通过不证明新写作充分，真实效果仍需干净需求实读七问。
+相同 DTO/模型需核字段/语义/约束/来源后复用，保留 nullable 与 required 等差异；UI/恢复/验收/写集只主责处完整展示，其余链接，并保留每 CU 精确范围和多源关联，不全局删同值列。显式空对象/数组为“无”，false/0 保真，缺项汇总仅处理 renderer 标记、不改作者文本；框架枚举按消费字段中文化，未知值/API/自由状态原样。
+
+页面清单来自 components.kind/useCases.ui_bindings；场景视图集中页面与交互截图，每张已登记图片一次，追溯表等其它位置链接；journey_steps 中 J5/JR1/JR2 等完成后去向文本保留。本批不生成页面导航图：navigation 只有 config_files，不从共享动作连页面边或由文字去向推路由。renderer 只输出已登记图片引用，不读外部图像字节作新设计事实/绑定输入。验证 A 是 canonical/CU/图片原样隔离副本、只验证展示；B 另存明确补完整调用步骤及派生图的设计变体，验证生成/质询和真实 Mermaid 预览，不混入 A、不声称原样副本凭空四图。原宿主不执行会写指针/文档的 readiness；用户集成发布件后在原工作区定向补时序、按既有修订复检文档/readiness，保留其它有效设计、不重置重做。设计专项不代替后续施工端到端验收。
 
 owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，合并集合标“待指针升版后显示”，不填假摘要、不承诺 carry-forward。当前精确绑定的 CU 若某层级相关性须靠外部 catalog 才能确定，则省略中立摘要，精确绑定与声明集合仍展示；原摘要算法/字段不变，不把省略变成新增来源缺口或阻断。单项坏 CU 不妨碍其余设计展示，缺口附 id/路径/原因；生成成功不等于来源完整或准入通过。内部刷新与外层补生成按整个尝试最终状态汇总，实际写入路径保留。
 
@@ -231,6 +235,8 @@ owner 指针待升版时保留 CU 自身契约，模块/设计链接待绑定，
 指针调和非 busy 后，readiness 对全部未退役（含已完成旧 CU）且原设计判定 constructable 的单元，复用 `deriveBlueprintSkillInput` 默认只读模式完整检查 canonical acceptance/contracts/use_cases。另一类 absent 不漏掉已声明的坏 use_cases；Feature 的阶段用例不反向参与设计投影，未对齐当前设计时由既有定义缺口和 plan 对齐门交 plan 重建。absent 提示“设计期未写入，将由 spec/plan 补”并明确责任，不新增缺字段机器门禁；canonical 已声明的坏形状、来源、写集或冲突为 invalid，复用原原因使 perUnit blocked/not-ready，不等运行中再首次发现。
 
 校验不物化 Feature 产物、不产 phase PASS/receipt、不重启旧 CU、不选择施工。未来 plan 映射缺失不阻断设计交接，设计投影也不证明 plan 已完成。prepare-blueprint-design 保留显式投影导出用途。不能证明 Feature 可安全刷新时保留原文件，合法 canonical CU 指针照常升版，由既有绑定或定义缺口安排 spec/plan；真实写入失败或依赖并发变化仍沿原事务回滚。不回滚用户已修订的 canonical 蓝图，文档结果与 readiness 结论分别报告。
+
+designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors；合法组件索引/typed UI 设计无需提前写 change_unit。plan 及后续组件映射检查完整保留，组件选型设计仍经原门，不新增替代检查。
 
 ### 4.4 铁律：投影相对蓝图与 CU 零新事实
 

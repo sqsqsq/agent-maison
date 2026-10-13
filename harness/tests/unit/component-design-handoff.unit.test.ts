@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { clearFrameworkConfigCache, featureFilePath, featuresDirPath } from '../../config';
+import { clearFrameworkConfigCache, componentIndexPath, relComponentIndex, featureFilePath, featuresDirPath } from '../../config';
 import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { BlueprintRecord, ComponentBlueprintRef, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
@@ -140,6 +140,94 @@ function assertStoppedAtHandoff(projectRoot: string): void {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  results.push(test('t9: real indexed UI design readiness skips future plan mappings; normal plan still requires exact component decisions', () => {
+    withSnapshotProject(({ root, frameworkRoot }) => {
+      const configFile = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      config.project_profile.name = 'hmos-app';
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      clearFrameworkConfigCache();
+      for (const loaded of enumerateCanonicalChangeUnits(root, BLUEPRINT_ID)) {
+        if (loaded.changeUnit.change_unit_id !== 'ledger-refresh') fs.rmSync(path.dirname(loaded.canonicalPath), { recursive: true, force: true });
+      }
+      dropStageArtifacts(root);
+      const indexFile = componentIndexPath(root);
+      fs.mkdirSync(path.dirname(indexFile), { recursive: true });
+      fs.writeFileSync(indexFile, YAML.stringify({ schema_version: '1.0', components: [] }));
+      const rationale = '本流程私有页面，不复用共享组件';
+      bumpBlueprint(root, bp => {
+        const target = findRecord(bp, row => row.node_id === 'ledger-domain' && !!asRecord(row.contracts))!;
+        const typed = asRecord(target.contracts)!;
+        delete typed.change_unit;
+        typed.components = [{ name: 'LedgerFeature', module: 'ledger', file: 'src/ledger/LedgerFeature.ets', kind: 'page', asset_selection: { resolution: 'custom', rationale } }];
+        const development = asRecords(bp.design_views).find(view => view.view_id === 'development')!;
+        const node = asRecords(development.nodes)[0]!;
+        node.kind = 'page';
+        const gaps = asRecord(bp.decisions_and_gaps)!;
+        gaps.decisions = [...asRecords(gaps.decisions), { decision_id: 'asset-ledger-page', kind: 'component_asset_selection', target_ref: `view:development/node:${node.node_id}`, asset_resolution: 'custom', rationale, status: 'decided_with_authority', owner: 'ui-owner', verification_refs: ['src/ledger/LedgerFeature.ets'], provenance: { ...asRecord(bp.provenance), source_ref: relComponentIndex(root) } }];
+        const provider = asRecords(bp.providers).find(item => item.provider_id === 'component-assets')!;
+        provider.available = true;
+        delete provider.missing_disposition;
+      });
+      reconcileChangeUnitBlueprintRefs(root, BLUEPRINT_ID);
+      const loaded = loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh');
+      loaded.changeUnit.design_refs = [...asRecords(loaded.changeUnit.design_refs), { ...loaded.changeUnit.component_blueprint_ref as BlueprintRecord, target: { kind: 'decision', id: 'asset-ledger-page' } }];
+      fs.writeFileSync(loaded.canonicalPath, YAML.stringify(loaded.changeUnit));
+      const canonical = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
+      assert(!canonical.issues.some(item => item.severity === 'BLOCKER'), `前提：合法 UI 选型设计：${JSON.stringify(canonical.issues)}`);
+      const derived = deriveBlueprintSkillInput(root, SNAPSHOT_CU_FEATURE, frameworkRoot, 'contracts');
+      assert(derived.state === 'resolved' && derived.value && 'components' in derived.value, `施工设计投影未解析：${JSON.stringify(derived)}`);
+      const contracts = derived.value;
+      assert(asRecords(contracts.components).length === 1 && !contracts.change_unit, '施工设计应有一个 UI 组件且没有 plan sidecar');
+      const readiness = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
+      assert(readiness.ready && readiness.nextEntry === 'change-unit-progression', `设计交接被未来组件映射误阻断：${JSON.stringify(readiness.perUnit)}`);
+      assert(!readiness.perUnit.some(unit => unit.issueIds.includes('component_asset_projection')), '组件施工映射仍污染真实 readiness');
+      const design = validateChangeUnitFeatureProjection(root, SNAPSHOT_CU_FEATURE, contracts, undefined, true, 'plan', [], { changeUnitOverride: asChangeUnitArtifact(loadCanonicalChangeUnit(root, BLUEPRINT_ID, 'ledger-refresh').changeUnit), designOnly: true });
+      assert(!design.issues.length, `designOnly 仍误报组件映射：${JSON.stringify(design.issues)}`);
+      const authored = authorCurrentCuPlan(root, { ...contracts });
+      const section = asRecord(authored.change_unit)!;
+      asRecords(section.design_ref_mappings).forEach(mapping => { mapping.implementation_refs = ['src/ledger/LedgerFeature.ets#LedgerFeature']; });
+      const evaluate = (contracts: BlueprintRecord, phase: 'plan' | 'coding') => validateChangeUnitFeatureProjection(root, SNAPSHOT_CU_FEATURE, contracts as unknown as ContractsSpec, undefined, true, phase);
+      assert(!evaluate(authored, 'plan').issues.length, `完整正常 plan 映射未通过：${JSON.stringify(evaluate(authored, 'plan').issues)}`);
+      section.design_ref_mappings = asRecords(section.design_ref_mappings).filter(mapping => asRecord(asRecord(mapping.design_ref)?.target)?.id !== 'asset-ledger-page');
+      for (const phase of ['plan', 'coding'] as const) assert(evaluate(authored, phase).issues.some(item => item.id === 'component_asset_projection'), `${phase} 的组件映射门被 designOnly 修复削弱`);
+      assert(!readiness.entersConstruction, '设计 readiness 启动施工');
+    });
+  }));
+
+  for (const [label, content, refs] of [
+    ['unsupported syntax', 'sequenceDiagram\nparticipant Page\nloop retry\nend', ['view:runtime/flow:ledger-refresh-flow']],
+    ['unknown endpoint', 'sequenceDiagram\nparticipant Page\nPage->>Missing: call', ['view:runtime/flow:ledger-refresh-flow']],
+    ['unclosed alternative', 'sequenceDiagram\nparticipant Page\nalt success\nPage->>Page: call', ['view:runtime/flow:ledger-refresh-flow']],
+    ['missing stable address', 'sequenceDiagram\nparticipant Page\nPage->>Page: call', ['view:runtime/node:missing']],
+  ] as const) results.push(test(`sequence ${label} does not block real blueprint admission or design readiness`, () => {
+    withProject(root => {
+      const baseline = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
+      assert(baseline.ready, `前提：基线未 ready：${JSON.stringify(baseline.perUnit)}`);
+      bumpBlueprint(root, bp => { bp.generated_graphs = [{ graph_id: 'graph:sequence', format: 'mermaid', source_view_id: 'runtime', content, node_refs: [...refs], relation_refs: [] }]; });
+      const checked = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
+      assert(checked.issues.some(item => item.id.startsWith('blueprint_generated_graph') && item.severity === 'WARN'), '坏时序未报告 WARN');
+      assert(!checked.issues.some(item => item.severity === 'BLOCKER') && evaluateDesignPreparationEntry(root, BLUEPRINT_ID).canEnter, `时序 WARN 阻断准入：${JSON.stringify(checked.issues)}`);
+      const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
+      assert(ready.ready && ready.nextEntry === baseline.nextEntry, `时序 WARN 经 projection/readiness 汇总被误阻断：${JSON.stringify(ready.perUnit)}`);
+      const source = loadBlueprintReviewSource(root, BLUEPRINT_ID);
+      assert(!source.inputs.sourceGaps.length, `时序 WARN 被提升为 sourceGaps：${source.inputs.sourceGaps.join('; ')}`);
+    });
+  }));
+
+  results.push(test('bad flowchart still blocks real blueprint admission and design readiness', () => {
+    withProject(root => {
+      bumpBlueprint(root, bp => { asRecords(bp.generated_graphs)[0]!.content = 'flowchart TD\nunsupported !'; });
+      const checked = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
+      assert(checked.issues.some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), 'flowchart 阻断级别丢失');
+      assert(!evaluateDesignPreparationEntry(root, BLUEPRINT_ID).canEnter, '坏 flowchart 被准入');
+      let ready = false;
+      try { ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID).ready; }
+      catch (error) { assert(String(error).includes('blueprint') || String(error).includes('蓝图'), '真实 readiness 抛出无关错误'); }
+      assert(!ready, '坏 flowchart 经 readiness 被洗成 ready');
+    });
+  }));
 
   results.push(test('design entry: draft/admitted local checks preserve canonical bytes and do not decompose', () => {
     for (const admitted of [false, true]) withProject(projectRoot => {

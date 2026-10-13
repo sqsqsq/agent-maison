@@ -17,7 +17,7 @@ import {
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
-import { generateMermaidViewGraph } from '../../scripts/utils/blueprint-graph-generator';
+import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
 import { downstreamRefNeedsRecompute } from '../../scripts/utils/derived-conclusion-freshness';
@@ -583,7 +583,7 @@ export function runAll(): UnitCaseResult[] {
     }
     const fixtureProjection = fs.readFileSync(path.join(path.dirname(VALID_PATH), 'component-blueprint.review.md'), 'utf8');
     assert(fixtureProjection !== markdown && fixtureProjection.includes('projection: component-blueprint-review@3'), '旧 Ledger 文档保留作旧格式回归，不重生成原夹具');
-    assert(markdown.includes('projection: component-blueprint-review@6'), '新输出使用默认设计交付格式');
+    assert(markdown.includes('projection: component-blueprint-review@7'), '新输出使用默认设计交付格式');
   }));
 
   results.push(test('review presentation selects business fields: DTO tables, ordered flow, decisions and unchanged evidence, without recursive metadata', () => {
@@ -606,7 +606,7 @@ export function runAll(): UnitCaseResult[] {
     for (const hidden of ['hidden-source-kind', 'hidden-time', 'hidden-strength', 'hidden-viewpoint', 'hidden-fact-id', 'hidden-question-id', 'hidden-frontier', 'observed_at', 'viewpoint_contract', 'source_fingerprint', 'identity_neutral_digest', '<details>', '条目 1']) {
       assert(!body.includes(hidden), `递归/机器元数据残留：${hidden}`);
     }
-    for (const kept of ['| 字段 | 类型 | 必需 | 可空 | 语义 |', '| amount | decimal-string | true | false | signed ledger amount |', 'CreateEntryResponseV1', 'LedgerEntry.parent', '核实未变：src/ledger/LedgerRepository.ts', 'old-layer → new-layer', 'owner remains stable', 'Existing repository；Existing create operation', 'LedgerDataSource', 'App composition root', 'Surface source failure and preserve prior projection.', '再次提取条件', '| 范围 | 问题 | 裁决 | 回答 |']) {
+    for (const kept of ['| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |', '| amount | decimal-string | 是 | 否 | signed ledger amount | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |', 'CreateEntryResponseV1', 'LedgerEntry.parent', '核实未变：src/ledger/LedgerRepository.ts', 'old-layer → new-layer', 'owner remains stable', 'Existing repository；Existing create operation', 'LedgerDataSource', 'App composition root', 'Surface source failure and preserve prior projection.', '再次提取条件', '| 范围 | 问题 | 裁决 | 回答 |']) {
       assert(markdown.includes(kept), `评审业务信息缺失：${kept}`);
     }
     const section = body.slice(body.indexOf('## 4 运行时视图'), body.indexOf('## 5 开发视图'));
@@ -627,6 +627,64 @@ export function runAll(): UnitCaseResult[] {
     const incomplete = validBlueprint();
     asRecords(runtimeFlow(incomplete).subscriptions)[0].cleanup = '';
     assert(validateFixture(incomplete).some(item => item.id === 'runtime_flow_subscription_lifecycle_missing'), '图可解析不得掩盖结构缺口');
+  }));
+
+  results.push(test('phase graph draws each transition once and preserves every branch source without guessing phase order', () => {
+    const branches = [
+      { id: 'baseline', expected_phase_seq: ['A', 'B', 'Done'] },
+      ...['failed-1', 'failed-2', 'failed-3', 'failed-4', 'failed-4'].map(id => ({ id, expected_phase_seq: ['A', 'B', 'Failed', 'A'] })),
+      { id: 'cancel', expected_phase_seq: ['B', 'Cancelled'] },
+    ];
+    const graph = generateMermaidPhaseGraph({ state_model: { phases: ['A', 'Cancelled', 'B', 'Done', 'Failed', 'Unused'] }, branches });
+    assert(graph.baselineBranch === 'baseline', '首分支展示基准身份丢失');
+    assert(graph.edges.length === 18 && (graph.content.match(/-->/g) ?? []).length === 5, '重复转移未合并或边来源被丢弃');
+    assert(graph.content.includes('p1 --> p3') && graph.content.includes('p3 --> p4'), '首分支转移不应有标签');
+    assert(graph.content.includes('|failed-1、failed-2 等 4 条分支|') && graph.content.includes('|cancel|'), '非基准边标签未去重、缩略或丢失不同终点');
+    assert(!graph.content.includes('p1 --> p2') && !graph.content.includes(' --> p6'), '不得按 phases 顺序猜转移');
+    assert(!parseMermaidSubset(graph.content), '阶段图不在支持的 flowchart 子集中');
+    let rejected = false;
+    try { generateMermaidPhaseGraph({ state_model: { phases: ['A'] }, branches: [{ id: 'bad', expected_phase_seq: ['A', 'Missing'] }] }); }
+    catch { rejected = true; }
+    assert(rejected, '未声明阶段未被拒绝');
+  }));
+
+  results.push(test('module graph uses only typed dependencies and traces original entries without stable-address aliases', () => {
+    const contracts = { modules: [{ name: 'Page', layer: '02-Feature', change_type: 'add' }, { name: 'Unused', layer: 'ignored' }], module_dependencies: { Page: ['Repository', 'Repository'], Repository: ['Database'] } };
+    const graph = generateMermaidModuleDependencyGraph(contracts, 'view:development/node:page');
+    assert(graph.edges.length === 3 && (graph.content.match(/-->/g) ?? []).length === 2, '模块边来源或绘制去重不正确');
+    assert(graph.content.includes('Page（02-Feature；新增）') && graph.content.includes('["Database"]') && !graph.content.includes('Unused'), '已声明模块标签或未知模块名称不正确');
+    assert(graph.edges[1]?.source === 'view:development/node:page.contracts.module_dependencies.Page[1]', '重复声明的具体项来源被丢弃');
+    assert(graph.edges[2]?.from === 'Repository' && graph.edges[2]?.to === 'Database', '声明方向被改变');
+    assert(!parseMermaidSubset(graph.content), '模块图不在支持的 flowchart 子集中');
+    const separate = generateMermaidModuleDependencyGraph({ module_dependencies: { Page: ['Other'] } }, 'decision:other');
+    assert(!separate.content.includes('Repository') && separate.edges[0]?.source.startsWith('decision:other.'), '不同承载的冲突声明被合成并集');
+  }));
+
+  results.push(test('sequence subset accepts explicit participants, returns, notes and nested alternatives', () => {
+    const content = ['sequenceDiagram', 'actor Page as 开卡页面', 'participant Repo as Repository', 'participant DB as 数据库', '', '%% 已声明步骤的派生图', 'Page->>Repo: save(request)', 'alt 保存成功', 'Repo->>DB: insert(row)', 'Note over Repo,DB: 等待提交确认', 'alt 已提交', 'DB-->>Repo: confirmed', 'else 查询失败', 'DB-->>Repo: error', 'end', 'Repo-->>Page: result', 'else 写入失败', 'Note over Page: 保留输入', 'Repo-->>Page: error', 'end'].join('\n');
+    assert(!parseMermaidSubset(content), '合法显式调用时序被拒');
+    const blueprint = validBlueprint();
+    blueprint.generated_graphs = [{ graph_id: 'graph:sequence', format: 'mermaid', source_view_id: 'runtime', content, node_refs: ['view:runtime/flow:ledger-refresh-flow', 'view:runtime/node:ledger-repository'], relation_refs: [] }];
+    assert(!validateGeneratedBlueprintGraphs(blueprint).length, '空 relation_refs 不应拒绝合法时序');
+  }));
+
+  for (const [label, content] of [
+    ['unknown message participant', 'sequenceDiagram\nparticipant Page\nPage->>Missing: call'],
+    ['unknown note participant', 'sequenceDiagram\nparticipant Page\nNote over Page,Missing: note'],
+    ['duplicate participant', 'sequenceDiagram\nparticipant Page\nactor Page as 重复'],
+    ['unclosed alt', 'sequenceDiagram\nparticipant Page\nalt 成功\nPage->>Page: call'],
+    ['unmatched else', 'sequenceDiagram\nparticipant Page\nelse 失败'],
+    ['unmatched end', 'sequenceDiagram\nparticipant Page\nend'],
+    ['unsupported syntax', 'sequenceDiagram\nparticipant Page\nloop 重试\nend'],
+  ]) results.push(test(`invalid sequence ${label} is WARN while bad flowchart remains BLOCKER`, () => {
+    const blueprint = validBlueprint();
+    blueprint.generated_graphs = [{ graph_id: 'graph:sequence', format: 'mermaid', source_view_id: 'runtime', content, node_refs: ['view:runtime/node:missing'], relation_refs: ['relation:missing'] }];
+    const issues = validateFixture(blueprint);
+    const graphIssues = issues.filter(item => item.id.startsWith('blueprint_generated_graph'));
+    assert(graphIssues.some(item => item.id === 'blueprint_generated_graph_parse_failed') && graphIssues.some(item => item.id === 'blueprint_generated_graph_ref_missing') && graphIssues.every(item => item.severity === 'WARN'), '时序语法/引用未只报 WARN');
+    assert(!issues.some(item => item.severity === 'BLOCKER'), '时序 WARN 经准入汇总被升级为阻断');
+    asRecords(blueprint.generated_graphs)[0]!.content = 'flowchart TD\nunsupported !';
+    assert(validateFixture(blueprint).some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), 'flowchart 原阻断级别被削弱');
   }));
 
   results.push(test('read-only initial-load flow does not fabricate mutation publication or subscription', () => {

@@ -460,7 +460,10 @@ renderer MUST NOT 兼任 feedback provider。
 
 人读取值/主责章节与设计写作深度 SHALL 遵循 app-component-blueprint 的同一契约：有值不假报缺失、不产空表，验收按来源目标加编号只完整展示一次、CU 链接保留实际范围；方案总览、分支阶段图与跨视图图只编排 canonical 内容/显式边，页面清单/截图/既有旅程去向表不推断导航路由。renderer 只输出已登记图片引用，外部图像字节 MUST NOT 成为新设计事实或新绑定输入。写作与原 scope 质询 SHALL 深化术语、存储、真实失败/中断、错误/幂等和质量结论并使用项目语言，MUST NOT 增加机器字段/scope/阻断或削弱既有 typed/来源/授权检查；夹具重渲染不代替真实宿主实读验收。
 
+完整调用与时序 SHALL 遵循 app-component-blueprint 的同源契约：flow contracts.state_management[].ordered_steps 先写 caller/callee/参数结果/等待/失败/完成，再由设计 agent 同次生成既有 generated_graphs，原 runtime scope 独立质询核图文一致；graph_id 与 derived_results.result_id 共用原身份/状态刷新。图非新权威，不增交互字段/schema 或每箭头 relation，renderer 不从测试动作/端口表猜 caller。时序图自身语法/端点/块/坏地址 SHALL 全部 WARN、原位说明不展示且不影响 admission/readiness，flowchart 原级别不变；缺图不证明人读完整。table_schema 双形状、三类确定性图真实来源、同源去重保留差异及字段级枚举展示 SHALL 复用同一内容约定。designOnly SHALL 不检查未来 plan 组件映射，plan 及后续原门完整保留。隔离原样 A 与补调用设计 B SHALL 分开，不能把 B 新事实冒充 A 原样重渲结果。
+
 #### Scenario: CU decomposition is included by Maison
+
 - **WHEN** 宿主接收当前设计交付
 - **THEN** Maison SHALL 同页呈现有效 CU、精确替代、显式依赖、安全中间态和需求直接引用，MUST NOT 依赖宿主拼装 CU 正文或输出覆盖结论
 

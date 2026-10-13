@@ -89,7 +89,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，补实术语、存储、真实失败/中断、错误/幂等与质量结论；App lens/质询用项目语言，细则沿同页，整个 contracts.change_unit 交 plan，交接不物化 Feature。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图并由既有 runtime 独立质询核图文一致，修订时同步刷新派生身份。App lens/质询用项目语言，整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。
 
 内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求按实际影响展开必要细节，未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 

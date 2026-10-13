@@ -52,7 +52,7 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 
 写作和质询共用七问：①需求与范围/非范围是什么；②当前问题是什么；③方案如何工作；④哪些模块负责；⑤关键选择为什么；⑥分几步、各交付什么、依赖与中间态是否安全；⑦风险/待决项和验证是什么。除核对原始证据外，评审者应能从文档回答；展示遗漏修 renderer，设计缺口交 owner 在现有字段补足并遵循 revision/权责，不以“未记录”宣称新设计质量通过。此为写作指引，不增加必填检查或人工批准。
 
-**按 4+1 完成可评审设计**：App lens 回答十个根问题时分别使用本问题的真实依据，不复制同一个通用答案。场景（+1）描述目标用户、前提、旅程、人群差异并追到其它视图；逻辑表达能力边界、实体字段/枚举、操作/DTO/映射/错误/幂等；运行表达触发→首次加载→权威/状态→写入/发布→订阅消费→失败恢复，附有序步骤与用例分支；开发表达已消费 DSL 分层、真实目录/文件、组件/接口职责和已声明持久化设计；部署表达实际落点与外部责任、配套顺序及兼容性。核实未变只写结论与依据，未知、不适用、未记录分别说明。取舍、异常、部件质量属性、数据生命周期与 AC/BD/NFR 展开到能审查约束、失败与代价的粒度。代码骨架不入蓝图；端到端时序用有序步骤/分支表，本批不生成时序图。
+**按 4+1 完成可评审设计**：App lens 回答十个根问题时分别使用本问题的真实依据，不复制同一个通用答案。场景（+1）描述目标用户、前提、旅程、人群差异并追到其它视图；逻辑表达能力边界、实体字段/枚举、操作/DTO/映射/错误/幂等；运行表达触发→首次加载→权威/状态→写入/发布→订阅消费→失败恢复，附完整调用步骤、设计期生成的时序图及用例分支；开发表达已消费 DSL 分层、真实目录/文件、组件/接口职责和已声明持久化设计；部署表达实际落点与外部责任、配套顺序及兼容性。核实未变只写结论与依据，未知、不适用、未记录分别说明。取舍、异常、部件质量属性、数据生命周期与 AC/BD/NFR 展开到能审查约束、失败与代价的粒度。代码骨架不入蓝图；图由下述同源设计生成，不替代步骤或分支。
 
 **设计期 typed 内容**：被 CU `design_refs` 引用的目标在设计期写入已有 `acceptance`、`contracts`、`use_cases`。acceptance 挂 scenarios/logical 等设计目标，包含 ID、优先级、步骤/预期、分层与 focus；contracts 挂 development 节点/runtime flow，包含真实模块目录、根级 module_dependencies、模型字段、接口签名、组件、files 写集和状态；**整个 contracts.change_unit 由 plan 在 Feature contracts.yaml 生成**。use_cases 挂 runtime flow，包含阶段、UI/数据边界、命名调用、主路径/分支去向、预期和 linked_acceptance，分支新写 expected_port_calls。目标 provenance 仍须满足已有 authoritative 要求，作者写内容不等于拥有外部裁决权。详见[蓝图设计输入](../../docs/concepts/blueprint-design-inputs.md)。
 
@@ -67,13 +67,52 @@ provider 固定内置并消费同一协议；id 必须唯一，requirement 只�
 | 关切 | 写作与质询内容 | 现有主责承载 |
 |---|---|---|
 | 术语 | 业务词意味着什么、与易混项如何区分？结合原说明与需求提炼，不用置信度/模块代替定义，不把示例用法机械复制成定义 | discovery.facts 的 term.value.meaning，保留原 provenance/确认语义 |
-| 存储 | 实际库名/版本、安全级别与是否加密是什么？主键/唯一约束如何避免重复，升级如何兼容，敏感字段如何保存/清理？有真实设计才写，未定如实未知 | 根 contracts[].table_schema 的表/列/约束、data_domains.security 及既有设计叙述；不新增数据库配置字段，不从类型推断索引/事务 |
+| 存储 | 实际库名/版本、安全级别与是否加密是什么？主键/唯一约束如何避免重复，升级如何兼容，敏感字段如何保存/清理？有真实设计才写，未定如实未知 | 根 contracts[].table_schema 按[双形状内容约定](../../docs/concepts/blueprint-design-inputs.md#存储内容约定)写单表或库级 tables[]，配 data_domains.security；库级事实仍在该子树，不新增数据库配置字段，不从类型推断索引/事务 |
+| 完整调用 | 谁调用谁、参数/结果是什么、何处等待，写入确认如何返回，关键失败在哪里分叉，成功后的完成/导航/消费者如何接上？页面、业务对象、Repository、真实 helper 和数据库分别保留角色；双入口和导航调用者依真实设计 | flow 承载的 contracts.state_management[].ordered_steps（string[]），typed components/interfaces、根契约/存储、恢复和用例提供同源细节；设计生成与质询按下述步骤 |
 | 失败与中断 | 逐项核真实依赖失败及返回、取消、selection 丢失、OTP 中断后的状态/恢复。先把已有说明归回正文主责位置，真实缺失才补；mock/本地场景不编外部故障或新业务 | acceptance.boundaries、flow.failure_recovery 及用例分支；已有失败/恢复责任不改 |
 | 错误与幂等 | 约定错误与恢复动作是什么，幂等键及作用范围是什么？涉及跨会话重复卡时，策略、主键/唯一约束及重复提交结果是否一致？缺外部权威不编错误码 | 既有 errors/idempotency、triggers、table_schema、boundaries/use_cases；保持外部契约权威 |
 | 质量 | 兼容、安全隐私、UX（深浅色/无障碍）、打点、性能分别有何结论/落点？不涉及给实际理由，不为凑量化而造阈值 | quality_attributes；安全/清理关联 data_domains，精确阈值/预期仍在 acceptance |
 | 页面与完成后去向 | 哪些真实页面/交互承担场景，已有截图如何对应，完成/返回后的 J5/JR1/JR2 等去向文本是否可读且保留？不把文字去向或共享动作当路由依据 | components.kind/useCases.ui_bindings、已登记图片引用和 journey_steps；不新增导航字段 |
 
 App lens 的十个现有问题分别承接上述关切：module_boundaries/capability_seams 核真实职责与错误边界；feature_flags 核已有兼容策略；data_producers_consumers/state_owners/initialization 核存储、安全与幂等；lifecycle_triggers/process_recovery 核真实中断与恢复；publication_subscription/ui_refresh 核页面、更新、UX 与已有打点/性能结论。按真实关联回答，不为每个根问题复制整张表；不涉及说明理由，不能因此豁免原根问题的证据与 disposition。
+
+#### 完整调用设计与时序图
+
+1. **先写可投影调用设计**：在 runtime flow 承载的 `contracts.state_management[].ordered_steps` 逐条用字符串写明调用方、被调用方/操作、参数及结果、等待/回调、条件和失败处理。typed components/interfaces/data_models 与根 contracts 的 operation/DTO/errors/idempotency/table_schema 提供同源签名和存储事实；flow 的权威、发布、消费者及恢复说明补闭环。保留 flow.ordered_steps 时同次同步。不能只在 Mermaid 补设计，也不把 string[] 改对象或另造交互 DSL。
+2. **同次设计调用生成图**：设计 agent 据上述事实生成根 `generated_graphs` 的 `format: mermaid`、`source_view_id: runtime`、`graph_id/content/node_refs/relation_refs`。主路从页面到业务对象、Repository、实际存在的 helper/数据库，再沿调用链返回结果，确认落库后才成功；继续到完成/导航/实际消费者。关键失败按设计在分叉处表达。没有 helper 不造层数，异步/回调据实表达，双入口不画用户直连业务，也不把所有 navStack 调用归给 coordinator。
+3. **复用现有派生身份**：同 graph_id 对应既有 `derived_results.result_id`，以现有图派生 kind、input_revision/source_fingerprint/decision_fingerprint/status 绑定并复用 `evaluateDerivedConclusionFreshness`。node_refs 指向真实 flow 和参与对象的承载地址，可多角色共用一承载目标；数据库引用现有数据节点或根存储契约。relation_refs 只引用已有关系，可为空，不为每个箭头新增顶层 relation 或 closure 义务，不造 table: 地址、独立 mmd 真源、sequence_diagrams 或 interactions 字段/schema。
+4. **原 runtime/flow scope 独立质询**：逐段对照步骤、typed 签名/参数、根契约、恢复与用例，核调用者、返回、等待、关键分支及完成链与图一致。user_sequence/expected_port_calls/not_called 是核对材料，其自身不声明完整调用者与交错关系，renderer 不从它们猜箭头。parser/引用 PASS 仅证明可表达，不证明设计语义一致，不新增自动自然语言比较器。正常新设计默认交付此图；缺图不加机器门禁，也不能声称该项人读验收完整。
+5. **修订同步生成**：调用/接口/恢复设计变化时，owner 按原权责与 revision 规则重生成受影响图和派生身份，之后发布同一蓝图并重建文档。不能只换来源戳冒充重核。renderer 只校验并原样展示 content，按 flow 引用放入对应运行章节；缺对应 derived_results 或 stale 的时序图原位提示重建、不展示、不改变 readiness，旧 flowchart 不加迁移门槛。
+
+支持的 `sequenceDiagram` 最小子集：`participant`/`actor` 声明（可带 `as` 标签）、调用 `->>`、返回 `-->>`、`Note over`、`alt/else/end`、空行和 `%%` 注释。检查声明重复、消息/注记端点、分支块配对及原 node_refs/relation_refs 地址。超出子集、坏端点/块/地址等**时序图自身问题全部 WARN**，原流程位置说明具体原因、不展示图；不能经 sourceGaps、投影 invalid 或其它汇总阻断 admission/readiness。flowchart 原级别不变，真实 canonical/契约/来源缺陷仍走原检查。不扩 activation/loop/par/HTML/include/主题；确需并发而子集不足时保留步骤并披露，不能假画串行。
+
+以下只示意语法与粒度，生成时替换成已写设计，不作为宿主事实：
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Page as 提交页面
+    participant Service as 业务对象
+    participant Repo as Repository
+    participant DB as 数据库
+    %% 对照已声明的提交、落库确认和返回步骤
+    User->>Page: 确认提交
+    Page->>Service: submit(request)
+    Service->>Repo: save(record)
+    Repo->>DB: insert(record)
+    Note over Repo,DB: 等待数据库确认写入
+    alt 写入成功
+        DB-->>Repo: persistedId
+        Repo-->>Service: savedRecord
+        Service-->>Page: success(savedRecord)
+        Page-->>User: 显示结果并按设计完成返回
+    else 写入失败
+        DB-->>Repo: storageError
+        Repo-->>Service: saveError
+        Service-->>Page: recoverableError
+        Page-->>User: 保留输入并提示重试
+    end
+```
 
 六类可选表达仅有以下增量，缺失不补事实、坏形状只 WARN，蓝图 schema 不变：
 
@@ -137,7 +176,7 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 ### 4. 质询、准入与调和
 
 - 独立质询从 canonical YAML 派生 scope，唯一覆盖每个 view/relation/runtime flow 和十个 App 根问题，并逐项给出 evidence、disposition、frontier fingerprint、owner 和 verification refs。
-- 在同一批既有 scope 内按 §2 深度问题实读 4+1 与 typed 细节：核术语定义、存储安全/主键/升级、真实失败/中断、错误/跨会话幂等和质量结论，检查来源、共享继承/写集、本侧外部证据与验收关系。区分已有内容展示遗漏与真实设计缺失，不因标题齐全、字段 dump 或一段 summary 宣称充分；不新增平行 scope/缺字段门禁、不豁免既有检查。
+- 在同一批既有 scope 内按 §2 深度问题实读 4+1 与 typed 细节：核术语定义、存储安全/主键/升级、真实失败/中断、错误/跨会话幂等和质量结论，检查来源、共享继承/写集、本侧外部证据与验收关系；runtime/flow 逐段核完整调用、等待、返回、失败及完成链与 generated_graphs 一致。区分已有内容展示遗漏与真实设计缺失，不因标题齐全、parser PASS 或一段 summary 宣称充分；不新增平行 scope/缺字段门禁、不豁免既有检查。
 - root questions、contracts/design refs readiness 和 admission status 由实际质询/App lens 及 checker 结果派生，不接受自报布尔值。
 - 当前切片依赖的 unknown 必须 blocker；远期 open decision 必须有 owner、needed-by 和解除条件。
 - 仅重入、查看或重跑 checker 不增加 revision；意见、建议与未接受反馈不自动触发修订。接受新事实、权威裁决或解决冲突后，才按既有调和规则生成新 revision，不回写旧 revision。
@@ -145,6 +184,8 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 - 下游发现 `component_blueprint_ref` 的 revision/source_fingerprint/artifact_sha256 不匹配时，在各自权威内重新派生；P1 不代写 ready/closure。
 
 ### 5. 写作、检查与本地交付
+
+designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors，有组件索引/合法 typed UI 设计不要求提前写 change_unit；plan 及后续组件映射检查保持完整、组件选型设计原门不变，不新增设计期替代检查。
 
 完整交接默认交付同目录 `component-blueprint.review.md`，同页展示蓝图与 canonical CU 的需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
 
@@ -156,9 +197,13 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 所有单元格共用取值规则：string/number/bool/list 保真，false/0 非空；已知业务键用专用格式，陌生业务键只一层键值、不递归 dump，深层已有声明未展开时如实说明范围。机制元数据按所在结构排除，来源/验证引用留原列，不全局删同名业务键；有值不假报未记录。不产表头空表/整空列，每节一行集中真正源缺项，缺失、明确未知、明确不适用分开；空值不推不适用。
 
-概述末方案总览只编排已有 review_summary/视图内容；跨视图图只 canonical relations 显式边，运行阶段节点取 state_model.phases，边仅各 branch.expected_phase_seq 相邻项并标 branch，绝不按 phases 排列连 Success→Failure。两图复用现有 flowchart/parser，逐边可追 relation/分支；其它结构/CU 依赖图仍限显式关系/requires，完整地址不串同名节点。页面清单取 components.kind/useCases.ui_bindings，截图集中场景页面与交互，每张一次，追溯表链接；journey_steps 去向文本保留。本批无页面导航图：navigation 只有 config_files，不因共享动作连页面边；若真实实读仍不足再讨论结构化导航数据。
+概述末总览只编排已有叙述，跨视图图只 canonical relations；运行阶段节点取 state_model.phases，边仅各 branch.expected_phase_seq 相邻项，按起止对去重保留全部分支来源，首分支作具名基准不假定到 Success 已含完成；模块图仅 contracts 根级 module_dependencies，声明模块补层级/变化、其余仅名称，替代同内容依赖表，不合成冲突并集。三类确定性图复用 flowchart/parser，逐边追真实来源，不按 phases 排列造边、状态/模块名不伪装稳定地址；结构/CU 依赖图仍限显式关系/requires。完整时序按 §2 展示设计派生图。页面清单/集中截图/旅程去向表不推路由，每张登记图片一次，其余链接，不从共享动作生成页面导航图。
 
-文档不运行完整投影门、不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog，不用 touches/predicate 估算或过滤集合；图片仅输出已登记引用，不将外部图像字节作为新设计事实/新绑定输入。隔离重渲染复制图片并保相对路径，以实际可见验证引用。canonical 可确定架构相关集合时沿用原 identityNeutralDigest；某层级相关性依赖外部 catalog 才能确定时省略摘要，精确 CU 绑定/集合仍可展示，不承诺 carry-forward。待升版集合写“待指针升版后显示”；无效 canonical 图不展示并说明原因。共享夹具与[完整样例](../../docs/operations/samples/blueprint-review-projection.valid.md)不代表真实宿主验收，写作真实效果仍需干净需求重跑实读七问。
+同源 DTO/模型须核字段、语义、约束和来源才复用，required/nullable 独立、差异保留，同名不判等；UI 动作、完全相同恢复、验收及 files 在主责处完整展示，其余链接，CU 精确范围/多源关联不能丢、touches 不替代 files。不全局删相同列，指定说明列至少三行内容/链接全同才可提表前。显式空集合显示“无”，仅来源键对象才称“仅来源信息”；缺项汇总只处理 renderer 标记，不改作者标题/正文。布尔含义列是/否、框架枚举仅在消费字段中文化，未知值/业务状态/API 保原样。
+
+文档不运行完整投影门、不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog，不用 touches/predicate 估算或过滤集合；图片仅输出已登记引用，不将外部图像字节作为新设计事实/新绑定输入。隔离重渲染复制图片并保相对路径，以实际可见验证引用。canonical 可确定架构相关集合时沿用原 identityNeutralDigest；某层级相关性依赖外部 catalog 才能确定时省略摘要，精确 CU 绑定/集合仍可展示，不承诺 carry-forward。待升版集合写“待指针升版后显示”；无效 canonical 图不展示并说明原因。共享夹具与[完整样例](../../docs/operations/samples/blueprint-review-projection.valid.md)不代表真实宿主验收，当前时序效果由用户在原工作区定向补设计后实读，后续端到端验收独立。
+
+隔离 A 原样保留宿主 canonical/CU/图片，只验展示；B 另存补完整调用步骤/图及派生身份的设计变体，明确增量并走原 runtime 质询，不混入 A、不承诺原样无时序数据凭空四图。当前宿主复检由用户集成发布件后定向补时序并按原修订重建文档/readiness，保留其余有效设计；设计专项不等于产品施工闭环。
 
 **本次调用改了 canonical 蓝图或 CU 内容，结束前必须重建**：继续草稿、质询/准入写回、局部修改、新增/替代 CU、正式修订均适用，不以 admitted 或 revision 增加作触发条件。新增 CU 仍经 consumer 接受，不能直接写 canonical。接受、readiness、持锁整批调和与 B1 已自动调用同一物化入口；agent 直接改蓝图后执行：
 
@@ -180,7 +225,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 
 需要解析稳定切片时，传入序列化 `component_blueprint_ref`。target 支持 `blueprint|view|node|relation|flow|decision|contract`；只有 node/flow 强制 `view_id`，decision/contract 是顶层稳定对象，contract 以 `contract_id` 寻址。resolver 在返回 target 前必须先通过 canonical schema/完整性门。蓝图/评审投影/closure 投影同处工作区 `blueprint/` 目录。
 
-只有本轮生成 Mermaid 时才校验其 parser 和引用。未生成图不阻塞；生成图可解析也不替代结构化完整性。
+生成图沿原 parser/引用校验；完整时序仅支持 §2 子集，图自身语法/端点/块/坏地址一律 WARN，原位说明并不展示，不阻断 admission/readiness；flowchart 原级别不变。未生成图不加门，但不证明人读已完整；生成图可解析也不替代结构化完整性。
 
 ## 完成边界
 

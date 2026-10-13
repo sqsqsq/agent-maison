@@ -23,17 +23,37 @@ CU-A 引 S+A、CU-B 引 S+B：共享 S 只放双方共同验收/写集/用例，
 
 无 ui-spec 依据时保留 P0 ID/优先级/步骤/预期/ut_layer/focus，不写 linked_flow/checkpoint/屏幕流程；spec 得到真实 UI 依据后只补未声明键，已有权威预期不改，按原 checkAuthoritativeContentAligned 与 P0 门检查。不得编元素 ID、删 acceptance 或修改门禁。
 
+## 存储内容约定
+
+根 `contracts[].table_schema` 同时承载现有单表 `{table, columns}` 和库级 `{database?, version?, security_level?, encrypt?, tables:[{name, primary_key?, columns, constraints?, upgrade?, source_ref?}]}`。库名、版本、安全级别和加密位于该既有子树；不另建数据库配置字段/schema。列保留 `name/type/description/from/encoding/default/constraints/source_ref` 等已写内容；`description` 说明语义、单位与约束，主键、表约束、升级与来源分别表达，不从类型推断索引/事务或安全结论。data_domains.security 解释敏感处理与生命周期，精确阈值仍在 acceptance。
+
+renderer 展示库级信息和每张表，旧单表仍可读；未知标量业务键一层保留，深层未展开如实说明，不把没有顶层 columns 的库级设计误判成缺失。只省真实整空列，不能减少宿主列或修改 YAML 适配 renderer；来源仍不授予写权限。
+
+## 完整调用设计与派生时序
+
+flow 承载的 `contracts.state_management[].ordered_steps`（现有 string[]）是调用设计主责位置：逐条明确 caller/callee/操作、参数/结果、等待/回调、条件、失败与完成返回。typed components/interfaces/data_models、根 operation/DTO/errors/idempotency/table_schema、flow 的发布/消费者/恢复及 use_cases 提供同源细节；保留 flow.ordered_steps 时同次同步。页面→业务对象→Repository→实际 helper/数据库、结果返回与完成/导航/消费者均须依真实设计，不从 user_sequence、expected_port_calls、类名或目录推断调用者。
+
+设计 agent 在同次 component-design 根据已写事实生成既有 generated_graphs 的 sequenceDiagram，原 runtime/flow 独立质询核图文一致。graph_id 对应既有 derived_results.result_id，沿 input_revision/source_fingerprint/decision_fingerprint/status 与原 freshness 机制更新；图可重建且非权威，不新建 sequence_diagrams/interactions 字段/schema、独立 mmd 真源或每箭头顶层 relation。node_refs 指真实 flow/承载目标，relation_refs 可空；缺结果或 stale 的时序图提示重建、不展示。修改调用事实沿原 revision、CU 指针/摘要规则，不能仅换图来源戳。
+
+renderer 只校验展示；时序图自身超出语法子集、坏端点/块/地址均 WARN，原流程位置说明具体原因并不展示，不经 sourceGaps/invalid 汇总影响 admission/readiness；flowchart 原级别不变，真正 canonical/契约/来源缺陷照旧检查。缺图不加机器门禁，也不代表人读完整。支持子集与短例见 [P1 时序写作](../../skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。
+
 ## 完整交接的只读前置检查
 
 deriveDesignPreparationReadiness 在原指针调和后，对全部未退役（含已完成）且原 constructable CU 调用 deriveBlueprintSkillInput 的**默认只读模式**。acceptance/contracts/use_cases 分别检查 canonical 内容，另一类 absent 不漏坏用例；Feature 的 use-cases.yaml 不反向参与设计投影。阶段用例未对齐当前设计时，由既有定义缺口和 plan 对齐门安排 plan 重建，不判成蓝图冲突。absent 交回原 spec/plan 补设计责任且不加门禁；canonical 内容 invalid 复用现有原因使 perUnit blocked/not-ready。
 
 检查不物化 sidecar、不写 phase 证据、不选 CU 或开始 Goal。**正常交接不运行 prepare-blueprint-design 来提前创建 Feature 文件**；spec/plan 直接消费 provider 推导输入并各写本阶段产物。未来 plan 的 change_unit 映射缺失不阻断设计 readiness，设计投影存在也不证明 plan 完成；没有有效映射仍须安排 plan。Feature 无法安全刷新不阻挡合法 canonical 指针升版；其旧文件保留，由既有绑定/定义缺口安排 spec/plan。canonical 校验与真实写入失败仍沿原异常和整批回滚。
 
+`validateChangeUnitFeatureProjection` 的 designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors：有组件索引和合法 typed UI 设计、无 change_unit 是合法设计输入。plan 及后续组件映射检查保持完整，组件选型设计原检查不变，不新增设计期替代门。
+
 完整[4+1 人读样例](../operations/samples/blueprint-review-projection.valid.md)只来自 canonical 蓝图/CU，逐 CU 用生产投影共用目标选取/合并逻辑保留实际声明范围。完整 AC/BD/NFR 仅文档第 9 章、完整 files 清单仅开发视图一次，CU 用编号/链接追溯范围与冲突；“是否通过交接校验见 readiness”等机制声明文首集中一次，正文可读标签保留锚点/链接目标，追溯附录可留原地址。renderer 不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog；设计来源按默认 readiness 路径检查，阶段用例按 plan 对齐门检查。canonical 能确定架构相关集合时沿用原中立摘要，否则省略摘要而保留精确 CU 绑定/声明，不承诺 carry-forward。待升版集合标“待指针升版后显示”；typed absent 明确“设计期未写入，将由 spec/plan 补”，可选表达 WARN 不变成业务阻断。
 
-所有单元格共用 string/number/bool/list 保真规则，false/0 非空，陌生业务键只一层键值；机制元数据按所在结构排除，来源/验证引用保留。有值不假报未记录，深层声明暂未展开如实说明；不产空表/整空列，每节一行集中真实缺项，明确未知/不适用与缺失分开。概述总览/跨视图图只取已有 canonical 叙述与 relations；运行阶段图节点取 state_model.phases、边只各 branch.expected_phase_seq 相邻项并标 branch，复用现有 parser，不按 phases 顺序串 Success→Failure。页面清单、已登记图片和 journey_steps 去向表是本批导航表达上限，不生成页面导航图或从共享动作连边；图片只输出引用，不把外部图像字节作为新设计/绑定输入。隔离副本保图片相对路径并验证实际可见。
+所有单元格共用 string/number/bool/list 保真规则，false/0 非空，显式空对象/数组显示“无”，仅来源键的对象才称“仅来源信息”；陌生业务键只一层键值，机制元数据按所在结构排除，来源/验证引用保留。有值不假报未记录，深层声明暂未展开如实说明；不产空表/整空列，每节一行集中真实缺项，明确未知/不适用与缺失分开。缺项汇总只处理 renderer 显式标记，不改作者标题/正文。框架枚举只在对应字段中文化，未知值/自由业务状态/API 原样；布尔含义列显示是/否，不改正文 true/false。
 
-设计深度沿 [P1 既有写作/质询问题](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 补术语含义、表级存储/安全/升级、真实失败与用户中断、错误/幂等及质量结论，App lens/质询用项目语言，不新增字段/机器阻断、不削弱原检查。示例或当前材料重渲染只证明忠实展示；缺失设计不会被 renderer 补成事实，写作真实效果仍需真实宿主干净需求实读。
+三类确定性图各循真实来源：概述跨视图图只 canonical relations；运行阶段图节点取 state_model.phases、边只各 branch.expected_phase_seq 相邻项，按起止对去重并保留全部分支来源，首分支只作具名展示基准，不能假定其到 Success 已含完成链；模块图只 typed contracts 根级 module_dependencies，声明模块补层级/变化标签，未声明依赖模块仅名称，不合成冲突并集。复用原 flowchart/parser，不按 phases 顺序造边，状态/模块名不伪装稳定设计地址。完整时序另外按设计生成路径展示。页面清单、已登记图片和 journey_steps 去向表是导航表达上限，不推页面路由；图片只输出引用，不作为新设计/绑定输入。
+
+同源 DTO/模型须核字段、语义、约束及来源后复用，required 与 nullable 独立、差异保留；同名不能判等。UI 主责表、相同恢复、验收全文和 files 仅主责处完整展示，其余链接，仍保留每 CU 精确范围、多源逐项关联和稳定锚点；不得全局删同值列或用 touches 代 files。指定说明列仅至少三行全同才可提表前。隔离材料 A 保留宿主 canonical/CU/图片原样，验证展示；B 明确另存补调用步骤/派生图的设计变体验证生成与质询，不把 B 新事实混入 A 或承诺原样无图数据凭空四图。宿主定向补时序、复检文档/readiness即可，保留其它有效设计。
+
+设计深度沿 [P1 既有写作/质询问题](../../skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 补术语含义、表级存储/安全/升级、真实失败与用户中断、错误/幂等及质量结论，App lens/质询用项目语言，不新增字段/机器阻断、不削弱原检查。示例或当前材料重渲染只证明忠实展示；缺失设计不会被 renderer 补成事实，当前时序效果仍须用户在原宿主定向补设计后实读。
 
 ## 施工映射
 

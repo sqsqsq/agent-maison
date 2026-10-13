@@ -226,9 +226,9 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 写作 SHALL 用 review_summary.title 表达可读需求标题，summary 说明本次改变，概述末用已有叙述串起场景、模块、运行、开发与部署方案；真缺叙述 SHALL 在设计期补既有 review_summary，不新增字段或由 renderer 造事实。通用决策获准选择写 conclusion，rationale 只解释原因，特定 kind 保留自身结论字段。term.value.meaning SHALL 由 glossary 已有说明结合需求语境提炼，sample_usage SHALL 仅作示例消歧而非机械当定义；模型字段 description SHALL 依已消费来源写入。App lens 与质询问题/结论 SHALL 使用项目语言，保留 API/类型/路径原名。
 
-设计 owner、App lens 与独立质询 SHALL 在原问题/scope 内逐项核真实设计深度：根 contracts[].table_schema 的表/列/约束结合 data_domains.security 与既有叙述说明实际库名/版本、安全级别/是否加密、主键唯一、升级和敏感字段；真实依赖失败与用户中断先核已有 boundaries/failure_recovery、真实缺失才补，mock SHALL NOT 编外部故障/新业务；约定错误、幂等键与范围，以及涉及跨会话重复卡时的策略/主键 SHALL 明确；现有 quality_attributes SHALL 对兼容、安全隐私、UX 深浅色/无障碍、打点、性能给实际结论，不涉及给理由，不凑量化阈值。此为写作/质询要求，MUST NOT 新增数据库配置字段、requiredQuestioningScopes 项或机器阻断，MUST NOT 降级既有 typed/来源/授权检查。真实效果由干净需求实读七问验收，隔离重渲染不证明写作充分。
+设计 owner、App lens 与独立质询 SHALL 在原问题/scope 内逐项核真实设计深度：根 contracts[].table_schema 的表/列/约束结合 data_domains.security 与既有叙述说明实际库名/版本、安全级别/是否加密、主键唯一、升级和敏感字段；真实依赖失败与用户中断先核已有 boundaries/failure_recovery、真实缺失才补，mock SHALL NOT 编外部故障/新业务；约定错误、幂等键与范围，以及涉及跨会话重复卡时的策略/主键 SHALL 明确；现有 quality_attributes SHALL 对兼容、安全隐私、UX 深浅色/无障碍、打点、性能给实际结论，不涉及给理由，不凑量化阈值。此为写作/质询要求，MUST NOT 新增数据库配置字段、requiredQuestioningScopes 项或机器阻断，MUST NOT 降级既有 typed/来源/授权检查。当前时序效果由用户在原工作区定向补设计后实读，保留其它有效设计；隔离重渲染不证明写作充分。
 
-renderer SHALL 用专用格式展示 publications.payload、failure_recovery.handling/retry、根 contracts[].table_schema 及原约束/默认值，不把已有值假报未记录。所有单元格 SHALL 共用取值规则，string/number/bool/list 保真，false/0 非空；已知业务键沿原格式，陌生业务键只一层键值、不递归 dump，深层声明未展开 SHALL 如实说明范围。机制元数据 SHALL 按所在结构排除，来源/验证引用保留原列，MUST NOT 全局删除同名业务键。用例新写 expected_port_calls，旧 expected_boundary_calls SHALL 由同一加载/归一化内核兼容；两键冲突 SHALL 披露且不得静默丢失。
+renderer SHALL 用专用格式展示 publications.payload/timing、consumers.handling（原 consumption 仍保留）、failure_recovery.handling/retry、根 contracts[].table_schema 及原约束/默认值，多键同时存在 MUST NOT 丢一侧。table_schema SHALL 保留现有单表与库级 tables[] 双形状、列 description、库名/版本/安全/加密、主键/约束/升级/来源，内容约定以 docs/concepts/blueprint-design-inputs.md 为准，不新建字段/schema。所有单元格 SHALL 共用取值规则，string/number/bool/list 保真，false/0 非空，显式空对象/数组为“无”，只有来源键的对象才称“仅来源信息”；深层声明未展开 SHALL 如实说明范围，有值 MUST NOT 假报未记录。缺项汇总 SHALL 只处理 renderer 标记，MUST NOT 改作者标题/正文。机制元数据按所在结构排除，来源/验证引用保留；陌生业务键只一层键值，不递归 dump。布尔含义列 SHALL 显示是/否，框架枚举只在消费字段中文化，未知值、业务状态、API/类型原样保留。用例新写 expected_port_calls，旧 expected_boundary_calls SHALL 由同一加载/归一化内核兼容；两键冲突 SHALL 披露且不得静默丢失。
 
 当前 CU 的精确绑定与合法 supersedes 历史 SHALL 分开判定：精确退役关系成立时，前身旧蓝图指针不能中立展开 SHALL 仅表示不能证明等价，不隐藏当前合并集合、不把退役 pending 混入当前 publication sourceGaps。坏 hash、缺前身、断链或当前坏 ref SHALL 继续披露，不重写历史指针或新增快照仓库。
 
@@ -243,11 +243,15 @@ renderer SHALL 用专用格式展示 publications.payload、failure_recovery.han
 | deployment 节点/视图 | 节点 responsibilities/inputs/outputs/not_responsible_for: string[]、failure_impact: string；视图 rollout: [{order: number, unit: string, depends_on: string[], note: string}]、coordination: [{counterpart: string, relation: string}] |
 | 蓝图根 | quality_attributes: [{qa_id: string, category: string, requirement: string, landing: string, source_ref: string, verification_refs: string[]}]；data_domains: [{data_domain_id: string, usage: string, retention: string, isolation: string, cleanup: string, security: string}] |
 
-flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MUST 留在已有 acceptance，不另维护 NFR 真源。`contracts.data_models[].fields[]` MAY 携带可选字符串 description/source_ref，现有加载/投影 MUST 透传；展示 SHALL 保留有值事实，真实非法形状如实诊断，MUST NOT 新增 schema/validator。所有新增 source_ref MUST 只引用设计期已有来源，MUST NOT 把未来施工文件当输入或授予写权限。本批 MUST NOT 新建独立文档权威、artifact/协议、审批门禁、代码骨架或时序图。
+flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MUST 留在已有 acceptance，不另维护 NFR 真源。`contracts.data_models[].fields[]` MAY 携带可选字符串 description/source_ref，现有加载/投影 MUST 透传；展示 SHALL 保留有值事实，真实非法形状如实诊断，MUST NOT 新增 schema/validator。所有新增 source_ref MUST 只引用设计期已有来源，MUST NOT 把未来施工文件当输入或授予写权限。本批 MUST NOT 新建独立文档权威、artifact/协议、审批门禁或代码骨架；完整时序 SHALL 使用下述既有字段与派生图流程。
+
+完整调用 SHALL 在 runtime flow 承载的 contracts.state_management[].ordered_steps（string[]）逐条写明 caller/callee/操作、参数/结果、等待/回调、条件、失败与完成返回，typed components/interfaces/data_models 与根 operation/DTO/errors/idempotency/table_schema、flow 恢复及用例 SHALL 提供同源细节。设计 agent SHALL 同次生成已有 generated_graphs sequenceDiagram，既有 runtime/flow 独立质询 SHALL 逐段核图文调用者、参数、返回、分支及完成/导航/消费者一致；语法通过 MUST NOT 代替语义核对。保留 flow.ordered_steps 时 SHALL 同次同步；renderer MUST NOT 从 user_sequence、expected_port_calls、方法同名或目录猜 caller/交错关系。缺图 MUST NOT 新增门禁，也 MUST NOT 声称此项人读已完整。
 
 文档 MUST 只读取 canonical 蓝图/CU，按目标展示 typed 细节，逐 CU 与生产投影共用纯目标选取/合并逻辑保留实际继承范围及冲突。验收展示身份 SHALL 为“来源目标 + 条目编号”，不同目标各自 AC-1 MUST 保留而非裸编号全局去重；完整 AC/BD/NFR 只在文档第 9 章、完整 contracts.files 清单只在开发视图一次，其余编号/链接 SHALL 保留 CU 精确范围。“是否通过交接校验见 readiness”等机制声明 SHALL 文首阅读说明集中一次，可读链接标签优先已有 label/name/含义、缺时短 ID，锚点/链接目标 MUST 保留，原内部地址 MAY 留追溯附录。框架状态枚举 SHALL 用中文，API/类型/自由业务状态名 MAY 保原名，不凭名称补业务结论。MUST NOT 读取 Feature use-cases.yaml、需求原文或外部 catalog 反向设计、运行完整投影门或按 predicate/touches 估算集合。待升版 CU MUST 保留自身施工契约，合并集合标“待指针升版后显示”；canonical 无法独立确定架构相关集合时 MAY 省略中立摘要并保留精确绑定，不改原摘要算法、不新增来源缺口、不宣称 carry-forward。
 
-正文 MUST 用专用字段/枚举/接口/步骤/分支/异常/取舍/验收表展示既有细节，不递归 dump 原始对象。概述跨视图图 SHALL 只用 canonical relations 显式边；运行阶段图节点 SHALL 取 state_model.phases，边只各 branch.expected_phase_seq 相邻项且标 branch，MUST NOT 按 phases 排列连 Success→Failure。两图 MUST 复用现有 flowchart/parser、逐边可追分支/关系；其它结构图仍只消费显式关系，按完整稳定地址区分端点，无效 canonical 图 MUST 不展示且披露原因。页面清单 SHALL 取 components.kind/useCases.ui_bindings，集中场景页面/交互截图，每张已登记图片一次、追溯表等位置链接；journey_steps 完成后去向文本 SHALL 保留。本批 MUST NOT 生成页面导航图：navigation 只有 config_files，不因共享动作连页面边、不由文字去向推路由；真实实读仍不足才另讨论结构化导航数据。renderer SHALL 只输出已登记图片引用，MUST NOT 将外部图像字节作为新设计事实/新绑定输入；隔离验收副本 SHALL 保图片相对路径并确认实际可见。readiness/run/完成状态 MUST 独立；内部 fingerprint/provider 行为卡不得充当设计内容。
+正文 MUST 用专用字段/枚举/接口/步骤/分支/异常/取舍/验收表展示既有细节，不递归 dump 原始对象。概述跨视图图 SHALL 只用 canonical relations；运行阶段节点 SHALL 取 state_model.phases，边只各 branch.expected_phase_seq 相邻项，按起止对去重保留全部分支来源，首分支仅具名作基准、不得假定 Success 包含完成链；模块依赖图 SHALL 只取 contracts 根级 module_dependencies，声明模块补层级/变化、其它仅名称，不合成冲突并集。三类图 SHALL 复用 flowchart/parser、逐边追真实来源，MUST NOT 按 phases 排列造边或把模块/状态名伪装稳定地址。结构图仍限显式关系、完整地址区分端点；无效图不展示且披露原因，时序图诊断级别按下述 Graph validation。
+
+同源 DTO/模型 SHALL 核字段/语义/约束/来源后复用，required/nullable 独立、差异保留，MUST NOT 同名判等；UI、完全相同恢复、验收全文与完整 files SHALL 只主责处完整展示、其它链接，保留每 CU 精确范围和多源关联，MUST NOT 用 touches 代 files 或全局删同值列。指定说明列仅至少三行内容/链接全同时 MAY 提表前。页面清单 SHALL 取 components.kind/useCases.ui_bindings，集中截图每张一次、其它链接；journey_steps 去向文本保留，MUST NOT 推导航路由。renderer 只输出登记图片引用，外部图片字节 MUST NOT 成为设计/绑定输入。隔离 A SHALL 保 canonical/CU/图片原样、只验展示；B SHALL 另存明确补 ordered_steps/派生图的设计变体验证生成/质询/实际预览，不混入 A、不声称原样无数据凭空四图。宿主用户复检 SHALL 定向补时序、沿原质询/修订重建文档/readiness，保留其余有效设计；设计专项不代替端到端施工。readiness/run/完成状态 MUST 独立。
 
 #### Scenario: Draft and complete local delivery
 - **WHEN** 当前 canonical 蓝图可解析但未准入，或完整设计交接完成
@@ -266,6 +270,8 @@ flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MU
 > **Enforced by:** skills/project/component-design/SKILL.md、skills/reference/app-component-blueprint-workflow.md、harness/scripts/check-component-blueprint.ts、harness/scripts/utils/blueprint-review-projection.ts
 
 ### Requirement: Blueprint construction preparation preserves authority
+
+validateChangeUnitFeatureProjection 的 designOnly SHALL 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors；合法组件索引与 typed UI 设计无 change_unit SHALL 可进入真实设计 readiness。plan 及后续组件映射检查 SHALL 完整保留，组件选型设计原检查不变，不新增设计期替代门。
 
 Blueprint projection SHALL use canonical CU design references and existing revision/hash, provenance, admission and current-slice checks. Design owners SHALL author the existing acceptance/contracts/use_cases structures on referenced targets during design; references, prose and verification_refs alone SHALL NOT become executable content. Acceptance SHALL use the existing semantic checks. Contracts SHALL preserve design facts, models, interfaces, the explicit files authorization set, runtime lifecycle and required use cases. The entire contracts.change_unit SHALL be authored by plan in Feature contracts.yaml, using the current canonical CU identity and real implementation/test mappings; design projection SHALL omit it, including legacy blueprint mappings. Missing future mappings SHALL not block design readiness, while complete mapping checks SHALL remain at plan and later consumers. A design projection alone SHALL not satisfy pending plan work.
 
@@ -528,6 +534,20 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 ### Requirement: Graph validation is limited to generated graphs
 
 图是蓝图结构化对象的派生表达，不是完整性、执行或恢复权威。只有在本轮确实生成 Mermaid 或其它图时，生成器才 MUST 检查该生成物可解析、节点地址可定位、边引用可落地；未请求/未生成图不应单独失败。无论图是否生成，完整性门 MUST 直接校验蓝图对象、view applicability、节点关系、证据、mapping、provenance、disposition 和 runtime flow。可解析的图 MUST NOT 替代缺失对象、缺证据或未闭合关系；手写/历史图 MUST NOT 反向写入或覆盖蓝图真源。
+
+完整时序 SHALL 复用 generated_graphs 的 graph_id/format/source_view_id/content/node_refs/relation_refs，format=mermaid、source_view_id=runtime。node_refs SHALL 指真实 flow/参与对象承载地址，可多角色共用目标；数据库指已有数据节点/根存储契约，不造 table: 地址。relation_refs MAY 为空，MUST NOT 为每箭头创建顶层 relation/closure 义务。图 SHALL 在既有 derived_results 以同 graph_id 对应 result_id，沿 input_revision/source_fingerprint/decision_fingerprint/status 与 evaluateDerivedConclusionFreshness；事实变化 SHALL 同次重生成，MUST NOT 仅换来源戳。renderer 按 flow 引用原样展示，缺对应结果或 stale 的新时序图 SHALL 原位提示重建、不展示、不改变 readiness；旧 flowchart 不新增迁移门槛。不新增 sequence_diagrams/interactions 字段/schema、图权威文件、hash/签名/状态或自动语义比较器。
+
+原 parser SHALL 只扩 sequenceDiagram 最小子集：participant/actor（可带 as 标签）、->>、-->>、Note over、alt/else/end、空行、%% 注释；核重复声明、消息/注记端点、块配对及原地址。超子集/坏端点/块/地址等时序图自身问题 MUST 全部 WARN，renderer 在对应流程说明原因并不展示该图，MUST NOT 经 sourceGaps、投影 invalid 或其它汇总阻断 admission/readiness。flowchart 原级别 MUST 保持，真正 canonical/契约/来源缺陷仍经原门。确需并发而子集不足 SHALL 保留步骤并披露，不假画串行；不扩 activation/loop/par/HTML/include/主题。
+
+#### Scenario: A malformed sequence diagram does not block valid design
+
+- **WHEN** 其它 canonical 设计有效，时序图超出子集、引用未知参与者、alt 未闭合或 node_refs 地址错误
+- **THEN** 图自身诊断 SHALL 为 WARN，原流程说明且不展示该图，真实 admission/readiness 结果 SHALL 不受影响；坏 flowchart SHALL 保持原级别
+
+#### Scenario: Sequence drawing follows current authored calls
+
+- **WHEN** owner 在已有 ordered_steps/接口/存储/恢复设计补全真实调用与完成链，同次生成图及 derived_results 并经 runtime 独立质询
+- **THEN** renderer SHALL 展示该当前图，即使 relation_refs 为空；旧/stale/缺派生结果的时序图 SHALL 不冒充当前，不从测试动作与端口列表生成替代箭头
 
 #### Scenario: A generated graph is syntactically valid but incomplete
 

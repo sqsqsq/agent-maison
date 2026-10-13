@@ -13,7 +13,7 @@ derived_from:
     - change_unit_id: ledger-report
       binding: bound
       identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
-projection: component-blueprint-review@6
+projection: component-blueprint-review@7
 ---
 
 # Ledger 完整设计表达样本（非真实需求）
@@ -128,9 +128,7 @@ flowchart LR
 
 ### 完成后去向（旅程原文）
 
-旅程—明确完成动作及去向。
-
-未记录：旅程。
+旅程未记录明确完成动作及去向。
 
 ### 需求追溯总表
 
@@ -167,7 +165,7 @@ flowchart LR
 ### 领域模型、字段与枚举
 
 <a id="design-6d6f64656c3a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f416d6f756e74"></a>
-设计内容来源：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · contracts
+内容承载于：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · 契约设计
 
 #### Amount · 接口
 
@@ -175,12 +173,12 @@ flowchart LR
 
 | 字段 | 类型 | 必需 | 约束/说明 | 来源 |
 | --- | --- | --- | --- | --- |
-| minorUnits | string | true | 整数分的十进制字符串，禁止浮点金额；最大长度由获准接口定义。 | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |
+| minorUnits | string | 是 | 整数分的十进制字符串，禁止浮点金额；最大长度由获准接口定义。 | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |
 
 <a id="design-6d6f64656c3a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f4c6564676572456e747279"></a>
-未记录：默认值。
+未记录：可空；默认值；补充约束；验证引用。
 
-设计内容来源：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · contracts
+内容承载于：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · 契约设计
 
 #### LedgerEntry · 接口
 
@@ -188,13 +186,13 @@ flowchart LR
 
 | 字段 | 类型 | 必需 | 约束/说明 | 来源 |
 | --- | --- | --- | --- | --- |
-| id | string | true | 稳定账目 ID，提交后不可改变。 | contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1/fields/0 |
-| amount | Amount | true | 共享金额模型，单位分。 | [create-entry-v1](#design-636f6e74726163743a6372656174652d656e7472792d7631) |
+| id | string | 是 | 稳定账目 ID，提交后不可改变。 | contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1/fields/0 |
+| amount | Amount | 是 | 共享金额模型，单位分。 | [create-entry-v1](#design-636f6e74726163743a6372656174652d656e7472792d7631) |
 
 <a id="design-6d6f64656c3a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f4c65646765725374616765"></a>
-未记录：默认值。
 
-设计内容来源：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · contracts
+
+未记录：可空；默认值；补充约束；验证引用。
 
 #### LedgerStage · 枚举
 
@@ -208,7 +206,7 @@ flowchart LR
 | CURRENT | current |
 
 <a id="design-6d6f64656c3a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f4c65646765725265706f7274536e617073686f74"></a>
-设计内容来源：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · contracts
+内容承载于：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · 契约设计
 
 #### LedgerReportSnapshot · 接口
 
@@ -216,31 +214,39 @@ flowchart LR
 
 | 字段 | 类型 | 必需 | 约束/说明 | 来源 |
 | --- | --- | --- | --- | --- |
-| month | string | true | yyyy-MM，当前账号的查询月份。 | [read-report-v1](#design-636f6e74726163743a726561642d7265706f72742d7631) |
-| total | Amount | true | 单位分，仅聚合已提交账目。 | [read-report-v1](#design-636f6e74726163743a726561642d7265706f72742d7631) |
+| month | string | 是 | yyyy-MM，当前账号的查询月份。 | [read-report-v1](#design-636f6e74726163743a726561642d7265706f72742d7631) |
+| total | Amount | 是 | 单位分，仅聚合已提交账目。 | [read-report-v1](#design-636f6e74726163743a726561642d7265706f72742d7631) |
 
-未记录：默认值。
+未记录：可空；默认值；补充约束；验证引用。
 
 ### 本部件实际消费或提供的操作与 DTO
 
 <a id="design-636f6e74726163743a6372656174652d656e7472792d7631"></a>
-### create-entry-v1
+#### create-entry-v1
 
 操作：createEntry · v1 · app-to-ledger-service；责任方 ledger-contract-owner；需要方 cu-ledger-refresh
 
+<a id="design-64746f3a6372656174652d656e7472792d76312f726571756573745f64746f"></a>
 **请求 DTO：CreateEntryRequestV1**
 
-| 字段 | 类型 | 必需 | 可空 | 语义 |
-| --- | --- | --- | --- | --- |
-| amount | decimal-string | true | false | signed ledger amount |
-| currency | iso-4217 | true | false | entry currency |
-| parent\_id | string | false | true | optional parent category |
+来源：[CreateEntryRequestV1](../../../../contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1)
+验证引用：verify:create-entry-request
 
+| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |
+| --- | --- | --- | --- | --- | --- |
+| amount | decimal-string | 是 | 否 | signed ledger amount | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |
+| currency | iso-4217 | 是 | 否 | entry currency | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/1 |
+| parent\_id | string | 否 | 是 | optional parent category | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/2 |
+
+<a id="design-64746f3a6372656174652d656e7472792d76312f726573706f6e73655f64746f"></a>
 **响应 DTO：CreateEntryResponseV1**
 
-| 字段 | 类型 | 必需 | 可空 | 语义 |
-| --- | --- | --- | --- | --- |
-| entry\_id | string | true | false | stable entry identity |
+来源：[CreateEntryResponseV1](../../../../contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1)
+验证引用：verify:create-entry-response
+
+| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |
+| --- | --- | --- | --- | --- | --- |
+| entry\_id | string | 是 | 否 | stable entry identity | contracts/ledger-api.yaml#/dtos/CreateEntryResponseV1/fields/0 |
 
 映射：
 
@@ -262,21 +268,31 @@ flowchart LR
 验证：verify:create-entry-nfr
 
 <a id="design-636f6e74726163743a726561642d7265706f72742d7631"></a>
-### read-report-v1
+未记录：默认值；约束；验证引用。
+
+#### read-report-v1
 
 操作：readReport · v1 · app-to-local-report；责任方 ledger-contract-owner；需要方 cu-ledger-report
 
+<a id="design-64746f3a726561642d7265706f72742d76312f726571756573745f64746f"></a>
 **请求 DTO：ReportRequestV1**
 
-| 字段 | 类型 | 必需 | 可空 | 语义 |
-| --- | --- | --- | --- | --- |
-| month | yyyy-MM | true | false | 按当前账号查询的月份 |
+来源：[ReportRequestV1](../../../../contracts/report-api.yaml#/dtos/ReportRequestV1)
+验证引用：test/ledger/closure.test.ts#verifyExternalContract
 
+| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |
+| --- | --- | --- | --- | --- | --- |
+| month | yyyy-MM | 是 | 否 | 按当前账号查询的月份 | contracts/report-api.yaml#/dtos/ReportRequestV1/fields/0 |
+
+<a id="design-64746f3a726561642d7265706f72742d76312f726573706f6e73655f64746f"></a>
 **响应 DTO：ReportResponseV1**
 
-| 字段 | 类型 | 必需 | 可空 | 语义 |
-| --- | --- | --- | --- | --- |
-| total | decimal-string | true | false | 该月已提交账目合计，单位分 |
+来源：[ReportResponseV1](../../../../contracts/report-api.yaml#/dtos/ReportResponseV1)
+验证引用：test/ledger/closure.test.ts#verifyExternalContract
+
+| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |
+| --- | --- | --- | --- | --- | --- |
+| total | decimal-string | 是 | 否 | 该月已提交账目合计，单位分 | contracts/report-api.yaml#/dtos/ReportResponseV1/fields/0 |
 
 映射：
 
@@ -294,6 +310,8 @@ flowchart LR
 非功能要求：isolation：不读取其它账号账目；freshness：仅使用已提交数据
 来源：[readReport](../../../../contracts/report-api.yaml#/nfr/readReport)
 验证：test/ledger/closure.test.ts#verifyExternalContract
+
+未记录：默认值；约束；验证引用。
 
 ## 4 运行时视图
 
@@ -329,7 +347,7 @@ flowchart TD
 | 触发 | 类型 | 时机 | 幂等 |
 | --- | --- | --- | --- |
 | committed-user-mutation | user\_mutation | 用户提交账目或进程重建后 | 按账号和请求 ID 去重提交 |
-| cold-start-load | cold\_start | 用户提交账目或进程重建后 | 按账号和请求 ID 去重提交 |
+| cold-start-load | 冷启动 | 用户提交账目或进程重建后 | 按账号和请求 ID 去重提交 |
 
 首次加载：repository-snapshot · 先读取持久快照，再建立订阅；责任方 app-state-team；范围 当前登录账号的账目；新鲜度 读取当前 Repository 版本后建立重放订阅
 
@@ -368,18 +386,18 @@ flowchart TD
 
 | 场景 | 覆盖裁决 | 依据 |
 | --- | --- | --- |
-| cold\_start | 已覆盖 | test/ledger/closure.test.ts#verifyColdStartLifecycle |
-| warm\_resume | 已覆盖 | test/ledger/closure.test.ts#verifyWarmResumeLifecycle |
-| page\_attach | 已覆盖 | test/ledger/closure.test.ts#verifyPageAttachLifecycle |
-| page\_detach | 已覆盖 | test/ledger/closure.test.ts#verifyPageDetachLifecycle |
-| account\_switch | 已覆盖 | test/ledger/closure.test.ts#verifyAccountSwitchLifecycle |
-| process\_recreation | 已覆盖 | test/ledger/closure.test.ts#verifyProcessRecreationLifecycle |
-| background\_write | 不适用 | no-background-writer（地址未登记，见附录） |
+| 冷启动 | 已覆盖 | test/ledger/closure.test.ts#verifyColdStartLifecycle |
+| 热恢复 | 已覆盖 | test/ledger/closure.test.ts#verifyWarmResumeLifecycle |
+| 页面挂载 | 已覆盖 | test/ledger/closure.test.ts#verifyPageAttachLifecycle |
+| 页面卸载 | 已覆盖 | test/ledger/closure.test.ts#verifyPageDetachLifecycle |
+| 账号切换 | 已覆盖 | test/ledger/closure.test.ts#verifyAccountSwitchLifecycle |
+| 进程重建 | 已覆盖 | test/ledger/closure.test.ts#verifyProcessRecreationLifecycle |
+| 后台写入 | 不适用 | no-background-writer（地址未登记，见附录） |
 
 验证关注：test/ledger/closure.test.ts#verifyLedgerFlow
 
 <a id="design-766965773a72756e74696d652f666c6f773a6c65646765722d7265706f72742d666c6f77"></a>
-未记录：载荷；发布；消费语义。
+未记录：时机；载荷；发布；消费语义；处理。
 
 ### 报表首次读取与快照更新
 
@@ -390,7 +408,7 @@ flowchart TD
 | 触发 | 类型 | 时机 | 幂等 |
 | --- | --- | --- | --- |
 | committed-user-mutation | user\_mutation | 用户按月查看或账目快照更新后 | 按账号、月份、账目版本去重聚合 |
-| cold-start-load | cold\_start | 用户按月查看或账目快照更新后 | 按账号、月份、账目版本去重聚合 |
+| cold-start-load | 冷启动 | 用户按月查看或账目快照更新后 | 按账号、月份、账目版本去重聚合 |
 
 首次加载：repository-snapshot · 本地读取并按月份聚合；责任方 app-state-team；范围 当前账号、当前月份；新鲜度 读取当前 Repository 版本后建立重放订阅
 
@@ -429,19 +447,19 @@ flowchart TD
 
 | 场景 | 覆盖裁决 | 依据 |
 | --- | --- | --- |
-| cold\_start | 已覆盖 | test/ledger/closure.test.ts#verifyColdStartLifecycle |
-| warm\_resume | 已覆盖 | test/ledger/closure.test.ts#verifyWarmResumeLifecycle |
-| page\_attach | 已覆盖 | test/ledger/closure.test.ts#verifyPageAttachLifecycle |
-| page\_detach | 已覆盖 | test/ledger/closure.test.ts#verifyPageDetachLifecycle |
-| account\_switch | 已覆盖 | test/ledger/closure.test.ts#verifyAccountSwitchLifecycle |
-| process\_recreation | 已覆盖 | test/ledger/closure.test.ts#verifyProcessRecreationLifecycle |
-| background\_write | 不适用 | no-background-writer（地址未登记，见附录） |
+| 冷启动 | 已覆盖 | test/ledger/closure.test.ts#verifyColdStartLifecycle |
+| 热恢复 | 已覆盖 | test/ledger/closure.test.ts#verifyWarmResumeLifecycle |
+| 页面挂载 | 已覆盖 | test/ledger/closure.test.ts#verifyPageAttachLifecycle |
+| 页面卸载 | 已覆盖 | test/ledger/closure.test.ts#verifyPageDetachLifecycle |
+| 账号切换 | 已覆盖 | test/ledger/closure.test.ts#verifyAccountSwitchLifecycle |
+| 进程重建 | 已覆盖 | test/ledger/closure.test.ts#verifyProcessRecreationLifecycle |
+| 后台写入 | 不适用 | no-background-writer（地址未登记，见附录） |
 
 验证关注：test/ledger/closure.test.ts#verifyLedgerFlow
 
-未记录：持久化；载荷；消费语义。
+未记录：持久化；时机；载荷；消费语义；处理。
 
-设计内容来源：[账目提交、发布与恢复](#design-766965773a72756e74696d652f666c6f773a6c65646765722d726566726573682d666c6f77) · contracts
+内容承载于：[账目提交、发布与恢复](#design-766965773a72756e74696d652f666c6f773a6c65646765722d726566726573682d666c6f77) · 契约设计
 
 ### 施工状态与有序步骤
 
@@ -454,13 +472,13 @@ flowchart TD
 | 3 | 发布快照后由订阅者消费 |
 | 4 | 失败保留旧快照；重启重新加载 |
 
-生命周期触发：process\_recreation
+生命周期触发：进程重建
 
 | 失败/恢复场景 | 处理 |
 | --- | --- |
-| strategy | 重新读取已提交持久快照 |
+| 策略 | 重新读取已提交持久快照 |
 
-设计内容来源：[报表首次读取与快照更新](#design-766965773a72756e74696d652f666c6f773a6c65646765722d7265706f72742d666c6f77) · contracts
+内容承载于：[报表首次读取与快照更新](#design-766965773a72756e74696d652f666c6f773a6c65646765722d7265706f72742d666c6f77) · 契约设计
 
 ### 施工状态与有序步骤
 
@@ -473,15 +491,15 @@ flowchart TD
 | 3 | 发布不可变报表快照 |
 | 4 | 失败保留旧报表；账号切换丢弃缓存 |
 
-生命周期触发：process\_recreation
+生命周期触发：进程重建
 
 | 失败/恢复场景 | 处理 |
 | --- | --- |
-| strategy | 重新聚合或保留上次报表 |
+| 策略 | 重新聚合或保留上次报表 |
 
 ### 用例、数据边界与分支
 
-设计内容来源：[账目提交、发布与恢复](#design-766965773a72756e74696d652f666c6f773a6c65646765722d726566726573682d666c6f77) · use\_cases
+内容承载于：[账目提交、发布与恢复](#design-766965773a72756e74696d652f666c6f773a6c65646765722d726566726573682d666c6f77) · 用例设计
 
 #### 用例 ledger-refresh
 
@@ -496,7 +514,7 @@ flowchart TD
 | published |
 | recovered |
 
-阶段流转（边标签为分支）：
+阶段流转（展示基准：success；基准已出现的边不标标签，其余边标分支，完整来源见下方分支表）：
 
 ```mermaid
 flowchart TD
@@ -504,8 +522,8 @@ flowchart TD
   p2["committed"]
   p3["published"]
   p4["recovered"]
-  p1 -->|success| p2
-  p2 -->|success| p3
+  p1 --> p2
+  p2 --> p3
   p1 -->|failure| p4
 ```
 
@@ -513,18 +531,38 @@ flowchart TD
 
 | 方法 | 参数 | 返回 | 异步 |
 | --- | --- | --- | --- |
-| load | 空列表 | LedgerEntry\[\] | true |
+| load | 无 | LedgerEntry\[\] | 是 |
 
 主路径及分支去向：
 
-| 分支 | 条件 | 动作顺序 | 阶段去向 | 端口调用 | 预期状态 | 不得调用 | 关联验收 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| success | 有效账号与已提交数据 | flow.load；flow.commit；flow.publish | initial-load；committed；published | repository.load；repository.commit | stage：published；snapshot：本次提交的不可变集合 | — | [AC-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f63726974657269613a41432d32) |
-| failure | 本地数据不可用或写失败 | flow.load | initial-load；recovered | — | snapshot：上一份快照 | flow.publish | [BD-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f626f756e6461726965733a42442d32) |
+| 分支 | 条件 | 关联验收 |
+| --- | --- | --- |
+| success | 有效账号与已提交数据 | [AC-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f63726974657269613a41432d32) |
+| failure | 本地数据不可用或写失败 | [BD-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f626f756e6461726965733a42442d32) |
 
-未记录：端口调用；不得调用。
+**分支 success 的行为与去向**
 
-设计内容来源：[报表首次读取与快照更新](#design-766965773a72756e74696d652f666c6f773a6c65646765722d7265706f72742d666c6f77) · use\_cases
+| 关切 | 声明内容 |
+| --- | --- |
+| 动作顺序 | flow.load；flow.commit；flow.publish |
+| 阶段去向 | initial-load；committed；published |
+| 端口调用 | repository.load；repository.commit |
+| 预期状态 | stage：published；snapshot：本次提交的不可变集合 |
+| 不得调用 | — |
+
+**分支 failure 的行为与去向**
+
+| 关切 | 声明内容 |
+| --- | --- |
+| 动作顺序 | flow.load |
+| 阶段去向 | initial-load；recovered |
+| 端口调用 | — |
+| 预期状态 | snapshot：上一份快照 |
+| 不得调用 | flow.publish |
+
+未记录：不得调用（声明内容）；端口调用（声明内容）。
+
+内容承载于：[报表首次读取与快照更新](#design-766965773a72756e74696d652f666c6f773a6c65646765722d7265706f72742d666c6f77) · 用例设计
 
 #### 用例 ledger-report
 
@@ -539,7 +577,7 @@ flowchart TD
 | published |
 | retained |
 
-阶段流转（边标签为分支）：
+阶段流转（展示基准：success；基准已出现的边不标标签，其余边标分支，完整来源见下方分支表）：
 
 ```mermaid
 flowchart TD
@@ -547,37 +585,56 @@ flowchart TD
   p2["aggregated"]
   p3["published"]
   p4["retained"]
-  p1 -->|success| p2
-  p2 -->|success| p3
-  p1 -->|empty| p2
+  p1 --> p2
+  p2 --> p3
 ```
 
 数据边界：repository · LedgerRepository · storage
 
 | 方法 | 参数 | 返回 | 异步 |
 | --- | --- | --- | --- |
-| load | 空列表 | LedgerEntry\[\] | true |
+| load | 无 | LedgerEntry\[\] | 是 |
 
 主路径及分支去向：
 
-| 分支 | 条件 | 动作顺序 | 阶段去向 | 端口调用 | 预期状态 | 不得调用 | 关联验收 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| success | 当前账号该月存在已提交账目 | flow.load；flow.aggregate；flow.publish | initial-load；aggregated；published | repository.load | total：该月已提交金额总和 | repository.commit | [AC-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f63726974657269613a41432d33) |
-| empty | 该月无账目 | flow.load；flow.aggregate | initial-load；aggregated | — | total：0 | repository.commit | [BD-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f626f756e6461726965733a42442d33) |
+| 分支 | 条件 | 关联验收 |
+| --- | --- | --- |
+| success | 当前账号该月存在已提交账目 | [AC-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f63726974657269613a41432d33) |
+| empty | 该月无账目 | [BD-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f626f756e6461726965733a42442d33) |
 
-未记录：端口调用。
+**分支 success 的行为与去向**
+
+| 关切 | 声明内容 |
+| --- | --- |
+| 动作顺序 | flow.load；flow.aggregate；flow.publish |
+| 阶段去向 | initial-load；aggregated；published |
+| 端口调用 | repository.load |
+| 预期状态 | total：该月已提交金额总和 |
+| 不得调用 | repository.commit |
+
+**分支 empty 的行为与去向**
+
+| 关切 | 声明内容 |
+| --- | --- |
+| 动作顺序 | flow.load；flow.aggregate |
+| 阶段去向 | initial-load；aggregated |
+| 端口调用 | — |
+| 预期状态 | total：0 |
+| 不得调用 | repository.commit |
+
+未记录：端口调用（声明内容）。
 
 ### 异常与恢复
 
-设计内容来源：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · acceptance
+内容承载于：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · 验收设计
 
 边界验收：[BD-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f626f756e6461726965733a42442d31)
 
-设计内容来源：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · acceptance
+内容承载于：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · 验收设计
 
 边界验收：[BD-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f626f756e6461726965733a42442d32)
 
-设计内容来源：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · acceptance
+内容承载于：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · 验收设计
 
 边界验收：[BD-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f626f756e6461726965733a42442d33)
 
@@ -609,7 +666,10 @@ flowchart TD
 <a id="design-66696c653a7372632f6c65646765722f4c65646765725265706f72742e657473"></a>
 <a id="design-66696c653a746573742f6c65646765722f4c65646765725265706f72742e746573742e657473"></a>
 <a id="design-66696c653a7372632f6c65646765722f4c65646765725265706f72744d6f64656c2e657473"></a>
-| 文件 | 声明责任目标 |
+<a id="design-7772697465733a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e"></a>
+<a id="design-7772697465733a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65"></a>
+<a id="design-7772697465733a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65"></a>
+| 文件 | 声明目标 |
 | --- | --- |
 | src/ledger/LedgerShared.ets | [共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) |
 | src/ledger/LedgerFeature.ets | [账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) |
@@ -621,35 +681,22 @@ flowchart TD
 | test/ledger/LedgerReport.test.ets | [账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) |
 | src/ledger/LedgerReportModel.ets | [账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) |
 
-<a id="design-7772697465733a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e"></a>
-目标写集：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e)；[LedgerShared.ets](#design-66696c653a7372632f6c65646765722f4c65646765725368617265642e657473)
+内容承载于：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · 契约设计
 
-<a id="design-7772697465733a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65"></a>
-目标写集：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65)；[LedgerFeature.ets](#design-66696c653a7372632f6c65646765722f4c6564676572466561747572652e657473)；[LedgerFeature.test.ets](#design-66696c653a746573742f6c65646765722f4c6564676572466561747572652e746573742e657473)；[LedgerEntry.ets](#design-66696c653a7372632f6c65646765722f4c6564676572456e7472792e657473)；[LedgerRepository.ets](#design-66696c653a7372632f6c65646765722f4c65646765725265706f7369746f72792e657473)；[LedgerStore.ets](#design-66696c653a7372632f6c65646765722f4c656467657253746f72652e657473)
-
-<a id="design-7772697465733a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65"></a>
-目标写集：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65)；[LedgerReport.ets](#design-66696c653a7372632f6c65646765722f4c65646765725265706f72742e657473)；[LedgerReport.test.ets](#design-66696c653a746573742f6c65646765722f4c65646765725265706f72742e746573742e657473)；[LedgerReportModel.ets](#design-66696c653a7372632f6c65646765722f4c65646765725265706f72744d6f64656c2e657473)
-
-设计内容来源：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · contracts
-
-设计内容来源：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · contracts
+内容承载于：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · 契约设计
 
 | 模块 | DSL 分层 | 形式 | 变化 | 目录 |
 | --- | --- | --- | --- | --- |
 | ledger | 02-Feature | 源码 | 修改 | src/ledger |
 
-根级 module_dependencies：
-
-| 模块 | 依赖模块 |
-| --- | --- |
-| ledger | 空列表 |
+模块依赖：无。
 
 接口 LedgerRepository · ledger / data · src/ledger/LedgerRepository.ets
 
 | 方法 | 参数 | 返回 | 异步 | 职责/失败语义 |
 | --- | --- | --- | --- | --- |
-| commit | entry: LedgerEntry | Promise&lt;LedgerEntry&gt; | true | 原子持久化成功后返回；失败抛错，缓存不发布。 |
-| load | 空列表 | Promise&lt;LedgerEntry\[\]&gt; | true | 按当前账号读取已提交集合。 |
+| commit | entry: LedgerEntry | Promise&lt;LedgerEntry&gt; | 是 | 原子持久化成功后返回；失败抛错，缓存不发布。 |
+| load | 无 | Promise&lt;LedgerEntry\[\]&gt; | 是 | 按当前账号读取已提交集合。 |
 
 组件 LedgerStore · state-owner · src/ledger/LedgerStore.ets
 
@@ -667,17 +714,13 @@ flowchart TD
 
 展示当前账号已提交快照并提供提交入口。
 
-设计内容来源：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · contracts
+内容承载于：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · 契约设计
 
 | 模块 | DSL 分层 | 形式 | 变化 | 目录 |
 | --- | --- | --- | --- | --- |
 | ledger | 02-Feature | 源码 | 修改 | src/ledger |
 
-根级 module_dependencies：
-
-| 模块 | 依赖模块 |
-| --- | --- |
-| ledger | 空列表 |
+模块依赖：无。
 
 ## 6 部署视图
 
@@ -730,7 +773,7 @@ flowchart TD
 
 | 顺序 | 部件/单元 | 配套前提 | 说明 |
 | --- | --- | --- | --- |
-| 1 | 账目服务 v1 | 空列表 | 现有接口保持兼容；外部施工不属于 CU。 |
+| 1 | 账目服务 v1 | 无 | 现有接口保持兼容；外部施工不属于 CU。 |
 | 2 | 账目刷新 | 账目服务 v1 | 完成本侧接口回归后上线。 |
 | 3 | 本地报表 | 账目刷新 | 配套顺序不自动变成 CU requires。 |
 
@@ -780,7 +823,7 @@ flowchart TD
 
 ## 9 质量与验收
 
-设计内容来源：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · acceptance
+内容承载于：[共同金额与账户隔离约束](#design-766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) · 验收设计
 
 <a id="design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f63726974657269613a41432d31"></a>
 <a id="design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f626f756e6461726965733a42442d31"></a>
@@ -803,7 +846,7 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- |
 | NFR-1 | 本地首次读取时间 | &lt;= 500 | ms | 本地首次读取时间 | 单元测试；UT：可重复的计时样本 |
 
-设计内容来源：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · acceptance
+内容承载于：[账目刷新模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65) · 验收设计
 
 <a id="design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f63726974657269613a41432d32"></a>
 <a id="design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f626f756e6461726965733a42442d32"></a>
@@ -826,7 +869,7 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- |
 | NFR-2 | 提交到消费者可见时间 | &lt;= 500 | ms | 提交到消费者可见时间 | 单元测试；UT：可重复的计时样本 |
 
-设计内容来源：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · acceptance
+内容承载于：[账页报表模块](#design-766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) · 验收设计
 
 <a id="design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f63726974657269613a41432d33"></a>
 <a id="design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f626f756e6461726965733a42442d33"></a>
@@ -919,7 +962,7 @@ flowchart TD
 | AC | [AC-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f63726974657269613a41432d32)；[AC-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f63726974657269613a41432d31) |
 | BD | [BD-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f626f756e6461726965733a42442d32)；[BD-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f626f756e6461726965733a42442d31) |
 | NFR | [NFR-2](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c652f706572666f726d616e63653a4e46522d32)；[NFR-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f706572666f726d616e63653a4e46522d31) |
-| contracts.files 声明写集 | 6 个文件；[账目刷新模块写集](#design-7772697465733a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d6d6f64756c65)；[共同金额与账户隔离约束写集](#design-7772697465733a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e) |
+| contracts.files 声明写集 | 6 个文件；[LedgerFeature.ets](#design-66696c653a7372632f6c65646765722f4c6564676572466561747572652e657473)；[LedgerFeature.test.ets](#design-66696c653a746573742f6c65646765722f4c6564676572466561747572652e746573742e657473)；[LedgerEntry.ets](#design-66696c653a7372632f6c65646765722f4c6564676572456e7472792e657473)；[LedgerRepository.ets](#design-66696c653a7372632f6c65646765722f4c65646765725265706f7369746f72792e657473)；[LedgerStore.ets](#design-66696c653a7372632f6c65646765722f4c656467657253746f72652e657473)；[LedgerShared.ets](#design-66696c653a7372632f6c65646765722f4c65646765725368617265642e657473) |
 | 用例 | ledger-refresh |
 
 ### ledger-report
@@ -988,12 +1031,12 @@ flowchart TD
 | AC | [AC-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f63726974657269613a41432d31)；[AC-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f63726974657269613a41432d33) |
 | BD | [BD-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f626f756e6461726965733a42442d31)；[BD-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f626f756e6461726965733a42442d33) |
 | NFR | [NFR-1](#design-616363657074616e63653a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e2f706572666f726d616e63653a4e46522d31)；[NFR-3](#design-616363657074616e63653a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c652f706572666f726d616e63653a4e46522d33) |
-| contracts.files 声明写集 | 4 个文件；[共同金额与账户隔离约束写集](#design-7772697465733a766965773a6c6f676963616c2f6e6f64653a7265766965772d636f6d6d6f6e)；[账页报表模块写集](#design-7772697465733a766965773a646576656c6f706d656e742f6e6f64653a6c65646765722d7265706f72742d6d6f64756c65) |
+| contracts.files 声明写集 | 4 个文件；[LedgerShared.ets](#design-66696c653a7372632f6c65646765722f4c65646765725368617265642e657473)；[LedgerReport.ets](#design-66696c653a7372632f6c65646765722f4c65646765725265706f72742e657473)；[LedgerReport.test.ets](#design-66696c653a746573742f6c65646765722f4c65646765725265706f72742e746573742e657473)；[LedgerReportModel.ets](#design-66696c653a7372632f6c65646765722f4c65646765725265706f72744d6f64656c2e657473) |
 | 用例 | ledger-report |
 
 ## 11 风险与待决项
 
-准入 通过；切片 cu-ledger-refresh；阻塞 空列表
+准入 通过；切片 cu-ledger-refresh；阻塞 无
 
 <a id="design-6761703a636c6f75642d73796e632d667574757265"></a>
 | 缺口 | 状态 | 责任方 | 需要方 | 解除条件 |
@@ -1004,8 +1047,8 @@ flowchart TD
 
 | 来源能力 | 可用 | 实际处置 |
 | --- | --- | --- |
-| conventions-knowledge | false | 不适用 |
-| component-assets | false | 不适用 |
+| conventions-knowledge | 否 | 不适用 |
+| component-assets | 否 | 不适用 |
 
 ## 附录：App 根问题
 
