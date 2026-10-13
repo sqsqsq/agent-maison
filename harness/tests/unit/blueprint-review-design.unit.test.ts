@@ -167,6 +167,11 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const ready = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'); assert(ready.ready, JSON.stringify(ready.perUnit));
     for (const feature of [f.feature, f.reportFeature]) for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml', 'spec.md', 'plan.md']) assert(!fs.existsSync(featureFilePath(f.root, feature, name)), name);
     const text = render(f);
+    const statements = ['未声明可展示的同视图结构边；以上对象表保留，不从名称、目录或字段类型猜连线。', '未声明上游依赖；不从目录、purpose 或数组顺序推断施工顺序。', '未声明的索引、事务、存储配置不由 renderer 推断。'];
+    const bodyMechanismStatements = (document: string) => document.slice(document.indexOf('## 1 概述'), document.indexOf('## 附录')).split('\n').filter(line => statements.some(statement => line.includes(statement)));
+    assert.equal(bodyMechanismStatements(text).length, 0, '重复机制说明只能集中在阅读说明');
+    const before = ['## 1 概述', ...Array(3).fill(statements[0]), statements[1], statements[2], '## 附录'].join('\n');
+    assert.equal(bodyMechanismStatements(before).length, 5, '统计必须能发现修复前五句声明');
     for (const needle of ['## 2 场景视图（+1）', '## 3 逻辑视图', '## 4 运行时视图', '## 5 开发视图', '## 6 部署视图', '整数分的十进制字符串', 'LedgerStage', '验证步骤（按序）', '被否理由', '账号隔离', '本地首次读取时间', '是否通过设计交接见 readiness', 'report-ready', 'repository.commit', 'LedgerPage']) assert(text.includes(needle), needle);
     const loaded = loadCanonicalBlueprint(f.root, 'ledger-app-blueprint'); const inputs = collectBlueprintReviewInputs(f.root, loaded);
     assert.equal(inputs.sourceGaps.length, 0);

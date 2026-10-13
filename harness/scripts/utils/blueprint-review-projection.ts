@@ -94,7 +94,7 @@ function renderUnit(item: ReviewChangeUnit, blueprint: BlueprintRecord): string[
     '交付结果：', '', ...table(['谓词', '职责', '交付语义', '提供项', '验证关注'], asRecords(cu.target_predicates).map(p => [p.predicate_id, enumText(p.role, ROLES), p.description, refs(p.provide_ids), acceptanceLinks(p.verification_refs)])),
     ...table(['提供项', '交付说明'], asRecords(cu.provides).map(p => [p.provide_id, p.description])));
   const requires = asRecords(cu.requires);
-  lines.push('显式依赖：', '', ...(requires.length ? table(['依赖', '上游 CU', '上游提供项'], requires.map(r => [r.require_id, r.from_change_unit_id, r.provide_id])) : ['未声明上游依赖；不从目录、purpose 或数组顺序推断施工顺序。', '']),
+  lines.push('显式依赖：', '', ...(requires.length ? table(['依赖', '上游 CU', '上游提供项'], requires.map(r => [r.require_id, r.from_change_unit_id, r.provide_id])) : ['未声明上游依赖。', '']),
     `可修改模块：${item.binding === 'pending' ? '待指针升版后显示' : item.modules?.map(text).join('；') || '未解析，见来源缺口'}。`,
     '',
     ...table(['修改责任方', '写入范围', '设计引用'], asRecords(cu.touches).map(touch => [touch.owner, asStrings(touch.write_refs).map(file => {
@@ -262,7 +262,6 @@ function renderView(view: BlueprintRecord | undefined, blueprint: BlueprintRecor
       const issues = validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [g] });
       if (issues.length) lines.push('结构图无效，未展示：', '', ...issues.map(i => `- ${text(i.message)}`), '');
       else if (asStrings(g.relation_refs).length) lines.push('```mermaid', String(g.content).trimEnd(), '```', '');
-      else lines.push('未声明可展示的同视图结构边；以上对象表保留，不从名称、目录或字段类型猜连线。', '');
     }
   }
   return lines;
@@ -402,7 +401,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     `# ${text(review.title ?? blueprint.component_id)}`, '', anchor(`blueprint:${blueprint.blueprint_id}`),
     `部件 ${text(blueprint.component_id)} · 蓝图 ${text(blueprint.blueprint_id)} · revision ${text(blueprint.revision)} · 准入 ${text(enumText(admission?.status, DISPOSITIONS))}`, '',
     '阅读顺序：概述 → 场景（+1）→ 逻辑、运行、开发、部署 → 取舍、质量与验收 → 施工拆分。正文使用可读标签，原地址见追溯附录。', '',
-    '阅读说明：本文根据蓝图与施工单元生成，展示已登记设计，来源身份保留在文首。验收全文见第 9 章，写集见第 5 章；各 CU 展示实际继承的声明与对应链接。是否通过设计交接见 readiness，施工授权、映射与完成结论仍由原责任阶段确认。', '',
+    '阅读说明：本文根据蓝图与施工单元生成，展示已登记设计，来源身份保留在文首。不从名称、目录或普通数组顺序推断关系、施工依赖与未声明的存储设计。验收全文见第 9 章，写集见第 5 章；各 CU 展示实际继承的声明与对应链接。是否通过设计交接见 readiness，施工授权、映射与完成结论仍由原责任阶段确认。', '',
     '## 1 概述', '', ...table(['关切', '设计说明'], [['背景', review.background], ['问题', review.problem], ['本次改变', review.summary], ['整体定位', review.positioning], ['范围', meaning(review.in_scope)], ['不做什么', meaning(review.non_goals)]]),
     '### 目标与成功衡量', '', ...(asRecords(review.goals).length ? table(['目标', '目标说明', '成功衡量'], asRecords(review.goals).map(g => [g.goal_id, g.statement, acceptanceLinks(g.success_measures)])) : ['未记录；由设计责任方补充，不按生成成功推定目标充分。', ''])];
   const facts = asRecords(asRecord(blueprint.discovery)?.facts); const terms = facts.filter(f => String(f.subject).startsWith('term:'));
@@ -479,7 +478,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   if (!typed('use_cases').length) lines.push('设计期未写入 use_cases，将由 plan 按真实义务补充。', '');
   lines.push('### 异常与恢复', '');
   for (const item of typed('acceptance').filter(i => asRecords(i.value.boundaries).length)) lines.push(origin(item), '', `边界验收：${asRecords(item.value.boundaries).map(b => designLink(`acceptance:${item.address}/boundaries:${b.id}`, String(b.id))).join('；')}`, '');
-  lines.push('## 5 开发视图', '', ...renderView(view('development'), blueprint, true), '模型与持久化字段见 [逻辑视图](#3-逻辑视图)；运行编排见 [运行时视图](#4-运行时视图)。未声明的索引、事务、存储配置不由 renderer 推断。', '');
+  lines.push('## 5 开发视图', '', ...renderView(view('development'), blueprint, true), '模型与持久化字段见 [逻辑视图](#3-逻辑视图)；运行编排见 [运行时视图](#4-运行时视图)。', '');
   const files = [...new Set(typed('contracts').flatMap(item => asStrings(item.value.files)))];
   if (files.length) {
     lines.push('### 声明文件（完整施工写集）', '', ...files.map(file => anchor(`file:${file}`)), ...table(['文件', '声明责任目标'], files.map(file => [file, typed('contracts').filter(item => asStrings(item.value.files).includes(file)).map(item => designLink(item.address)).join('；')])));
