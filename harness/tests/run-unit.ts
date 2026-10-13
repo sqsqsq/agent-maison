@@ -7,9 +7,13 @@
 //   - run-unit.ts ：直接 import 工具函数（hdc-runner / spec-loader 等的纯函数），
 //                   做白盒级断言，DevEco / hypium 升级时第一时间挂出来
 //
-// 用法（在仓库根）：
-//   npx ts-node framework/harness/tests/run-unit.ts
-//   npx ts-node framework/harness/tests/run-unit.ts --filter parseHypium
+// 用法（在 harness/）：
+//   npm run test:unit                              默认每套件独立进程，最多 min(12, 可用逻辑核数) 并发
+//   npm run test:unit -- --workers 1                单套件独立进程，顺序派发
+//   npm run test:unit -- --serial                   原单进程、登记顺序
+//   npm run test:unit -- --filter parseHypium
+//   npm run test:unit -- --filter real-chain --case "完整显示名的字面子串"
+//   npm run test:unit -- --release --results-out reports/ut-results.json
 //
 // 退出码：0 全部通过；1 至少一个用例失败。
 // ============================================================================
@@ -20,13 +24,18 @@ import './utils/transpile-only-env'; // 须为首个 import：本进程+子进�
 import { cleanupStrict } from './utils/test-trust-bootstrap';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+import { performance } from 'perf_hooks';
 import { selectSuites } from './utils/select-suites';
 import { writeUnitFailureReport } from './utils/unit-failure-report';
+import { runSuiteProcesses, UnitSuiteTask } from './utils/unit-suite-processes';
+import { executeUnitModule, filterLegacyCases, SelectableUnitModule, UnitExecutionTiming } from './utils/unit-case-selection';
 
 export interface UnitCaseResult {
   name: string;
   ok: boolean;
   error?: string;
+  infrastructure?: boolean;
 }
 
 function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> {
@@ -66,7 +75,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'change-unit-content-revision', modulePath: './unit/change-unit-content-revision.unit.test' },
   { id: 'change-unit-revision-recovery', modulePath: './unit/change-unit-revision-recovery.unit.test', releaseOnly: true },
   { id: 'blueprint-review-design', modulePath: './unit/blueprint-review-design.unit.test' },
-  { id: 'execution-scope', modulePath: './unit/execution-scope.unit.test' },
+  { id: 'execution-scope-prepare-early', modulePath: './unit/execution-scope-prepare-early.unit.test' },
+  { id: 'execution-scope-prepare-late', modulePath: './unit/execution-scope-prepare-late.unit.test' },
+  { id: 'execution-scope-runtime', modulePath: './unit/execution-scope-runtime.unit.test' },
   { id: 'component-assets', modulePath: './unit/component-assets.unit.test' },
   { id: 'knowledge-context', modulePath: './unit/knowledge-context.unit.test' },
   { id: 'conventions', modulePath: './unit/conventions.unit.test' },
@@ -232,7 +243,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'hylyre-selector-gates-v1', modulePath: './unit/hylyre-selector-gates-v1.unit.test' },
   { id: 'skills-device-policy-gate', modulePath: './unit/skills-device-policy-gate.unit.test' },
   // runner 级集成（进程内跑真实 phase 循环 + 注入缝；断言时序与副作用）
-  { id: 'goal-runner-testing-integrity', modulePath: './unit/goal-runner-testing-integrity.unit.test' },
+  { id: 'goal-runner-testing-integrity-budget', modulePath: './unit/goal-runner-testing-integrity-budget.unit.test' },
+  { id: 'goal-runner-testing-integrity-revalidate', modulePath: './unit/goal-runner-testing-integrity-revalidate.unit.test' },
+  { id: 'goal-runner-testing-integrity-early', modulePath: './unit/goal-runner-testing-integrity-early.unit.test' },
+  { id: 'goal-runner-testing-integrity-late', modulePath: './unit/goal-runner-testing-integrity-late.unit.test' },
   // plan d8c5f3a7 T7a：结果级 golden 快检（决策链回放；显式注册防假绿）
   { id: 'golden-bc-opencard', modulePath: './unit/golden-bc-opencard.unit.test' },
   { id: 'vision-canary', modulePath: './unit/vision-canary.unit.test' },
@@ -362,6 +376,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-timeout', modulePath: './unit/goal-timeout.unit.test' },
   { id: 'goal-checkpoint', modulePath: './unit/goal-checkpoint.unit.test' },
   { id: 'run-unit-filter', modulePath: './unit/run-unit-filter.unit.test' },
+  { id: 'run-unit-processes', modulePath: './unit/run-unit-processes.unit.test' },
   { id: 'gate-fingerprint', modulePath: './unit/gate-fingerprint.unit.test' },
   { id: 'process-integrity', modulePath: './unit/process-integrity.unit.test' },
   { id: 'unlock-wording-c9f4e7a2', modulePath: './unit/unlock-wording-c9f4e7a2.unit.test' },
@@ -385,7 +400,10 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   // plan b2d7f4e9 t1：唯一评估入口 assessFeature（上一版宿主快照 + 生产 writer 夹具，不注入 verdict）
   { id: 'feature-assessment', modulePath: './unit/feature-assessment.unit.test' },
   // plan b2d7f4e9 t3：完成后修正经 successor（快照 + 生产 writer，goal-runner 公开入口，假 agent 出生即停）
-  { id: 'successor-exit', modulePath: './unit/successor-exit.unit.test' },
+  { id: 'successor-exit-blueprint-base', modulePath: './unit/successor-exit-blueprint-base.unit.test' },
+  { id: 'successor-exit-blueprint-projection', modulePath: './unit/successor-exit-blueprint-projection.unit.test' },
+  { id: 'successor-exit-early', modulePath: './unit/successor-exit-early.unit.test' },
+  { id: 'successor-exit-late', modulePath: './unit/successor-exit-late.unit.test' },
   { id: 'behavior-switch-scan', modulePath: './unit/behavior-switch-scan.unit.test' },
   { id: 'p0-semantic-gates', modulePath: './unit/p0-semantic-gates.unit.test' },
   { id: 'efficiency-first-t2', modulePath: './unit/efficiency-first-t2.unit.test' },
@@ -453,9 +471,19 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'lifecycle-evolution', modulePath: './unit/lifecycle-evolution.unit.test', releaseOnly: true },
   // plan 1dbe4fa4 t2：十三个事故场景的确定性重放（真实链路 / 运行时链 / 子进程 / 函数级），事实由 t1 采集器求出；
   // 进程内跑 goalMain，排在 device-session 之后。release-only；RELIABILITY_RESULTS_OUT 设置时写出实测。
-  { id: 'reliability-scenarios', modulePath: './unit/reliability-scenarios.unit.test', releaseOnly: true },
+  ...(process.env.RELIABILITY_RESULTS_OUT
+    ? [{ id: 'reliability-scenarios', modulePath: './unit/reliability-scenarios.unit.test', releaseOnly: true }]
+    : [
+      { id: 'reliability-scenarios-foundation', modulePath: './unit/reliability-scenarios-foundation.unit.test', releaseOnly: true },
+      { id: 'reliability-scenarios-runtime', modulePath: './unit/reliability-scenarios-runtime.unit.test', releaseOnly: true },
+      { id: 'reliability-scenarios-repair', modulePath: './unit/reliability-scenarios-repair.unit.test', releaseOnly: true },
+      { id: 'reliability-scenarios-successor', modulePath: './unit/reliability-scenarios-successor.unit.test', releaseOnly: true },
+    ]),
   // plan 9c3d7e1a：设计权威修复的自动接手与同任务续跑（快照宿主 + 真 harness；run 内调和、锁边界、修后续跑）。release-only。
-  { id: 'design-authority-repair', modulePath: './unit/design-authority-repair.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-content', modulePath: './unit/design-authority-repair-content.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-continuation', modulePath: './unit/design-authority-repair-continuation.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-runtime', modulePath: './unit/design-authority-repair-runtime.unit.test', releaseOnly: true },
+  { id: 'design-authority-repair-other', modulePath: './unit/design-authority-repair-other.unit.test', releaseOnly: true },
 ];
 
 const SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> =
@@ -467,49 +495,157 @@ interface SuiteSummary {
   results: UnitCaseResult[];
 }
 
+interface SuiteMeasurement extends SuiteSummary {
+  matchedCaseCount?: number;
+  executionTimings?: UnitExecutionTiming[];
+  releaseOnly: boolean;
+  status: 'not-run' | 'completed' | 'skipped' | 'missing' | 'load-error' | 'run-error' | 'worker-error';
+  ok: boolean | null;
+  error?: string;
+  loadMs: number | null;
+  executionMs: number | null;
+  totalMs: number | null;
+  startupMs?: number | null;
+}
+
+const runStartedAt = performance.now();
+let resultsOut: string | undefined;
+const measurements: SuiteMeasurement[] = [];
+let scope: { filter: string | null; release: boolean; caseNameFilter: string | null; suiteIds: string[] } = {
+  filter: null, release: false, caseNameFilter: null, suiteIds: [],
+};
+let runError: string | undefined;
+let mode: 'serial' | 'workers' = 'serial';
+let workers = 1;
+
+function printSuiteTiming(suite: SuiteMeasurement): void {
+  console.log(`  [TIME] suite ${suite.id} (${suite.status})：load=${suite.loadMs === null ? '未加载' : `${(suite.loadMs / 1000).toFixed(3)}s`}, run=${suite.executionMs === null ? '未执行' : `${(suite.executionMs / 1000).toFixed(3)}s`}, total=${((suite.totalMs ?? 0) / 1000).toFixed(3)}s`);
+}
+
 async function main(): Promise<void> {
+  mode = process.argv.includes('--serial') ? 'serial' : 'workers';
+  const workersIdx = process.argv.indexOf('--workers');
+  if (mode === 'serial' && workersIdx >= 0) throw new Error('--serial 不能与 --workers 同用');
+  workers = workersIdx >= 0 ? Number(process.argv[workersIdx + 1]) : Math.max(1, Math.min(12, os.availableParallelism()));
+  if (!Number.isInteger(workers) || workers < 1) throw new Error('--workers 需要正整数');
+  if (mode === 'serial') workers = 1;
+  const resultsIdx = process.argv.indexOf('--results-out');
+  if (resultsIdx >= 0) {
+    const value = process.argv[resultsIdx + 1];
+    if (!value || value.startsWith('--')) throw new Error('--results-out 需要文件路径');
+    resultsOut = path.resolve(value);
+  }
   const filterIdx = process.argv.indexOf('--filter');
   const filter = filterIdx >= 0 ? process.argv[filterIdx + 1] : undefined;
+  if (filterIdx >= 0 && (!filter || filter.startsWith('--'))) throw new Error('--filter 需要字面字符串');
+  const caseIdx = process.argv.indexOf('--case');
+  const caseSelector = caseIdx >= 0 ? process.argv[caseIdx + 1] : undefined;
+  if (caseIdx >= 0 && (!caseSelector || caseSelector.startsWith('--'))) throw new Error('--case 需要非空字面字符串');
   // `--release`：发布门（release-all / candidate-release）与手动全量跑传它，含 release-only 套件。
   const release = process.argv.includes('--release');
-  const { toRun, caseNameFilter, skipExecution } = selectSuites(filter, SUITES, { release });
+  const { toRun, caseNameFilter, skipExecution } = selectSuites(filter, SUITES, { release, case: caseSelector });
+  scope = { filter: filter ?? null, release, caseNameFilter: caseNameFilter ?? null, suiteIds: toRun.map(s => s.id) };
+  measurements.push(...toRun.map(s => ({
+    id: s.id, releaseOnly: s.releaseOnly === true, status: 'not-run' as const, ok: null,
+    loadMs: null, executionMs: null, totalMs: null, results: [],
+  })));
 
   console.log('\nFramework Harness Unit Tests\n');
   console.log('='.repeat(72));
+  if (caseSelector === undefined && caseNameFilter !== undefined) {
+    console.log(`[SELECT] --filter 未命中任何套件 ID，改为在全部 ${toRun.length} 个套件中按用例名执行（本次执行 ${toRun.length - skipExecution.size} 个，release-only 跳过 ${skipExecution.size} 个）`);
+  }
+  const suiteScope = toRun.length > 10 ? `${toRun.length} 个套件` : toRun.map(s => s.id).join(', ');
+  console.log(`[SELECT] mode=${mode}, workers=${workers}；suites=${suiteScope}；case=${caseNameFilter === undefined ? '未指定' : JSON.stringify(caseNameFilter)}；release-only 跳过=${skipExecution.size}`);
 
   const summaries: SuiteSummary[] = [];
+  const tasks: UnitSuiteTask[] = [];
 
-  for (const suite of toRun) {
+  for (const [index, suite] of toRun.entries()) {
+    const measurement = measurements[index];
+    const suiteStartedAt = performance.now();
     const fullPath = path.resolve(__dirname, suite.modulePath + '.ts');
     if (!fs.existsSync(fullPath)) {
       // review P1：显式注册的 CORE 套件缺失 = 测试基建回归，必须 FAIL（静默 SKIP 会假绿）；
       // 自动发现（profile）套件缺失则 SKIP 属正常（profile 可能未带该测试）。
       if (EXPLICIT_SUITE_IDS.has(suite.id)) {
         console.log(`  [FAIL] suite ${suite.id} 缺失：${fullPath}`);
-        summaries.push({
-          id: suite.id,
-          results: [{ name: '<suite-load>', ok: false, error: `显式注册的 CORE 套件文件缺失：${fullPath}` }],
-        });
+        measurement.results = [{ name: '<suite-load>', ok: false, error: `显式注册的 CORE 套件文件缺失：${fullPath}` }];
+        measurement.ok = false;
+        summaries.push(measurement);
       } else {
         console.log(`  [SKIP] suite ${suite.id} 不存在：${fullPath}`);
       }
+      measurement.status = 'missing';
+      measurement.error = `套件文件缺失：${fullPath}`;
+      measurement.totalMs = performance.now() - suiteStartedAt;
+      printSuiteTiming(measurement);
       continue;
     }
     // release-only：文件存在性已在上面校验过（缺失仍 FAIL），这里只跳过执行。
     if (skipExecution.has(suite.id)) {
       console.log(`  [SKIP] suite ${suite.id}：release-only（加 --release 或 --filter ${suite.id} 执行）`);
+      measurement.status = 'skipped';
+      measurement.totalMs = performance.now() - suiteStartedAt;
+      printSuiteTiming(measurement);
       continue;
     }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require(suite.modulePath) as { runAll: () => UnitCaseResult[] | Promise<UnitCaseResult[]> };
-    if (typeof mod.runAll !== 'function') {
-      console.log(`  [FAIL] suite ${suite.id} 未导出 runAll()`);
-      summaries.push({ id: suite.id, results: [{ name: '<suite-load>', ok: false, error: '未导出 runAll()' }] });
+    if (mode === 'workers') {
+      tasks.push({ id: suite.id, modulePath: fullPath, selector: caseNameFilter, requirePreselection: caseSelector !== undefined });
       continue;
     }
-    const all = await mod.runAll();
-    const filtered = caseNameFilter ? all.filter(r => r.name.includes(caseNameFilter)) : all;
-    summaries.push({ id: suite.id, results: filtered });
+    const loadStartedAt = performance.now();
+    let executionStartedAt: number | undefined;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require(suite.modulePath) as SelectableUnitModule;
+      measurement.loadMs = performance.now() - loadStartedAt;
+      if (typeof mod.runAll !== 'function') {
+        console.log(`  [FAIL] suite ${suite.id} 未导出 runAll()`);
+        measurement.status = 'load-error';
+        measurement.ok = false;
+        measurement.error = '未导出 runAll()';
+        measurement.results = [{ name: '<suite-load>', ok: false, error: '未导出 runAll()' }];
+        summaries.push(measurement);
+        continue;
+      }
+      executionStartedAt = performance.now();
+      const selected = await executeUnitModule(mod, suite.id, caseNameFilter, caseSelector !== undefined);
+      measurement.executionMs = performance.now() - executionStartedAt;
+      measurement.matchedCaseCount = selected.matchedCaseCount;
+      measurement.executionTimings = selected.executionTimings;
+      const filtered = caseSelector !== undefined ? selected.results : filterLegacyCases(selected.results, caseNameFilter);
+      measurement.status = 'completed';
+      measurement.results = filtered;
+      measurement.ok = filtered.every(r => r.ok);
+      summaries.push(measurement);
+    } catch (error) {
+      measurement.status = executionStartedAt === undefined ? 'load-error' : 'run-error';
+      measurement.ok = false;
+      measurement.error = error instanceof Error ? error.stack ?? error.message : String(error);
+      if (executionStartedAt === undefined) measurement.loadMs = performance.now() - loadStartedAt;
+      else measurement.executionMs = performance.now() - executionStartedAt;
+      throw error;
+    } finally {
+      measurement.totalMs = performance.now() - suiteStartedAt;
+      printSuiteTiming(measurement);
+    }
+  }
+
+  if (mode === 'workers') {
+    const workerResults = new Map((await runSuiteProcesses(tasks, workers)).map(result => [result.id, result]));
+    summaries.length = 0;
+    for (const measurement of measurements) {
+      const result = workerResults.get(measurement.id);
+      if (result) {
+        Object.assign(measurement, result);
+        if (caseNameFilter !== undefined && caseSelector === undefined) {
+          measurement.results = filterLegacyCases(measurement.results, caseNameFilter);
+          measurement.ok = measurement.results.every(c => c.ok);
+        }
+      }
+      if (measurement.ok !== null) summaries.push(measurement);
+    }
   }
 
   console.log('');
@@ -549,13 +685,17 @@ async function main(): Promise<void> {
   }
 
   // b7e4d2a9 Todo1：不再直接 process.exit——exitCode + finally 严格清理（see 底部）
-  process.exitCode = totalFail > 0 ? 1 : 0;
+  const matchedCaseCount = measurements.reduce((sum, s) => sum + (s.matchedCaseCount ?? 0), 0);
+  const noMatch = caseNameFilter !== undefined && matchedCaseCount === 0;
+  if (noMatch) console.error(`[SELECT] 用例零命中：${JSON.stringify(caseNameFilter)}；suites=${scope.suiteIds.join(', ')}`);
+  process.exitCode = totalFail > 0 || noMatch ? 1 : 0;
 }
 
 void (async () => {
   try {
     await main();
   } catch (err) {
+    runError = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error(err);
     process.exitCode = 1;
   } finally {
@@ -565,6 +705,26 @@ void (async () => {
     if (!r.ok) {
       console.error(`[test-trust-bootstrap] 临时 trust 根清理失败，遗留：${r.leftoverPath}`);
       process.exitCode = 1;
+    }
+    console.log(`\n最慢套件 Top 20（${mode === 'serial' ? '加载 + 执行' : '完整进程占用'}）：`);
+    const slowest = measurements.filter(s => mode === 'serial' ? s.loadMs !== null
+      : s.totalMs !== null && s.status !== 'skipped' && s.status !== 'missing')
+      .sort((a, b) => (b.totalMs ?? 0) - (a.totalMs ?? 0)).slice(0, 20);
+    for (const suite of slowest) printSuiteTiming(suite);
+    const wallMs = performance.now() - runStartedAt;
+    console.log(`整轮墙钟：${(wallMs / 1000).toFixed(3)}s`);
+    if (resultsOut) {
+      try {
+        fs.mkdirSync(path.dirname(resultsOut), { recursive: true });
+        fs.writeFileSync(resultsOut, JSON.stringify({
+          mode, workers, scope, wallMs, ok: process.exitCode === 0,
+          ...(runError ? { error: runError } : {}), suites: measurements,
+        }, null, 2) + '\n', 'utf-8');
+        console.log(`完整结果已写入：${resultsOut}`);
+      } catch (error) {
+        console.error(`[run-unit] 写完整结果失败：${(error as Error).message}`);
+        process.exitCode = 1;
+      }
     }
   }
 })();

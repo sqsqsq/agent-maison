@@ -11,7 +11,7 @@
 export function selectSuites<T extends { id: string; releaseOnly?: boolean }>(
   filter: string | undefined,
   suites: readonly T[],
-  opts?: { release?: boolean },
+  opts?: { release?: boolean; case?: string },
 ): { toRun: T[]; caseNameFilter: string | undefined; skipExecution: Set<string> } {
   const pick = (toRun: T[], caseNameFilter: string | undefined, selectedById: boolean) => ({
     toRun,
@@ -20,6 +20,13 @@ export function selectSuites<T extends { id: string; releaseOnly?: boolean }>(
       opts?.release === true || selectedById ? [] : toRun.filter(s => s.releaseOnly === true).map(s => s.id),
     ),
   });
+  if (opts?.case !== undefined) {
+    if (!filter) throw new Error('--case 必须配 --filter 明确选择套件');
+    const exact = suites.filter(s => s.id === filter);
+    const selected = exact.length ? exact : suites.filter(s => s.id.includes(filter));
+    if (!selected.length) throw new Error(`--case 的 suite 未命中：${filter}`);
+    return pick(selected, opts.case, true);
+  }
   if (!filter) return pick([...suites], undefined, false);
   const byId = suites.filter(s => s.id.includes(filter));
   if (byId.length > 0) return pick(byId, undefined, true);

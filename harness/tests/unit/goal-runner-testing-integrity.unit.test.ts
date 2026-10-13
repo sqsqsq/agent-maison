@@ -119,6 +119,7 @@ import {
 } from '../../scripts/utils/fidelity-shared';
 import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { NO_AUTHORITY, decide } from '../../scripts/utils/adjudication';
 import { reduceRunState } from '../../scripts/utils/run-state-reducer';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
@@ -6953,17 +6954,27 @@ test('b7d2e9f4 §3.3 orphaned_session：只有出生事件的 run 挂着过期 s
   }
 });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
-  // 按用例名前缀单跑（逗号分隔；同 DESIGN_AUTHORITY_REPAIR_ONLY），未设置时跑全部
-  const only = process.env.TESTING_INTEGRITY_ONLY;
+type IntegrityGroup = 'budget' | 'revalidate' | 'early' | 'late';
+// 两条等待长尾独立，其余按本轮计时的登记顺序中点互补。
+function caseGroup(name: string, index: number): IntegrityGroup {
+  return name.startsWith('e9d4b7a3 t5:') ? 'budget'
+    : name.startsWith('6e2f9a10 t1:') ? 'revalidate' : index < 90 ? 'early' : 'late';
+}
+
+export async function runSelectedCases(selector?: string, group?: IntegrityGroup): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases.filter(item => !only || only.split(',').some(prefix => item.name.startsWith(prefix)))) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const [index, c] of cases.entries()) {
+    if ((group && group !== caseGroup(c.name, index)) || !matchesUnitCase(c.name, selector)) continue;
+    const endTiming = startCaseTiming([c.name], timings);
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endTiming(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

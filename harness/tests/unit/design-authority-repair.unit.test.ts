@@ -5,7 +5,8 @@
 //
 // plan b0e0621c §3.3：S14–S16 主流程（A2 主线与两个反例、S15 四支、S16 主线与两个绑定失效支、S16-c1）的驱动与断言
 // 在本文件导出的流程函数里，注册用例只在 reliability-scenarios 的 S14 / S15 / S16 里——单跑本套件不覆盖它们，
-// 本地验证这几条要跑：RELIABILITY_SCENARIOS_ONLY=S14,S15,S16 + `--filter reliability-scenarios`。
+// 本地验证 S14/S15/S16：分别三次 `--filter reliability-scenarios --case "S14 "`、
+// `--filter reliability-scenarios --case "S15 "`、`--filter reliability-scenarios --case "S16 "`。
 // 历史作者前缀使用 lifecycle-evolution 的缓存；普通 S16 从 fresh 请求出生，旧绑定分支按实际 owner 续跑或起后继。
 
 import assert from 'assert';
@@ -51,6 +52,7 @@ import {
 } from './lifecycle-evolution.unit.test';
 import { NEW_EXPECTED_RESULT, changeProjectedAcceptance, readJson, runFile, runIds, supersede } from './successor-exit.unit.test';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 type Snapshot = Parameters<Parameters<typeof withHost>[0]>[0];
 type Ev = Record<string, any>;
@@ -961,7 +963,8 @@ async function startSiblingRun(s: Snapshot, saved: Ev): Promise<{ release: () =>
     'require(workerData.tsNode).register({ transpileOnly: true, project: workerData.tsconfig });',
     "require(workerData.module).__siblingRunInWorker().then(r => parentPort.postMessage({ type: 'done', result: r }), e => parentPort.postMessage({ type: 'error', error: String((e && e.stack) || e) }));",
   ].join('\n');
-  const worker = new Worker(boot, { eval: true, workerData: {
+  // boot 自行注册 harness ts-node；不继承外层套件进程在临时 cwd 下的预加载。
+  const worker = new Worker(boot, { eval: true, execArgv: [], workerData: {
     root: s.root, frameworkRoot: s.frameworkRoot, signal, saved,
     tsNode: require.resolve('ts-node'), tsconfig: path.resolve(__dirname, '..', '..', 'tsconfig.json'), module: __filename,
   } });
@@ -2263,18 +2266,28 @@ for (const finalFailure of [false, true]) cases.push({
   }),
 });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
-  const only = process.env.DESIGN_AUTHORITY_REPAIR_ONLY;
+export async function runSelectedCases(selector?: string, group?: 'content' | 'continuation' | 'runtime' | 'other'): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases.filter(item => !only || only.split(',').some(prefix => item.name.startsWith(prefix)))) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases) {
+    const name = `design-authority-repair: ${c.name}`;
+    const category = c.name.startsWith('S16-c') ? 'content'
+      : c.name.startsWith('S15-') ? 'continuation'
+      : c.name.startsWith('S16-r') ? 'runtime' : 'other';
+    if ((group && group !== category) || !matchesUnitCase(name, selector)) continue;
+    const endTiming = startCaseTiming([name], timings);
     const started = Date.now();
     try {
       await c.run();
-      results.push({ name: `design-authority-repair: ${c.name}`, ok: true });
+      results.push({ name, ok: true });
     } catch (err) {
-      results.push({ name: `design-authority-repair: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+      results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
+    } finally { endTiming(); }
     console.log(`[design-authority-repair] ${c.name.split('：')[0]} ${((Date.now() - started) / 1000).toFixed(1)}s`);
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
+}
+
+export async function runAll(group?: 'content' | 'continuation' | 'runtime' | 'other'): Promise<UnitCaseResult[]> {
+  return (await runSelectedCases(undefined, group)).results;
 }

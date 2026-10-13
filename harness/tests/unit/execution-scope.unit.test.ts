@@ -69,6 +69,7 @@ import { isClosureOnlyRetryPending, resolveResumedBudget } from '../../scripts/u
 import { SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const workflow: WorkflowSpec = {
   schema_version: '1.2', name: 'scoped', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'],
@@ -3141,9 +3142,23 @@ cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the 
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  const only = process.env.EXECUTION_SCOPE_ONLY;
-  for (const test of cases.filter(test => !only || test.name === only || only.split(',').some(name => test.name === name))) { try { await test.run(); results.push({ name: test.name, ok: true }); } catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); } }
-  return results;
+type ScopeGroup = 'prepare-early' | 'prepare-late' | 'runtime';
+// prepare 各分支自备宿主；边界按一次完整计时分为三个近等成本段。
+function caseGroup(_name: string, index: number): ScopeGroup {
+  return index < 22 ? 'prepare-early' : index < 38 ? 'prepare-late' : 'runtime';
 }
+
+export async function runSelectedCases(selector?: string, group?: ScopeGroup): Promise<SelectedUnitCases> {
+  const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
+  for (const [index, test] of cases.entries()) {
+    if ((group && group !== caseGroup(test.name, index)) || !matchesUnitCase(test.name, selector)) continue;
+    const endTiming = startCaseTiming([test.name], timings);
+    try { await test.run(); results.push({ name: test.name, ok: true }); }
+    catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
+    finally { endTiming(); }
+  }
+  return selectedUnitCases(results, selector, timings);
+}
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

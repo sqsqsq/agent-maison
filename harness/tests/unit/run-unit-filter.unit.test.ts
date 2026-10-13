@@ -1,5 +1,6 @@
 // run-unit-filter.unit.test.ts — selectSuites filter 双语义（plan a7c3e1f9 P3）
 import { selectSuites } from '../utils/select-suites';
+import nodeAssert from 'assert';
 
 export interface UnitCaseResult {
   name: string;
@@ -20,6 +21,17 @@ function assert(name: string, cond: boolean, msg?: string): UnitCaseResult {
 
 export function runAll(): UnitCaseResult[] {
   const out: UnitCaseResult[] = [];
+  const collision = [{ id: 'real-chain', releaseOnly: true }, { id: 'real-chain-seams', releaseOnly: true }];
+  const exact = selectSuites('real-chain', collision, { case: 'literal, (中文)' });
+  out.push(assert('--case exact id 优先；legacy filter 仍含 seams',
+    exact.toRun.length === 1 && exact.toRun[0].id === 'real-chain' && exact.caseNameFilter === 'literal, (中文)'
+      && exact.skipExecution.size === 0 && selectSuites('real-chain', collision).toRun.length === 2));
+  const groups = [{ id: 'reliability-scenarios-foundation' }, { id: 'reliability-scenarios-runtime' }];
+  out.push(assert('--case 无 exact 时公共前缀选择全部分组', selectSuites('reliability-scenarios', groups, { case: 'S3 ' }).toRun.length === 2));
+  for (const filter of [undefined, 'absent-suite']) {
+    nodeAssert.throws(() => selectSuites(filter, collision, { case: 'target' }));
+  }
+  out.push({ name: '--case 没有 suite 或错误 suite 在派发前拒绝', ok: true });
 
   // 无 filter → 全跑，无 case 过滤
   {

@@ -46,6 +46,7 @@ import { readScopeAcceptance } from '../../scripts/utils/feature-track';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import { changeConsumedTargetContent, changeUnconsumedBlueprintContent } from './phase-evidence-manifest.unit.test';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 type Snapshot = ReturnType<typeof loadHostSnapshot>;
 type Phase = 'spec' | 'plan' | 'coding' | 'review' | 'ut' | 'testing';
@@ -836,18 +837,23 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
   }) },
 ];
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
-  const only = process.env.LIFECYCLE_EVOLUTION_ONLY?.split(',').map(value => value.trim()).filter(Boolean);
-  for (const c of cases.filter(test => !only?.length || only.some(prefix => test.name.startsWith(prefix)))) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases) {
+    const name = `lifecycle-evolution: ${c.name}`;
+    if (!matchesUnitCase(name, selector)) continue;
+    const endTiming = startCaseTiming([name], timings);
     const started = Date.now();
     try {
       await c.run();
-      results.push({ name: `lifecycle-evolution: ${c.name}`, ok: true });
+      results.push({ name, ok: true });
     } catch (err) {
-      results.push({ name: `lifecycle-evolution: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+      results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
+    } finally { endTiming(); }
     console.log(`[lifecycle-evolution] ${c.name.split(' ')[0]} ${((Date.now() - started) / 1000).toFixed(1)}s`);
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

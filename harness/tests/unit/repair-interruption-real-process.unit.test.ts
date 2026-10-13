@@ -49,7 +49,7 @@ const EXECUTOR_SCRIPT = [
   "process.exitCode = mode === 'exit-no-terminal' ? 1 : 0;",
   '}',
   // A short-lived executor must remain queryable until the real containment observer returns.
-  "if (mode !== 'complete') emit(); else {",
+  "if (mode !== 'complete' && mode !== 'exit-no-terminal') emit(); else {",
   '  const deadline = Date.now() + 10000;',
   '  const wait = setInterval(() => {',
   '    if (fs.existsSync(observed)) { clearInterval(wait); emit(); }',

@@ -38,6 +38,7 @@ import review from '../../scripts/check-review';
 import type { CheckContext } from '../../scripts/utils/types';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { writePhaseSummary } from '../utils/completion-chain-seed';
 import { withRunDisposition } from '../../scripts/utils/adjudication';
 
@@ -1935,15 +1936,20 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
   } },
 ];
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   const prior = process.env.MAISON_GOAL_RUN_ID;
-  const only = process.env.STANDALONE_CODING_REVIEW_ONLY;
-  for (const test of cases.filter(test => !only || only.split(',').some(prefix => test.name.startsWith(prefix)))) {
+  for (const test of cases.filter(test => matchesUnitCase(test.name, selector))) {
+    const endTiming = startCaseTiming([test.name], timings);
     let f: ReturnType<typeof fixture> | undefined;
-    try { f = fixture(test.newFile, test.baselineTest, test.extraContractFiles); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-    finally { if (prior === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prior; clearFrameworkConfigCache(); if (f) fs.rmSync(f.root, { recursive: true, force: true }); }
+    try {
+      try { f = fixture(test.newFile, test.baselineTest, test.extraContractFiles); process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id; await test.run(f); results.push({ name: test.name, ok: true }); }
+      catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
+      finally { if (prior === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = prior; clearFrameworkConfigCache(); if (f) fs.rmSync(f.root, { recursive: true, force: true }); }
+    } finally { endTiming(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

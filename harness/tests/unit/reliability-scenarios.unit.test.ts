@@ -21,6 +21,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 import {
   collectReliability,
   deriveConclusion,
@@ -1393,6 +1395,7 @@ const runS8: ScenarioRunner = async (_entry, done) => {
   const feature = 'reliability-crash';
   const host = setupMinimalHost(feature, 'hmos-app');
   try {
+    freezeExistingGoalDelivery(host, feature);
     const crashed = runDriver('crash_scope_in_run', feature, host);
     assert(crashed.runId, `S8：崩溃段须产出 run：${JSON.stringify({ ...crashed, eventTypes: undefined })}`);
     const run = crashed.runId as string;
@@ -1452,6 +1455,7 @@ const runS9: ScenarioRunner = async (entry, done) => {
   const feature = S9_FEATURE;
   const host = setupMinimalHost(feature, 'hmos-app');
   try {
+    freezeExistingGoalDelivery(host, feature);
     const parked = runDriver('device_park', feature, host);
     assert(parked.runId, `S9：停放段须产出 run：${JSON.stringify({ ...parked, eventTypes: undefined })}`);
     const run = parked.runId as string;
@@ -1503,6 +1507,7 @@ const runS9Wait: ScenarioRunner = async (_entry, done) => {
   const feature = S9_FEATURE;
   const host = setupMinimalHost(feature, 'hmos-app');
   try {
+    freezeExistingGoalDelivery(host, feature);
     const out = runDriver('device_wait_ready', feature, host);
     assert(out.runId, `S9 等待支：须产出 run：${JSON.stringify({ ...out, eventTypes: undefined })}`);
     const run = out.runId as string;
@@ -1893,24 +1898,35 @@ function runS16(key: S16Key): ScenarioRunner {
 // ---------------------------------------------------------------------------
 
 /** 顺序即执行顺序；S10 的新格式分支在 S3 的宿主里产出，故 S10 先登记、S3 执行时写入。 */
-export const SCENARIOS: Array<{ id: string; run: ScenarioRunner[] }> = [
-  { id: 'S1', run: [runS1, runS1Formal, runS1Budget, runBe091cOrphan, runBe091cScope] },
-  { id: 'S2', run: [runS2, runS2Codex] },
-  { id: 'S10', run: [runS10] },
-  { id: 'S3', run: [runS3] },
-  { id: 'S4', run: [acceptanceChangeBranch(true), acceptanceChangeBranch(false)] },
-  { id: 'S5', run: [runS5] },
-  { id: 'S6', run: [runS6] },
-  { id: 'S7', run: [runS7] },
-  { id: 'S8', run: [runS8] },
-  { id: 'S9', run: [runS9Wait, runS9] },
-  { id: 'S11', run: [runS11Branch(true), runS11Branch(false)] },
-  { id: 'S12', run: [runS12] },
-  { id: 'S13', run: [runS13Branch(false), runS13Branch(true)] },
-  { id: 'S14', run: [runS14('in-run-reconcile'), runS14('counter-own-skipped'), runS14('counter-sibling-skipped')] },
-  { id: 'S15', run: [runS15('b1-rejoin'), runS15('counter-unrepaired'), runS15('b1-stale-successor'), runS15('supervisor-stale-successor'), runS15('b2-authority')] },
-  { id: 'S16', run: [runS16('b1-auto-repair'), runS16('counter-no-preauth'), runS16('stale-supervisor'), runS16('stale-resend')] },
+interface ScenarioFlow { execute: ScenarioRunner; produces: string[] }
+const flow = (execute: ScenarioRunner, ...produces: string[]): ScenarioFlow => ({ execute, produces });
+
+export const SCENARIOS: Array<{ id: string; run: ScenarioFlow[] }> = [
+  { id: 'S1', run: [flow(runS1, 'S1/canary-no-alternative', 'S1/explicit-model-successor'), flow(runS1Formal, 'S1/formal-with-alternative'), flow(runS1Budget, 'S1/budget'), flow(runBe091cOrphan, 'S1/be091c-orphan-lock'), flow(runBe091cScope, 'S1/be091c-scope-transfer')] },
+  { id: 'S2', run: [flow(runS2, 'S2/transient'), flow(runS2Codex, 'S2/codex-synthetic-429')] },
+  { id: 'S10', run: [flow(runS10, 'S10/old-snapshot')] },
+  { id: 'S3', run: [flow(runS3, 'S3/blueprint-bump', 'S10/new-format')] },
+  { id: 'S4', run: [flow(acceptanceChangeBranch(true), 'S4/aligned'), flow(acceptanceChangeBranch(false), 'S4/counter-unaligned')] },
+  { id: 'S5', run: [flow(runS5, 'S5/excluded-reference')] },
+  { id: 'S6', run: [flow(runS6, 'S6/excluded-implemented')] },
+  { id: 'S7', run: [flow(runS7, 'S7/disclosed', 'S7/undisclosed-in-chain')] },
+  { id: 'S8', run: [flow(runS8, 'S8/crash-resume')] },
+  { id: 'S9', run: [flow(runS9Wait, 'S9/in-process-wait'), flow(runS9, 'S9/park-resume')] },
+  { id: 'S11', run: [flow(runS11Branch(true), 'S11/fixed'), flow(runS11Branch(false), 'S11/never-fixed')] },
+  { id: 'S12', run: [flow(runS12, 'S12/human-authorization', 'S12/repeat-unchanged', 'S12/reauthorized')] },
+  { id: 'S13', run: [flow(runS13Branch(false), 'S13/refusal-corrected'), flow(runS13Branch(true), 'S13/refusal-twice')] },
+  { id: 'S14', run: ['in-run-reconcile', 'counter-own-skipped', 'counter-sibling-skipped'].map(key => flow(runS14(key as S14Key), `S14/${key}`)) },
+  { id: 'S15', run: [flow(runS15('b1-rejoin'), 'S15/b1-rejoin'), flow(runS15('counter-unrepaired'), 'S15/counter-unrepaired'), flow(runS15('b1-stale-successor'), 'S15/b1-stale-successor'), flow(runS15('supervisor-stale-successor'), 'S15/supervisor-stale-successor'), flow(runS15('b2-authority'), 'S15/b2-authority')] },
+  { id: 'S16', run: [flow(runS16('b1-auto-repair'), 'S16/b1-auto-repair'), flow(runS16('counter-no-preauth'), 'S16/counter-no-preauth'), flow(runS16('stale-supervisor'), 'S16/stale-supervisor'), flow(runS16('stale-resend'), 'S16/stale-resend')] },
 ];
+
+function branchName(registry: Map<string, RegistryEntry>, reference: string): string {
+  const [id, key] = reference.split('/');
+  const entry = registry.get(id);
+  const branch = entry?.branches.find(b => b.key === key);
+  if (!entry || !branch) throw new Error(`登记表缺分支 ${reference}`);
+  return `${id} ${entry.title} / ${branch.label}`;
+}
 
 /** 按断言策略评估一个分支：命中恒断言；baseline_met / correct_stop 断言期望；gap_only 只打印差距。 */
 export function evaluateOutcome(o: BranchOutcome): void {
@@ -2095,22 +2111,30 @@ function line(o: BranchOutcome, ms: number): string {
     + ` 无影响重跑=${t.unaffected_reruns.exact ?? `代理 ${t.unaffected_reruns.proxy ?? '-'}`} 期望达成=${o.expectation.met ? '是' : '否'} 策略=${o.policy} 耗时=${(ms / 1000).toFixed(1)}s`;
 }
 
-export async function runScenarios(only?: string[]): Promise<{ results: UnitCaseResult[]; outcomes: BranchOutcome[] }> {
+export async function runScenarios(only?: string[], selfChecks = true, selector?: string): Promise<SelectedUnitCases & { outcomes: BranchOutcome[] }> {
   const registry = loadRegistry();
   const results: UnitCaseResult[] = [];
   const outcomes: BranchOutcome[] = [];
+  const timings: UnitExecutionTiming[] = [];
+  const expected = new Set<string>();
   s10Entry = registry.get('S10');
   const s10Pending: BranchOutcome[] = [];
   s10Outcomes = s10Pending;
-  for (const check of SELF_CHECKS) {
+  for (const check of selfChecks ? SELF_CHECKS : []) {
+    const endTiming = startCaseTiming([check.name], timings);
     try { check.run(registry); results.push({ name: check.name, ok: true }); } catch (e) { results.push({ name: check.name, ok: false, error: (e as Error).message }); }
+    finally { endTiming(); }
   }
   for (const scenario of SCENARIOS.filter(x => !only || only.includes(x.id))) {
     const entry = registry.get(scenario.id);
-    if (!entry) { results.push({ name: `${scenario.id} <registry>`, ok: false, error: '登记表缺该场景' }); continue; }
+    if (!entry) { results.push({ name: `${scenario.id} <registry>`, ok: false, error: '登记表缺该场景', infrastructure: true }); continue; }
     const mine: BranchOutcome[] = [];
     const collect = makeCollector(entry, mine);
     for (const runner of scenario.run) {
+      const names = runner.produces.map(reference => branchName(registry, reference));
+      if (!names.some(name => matchesUnitCase(name, selector))) continue;
+      for (const reference of runner.produces) expected.add(reference);
+      const endTiming = startCaseTiming(names, timings);
       const started = Date.now();
       const before = mine.length;
       // 生产代码在进程内偶有 process.exit（启动期 BLOCKER）：拦成异常，不让它带走整个 run-unit。
@@ -2119,9 +2143,9 @@ export async function runScenarios(only?: string[]): Promise<{ results: UnitCase
         throw new Error(`process.exit(${code}) 被场景拦截（进程内 goalMain 的启动期退出）`);
       }) as typeof process.exit;
       try {
-        await runner(entry, collect);
+        await runner.execute(entry, collect);
       } catch (e) {
-        results.push({ name: `${entry.id} ${entry.title} <driver>`, ok: false, error: (e as Error).stack ?? (e as Error).message });
+        results.push({ name: `${entry.id} ${entry.title} <driver>`, ok: false, error: (e as Error).stack ?? (e as Error).message, infrastructure: true });
       } finally {
         process.exit = realExit;
       }
@@ -2130,7 +2154,7 @@ export async function runScenarios(only?: string[]): Promise<{ results: UnitCase
       for (const o of produced) {
         console.log(line(o, ms));
         outcomes.push(o);
-        const name = `${o.id} ${registry.get(o.id)?.title ?? entry.title} / ${o.label}`;
+        const name = branchName(registry, `${o.id}/${o.key}`);
         try {
           evaluateOutcome(o);
           results.push({ name, ok: true });
@@ -2138,6 +2162,7 @@ export async function runScenarios(only?: string[]): Promise<{ results: UnitCase
           results.push({ name, ok: false, error: (e as Error).message });
         }
       }
+      endTiming();
     }
   }
   // 每个登记分支都须有一条实测（S10 新格式分支产自 S3 的宿主，只跑 S10 时不要求）。
@@ -2146,9 +2171,13 @@ export async function runScenarios(only?: string[]): Promise<{ results: UnitCase
     const entry = registry.get(id);
     for (const b of entry?.branches ?? []) {
       if (id === 'S10' && b.key === 'new-format' && !ran.has('S3')) continue;
-      if (!outcomes.some(o => o.id === id && o.key === b.key)) {
-        results.push({ name: `${id} ${entry!.title} / ${b.label} <missing>`, ok: false, error: '分支未产出实测' });
-      }
+      if (selector === undefined) expected.add(`${id}/${b.key}`);
+    }
+  }
+  for (const reference of expected) {
+    const [id, key] = reference.split('/');
+    if (!outcomes.some(o => o.id === id && o.key === key)) {
+      results.push({ name: `${branchName(registry, reference)} <missing>`, ok: false, error: '分支未产出实测', infrastructure: true });
     }
   }
   s10Entry = undefined;
@@ -2160,11 +2189,12 @@ export async function runScenarios(only?: string[]): Promise<{ results: UnitCase
     fs.writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
     console.log(`[reliability-scenarios] 实测已写入 ${path.resolve(out)}`);
   }
-  return { results, outcomes };
+  return { ...selectedUnitCases(results, selector, timings), outcomes };
 }
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  // 只供本地迭代：RELIABILITY_SCENARIOS_ONLY=S14,S15 只跑点名的场景（发布门与收口不设，全量执行）。
-  const only = process.env.RELIABILITY_SCENARIOS_ONLY?.split(',').map(id => id.trim()).filter(Boolean);
-  return (await runScenarios(only?.length ? only : undefined)).results;
+  return (await runSelectedCases()).results;
 }
+
+export const runSelectedCases = (selector?: string) => runScenarios(undefined, true, selector);
+export const runSelectedScenarioGroup = (selector: string | undefined, ids: string[], selfChecks = false) => runScenarios(ids, selfChecks, selector);

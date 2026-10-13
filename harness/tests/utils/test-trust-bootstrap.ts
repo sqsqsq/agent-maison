@@ -45,7 +45,7 @@ export function createTrustIsolation(prefix = 'maison-test-trust-'): TrustIsolat
     },
     cleanupStrict(): { ok: boolean; leftoverPath?: string } {
       try {
-        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       } catch {
         /* 结果以存在性为准 */
       }

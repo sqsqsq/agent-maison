@@ -31,6 +31,7 @@ import { goalRunEvents, requestVia, runGoalRuntimeChain } from './goal-runner-te
 import { sealLegacyInvokes } from './goal-park-resume.unit.test';
 import { handWriteProjections } from './component-design-handoff.unit.test';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
 import type { CheckContext, CheckResult } from '../../scripts/utils/types';
@@ -742,16 +743,28 @@ cases.push({ name: '后继保留已满足定义的责任方：健康输入不额
   assert(!recovered.phase_chain.includes('coding'), '设计责任方尚未重签写集时不得授权 coding');
 }) });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+type SuccessorGroup = 'blueprint-base' | 'blueprint-projection' | 'early' | 'late';
+// 两条百秒 ★2 独立，其余按原登记顺序互补；每 case 仍自备 snapshot 宿主。
+function caseGroup(name: string, index: number): SuccessorGroup {
+  return name.startsWith('★2 变体 ') ? 'blueprint-projection'
+    : name.startsWith('★2 蓝图升版 ') ? 'blueprint-base' : index < 20 ? 'early' : 'late';
+}
+
+export async function runSelectedCases(selector?: string, group?: SuccessorGroup): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
-  const only = process.env.SUCCESSOR_EXIT_ONLY?.split(',').map(prefix => prefix.trim()).filter(Boolean);
-  for (const c of cases.filter(test => !only?.length || only.some(prefix => test.name.startsWith(prefix)))) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const [index, c] of cases.entries()) {
+    const name = `successor-exit: ${c.name}`;
+    if ((group && group !== caseGroup(c.name, index)) || !matchesUnitCase(name, selector)) continue;
+    const endTiming = startCaseTiming([name], timings);
     try {
       await c.run();
-      results.push({ name: `successor-exit: ${c.name}`, ok: true });
+      results.push({ name, ok: true });
     } catch (err) {
-      results.push({ name: `successor-exit: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+      results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
+    } finally { endTiming(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

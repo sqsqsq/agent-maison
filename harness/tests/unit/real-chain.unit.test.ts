@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import {
   provisionRealChainProject,
   scaffoldRealChainHost,
@@ -1792,12 +1793,16 @@ test('5f8c2d70 generic and single-duty request keep production prepare/birth pat
   } finally { fs.rmSync(p.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const out: UnitCaseResult[] = [];
-  const only = process.env.REAL_CHAIN_ONLY;
-  for (const c of cases.filter(item => !only || only.split(',').some(prefix => item.name.startsWith(prefix)))) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases.filter(item => matchesUnitCase(item.name, selector))) {
+    const endTiming = startCaseTiming([c.name], timings);
     try { await c.run(); out.push({ name: c.name, ok: true }); }
     catch (e) { out.push({ name: c.name, ok: false, error: (e as Error).message }); }
+    finally { endTiming(); }
   }
-  return out;
+  return selectedUnitCases(out, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

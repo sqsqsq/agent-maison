@@ -20,6 +20,7 @@ import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic
 import { sha256Bytes } from '../../scripts/utils/component-blueprint-path';
 import type { CheckContext, AcceptanceSpec } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 type Fixture = ReturnType<typeof fixture>;
@@ -405,11 +406,20 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(conflict.issues[0].includes('branches[0]')); assert(conflict.value.use_cases[0].branches[0].expected_boundary_calls);
   } },
 ];
-export function runAll(): UnitCaseResult[] {
-  const only = process.env.BLUEPRINT_STAGE_DELIVERY_ONLY?.split(',').map(name => name.trim()).filter(Boolean);
-  return cases.filter(test => !only?.length || only.some(name => test.name.startsWith(name))).map(test => { const f = fixture(); try {
-    const workspace = path.dirname(path.dirname(f.cuFile));
-    for (const entry of fs.readdirSync(workspace, { withFileTypes: true })) if (entry.isDirectory() && !['blueprint', 'ledger-refresh'].includes(entry.name)) fs.rmSync(path.join(workspace, entry.name), { recursive: true, force: true });
-    test.run(f); return { name: test.name, ok: true };
-  } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); } });
+export function runSelectedCases(selector?: string): SelectedUnitCases {
+  const timings: UnitExecutionTiming[] = [];
+  const results: UnitCaseResult[] = cases.filter(test => matchesUnitCase(test.name, selector)).map(test => {
+    const endTiming = startCaseTiming([test.name], timings);
+    let f: ReturnType<typeof fixture> | undefined;
+    try {
+      f = fixture();
+      const workspace = path.dirname(path.dirname(f.cuFile));
+      for (const entry of fs.readdirSync(workspace, { withFileTypes: true })) if (entry.isDirectory() && !['blueprint', 'ledger-refresh'].includes(entry.name)) fs.rmSync(path.join(workspace, entry.name), { recursive: true, force: true });
+      test.run(f); return { name: test.name, ok: true };
+    } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; }
+    finally { try { if (f) fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); } finally { endTiming(); } }
+  });
+  return selectedUnitCases(results, selector, timings);
 }
+
+export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }

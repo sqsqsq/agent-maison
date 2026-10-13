@@ -35,16 +35,20 @@ function hashDir(dir: string): string {
   return h.digest('hex');
 }
 
-export function runAll(): UnitCaseResult[] {
-  const name = 'sentinel 黑盒：外部 env 被无条件覆写（sentinel 不变）+ 子进程只跑 probe + 临时根退出即清';
+function runProbe(mode: 'serial' | 'workers'): UnitCaseResult[] {
+  const name = 'sentinel 黑盒：外部 env 被无条件覆写（sentinel 不变）+ 子进程只跑 probe + 临时根退出即清'
+    + (mode === 'workers' ? '（默认 worker）' : '');
   try {
-    const sentinelDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-sentinel-'));
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-sentinel-'));
+    const sentinelDir = path.join(testRoot, 'sentinel');
+    const resultsPath = path.join(testRoot, 'reports', 'results.json');
+    fs.mkdirSync(sentinelDir);
     fs.writeFileSync(path.join(sentinelDir, 'sentinel.txt'), 'DO-NOT-TOUCH', 'utf-8');
     const before = hashDir(sentinelDir);
     try {
       const r = spawnSync(
         process.execPath,
-        [TSNODE, '--transpile-only', 'tests/run-unit.ts', '--filter', 'trust-isolation-probe'],
+        [TSNODE, '--transpile-only', 'tests/run-unit.ts', ...(mode === 'serial' ? ['--serial'] : []), '--filter', 'trust-isolation-probe', '--results-out', resultsPath],
         {
           cwd: HARNESS,
           encoding: 'utf-8',
@@ -76,11 +80,28 @@ export function runAll(): UnitCaseResult[] {
       if (fs.existsSync(probeRoot)) {
         throw new Error(`子进程临时 trust 根未被清理：${probeRoot}`);
       }
+      const doc = JSON.parse(fs.readFileSync(resultsPath, 'utf-8'));
+      const suite = doc.suites?.[0];
+      if (doc.mode !== mode || doc.ok !== true || doc.scope?.filter !== 'trust-isolation-probe'
+        || doc.scope.release !== false || doc.scope.caseNameFilter !== null
+        || doc.scope.suiteIds?.join(',') !== 'trust-isolation-probe'
+        || doc.suites?.length !== 1 || suite.id !== 'trust-isolation-probe'
+        || suite.status !== 'completed' || suite.ok !== true || suite.releaseOnly !== false
+        || !suite.results?.length || !suite.results.every((c: UnitCaseResult) => c.ok && typeof c.name === 'string')
+        || ![suite.loadMs, suite.executionMs, suite.totalMs, doc.wallMs].every(v => Number.isFinite(v) && v >= 0)
+        || suite.totalMs < suite.loadMs + suite.executionMs || doc.wallMs < suite.totalMs
+        || !out.includes('最慢套件 Top 20') || !out.includes('整轮墙钟：')) {
+        throw new Error(`${mode} 计时/完整结果不符合契约：${JSON.stringify(doc)}`);
+      }
       return [{ name, ok: true }];
     } finally {
-      fs.rmSync(sentinelDir, { recursive: true, force: true });
+      fs.rmSync(testRoot, { recursive: true, force: true });
     }
   } catch (err) {
     return [{ name, ok: false, error: (err as Error).stack ?? (err as Error).message }];
   }
+}
+
+export function runAll(): UnitCaseResult[] {
+  return [...runProbe('serial'), ...runProbe('workers')];
 }
