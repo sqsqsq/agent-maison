@@ -1123,7 +1123,7 @@ export function runAll(): UnitCaseResult[] {
       assert(text.includes('待指针升版') && text.includes(String(unit.changeUnit.purpose)) && text.includes('安全中间态'), '待升版误丢 CU 自身契约');
       const header = YAML.parse(/^---\n([\s\S]*?)\n---/.exec(text)![1]!);
       assert(header.derived_from.change_units.some((u: BlueprintRecord) => u.change_unit_id === 'ledger-refresh' && u.binding === 'pending' && !u.identity_neutral_digest), '待绑定填了假摘要');
-      const trace = text.slice(text.indexOf('### 需求追溯总表'));
+      const trace = text.slice(text.indexOf('#### 需求追溯总表'));
       assert(trace.includes('ledger-refresh（待升版）'), '待升版 CU 的原始直接引用被误报为无人引用');
       const nodeFs = require('fs') as typeof fs;
       const rename = nodeFs.renameSync;
@@ -1242,15 +1242,15 @@ export function runAll(): UnitCaseResult[] {
       fs.writeFileSync(cu.canonicalPath, YAML.stringify(cu.changeUnit));
       const result = materializeBlueprintReview(root, BLUEPRINT_ID);
       const text = fs.readFileSync(result.path, 'utf8');
-      assert(text.includes('## 10 施工拆分') && text.includes('安全中间态') && text.includes('需求追溯总表'), '缺拆分/追溯');
+      assert(text.includes('### E 施工精确映射') && text.includes('安全中间态') && text.includes('需求追溯总表'), '缺拆分/追溯');
       assert(text.includes('&lt;test&gt;') && text.includes('\\`literal\\`'), 'Markdown 叙述转义失败');
       const links = [...text.matchAll(/\]\(#(design-[a-f0-9]+)\)/g)].map(m => m[1]);
       assert(links.length > 0 && links.every(id => text.includes(`id="${id}"`)), '稳定地址链接没有对应锚点');
-      const traceability = text.slice(text.indexOf('### 需求追溯总表'), text.indexOf('## 3 逻辑视图'));
-      const construction = text.slice(text.indexOf('## 10 施工拆分'), text.indexOf('## 11 风险'));
+      const traceability = text.slice(text.indexOf('#### 需求追溯总表'), text.indexOf('### G 质询、决定与稳定地址'));
+      const construction = text.slice(text.indexOf('### E 施工精确映射'), text.indexOf('### F 需求追溯'));
       assert(source.inputs.units.length > 0 && !traceability.includes('已覆盖') && !construction.includes('已覆盖'), '需求追溯/施工认领冒充覆盖结论');
       const lifecycleCovered = asRecords(source.loaded.blueprint.design_views).flatMap(view => asRecords(view.runtime_data_flows)).some(flow => Object.values(asRecord(flow.lifecycle_coverage) ?? {}).some(item => asRecord(item)?.status === 'covered'));
-      const runtime = text.slice(text.indexOf('## 4 运行时视图'), text.indexOf('## 5 开发视图'));
+      const runtime = text.slice(text.indexOf('#### 运行流与状态明细'), text.indexOf('### C 完整验收'));
       assert(lifecycleCovered && runtime.includes('| 已覆盖 |'), '原生命周期 covered 声明丢失');
     });
     withProject(root => {

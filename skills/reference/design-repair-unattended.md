@@ -27,6 +27,12 @@
 
 施工映射属于 plan 的 Feature contracts.change_unit；缺失、过期或冲突回 plan，不由 B1 删改蓝图旧映射或复制版本化设计节点。
 
+## 评审说明的定向复核
+
+事实修复可能使可选 `review_summary.reader_guide` 的 source_digest 失效。按本次事实变化与 guide.source_refs 定向阅读说明；只有修复简报明确允许相应 guide 位置修改时，才可在**同一授权草稿**内必要改写。公开摘要命令只读取 canonical，不读取修复草稿；框架随后登记的根 provenance（包括 observed_at）也参与摘要，会使发布前摘要失效。当前公开 B1 流程保留原说明摘要，不为盖章扩大允许位置，也不把 canonical 的摘要填进草稿宣称说明已更新。
+
+发布后的 renderer 会标“评审说明需更新”，展示当前事实与完整参考；这不改变原恢复判定、不停止 run。后续由设计 owner 复核已发布 canonical，再按 [P1 摘要指引](app-component-blueprint-workflow.md#摘要渲染与读成品) 记录摘要与读成品。你不写 canonical 文档，框架发布/接受/调和后的自动物化仍是确定性生成，零新增模型调用、不自动写说明或盖摘要，不加独立阅读循环。
+
 ## 之后框架做什么（供理解，不需要你做）
 
 1. 核对你的调用没有改草稿之外的文件、没有改准入与质询结果，草稿只在简报定位的位置与原蓝图不同。

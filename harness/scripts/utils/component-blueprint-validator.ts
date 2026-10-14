@@ -23,6 +23,7 @@ import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { validateBlueprintProviders } from './blueprint-provider-boundary';
 import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
 import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
+import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
 
 export interface ComponentBlueprintValidationContext {
   projectRoot?: string;
@@ -91,7 +92,7 @@ export function validateComponentBlueprintUpstream(
 
 /** 六类可选设计表达的形状诊断；缺失/空数组合法，坏形状也仅 WARN。 */
 export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): BlueprintIssue[] {
-  const out: BlueprintIssue[] = [];
+  const out: BlueprintIssue[] = [...inspectBlueprintReaderGuide(blueprint).diagnostics];
   const string = { type: 'string' };
   const strings = { type: 'array', items: string };
   const rows = (properties: BlueprintRecord): BlueprintRecord => ({ type: 'array', items: { type: 'object', properties, required: Object.keys(properties) } });

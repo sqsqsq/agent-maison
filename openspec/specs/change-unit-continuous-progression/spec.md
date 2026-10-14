@@ -464,11 +464,17 @@ P2 MUST 暴露一个**设计准备子流程**，关闭"首个 canonical CU 由�
 
 > **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/utils/change-unit-provider-boundary.ts`, `harness/scripts/utils/change-unit-progress-loop.ts`, `skills/project/change-unit-progression/SKILL.md`, `skills/project/component-design/SKILL.md`
 
-CU 接受成功、非 busy readiness、B1 发布后 SHALL 刷新人读文档；唯一 reconcileHeldBlueprintRefs MUST 在整批 bumped 成功后持锁刷新，覆盖运行中 reconcilePointerInRun。文档失败 MUST NOT 改变 accepted/readiness/bumped/recovered 或回滚设计。结果 SHALL 汇总内部与外层生成的最终状态和实际写入路径，不把外层未重写误报未交付。
+CU 接受成功、非 busy readiness、B1 发布后 SHALL 刷新人读文档；唯一 reconcileHeldBlueprintRefs MUST 在整批 bumped 成功后持锁刷新，覆盖运行中 reconcilePointerInRun。正文施工拆分 SHALL 从当前有效 CU 原字段生成，精确授权/继承/替代映射留同文档参考；蓝图 guide MUST NOT 反向绑定 CU 身份、修订或集合。自动物化 SHALL 零新增模型调用、不自动写 guide 或盖摘要。B1 agent 只在授权草稿允许位置修改；公开摘要命令只读 canonical，框架随后登记的根 provenance 参与摘要，当前公开流程 SHALL 保留原说明摘要、发布后提示需更新并回退当前事实，由后续 component-design 复核已发布 canonical 再记录摘要，不扩大修复白名单。文档失败或叙述缺口 MUST NOT 改变 accepted/readiness/bumped/recovered、回滚设计或新增 halt reason。结果 SHALL 分别报告文件与说明缺口，汇总最终生成状态与实际写入路径，不把外层未重写误报未交付。
 
 #### Scenario: Stale owner pointer retains the unit contract
 - **WHEN** 蓝图已改而 CU owner 指针待升版
 - **THEN** 文档 SHALL 保留 CU 自身交付、依赖、约束、中间态与阻塞项，派生模块/链接标待升版、合并声明集合标“待指针升版后显示”，摘要不填假值；整批调和后 SHALL 自动刷新为当前绑定
+
+#### Scenario: Explanation editing preserves construction semantics
+
+- **WHEN** 只润色蓝图 review_summary.reader_guide 且 CU 或 Feature 引整份蓝图
+- **THEN** identityNeutralDigest SHALL 仅在蓝图目标入口剔除该精确子树，业务摘要不变；文档精确 SHA/正文 MUST 变化，完整来源戳仍 SHALL 沿既有调和与安全刷新更新身份，不跳过实际消费检查
+- **AND** 改 acceptance/contracts/use_cases/ordered_steps 等真实内容 SHALL 继续改变原摘要并使旧阶段产物过期，任意同名业务键及其它事实 MUST 保留
 
 #### Scenario: Display failure does not halt construction recovery
 - **WHEN** 文档写入失败或单 CU 来源不可解析

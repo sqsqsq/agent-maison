@@ -7,6 +7,7 @@ import { loadCanonicalChangeUnit, parseChangeUnitFeatureId, resolveChangeUnitRef
 import { deriveModifiableModules, relevantArchitectureImpactDecisions } from './change-unit-feature-projection';
 import { ChangeUnitArtifact } from './change-unit-model';
 import { BLUEPRINT_PROJECTION_FILES } from './blueprint-skill-projection';
+import { blueprintWithoutReaderGuide } from './blueprint-reader-guide';
 const IDENTITY_KEYS = ['revision', 'source_fingerprint', 'artifact_sha256'] as const;
 
 /** 窄读取接点：展示使用 canonical 快照；默认解析/相关性与摘要字段集合不变。 */
@@ -53,7 +54,10 @@ function resolveBlueprintRefCached(projectRoot: string, ref: unknown): ReturnTyp
   return resolvedBlueprintRefs.get(key)!;
 }
 function expandBlueprintRef(projectRoot: string, ref: unknown, readers?: IdentityNeutralDigestReaders): unknown {
-  return { ref: withoutIdentity(ref), content: (readers?.blueprint ?? resolveBlueprintRefCached)(projectRoot, ref).target };
+  const target = (readers?.blueprint ?? resolveBlueprintRefCached)(projectRoot, ref).target;
+  const content = asRecord(asRecord(ref)?.target)?.kind === 'blueprint' && asRecord(target)
+    ? blueprintWithoutReaderGuide(target as Record<string, unknown>) : target;
+  return { ref: withoutIdentity(ref), content };
 }
 
 function expandChangeUnitRef(projectRoot: string, ref: unknown, readers?: IdentityNeutralDigestReaders): unknown {

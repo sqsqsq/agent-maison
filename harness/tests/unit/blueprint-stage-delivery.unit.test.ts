@@ -76,7 +76,75 @@ function stagePlan(f: Fixture, authorOwned = false): void {
   write(f, 'use-cases.yaml', { ...(structuredClone(projected.artifacts!['use-cases@1']) as any), ...(authorOwned ? { source: 'plan:ledger-request' } : {}) });
 }
 
+function stageBytesWithoutSourceIdentity(text: string): string {
+  const doc = YAML.parseDocument(text);
+  const ranges: Array<[number, number]> = [];
+  const collect = (map: YAML.YAMLMap, keys: string[]): void => {
+    for (const key of keys) { const value = map.get(key, true); if (YAML.isScalar(value) && value.range) ranges.push([value.range[0], value.range[1]]); }
+  };
+  if (YAML.isMap(doc.contents)) collect(doc.contents, ['source']);
+  YAML.visit(doc, { Map: (_key, map) => {
+    if (map.get('artifact') === 'component-blueprint@1') collect(map, ['revision', 'source_fingerprint', 'artifact_sha256']);
+    if (map.get('artifact') === 'change-unit@1') collect(map, ['revision', 'artifact_sha256']);
+  } });
+  return ranges.sort((a, b) => b[0] - a[0]).reduce((value, [start, end]) => value.slice(0, start) + '<IDENTITY>' + value.slice(end), text);
+}
+
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'reader guide polishing refreshes stamped spec and plan through real reconciliation and consumption', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const contracts = planContracts(f); delete contracts.conventions_applied; write(f, 'contracts.yaml', contracts);
+    const files = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(f.root, f.feature, name));
+    for (const file of files) fs.appendFileSync(file, '\n# stage formatting and approved supplement remain intact\n');
+    freeze(f);
+    const before = files.map(file => fs.readFileSync(file, 'utf8'));
+    const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    bp.review_summary.reader_guide = { sections: [{ section: 'solution', title: '已有设计的解释', prose: '仅补写评审说明。', source_refs: ['/design_views'] }] };
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(bp));
+    const reconciled = reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint');
+    assert.equal(reconciled.bumped.length, 1, JSON.stringify(reconciled));
+    const currentCu = loadCanonicalChangeUnit(f.root, 'ledger-app-blueprint', 'ledger-refresh');
+    const currentBlueprintSha = sha256Bytes(fs.readFileSync(f.blueprintFile));
+    files.forEach((file, index) => {
+      const after = fs.readFileSync(file, 'utf8'); const value = YAML.parse(after);
+      assert.notEqual(after, before[index], 'the real writer must refresh the exact source identity');
+      assert.equal(stageBytesWithoutSourceIdentity(after), stageBytesWithoutSourceIdentity(before[index]), path.basename(file));
+      assert(value.source.endsWith(`:${currentCu.artifactSha256}:${currentBlueprintSha}`), value.source);
+    });
+    for (const [phase, id] of [['spec', 'acceptance'], ['plan', 'contracts'], ['ut', 'use_cases']]) {
+      const actual = resolve(f, phase); const input = actual.inputs!.values[id];
+      assert(input, `${phase}:${id} must be a declared phase input: ${JSON.stringify(actual.report)}`);
+      assert.equal(input.state, 'resolved', JSON.stringify(actual.report));
+      if (input.state !== 'resolved') throw new Error(`${phase}:${id} not resolved`);
+      assert.deepStrictEqual(readBoundInput({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase, track: 'full' }, input.binding), input.value);
+      const spec = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, actual.inputs);
+      if (id === 'acceptance') assert(spec.acceptance?.criteria.length);
+      if (id === 'contracts') assert(spec.contracts?.state_management?.length);
+      if (id === 'use_cases') assert(spec.useCases?.use_cases.length);
+    }
+    assert.equal(YAML.parse(fs.readFileSync(files[1], 'utf8')).conventions_applied, undefined);
+  } },
+  { name: 'reader guide refresh cannot launder a real ordered step change into resolved stage input', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot); write(f, 'contracts.yaml', planContracts(f)); freeze(f);
+    const files = ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].map(name => featureFilePath(f.root, f.feature, name));
+    const before = files.map(file => fs.readFileSync(file));
+    const bp = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    bp.review_summary.reader_guide = { sections: [] };
+    let changed = false;
+    for (const view of bp.design_views) for (const flow of view.runtime_data_flows ?? []) {
+      for (const state of flow.contracts?.state_management ?? []) { state.ordered_steps.push('changed persisted execution ordering'); changed = true; }
+    }
+    assert(changed, 'fixture must change a referenced ordered_steps fact');
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(bp));
+    const reconciled = reconcileChangeUnitBlueprintRefs(f.root, 'ledger-app-blueprint');
+    assert.equal(reconciled.bumped.length, 1, JSON.stringify(reconciled));
+    files.forEach((file, i) => assert(fs.readFileSync(file).equals(before[i]), `${path.basename(file)} real change must preserve stage bytes`));
+    for (const [phase, id, owner] of [['spec', 'acceptance', 'spec'], ['plan', 'contracts', 'plan']]) {
+      const input = resolve(f, phase).inputs!.values[id];
+      assert.equal(input.state, 'invalid', JSON.stringify(input));
+      if (input.state === 'invalid') { assert(input.detail.startsWith(`${owner}:`), input.detail); assert(/stale|过期|来源/.test(input.detail), input.detail); }
+    }
+  } },
   ...['unfrozen author plan', 'plan changed after freeze'].map(mode => ({
     name: `identity reconciliation keeps unproved stage bytes and gives plan ownership: ${mode}`, run(f: Fixture) {
       const consumer = consumerFixture(f);

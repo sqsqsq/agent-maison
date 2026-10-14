@@ -224,7 +224,7 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 设计期 MUST 在将被 CU 引用的 canonical 目标上写入已有 `acceptance`、`contracts`、`use_cases` 结构，保持既有 provenance 权威、类型/版本与检查；spec/plan MUST 直接消费已有 typed 投影，只补本职责未声明的内容。无 ui-spec 依据时，P0 真机条目 MUST 保留 ID、优先级、步骤、预期、分层与 focus，MUST NOT 编造 linked_flow、checkpoint、屏幕流程或元素 ID；spec 得到真实 UI 依据后 MAY 只补未声明键，MUST 保留原权威预期并通过原对齐与 P0 检查。缺 typed 内容的存量蓝图 MUST 如实显示“设计期未写入，将由 spec/plan 补”，MUST NOT 因本批缺字段新增机器门禁或强制迁移合法手写产物。
 
-写作 SHALL 用 review_summary.title 表达可读需求标题，summary 说明本次改变，概述末用已有叙述串起场景、模块、运行、开发与部署方案；真缺叙述 SHALL 在设计期补既有 review_summary，不新增字段或由 renderer 造事实。通用决策获准选择写 conclusion，rationale 只解释原因，特定 kind 保留自身结论字段。term.value.meaning SHALL 由 glossary 已有说明结合需求语境提炼，sample_usage SHALL 仅作示例消歧而非机械当定义；模型字段 description SHALL 依已消费来源写入。App lens 与质询问题/结论 SHALL 使用项目语言，保留 API/类型/路径原名。
+写作 SHALL 用 review_summary.title 表达可读需求标题，summary 说明本次改变；原字段已可读 SHALL 直接使用，仅改表达 SHALL 优先使用唯一可选 review_summary.reader_guide，MUST NOT 强制各小节另建 guide、复制权威明细或由 renderer 造事实。修改原字段仍属于设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。通用决策获准选择写 conclusion，rationale 只解释原因，特定 kind 保留自身结论字段。term.value.meaning SHALL 由 glossary 已有说明结合需求语境提炼，sample_usage SHALL 仅作示例消歧而非机械当定义；模型字段 description SHALL 依已消费来源写入。App lens 与质询问题/结论 SHALL 使用项目语言，保留 API/类型/路径原名。
 
 设计 owner、App lens 与独立质询 SHALL 在原问题/scope 内逐项核真实设计深度：根 contracts[].table_schema 的表/列/约束结合 data_domains.security 与既有叙述说明实际库名/版本、安全级别/是否加密、主键唯一、升级和敏感字段；真实依赖失败与用户中断先核已有 boundaries/failure_recovery、真实缺失才补，mock SHALL NOT 编外部故障/新业务；约定错误、幂等键与范围，以及涉及跨会话重复卡时的策略/主键 SHALL 明确；现有 quality_attributes SHALL 对兼容、安全隐私、UX 深浅色/无障碍、打点、性能给实际结论，不涉及给理由，不凑量化阈值。此为写作/质询要求，MUST NOT 新增数据库配置字段、requiredQuestioningScopes 项或机器阻断，MUST NOT 降级既有 typed/来源/授权检查。当前时序效果由用户在原工作区定向补设计后实读，保留其它有效设计；隔离重渲染不证明写作充分。
 
@@ -247,9 +247,9 @@ flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MU
 
 完整调用 SHALL 在 runtime flow 承载的 contracts.state_management[].ordered_steps（string[]）逐条写明 caller/callee/操作、参数/结果、等待/回调、条件、失败与完成返回，typed components/interfaces/data_models 与根 operation/DTO/errors/idempotency/table_schema、flow 恢复及用例 SHALL 提供同源细节。设计 agent SHALL 同次生成已有 generated_graphs sequenceDiagram，既有 runtime/flow 独立质询 SHALL 逐段核图文调用者、参数、返回、分支及完成/导航/消费者一致；语法通过 MUST NOT 代替语义核对。保留 flow.ordered_steps 时 SHALL 同次同步；renderer MUST NOT 从 user_sequence、expected_port_calls、方法同名或目录猜 caller/交错关系。缺图 MUST NOT 新增门禁，也 MUST NOT 声称此项人读已完整。
 
-文档 MUST 只读取 canonical 蓝图/CU，按目标展示 typed 细节，逐 CU 与生产投影共用纯目标选取/合并逻辑保留实际继承范围及冲突。验收展示身份 SHALL 为“来源目标 + 条目编号”，不同目标各自 AC-1 MUST 保留而非裸编号全局去重；完整 AC/BD/NFR 只在文档第 9 章、完整 contracts.files 清单只在开发视图一次，其余编号/链接 SHALL 保留 CU 精确范围。“是否通过交接校验见 readiness”等机制声明 SHALL 文首阅读说明集中一次，可读链接标签优先已有 label/name/含义、缺时短 ID，锚点/链接目标 MUST 保留，原内部地址 MAY 留追溯附录。框架状态枚举 SHALL 用中文，API/类型/自由业务状态名 MAY 保原名，不凭名称补业务结论。MUST NOT 读取 Feature use-cases.yaml、需求原文或外部 catalog 反向设计、运行完整投影门或按 predicate/touches 估算集合。待升版 CU MUST 保留自身施工契约，合并集合标“待指针升版后显示”；canonical 无法独立确定架构相关集合时 MAY 省略中立摘要并保留精确绑定，不改原摘要算法、不新增来源缺口、不宣称 carry-forward。
+文档 MUST 只读取 canonical 蓝图/CU，逐 CU 与生产投影共用纯目标选取/合并逻辑保留实际继承范围及冲突。正文 SHALL 按方案摘要、背景/目标/边界、术语、用户旅程与界面、整体方案、关键流程、数据与存储、关键取舍、失败与恢复、质量与安全、施工与上线、验收、待补问题组织，MAY 省略无意义空小节；4+1 SHALL 继续建模/质询，并在参考给章节对照。完整字段/类型、接口/存储、AC/BD/NFR、用例分支、施工精确映射、需求追溯及质询/稳定地址 SHALL 留同文档参考。验收身份 SHALL 为“来源目标 + 条目编号”，不同目标各自 AC-1 MUST 保留；正文验收主题与 CU 编号/链接 SHALL 保留精确范围。身份/准入/来源/机制说明 SHALL 集中参考入口，说明缺失/过期提示 MUST 在文首可见。可读标签优先已有 label/name/含义、缺时短 ID，锚点/链接目标 MUST 保留。框架状态枚举 SHALL 用中文，API/类型/自由业务状态名 MAY 保原名，不凭名称补业务结论。MUST NOT 读取 Feature use-cases.yaml、需求原文或外部 catalog 反向设计、运行完整投影门或按 predicate/touches 估算集合。待升版 CU MUST 保留自身施工契约，合并集合标“待指针升版后显示”；canonical 无法独立确定架构相关集合时 MAY 省略中立摘要并保留精确绑定，不新增来源缺口、不宣称 carry-forward。
 
-正文 MUST 用专用字段/枚举/接口/步骤/分支/异常/取舍/验收表展示既有细节，不递归 dump 原始对象。概述跨视图图 SHALL 只用 canonical relations；运行阶段节点 SHALL 取 state_model.phases，边只各 branch.expected_phase_seq 相邻项，按起止对去重保留全部分支来源，首分支仅具名作基准、不得假定 Success 包含完成链；模块依赖图 SHALL 只取 contracts 根级 module_dependencies，声明模块补层级/变化、其它仅名称，不合成冲突并集。三类图 SHALL 复用 flowchart/parser、逐边追真实来源，MUST NOT 按 phases 排列造边或把模块/状态名伪装稳定地址。结构图仍限显式关系、完整地址区分端点；无效图不展示且披露原因，时序图诊断级别按下述 Graph validation。
+正文 SHALL 优先放有效作者说明、按同位置配当前事实及图像，MUST NOT 重复 summary。技术参考 MUST 用已有专用字段/枚举/接口/步骤/分支/异常/验收格式保留精确内容，不递归 dump 原始对象或调用模型重造明细。目录树 SHALL 合并公共前缀并可还原所有精确 files 路径；用途仅取已有组件说明或链接接口明细，MUST NOT 从目录推新责任或扩授权。跨视图图 SHALL 只用 canonical relations；运行阶段节点 SHALL 取 state_model.phases，边只各 branch.expected_phase_seq 相邻项，按起止对去重保留全部分支来源，首分支仅具名作基准、不得假定 Success 包含完成链；模块依赖图 SHALL 只取 contracts 根级 module_dependencies，声明模块补层级/变化、其它仅名称，不合成冲突并集。三类图 SHALL 复用 flowchart/parser、逐边追真实来源，MUST NOT 按 phases 排列造边或把模块/状态名伪装稳定地址。结构图仍限显式关系、完整地址区分端点；有效图 SHALL 就近呈现且同图不重复，无效图不展示且披露原因，时序图诊断级别按下述 Graph validation。
 
 同源 DTO/模型 SHALL 核字段/语义/约束/来源后复用，required/nullable 独立、差异保留，MUST NOT 同名判等；UI、完全相同恢复、验收全文与完整 files SHALL 只主责处完整展示、其它链接，保留每 CU 精确范围和多源关联，MUST NOT 用 touches 代 files 或全局删同值列。指定说明列仅至少三行内容/链接全同时 MAY 提表前。页面清单 SHALL 取 components.kind/useCases.ui_bindings，集中截图每张一次、其它链接；journey_steps 去向文本保留，MUST NOT 推导航路由。renderer 只输出登记图片引用，外部图片字节 MUST NOT 成为设计/绑定输入。隔离 A SHALL 保 canonical/CU/图片原样、只验展示；B SHALL 另存明确补 ordered_steps/派生图的设计变体验证生成/质询/实际预览，不混入 A、不声称原样无数据凭空四图。宿主用户复检 SHALL 定向补时序、沿原质询/修订重建文档/readiness，保留其余有效设计；设计专项不代替端到端施工。readiness/run/完成状态 MUST 独立。
 
@@ -269,6 +269,41 @@ flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MU
 
 > **Enforced by:** skills/project/component-design/SKILL.md、skills/reference/app-component-blueprint-workflow.md、harness/scripts/check-component-blueprint.ts、harness/scripts/utils/blueprint-review-projection.ts
 
+### Requirement: Reader-oriented narrative remains a non-authoritative explanation
+
+原设计 owner SHALL 在同一设计任务先完成事实与图，再写/复核说明并读渲染成品；仅补说明 SHALL 从已有 canonical 与登记材料继续，MUST NOT 为此重做产品源码发现或启动施工。可选 review_summary.reader_guide SHALL 包含 source_digest 与 sections；每节包含 section/title/prose/source_refs，MAY 包含 graph_ids。section SHALL 取 summary/background/terms/journey/solution/flows/data/decisions/recovery/quality/delivery/acceptance/questions，同位置按作者顺序讲述。原 summary 与 guide.summary MUST NOT 重复呈现。source_refs SHALL 是蓝图内 JSON Pointer，验收主题指完整条目位置，以实际来源目标加编号建立链接；graph_ids SHALL 仅引用已有 generated_graphs。prose SHALL 用段落/列表/代码名称，MUST NOT 维护另一套权威表、截图或 Mermaid；实际 Markdown 标题块 SHALL 降为加粗段落并给 WARN，代码块内 # MUST 保留。
+
+写作 SHALL 一图一事；复杂调用、多角色或深嵌套分支看不清时 SHALL 按子问题拆图与说明，主路和失败/恢复分开，保留真实调用返回、等待、分叉及段间交接，完整调用事实留原 ordered_steps 与参考。每段 SHALL 先导读再用既有 graph_ids 就近放图，generated_graphs/derived_results 继续为唯一派生图承载，不设数量硬门。作者 SHALL 在正常预览宽度实读，MUST NOT 把放大、图语法通过或生成成功当作可读验收。
+
+首屏 SHALL 向不了解项目代码的评审人说明现状、变化、用户结果与范围；产品非目标与本次只执行设计的阶段状态 SHALL 分开，摘要施工只链接第 11 节。关键取舍 SHALL 逐问题讲选择、理由、被否方案与代价，不以决定编号串替代解释。恢复速查 SHALL 用 guide.prose 的 Markdown 短表，每行对应实际 BD 编号和 source_refs，解释发生什么、用户看到什么、数据是否保存、如何继续；MUST NOT 改精确 BD 预期或补造行为，素材不足如实未定。
+
+角色正文 SHALL 由设计 agent 从已有职责/状态/调用事实归纳，中文角色与消息意图在前，类名/方法必要时括注、完整方法目录留参考，目录 MUST NOT 冒充角色说明。旅程总览和角色关系图 SHALL 由作者按明确旅程顺序、原调用或责任关系写入既有 generated_graphs 并以 graph_ids 就近放置，MUST NOT 猜连线或混淆流转/调用/归属含义。组件职责 SHALL 在主责小节解释一次；界面有登记截图时 SHALL 各写 journey 小节，并以 source_refs 精确引用对应图片登记单项或只含该图路径的来源对象，图紧随说明、每图一次，MUST NOT 从名称猜图或新增图片字段。正文文件落点 SHALL 用单一目录树，CU 精确范围仍在参考可查；各节来源 SHALL 仅关联本节说法，正文设计依据聚合到该节完整来源参考入口，避免多个同名链接堆叠。
+
+source_digest SHALL 以当前解析蓝图 stableStringify 与 SHA256 计算，只删除根 revision、derived_results 和 review_summary 内 reader_guide/authored_by/questioning/admission/reconciliation；其余事实、generated_graphs 实际内容、数组顺序 MUST 保留，MUST NOT 递归按同名键删除。独立只读 --reader-guide-digest SHALL 返回当前值（JSON 为 reader_guide_source_digest/canonical_path/artifact_sha256），MUST NOT 写文件、运行完整 validator、盖摘要或声称作者已读。作者完成必要改写并确认说明仍适用后 SHALL 记录摘要，再 --write-review 并实际打开成品。renderer/校验/自动物化 MUST NOT 代作者更新摘要。
+
+无 guide SHALL 展示当前字段及完整参考、文首提示“尚未补写评审说明”；事实变化或摘要缺失/错误 SHALL 不展示旧解释、回退当前事实并提示“评审说明需更新”。个别坏小节/引用只诊断并跳过受影响部分，图仍沿自身 freshness。所有展示形状/引用诊断 SHALL 沿 WARN，MUST NOT 改 schema required/type、admission、readiness、run 或原操作结果。文档“当前”只证明忠实投影，MUST NOT 代替说明完整或阅读通过。
+
+guide MUST NOT 固化 CU 数量/ID/修订/依赖；正文施工 SHALL 按当前有效 CU 原 purpose/目标/touches/requires/安全中间态展示。目的、交付和安全中间态 SHALL 在原 purpose、provides/target_predicates 的 description、safe_intermediate_state.description 用完整句子说明；纯润色保持职责含义、提供承诺、依赖、写集与身份，并沿现有未完成资格和 consumer 内容修订 API，MUST NOT 直接改 canonical 或为润色修订已完成/退役 CU。新建/修订/替代 CU SHALL 自动刷新施工段和参考，MUST NOT 要求回改蓝图说明。真实新事实 SHALL 先写原承载，MUST NOT 仅写 guide 或由 renderer 补造未知。
+
+正式交付 SHALL 将一次“先只读首屏复述现状/变化/结果/范围，再读正文答八问，最后定向核源”合并到已有独立质询，随后一轮定向修订，问题沿既有质询输出/报告记录；读者 SHALL 以不了解项目代码的评审人视角阅读，不靠框架经验补全正文。八问 SHALL 覆盖十分钟讲清方案、选择/被否方案、调用责任、存储安全/账号隔离、失败恢复、施工/安全中间态、文件用途、原验收编号；十分钟不是计时门禁。非关键表达缺口 SHALL 如实报告后交接，MUST NOT 新增评分/次数状态、签章、用户签字或无限重试；事实/授权错误仍归原责任方。纯 guide 润色 MUST NOT 要求重做原设计质询。
+
+发布件指引 SHALL 教完整因果、首次角色解释、已有导航规则的清栈前后例子、S4 与加密分开、验收主题原编号；MUST NOT 放本次宿主目标样稿或业务栈答案。通用好坏示例 SHALL 标明仅示例，不新增业务要求。接受 CU/readiness/指针调和/B1 发布/只读与发布校验 SHALL 零新增模型调用，不自动写说明或盖摘要。B1 agent SHALL 仅改授权草稿，MAY 按事实变化和 source_refs 定向阅读说明，MUST NOT 扩权补盖。公开摘要命令只读 canonical，框架随后登记的根 provenance 参与摘要；当前公开 B1 流程 SHALL 保留原摘要、发布后提示说明需更新并回退当前事实，由后续 component-design 复核已发布 canonical 再记录摘要，MUST NOT 因观感停止 run。
+
+#### Scenario: Draft facts change under the same revision
+
+- **WHEN** 草稿同 revision 修改契约或流程但 guide 仍带旧摘要
+- **THEN** 旧说明 SHALL 回退为当前事实与参考，文首提示需更新；原 readiness/准入结果 MUST NOT 因说明失效改变
+
+#### Scenario: Identity or questioning changes without design changes
+
+- **WHEN** 只升 revision 或只更新 questioning/admission/reconciliation 记录
+- **THEN** guide SHALL 无需重写；图 freshness SHALL 仍独立按既有机制判定，自动刷新 MUST NOT 调模型
+
+#### Scenario: Invalid local narrative does not damage valid content
+
+- **WHEN** guide 有坏引用/图引用或 prose 标题，但其它说明有效
+- **THEN** renderer SHALL 保留有效内容并局部说明缺口，实际标题降级而代码块 # 保留；机器能核引用与集合，MUST NOT 宣称文意无新事实
+
 ### Requirement: Blueprint construction preparation preserves authority
 
 validateChangeUnitFeatureProjection 的 designOnly SHALL 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors；合法组件索引与 typed UI 设计无 change_unit SHALL 可进入真实设计 readiness。plan 及后续组件映射检查 SHALL 完整保留，组件选型设计原检查不变，不新增设计期替代门。
@@ -277,7 +312,7 @@ Blueprint projection SHALL use canonical CU design references and existing revis
 
 Projection and the review document SHALL share one target selection and content merge function. Selecting a target SHALL inherit its whole typed content. Arrays SHALL merge by the existing projection row identity, deduplicating identical content and rejecting conflicting content with authority_content_conflict. Object-valued keys SHALL only accept identical complete declarations and SHALL NOT merge per key. Shared targets SHALL contain only content all referencing units should inherit; exclusive acceptance, files and use cases SHALL belong to targets referenced only by their unit. Stable design nodes SHALL NOT be copied or versioned to carry a revised or replacement CU mapping. Predicates and touches SHALL NOT filter inherited content or expand authorization. Legitimate sequential writes to the same file SHALL NOT introduce a new overlap gate.
 
-Design readiness SHALL reuse canonical-only read-only projection checks for all non-retired constructable units, including completed units, without materializing artifacts. Feature use-cases SHALL NOT reverse-validate canonical authority; existing definition gaps and plan alignment SHALL return unaligned stage content to plan. The removed pure mode SHALL NOT be reintroduced. Each declared content kind SHALL be checked even when another is absent. Absent content SHALL identify the existing spec/plan responsibility without a new missing-field gate; declared invalid canonical structure, authority, design write sets or conflicts SHALL reuse existing reasons and return not-ready. The review document SHALL only show canonical declarations and merge conflicts, with handoff validation explained once in the opening reading note.
+Design readiness SHALL reuse canonical-only read-only projection checks for all non-retired constructable units, including completed units, without materializing artifacts. Feature use-cases SHALL NOT reverse-validate canonical authority; existing definition gaps and plan alignment SHALL return unaligned stage content to plan. The removed pure mode SHALL NOT be reintroduced. Each declared content kind SHALL be checked even when another is absent. Absent content SHALL identify the existing spec/plan responsibility without a new missing-field gate; declared invalid canonical structure, authority, design write sets or conflicts SHALL reuse existing reasons and return not-ready. The review document SHALL only show canonical declarations, valid explanatory narrative and merge conflicts, with identity, handoff validation and source mechanisms explained once at the reference entrance and narrative freshness warnings visible at the opening.
 
 Normal handoff SHALL NOT materialize Feature acceptance/contracts/use-cases files; spec and plan SHALL consume derived inputs and write their own outputs. Explicit materialization remains a current projection export, not an unpublished legacy-CU migration path. Source-stamped files SHALL permit non-conflicting stage supplementation under the same authoritative alignment used by handwritten content. Refresh SHALL only update source/reference identity when unchanged design and CU contract content is provable, preserving business and supplementary bytes; real content changes or unavailable equivalence SHALL retain that Feature's old files and return to the responsible stage without merging or overwriting, while legal canonical pointers and sibling units continue. Canonical invalidity and real I/O/CAS failures SHALL retain existing transactional failure behavior. Materialization MUST validate the complete candidate and sources before writing through existing artifact paths and MUST reject conflicts with existing decisions. Equivalent files SHALL not be rewritten; valid handwritten files SHALL not be silently migrated or overwritten. Source stamps, normalized content and canonical CU bindings SHALL remain verifiable through the same existing path.
 
@@ -537,12 +572,22 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 
 完整时序 SHALL 复用 generated_graphs 的 graph_id/format/source_view_id/content/node_refs/relation_refs，format=mermaid、source_view_id=runtime。node_refs SHALL 指真实 flow/参与对象承载地址，可多角色共用目标；数据库指已有数据节点/根存储契约，不造 table: 地址。relation_refs MAY 为空，MUST NOT 为每箭头创建顶层 relation/closure 义务。图 SHALL 在既有 derived_results 以同 graph_id 对应 result_id，沿 input_revision/source_fingerprint/decision_fingerprint/status 与 evaluateDerivedConclusionFreshness；事实变化 SHALL 同次重生成，MUST NOT 仅换来源戳。renderer 按 flow 引用原样展示，缺对应结果或 stale 的新时序图 SHALL 原位提示重建、不展示、不改变 readiness；旧 flowchart 不新增迁移门槛。不新增 sequence_diagrams/interactions 字段/schema、图权威文件、hash/签名/状态或自动语义比较器。
 
-原 parser SHALL 只扩 sequenceDiagram 最小子集：participant/actor（可带 as 标签）、->>、-->>、Note over、alt/else/end、空行、%% 注释；核重复声明、消息/注记端点、块配对及原地址。超子集/坏端点/块/地址等时序图自身问题 MUST 全部 WARN，renderer 在对应流程说明原因并不展示该图，MUST NOT 经 sourceGaps、投影 invalid 或其它汇总阻断 admission/readiness。flowchart 原级别 MUST 保持，真正 canonical/契约/来源缺陷仍经原门。确需并发而子集不足 SHALL 保留步骤并披露，不假画串行；不扩 activation/loop/par/HTML/include/主题。
+原 parser SHALL 只扩 sequenceDiagram 最小子集：participant/actor（可带 as 标签）、->>、-->>、Note over、alt/else/end、空行、%% 注释；核重复声明、消息/注记端点、块配对及原地址。flowchart 当前子集 SHALL 仅支持 flowchart/graph 方向声明、ASCII id、`id["标签"]`、`-->`、`-->|标签|`，不支持 `{}`、subgraph 或注释。超子集/坏端点/块/地址等时序图自身问题及 relation_refs 缺省或空数组的作者展示图问题 SHALL 全部 WARN，renderer 在对应流程或 graph_ids 放置点说明原因且不展示该图，MUST NOT 经 sourceGaps、投影 invalid 或其它汇总阻断 admission/readiness。声明 relation_refs 的关系结构图 MUST 保持原 BLOCKER；真正关系/canonical/契约/来源缺陷仍经原门。确需并发而时序子集不足 SHALL 保留步骤并披露，不假画串行；不扩 activation/loop/par/HTML/include/主题。
 
 #### Scenario: A malformed sequence diagram does not block valid design
 
 - **WHEN** 其它 canonical 设计有效，时序图超出子集、引用未知参与者、alt 未闭合或 node_refs 地址错误
-- **THEN** 图自身诊断 SHALL 为 WARN，原流程说明且不展示该图，真实 admission/readiness 结果 SHALL 不受影响；坏 flowchart SHALL 保持原级别
+- **THEN** 图自身诊断 SHALL 为 WARN，原流程说明且不展示该图，真实 admission/readiness 结果 SHALL 不受影响
+
+#### Scenario: A malformed authored overview without relation references does not block valid design
+
+- **WHEN** 其它 canonical 设计有效，作者展示图的 relation_refs 缺省或为空，图使用不支持的 `{}` 判断或有坏端点/地址
+- **THEN** 图自身诊断 SHALL 为 WARN，renderer SHALL 在 graph_ids 原位置说明且不展示该图，其它内容保留，真实 admission/readiness SHALL 不受影响
+
+#### Scenario: A malformed relationship structure retains its blocker
+
+- **WHEN** 同样损坏的图声明了非空 relation_refs
+- **THEN** 图自身诊断 SHALL 保持原 BLOCKER，关系事实检查 MUST NOT 降级
 
 #### Scenario: Sequence drawing follows current authored calls
 

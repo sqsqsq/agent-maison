@@ -4,7 +4,13 @@
 
 ## 3.1.0：蓝图人读设计文档默认交付与修订同步
 
-默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @6），按 4+1 展示需求/旅程、模型与接口、运行顺序/分支/恢复、开发落点、适用部署、取舍、质量、验收及 canonical CU 拆分。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿也能生成并如实标示准入；默认 checker 只读输出状态。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
+默认设计交接包含蓝图同目录 `component-blueprint.review.md`（格式 @8），正文按评审问题讲方案，4+1 继续用于建模/质询并在同文档参考对照。业务施工拆分留正文，精确字段、接口、存储、验收、分支、文件授权映射及追溯留参考。旧投影或缺失文档执行 `cd framework/harness` 后运行 `npm run check:component-blueprint -- --project-root <宿主根> --blueprint <id> --write-review` 即可重建，无需改 canonical revision。草稿显示真实准入与缺口；默认 checker 只读输出文档与 reader_guide 诊断。蓝图/CU 内容修改后本次结束前重建，接受、readiness、整批持锁调和及 B1 自动刷新；文档故障不回滚设计或改变业务判定。宿主无需另拼 CU 附件，可选外部归档仍独立。
+
+原字段已可读就直接用，仅改表达优先可选 `review_summary.reader_guide`，不强制每节新建 guide；修改原字段仍是设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。来源引用/图位置与写法见 [P1 写作指引](skills/reference/app-component-blueprint-workflow.md#按评审问题写说明)。作者复核后运行独立只读 `--reader-guide-digest`，记录 source_digest，再渲染并实际读成品；正式交付独立读者先只读首屏复述现状、变化、结果与范围，再做一次正文八问阅读与一轮定向修订。产品非目标与本次只执行设计的阶段状态分开，关键取舍逐问题讲选择、理由与代价，摘要施工只链接第 11 节。恢复速查用 guide.prose 的 Markdown 短表，每行带实际 BD 编号和 source_refs，解释发生什么、用户看到什么、数据是否保存、如何继续，不改精确预期或补造行为。无 guide 或摘要失效时文首提示并回退当前事实，不加 admission/readiness/运行门禁。生成器不代写、不盖摘要，自动刷新增加模型调用为 0；B1 只改授权草稿，公开摘要命令只读 canonical，框架后续登记的根 provenance 参与摘要。当前 B1 流程保留原摘要、发布后提示需更新，由后续 component-design 复核已发布 canonical 再记录摘要，不扩草稿授权或停止 run。
+
+写作者按一图一事拆复杂调用，主路与失败/恢复分别讲，保留返回和段间交接；图前导读并用现有 graph_ids 就近编排，正常预览宽度实读，不以放大或语法通过替代可读验收。界面各写 journey 小节并精确引用对应图片登记单项，角色从已有职责/调用事实解释、类名作对照、方法目录留参考；职责只在主责处说明，正文文件落点只用一份目录树，CU 精确范围仍可查。各节只引用相关来源，设计依据聚合到一个完整参考入口。这些是写作与编排要求，不新增图规模硬门、字段或协议。
+
+纯 reader_guide 润色只从蓝图目标的 CU/Feature 业务摘要排除该精确子树，文档精确 SHA 与内容仍变化。已有带戳 spec/plan 沿原调和与安全刷新更新来源身份、保留正文与合法补充字节，完整等价依据不足回责任阶段；流程/契约/验收/ordered_steps 真变化不按润色放行。仅补说明从现有 canonical 继续，不重做源码发现、不启动施工。
 
 新需求在设计期给可引用目标写入已有 acceptance/contracts/use_cases，spec/plan 直接消费 typed 投影，只补未声明的本职责内容，叙述文件按 required_outputs 产出。引用目标会整体继承内容：共享目标只放所有引用 CU 都承担的验收/写集/用例，专属验收/files/用例放独占目标；整个 contracts.change_unit 归 plan 在 Feature 生成；数组按原行身份合并，对象只接受完全相等内容，不逐键拼接。无 ui-spec 依据的 P0 真机验收不编 UI 流程/检查点，spec 取得真实依据后只补缺键，保留原权威预期与现有门禁。存量合法手写产物不强制迁移或静默覆盖。
 
@@ -16,19 +22,21 @@ SpecLoader 只在本阶段 `required_outputs` 声明的文件上优先读实体�
 
 同一未完成交付的未退役 CU，仅无运行或已停住时支持 consumer 同 ID 内容修订，保留 Feature/目录、框架 revision +1；running/锁竞争 busy，普通再接受仍拒绝覆盖。曾完成现为 INCOMPLETE、成功终局缺投影、损坏记录或退役前身不能走未完成修订；原义务补证据沿原 successor，完成后新工作与拆分/合并/迁移用新 CU。修订后旧业务产物保留，通过既有 cu:feature-binding/合同 binding 缺口回 plan 恢复，保留历史、出生 manifest 与累计预算。
 
+CU 目的、交付与安全中间态在原字段写完整句子，保持职责含义、依赖、写集与身份；已接受 CU 的文字润色也走上述资格与既有 consumer API，不直改 canonical、不写入蓝图 guide。当前没有修订 CLI，既有 `reviseChangeUnitContent` 的临候选与调用示例见[蓝图设计输入](docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)，不能用 `--accept-candidates` 覆盖已有单元。
+
 停住的 HALTED/DEFERRED run 只有出生时所绑 canonical CU hash 已变化、且存在原 binding 缺口时，才沿既有 successor 接回 plan；contracts artifact 冻结绑定始终登记实际 canonical CU 依赖。不根据 contracts 内的引用猜出生 hash，不改出生 manifest；普通映射错误和已完成 holder 不据此当作新 CU 内容修订。
 
 蓝图/CU 能力此前未发布；本节是 3.1.0 新能力说明，不提供未发布 CU 旧冻结格式的迁移兼容。3.0.0 通用 Feature/requirement/路径恢复及 derive.codebase 已发布输入的顺序兼容保持。
 
 背景/目标/范围、被否方案、术语含义、旅程、部署参与方/协同、质量/数据生命周期六类表达仍可选，坏形状只 WARN，蓝图 schema 不变。真正缺失每节集中一行，明确未知/不适用分开；有值不能假报“未记录”，false/0 保留，不产空表/整空列，陌生业务键只展一层而非递归 dump。模型字段可选 description/source_ref 保持透传，不授予写权限。文档只读取 canonical 蓝图/CU；readiness 同样检查 canonical 内容，absent 列补设计责任，invalid 按原原因 not-ready。阶段 use-cases 未对齐由原定义缺口/plan 对齐门处理，不反校验蓝图；已删除 pure 模式。
 
-人读交付保留原 4+1 顺序；三类确定性图分别来自 canonical relations（概述）、各分支 expected_phase_seq 相邻项（阶段）和 contracts 根级 module_dependencies（模块）。阶段按起止对去重保留全部分支来源，首分支只具名作展示基准，不假定到 Success 已含完成；模块图保留真实声明与未知依赖模块、不合成冲突并集。复用 flowchart/parser，不从 phases 排列造边。页面清单、集中截图及 journey_steps 完成后去向表不推路由；每张登记图片一次，renderer 不读外部图片字节作新设计/绑定输入。
+正文不再固定 4+1 顺序。三类确定性图仍分别来自 canonical relations、各分支 expected_phase_seq 相邻项及 contracts 根级 module_dependencies。阶段按起止对去重保留全部分支来源，首分支只具名作展示基准，不假定到 Success 已含完成；模块图保留真实声明与未知依赖模块、不合成冲突并集。复用 flowchart/parser，不从 phases 排列造边。页面清单、集中截图及 journey_steps 完成后去向表不推路由；每张登记图片一次，renderer 不读外部图片字节作新设计/绑定输入。
 
 完整调用在设计期写入 flow contracts.state_management[].ordered_steps（仍为 string[]）：页面→业务对象→Repository→实际 helper/数据库，逐条明确 caller/callee、参数/结果、等待/回调、关键失败和完成/导航/消费者，typed 接口与根存储契约同源。设计 agent 同次生成既有 generated_graphs sequenceDiagram，原 runtime 独立质询核图文一致；graph_id 对应 derived_results.result_id，复用原 revision/指纹/状态，事实变化按原修订重生成。renderer 只校验展示，不从 user_sequence/expected_port_calls 猜调用者，不新建交互字段/schema/独立图真源或每箭头顶层 relation。
 
-支持的时序语法及短例见 [P1 时序写作](skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。时序图自身超子集/端点/块/坏地址均 WARN，原流程说明原因且不展示、不影响 admission/readiness；flowchart 原级别不变，真实 canonical/契约/来源检查不削弱。缺派生结果或 stale 的时序图提示重建、不展示；缺图不加门也不证明人读完整。根 table_schema 同时读取旧单表及库级 tables[]，保留库名/版本/安全/加密、列 description、主键、约束、升级与来源，约定见[蓝图设计输入](docs/concepts/blueprint-design-inputs.md#存储内容约定)。designOnly 不检查未来 plan.design_ref_mappings 所支撑的 componentProjectionErrors，plan 及后续完整保留原组件映射门。
+旅程总览与角色关系图由作者按明确旅程顺序及原调用/责任事实写入 generated_graphs，用 graph_ids 就近；中文角色与消息意图在前，类名/方法必要时括注，不猜连线。flowchart 子集仅含 flowchart/graph 方向声明、ASCII id、`id["标签"]`、`-->`、`-->|标签|`，无 `{}`、subgraph 或注释。支持的时序语法及短例见 [P1 图写作](skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。时序图及 relation_refs 缺省/空数组的作者展示图自身超子集/端点/块/坏地址只 WARN，原流程/graph_ids 位置说明原因且不展示、不影响 admission/readiness；有 relation_refs 的关系结构图仍 BLOCKER，真实关系/canonical/契约/来源检查不削弱。缺派生结果或 stale 的时序图提示重建、不展示；缺图不加门也不证明人读完整。根 table_schema 同时读取旧单表及库级 tables[]，保留库名/版本/安全/加密、列 description、主键、约束、升级与来源，约定见[蓝图设计输入](docs/concepts/blueprint-design-inputs.md#存储内容约定)。designOnly 不检查未来 plan.design_ref_mappings 所支撑的 componentProjectionErrors，plan 及后续完整保留原组件映射门。
 
-完整 AC/BD/NFR 仅文档第 9 章，展示身份为来源目标加编号，两个目标各自 AC-1 保留；完整 files 清单仅开发视图一次，CU 链接保留实际范围。正文标签使用已有可读名称/短 ID，框架状态中文化，锚点/链接目标保留；机制声明文首集中一次，原内部地址可留追溯附录，不改 API/类型/自由业务状态语义。
+完整 AC/BD/NFR 与 files、施工精确映射在同文档参考只完整展示一次，正文验收主题与 CU 用来源限定编号/链接保留实际范围；两个目标各自 AC-1 保留。正文标签使用已有可读名称/短 ID，框架状态中文化，锚点/链接目标保留；身份/准入/来源/机制说明集中参考入口，说明缺失/过期提示在文首，不改 API/类型/自由业务状态语义。
 
 新设计沿现有 [P1 写作问题](skills/reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 补深：术语 meaning 由 glossary 说明结合需求提炼，sample_usage 仅作消歧；表级契约与 data_domains.security/既有叙述说明库名/版本、安全/加密、主键唯一、升级与敏感字段。真实失败/中断先核已有 boundaries/failure_recovery，再补确实缺失项，不给 mock 编外部故障；错误/幂等键及涉及跨会话重复卡时的策略/主键明确。quality_attributes 对兼容、安全隐私、UX 深浅色/无障碍、打点、性能给实际结论，不涉及给理由、不凑阈值；App lens/质询也用项目语言。这些是现有写作与质询深化，不增加机器字段/门禁、不削弱原 typed/来源/授权检查；重建旧文档不会自动补缺失设计，真实效果仍需宿主实读。
 

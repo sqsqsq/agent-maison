@@ -28,6 +28,7 @@ description: Create or continue a component design from the user's request and e
 - 已有草稿未 admitted：继续尚未完成的发现、设计与独立质询；用户只要求局部操作时到此结束。
 - 查看、解释、检查或评审：读取当前设计，复用 P1 质询与既有 publication/feedback 接缝。
   **只读请求不修改 canonical 设计**，发现问题先报告；不得因已有蓝图就自动执行调和。
+- 仅补写评审说明：读取 canonical 蓝图/CU 与已登记设计材料，按 [P1 写作指引](../../reference/app-component-blueprint-workflow.md#按评审问题写说明) 直接使用已可读的原字段，仅改表达时优先写可选 reader_guide；修改原字段属于设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。复核后计算摘要，在 `framework/harness` 运行 `npm run check:change-unit -- --project-root <宿主根> --blueprint <blueprint-id> --readiness --json` 完成既有指针调和与文档物化，非 busy 后实际读成品，不重做产品源码发现或启动施工。发现新事实先回原设计承载，不能只写 guide。
 - 仅重入、查看或重跑 checker **不增加 revision**。新事实、被接受的权威裁决或冲突解决才按
   P1 调和规则形成正式修订；意见、建议与未接受反馈不自动升 revision。下游由各自权责重新派生。
 - 用户要求完成设计交接且蓝图已 admitted：0 CU 从第 3 步首次分解；已有 CU 复用并在第 4 步
@@ -89,7 +90,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图并由既有 runtime 独立质询核图文一致，修订时同步刷新派生身份。App lens/质询用项目语言，整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图并由既有 runtime 独立质询核图文一致，修订时同步刷新派生身份。一图一事，复杂调用按子问题拆小节，主路与失败/恢复分开，交接与返回完整保留；用现有 graph_ids 把图放在导读之后，不设图规模硬门。正文按评审问题组织：设计 agent 依据已有事实解释角色与职责，类名作对照、方法目录留参考；界面逐小节解释并通过精确 source_refs 配对应登记截图，组件职责不跨章节重复。按 [§5](../../reference/app-component-blueprint-workflow.md#5-写作检查与本地交付) 写有来源的说明、计算摘要并读成品，正式交付把一次正文八问阅读合并到已有独立质询，随后一轮定向修订。App lens/质询用项目语言，整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。
 
 内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求按实际影响展开必要细节，未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
@@ -129,7 +130,9 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 
 完整交接默认交付同目录 `component-blueprint.review.md`，同页展示蓝图与 canonical CU 的设计、拆分与风险验收。**本次改了 canonical 蓝图/CU 内容，结束前必须执行 `check:component-blueprint --write-review`**（草稿、质询写回、局部修改、新增/替代同规则）；CU 仍经既有 consumer 接受。
 
-最终回复链接当前文档并概述变化/未决项，单独报告 readiness；文档失败如实说明未交付/过期，仅重试物化、不改变原接受或施工结论。只读请求不落盘；当生成、刷新或检查文档时读 [P1 工作流 §5](../../reference/app-component-blueprint-workflow.md#5-写作检查与本地交付) 的命令、写作与失败细则。
+首屏先让不了解项目代码的评审人讲清现状、变化、结果与范围，独立读者先只读首屏复述，再读正文答八问。按 P1 写作指引补旅程与角色总览、中文消息和带 BD 来源的恢复速查，不强制各小节新建 guide；关键取舍逐问题讲选择、理由与代价。产品非目标与本次只执行设计的阶段状态分开，摘要施工只链接第 11 节。作者图 `relation_refs` 缺省/空数组时坏图只 WARN、原位说明且不展示、不影响准入/readiness；有关系引用的结构图仍 BLOCKER。
+
+最终渲染后实际打开文档/预览，以正常阅读宽度核正文、图像和链接；需放大才看清的图回设计拆分，放大或语法通过不能替代可读验收。正文文件落点只用一份目录树，CU 段链接各自精确参考；CU 目的、交付与安全中间态在原字段写完整句子，已有 CU 润色遵守原未完成修订资格与 consumer 接点，不直写 canonical。最终回复链接当前文档并概述变化/未决项，单独报告 readiness 与阅读缺口。缺 guide 或摘要过期时展示当前事实，作者沿 P1 指引补写/复核，生成器不代写或自动盖摘要。文档失败如实说明未交付/过期，仅重试物化、不改变原接受或施工结论。只读请求不落盘；当生成、刷新或检查文档时读 [P1 工作流 §5](../../reference/app-component-blueprint-workflow.md#5-写作检查与本地交付) 的命令、写作与失败细则。
 
 - **publication（Maison → 宿主，optional）**：输出指定 admitted revision 的确定性评审投影 （同一 `component-blueprint.review.md`），供宿主装配 Story Document / 归档件。投影 `derived_from` 精确绑定蓝图与有效 CU 内容、**相对两者零新设计事实**；宿主仍可附 spec 等附件，但**附件不成为 部件内设计的事实来源**。宿主未接该接缝 → 诚实降级，不宣称已归档。校验：`--projection <path>`。
 - **feedback（宿主 → Maison，optional）**：结构化评审反馈必须区分**意见 / 事实补充 / 建议 / 授权裁决**四类。只有同时具备 `authority`、`source_revision` 与明确 `decision` 语义的 `authoritative_ruling` 才能进入 `decided_with_authority`。**校验只判候选资格，不代表已被 接受**——是否接受由蓝图 write owner 裁决；被接受的事实补充与授权裁决才按既有 reconciliation 生成**新** revision，**不得回写旧 revision**；意见与建议永不触发 revision 递进。契约 schema `framework/harness/schemas/blueprint-review-feedback.schema.json`；校验：`--feedback <path>`。

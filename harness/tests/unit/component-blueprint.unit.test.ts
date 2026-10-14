@@ -458,7 +458,7 @@ export function runAll(): UnitCaseResult[] {
 
   results.push(test('canonical fixture passes all P1 completeness checks', () => {
     const issues = validateFixture(validBlueprint());
-    assert(issues.length === 0, issues.map(item => `[${item.id}] ${item.path}: ${item.message}`).join('\n'));
+    assert(issues.length === 1 && issues[0].id === 'blueprint_reader_guide_missing' && issues[0].severity === 'WARN', issues.map(item => `[${item.id}] ${item.path}: ${item.message}`).join('\n'));
   }));
 
   results.push(test('canonical path is workspace-owned and rejects arbitrary path identities', () => {
@@ -568,22 +568,22 @@ export function runAll(): UnitCaseResult[] {
       'component_id: ledger',
       'blueprint_id: ledger-app-blueprint',
       `artifact_sha256: ${loaded.artifactSha256}`,
-      '## 3 逻辑视图',
-      '## 2 场景视图（+1）',
+      '#### 逻辑视图',
+      '#### 场景视图（+1）',
       '| 适用性 | 本次影响 | 当前 | 目标 | 变化/依据 |',
       '| 设计对象 | 模块/责任方 | 当前 | 目标 | 依据 |',
-      '## 4 运行时视图',
-      '### 本部件实际消费或提供的操作与 DTO',
-      '## 各视图的显式联系',
-      '## 附录：独立质询',
-      '## 11 风险与待决项',
-      '本文根据蓝图与施工单元生成，展示已登记设计',
+      '#### 运行流与状态明细',
+      '#### 本部件实际消费或提供的操作与 DTO',
+      '#### 各视图的显式联系',
+      '#### 独立质询',
+      '#### 风险、缺口与诊断',
+      '本文根据 canonical 蓝图与当前施工单元确定性生成',
     ]) {
       assert(markdown.includes(expected), `projection 缺 ${expected}`);
     }
     const fixtureProjection = fs.readFileSync(path.join(path.dirname(VALID_PATH), 'component-blueprint.review.md'), 'utf8');
     assert(fixtureProjection !== markdown && fixtureProjection.includes('projection: component-blueprint-review@3'), '旧 Ledger 文档保留作旧格式回归，不重生成原夹具');
-    assert(markdown.includes('projection: component-blueprint-review@7'), '新输出使用默认设计交付格式');
+    assert(markdown.includes('projection: component-blueprint-review@8'), '新输出使用默认设计交付格式');
   }));
 
   results.push(test('review presentation selects business fields: DTO tables, ordered flow, decisions and unchanged evidence, without recursive metadata', () => {
@@ -609,12 +609,12 @@ export function runAll(): UnitCaseResult[] {
     for (const kept of ['| 字段 | 类型 | 必需 | 可空 | 语义 | 来源 |', '| amount | decimal-string | 是 | 否 | signed ledger amount | contracts/ledger-api.yaml#/dtos/CreateEntryRequestV1/fields/0 |', 'CreateEntryResponseV1', 'LedgerEntry.parent', '核实未变：src/ledger/LedgerRepository.ts', 'old-layer → new-layer', 'owner remains stable', 'Existing repository；Existing create operation', 'LedgerDataSource', 'App composition root', 'Surface source failure and preserve prior projection.', '再次提取条件', '| 范围 | 问题 | 裁决 | 回答 |']) {
       assert(markdown.includes(kept), `评审业务信息缺失：${kept}`);
     }
-    const section = body.slice(body.indexOf('## 4 运行时视图'), body.indexOf('## 5 开发视图'));
+    const section = body.slice(body.indexOf('#### 运行流与状态明细'), body.indexOf('### C 完整验收'));
     const sequence = ['触发：', '首次加载：', '权威状态：', '写入与发布：', '订阅与消费者：', '失败与恢复：', '生命周期：'];
     const positions = sequence.map(label => section.indexOf(label));
     assert(positions.every((position, index) => position >= 0 && (!index || position > positions[index - 1]!)), `流程顺序错误：${positions}`);
-    assert(section.includes('ledger-changed') && !section.includes('publication:ledger-changed') && section.includes('remove observer token') && section.includes('rebuild store from repository'), '发布/清理/恢复链路丢失');
-    const referenceAppendix = body.slice(body.indexOf('## 附录：正文引用地址'));
+    assert(section.includes('ledger-changed') && section.includes('publication:ledger-changed') && section.includes('remove observer token') && section.includes('rebuild store from repository'), '发布/清理/恢复链路丢失');
+    const referenceAppendix = body.slice(body.indexOf('## 技术与追溯参考'));
     assert(referenceAppendix.includes('publication:ledger-changed'), '原发布引用未保留在追溯附录');
   }));
 
@@ -666,6 +666,18 @@ export function runAll(): UnitCaseResult[] {
     const blueprint = validBlueprint();
     blueprint.generated_graphs = [{ graph_id: 'graph:sequence', format: 'mermaid', source_view_id: 'runtime', content, node_refs: ['view:runtime/flow:ledger-refresh-flow', 'view:runtime/node:ledger-repository'], relation_refs: [] }];
     assert(!validateGeneratedBlueprintGraphs(blueprint).length, '空 relation_refs 不应拒绝合法时序');
+  }));
+
+  results.push(test('author graph syntax shape and missing node refs are WARN only with absent or empty relation refs', () => {
+    for (const relation_refs of [undefined, []]) for (const content of ['flowchart TD\ntyped{}', '', 'flowchart TD\nvalid["合法节点"]']) {
+      const blueprint = validBlueprint();
+      blueprint.generated_graphs = [{ graph_id: 'author-overview', format: 'mermaid', content, node_refs: ['view:runtime/node:missing'], ...(relation_refs === undefined ? {} : { relation_refs }) }];
+      const graphIssues = validateFixture(blueprint).filter(item => item.id.startsWith('blueprint_generated_graph'));
+      assert(graphIssues.length > 0 && graphIssues.every(item => item.severity === 'WARN'), '无关系声明的展示图错误应只报 WARN');
+    }
+    const blueprint = validBlueprint();
+    blueprint.generated_graphs = [{ graph_id: 'relation-overview', format: 'mermaid', content: 'flowchart TD\ntyped{}', relation_refs: [`relation:${asRecords(blueprint.relations)[0].relation_id}`] }];
+    assert(validateFixture(blueprint).some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), '声明关系图的解析错误必须仍阻断');
   }));
 
   for (const [label, content] of [

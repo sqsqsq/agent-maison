@@ -71,6 +71,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
   { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },
   { id: 'blueprint-stage-delivery', modulePath: './unit/blueprint-stage-delivery.unit.test' },
+  { id: 'reader-guide', modulePath: './unit/reader-guide.unit.test' },
   { id: 'blueprint-host-history', modulePath: './unit/blueprint-host-history.unit.test' },
   { id: 'change-unit-content-revision', modulePath: './unit/change-unit-content-revision.unit.test' },
   { id: 'change-unit-revision-recovery', modulePath: './unit/change-unit-revision-recovery.unit.test', releaseOnly: true },

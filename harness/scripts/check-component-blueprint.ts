@@ -12,6 +12,7 @@ import { validateComponentBlueprint } from './utils/component-blueprint-validato
 import { profileHasDesignLens } from './utils/blueprint-provider-boundary';
 import { loadFrameworkConfig } from '../config';
 import { inspectBlueprintReview, materializeBlueprintReview } from './utils/blueprint-review-materialization';
+import { computeBlueprintReaderGuideSourceDigest, inspectBlueprintReaderGuide } from './utils/blueprint-reader-guide';
 import {
   validateBlueprintReviewFeedback,
   validateBlueprintReviewPublication,
@@ -30,6 +31,7 @@ interface CliArgs {
   feedback?: string;
   json?: boolean;
   'write-review'?: boolean;
+  'reader-guide-digest'?: boolean;
 }
 
 export function checkCanonicalComponentBlueprint(projectRoot: string, blueprintId: string) {
@@ -133,15 +135,22 @@ export function checkHostSeamMaterials(
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
     string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback'],
-    boolean: ['json', 'write-review'],
+    boolean: ['json', 'write-review', 'reader-guide-digest'],
     default: { 'project-root': process.cwd(), json: false },
   });
   if (!args.blueprint) {
     console.error('用法：check-component-blueprint --project-root <root> --blueprint <blueprint-id> [--ref <json>]'
-      + ' [--write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
+      + ' [--reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
     process.exit(2);
   }
   try {
+    if (args['reader-guide-digest']) {
+      if (args['write-review'] || args.materialization || args.projection || args.feedback || args.ref) throw new Error('--reader-guide-digest 是独立只读模式，不能与其它模式混用。');
+      const loaded = loadCanonicalBlueprint(args['project-root']!, args.blueprint);
+      const sourceDigest = computeBlueprintReaderGuideSourceDigest(loaded.blueprint);
+      console.log(args.json ? JSON.stringify({ reader_guide_source_digest: sourceDigest, canonical_path: loaded.canonicalPath, artifact_sha256: loaded.artifactSha256 }, null, 2) : sourceDigest);
+      return;
+    }
     if (args['write-review'] && (args.materialization || args.projection || args.feedback || args.ref)) throw new Error('--write-review 是独立生成模式，不能与 --ref/--materialization/--projection/--feedback 混用。');
     // 只跑 materialization 时不加载 canonical blueprint：物化发生在建立蓝图之前。
     // projection / feedback / ref 模式仍要求蓝图存在（它们本质上就是对某个 revision 的操作）。
@@ -187,6 +196,7 @@ function main(): void {
         host_seam_modes: seams.modes,
         issues: result.issues,
         review_document: reviewDocument,
+        reader_guide: inspectBlueprintReaderGuide(result.blueprint),
       }, null, 2));
     } else if (failed) {
       console.error(`❌ Component blueprint FAIL (${result.issues.length} issues)`);
@@ -195,6 +205,7 @@ function main(): void {
       console.log(`✅ Component blueprint PASS — ${result.canonicalPath}`);
       console.log(`   component_id=${String(result.blueprint.component_id)}`);
       console.log(`   artifact_sha256=${result.artifactSha256}`);
+      for (const diagnostic of inspectBlueprintReaderGuide(result.blueprint).diagnostics) console.log(`   [WARN] ${diagnostic.path}: ${diagnostic.message}`);
       if (seams.modes.length > 0) console.log(`   host_seam_modes=${seams.modes.join(', ')}`);
     }
     if (!args.json) console.log(`   review_document=${reviewDocument.status} ${reviewDocument.path}\n   重建：${reviewDocument.rebuildCommand}`

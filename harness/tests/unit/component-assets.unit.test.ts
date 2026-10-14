@@ -404,15 +404,16 @@ test('R5 小写全局 Builder 保留 unknown 并阻断新增共享包装，真�
 
 test('R6 只要求被引用的证据文件可读，不增加 optional catalog 或锚点门', () => setup(root => {
   generate(root); const { bp, decision } = blueprintFixture(root);
+  const expectedIssues = [{ id: 'blueprint_reader_guide_missing', severity: 'WARN', path: '$.review_summary.reader_guide', message: '尚未补写评审说明；按当前设计字段展示。' }];
   assert(!fs.existsSync(componentCatalogPath(root)));
-  assert.deepEqual(validateComponentBlueprint(bp, { projectRoot: root }), []);
+  assert.deepEqual(validateComponentBlueprint(bp, { projectRoot: root }), expectedIssues);
   decision.provenance.source_ref = 'knowledge/curated.yaml#not-an-anchor-contract';
   assert(validateComponentBlueprint(bp, { projectRoot: root }).some(i => i.id === 'blueprint_asset_source_unreadable'));
   fs.mkdirSync(componentCatalogPath(root));
   assert(validateComponentBlueprint(bp, { projectRoot: root }).some(i => i.id === 'blueprint_asset_source_unreadable'));
   fs.rmdirSync(componentCatalogPath(root));
   write(root, 'knowledge/curated.yaml', 'schema_version: "1.0"\ncomponents: []\n');
-  assert.deepEqual(validateComponentBlueprint(bp, { projectRoot: root }), []);
+  assert.deepEqual(validateComponentBlueprint(bp, { projectRoot: root }), expectedIssues);
 }));
 
 test('R5 直接回归：空生命周期声明加 Divider 不产生新共享组件未知债', () => setup(root => {

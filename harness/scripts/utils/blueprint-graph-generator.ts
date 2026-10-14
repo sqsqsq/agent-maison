@@ -191,7 +191,8 @@ export function validateGeneratedBlueprintGraphs(blueprint: BlueprintRecord): Bl
   }
   asRecords(blueprint.generated_graphs).forEach((graph, index) => {
     const base = `$.generated_graphs[${index}]`;
-    const severity = typeof graph.content === 'string' && /^sequenceDiagram\b/.test(graph.content.trimStart()) ? 'WARN' : 'BLOCKER';
+    const presentationOnly = graph.relation_refs === undefined || (Array.isArray(graph.relation_refs) && graph.relation_refs.length === 0);
+    const severity = presentationOnly || (typeof graph.content === 'string' && /^sequenceDiagram\b/.test(graph.content.trimStart())) ? 'WARN' : 'BLOCKER';
     if (graph.format !== 'mermaid' || !nonEmptyString(graph.content)) {
       out.push(issue('blueprint_generated_graph_shape_invalid', base, '生成图必须声明 format=mermaid 和 content。', severity));
       return;
