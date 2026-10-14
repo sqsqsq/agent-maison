@@ -75,3 +75,9 @@ demo-card: feature_status=FEATURE_COMPLETED (verify=VALID, chain=spec→plan→c
 cu-bGVkZ2VyLWFwcC1ibHVlcHJpbnQAbGVkZ2VyLXJlZnJlc2g: feature_status=FEATURE_COMPLETED (verify=VALID, chain=coding→review→ut)
 BASELINE_STAR1=PASS
 ```
+
+## e9d49418：spec 规则变化后的同任务重验
+
+新规则可能使 spec 也需要重验。迁移替身仅在正式 spec 回调中补 ui_change 与当前 facts，已声明 checkpoint 继续核验；spec 产出使原先复用的阶段失效时，通过原 scope_revised 机制接回同一个 run，不换任务或清零预算。原 project/ 和旧完成原件不改。
+
+可移植 Git 基线须保留本 fixture 的 UT 归属：AllBanksPage.test.ets 与 LedgerFeature.test.ets 由其原 UT 阶段新增，seed 阶段不存在。临时 Git 初始化时这两个文件不进入基线提交，工作区仍保留捕获字节；其余捕获文件照常入树，再用既有 --rebaseline-to 显式记录新基线。不能把整份完成快照一律作为“动手前”基线，否则本任务 UT 全被误作存量而退出覆盖。该提交是测试重建的可移植基线，不冒充原 Git 对象；真实宿主优先使用仍可达的原任务基线，不以这份测试重建证明任意丢失历史都可自动迁移。

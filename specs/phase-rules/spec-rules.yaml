@@ -52,16 +52,15 @@ structure_checks:
 
   acceptance_flow_structure:
     description: >
-      P0 交互 AC 结构化流程模型（goal-fakepass-hardening t4a）：flows 有序屏链 +
-      checkpoint{pre/action.target_element_id/post/required_element_ids} 强制（P0 纯
-      自然语言锚点 FAIL）；三约束=每条边被 ≥1 P0 AC 拥有 / requirement_ref 源片段
-      sha256 验存 / flow=checkpoint edges 有序合成（bank_list→add_success 型跳边 FAIL）。
+      P0 设备义务取 priority=P0 且 ut_layer=device/both，不依赖 linked_flow。
+      UI 相关性复用有效 ui_change/需求；相关义务必须有完整可绑定 checkpoint 与逐字 requirement_ref。
+      linked_flow 仅指业务用例。flows 可选；声明时按 checkpoint 前后屏核相邻关系、边覆盖与有序合成。
+      缺定义回 spec，不因 ui-spec 文件缺失当作无 UI 或 unsupported_gap。
 
   acceptance_flow_contract:
     description: >
-      结构化流程模型机器契约（t4b/codex 四轮 P0-3）：由 spec-owned acceptance/flows/ui-spec
-      及 requirement_ref hash 形成唯一真源，任一输入改动即 stale 并重跑 spec 门禁。
-      legacy flow_contract receipt 可读但不参与 verdict；不得以人签补足缺失或不一致的流程证据。
+      屏链来自 spec-owned acceptance；声明 flows 时消费相同义务解析与 phase evidence freshness。
+      未声明 flows 不取消 P0 设备义务。legacy flow_contract receipt 不参与 verdict，不以人签补定义。
 
   ux_reference_mapping:
     description: >

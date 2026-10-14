@@ -145,3 +145,5 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 ## 组件资产审查（若启用）
 
 读取 [组件资产 SSOT](../../../docs/concepts/component-assets.md)、index/catalog 摘要、候选 live 调用点与全部目标源码，核对蓝图决定、合同选型和实际实现是否一致。语义重复由 verifier 结合调用点判断；同一组件包装 ≥2 给 WARN 建议 evolve，不做文本匹配 gate。新共享导出须登记且适用静态项无 fail/unknown；存量 unknown 不阻断，私有 custom 不要求登记，uncurated 仅建议增量策展。三个静态项不代表渲染或真机能力。
+
+**当前范围与延后裁决**：消费共享目标简报的“本次延后”及原 ref-elements 来源；note 是 spec 理由，不是用户原文排除。范围已经明确而意见相反时更正 review 报告，实现违约由 coding 恢复原契约；只有登记错误、定义缺口或目标变化才回原设计/spec 责任方。defer 不豁免真实功能/数据缺陷，按当前严格度披露债务与发布状态。

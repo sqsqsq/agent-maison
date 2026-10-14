@@ -138,18 +138,27 @@ export function publishVerifier(p: RealChainProject, phase: string): void {
 //   · review 报告的四类视觉证据在非 pixel 档只需命中 1 类（check-review.ts:873）——下面四类全引只为稳。
 // **`spec/ui-spec.yaml` 本链必须写**（与上一笔记录相反）：testing 的 P0 语义门
 // `p0-semantic-gates.ts:721-735` 在 ui-spec 不可解析时直接 gateFailure
-// 「canonical ui-spec 不可解析」，与保真档位无关。它不声明 `ui_change`，故
+// 「canonical ui-spec 不可解析」，与保真档位无关。它声明 `ui_change: reuse_only`（界面复用），故
 // `spec-ui-spec-check.ts:71-75` 的 `ui_spec_structure` 仍不进（enforcement 未配置即返回 []）。
 // `architecture.md` 同步同样免除：plan.md 声明 `impact: none`，
 // check-plan.ts:909-914 的 `plan_to_architecture` 直接 SKIP，**架构变更分支不覆盖**。
 // ---------------------------------------------------------------------------
 
-export function writeSpecMaterials(p: RealChainProject): void {
+export function writeSpecMaterials(p: RealChainProject, _executionRunId?: string, options: { preserveUnchanged?: boolean } = {}): void {
   const f = p.feature;
+  const write = (relative: string, content: string): void => {
+    const file = path.join(p.root, relative);
+    if (options.preserveUnchanged && fs.existsSync(file) && fs.readFileSync(file, 'utf8') === content) return;
+    writeHostFile(p.root, relative, content);
+  };
   // spec.md：check-spec 的 required_chapters / feature_table_format(:674-681) /
   // scope_declaration / terminology_mapping_table / mermaid_flowchart 五门的正文载体。
-  writeHostFile(p.root, `doc/features/${f}/spec/spec.md`, [
+  write(`doc/features/${f}/spec/spec.md`, [
     '# 银行卡开卡 spec',
+    '',
+    '```yaml',
+    'ui_change: reuse_only',
+    '```',
     '',
     // metadata_header（check-spec.ts:860-867，MINOR）：`> **字段**: 值` 四行。
     `> **模块标识**: ${p.module}`,
@@ -231,12 +240,12 @@ export function writeSpecMaterials(p: RealChainProject): void {
   // acceptance.yaml：下游 UT 范围与 P0/AC 覆盖分母来源；`ut_layer ∈ {unit,both}`
   // 决定 check-ut 的 testability-audit / coverage-evidence 两门是否强制（check-ut.ts:3518/:2884）。
   //
-  // AC-1 是 **P0 device 交互型**（`isP0DeviceInteractive`：P0 + ut_layer∈{device,both} + linked_flow），
+  // AC-1 是 **P0 device 交互型**（`isP0DeviceInteractive`：P0 + ut_layer∈{device,both}，已有 checkpoint 继续受原语义核验），
   // 因此同时进三道门：spec 期 `acceptance_flow_structure`（checkpoint 完整 + 引文验存 +
   // flows 每条边有 P0 AC 拥有，p0-semantic-gates.ts:132-210）、testing 期
   // `p0_coverage_integrity` / `p0_semantic_coverage_integrity`（按 checkpoint 的
   // action/required 元素逐条对账派生计划步骤与 native StepResult，:576-645）。
-  writeHostFile(p.root, `doc/features/${f}/acceptance.yaml`, [
+  write(`doc/features/${f}/acceptance.yaml`, [
     `feature: ${f}`,
     'source: approved',
     "version: '1'",
@@ -293,7 +302,7 @@ export function writeSpecMaterials(p: RealChainProject): void {
   // `selector-contract.ts:149-239` 的静态 selector lint 都读它）。
   // 两屏都声明 P1：`collectP0ComponentNodeIds` 因此为空，plan 期 visual-parity 硬地板不触发
   //（见文件头「档位表态」）。
-  writeHostFile(p.root, `doc/features/${f}/spec/ui-spec.yaml`, [
+  write(`doc/features/${f}/spec/ui-spec.yaml`, [
     'schema_version: "1.0"',
     `feature: ${f}`,
     'screens:',

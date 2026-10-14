@@ -88,6 +88,9 @@ OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标优
 
 `criteria` 章节（从「验收标准」提取）：`id`（AC-N）/`prd_function`（功能清单编号）/`priority`/`description`/`testable`（固定 true）/`verification_steps`/`expected_result`/`data_constraints`（可选）/`ut_layer`（**必填**，见下）/`ut_focus`（ut_layer∈{unit,both} 必填）/`device_focus`（ut_layer∈{device,both} 必填，both 禁止把 UI 要点只写 ut_focus）/`linked_flow`/`linked_branch`（建议填，指向 use-cases.yaml）。
 
+P0 设备义务由 `priority=P0` 与 `ut_layer=device/both` 决定，不因没有 `linked_flow` 消失。有效 UI 需求须补真实 checkpoint；ui-spec 缺失是定义缺口，不能登记为能力缺口。`linked_flow` 只指业务用例，`flows` 屏链可选；声明时按 checkpoint 前后屏核验边覆盖与相邻关系，无需把用例名改成屏链名。
+
+
 `boundaries` 章节（从「异常/边界场景处理」提取）：`id`（BD-N）/`prd_exception`/`scenario`/`description`/`handling`/`expected_behavior`/`ut_layer`+`ut_focus`/`device_focus`（同上）。
 
 **ut_layer 分层判定**（从严判 device）：

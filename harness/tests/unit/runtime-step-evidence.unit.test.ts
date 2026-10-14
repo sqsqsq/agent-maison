@@ -81,6 +81,7 @@ interface Fixture {
 
 function fixture(): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-step-evidence-'));
+  write(root, `doc/features/${FEATURE}/spec/spec.md`, '# spec\n```yaml\nui_change: new_or_changed\n```\n');
   write(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
     project_name: 'runtime-step-evidence',

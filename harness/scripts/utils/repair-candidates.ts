@@ -667,6 +667,16 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     }
   }
   if (input.phase === 'testing') {
+    // Only a real P0 definition gap goes upstream; ordinary visual evidence bookkeeping stays local.
+    for (const check of input.checks.filter(c => c.status === 'FAIL' && c.repair_owner === 'spec'
+      && ['p0_coverage_integrity', 'p0_semantic_coverage_integrity'].includes(c.id))) {
+      const files = normalizeFiles(check.affected_files ?? []);
+      const summary = normalizeSummary(check.details ?? check.id);
+      if (!out.some(c => c.category === 'spec' && c.summary === summary)) out.push({
+        id: check.id, category: 'spec', files, summary,
+        item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: 'testing',
+      });
+    }
     // T3：coding candidate 只允许由已执行 StepResult 的冻结 pair 产生。
     // explicit skip/unexecuted 没有 failure_kind/code，不能通过 check id 或 status 猜测 coding。
     //

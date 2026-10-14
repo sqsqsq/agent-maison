@@ -1,3 +1,4 @@
+import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
 /**
  * testing-stepresult-evidence — native Hylyre v1 三重判据、P0 对账、静态 selector 契约
  * 与 native artifact binding。
@@ -13,6 +14,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 
@@ -25,6 +27,8 @@ import {
 } from '../../../profiles/hmos-app/harness/providers/device-test-run';
 import {
   evaluateP0CoverageIntegrity,
+  evaluateAcceptanceFlowStructure,
+  resolveP0DeviceObligations,
   evaluateP0SemanticCoverage,
 } from '../../scripts/utils/p0-semantic-gates';
 import { lintDerivedPlanSelectorContract } from '../../../profiles/hmos-app/harness/selector-contract';
@@ -71,6 +75,7 @@ function write(root: string, rel: string, content: string): string {
 
 function projectRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-native-evidence-'));
+  write(root, `doc/features/${FEATURE}/spec/spec.md`, '# spec\n```yaml\nui_change: new_or_changed\n```\n');
   write(root, 'framework.config.json', JSON.stringify({
     schema_version: '1.1',
     project_name: 'native-evidence',
@@ -1490,6 +1495,73 @@ test('T4 返修控制：by_text 入口没有字面身份，不在 ui-spec 就绑
     const semantic = evaluateP0SemanticCoverage(nativeInput(root, openWorldBindingTrace()))[0];
     assert.strictEqual(semantic.status, 'FAIL');
     assert.match(semantic.details ?? '', /AC-1 计划中无.*action/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('e9d49418: 无 linked_flow/flows 的宿主设备义务经真实 native gate 消费，缺定义回 spec', () => {
+  const root = projectRoot();
+  try {
+    const acceptancePath = path.join(root, `doc/features/${FEATURE}/acceptance.yaml`);
+    const acceptance = YAML.parse(fs.readFileSync(acceptancePath, 'utf8'));
+    delete acceptance.flows;
+    const seed = acceptance.criteria[0];
+    delete seed.linked_flow;
+    seed.requirement_ref = { source_path: 'req.md', snippet: '核对支付页面结果' };
+    write(root, 'req.md', '核对支付页面结果');
+    acceptance.criteria = Array.from({ length: 7 }, (_, n) => ({ ...seed, id: `AC-${n + 1}` }));
+    fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
+    assert.strictEqual(resolveP0DeviceObligations(root, FEATURE).device.length, 7);
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE)[0].status, 'PASS');
+    acceptance.criteria[1].ut_layer = 'both'; acceptance.criteria[1].linked_flow = 'bank_card_enrollment';
+    fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE)[0].status, 'PASS', '业务用例名不要求成为屏链名');
+    const tc = (n: number) => `TC-${String(n).padStart(3, '0')}`;
+    write(root, `doc/features/${FEATURE}/testing/test-plan.md`, '# 测试用例\n| 用例编号 | 优先级 | 关联 AC |\n| --- | --- | --- |\n'
+      + Array.from({ length: 10 }, (_, n) => `| ${tc(n + 1)} | P0 | AC-${n < 7 ? n + 1 : 1} |`).join('\n'));
+    const derived = `doc/features/${FEATURE}/testing/reports/20260830T000000Z/hylyre/test-plan.hylyre.md`;
+    const oldDerived = fs.readFileSync(path.join(root, derived), 'utf8');
+    const row = oldDerived.split('\n').find(line => line.startsWith('| TC-001'))!;
+    write(root, derived, oldDerived.replace(row, Array.from({ length: 7 }, (_, n) => row.replace('TC-001', tc(n + 1)).replace('AC-1', `AC-${n + 1}`)).join('\n')));
+    const raw = traceObject();
+    raw.cases = Array.from({ length: 7 }, (_, n) => ({ ...structuredClone(raw.cases[0]), id: tc(n + 1) }));
+    raw.tool_calls = projectToolCalls(raw.cases);
+    const input = { ...nativeInput(root, raw), unsupportedGapTcIds: ['TC-008', 'TC-009', 'TC-010'] };
+    const coverage = evaluateP0CoverageIntegrity(input)[0];
+    assert.strictEqual(coverage.status, 'PASS', coverage.details);
+    assert.deepStrictEqual((coverage.structured as any).verified_pass, 7);
+    assert.deepStrictEqual((coverage.structured as any).unsupported_gap, 3);
+    assert.strictEqual(evaluateP0SemanticCoverage(input)[0].status, 'PASS');
+    delete acceptance.criteria[0].checkpoint;
+    fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
+    const failed = evaluateP0SemanticCoverage(input)[0];
+    assert.strictEqual(failed.status, 'FAIL');
+    assert.strictEqual(failed.repair_owner, 'spec');
+    const repair = collectPhaseRepairCandidates({ phase: 'testing', checks: [failed], reportValidity: 'PASS', reviewReportText: null, verifierReportText: null });
+    assert.strictEqual(repair.length, 1); assert.strictEqual(repair[0].category, 'spec');
+    assert.ok(!failed.suggestion?.includes('升级'));
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE)[0].status, 'FAIL');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('e9d49418: 非 UI 设备义务仍核计划断言；UI 文件缺失不降为能力缺口', () => {
+  const root = projectRoot();
+  try {
+    const input = nativeInput(root, traceObject());
+    const spec = `doc/features/${FEATURE}/spec/spec.md`;
+    fs.rmSync(path.join(root, `doc/features/${FEATURE}/spec/ui-spec.yaml`));
+    const missing = evaluateP0SemanticCoverage(input)[0];
+    assert.strictEqual(missing.repair_owner, 'spec');
+    write(root, spec, '# spec\n```yaml\nui_change: none\n```\n');
+    const acceptanceFile = path.join(root, `doc/features/${FEATURE}/acceptance.yaml`);
+    const nonUi = YAML.parse(fs.readFileSync(acceptanceFile, 'utf8')); delete nonUi.criteria[0].checkpoint; delete nonUi.flows;
+    fs.writeFileSync(acceptanceFile, YAML.stringify(nonUi));
+    const passed = evaluateP0SemanticCoverage(input)[0];
+    assert.strictEqual(passed.status, 'PASS', passed.details);
+    const bad = failingTraceObject();
+    assert.strictEqual(gate(bad).native, true, '反例也是合法原生失败证据');
+    assert.strictEqual(evaluateP0CoverageIntegrity(nativeInput(root, bad))[0].status, 'FAIL');
+    const unplanned = { ...input, planMd: '# 测试用例\n' };
+    assert.strictEqual(evaluateP0SemanticCoverage(unplanned)[0].status, 'FAIL', '漏列用例不能取消有效设备义务');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

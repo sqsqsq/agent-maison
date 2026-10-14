@@ -13,25 +13,27 @@ import { parseScope } from './scope-parser';
 import { loadRepairDeclineState } from './repair-candidates';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import * as fs from 'fs';
+import * as path from 'path';
 
 export interface GoalBrief {
   /** null = 需求原文不可得（如实写明，不猜） */
   requirement: string | null;
   requested?: { completion_target: string; requested_results: string[] };
   exclusions?: { elements: Array<{ element_id: string; quote: string }>; out_of_scope_modules: string[] };
+  deferrals?: Array<{ element_id: string; screen?: string; text?: string; note: string; source: string }>;
   permissions?: { write_mode: string; approval_mode: string };
   /** §4 的拒修记录（resolveRepairDeclineState 输出的最近一次来源核验通过的拒修） */
   resolved_conflicts: Array<{ candidate: string; basis: string; run_id: string }>;
 }
 
-export type GoalBriefSection = 'requirement' | 'requested' | 'exclusions' | 'permissions' | 'resolved_conflicts' | 'judgement';
+export type GoalBriefSection = 'requirement' | 'requested' | 'exclusions' | 'deferrals' | 'permissions' | 'resolved_conflicts' | 'judgement';
 
-const ALL_SECTIONS: readonly GoalBriefSection[] = ['requirement', 'requested', 'exclusions', 'permissions', 'resolved_conflicts', 'judgement'];
+const ALL_SECTIONS: readonly GoalBriefSection[] = ['requirement', 'requested', 'exclusions', 'deferrals', 'permissions', 'resolved_conflicts', 'judgement'];
 
-/** goal 执行者：需求行与冻结范围段已在提示词里，简报块只补这三栏（§3.2 装配去重）。 */
-export const EXECUTOR_BRIEF_SECTIONS: readonly GoalBriefSection[] = ['exclusions', 'resolved_conflicts', 'judgement'];
-/** 普通模式控制台：只打印这两栏，不打印需求全文（§3.3）。 */
-export const CONSOLE_BRIEF_SECTIONS: readonly GoalBriefSection[] = ['exclusions', 'resolved_conflicts'];
+/** goal 执行者：需求行与冻结范围段已在提示词里，简报块补范围裁决与判定办法（§3.2 装配去重）。 */
+export const EXECUTOR_BRIEF_SECTIONS: readonly GoalBriefSection[] = ['exclusions', 'deferrals', 'resolved_conflicts', 'judgement'];
+/** 普通模式控制台：只打印范围裁决栏目，不打印需求全文（§3.3）。 */
+export const CONSOLE_BRIEF_SECTIONS: readonly GoalBriefSection[] = ['exclusions', 'deferrals', 'resolved_conflicts'];
 
 export function assembleGoalBrief(projectRoot: string, feature: string, opts: { runId?: string } = {}): GoalBrief {
   let featuresDirRel = 'doc/features';
@@ -51,9 +53,18 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
     if (scope) brief.requested = { completion_target: scope.completion_target, requested_results: [...scope.requested_results] };
   } catch { /* 范围不可得 → 省略该栏 */ }
 
-  const elements = (loadRefElementsFile(refElementsAbsPath(projectRoot, feature))?.elements ?? [])
+  const refElements = loadRefElementsFile(refElementsAbsPath(projectRoot, feature))?.elements ?? [];
+  const elements = refElements
     .filter(e => e?.disposition === 'excluded')
     .map(e => ({ element_id: String(e.element_id), quote: typeof e.requirement_quote === 'string' ? e.requirement_quote.trim() : '' }));
+  const deferred = refElements
+    .filter(e => e?.disposition === 'defer').map(e => {
+      const screen = e.screen_ref_id ?? e.ref_id;
+      return { element_id: String(e.element_id), ...(screen ? { screen } : {}),
+        text: typeof e.text === 'string' ? e.text.trim() : '', note: typeof e.note === 'string' ? e.note.trim() : '',
+        source: path.relative(projectRoot, refElementsAbsPath(projectRoot, feature)).replace(/\\/g, '/') };
+    });
+  if (deferred.length) brief.deferrals = deferred;
   let outOfScope: string[] = [];
   try {
     const spec = resolveFeatureArtifact(projectRoot, feature, 'spec.md');
@@ -105,6 +116,7 @@ const SECTION_TITLES: Record<GoalBriefSection, string> = {
   requirement: '需求原文',
   requested: '请求结果与完成目标',
   exclusions: '明确不做',
+  deferrals: '本次延后',
   permissions: '已授予的权限',
   resolved_conflicts: '已裁决的冲突',
   judgement: '判定办法',
@@ -129,6 +141,13 @@ function sectionBody(brief: GoalBrief, key: GoalBriefSection, requirementInConte
               : []),
           ].join('\n')
         : '';
+    case 'deferrals':
+      return brief.deferrals?.length ? [
+        '以下是 spec 登记的本次延后及债务，不是用户原文排除；理由和登记正当性仍须依当前目标核验。',
+        ...brief.deferrals.map(e => `- ${e.element_id}${e.screen ? `（${e.screen}）` : ''}${e.text ? `「${e.text}」` : ''}：${e.note || '未登记理由，不能自行补授权'}（来源 ${e.source}）`),
+        '有效范围已明确而审查意见相反：更正 review 报告，不派扩大范围的 coding 返修；实现违约由 coding 恢复契约。只有登记错误、定义缺口或目标需要改变时回原设计/spec 责任方。',
+        '合法延后按当前严格度披露债务与发布状态；不豁免真实功能、数据或关键交互缺陷。',
+      ].join('\n') : '';
     case 'permissions':
       return brief.permissions ? `- 写入模式 ${brief.permissions.write_mode}，审批模式 ${brief.permissions.approval_mode}` : '';
     case 'resolved_conflicts':

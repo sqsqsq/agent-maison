@@ -2165,3 +2165,14 @@ Unknown obligations SHALL hold their actual downstream consumers until the respo
 
 - **WHEN** UT discovers a real missing use-case definition and the complete-delivery run omitted plan because its prior design was reusable
 - **THEN** the existing revision SHALL append plan to the same run and revalidate UT after its repair, preserving unaffected fresh coding/review evidence and consumed budget
+
+### Requirement: Effective deferred decisions are shared context
+
+Executor, verifier, visual provider and console SHALL receive the same deferred reference elements, original spec note, scope and source path in the existing goal brief. Deferred notes SHALL NOT be represented as user exclusion quotes or a new authority. Conflicting review opinions against an established valid scope SHALL be corrected by the report owner; implementation deviations SHALL return to coding; only erroneous scope registration, missing definitions or target changes SHALL return to the original design/spec owner. Existing verifier, strictness and debt handling SHALL remain authoritative.
+
+Enforcement: `harness/scripts/utils/goal-brief.ts`, `harness/scripts/utils/report-generator.ts`, `harness/scripts/goal-phase-runtime.ts`
+
+#### Scenario: A reference background shows more banks than the accepted scope
+
+- **WHEN** spec defers the reference's bank-count difference and keeps the accepted twenty-bank contract
+- **THEN** all brief consumers receive that decision and its source, and an expansion request is checked against that scope rather than automatically dispatched as a coding repair

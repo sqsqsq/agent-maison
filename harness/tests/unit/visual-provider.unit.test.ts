@@ -1,3 +1,4 @@
+import { visualDiffNavConfigPath } from '../../../profiles/hmos-app/harness/visual-diff-nav';
 /**
  * visual-provider — 只读视觉 provider（plan ab072691）单测矩阵。
  *
@@ -1441,7 +1442,7 @@ test('6e2f9a10 t3: 坏 JSON 保留原生错误、候选与正文位置和有界�
     assert.strictEqual(result.kind, 'applied', JSON.stringify(result));
     assert.strictEqual(calls.length, 2);
     assert.ok(calls[1].prompt.includes(native) && calls[1].prompt.includes(body));
-    assert.deepStrictEqual(calls[1].imagePaths, calls[0].imagePaths);
+    assert.deepStrictEqual(calls[1].imagePaths, [], '格式纠错不重看图片');
     assert.deepStrictEqual(calls[1].provider, calls[0].provider);
     assert.strictEqual(calls[1].deadlineMs, calls[0].deadlineMs);
   } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
@@ -1467,7 +1468,7 @@ test('t3 同 gate 非法refs原body与精确索引回实际provider，最多纠�
     assert.ok(inputs[1].prompt.includes(invalid), '实际产出者收到原body');
     assert.match(inputs[1].prompt, /screens\[0\]\.defects\[0\]\.must_fix_refs\[0\]: actual=9/);
     assert.deepStrictEqual(inputs.map(input => input.provider), [{ adapter: 'codex', model: 'frozen-m' }, { adapter: 'codex', model: 'frozen-m' }]);
-    assert.deepStrictEqual(inputs[1].imagePaths, inputs[0].imagePaths);
+    assert.deepStrictEqual(inputs[1].imagePaths, [], '格式纠错不重看图片');
     assert.strictEqual(inputs[1].deadlineMs, inputs[0].deadlineMs);
     assert.ok(inputs[1].timeoutMs! <= inputs[0].timeoutMs! && inputs[0].timeoutMs! <= 30_000);
     assert.notStrictEqual(inputs[1].evidenceDir, inputs[0].evidenceDir);
@@ -1489,7 +1490,7 @@ test('t3 同 gate 非法refs原body与精确索引回实际provider，最多纠�
   } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
 });
 
-test('t3 第二次仍非法保留清场与两份诊断；精确路径进入既有check/NEXT建议', async () => {
+test('t3 缺区域观察不能靠格式纠错补造；精确路径进入既有check/NEXT建议', async () => {
   const f = invalidatedScreenProject({ mustHaveElements: ['root', 'sms_next'] });
   try {
     const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'pixel_1to1' } as never;
@@ -1502,10 +1503,10 @@ test('t3 第二次仍非法保留清场与两份诊断；精确路径进入既�
       provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A',
       invoke: async input => { calls++; if (calls === 2) assert.match(input.prompt, /region_attest.*sms_next/); return reviewReply(input, bad); },
     });
-    assert.strictEqual(calls, 2);
+    assert.strictEqual(calls, 1);
     assert.ok(out.kind === 'unusable' && out.outcome === 'invalid');
     if (out.kind !== 'unusable') throw Error('unusable expected');
-    assert.strictEqual(out.diagnosticPaths?.length, 2);
+    assert.strictEqual(out.diagnosticPaths?.length, 1);
     const check = projectDelegatedVisualProviderFailure(ctx, out.outcome, out.reason, 'visual', out.diagnosticPaths);
     assert.deepStrictEqual((check.structured as { diagnostic_paths?: string[] }).diagnostic_paths, out.diagnosticPaths);
     assert.ok(check.suggestion?.includes(out.diagnosticPaths![0]));
@@ -1566,7 +1567,7 @@ test('t3 R1 纠正不可用/空正文不洗掉首轮invalid；必需与非必需
   }
 });
 
-test('t3 共享deadline耗尽不调第二次；独立非goal两次也不重新授完整timeout', async () => {
+test('t3 硬deadline耗尽不调第二次；首评600秒与一次格式纠错300秒各自有界', async () => {
   const f = invalidatedScreenProject();
   const originalNow = Date.now;
   try {
@@ -1576,19 +1577,21 @@ test('t3 共享deadline耗尽不调第二次；独立非goal两次也不重新�
     const inputs: VisualProviderInvokeInput[] = [];
     const out = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
       provider: { adapter: 'codex', model: 'm' }, runId: 'R', attemptId: 'A', reviewDeadlineMs: now + 10,
-      invoke: async input => { inputs.push(input); now += 20; return reviewReply(input, '{}'); },
+      invoke: async input => { inputs.push(input); now += 20; return reviewReply(input, '{bad json'); },
     });
     assert.strictEqual(inputs.length, 1);
     assert.ok(out.kind === 'unusable' && /deadline 已耗尽/.test(out.reason));
     inputs.length = 0;
     const direct = await runVisualProviderReview(ctx, { frameworkRoot: FRAMEWORK_ROOT,
       provider: { adapter: 'codex', model: 'm' },
-      invoke: async input => { inputs.push(input); now += 1000; return reviewReply(input, '{}'); },
+      invoke: async input => { inputs.push(input); now += 1000; return reviewReply(input, '{bad json'); },
     });
     assert.strictEqual(direct.kind, 'unusable');
     assert.strictEqual(inputs.length, 2);
     assert.strictEqual(inputs[1].deadlineMs, inputs[0].deadlineMs);
-    assert.ok(inputs[1].timeoutMs! <= inputs[0].timeoutMs! - 1000);
+    assert.strictEqual(inputs[0].timeoutMs, 600_000);
+    assert.strictEqual(inputs[1].timeoutMs, 300_000);
+    assert.deepStrictEqual(inputs[1].imagePaths, []);
   } finally { Date.now = originalNow; fs.rmSync(f.tmp, { recursive: true, force: true }); }
 });
 
@@ -2386,7 +2389,7 @@ test('t1 personal 任务计划：record-visual-provider 携带 catalog 派生候
   }
 });
 
-test('t3 传输面失败分档：超时 / terminal failure / 非零退出 一律 unavailable', async () => {
+test('t3 review超时走invalid恢复，明确传输面失败保持unavailable', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-outcome-'));
   try {
     const img = path.join(tmp, 'a.png');
@@ -2404,7 +2407,12 @@ test('t3 传输面失败分档：超时 / terminal failure / 非零退出 一律
       ['spawn error', { spawn_error: { message: 'CLI 缺失' } }],
     ] as Array<[string, Record<string, unknown>]>) {
       const inv = await call(r);
-      assert.strictEqual(inv.outcome, 'unavailable', `${label} 应判 unavailable`);
+      assert.strictEqual(inv.outcome, label === 'timeout' ? 'invalid' : 'unavailable', label);
+      if (label === 'timeout') {
+        assert.strictEqual(inv.timed_out, true);
+        const result = projectDelegatedVisualProviderFailure({ projectRoot: tmp, feature: 'feat' } as never, inv.outcome as 'invalid', inv.reason!, 'visual');
+        assert.strictEqual(result.status, 'FAIL'); assert.strictEqual(result.blocking_class, undefined);
+      }
       assert.strictEqual(inv.body, null);
     }
     // 内容面失败（有回应但信封投不出正文）判 invalid，与传输面分开
@@ -2650,6 +2658,60 @@ test('b3d7e5a1 T5：长图屏使评审目标为空 → skipped 前复位旧 prov
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('e9d49418: 真实回执复用原观察、换attempt零调用、当前严格度重裁；实质输入变化才重评', async () => {
+  const f = invalidatedScreenProject();
+  try {
+    const hap = path.join(f.tmp, 'app.hap'); fs.writeFileSync(hap, 'build-one');
+    const reports = path.join(f.tmp, 'doc/features/feat/testing/reports'); fs.mkdirSync(reports, { recursive: true });
+    fs.writeFileSync(path.join(reports, 'device-test-install.meta.json'), JSON.stringify({ hapPath: hap }));
+    const receiptPath = path.join(f.tmp, 'doc/features/feat/device-testing/reports/critic-receipt.json');
+    const ctx = { projectRoot: f.tmp, feature: 'feat', phase: 'testing', fidelityTarget: 'pixel_1to1', acceptanceStrictness: 'best_effort' };
+    let calls = 0, model = 'm';
+    const run = (attemptId: string) => runVisualProviderReview(ctx as never, { frameworkRoot: FRAMEWORK_ROOT,
+      provider: { adapter: 'codex', model }, runId: 'R', attemptId,
+      invoke: async input => {
+        calls++;
+        const targets = collectReviewTargets(ctx as never, JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens);
+        const body = goodPayload(targets, { attempt_id: attemptId });
+        const events = path.join(input.evidenceDir!, 'agent-events.jsonl'); fs.mkdirSync(input.evidenceDir!, { recursive: true });
+        fs.writeFileSync(events, JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: body } }) + '\n' + JSON.stringify({ type: 'turn.completed' }) + '\n');
+        return { ...reviewReply(input, body), events_path: events };
+      },
+    });
+    assert.strictEqual((await run('A')).kind, 'applied');
+    const originalReceipt = fs.readFileSync(receiptPath, 'utf8');
+    assert.ok(JSON.parse(originalReceipt).reuse.input_hash);
+    assert.strictEqual(JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens[0].verdict, 'warn');
+    ctx.acceptanceStrictness = 'hard';
+    const second = await run('B');
+    assert.ok(second.kind === 'applied' && second.reused, JSON.stringify(second));
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(fs.readFileSync(receiptPath, 'utf8'), originalReceipt, '不改写原回执身份');
+    assert.strictEqual(second.kind === 'applied' && second.invocation.input_provenance, 'unverified');
+    assert.strictEqual(JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')).screens[0].verdict, 'fail', 'hard须按原major重裁');
+    for (const changed of ['shot', 'ref', 'hap', 'nav', 'brief', 'elements', 'provider', 'invalidated', 'legacy']) {
+      if (changed === 'shot' || changed === 'ref') fs.appendFileSync(path.join(path.dirname(f.jsonPath), `${changed}.png`), changed);
+      if (changed === 'hap') fs.appendFileSync(hap, 'next-build');
+      if (changed === 'nav') fs.writeFileSync(visualDiffNavConfigPath(f.tmp, 'feat'), 'nav-input');
+      if (changed === 'brief') {
+        const file = path.join(f.tmp, 'doc/features/feat/spec/ref-elements.yaml'); fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, 'elements:\n  - element_id: bank_count\n    disposition: defer\n    note: keep twenty\n');
+      }
+      if (changed === 'elements') fs.writeFileSync(path.join(f.tmp, 'doc/features/feat/spec/ui-spec.yaml'), 'screens:\n  - id: s1\n    priority: P0\n    must_have_elements: [new_target]\ntokens: {}\nassets: []\n');
+      if (changed === 'provider') model = 'm2';
+      if (changed === 'invalidated') {
+        const doc = JSON.parse(fs.readFileSync(f.jsonPath, 'utf8')); doc.screens[0].evaluation_invalidated = true; fs.writeFileSync(f.jsonPath, JSON.stringify(doc));
+      }
+      if (changed === 'legacy') {
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')); delete receipt.reuse; fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+      }
+      const before: number = calls;
+      assert.strictEqual((await run(changed)).kind, 'applied', changed);
+      assert.strictEqual(calls, before + 1, changed + ' must re-evaluate');
+    }
+  } finally { fs.rmSync(f.tmp, { recursive: true, force: true }); }
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {

@@ -139,7 +139,7 @@ import { parseChangeUnitFeatureId, pointerStaleCandidate } from './utils/change-
 import { reconcileChangeUnitBlueprintRefs, type BlueprintRefReconciliation, type HeldFeatureLock } from './utils/change-unit-design-preparation';
 import { classifyDesignAuthorityCodes, diagnoseDesignAuthority, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
 import { resolveFeatureTrack, LEGACY_FEATURE_PHASE_ORDER } from './utils/runtime-policy';
-import { loadAcceptanceFlowsDoc, isP0DeviceInteractive } from './utils/p0-semantic-gates';
+import { loadAcceptanceFlowsDoc, resolveP0DeviceObligations } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
 import { mergeUsageIntoTraceFile } from './utils/usage-capture';
 import {
@@ -1142,7 +1142,7 @@ export function runRuntimeTelemetryPreflightGate(opts: {
 }): { outcome: GoalPhaseOutcome } | null {
   if (opts.phase !== 'testing') return null;
   const acceptance = loadAcceptanceFlowsDoc(opts.projectRoot, opts.feature);
-  if (!acceptance?.criteria.some(isP0DeviceInteractive)) return null;
+  if (resolveP0DeviceObligations(opts.projectRoot, opts.feature, acceptance).device.length === 0) return null;
 
   let capability: RuntimeEvidencePreflightCapability;
   try {
@@ -8855,7 +8855,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // t3b（f7a3d9c2）：goal 态 verified 回执生产——runner 从纯净事件文件（agent-events.jsonl）
         // 审计图片验读记录后签发 runner attestation 回执，在脚本闸门之前落盘（gate 消费）。
         // adapter 未声明 structured_events / 无注册解析器 / 覆盖不全 → 如实 unverified/不产出。
-        if (!dryRun && phase === 'testing' && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
+        if (!dryRun && phase === 'testing' && capabilityAdvisory?.visionMode !== 'delegated'
+          && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
             const produced = produceCriticReceipt({
               projectRoot,
@@ -10569,6 +10570,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (runControl) {
           assertFencedOwner(runControl.dir, runControl.token, 'assess_recommendation');
         }
+        const runAssess = (): ReturnType<typeof assessFeature> => assessFeature({
+          projectRoot,
+          frameworkRoot,
+          feature: manifest.feature,
+          goalEnd: manifest.end_phase,
+          minimumAssurance: manifest.minimum_assurance,
+          authorization: { mode: 'goal_mode' },
+          runId: manifest.run_id,
+          attemptId: invokeId,
+          writeProjection: !dryRun,
+          reconcile: reconcileObservation,
+        });
+        let assessmentBeforeRevision: ReturnType<typeof assessFeature> | undefined;
         let pendingScopeRevision: ExecutionScope | undefined;
         // Kept alongside the resolved scope so the appended event records what triggered it.
         let pendingScopeRevisionInput: ExecutionScopeInput | undefined;
@@ -10587,6 +10601,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // `resolveScopeRevisionProposal`——单提案、请求边界、已完成阶段补证明、impact
           // 继承与修正、失效 satisfied_by 剔除、「范围变了必须有新来源」全部同源实现。
           const old = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath));
+          // A successful definition repair can stale an earlier reused phase. Re-resolve the same
+          // obligations with this run's fresh proof instead of inventing a product repair candidate.
+          if (!proposals.length && old.completion_target === 'feature' && verdict === 'PASS'
+            && !resolved.advance_blocked && old.reused_phases.length) {
+            assessmentBeforeRevision = runAssess();
+            const target = assessmentBeforeRevision.recommendation.phase;
+            if (assessmentBeforeRevision.recommendation.action === 'rerun_phase' && target
+              && !old.phase_chain.includes(target as FeaturePhase) && old.reused_phases.some(reuse => reuse.phase === target)) {
+              proposals.push({
+                request: { completion_target: old.completion_target, requested_results: [...old.requested_results],
+                  requested_phases: [...old.phase_chain, target], ...(old.request_impact ? { impact: structuredClone(old.request_impact) } : {}) },
+                facts: structuredClone(old.obligations), contract_fingerprints: [],
+                ...(old.control_edges ? { control_edges: structuredClone(old.control_edges) } : {}),
+              });
+            }
+          }
           const completed = new Set([
             ...outcomes.filter(outcome => outcome.verdict === 'PASS' && !outcome.halted && !outcome.advance_blocked).map(outcome => String(outcome.phase)),
             ...(verdict === 'PASS' && !resolved.advance_blocked ? [String(phase)] : []),
@@ -10611,19 +10641,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             reconcileObservation.scope_revision = pendingScopeRevision;
           }
         }
-        const runAssess = (): ReturnType<typeof assessFeature> => assessFeature({
-          projectRoot,
-          frameworkRoot,
-          feature: manifest.feature,
-          goalEnd: manifest.end_phase,
-          minimumAssurance: manifest.minimum_assurance,
-          authorization: { mode: 'goal_mode' },
-          runId: manifest.run_id,
-          attemptId: invokeId,
-          writeProjection: !dryRun,
-          reconcile: reconcileObservation,
-        });
-        let assessment = runAssess();
+        let assessment = pendingScopeRevision || !assessmentBeforeRevision ? runAssess() : assessmentBeforeRevision;
         const recoveryTarget = assessment.recommendation.phase;
         const executableInputRecovery = !!factsAdmissionError && skipExecutor && !!recoveryTarget
           && chain.indexOf(recoveryTarget as FeaturePhase) >= 0 && chain.indexOf(recoveryTarget as FeaturePhase) < phaseIdx

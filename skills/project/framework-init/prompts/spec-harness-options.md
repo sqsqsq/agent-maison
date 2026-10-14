@@ -68,3 +68,5 @@
 **UPDATE overwrite**：`deriveUpdateConfigWritePayload` 保留磁盘已有 `spec` / `coding` 整段，再与 profile 默认 deep-merge 补缺缺失子键。
 
 **legacy `prd` 段**：**MIGRATION_RULES** 自动迁至 `spec`。
+
+P0 device/both 义务需要有效 UI 相关性定义：spec 声明 ui_change（非 UI 为 none，复用既有界面为 reuse_only），或在尚无 spec 时提供可解析的有效需求；缺 UI 定义不能当作能力缺口。已有 checkpoint 即使 UI 复用也继续核验，蓝图投影不提前要求 spec 补齐全部 checkpoint。

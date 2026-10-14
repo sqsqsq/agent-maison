@@ -1780,3 +1780,15 @@ cd framework/harness && npm run backfill:context -- --feature <name> --phases sp
 ### 3.0.x：bc-openCard 发布回归样本改为已确认三屏
 
 2026-09-09 用户确认以 bc-openCard-1 原始需求为准。随包 bc-opencard.golden-contract.json 固定为添加银行卡收起态、展开态、全部银行页；短信、完成页、卡详情等旧十屏内容及 HomeTab 专项负向采集不再要求。evaluator 检查项 ten_fixed_screens_exact_set 更名为 fixed_screens_exact_set；精确集合、截图/构建/run 绑定、崩溃、素材与未修复缺陷检查继续生效。CLI 的 --feature 参数及其历史默认值不变，当前宿主应显式传 --feature bc-openCard-1。这只调整随包回归样本，不限制其他宿主的页面数量。
+
+## v3.1.0 — e9d49418 交付收口补修
+
+P0 设备义务按 `priority=P0` 与 `ut_layer=device/both` 识别，不再依赖 `linked_flow`。有效 UI 义务需要真实 checkpoint；缺定义回原 spec/设计责任方。`linked_flow` 保持业务用例引用，`acceptance.flows` 可选，声明时按 checkpoint 屏关系核验；不要把缺 UI 定义改成 unsupported_gap，或改写业务用例名迁就屏链。
+
+视觉评审复用已采信观察，由当前严格度重新裁决。新 critic-receipt 在原产物中携带实质提示/构建/导航复用摘要及原输出路径；旧回执缺摘要时正常重评，不回填旧身份或摘要。跨 attempt 的复用如实 unverified，不新增完成阻断。review 首评默认最多600秒、一次不带图的格式纠错最多300秒，仍受原 gate/run 硬预算及有效更小上限约束。单次超时进入既有证据失败重试/熔断，不单凭超时标能力缺失。
+
+spec 规则与 verifier 模板有变化，旧 gate/template 指纹可能失效。沿本文件既有 c6a3d918 正式重验/后继流程，从实际失效的责任阶段开始；本批新增 spec 定义检查时不能固定只从 review 重验。旧快照、完成原件及签名保留，不修改指纹、不登记白名单。干净宿主验收与 c6 t9 共用一次运行，开发回归不代表宿主交付已完成。
+
+P0 device/both 的旧 spec 若未声明 ui_change，须由 spec 责任阶段补足（真实非 UI 写 none，已有界面复用写 reuse_only）；已有 checkpoint 的约束继续核验，不因 UI 未改而丢弃。蓝图投影只核已声明的 checkpoint/屏链，不要求它提前写完 spec 补充内容。快照迁移替身在正式 spec 回调内补材料与当前 facts，再由真实 harness/verifier/closure 重验；原 project 快照不改。
+
+原任务 Git 基线仍可达时应保留，不能把包含本任务全部 UT 的完成后 HEAD 当作“动手前”基线来重验；那会把本任务用例归为存量。host-snapshot 的临时 Git 仅按已知 fixture 作者历史重建 UT 归属，具体边界见其 README，不代表任意丢失 Git 历史的宿主都可自动重建。

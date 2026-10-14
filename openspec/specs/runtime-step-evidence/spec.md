@@ -7,7 +7,7 @@ TBD - created by archiving change autonomous-recovery-without-human-gates. Updat
 
 When the vendor manifest declares native Hylyre `0.5.0+` and `tools.hylyre.auto_install=true`, the default or `HYLYRE_HOME` venv is an installation target: a missing or stale installed version SHALL proceed to `ensureHylyreReady` rather than permanently defer. An explicit `HYLYRE_PYTHON` or `auto_install=false` may defer based on the installed environment before content execution.
 
-For a testing phase with applicable P0 device/both checkpoints, the runner SHALL resolve the selected Hylyre provider and its evidence contract before execution. A provider that can emit native `CaseResult.steps[]` SHALL be accepted as the runtime evidence source even when the legacy `runtime_step_telemetry` capability is absent; ordinary interactive testing MUST NOT be skipped solely because that legacy capability is missing. Goal mode SHALL retain its existing run/attempt/HAP/device identity binding. The released native contract is Hylyre `0.5.0+` with trace schema `0.4-p0` and result protocol `hylyre.step-outcome/1` (Step Outcome v1); `0.3-p0` and older are read-only historical compatibility, are not new-run producers, and MUST NOT close any required gate. If native support is unavailable, the existing capability-missing carrier SHALL defer before content execution. The pre-check capability report MUST NOT consume evidence that can only be produced by the current testing invocation.
+For a testing phase with effective P0 device/both acceptance obligations, the runner SHALL resolve the selected Hylyre provider and its evidence contract before execution. A provider that can emit native `CaseResult.steps[]` SHALL be accepted as the runtime evidence source even when the legacy `runtime_step_telemetry` capability is absent; ordinary interactive testing MUST NOT be skipped solely because that legacy capability is missing. Goal mode SHALL retain its existing run/attempt/HAP/device identity binding. The released native contract is Hylyre `0.5.0+` with trace schema `0.4-p0` and result protocol `hylyre.step-outcome/1` (Step Outcome v1); `0.3-p0` and older are read-only historical compatibility, are not new-run producers, and MUST NOT close any required gate. If native support is unavailable, the existing capability-missing carrier SHALL defer before content execution. The pre-check capability report MUST NOT consume evidence that can only be produced by the current testing invocation.
 
 Enforcement: `harness/capability-registry.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/check-testing.ts`, `profiles/hmos-app/harness/providers/device-test-run.ts`
 
@@ -97,3 +97,31 @@ Enforcement: `harness/scripts/utils/verify-feature-completion.ts`, `harness/scri
 
 - **WHEN** the trace dispatches as `v1` and the doc also carries `runtime_fidelity`
 - **THEN** only the native branch decides; the legacy block is neither validated nor compared
+
+### Requirement: Device obligations and UI checkpoints share one resolved source
+
+The framework SHALL derive P0 device obligations from effective acceptance priority=P0 and ut_layer=device/both without requiring linked_flow. Spec definition checks, native evidence preparation/consumption, legacy readers and AC-to-case mapping SHALL consume one shared resolution. UI relevance SHALL use resolveUiRelevanceForRun and effective requirement inputs, not ui-spec file existence. UI obligations require real bindable checkpoints; missing definitions SHALL return to their definition owner through existing recovery. Non-UI obligations retain their plan assertion/native evidence checks. Missing definitions MUST NOT become unsupported_gap.
+
+linked_flow SHALL reference business use cases only. Optional acceptance.flows SHALL be checked by checkpoint pre/post/action relations when declared; absent flows SHALL NOT remove device obligations. A case absent from the plan or trace SHALL NOT reduce the acceptance obligation set. Failure guidance SHALL distinguish definition gaps, missing/mismatched evidence and actual unsupported tool protocols.
+
+Enforcement: `harness/scripts/utils/p0-semantic-gates.ts`, `harness/scripts/check-testing.ts`, `harness/scripts/utils/runtime-step-evidence.ts`, `harness/scripts/utils/repair-candidates.ts`
+
+#### Scenario: Host acceptance omits linked_flow
+
+- **WHEN** UI-related P0 device/both acceptance omits linked_flow and optional flows
+- **THEN** its device obligations remain applicable, missing checkpoints return to spec, and complete checkpoints plus matching native evidence can satisfy the existing P0 gates
+
+#### Scenario: A missing ui-spec does not waive a UI obligation
+
+- **WHEN** an effective UI obligation lacks its required UI definition
+- **THEN** the result SHALL identify a definition gap rather than declare non-UI or unsupported_gap
+
+#### Scenario: Blueprint admission precedes spec-owned UI completion
+
+- **WHEN** canonical design has P0 device obligations but omits spec-owned checkpoints
+- **THEN** admission validates only explicitly declared checkpoints and related screen flows; complete requirements are enforced when spec executes and when testing consumes evidence
+
+#### Scenario: Reused UI retains its explicit checkpoints and alternative routes
+
+- **WHEN** ui_change is reuse_only and acceptance already declares checkpoints, including a shortcut alongside a longer route
+- **THEN** those checkpoint obligations remain enforced, a checkpoint belongs only to adjacent matching flows, and flows unrelated to P0 checkpoints do not gain new P0 edge obligations

@@ -331,7 +331,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(evaluateAcceptanceFlowStructure(f.root, f.feature, spec.acceptance).every(c => c.status === 'PASS'));
     spec.acceptance!.criteria.find(c => c.id === 'AC-2')!.expected_result = '允许显示未提交金额';
     assert(checkAuthoritativeContentAligned(ctx, 'acceptance').some(c => c.status === 'FAIL'));
-    update(f, bp => { asRecords(asRecord(target(bp, 'ledger-module').acceptance)!.criteria).find(c => c.id === 'AC-2')!.linked_flow = 'premature-ui'; });
+    update(f, bp => { asRecords(asRecord(target(bp, 'ledger-module').acceptance)!.criteria).find(c => c.id === 'AC-2')!.checkpoint = { pre_screen: 'premature-ui' }; });
     const invalid = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance'); assert.equal(invalid.state, 'invalid'); assert(invalid.codes?.includes('authority_acceptance_content_invalid'));
   } },
   { name: 'readiness checks declared malformed use_cases even when acceptance and contracts are absent', run(f) {

@@ -42,6 +42,7 @@ export interface FidelityDeferralEntry {
 export interface RefElementEntry {
   element_id: string;
   screen_ref_id?: string;
+  ref_id?: string;
   zone?: string;
   type?: string;
   text?: string;
@@ -52,6 +53,7 @@ export interface RefElementEntry {
   /** plan c4e7a9b2 A2：`excluded` = 需求明文排除（非质量义务、非债务），须带 requirement_quote 逐字引自需求原文 */
   disposition: 'implement' | 'defer' | 'excluded';
   requirement_quote?: string;
+  note?: string;
   /** structured | vl — 第二刀双写优先级 */
   provenance?: 'structured' | 'vl';
 }

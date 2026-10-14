@@ -228,3 +228,9 @@
 - **SSOT**：应用工程集成的 Maison 发布件为 harness / device-testing 源码；须使用包含所需能力的已验证发布版本（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等），不以宿主 HEAD/commit 判断版本。
 - **同步后**：在应用工程根执行 framework-init render（或手动复制 `.cursor/rules/framework-agent-execution.mdc`、device-testing 跳板）；重跑 `npm run adhoc-device-test -- --bundle <id> --steps "…"` 刷新 `derive-adhoc-last.json`（schema 4 + `cache_layout_*`）。
 - **Cache**：若 stderr `ADHOC_CACHE_LAYOUT_MISMATCH=1`，将根目录 page JSON 迁入 `pages/` 或修 page save；**勿** agent Write 根目录替代。
+
+### P0 义务与视觉恢复
+
+P0 device/both 义务不以 linked_flow 或 flows 是否填写判断。缺 UI 定义回 spec，工具确实不支持才按能力缺口披露。执行者消费目标简报中的“本次延后”，不把参考图背景差异直接提升为已授权需求。
+
+harness 会在实质输入未变时复用已采信的视觉观察，仍按当前严格度裁决；不要手改旧回执身份或 hash。视觉首评默认最多600秒，至多一次不带图的格式纠错最多300秒，均受 gate/run 剩余预算约束；格式恢复不重新操作设备，真实 native 失败保持失败。

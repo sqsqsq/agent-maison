@@ -44,6 +44,7 @@ const SNIPPET = '点击任意银行拉起添卡选卡半模态。';
 function mkProject(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-eff-t2-'));
   clearFrameworkConfigCache();
+  writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, '# spec\n```yaml\nui_change: new_or_changed\n```\n');
   return root;
 }
 

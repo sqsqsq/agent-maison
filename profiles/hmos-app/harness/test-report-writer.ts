@@ -23,7 +23,7 @@ import { featureDir, resolveFeatureArtifact } from '../../../harness/config';
 import { extractTables, getSectionContent } from '../../../harness/scripts/utils/markdown-parser';
 import {
   isCapabilityAbsenceCheck,
-  isP0DeviceInteractive,
+  resolveP0DeviceObligations,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from '../../../harness/scripts/utils/p0-semantic-gates';
@@ -448,7 +448,7 @@ export function generateTestReport(input: TestReportWriterInput): GeneratedTestR
         : 'PASS';
   const stabilityAxis: AxisStatus = !stability.available || !stability.min_rounds_met ? 'UNKNOWN' : stability.consistent_all ? 'PASS' : 'FAIL';
   const p0Screens = new Set(
-    (acceptance?.criteria ?? []).filter(isP0DeviceInteractive).flatMap(ac => screensByAc.get(ac.id.toUpperCase()) ?? []),
+    resolveP0DeviceObligations(projectRoot, feature, acceptance).checkpoints.flatMap(ac => screensByAc.get(ac.id.toUpperCase()) ?? []),
   );
   const canonicalP0Targets = new Set(collectP0VisualTargetIds(loadUiSpecFile(uiSpecAbsPath(projectRoot, feature))));
   // 视觉轴只在 feature 确有视觉面（有 visual-diff.json 或 P0 checkpoint 屏）时才计入缺口

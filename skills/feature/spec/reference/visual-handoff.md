@@ -176,3 +176,5 @@ spec 阶段 agent 调用宿主 MCP `fetch_fidelity(source_link, feature, out_dir
 - **spec**：`asset-acquisition` 裁剪/采色（吃 PNG）；第二刀结构化派生注入 **内存 manifest**（`CheckContext.refElementsManifest`），同 run 内 `capture-completeness` 消费——verify 路径不写盘；VL 手工枚举仍落 `spec/ref-elements.yaml` 作审计/离线 fallback。
 - **coding**：`static-fidelity` 间接受益（token 值来自 spec 采样）；直接采样快照 PNG 为 future task。
 - **plan / review**：消费 lock 清单 / 治理签字，不对图。
+
+P0 device/both 验收若存在，spec 完整性检查需要可解析的 UI 相关性定义：在 spec.md 的 YAML 中声明 ui_change（非 UI 为 none，既有界面复用为 reuse_only），或在尚无 spec 时提供有效需求输入；ui-spec 文件是否存在不决定适用性。已有 checkpoint 即使界面只复用也继续核验。蓝图投影仅检查已声明内容，不前移 spec 才能补的定义义务。

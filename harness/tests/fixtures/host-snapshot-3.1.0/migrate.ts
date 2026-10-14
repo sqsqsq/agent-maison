@@ -7,7 +7,7 @@ import { execFileSync } from 'child_process';
 import { clearFrameworkConfigCache, featureFilePath } from '../../../config';
 import { assessFeature } from '../../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../../scripts/utils/change-unit-completion';
-import { publishVerifier } from '../../unit/real-chain.unit.test';
+import { publishVerifier, writeSpecMaterials, writeCuSpecMaterials } from '../../unit/real-chain.unit.test';
 import { runGoalRuntimeChain } from '../../unit/goal-runner-testing-integrity.unit.test';
 import { ensureFakeDeveco } from '../../unit/successor-exit.unit.test';
 import { git, provisionFrameworkUnder, synthesizeTestChainProfile } from '../../utils/real-chain-host';
@@ -32,7 +32,11 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
     git(s.root, ['init', '-q']);
     fs.writeFileSync(path.join(s.root, '.gitignore'), 'framework/\nfake-deveco/\nbuild/\n');
     git(s.root, ['add', '-A']);
-    git(s.root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'snapshot sources']);
+    // Both files are authored by the fixture's UT stages, not its seed. Keep their captured bytes
+    // in the working tree while reconstructing the portable pre-UT ownership baseline.
+    git(s.root, ['rm', '--cached', '--', '02-Feature/FinancialCard/src/ohosTest/ets/test/AllBanksPage.test.ets',
+      'src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets']);
+    git(s.root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'snapshot sources before authored UT']);
   }
   let rebaselineTo: string | undefined;
   try { execFileSync('git', ['cat-file', '-e', `${manifest.run_base_sha}^{commit}`], { cwd: s.root, stdio: 'ignore' }); }
@@ -45,12 +49,25 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
     frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true,
     supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
     freshStartPhase: chain[0] as 'review', freshEndPhase: chain.at(-1), skipLegacySeal: true,
+    onSpec: ctx => {
+      const current = { ...p, runId: ctx.runId };
+      if (feature === SNAPSHOT_CU_FEATURE) writeCuSpecMaterials(current); else writeSpecMaterials(current, undefined, { preserveUnchanged: true });
+      if (ctx.attempt > 1) publishVerifier(current, 'spec');
+    },
+    onPlan: ctx => { if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'plan'); },
+    onCoding: ctx => { if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'coding'); },
+    onUt: ctx => { if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'ut'); },
     onReview: ctx => { if (ctx.attempt > 1) publishVerifier(p, 'review'); },
   });
   clearFrameworkConfigCache();
   const after = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
   assert.equal(hash(original), originalHash, '迁移不得改写旧 completion 原件');
-  assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-5)));
+  if (owners.has('spec')) assert(probe.events.some(event => event.type === 'scope_revised'), 'spec补定义后应在同一run接回失效的复用阶段');
+  const failedPhase = [...probe.events].reverse().find(event => event.type === 'phase_verdict' && event.verdict !== 'PASS')?.phase;
+  const failedReport = failedPhase ? featureFilePath(s.root, feature, `${failedPhase}/reports/script-report.json`) : '';
+  const failureChecks = failedReport && fs.existsSync(failedReport)
+    ? JSON.parse(fs.readFileSync(failedReport, 'utf8')).checks.filter((check: { status: string }) => check.status === 'FAIL') : [];
+  assert.equal(probe.exitCode, 0, JSON.stringify({ events: probe.events.slice(-5), checks: failureChecks }));
   assert(after.complete, JSON.stringify({ record: after.record, obligations: after.obligations.filter(o => o.status === 'uncovered') }));
   assert(after.record.state === 'ok' && after.record.run_id, '新完成必须仍可信并有 run 身份');
   const successorRun = after.record.run_id;

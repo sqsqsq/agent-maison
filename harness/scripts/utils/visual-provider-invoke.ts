@@ -331,7 +331,7 @@ export function extractOpenCodeFinalText(raw: string): string | null {
  */
 export function projectVisualProviderBody(
   envelope: VisualProviderStdoutEnvelope,
-  result: AgentInvokeResult,
+  result: Pick<AgentInvokeResult, 'stdout' | 'completion_observed' | 'terminal_failure_observed'>,
 ): { body: string | null; reason?: string } {
   switch (envelope) {
     case 'stream_json_result': {
@@ -420,6 +420,8 @@ export interface VisualProviderInvocation {
   outcome: VisualProviderOutcome;
   /** 非 success 时的人读原因（进事件，供排障） */
   reason?: string;
+  timed_out?: boolean;
+  deadline_exhausted?: boolean;
   /** 投影后的正文；outcome!=='success' 时恒 null */
   body: string | null;
   duration_ms: number;
@@ -470,8 +472,8 @@ function resolveInputProvenance(
  *
  * 失败分档：
  *  · `unavailable` —— 传输面不成立：adapter 无完整声明、CLI 缺失/不可 spawn、spawn 失败、
- *    超时、terminal failure、进程非零退出。
- *  · `invalid`     —— 调用回来了但内容不可用：信封投影为空/为 null、工作区被弄脏。
+ *    terminal failure、进程非零退出（非 review 的超时沿原能力投影）。
+ *  · `invalid`     —— 当前没有可采信内容：review 超时、信封投影为空/为 null、工作区被弄脏；超时保留原原因。
  * 载荷 schema / 身份回显 / 图片 hash 的**逐项校验**由调用方在拿到 body 后进行
  * （review 与 spec 观察两种载荷形态不同，但都走同一条「不合法即丢弃」的路）。
  */
@@ -562,7 +564,10 @@ export async function invokeVisualProvider(
     return fail('unavailable', `provider CLI 无法启动：${result.spawn_error.message}`, common);
   }
   if (result.timed_out) {
-    return fail('unavailable', 'provider 调用超时', common);
+    const exhausted = input.deadlineMs !== undefined && Date.now() >= input.deadlineMs;
+    return fail(input.purpose === 'review' ? 'invalid' : 'unavailable',
+      exhausted ? 'provider 调用被 gate/run 硬预算截断' : 'provider 调用超时',
+      { ...common, timed_out: true, ...(exhausted ? { deadline_exhausted: true } : {}) });
   }
   if (result.terminal_failure_observed === true) {
     return fail('unavailable', `provider 观测到失败终态：${result.terminal_error_excerpt ?? 'terminal failure'}`, common);
@@ -761,6 +766,8 @@ export function buildVisualProviderInvokeEvent(
     ...(inv.usage ? { usage: inv.usage } : {}),
     ...(inv.workspace_dirtied ? { workspace_dirtied: true } : {}),
     ...(inv.reason ? { reason: inv.reason } : {}),
+    ...(inv.timed_out ? { timed_out: true } : {}),
+    ...(inv.deadline_exhausted ? { deadline_exhausted: true } : {}),
     ...(inv.events_path ? { events_path: inv.events_path } : {}),
   };
 }

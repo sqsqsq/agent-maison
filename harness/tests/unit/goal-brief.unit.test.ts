@@ -1,3 +1,4 @@
+import { assembleAIPrompt } from '../../scripts/utils/report-generator';
 // ============================================================================
 // goal-brief.unit.test.ts — 目标简报同源注入（plan 33784ed1 §3，验收 A1/A2/A3/A5）
 // ============================================================================
@@ -39,6 +40,10 @@ const REF_ELEMENTS_EXCLUDED = [
   '  - element_id: result_nfc_card',
   '    disposition: excluded',
   '    requirement_quote: "本次不做 NFC 卡"',
+  '  - element_id: bank_count',
+  '    disposition: defer',
+  '    screen_ref_id: bank_list',
+  '    note: 本次保留20家，不扩至100家',
   '  - element_id: result_done',
   '    disposition: implement',
   '',
@@ -73,6 +78,38 @@ function withTmp(fn: (root: string) => void): void {
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
+    name: 'e9d49418 延后展示兼容宿主 ref_id 并携带元素原文，screen_ref_id 优先',
+    run: () => withTmp(root => {
+      put(root, 'doc/features/demo/spec/ref-elements.yaml', [
+        'elements:',
+        '  - element_id: bank_count',
+        '    ref_id: card_type_sheet',
+        '    text: 支持100家银行',
+        '    disposition: defer',
+        '    note: 本次保留20家',
+        '  - element_id: bank_search',
+        '    screen_ref_id: bank_list',
+        '    ref_id: ignored_alias',
+        '    text: 搜索银行',
+        '    disposition: defer',
+        '    note: 本次不新增搜索',
+      ].join('\n'));
+      const text = renderGoalBrief(assembleGoalBrief(root, 'demo', { runId: '' }), { sections: ['deferrals'] });
+      assert(text.includes('bank_count（card_type_sheet）「支持100家银行」：本次保留20家'), `宿主字段与原文须展示：${text}`);
+      assert(text.includes('bank_search（bank_list）「搜索银行」：本次不新增搜索') && !text.includes('ignored_alias'), `标准屏名字段优先：${text}`);
+      assert(text.includes('来源 doc/features/demo/spec/ref-elements.yaml'), '保留既有来源');
+    }),
+  },
+  {
+    name: 'e9d49418 coding 实际提示只展开一次完整脚本报告',
+    run: () => withTmp(root => {
+      const marker = 'coding-report-unique-e9d49418';
+      const prompt = assembleAIPrompt(path.join(FRAMEWORK_ROOT, 'harness'), root, 'coding', 'demo', [], JSON.stringify({ evidence: marker }), '', undefined, undefined, FRAMEWORK_ROOT);
+      assert(prompt.split(marker).length === 2, '报告只展开一次');
+      assert(prompt.includes('coding_compile_gate') && prompt.includes('HARD STOP'), '编译约束不变');
+    }),
+  },
+  {
     name: 'A2 需求原文不可得：简报如实写明，明确不做/判定办法照常；无 run 不出权限栏',
     run: () => withTmp(root => {
       put(root, 'doc/features/demo/spec/ref-elements.yaml', REF_ELEMENTS_EXCLUDED);
@@ -83,6 +120,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(text.includes('需求原文不可得'), `须如实写明需求不可得：${text}`);
       assert(text.includes('参考图元素 result_nfc_card：「本次不做 NFC 卡」'), `排除项须带引文：${text}`);
       assert(!text.includes('result_done'), 'implement 元素不是排除项');
+      assert(text.includes('### 本次延后') && text.includes('本次保留20家，不扩至100家') && text.includes('spec/ref-elements.yaml'), '延后必须携带真实理由与来源');
+      assert(!exclusionsSection(root, 'demo').includes('bank_count'), 'defer 不能冒充原文排除');
       assert(text.includes('spec 出范围模块：payment'), `spec 出范围模块须进明确不做：${text}`);
       assert(text.includes('即使尚未登记'), '明确不做须提示需求原文里的排除同样有效');
       assert(text.includes('### 判定办法') && text.includes('权威判定'), '判定办法恒有');
@@ -172,7 +211,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(!second.stdout.includes('### 需求原文') && !second.stdout.includes('### 判定办法'), '控制台只打印两栏');
 
         const manifest = { feature: p.feature, run_id: 'no-run', requirement: 'REQ_LINE' } as unknown as GoalManifest;
+        assert(second.stdout.includes('本次保留20家，不扩至100家'), '控制台必须收到延后理由');
+        assert(fs.readFileSync(path.join(p.reportsDir, 'ai-prompt.md'), 'utf8').includes('本次保留20家，不扩至100家'), 'verifier必须收到延后理由');
         const executor = buildPhasePrompt(manifest, p.root, 'coding', p.frameworkRoot, []);
+        assert(executor.includes('本次保留20家，不扩至100家'), '执行者必须收到延后理由');
         assert(executor.includes(expected), `执行者提示词须逐字含明确不做：\n${executor.slice(0, 3000)}`);
         assert(executor.indexOf('REQ_LINE') < executor.indexOf(expected), '简报块在需求行之后');
         assert(executor.split('REQ_LINE').length === 2, '执行者提示词不重复需求正文');
@@ -202,6 +244,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
             };
           }) as never,
         });
+        assert(providerPrompt.includes('本次保留20家，不扩至100家'), 'provider必须收到延后理由');
         assert(providerPrompt.includes(expected), `provider 提示词须逐字含明确不做：\n${providerPrompt.slice(0, 3000)}`);
         assert(providerPrompt.includes('result_nfc_card(excluded)'), 'refElements 的 id 清单保留');
       } finally {

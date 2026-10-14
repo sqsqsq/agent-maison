@@ -210,7 +210,7 @@ import {
   evaluateP0CoverageIntegrity,
   evaluateP0SemanticCoverage,
   isCapabilityAbsenceCheck,
-  isP0DeviceInteractive,
+  resolveP0DeviceObligations,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './utils/p0-semantic-gates';
@@ -2318,7 +2318,7 @@ function checkReportReconcileOnlyPipeline(
       ? manifestRecord.value.hylyre_version
       : null;
   const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
-  const nativeEvidenceApplicable = Boolean(acceptance?.criteria.some(isP0DeviceInteractive));
+  const nativeEvidenceApplicable = resolveP0DeviceObligations(ctx.projectRoot, ctx.feature, acceptance).device.length > 0;
   const evidenceGate = nativeEvidenceApplicable
     ? evaluateHylyreNativeEvidenceGate({
         trace,
@@ -3734,8 +3734,8 @@ function checkP0RuntimeStepEvidenceGate(
   const id = 'p0_runtime_step_evidence';
   const description = 'P0 device flow 原生 CaseResult.steps[] 证据';
   const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
-  if (!acceptance?.criteria.some(isP0DeviceInteractive)) {
-    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，native StepResult evidence 不适用。' }];
+  if (resolveP0DeviceObligations(ctx.projectRoot, ctx.feature, acceptance).device.length === 0) {
+    return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device/both 验收义务，native StepResult evidence 不适用。' }];
   }
   const gate = holder.hylyreEvidenceGate ?? priorResults
     .map(result => result.structured as HylyreEvidenceGateResult | undefined)
@@ -4448,7 +4448,7 @@ function checkDeviceTestRunGate(
     // the bounded bridge path; native 0.4.0 must never be monkey-patched.
     const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
     const runtimeEvidenceRequired = Boolean(
-      acceptanceFlows?.criteria.some(isP0DeviceInteractive),
+      resolveP0DeviceObligations(ctx.projectRoot, ctx.feature, acceptanceFlows).device.length > 0,
     );
     if (runtimeEvidenceRequired) {
       let resolvedCapability: HylyreEvidenceCapability;
@@ -5798,9 +5798,9 @@ export function projectDelegatedVisualProviderFailure(
       status: 'FAIL',
       failure_kind: 'visual_provider_invalid_evidence',
       details:
-        `【delegated 视觉委托】provider 已执行但本轮证据不可采信（invalid）：${reason}\n` +
+        `【delegated 视觉委托】本轮未取得可采信的 provider 证据（invalid）：${reason}\n` +
         '该结果属于 evidence 产出失败，保持 testing FAIL 并走既有 retry/fuse；不得伪装成能力缺失或沿用旧 PASS。',
-      suggestion: `同 gate provider 局部纠错已结束；按精确诊断处理，原图/装机绑定变化须回采集路径，不能改旧 hash。${diagnosticPaths?.length ? `诊断：${diagnosticPaths.join('、')}` : ''}`,
+      suggestion: `按精确诊断沿原阶段有界恢复；仅格式错误适用局部纠错，预算不足按预算停放。原图/装机绑定变化须回采集路径，不能改旧 hash。${diagnosticPaths?.length ? `诊断：${diagnosticPaths.join('、')}` : ''}`,
     };
   }
 

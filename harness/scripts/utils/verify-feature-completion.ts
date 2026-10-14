@@ -42,7 +42,7 @@ import {
 } from './device-test-evidence-shared';
 import { dispatchHylyreResult } from './hylyre-result-protocol';
 import { phaseManifestBindsRuntimeArtifacts, validateRuntimeFidelityEvidenceDocument } from './runtime-step-evidence';
-import { isP0DeviceInteractive, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
+import { resolveP0DeviceObligations, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import {
   loadPhaseEvidenceManifest,
   recomputePhaseEvidenceStaleness,
@@ -480,7 +480,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
       } catch (error) { issues.push({ phase: 'testing', condition: 'acceptance_binding', detail: String(error), kind: 'needs_fix' }); suppliedAcceptance = null; }
     }
     const doc = loadAcceptanceFlowsDoc(projectRoot, feature, suppliedAcceptance);
-    const hasP0DeviceFlow = doc && doc.criteria.some(isP0DeviceInteractive);
+    const hasP0DeviceFlow = resolveP0DeviceObligations(projectRoot, feature, doc).device.length > 0;
     if (hasP0DeviceFlow) {
       let expectedRunId: string | null = null;
       let expectedAttemptId: string | null = null;

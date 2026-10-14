@@ -26,7 +26,7 @@ import {
   stableStringify,
 } from './phase-evidence-manifest';
 import {
-  isP0DeviceInteractive,
+  resolveP0DeviceObligations,
   loadAcceptanceFlowsDoc,
   parsePlanTcEntries,
 } from './p0-semantic-gates';
@@ -190,8 +190,9 @@ export function composeRuntimeFidelityEvidence(
   opts: ComposeRuntimeFidelityOptions,
 ): ComposeRuntimeFidelityResult {
   const acceptance = loadAcceptanceFlowsDoc(opts.projectRoot, opts.feature);
-  const p0Criteria = (acceptance?.criteria ?? []).filter(isP0DeviceInteractive);
-  if (!acceptance || p0Criteria.length === 0) return { ok: true, applicable: false };
+  const obligations = resolveP0DeviceObligations(opts.projectRoot, opts.feature, acceptance);
+  const p0Criteria = obligations.checkpoints;
+  if (!acceptance || obligations.device.length === 0) return { ok: true, applicable: false };
 
   const acceptanceFile = resolveFeatureArtifact(opts.projectRoot, opts.feature, 'acceptance.yaml');
   const topPlanFile = resolveFeatureArtifact(opts.projectRoot, opts.feature, 'test-plan.md');
@@ -216,6 +217,8 @@ export function composeRuntimeFidelityEvidence(
   if (trace.schema_version === '0.4-p0') {
     return { ok: true, applicable: false };
   }
+  if (!obligations.uiKnown) return { ok: false, reason: 'P0 UI 相关性定义缺失，回 spec 补齐 ui_change' };
+  if (p0Criteria.length === 0) return { ok: true, applicable: false };
   const envelopeIssue = validateTelemetryEnvelope(trace.runtime_step_telemetry, opts);
   if (envelopeIssue) return { ok: false, reason: envelopeIssue };
   const telemetry = trace.runtime_step_telemetry!;
@@ -262,7 +265,7 @@ export function composeRuntimeFidelityEvidence(
   for (const ac of p0Criteria) {
     const cp = ac.checkpoint;
     if (
-      !ac.linked_flow || !cp?.pre_screen || !cp.post_screen ||
+      !cp?.pre_screen || !cp.post_screen ||
       !cp.action?.target_element_id || !Array.isArray(cp.required_element_ids)
     ) {
       return { ok: false, reason: `${ac.id} 缺完整 P0 checkpoint` };
@@ -365,7 +368,10 @@ export function composeRuntimeFidelityEvidence(
       }
       accepted = {
         acceptance_id: ac.id,
-        flow_id: ac.linked_flow,
+        flow_id: Object.entries(obligations.flows).find(([, screens]) => {
+          const pre = screens.indexOf(cp.pre_screen!), post = screens.indexOf(cp.post_screen!);
+          return pre >= 0 && (post === pre || post === pre + 1);
+        })?.[0] ?? '',
         case_id: caseId,
         step_index: targetIndex,
         action_kind: event.action_kind,

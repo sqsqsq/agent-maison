@@ -25,6 +25,7 @@ const SNIPPET = '页面布局完全参考\'3-点击任意银行拉起添卡选�
 function mkProject(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-p0gate-'));
   clearFrameworkConfigCache();
+  writeFile(root, `doc/features/${FEATURE}/spec/spec.md`, '# spec\n```yaml\nui_change: new_or_changed\n```\n');
   return root;
 }
 
@@ -440,6 +441,28 @@ const cases: Case[] = [
     },
   },
 ];
+
+cases.push({ name: 'e9d49418 B1/B2: 设计期只验已声明定义；合法捷径与无P0屏链不误报，真跳边和缺边仍失败', run: () => {
+  const root = mkProject();
+  try {
+    seedReqDoc(root);
+    const edge = (id: string, pre: string, post: string) => ({ id, priority: 'P0', ut_layer: 'device',
+      requirement_ref: { source_path: REQ_DOC_REL, snippet: SNIPPET },
+      checkpoint: { pre_screen: pre, post_screen: post, action: { type: 'touch', target_element_id: 'go' }, required_element_ids: ['result'] } });
+    const doc = { flows: { full: ['a', 'b', 'c'], shortcut: ['a', 'c'], unrelated: ['x', 'y'] },
+      criteria: [edge('AC-1', 'a', 'b'), edge('AC-2', 'b', 'c'), edge('AC-3', 'a', 'c')] };
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE, doc)[0].status, 'PASS');
+    const gap = { ...doc, criteria: [doc.criteria[0], doc.criteria[2]] };
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE, gap)[0].status, 'FAIL', '有关联的屏链仍检查缺边');
+    const jump = { flows: { full: ['a', 'b', 'c'] }, criteria: [doc.criteria[2]] };
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE, jump)[0].status, 'FAIL', '真正跳边仍失败');
+    const missing = { criteria: [{ id: 'AC-1', priority: 'P0', ut_layer: 'device' }] };
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE, missing, 'declared')[0].status, 'PASS');
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE, missing)[0].repair_owner, 'spec');
+    const malformed = { criteria: [{ ...missing.criteria[0], checkpoint: {} }] };
+    assert.strictEqual(evaluateAcceptanceFlowStructure(root, FEATURE, malformed, 'declared')[0].status, 'FAIL', '已经声明的残缺checkpoint不能蒙混');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}});
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
