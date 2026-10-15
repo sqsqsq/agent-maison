@@ -1,5 +1,7 @@
 # App Component Blueprint 内部工作流
 
+验收分层按行为风险选择：业务逻辑与可隔离异常用 UT，真实 UI/导航及平台集成用设备证据；both 分别说明两层覆盖，不能默认全部两层重复验证。复用 acceptance 的 ut_layer/device_focus 与既有 flow/接口说明，不增加第二份覆盖表。
+
 由 [`/component-design`](../project/component-design/SKILL.md) 或合法内部消费者引用，负责 App 部件发现、设计、质询、准入与调和；不登记独立 Skill、不提供公开 command。蓝图是一次演进的设计权威，本流程不创建 CU、P2 ready set 或 P3 closure。
 
 只有一种蓝图协议，内容深度由真实影响面派生；当前仅支持 `hmos-app` / App design lens，其它 component type 明确返回 unsupported / missing design lens。

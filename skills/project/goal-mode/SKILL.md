@@ -50,7 +50,7 @@
 
 有人在场由当前会话提供 executor transport，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（`runGoalModeHostBridge()`→`GoalPhaseRuntime`）；完整命令和 JSONL phase callback 协议见 operations 文档。唯一 runtime 负责 assess、attempt、receipt/gate、verdict、重试/回退、closure 与 owner fence；Skill/宿主不得另拼推进循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守，差异仅是 `DetachedGoalPhaseExecutor` 的 adapter spawn transport。**非 orphan 状态下**，session 与 detached process 互转只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。仅 `orphaned_session` 可在用户显式授权后通过既有 `--force-resume` / `forceTakeoverRunOwner` 执行 epoch takeover；supervisor 永不得触发该例外。禁止复制或转换 ledger。
 
-具体 CLI、adapter 解析、detach 启动握手、进度汇报与 opt-in 盯守见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
+具体 CLI、adapter 解析、detach 启动握手、进度汇报与有界终态跟踪见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
 
 ## 每轮汇报
 
@@ -62,7 +62,7 @@
 - 等待项（没有则省略）
 - `run_id` 与进度文件
 
-无人值守（`--detach`）启动后：launcher 已用 manifest / 本次新增 events / liveness / progress 做一次**有界启动握手**（≤30s），stdout 的 `startup.state` 区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`；不得把 pid/目录单独当健康，也不得在 launcher 返回后再手搓轮询。`failed` 立即准确通知，`alive_timeout` 只表示尚未就绪且进程仍活，不能杀进程；其余汇报 `run_id` 与续查入口后**立即结束当前轮次**。不进入 monitor，除非用户明确要求盯守；查进度唯一入口是 `goal-status`。
+无人值守（`--detach`）启动后：launcher 已用 manifest / 本次新增 events / liveness / progress 做一次**有界启动握手**（≤30s），stdout 的 `startup.state` 区分 `ready`、快速 `terminal`、`alive_timeout` 与 `failed`；不得把 pid/目录单独当健康，也不得重复握手或手搓轮询。`failed` 准确通知；`alive_timeout` 不表示失败、不能杀进程。仅启动请求汇报后结束轮次；完整交付/终态回报请求已授权按 operations 的 bounded monitor 跟踪，已知责任由 runner 自动接续，无合法恢复路径时准确停放，不代写产品或盲目重启。
 
 遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
 

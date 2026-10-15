@@ -736,11 +736,12 @@ export function resolveSuccessorExecutionScope(
   const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
   const impact = previous.request_impact;
   const basisPaths = [...new Set((impact?.basis ?? []).flatMap(binding => binding.source_refs ?? []))];
-  // A fulfilled definition can lose reuse; retain its existing owner in successor recovery.
+  // A temporary chain omits blocked owners, not the delivery obligations they still owe.
   const requestedPhases = [...new Set([
     ...executionCompletionPhases(previous),
     ...previous.obligations.filter(obligation => obligation.applicability === 'required'
-      && ['acceptance-context', 'design-context'].includes(obligation.kind)).map(obligation => obligation.owner_phase),
+      && (!obligation.satisfied_by?.length || ['acceptance-context', 'design-context'].includes(obligation.kind))).map(obligation => obligation.owner_phase),
+    // Unknown evidence is re-derived below; treating its owner as an explicit request would make it required.
   ])];
   const candidate = buildFeatureScopeCandidate({
     projectRoot, frameworkRoot: root, feature,

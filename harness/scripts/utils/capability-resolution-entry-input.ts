@@ -21,7 +21,7 @@ import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoo
 import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
-import { readRunBoundContracts } from './capability-resolution';
+import { readRunBoundContracts, projectSourceFileBinding } from './capability-resolution';
 import { resolveEffectiveDiffBaseline } from './git-diff';
 import { diffChangedFilesWithStatus } from './git-diff';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -56,7 +56,7 @@ export { realProjectPath as realRequestPath } from './project-relative-path';
 import { realProjectPath as realRequestPath } from './project-relative-path';
 
 /**
- * spec / plan 是否仍持有这条 artifact 绑定的改写权：它产出该 artifact，且本阶段还有未满足的 required 义务。
+ * spec / plan 是否仍持有这条 artifact 绑定的改写权：它产出该 artifact，且本阶段还有未满足的 required/unknown 义务。
  * 持有时该绑定由本阶段在链内改写并经范围修订重签，不作为期望绑定去比对。阶段输入解析与恢复判断（plan 9c3d7e1a §5.3）共用。
  */
 export function phaseOwnsDesignOutput(
@@ -70,7 +70,8 @@ export function phaseOwnsDesignOutput(
       : binding.source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
   return ['spec', 'plan'].includes(phase)
     && !!artifact && produces.some(output => output.artifact === artifact)
-    && scope.obligations.some(obligation => obligation.owner_phase === phase && obligation.applicability === 'required' && !obligation.satisfied_by?.length);
+    && scope.obligations.some(obligation => obligation.owner_phase === phase
+      && (obligation.applicability === 'required' || obligation.applicability === 'unknown') && !obligation.satisfied_by?.length);
 }
 
 export function requestProtectedPaths(root: string, frameworkRoot: string): string[] {
@@ -422,6 +423,7 @@ export function resolveCapabilityResolutionEntryInput(
         ...obligation.basis.filter(binding => !binding.dependencies.length || !binding.dependencies.every(dep => isExecutionSourceBasis(options.projectRoot, scope, obligation, dep))),
         ...(obligation.satisfied_by ?? []).filter(ref => 'input_id' in ref),
       ]);
+      const researchPaths = new Set<string>();
       // §5.1.1a R-target collection: a `design-decision` / `acceptance-definition` derive basis is
       // the historical file that TRIGGERED a revision, not a current target of any phase. Collecting
       // it here re-enters it into `factsContext.source_paths` / `testTargets` and the phase evidence,
@@ -453,7 +455,10 @@ export function resolveCapabilityResolutionEntryInput(
         ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
       if (admitted) {
         Object.assign(factsContext, admitted);
-        for (const source of admitted.source_paths) if (!sourcePaths.includes(source)) sourcePaths.push(source);
+        for (const source of admitted.source_paths) {
+          researchPaths.add(source);
+          if (!sourcePaths.includes(source)) sourcePaths.push(source);
+        }
       }
       const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
       let factsRebuildReason: string | undefined;
@@ -475,6 +480,7 @@ export function resolveCapabilityResolutionEntryInput(
           if (new Set(normalized).size !== normalized.length) throw new Error('facts source paths contain duplicates');
           for (const source of normalized) {
             assertFactsSourceReadable(options.projectRoot, source);
+            researchPaths.add(source);
             if (!sourcePaths.includes(source)) sourcePaths.push(source);
           }
         }
@@ -521,6 +527,7 @@ export function resolveCapabilityResolutionEntryInput(
             }
             for (const source of paths) {
               const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
+              researchPaths.add(safe);
               const abs = path.join(options.projectRoot, safe);
               if (!factsContext.baseline.dependencies.some(dep => dep.exists && dep.sha256 && path.resolve(dep.path) === path.resolve(abs))) {
                 // plan e7a2c4f1 §3.4（G01）：这是账本类缺口——facts 声明的来源没进阶段证据
@@ -718,7 +725,13 @@ export function resolveCapabilityResolutionEntryInput(
       return { requirement, requirementSourceFiles, codeTargets, testTargets, factsContext, ...(factsRebuildReason ? { factsRebuildReason } : {}),
         inputContext: { schema_version: '1.1', subject: { feature: options.feature },
           obligations,
-          expected_bindings: expectedBindings.map(binding => options.phase === 'testing' && binding.input_id === 'acceptance' ? { ...binding, input_id: 'cases' } : binding).filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),
+          expected_bindings: expectedBindings.map(binding => {
+            const projected = binding.source.kind === 'derive' && binding.source.provider_id === 'derive.codebase'
+              ? projectSourceFileBinding(options.projectRoot, binding, codeTargets, researchPaths, partitionedTestTargets, inferLegacyProjectRoot(options.projectRoot, scope))
+              : binding.source.kind === 'derive' && binding.source.provider_id === 'derive.test-targets'
+                ? projectSourceFileBinding(options.projectRoot, binding, testTargets, researchPaths, codeTargets, inferLegacyProjectRoot(options.projectRoot, scope)) : binding;
+            return options.phase === 'testing' && projected.input_id === 'acceptance' ? { ...projected, input_id: 'cases' } : projected;
+          }).filter(binding => !ownsDesignOutput(binding) && indexed.phase.inputs.some(input => input.id === binding.input_id)),
           required_outputs: requiredOutputs,
         } };
     }

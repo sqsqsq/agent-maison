@@ -1332,7 +1332,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     const signSkipMsg = describeOhosTestSignSkipDiagnosis(discovery, opts.signDiagnosis);
     const msg =
       signSkipMsg ??
-      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先 genOnDeviceTestHap`;
+      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先按模块类型构建 ohosTest：HAP=assembleHap，HAR/HSP=genOnDeviceTestHap`;
     return finalize({
       executed: false,
       failedAt: 'hap_not_found',

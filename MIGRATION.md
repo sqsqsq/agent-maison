@@ -1810,3 +1810,11 @@ spec 规则与 verifier 模板有变化，旧 gate/template 指纹可能失效�
 P0 device/both 的旧 spec 若未声明 ui_change，须由 spec 责任阶段补足（真实非 UI 写 none，已有界面复用写 reuse_only）；已有 checkpoint 的约束继续核验，不因 UI 未改而丢弃。蓝图投影只核已声明的 checkpoint/屏链，不要求它提前写完 spec 补充内容。快照迁移替身在正式 spec 回调内补材料与当前 facts，再由真实 harness/verifier/closure 重验；原 project 快照不改。
 
 原任务 Git 基线仍可达时应保留，不能把包含本任务全部 UT 的完成后 HEAD 当作“动手前”基线来重验；那会把本任务用例归为存量。host-snapshot 的临时 Git 仅按已知 fixture 作者历史重建 UT 归属，具体边界见其 README，不代表任意丢失 Git 历史的宿主都可自动重建。
+
+## 3.1.0：交付恢复补修（4f8c2a71）
+
+UT 的 L3 审计通过现有候选链交回 coding 或 spec；option_a 仅提请定义裁定，不批准 device-only，也不豁免仍有效的 unit 义务。HAP 的 ohosTest 使用 assembleHap，HAR/HSP 使用 genOnDeviceTestHap；独立 UT request 与正式 UT 共用任务选择，工程级 compile 行为不变。模块实际类型与正式 contracts.format 不一致时按配置缺口处理。
+
+successor 保留暂被上游缺口挡住的必需阶段；定义 owner 可补齐 unknown，代码输入的源/测试分组及有来源调研增补按投影对齐。真实输入漂移仍走原责任恢复，旧 scope/完成凭证不改写。规则或 verifier 模板变化导致旧证据失效时沿现有重验/后继路径处理，不重建旧证据假通过。
+
+缺核验/回执的 closure-only attempt 使用窄提示，受管阶段负责 verifier 与报告，外层不重复派审。明确无人值守完整交付请求采用既有有界监控；未有合法机器恢复路由时准确停放，repair-notes 不承担改道。刷新消费者生成的入口后再检验该指引生效；开发回归、HAP 真机专项与完整宿主交付分别记录，不互相替代。

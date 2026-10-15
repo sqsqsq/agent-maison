@@ -435,7 +435,7 @@ structure_checks:
   ut_unsupported_targets_handled:
     description: >
       testability-audit.md 中 testability_level=L3 的每条记录必须 selected ∈ {option_a, option_b}：
-      option_a → acceptance.yaml 对应条目必须填写 device_focus；
+      option_a → 定义未闭环或 unit 义务仍在时生成 spec 裁定候选，UT 不改 acceptance、不自批降级；
       option_b → 当前 UT 阶段 FAIL，并生成 coding repair candidate；coding 完成源码可测性改造
       且重走 review 后，审计应降为 L1/L2 再继续 UT。
     severity: BLOCKER

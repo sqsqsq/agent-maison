@@ -1565,8 +1565,9 @@ const checker: PhaseChecker = {
         ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
       if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'ui-spec.yaml')) {
         const input = ctx.resolvedInputs.values.requirement;
-        const requirement = input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '';
-        results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, requirement), ...dispatchSpecUiSpec(ctx, requirement), ...dispatchSpecAssetAcquisition(ctx));
+        const visualDefinition = loadSpecMarkdown(ctx.projectRoot, ctx.feature)
+          ?? (input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '');
+        results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, visualDefinition), ...dispatchSpecUiSpec(ctx, visualDefinition), ...dispatchSpecAssetAcquisition(ctx));
       }
       results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
       return [...results, ...designScopeRevisionChecks(ctx, results)];

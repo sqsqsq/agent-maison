@@ -616,6 +616,18 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     }
   }
   if (input.phase === 'ut') {
+    for (const check of input.checks.filter(c => c.id === 'ut_unsupported_targets_handled' && c.status === 'FAIL')) {
+      const repairs = (check.structured as { repair_candidates?: unknown } | undefined)?.repair_candidates;
+      if (!Array.isArray(repairs)) continue;
+      for (const repair of repairs) {
+        if (!repair || !['coding', 'spec'].includes(repair.category) || typeof repair.id !== 'string'
+          || typeof repair.summary !== 'string' || !Array.isArray(repair.files) || !repair.files.every((file: unknown) => typeof file === 'string')) continue;
+        const files = normalizeFiles(repair.files);
+        const summary = normalizeSummary(repair.summary);
+        if (files.length && summary) out.push({ id: repair.id, category: repair.category, files, summary,
+          item_fingerprint: itemFingerprintOf(repair.id, files, summary), source_phase: 'ut' });
+      }
+    }
     for (const check of input.checks.filter(c => c.status === 'FAIL' && c.repair_owner === 'plan')) {
       const files = normalizeFiles(check.affected_files ?? []);
       const summary = normalizeSummary(check.details ?? check.id);

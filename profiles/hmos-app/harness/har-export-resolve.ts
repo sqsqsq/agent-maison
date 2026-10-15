@@ -12,7 +12,7 @@ function readFileIfExists(filePath: string): string | null {
   return fs.readFileSync(filePath, 'utf-8');
 }
 
-function parseJson5(content: string): unknown {
+export function parseJson5(content: string): unknown {
   let stripped = content.replace(/^\s*\/\/.*$/gm, '');
   stripped = stripped.replace(/([^"':])\s*\/\/.*$/gm, '$1');
   stripped = stripped.replace(/\/\*[\s\S]*?\*\//g, '');

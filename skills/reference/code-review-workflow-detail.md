@@ -151,6 +151,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 ## 阶段闭环判定（仅 Feature/CU）（全局入口 §5.1）
 
+closure-only 使用当前有效 verifier 结果或仅补缺失核验/回执，不重复完整 review 作业；真实新缺陷交原责任调度。发起核验和写报告由当前阶段执行者负责，外层 Goal 调度者不再派一份。普通独立审查不因此追加正式 verifier。
+
 负面审查的逐条验证须覆盖每个未关闭 BLOCKER/MAJOR。缺行、重复冲突、非法 verdict 或 evidence 与当前行不符时，
 按 `readiness_signals` 中 `id=verifier_repair_diagnosis` 的精确问题修报告：只有本轮实际签发了 request 才投给该 verifier。
 合法 refuted/unclear 保留原判断，不因为零候选强制改成 confirmed。 当前 Goal attempt 的格式缺口先如实保留原回复并返回 runtime，由既有调用路径最多自动纠错一次；不在阶段内另叠重投循环。纠错调用与时间照计，重进不重新发放机会；其它条目错误不清掉逐条绑定有效的 confirmed。carried/disabled 或混合资格不足时不补造 request，

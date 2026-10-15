@@ -33,6 +33,7 @@ import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harne
 import {
   hasDependencyResolutionFailure as hasDepResolutionFailureSignal,
   detectHvigorTaskNotFound,
+  resolveUtBuildTask,
   isHvigorBuildSuccessful,
   moduleDeclaresOhosTestTarget,
 } from './hvigor-runner';
@@ -394,11 +395,14 @@ export function isRealAssertionFailure(
  * plan 5e1c7a93 D1：build 与 test 两侧对同一 (module, product) 算同一个 collector 键。
  * 维度逐字对齐 runHvigorTest 内建那次 runHvigorBuild 的入参。
  */
-export function utBuildCollectorKey(projectRoot: string, moduleName: string, product?: string): string {
+export function utBuildCollectorKey(projectRoot: string, moduleName: string, product?: string): string | null {
+  let task: string;
+  try { task = resolveUtBuildTask(projectRoot, moduleName); }
+  catch { return null; } // No reuse key; the actual build reports the configuration error.
   return computeHvigorInvocationFingerprint(projectRoot, {
     module: moduleName,
     target: 'ohosTest',
-    task: 'genOnDeviceTestHap',
+    task,
     product,
     buildMode: 'test',
   });
@@ -515,6 +519,7 @@ export function checkUtHvigorBuild(
       phase: 'ut',
       moduleName: mod.name,
       target: 'ohosTest',
+      moduleFormat: ctx.featureSpec.contracts?.modules?.find(module => module.name === mod.name)?.format,
       skipEnvVar: 'HARNESS_SKIP_HVIGOR',
       product: selection.product ?? undefined,
     });
@@ -529,7 +534,8 @@ export function checkUtHvigorBuild(
     }
     // D1：只有真成功的出包才进 collector——skip/失败不得被洗成"本次已出包"。
     if (builds && isHvigorBuildSuccessful(res)) {
-      builds.set(utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined), res);
+      const key = utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined);
+      if (key) builds.set(key, res);
     }
     perModule.push(entry);
     if (res.toolMissing || res.skippedByEnv) break; // 全局性问题：后续模块必然同因失败
@@ -717,15 +723,18 @@ function classifyUtHvigorBuildFailure(
 
   const mergedLog = mergeUtCompileLogForClassification(ctx, res);
 
-  // plan 423e5d0f P0：hvigor "Task ... was not found" = 工程构建配置形态问题（该模块未注册
-  // 对应构建目标 / hvigor 版本差异），不是 UT 代码问题——归因给 build-profile targets，
-  // 不按 module.json5 type 武断归因，也不引导 ohpm install / 改 UT。
+  if (mergedLog.includes('UT 构建配置：')) return {
+    kind: 'build_config_invalid', explanation: mergedLog,
+    suggestion: '由构建配置责任方核对模块 module.json5 与 contracts.format，UT 不改写声明或用其它模块通过代替。',
+  };
+
+  // Missing task can be a module/task mismatch or a plugin/configuration error, not a UT assertion failure.
   const taskNotFound = detectHvigorTaskNotFound(mergedLog);
   if (taskNotFound) {
     const probe = moduleDeclaresOhosTestTarget(projectRoot, moduleName);
     const probeNote =
       probe === false
-        ? `工程根 build-profile.json5 的 modules[] 中模块 "${moduleName}" 的 targets 未含 ohosTest —— hvigor 因此不会为其挂载该 task（与日志现象一致）。`
+        ? `工程根模块 "${moduleName}" 的 targets 仅供配置定位；未列 ohosTest 不足以证明模块没有测试目标。`
         : probe === true
           ? `工程根 build-profile.json5 中模块 "${moduleName}" 已注册 ohosTest target，但 hvigor 仍未挂载该 task——多为 hvigor 版本/插件差异，需在 DevEco 对该模块实测 "Run ohosTest" 确认。`
           : `未能从工程根 build-profile.json5 读取模块 "${moduleName}" 的 targets（文件缺失/解析失败/模块未列出），请人工核对。`;
@@ -733,9 +742,9 @@ function classifyUtHvigorBuildFailure(
       kind: 'ut_module_target_unregistered',
       explanation:
         `hvigor 报 Task '${taskNotFound.task}' was not found：该模块当前构建配置下不存在此构建目标任务。` +
-        `这是工程配置形态问题，不是 UT 代码问题。${probeNote}`,
+        `先核对 module.type 与实际任务：HAP=assembleHap，HAR/HSP=genOnDeviceTestHap，再核对模块测试声明和插件。${probeNote}`,
       suggestion:
-        `选项 A：在工程根 build-profile.json5 为模块 "${moduleName}" 的 targets 注册 ohosTest target（对照可正常 Run ohosTest 的模块写法），在 DevEco 实测通过后重跑；` +
+        '核对本次元数据中的任务与模块类型；任务正确时再检查模块 src/ohosTest/module.json5、模块目标和插件支持，不因根 targets 只列 default 就要求修改工程；' +
         '选项 B：若该模块本不属于本需求被测范围（仅因存量测试文件被顺带触碰而进入编译集合），恢复对该文件的改动使其退出 scope，不要为过门禁修改无关模块配置。' +
         '注意：build-profile.json5 受源码改动门禁约束，确需修改须交回 coding owner 并重走 review→ut→testing。',
     };
@@ -922,7 +931,8 @@ function evaluateUtReuseEligibility(
     return { eligible: false, reason: '本次调用无成功 prebuild，不做同键复用', hapDigests };
   }
   for (const mod of mods) {
-    const built = builds.get(utBuildCollectorKey(ctx.projectRoot, mod.name, product));
+    const key = utBuildCollectorKey(ctx.projectRoot, mod.name, product);
+    const built = key ? builds.get(key) : undefined;
     if (!built || !isHvigorBuildSuccessful(built)) {
       return { eligible: false, reason: `本次调用无成功 prebuild（${mod.name}），不做同键复用`, hapDigests };
     }
@@ -962,7 +972,7 @@ function buildUtExecutionKeyInputs(
     hylyre_version: null,
     manifest_version: null,
     profile: ctx.resolvedProfile.name,
-    tool_config_sha256: aggregateByModule(mods.map(m => [m.name, utBuildCollectorKey(ctx.projectRoot, m.name, product)])),
+    tool_config_sha256: aggregateByModule(mods.map(m => [m.name, utBuildCollectorKey(ctx.projectRoot, m.name, product) ?? 'unresolved'])),
     flags: Object.keys(process.env)
       .filter(k => /^HARNESS_SKIP_HVIGOR/.test(k))
       .sort()
@@ -1154,9 +1164,10 @@ export function checkUtHvigorTest(
       phase: 'ut',
       moduleName: mod.name,
       moduleSrcPath: mod.package_path,
+      moduleFormat: ctx.featureSpec.contracts?.modules?.find(module => module.name === mod.name)?.format,
       product: selection.product ?? undefined,
       // D1：本次调用内已出过的同参数包直接下传，runHvigorTest 据此跳过内建出包。
-      prebuild: builds?.get(utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined)),
+      prebuild: builds?.get(utBuildCollectorKey(ctx.projectRoot, mod.name, selection.product ?? undefined) ?? ''),
     });
     perModule.push({ module: mod.name, packagePath: mod.package_path, result: res });
     const caseLevelFailure = res.executed && !!res.testResult && (res.testResult.total ?? 0) > 0;

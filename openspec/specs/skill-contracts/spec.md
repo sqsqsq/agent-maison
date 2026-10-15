@@ -149,3 +149,16 @@ The review, UT and device-testing skills SHALL share professional methods throug
 - **THEN** the agent SHALL deliver cases without device calls, installation or formal stage invocation
 
 > **Enforced by:** `skills/feature/code-review/SKILL.md`、`skills/feature/business-ut/SKILL.md`、`skills/feature/device-testing/SKILL.md`、`docs/operations/request-harness.md`。
+
+### Requirement: Align source projections without losing input truth
+Source bindings SHALL preserve frozen file existence and bytes while aligning the phase's source/test partition and admitted research additions. The projection SHALL use existing research provenance and SHALL NOT modify the frozen scope or authorize additional writes.
+
+#### Scenario: Research augments the read set
+- **WHEN** current admitted research includes additional readable sources and the frozen sources remain unchanged
+- **THEN** phase resolution can consume that projected read set without reporting metadata-only drift as stale
+- **AND** unaccounted additions, missing frozen files, or changed frozen bytes do not receive that alignment
+
+#### Scenario: The definition owner resolves an unknown obligation
+- **WHEN** the active definition owner is scheduled to resolve an unknown obligation using its declared outputs
+- **THEN** its own materialization is checked as current output and re-signed through existing scope revision
+- **AND** unrelated producers and already-settled definitions gain no implicit rewrite permission

@@ -1,5 +1,7 @@
 # Plan 阶段语义验证 — {feature_name}
 
+核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
+
 **P3 显式 1.1 调用**：以已解析验收与施工内容为准，不要求未列入 required_outputs 的 spec.md/plan.md。仍审查精确文件写集、类型/接口、外部 DTO 映射、runtime 生命周期、CU sidecar 与用例；不得用缺叙述为由跳过这些责任。共同决策冲突回蓝图/外部 owner，职责修订沿既有 P2 successor，不在原 run 改写范围。
 
 **CU-bound（Feature 名以 `cu-` 开头）**：术语、Scope 模块范围与架构影响已由部件演进蓝图裁决（可修改模块 = CU touches 派生；架构影响 = 蓝图 `architecture_impact` 决策 id 投影）。检查 3、4、7 及检查 R 中涉及这三项的判断只核对与蓝图投影一致，不重新裁决模块归属、范围扩展或架构影响等级；检查 7 在 CU-bound 下按"架构影响段 `decisions` 与蓝图决策一致"判定，不要求 plan 更新 architecture.md。不一致指回 `/component-design` 做蓝图 revision。

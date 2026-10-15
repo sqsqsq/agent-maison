@@ -32,7 +32,7 @@ import {
   writeHostBytes,
   type RealChainProject,
 } from '../utils/real-chain-host';
-import { runGoalRuntimeChain, requestVia } from './goal-runner-testing-integrity.unit.test';
+import { runGoalRuntimeChain, requestVia, claudeReadEventLine, writeAgentEvents } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import * as YAML from 'yaml';
@@ -56,6 +56,7 @@ import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path'
 import { BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { tryAcquireLock, releaseLock } from '../../scripts/utils/goal-run-lock';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -1409,6 +1410,76 @@ export function runCuBoundChain(cu: RealChainProject, birthChain: string[]): Ret
     onUt: ctx => { cu.runId = ctx.runId; writeCuUtMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'ut'); },
   });
 }
+
+test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返修→testing', async () => {
+  const project = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(project, 'claude');
+    writeHostFile(project.root, 'CLAUDE.md', '# CLAUDE\n');
+    const { cu } = seedCuBoundHost(project);
+    const ref = `${cuRel(cu)}/ux-reference/ledger.png`;
+    writeHostBytes(cu.root, ref, fs.readFileSync(path.join(cu.root, REAL_CHAIN_PNG_EXISTING)));
+    const requirement = `新增账目页面按钮与余额显示，按参考图 ${ref} 逐像素复现，业务入口保持单测，并在真机验收页面`;
+    initializeFidelityRouting({ projectRoot: cu.root, frameworkRoot: cu.frameworkRoot, feature: cu.feature, requirement,
+      featuresDirRel: 'doc/features', executionIdentity: `phase:${cu.feature}:spec`, requirementProvenance: 'explicit_cli',
+      manifestFidelity: 'pixel_1to1', fidelityFromCli: true, adapter: 'claude' });
+    const prepared = prepareFeatureScopeCandidate({ projectRoot: cu.root, frameworkRoot: cu.frameworkRoot,
+      feature: cu.feature, completionTarget: 'feature', requestedResults: ['页面与业务完整交付'],
+      requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], requirement, overwrite: true,
+      impact: { userVisibleBehaviorChange: true, reason: '新增页面展示', basisPaths: [CU_SOURCE] } });
+    assert(prepared.scope.obligations.some(o => o.id === 'acceptance-definition:visual' && o.applicability === 'unknown'), JSON.stringify(prepared.scope));
+    assert(!prepared.scope.phase_chain.includes('coding'), 'UI 定义待定应先留在定义阶段');
+    const before = fs.readFileSync(path.join(cu.root, REAL_CHAIN_SOURCE));
+    git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'combined UI definition baseline']);
+    let needsSeam = false; let repaired = false; let enteredTesting = false;
+    const probe = await runGoalRuntimeChain(cu.root, { frameworkRoot: cu.frameworkRoot, featureId: cu.feature,
+      realHarness: true, adapter: 'claude', freshRequirement: requirement,
+      freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
+      onSpec: ctx => {
+        cu.runId = ctx.runId; writeCuSpecMaterials(cu);
+        writeHostFile(cu.root, `${cuRel(cu)}/spec/spec.md`, '# 页面定义\n\n```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\nvisual_handoff:\n  kind: repo_assets\n  authoritative_refs:\n    - id: ledger\n      path: ' + ref + '\n```\n');
+        writeHostFile(cu.root, `${cuRel(cu)}/spec/ui-spec.yaml`, YAML.stringify({ schema_version: '1.0', verified: 'verified', verified_method: 'vl_multimodal',
+          screens: [{ id: 'ledger', ref_id: 'ledger', priority: 'P1', root: { type: 'navigation_frame', order: 0,
+            children: [{ id: 'balance', type: 'content_display', order: 0, text: '余额' }] } }],
+          tokens: { gap: { kind: 'spacing', value: '16vp' } }, assets: [] }));
+        writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(ref)]);
+        if (ctx.attempt > 1) publishVerifier(cu, 'spec');
+      },
+      onPlan: ctx => {
+        cu.runId = ctx.runId; writeCuPlanMaterials(cu);
+        writeHostFile(cu.root, `${cuRel(cu)}/plan/visual-parity.yaml`, YAML.stringify({ mappings: {
+          assets: [], tokens: [{ ui_spec_key: 'gap', contract_resource_key: 'gap' }], components: [] } }));
+        if (ctx.attempt > 1) publishVerifier(cu, 'plan');
+      },
+      onCoding: ctx => {
+        cu.runId = ctx.runId; writeCuCodingMaterials(cu);
+        if (needsSeam) { fs.appendFileSync(path.join(cu.root, CU_SOURCE), '\nexport const testabilitySeamAvailable = true;\n'); repaired = true; }
+        if (ctx.attempt > 1) publishVerifier(cu, 'coding');
+      },
+      onReview: ctx => { cu.runId = ctx.runId; writeCuReviewMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'review'); },
+      onUt: ctx => {
+        cu.runId = ctx.runId; writeCuUtMaterials(cu);
+        if (!repaired) {
+          needsSeam = true;
+          writeHostFile(cu.root, `${cuRel(cu)}/ut/testability-audit.md`, '```yaml\n' + YAML.stringify({ records: [{ acceptance_id: 'AC-1',
+            entry_point: { file: CU_SOURCE, symbol: 'add' }, testability_level: 'L3', selected: 'option_b',
+            verdict: 'needs_seam', recommendation: { option_b: '为现有业务入口补最小可测接缝' } }] }) + '```\n');
+        } else if (ctx.attempt > 1) publishVerifier(cu, 'ut');
+      },
+      onTesting: () => { enteredTesting = true; },
+      // 此用例证明自动接续到 testing；设备/视觉完整验收由既有六阶段 real-chain 和真实专项证明。
+      failExecutorFor: phase => phase === 'testing',
+    });
+    assert(enteredTesting && repaired, `未完成组合恢复（exit=${probe.exitCode}）：${probe.invokedPhases.join('→')}\n${['spec','plan','coding','review','ut'].map(ph => dumpPhase(cu, ph)).join('\n')}`);
+    assert(probe.events.some(e => e.type === 'scope_revised'), '必须通过现有 scope revision 保留后续义务');
+    assert(fs.readFileSync(path.join(cu.root, REAL_CHAIN_SOURCE)).equals(before), 'spec 只读调研不能修改源码');
+    assert(readSummary(cu, 'spec')?.verdict === 'PASS' && readSummary(cu, 'ut')?.verdict === 'PASS', '真实 spec/UT 检查应通过');
+  } finally {
+    if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true });
+    else console.log('--- kept root', project.root);
+    clearFrameworkConfigCache();
+  }
+});
 
 /** 公开入口 `goal-status` 在工程自己的框架根下子进程运行，返回 `feature_status=…` 行（生产 `assessFeature`）。 */
 export function goalStatusFeatureLine(project: { root: string; harnessDir: string }, feature: string): string {

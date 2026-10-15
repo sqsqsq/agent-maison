@@ -1,4 +1,5 @@
 import { writeRunSummaryBase } from '../../harness-runner';
+import { checkUtUnsupportedTargetsHandled, checkUtTestabilityAuditPresent, inspectTestabilityAudit } from '../../scripts/check-ut';
 import { UT_REAL_ASSERTION_CHECK } from './repair-candidates.unit.test';
 import { renderResultBlock } from '../utils/verifier-evidence-fixture';
 import assert from 'assert';
@@ -16,6 +17,8 @@ import { resolveFeatureTrack } from '../../scripts/utils/runtime-policy';
 import { loadFeatureTrackDecl, resolveScopeRevisionProposal } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { resolveBirthScopeForManifest } from '../../scripts/utils/feature-execution-scope';
+import { resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
+import { loadWorkflowSpec } from '../../workflow-loader';
 import { __testing_setInsideRecordWriteLock, __testing_setBeforeStaleLockReclaim, detectLiveFeatureLock } from '../../scripts/utils/feature-execution-scope';
 import { resolveChangeUnitExpectedExecution } from '../../scripts/utils/change-unit-completion';
 import { tryAcquireLock, releaseLock } from '../../scripts/utils/goal-run-lock';
@@ -39,7 +42,7 @@ import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-uni
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { configureFeature } from './component-closure.unit.test';
-import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { resolveCapabilityInputs, projectSourceFileBinding, type InputBinding } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildSummaryRepairCandidates, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
@@ -82,6 +85,90 @@ function request(phases: string[], completion_target: 'request' | 'feature' = 'r
   return { request: { completion_target, requested_results: ['requested-result'], requested_phases: phases }, facts: [], contract_fingerprints: [] };
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+  { name: '4f spec 实际输入入口对齐冻结测试分组及同阶段调研增补', run() {
+    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec', 'plan', 'coding', 'review', 'ut'] });
+    try {
+      const configPath = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8')); config.project_profile.name = 'hmos-app';
+      fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
+      const original = ['src/demo/value.ts', 'src/demo/src/ohosTest/ets/test/value.test.ets'];
+      const researched = 'src/demo/researched.ts';
+      fs.mkdirSync(path.dirname(path.join(root, original[1])), { recursive: true });
+      fs.writeFileSync(path.join(root, original[1]), 'export const testValue = 1;\n');
+      fs.writeFileSync(path.join(root, researched), 'export const researchValue = 2;\n');
+      const contractsPath = featureFilePath(root, feature, 'contracts.yaml');
+      const contracts = YAML.parse(fs.readFileSync(contractsPath, 'utf8')); contracts.files = original;
+      fs.writeFileSync(contractsPath, YAML.stringify(contracts));
+      fs.unlinkSync(featureFilePath(root, feature, 'acceptance.yaml'));
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature',
+        requestedResults: ['value is 42'], requestedPhases: ['spec','plan','coding','review','ut'], requirement: '把 value 改成 42', overwrite: true,
+        impact: { userVisibleBehaviorChange: false, reason: '内部取值', basisPaths: original } });
+      const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+      const bytes = fs.readFileSync(featureFrozenScopePath(root, feature));
+      assert(prepared.scope.obligations.flatMap(o => o.basis).some(b => b.source_refs.includes(original[1])), '出生绑定必须实际带测试文件');
+      const facts = featureFilePath(root, feature, 'context/facts.md'); fs.mkdirSync(path.dirname(facts), { recursive: true });
+      fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.1', feature, established_by: 'spec',
+        frozen_scope_fingerprint: executionScopeFingerprint(featureEffectiveScope(frozen.record!)), source_code_paths: [...original, researched],
+        ready_to_produce: true, has_blocker_coverage_risk: false }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n'
+        + [...original, researched].map(file => `| ${file} | 已读原文件 | 定义输入 |`).join('\n'));
+      const entry = () => resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'spec', featuresDir: 'doc/features' });
+      const bridge = entry();
+      assert(bridge.codeTargets?.includes(researched) && !bridge.codeTargets.includes(original[1]), JSON.stringify(bridge.codeTargets));
+      const inputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'spec', track: 'full', ...bridge }).inputs!;
+      assert.equal(inputs.values.codebase.state, 'resolved', JSON.stringify(inputs.values.codebase));
+      assert(fs.readFileSync(featureFrozenScopePath(root, feature)).equals(bytes), '投影不得改冻结范围');
+      fs.appendFileSync(path.join(root, original[0]), '// real mutation\n');
+      const changed = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'spec', track: 'full', ...entry() });
+      assert.notEqual(changed.inputs?.values.codebase.state, 'resolved', '实际源码漂移仍须被拒');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: '4f 真实 successor 保留因定义缺口未进临时执行链的 coding/review', run() {
+    const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] });
+    try {
+      const acceptancePath = featureFilePath(root, feature, 'acceptance.yaml');
+      const acceptance = fs.readFileSync(acceptancePath);
+      fs.unlinkSync(acceptancePath);
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature',
+        requestedResults: ['value is 42'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'], requirement: '把 value 改成 42', overwrite: true,
+        impact: { userVisibleBehaviorChange: false, reason: '内部取值', basisPaths: ['src/demo/value.ts'] } });
+      assert(!prepared.scope.phase_chain.includes('coding') && prepared.scope.obligations.some(o => o.kind === 'implementation' && o.applicability === 'required'));
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+      execFileSync('git', ['add', '.'], { cwd: root });
+      execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
+      ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+      prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, runId: '4f-source', adapter: 'generic', requirement: '把 value 改成 42' });
+      fs.writeFileSync(acceptancePath, acceptance);
+      const successor = resolveSuccessorExecutionScope(root, feature, loadWorkflowSpec(frameworkRoot, 'd1'), frameworkRoot, '把 value 改成 42', '4f-source')!;
+      assert(successor.phase_chain.includes('coding') && successor.phase_chain.includes('review'), JSON.stringify(successor));
+      assert(!successor.phase_chain.includes('testing'), '待定设备证据不能变成用户明确请求 testing：' + JSON.stringify(successor));
+      assert.deepStrictEqual(successor.requested_results, prepared.scope.requested_results);
+      assert(successor.obligations.some(o => o.kind === 'implementation' && o.applicability === 'required'));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: '4f 冻结源码绑定接受测试分组和有来源的调研增补，拒绝丢失/改写/无来源增量', run() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-input-projection-'));
+    try {
+      const files = ['source.ets', 'source.test.ets', 'researched.ets'];
+      for (const file of files) fs.writeFileSync(path.join(root, file), `content:${file}`);
+      const initial = files.slice(0, 2);
+      const value = initial.map(file => ({ path: file, content: fs.readFileSync(path.join(root, file), 'utf8') }));
+      const binding: InputBinding = { input_id: 'codebase', source: { kind: 'derive', provider_id: 'derive.codebase' },
+        source_refs: initial, content_fingerprint: createHash('sha256').update(stableStringify(value)).digest('hex'),
+        dependencies: initial.map(file => ({ path: path.join(root, file), role: 'derive', exists: true,
+          sha256: createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex') })) };
+      const projected = projectSourceFileBinding(root, binding, ['source.ets', 'researched.ets'], new Set(['researched.ets']), ['source.test.ets']);
+      assert.deepStrictEqual(projected.source_refs, ['researched.ets', 'source.ets']);
+      assert.notStrictEqual(projected, binding);
+      assert.deepStrictEqual(binding.source_refs, initial, '冻结原件不改');
+      assert.strictEqual(projectSourceFileBinding(root, binding, files, new Set(), []), binding, '无调研来源的增量不对齐');
+      assert.strictEqual(projectSourceFileBinding(root, binding, ['source.ets'], new Set(), []), binding, '非分组造成的缺失不对齐');
+      fs.writeFileSync(path.join(root, 'source.test.ets'), 'changed');
+      assert.strictEqual(projectSourceFileBinding(root, binding, ['source.ets'], new Set(), ['source.test.ets']), binding, '被分走文件变更仍检查');
+      fs.unlinkSync(path.join(root, 'source.test.ets'));
+      assert.strictEqual(projectSourceFileBinding(root, binding, ['source.ets'], new Set(), ['source.test.ets']), binding, '冻结文件缺失仍检查');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } },
   { name: 'fully reused request verifies existing bindings without an empty run; stale data is rejected', run() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-reuse-'));
     try {
@@ -166,7 +253,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     for (const value of [null, {}, { schema_version: '9' }]) assert.throws(() => validateExecutionScope(value));
   } },
 ];
-async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 'revision-cut' | 'revision-precut' | 'revision-revoke' | 'impact-first' | 'impact-reuse' | 'impact-null' | 'design-gap' | 'design-gap-revert' | 'spec-gap-revert' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'request-spec' | 'request-plan' | 'request-coding' | 'request-spec-invalid' | 'request-plan-invalid' | 'request-spec-cut' | 'request-plan-cut' | 'testing-fail' | 'testing-offline' | 'testing-manual' | 'unresolved', useDefault = false, missingMapping = false, continuousCoding: boolean | 'request' = false): Promise<void> {
+async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-gap' | 'direct' | 'revision' | 'revision-cut' | 'revision-precut' | 'revision-revoke' | 'impact-first' | 'impact-reuse' | 'impact-null' | 'design-gap' | 'design-gap-revert' | 'spec-gap-revert' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'request-spec' | 'request-plan' | 'request-coding' | 'request-spec-invalid' | 'request-plan-invalid' | 'request-spec-cut' | 'request-plan-cut' | 'testing-fail' | 'testing-offline' | 'testing-manual' | 'unresolved', useDefault = false, missingMapping = false, continuousCoding: boolean | 'request' = false): Promise<void> {
   const repo = path.resolve(__dirname, '../../..');
   const { root } = setupGoalRuntimeHost('codex');
   const frameworkRoot = path.join(root, 'framework');
@@ -192,13 +279,14 @@ async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 
       const contract = YAML.parse(fs.readFileSync(file, 'utf8')); contract.change_unit.predicate_mappings = [];
       fs.writeFileSync(file, YAML.stringify(contract));
     }
+    const utL3 = mode === 'ut-l3-code' || mode === 'ut-l3-spec';
     const utDesignGap = mode === 'ut-design-gap';
     const designGapFamily = ['design-gap', 'design-gap-revert', 'ut-design-gap'].includes(mode);
     // `spec-gap-revert`：与 design-gap-revert **同构**的 spec 归属闭环（需求 D0.3「review 归因
     // spec 的用例同理」）。候选形态与 designGapFamily 一致（请求 coding/review/ut + 契约、验收、
     // 实现事实 + 有来源 impact），区别只在触发者是 review 的 spec 归属发现。
-    const specGap = mode === 'spec-gap-revert';
-    const codingFirst = designGapFamily || specGap;
+    const specGap = mode === 'spec-gap-revert' || mode === 'ut-l3-spec';
+    const codingFirst = designGapFamily || specGap || utL3;
     if (mode === 'direct') {
       fs.rmSync(featureFilePath(root, feature, 'spec/spec.md'), { force: true });
       fs.rmSync(featureFilePath(root, feature, 'plan/plan.md'), { force: true });
@@ -345,6 +433,7 @@ async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 
       // fact (goal-phase-runtime.ts:9084), which an unchanged file cannot provide now that the
       // birth candidate already binds the same codebase source.
       onCoding: () => {
+        if (utL3 && designGap) fs.appendFileSync(codeFile, '\nexport function repairedTestabilitySeam(): string[] { return []; }\n');
         if (continuousCoding && codingRegression) fs.appendFileSync(codeFile, '\nexport const repairedOwnerRegression = true;\n');
         // `design-gap-revert`：第一轮 coding 误改（触发 plan 裁决），plan 拒绝扩展契约后
         // 第二轮 coding **把文件改回原字节**——这正是 §5.1.1a 要保护的闭环。
@@ -352,7 +441,26 @@ async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 
         if (mode === 'revision-revoke' && !designGap) fs.appendFileSync(codeFile, '\nexport function refreshLedgerSnapshot(): string[] { return []; }\n');
         else if (['direct', 'design-gap', 'revision-revoke'].includes(mode)) fs.appendFileSync(codeFile, '\n// authorized P2 implementation\n');
       },
+      onUt: () => {
+        if (!utL3) return;
+        const acc = new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).acceptance!;
+        const fixed = fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam');
+        const selected = mode === 'ut-l3-spec' && !acc.criteria[0].device_focus ? 'option_a' : 'option_b';
+        const audit = featureFilePath(root, feature, 'ut/testability-audit.md');
+        fs.mkdirSync(path.dirname(audit), { recursive: true });
+        fs.writeFileSync(audit, '```yaml\n' + YAML.stringify({ records: [{ acceptance_id: 'AC-REFRESH',
+          entry_point: { file: codeRel, symbol: 'refreshLedgerSnapshot' }, testability_level: fixed ? 'L1' : 'L3',
+          selected, verdict: fixed ? 'testable' : 'needs_seam', recommendation: { option_b: '补齐当前入口的最小接缝' } }] }) + '```\n');
+      },
       onHarnessSummary: ({ phase }) => {
+        if (utL3 && phase === 'ut') {
+          designGap = true;
+          const ctx = { projectRoot: root, frameworkRoot, feature, phaseRule: {},
+            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature) } as CheckContext;
+          const audit = inspectTestabilityAudit(ctx);
+          return { checks: [...checkUtTestabilityAuditPresent(ctx, audit), ...checkUtUnsupportedTargetsHandled(ctx, audit)] };
+        }
+
         if (continuousCoding && !codingRegression && ((specGap && designGap && phase === 'review') || (utDesignGap && designGap && phase === 'ut') || (continuousCoding === 'request' && phase === 'ut'))) {
           const current = loadEffectiveExecutionScope(root, feature, 'p2-attended')!;
           assert(!current.phase_chain.includes('coding'), '本例必须真实覆盖 fresh coding 出链');
@@ -418,7 +526,7 @@ async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 
         // `spec-gap-revert` 的触发者是 **review 的 spec 归属发现**：finding 指向 feature 自己的
         // `acceptance.yaml`（`deriveCategoryFromFiles` 按路径域判 spec，且全部文件同域才产候选），
         // verifier 逐条确认之后，**用生产函数**把候选变成修订输入——不手拼 revision。
-        if (specGap && phase === 'review' && !designGap) {
+        if (specGap && !utL3 && phase === 'review' && !designGap) {
           designGap = true;
           const issueId = 'CR-SPEC-001';
           const triggerRel = path.relative(root, featureFilePath(root, feature, continuousCoding === true ? 'spec/ref-elements.yaml' : 'acceptance.yaml')).split(String.fromCharCode(92)).join('/');
@@ -467,6 +575,14 @@ async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 
         fs.writeFileSync(contractsFile, YAML.stringify({ ...YAML.parse(contractsAtBirth.toString('utf8')), files: [codeRel] }));
       },
       onSpec: () => {
+        if (mode === 'ut-l3-spec') {
+          const file = featureFilePath(root, feature, 'acceptance.yaml');
+          const acc = YAML.parse(fs.readFileSync(file, 'utf8'));
+          acc.criteria[0].device_focus = 'AC-REFRESH 真机页面表现；unit 业务义务继续保留';
+          fs.writeFileSync(file, YAML.stringify(acc));
+          return;
+        }
+
         // `spec-gap-revert`：责任阶段 spec 重跑时**修复触发文件**（补上被 review 指出的缺口），
         // 验收层级保持 unit——责任是补定义，不是把范围扩到设备验证。
         if (specGap) {
@@ -577,6 +693,16 @@ async function runScopeScenario(mode: 'ut-design-gap' | 'direct' | 'revision' | 
       probe = await execute();
     }
     if (probe.exitCode !== 0 && injected) probe = await execute();
+    if (utL3) {
+      assert.equal(probe.exitCode, 0, JSON.stringify(probe.events.slice(-6)));
+      const invoked = probe.events.filter(event => event.type === 'agent_invoke_start').map(event => event.phase);
+      assert.equal(invoked.filter(phase => phase === 'coding').length, 2, JSON.stringify(invoked));
+      assert(invoked.lastIndexOf('ut') > invoked.lastIndexOf('coding'), JSON.stringify(invoked));
+      if (mode === 'ut-l3-spec') assert(invoked.includes('spec') && probe.events.some(event => event.type === 'scope_revised'), '链外 spec 未接入');
+      assert.equal(new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).acceptance!.criteria[0].ut_layer, 'unit', '不得自批降低验收');
+      assert(fs.readFileSync(codeFile, 'utf8').includes('repairedTestabilitySeam'));
+      return;
+    }
     if (continuousCoding) {
       const events = probe.events;
       if (continuousCoding === 'request') {
@@ -3254,6 +3380,9 @@ cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the 
     assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 1, '非法验收仍推进了范围修订');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
+
+cases.push({ name: '4f L3 option_b 真实 checker→summary→runner 回 coding/review/UT', run: () => runScopeScenario('ut-l3-code') });
+cases.push({ name: '4f L3 option_a 补链外 spec 裁定且不降 unit，再由 coding 修复后回 UT', run: () => runScopeScenario('ut-l3-spec') });
 
 cases.push({ name: 'c6a3d918 UT real missing use-case restores chain-external plan in same run', run: () => runScopeScenario('ut-design-gap') });
 

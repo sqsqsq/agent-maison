@@ -3520,7 +3520,7 @@ function resolveAuditEntryPoint(ctx: CheckContext, record: TestabilityAuditRecor
   return undefined;
 }
 
-function checkUtTestabilityAuditPresent(
+export function checkUtTestabilityAuditPresent(
   ctx: CheckContext,
   observed: UtMachineArtifactObservation<TestabilityAuditRecord[]>,
 ): CheckResult[] {
@@ -3618,25 +3618,37 @@ export function checkUtUnsupportedTargetsHandled(
   const acceptance = ctx.featureSpec.acceptance;
 
   const issues: string[] = [];
+  const repairs: Array<{ id: string; category: 'spec' | 'coding'; files: string[]; summary: string }> = [];
+  const unitIds = new Set(collectUnitScopeAcceptanceIds(ctx));
   for (const r of l3) {
+    const item = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].find(ac => ac.id === r.acceptance_id);
+    if (!item) {
+      issues.push(`${r.acceptance_id}: 不在当前 acceptance 中，不能据此派修`);
+      continue;
+    }
     const sel = (r.selected ?? '').trim();
     if (sel !== 'option_a' && sel !== 'option_b') {
       issues.push(`${r.acceptance_id}: L3 须设置 selected 为 option_a 或 option_b（当前：${sel || '（空）'}）`);
       continue;
     }
     if (sel === 'option_a') {
-      if (!acceptance) {
-        issues.push(`${r.acceptance_id}: option_a 需要 acceptance.yaml，但文件不可用`);
-      } else if (!acceptanceHasDeviceFocusRef(acceptance, r.acceptance_id)) {
-        issues.push(
-          `${r.acceptance_id}: option_a 须在 acceptance.yaml 对应条目的 device_focus 中声明真机要点（含 ${r.acceptance_id} 引用）`,
-        );
+      if (unitIds.has(r.acceptance_id) || !acceptanceHasDeviceFocusRef(acceptance!, r.acceptance_id)) {
+        const summary = `${r.acceptance_id}: option_a 提请 spec 核对验收分层与 device_focus；保留当前 unit/both 义务，未经有效修订不得降级。`;
+        issues.push(summary);
+        repairs.push({ id: `${id}:${r.acceptance_id}:option_a`, category: 'spec',
+          files: [path.relative(ctx.projectRoot, featureArtifactPath(ctx.projectRoot, ctx.feature, 'acceptance.yaml')).replace(/\\/g, '/')], summary });
       }
-    } else {
-      issues.push(
-        `${r.acceptance_id}: option_b 表示仍需业务源码可测性改造，必须交回 coding owner；` +
-        'coding 重验后该记录应降为 L1/L2，再由 UT 继续',
-      );
+    } else if (unitIds.has(r.acceptance_id)) {
+      const summary = `${r.acceptance_id}: option_b 需 coding 核实并补最小生产可测接缝，重走 review→ut；` +
+        `${r.recommendation?.option_b ?? '按当前契约修复被测入口，不扩大业务范围。'}`;
+      issues.push(summary);
+      const file = r.entry_point?.file;
+      if (file) {
+        const relative = path.relative(ctx.projectRoot, path.resolve(ctx.projectRoot, file)).replace(/\\/g, '/');
+        if (relative && !relative.startsWith('../') && !path.isAbsolute(relative)) {
+          repairs.push({ id: `${id}:${r.acceptance_id}:option_b`, category: 'coding', files: [relative], summary });
+        }
+      }
     }
   }
 
@@ -3647,9 +3659,10 @@ export function checkUtUnsupportedTargetsHandled(
       description: ruleDesc(ctx, 'structure_checks', id),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `${issues.length} 条 L3 处置不合规：\n${truncateList(issues, 15)}`,
+      details: `${issues.length} 条 L3 需责任处理：\n${truncateList(issues, 15)}`,
+      structured: { repair_candidates: repairs },
       suggestion:
-        'option_a → 在 acceptance.yaml 对应 AC/BD 填写 device_focus；option_b → 产出 coding repair candidate，由 coding owner 修改源码并重走 review→ut。',
+        'option_a → 交 spec 裁定定义，UT 不改 acceptance 或自批降低验收；option_b → 交 coding 补可测接缝并重走 review→ut。',
     }];
   }
 

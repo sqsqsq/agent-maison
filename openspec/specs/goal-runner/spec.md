@@ -2176,3 +2176,24 @@ Enforcement: `harness/scripts/utils/goal-brief.ts`, `harness/scripts/utils/repor
 
 - **WHEN** spec defers the reference's bank-count difference and keeps the accepted twenty-bank contract
 - **THEN** all brief consumers receive that decision and its source, and an expansion request is checked against that scope rather than automatically dispatched as a coding repair
+
+### Requirement: Preserve unfinished delivery duties through recovery
+A successor SHALL inherit the owners of unfinished required obligations, including stages temporarily omitted from the executable chain by definition gaps. Unknown evidence SHALL be re-derived from current inputs rather than promoted to an explicitly requested phase. Valid completed evidence and cumulative budget SHALL remain governed by the existing recovery rules.
+
+#### Scenario: Definition work temporarily hides implementation
+- **WHEN** a full-delivery run has required coding/review duties held behind an unresolved definition
+- **THEN** its successor retains those duties and schedules them after the definition becomes available
+- **AND** a request-only task does not acquire unrelated phase authorization
+
+### Requirement: Complete closure with the existing narrow retry
+The runner SHALL use the existing closure-only attempt for missing verification or receipt work, without resending the complete stage assignment. Current valid verification SHALL be reused; real semantic failures SHALL retain their existing repair route and budget.
+
+#### Scenario: PASS needs only verification and receipt
+- **WHEN** a stage has passed its script checks but closure remains open
+- **THEN** the retry receives the current summary/request and only the outstanding closure work
+- **AND** the outer driver does not duplicate the stage executor's verifier or report writes
+
+#### Scenario: Unattended terminal delivery
+- **WHEN** the user requests unattended completion and a terminal report
+- **THEN** the driver follows bounded monitor events while the runner handles supported recovery
+- **AND** unsupported recovery or real authorization, budget, or external blockers are reported accurately without blind resume or manual product edits

@@ -111,13 +111,13 @@ goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟
 
 **存活是环境属性**：对 Cursor / 本机已实测 `--detach` 可活过会话。若换到会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI），`--detach` 也可能保不住——那种环境须由宿主调度任务（cron / Windows Task Scheduler）托管 run，不能只靠 `--detach`。
 
-## 无人值守启动后的默认交还（--detach）
+## 无人值守启动后的请求终点（--detach）
 
-**新默认：启动即交还。** 无人值守（`--detach`）run 启动后，执行**有界启动握手**，确认就绪后汇报并**立即结束当前轮次**；不需要用户开口「后台跑」，也不进入 monitor。用户在不在看对话框都不影响 run 独立存活。
+只要求启动后台 run 时，完成有界启动握手后汇报并结束当前轮次。明确要求“无人值守完成、终态一次回报”已包含持续跟踪：按下述 bounded monitor 消费事件至完成或准确停放，不再要求用户另说盯守。已知责任候选由 runner 自动接续；外层不代写产品或重派 verifier。
 
 - **有界启动握手（唯一合法等待，硬上限 30s）**：由 launcher 自己完成；调用者只消费返回的 `startup`，不得再 sleep/grep events。`terminal` 按真实 status 汇报；`ready` 报已启动；`alive_timeout` 报尚未就绪、进程仍存活并给出 log；仅 `failed` 报启动失败。超时不杀活跃 child，句柄已在等待前释放。
-- **汇报模板（启动即用；亦为 P1-8 熔断后的转出话术，从「熔断后才用」提为「启动即用」）**：①`run_id` 与当前 phase；②预计耗时与依据（阶段超时预算）；③续查指令 `goal-status --feature <f> --run-id <id>`；④说明「后台继续跑，要看进度或让我盯着随时说」→ **结束当前轮次**。
-- **禁事件轮询（BLOCKER）**：禁止**等待 phase / verdict / run_end 的轮询**——不得用 `sleep` / `for` / `grep events.jsonl` 等手搓循环替代 monitor 绕回前台占用（08-14~15 宿主实锤：agent 意识到 monitor 空转后改写手搓轮询，占用反而更失控——多次 monitor + 数十处自制 sleep 轮询，工具等待累计 ≈3.5h）。等待阶段事件的唯一合法途径是下列 **opt-in 盯守**；不盯守就交还轮次。launcher 内部的一次性启动确认是实现细节，不授权调用方追加任何等待。
+- **汇报模板（仅启动请求或准确停放时）**：①`run_id` 与当前 phase；②真实状态及依据；③续查指令 `goal-status --feature <f> --run-id <id>`；④启动成功说明后台继续运行，停放则说明缺口与恢复条件，不把停止说成仍在执行。
+- **禁事件轮询（BLOCKER）**：禁止**等待 phase / verdict / run_end 的轮询**——不得用 `sleep` / `for` / `grep events.jsonl` 等手搓循环替代 monitor 绕回前台占用（08-14~15 宿主实锤：agent 意识到 monitor 空转后改写手搓轮询，占用反而更失控——多次 monitor + 数十处自制 sleep 轮询，工具等待累计 ≈3.5h）。等待阶段事件的唯一合法途径是下列 **有界跟踪**；只要求启动时交还轮次。launcher 内部的一次性启动确认是实现细节，不授权调用方追加任何等待。
 
 ## 查进度（状态查询唯一入口）
 
@@ -130,9 +130,9 @@ npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
 - **不得**用 `goal-monitor`（含 `--max-seconds 0`）当状态查询：monitor 默认游标 `since-event=-1`，会把**最早的历史** phase_verdict 当新事件重放报出，与当前快照混淆（B1）。
 - 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` 实时重算。
 
-## opt-in 盯守细则（仅用户明确要求盯守时进入）
+## 有界跟踪（明确盯守或完整无人值守交付请求）
 
-仅当用户明确说「你盯着」或等价表述时，才进入 bounded monitor loop：
+用户明确说「你盯着」或要求完整无人值守交付/终态回报时，进入 bounded monitor loop。`--repair-notes` 只在已有本阶段返修候选的窗口消费，不改变冻结起止或需求；无候选不能靠文字改道，按实际 phase_start/scope_revised 核对接续，同输入无进展保留原熔断：
 
 ```bash
 npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --since-event <last_seen> --max-seconds 240
@@ -149,7 +149,7 @@ npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --sinc
   1. 连续 **3 轮** bounded monitor（≈12–15min）phase/substep 无推进（same phase + same substep）；
   2. 单 phase 的 monitor 累计等待超过 **30 分钟**；
   3. 单轮对话内 monitor 总时长超过 **30 分钟**（硬上限——2h+ 的占用对用户是事故不是服务）。
-  转出话术模板：向用户交代 ①`run_id` 与当前 phase/attempt；②预计耗时与依据（phase 超时预算）；③续看指令（`goal-status --feature <f> --run-id <id>`）；④说明「后台继续跑，完成/求人时可随时用上述命令查看」，然后结束当前轮次。用户后续追问时按 status 现查现答。
+  转出时报告 `run_id`、真实 phase/attempt、继续执行或停放状态、触及的监控上限与 `goal-status --feature <f> --run-id <id>` 续查入口，然后结束轮次。交还监控不等于完成终态交付，不能宣称已经完成；用户后续追问时按 status 现查现答。
 - **禁自建长驻桥**：不得自建 `tail detach.log` 之类长驻桥接进程变相恢复 stdout 监听——`--detach` 下 runner stdout 已全进 `detach.log`，不是事件通道；若未来存在非 detached、有活 stdout 的路径再按 L4 声明式设计，不在话术层保留。
 - 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` / `goal-monitor`（实时重算锁 pid）。
 - 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。

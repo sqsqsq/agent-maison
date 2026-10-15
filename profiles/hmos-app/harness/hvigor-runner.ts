@@ -38,6 +38,7 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
+import { isLibraryFormat, parseJson5 } from './har-export-resolve';
 // type-only：编译期擦除，不构成 hvigor-runner ↔ hdc-runner 运行期 import 环
 // （运行期互调仍走函数内 require，见 runHvigorTest）。
 import type {
@@ -491,14 +492,30 @@ export function sanitizeLogModuleName(moduleName: string): string {
 /**
  * 识别 hvigor「task 不存在」失败（plan 423e5d0f P0）：
  *   `ERROR: Task 'genOnDeviceTestHap' was not found in project ...`
- * 这是**工程构建配置形态**问题（常见：该模块未注册 ohosTest target，hvigor 因此不挂载
- * 对应 hook task），不是 UT 代码问题——不得引导改 UT 或 ohpm install。
+ * 先核对模块类型对应的任务，再核对真实配置/插件；根 targets 只列 default 不证明 UT 未注册。
  */
 export function detectHvigorTaskNotFound(log: string): { task: string } | null {
   const cleaned = stripAnsi(log);
-  const m = /Task\s+['"]?([\w:@.-]+)['"]?\s+(?:was\s+)?not\s+found/i.exec(cleaned);
+  const m = /Task\s+(?:\[\s*)?['"]?([\w:@.-]+)['"]?(?:\s*\])?\s+(?:was\s+)?not\s+found/i.exec(cleaned);
   if (m) return { task: m[1] };
   return null;
+}
+
+/** Build and execution use the same module declaration; contracts only cross-check it. */
+export function resolveUtBuildTask(projectRoot: string, moduleName: string, contractFormat?: string): string {
+  const module = listBuildProfileModules(projectRoot).find(entry => entry.name === moduleName);
+  if (!module) throw new Error(`UT 构建配置：工程未登记模块 ${moduleName}`);
+  const file = path.join(projectRoot, module.srcPath, 'src/main/module.json5');
+  let type: unknown;
+  try { type = (parseJson5(fs.readFileSync(file, 'utf-8')) as { module?: { type?: unknown } }).module?.type; }
+  catch (error) { throw new Error(`UT 构建配置：无法读取 ${file}：${(error as Error).message}`); }
+  const format = type === 'entry' || type === 'feature' ? 'HAP' : type === 'har' ? 'HAR' : type === 'shared' ? 'HSP' : null;
+  if (!format) throw new Error(`UT 构建配置：${moduleName} 的 module.type 无效：${String(type)}`);
+  const declaredFormat = contractFormat?.trim().toUpperCase();
+  if (declaredFormat && (declaredFormat === 'ATOMICSERVICE' ? 'HAP' : declaredFormat) !== format) {
+    throw new Error(`UT 构建配置：${moduleName} 的 module.type=${String(type)} 与 contracts.format=${contractFormat} 不一致`);
+  }
+  return isLibraryFormat(format) ? 'genOnDeviceTestHap' : 'assembleHap';
 }
 
 /**
@@ -1815,12 +1832,12 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 /**
  * 模块级编译。
  *
- * 用于 ut_hvigor_build（`genOnDeviceTestHap`，与 DevEco Run ohosTest 对齐）。
+ * 用于 ut_hvigor_build：HAP 用 assembleHap，HAR/HSP 用 genOnDeviceTestHap。
  * Coding 阶段默认走 `runHvigorAssembleApp`（`toolchain.hvigor.coding`，与 DevEco `--mode module assembleHap` 对齐）。
  *
  * 注意：**HAR / HSP 模块没有 assembleHap task**。如果把 `task` 设为
  * `assembleHap` 同时模块是 library，会报 "Task was not found"；此时应把
- * `task` 改为 `OhosTestCompileArkTS`（ut 目标）或 `assembleHar`（library 出包）。
+ * `task` 改为 genOnDeviceTestHap（ohosTest）或 assembleHar（library 出包）。
  */
 export function runHvigorBuild(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
@@ -1828,6 +1845,7 @@ export function runHvigorBuild(
     moduleName: string;
     /** 对应 build 目标；ohosTest 模块用 'ohosTest' */
     target?: 'default' | 'ohosTest';
+    moduleFormat?: string;
     /**
      * t5（plan a7c3f9e2）：本次构建显式 product（由上游单次解析传入）；
      * 缺省时才回落到 detectProduct 薄包装（unresolved 抛错，调用方须已处置）。
@@ -1835,7 +1853,7 @@ export function runHvigorBuild(
     product?: string;
     /**
      * 要执行的 hvigor task 名（unqualified hook task）。
-     * - 默认：default 目标 → 'assembleHap'；ohosTest 目标 → 'genOnDeviceTestHap'。
+     * - 默认：default 目标 → assembleHap；ohosTest 目标依 module.type 选择任务。
      *   两者都是 hvigor 命令行直接接受的 hook task：
      *     · `assembleHap` 触发模块 default target 的完整编译 + 签名；
      *     · `genOnDeviceTestHap` 触发 ohosTest target 的 ArkTS 编译 + 装机包生成
@@ -1858,7 +1876,12 @@ export function runHvigorBuild(
   }
 
   const target = opts.target ?? 'default';
-  const task = opts.task ?? (target === 'ohosTest' ? 'genOnDeviceTestHap' : 'assembleHap');
+  let task: string;
+  try { task = opts.task ?? (target === 'ohosTest' ? resolveUtBuildTask(opts.projectRoot, opts.moduleName, opts.moduleFormat) : 'assembleHap'); }
+  catch (error) {
+    const message = (error as Error).message;
+    return { executed: false, durationMs: 0, logExcerpt: message, errors: [{ message }] };
+  }
   const resolvedProduct = opts.product?.trim() || detectProduct(opts.projectRoot);
 
   if (target === 'ohosTest') {
@@ -2228,6 +2251,7 @@ export function runHvigorTest(
     moduleName: string;
     /** 模块源码相对路径（相对 projectRoot），如 '02-Feature/FeatureAlpha' */
     moduleSrcPath: string;
+    moduleFormat?: string;
     /** t5（plan a7c3f9e2）：本次构建显式 product（由 ut-host 单次解析传入） */
     product?: string;
     /**
@@ -2240,14 +2264,13 @@ export function runHvigorTest(
 ): HvigorRunResult {
   const t0 = Date.now();
 
-  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task）。
+  // ① 出包：与 ut_hvigor_build 共用模块任务选择。
   //    ohosTest 模块的 task 入口必须用 hook task，不能用 `test`（要 TestAbility）也不能
   //    用 OhosTestCompileArkTS（CLI 拒收的内部 task）。
   const buildRes = opts.prebuild ?? runHvigorBuild({
     ...opts,
     moduleName: opts.moduleName,
     target: 'ohosTest',
-    task: 'genOnDeviceTestHap',
     product: opts.product,
   });
   if (!buildRes.executed || (buildRes.exitCode !== undefined && buildRes.exitCode !== 0)) {
@@ -2275,7 +2298,7 @@ export function runHvigorTest(
       logPath: buildRes.logPath,
       errors: [{ message: `失败阶段：install_preflight (${installDiag.kind})` }],
       installBlocking: installDiag,
-      command: 'genOnDeviceTestHap + install_preflight',
+      command: `${buildRes.command ?? 'ohosTest build'} + install_preflight`,
     };
   }
 
@@ -2319,7 +2342,7 @@ export function runHvigorTest(
     errors: onDevice.errors.length ? onDevice.errors : (buildRes.errors ?? []),
     testResult: onDevice.report,
     onDeviceFailureEvidence: buildOnDeviceFailureEvidence(buildRes, onDevice),
-    command: 'genOnDeviceTestHap + hdc install -r + hdc shell aa test',
+    command: `${buildRes.command ?? 'ohosTest build'} + hdc install -r + hdc shell aa test`,
   };
   // 用 onDevice.failedAt 标注失败阶段：当 install 失败时仍属于真实执行链路异常，
   // 让 check-ut 把它当 BLOCKER FAIL 报；on_pass=有用例 fail 也是 FAIL。

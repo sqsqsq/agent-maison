@@ -1,5 +1,7 @@
 # 业务级 UT 阶段语义验证 — {feature_name}（v2.1 · UseCase 去代码化）
 
+核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
+
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
 > 现代调用消费绑定的 acceptance/contracts 与实际测试目标，P3 等价内容不因缺物理 spec/plan 降级。unit/both 的 AC、BD、NFR 都核对真实覆盖；性能基准必须有授权负载、指标和预期。request 只证明指定断言，不冒充 CU 完成；characterization 不自动成为正式期望。mock/testability 按真实依赖与目标核验，已明确 pure 的依赖不强造 mock-plan。UT 使用设备环境不自动产生 testing 义务。

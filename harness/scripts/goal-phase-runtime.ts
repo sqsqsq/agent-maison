@@ -3849,6 +3849,24 @@ export function extensionInputsForPhase(projectRoot: string, phase: string,
     subject: 'feature', role: 'author', requirement: context?.requirement, contracts, extensionBundle: bundle }));
 }
 
+export function buildClosureOnlyPrompt(
+  projectRoot: string, frameworkRoot: string, feature: string, phase: string, timeoutMs: number,
+): string {
+  const summary = path.relative(projectRoot, path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json')).replace(/\\/g, '/');
+  return [
+    `# Closure-only: ${phase} / ${feature}`,
+    '本轮只补当前阶段缺失的语义核验或回执，不重新执行完整阶段作业、Research、产品返修或扩面审查。',
+    `读取当前 ${summary}，以其 verifier_request/verifier_report 和 next_action 为准。`,
+    '当前材料已有有效 verifier 结果时直接复用并执行原 check-receipt/sync-closure，不再派一次核验。',
+    '确需语义核验时，将当前 request JSON 原文交给独立 verifier，完整保存回复到 request 对应路径，再按原入口检查回执。',
+    '没有 verifier request 不补造；材料过期时只运行必要的当前 harness 刷新，不改写旧身份或伪造 PASS。',
+    '真实语义失败交回现有责任调度；本轮不修改产品、验收、契约或 facts，不自行修业务再重签。',
+    '本调用的执行者负责所缺核验与报告，外层调度者不并行派审查或写同一报告。',
+    `当前调用时限 ${Math.max(0, Math.floor(timeoutMs / 1000))} 秒，沿用原预算与超时出口。`,
+    '',
+  ].join('\n');
+}
+
 export function buildPhasePrompt(
   manifest: GoalManifest,
   projectRoot: string,
@@ -7742,7 +7760,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (factsAdmissionError && !resumePostAgent) totalTurns--;
 
         // 批二确认轮遗留：提示词里写给执行者的时限取调用前的最终值——门禁里若等过、时限被再钳制，下方重渲染同一份提示词。
-        const renderPrompt = (promptTimeoutMs: number): string => buildPhasePrompt(
+        const renderPrompt = (promptTimeoutMs: number): string => (closureOnlyAttempt
+          ? buildClosureOnlyPrompt(projectRoot, frameworkRoot, manifest.feature, String(phase), promptTimeoutMs)
+          : buildPhasePrompt(
           // The prompt must describe the chain and obligations that are actually in force now:
           // `manifest.execution_scope` keeps its birth bytes (identity), so a revised run would
           // otherwise instruct the agent from the superseded scope (review M3).
@@ -7771,18 +7791,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
           // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
           executorMode === 'attended',
-        ) + (phase === 'review' ? buildRereviewContext(projectRoot, manifest, loadAuthoritativeEvents(eventsPath), frameworkRoot) : '') + (factsRebuildReason ? `\n## Facts admission / actual source reconstruction\n${factsRebuildReason}\nRead the current sources and rebuild canonical facts; changing run_id alone is not reconstruction.\n` : phaseFactsContext?.baseline
+        )) + (phase === 'review' && !closureOnlyAttempt ? buildRereviewContext(projectRoot, manifest, loadAuthoritativeEvents(eventsPath), frameworkRoot) : '') + (factsRebuildReason && !closureOnlyAttempt ? `\n## Facts admission / actual source reconstruction\n${factsRebuildReason}\nRead the current sources and rebuild canonical facts; changing run_id alone is not reconstruction.\n` : !closureOnlyAttempt && phaseFactsContext?.baseline
           ? `\n## Validated facts baseline\nPreserve the baseline body and its original identity. For current owned source targets within this phase's write boundary, registering each changed or newly created source in a path | fact | impact table in ## phase_delta: ${phase} is recommended; missing exact rows disclose weaker traceability and do not block the phase. Prefer project-relative paths; equivalent absolute paths, backslashes, ./ and repeated same-phase sections are recognized. Existing unexplored targets and requirement/contracts/config or unauthorized-source drift remain strict. Do not rewrite the baseline, even when this run starts at or backtracks to ${phase}.\n` : '') +
           // v23 F1：回退后 coding 注入缺陷必做段——闭环最后一段电线（没有它，coding
           // 回去了也不知道修什么 → 原样重跑 → 熔断）
-          (phase === 'coding' && backtrackCodingContext.length > 0
+          (phase === 'coding' && !closureOnlyAttempt && backtrackCodingContext.length > 0
             ? buildTestingDefectsBlock(backtrackCodingContext)
             : '') +
           // 责任阶段统一路由（plan b6e4c9f2）：repair candidates 按**当前 phase 类别**
           // 过滤注入（mixed-owner：spec 修不了 coding 的缺陷，coding 轮到时拿到自己的单）。
           // 未受信上下文措辞——只陈述发现的缺陷事实，不含授权语气。
           (() => {
-            if (backtrackRepairCandidates.length === 0) return '';
+            if (closureOnlyAttempt || backtrackRepairCandidates.length === 0) return '';
             const mine = backtrackRepairCandidates.filter(
               c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === String(phase),
             );
@@ -7844,10 +7864,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           })() +
           // b3e8d4c7 t5②：scope 自动回退后给 plan 的**未受信上下文**——同款"闭环最后一段
           // 电线"。措辞刻意不含任何授权语气：只陈述发现的事实，纳不纳入由 plan 自己裁决。
-          (phase === 'plan' && scopeReplanContext
+          (!closureOnlyAttempt && phase === 'plan' && scopeReplanContext
             ? buildScopeReplanContextBlock(scopeReplanContext)
             : '') +
-          (phaseWriteRecoveryContext?.targetPhase === String(phase)
+          (!closureOnlyAttempt && phaseWriteRecoveryContext?.targetPhase === String(phase)
             ? buildPhaseWriteRecoveryContextBlock(phaseWriteRecoveryContext)
             : '') +
           // closure-only 提示由上一轮裁决决定（pass snapshot 已退役——"不要重写产物"仍是

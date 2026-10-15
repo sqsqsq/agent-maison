@@ -21,6 +21,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import assert from 'assert';
+import { resolveUtBuildTask, runHvigorBuild } from '../../hvigor-runner';
 import {
   buildHvigorDiagnostics,
   detectSignSkip,
@@ -119,6 +121,27 @@ const HOST_FAIL_SLICE_ANSI = [
 ].join('\n');
 
 const cases: Array<{ name: string; run: () => void }> = [
+  { name: '4f UT 任务由实际模块类型派生，contract 冲突/缺失定义不能假编译', run: () => withTmpDir(root => {
+    writeFile(path.join(root, 'build-profile.json5'), JSON.stringify({ modules: ['app', 'lib', 'shared'].map(name => ({ name, srcPath: name })) }));
+    for (const [name, type, format, task] of [
+      ['app', 'entry', 'HAP', 'assembleHap'], ['lib', 'har', 'HAR', 'genOnDeviceTestHap'], ['shared', 'shared', 'HSP', 'genOnDeviceTestHap'],
+    ]) {
+      writeFile(path.join(root, name, 'src/main/module.json5'), `{ // module\n "module": { "type": "${type}", }, }`);
+      assert.equal(resolveUtBuildTask(root, name, format), task);
+      assertContains(buildUtHvigorArgs(root, name, resolveUtBuildTask(root, name), 'default'), task, '共同任务选择');
+    }
+    assert.throws(() => resolveUtBuildTask(root, 'app', 'HAR'), /不一致/);
+    assert.equal(resolveUtBuildTask(root, 'app', 'AtomicService'), 'assembleHap');
+    assert.throws(() => resolveUtBuildTask(root, 'lib', 'AtomicService'), /不一致/);
+    const failed = runHvigorBuild({ projectRoot: root, harnessRoot: root, phase: 'ut', reportDir: root,
+      moduleName: 'app', moduleFormat: 'HAR', target: 'ohosTest', product: 'default' });
+    assert.equal(failed.executed, false); assert(failed.logExcerpt.includes('UT 构建配置：'));
+    fs.unlinkSync(path.join(root, 'app/src/main/module.json5'));
+    assert.throws(() => resolveUtBuildTask(root, 'app'), /无法读取/);
+    assert.deepEqual(detectHvigorTaskNotFound("Task [ 'genOnDeviceTestHap' ] was not found in the project"), { task: 'genOnDeviceTestHap' });
+    assert.deepEqual(detectHvigorTaskNotFound("Task 'assembleHap' was not found"), { task: 'assembleHap' });
+    assert.equal(detectHvigorTaskNotFound('ArkTS compile failed'), null);
+  }) },
   {
     name: 'buildAssembleAppArgs: 含 buildMode=debug + parallel + incremental + product 自动探测，extraArgs 在 task 前',
     run: () => withTmpDir(root => {

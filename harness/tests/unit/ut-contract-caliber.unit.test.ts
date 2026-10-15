@@ -27,6 +27,7 @@ import {
   checkUtMockPlanContractsConsistent,
   checkUtMockPlanPresent,
   checkUtUnsupportedTargetsHandled,
+  inspectTestabilityAudit,
   type DagFile,
   type UtMachineArtifactObservation,
 } from '../../scripts/check-ut';
@@ -41,6 +42,7 @@ import {
   type UtTemplateKey,
 } from '../../scripts/utils/ut-template-paths';
 import { isCheckNotApplicable, type CheckContext, type CheckResult } from '../../scripts/utils/types';
+import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
 
 export interface UnitCaseResult {
   name: string;
@@ -413,6 +415,37 @@ function testNamedHandlerLoadFailureStaysUnmarked(): void {
 
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
+    { name: '4f L3 审计真实解析→机器检查→混合 coding/spec 候选，不凭 device_focus 降低 unit 义务', fn: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-handoff-'));
+      try {
+        const ctx = makeCtx(); ctx.projectRoot = root;
+        ctx.featureSpec.acceptance = { criteria: [
+          { id: 'AC-1', priority: 'P0', ut_layer: 'both', device_focus: 'AC-1 页面跳转' },
+          { id: 'AC-2', priority: 'P0', ut_layer: 'unit' },
+        ], boundaries: [] } as unknown as CheckContext['featureSpec']['acceptance'];
+        const dir = path.join(root, 'doc/features/demo/ut'); fs.mkdirSync(dir, { recursive: true });
+        const audit = ['```yaml', 'records:',
+          '  - acceptance_id: AC-1', '    testability_level: L3', '    entry_point: { symbol: Page.go, file: src/Page.ets }',
+          '    selected: option_a', '    verdict: downgrade_device',
+          '  - acceptance_id: AC-2', '    testability_level: L3', '    entry_point: { symbol: Flow.submit, file: src/Flow.ets }',
+          '    selected: option_b', '    verdict: needs_seam', '    recommendation: { option_b: 注入已有仓储 }',
+          '  - acceptance_id: AC-999', '    testability_level: L3', '    entry_point: { symbol: Other.go, file: src/Other.ets }',
+          '    selected: option_b', '```'].join('\n');
+        fs.writeFileSync(path.join(dir, 'testability-audit.md'), audit);
+        const candidates = () => collectPhaseRepairCandidates({ phase: 'ut', reportValidity: 'FAIL',
+          reviewReportText: null, verifierReportText: null,
+          checks: checkUtUnsupportedTargetsHandled(ctx, inspectTestabilityAudit(ctx)) });
+        const repairs = candidates();
+        assert(repairs.length === 2, JSON.stringify(repairs));
+        assert(repairs.some(c => c.category === 'spec' && c.files[0].endsWith('/acceptance.yaml')), '定义交 spec');
+        assert(repairs.some(c => c.category === 'coding' && c.files[0] === 'src/Flow.ets'), '接缝交 coding');
+        assert(ctx.featureSpec.acceptance!.criteria[0].ut_layer === 'both', '候选不能自批降级');
+        ctx.featureSpec.acceptance!.criteria[0].ut_layer = 'device';
+        assert(candidates().every(c => c.category === 'coding'), 'spec 已合法裁定且已有 device_focus 后不重复派定义修复');
+        fs.writeFileSync(path.join(dir, 'testability-audit.md'), '```yaml\nrecords: [broken\n```');
+        assert(candidates().length === 0, '无效审计不派修');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } },
     { name: 't1 boundary 对象形式 PASS', fn: testBoundaryObjectFormPasses },
     { name: 't1 boundary 对象不匹配 → WARN(按 boundary.name 报告)', fn: testBoundaryObjectMismatchWarns },
     { name: 't1 旧字符串 boundary 兼容消费', fn: testBoundaryLegacyStringStillConsumed },

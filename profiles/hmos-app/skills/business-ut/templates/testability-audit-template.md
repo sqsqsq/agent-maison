@@ -143,7 +143,7 @@ records:
         seam: none
     verdict: downgrade_device
     recommendation:
-      option_a: "标记 device-only，在 acceptance.yaml 对应条目填写 device_focus"
+      option_a: "提请 spec 裁定验收分层/device_focus；UT 不改 acceptance，不自批取消 unit 义务"
       option_b: "源码改造：交回 coding owner 完成 JumpManager 构造注入并重走 review→ut"
-    selected: option_a   # 用户确认后填写 option_a 或 option_b
+    selected: option_a   # 记录待裁定的定义问题，不代表获准降低验收
 ```

@@ -118,19 +118,24 @@ function testOrderStableWithoutFeatureNew(): void {
 // plan 5e1c7a93 D1：build 侧写入与 test 侧读取必须同键——同 (module, product) 稳定同值，
 // 换模块或换 product 即换键；两个调用点必须共用 utBuildCollectorKey（不得各自内联维度）。
 function testBuildCollectorKeyIdentity(): void {
-  const root = path.resolve(__dirname, '../../..');
+  const fx = makeUtOrchestrationFixture([WALLET, PHONE]);
+  const root = fx.root;
+  try {
   const a = utBuildCollectorKey(root, 'WalletMain', 'default');
+  assert(a !== null, 'registered module must have a reuse key');
+  assert(utBuildCollectorKey(root, 'Missing', 'default') === null, 'invalid module must not enter reuse');
   assert(a === utBuildCollectorKey(root, 'WalletMain', 'default'), 'same (module,product) must be stable');
   assert(a !== utBuildCollectorKey(root, 'Phone', 'default'), 'different module must change key');
   assert(a !== utBuildCollectorKey(root, 'WalletMain', 'oversea'), 'different product must change key');
   assert(a !== utBuildCollectorKey(root, 'WalletMain', undefined), 'absent product must change key');
 
   const src = fs.readFileSync(
-    path.join(root, 'profiles', 'hmos-app', 'harness', 'ut-host-impl.ts'),
+    path.join(FRAMEWORK_ROOT, 'profiles', 'hmos-app', 'harness', 'ut-host-impl.ts'),
     'utf-8',
   );
   const uses = src.match(/utBuildCollectorKey\(ctx\.projectRoot, mod\.name, selection\.product \?\? undefined\)/g) ?? [];
   assert(uses.length === 2, `build/test 两侧必须共用同一键式，实际命中 ${uses.length} 处`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +312,8 @@ function makeUtOrchestrationFixture(modules: UtModuleSpec[]): UtFixture {
   // 真实 runner 会在没拿到显式 frameworkRoot 时 inferRepoLayout（写 ut-install-diag 等），
   // 夹具按 consumer 布局给一棵最小 framework 树；reports 路径仍由 pattern 决定，不受影响。
   fs.mkdirSync(path.join(root, 'framework', 'skills'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'build-profile.json5'), JSON.stringify({ app: { products: [{ name: 'default' }] } }));
+  fs.writeFileSync(path.join(root, 'build-profile.json5'), JSON.stringify({ app: { products: [{ name: 'default' }] },
+    modules: modules.map(m => ({ name: m.name, srcPath: m.package_path })) }));
   fs.mkdirSync(path.join(root, 'AppScope'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'AppScope', 'app.json5'),
@@ -318,6 +324,9 @@ function makeUtOrchestrationFixture(modules: UtModuleSpec[]): UtFixture {
     fs.writeFileSync(path.join(root, wrapper), '@echo off\n');
   }
   for (const m of modules) {
+    const main = path.join(root, m.package_path, 'src/main');
+    fs.mkdirSync(main, { recursive: true });
+    fs.writeFileSync(path.join(main, 'module.json5'), JSON.stringify({ module: { name: m.name, type: 'har' } }));
     const ohosTest = path.join(root, m.package_path, 'src', 'ohosTest');
     fs.mkdirSync(path.join(ohosTest, 'ets', 'test'), { recursive: true });
     fs.writeFileSync(

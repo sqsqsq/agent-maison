@@ -1,5 +1,7 @@
 # spec 阶段详细流程（条件加载：执行对应 Step 时读）
 
+正式交付按已有 ut_layer、device_focus、use-cases 和 plan 说明两层各证明什么；both 不是要求 UT 模拟 ArkUI 或重复全条设备流程。定义与可测性不一致先回原责任方裁定，不由 UT 修改 acceptance、减少 required 义务或新建业务抽象。 设计阶段同时明确真实业务入口与最小必要隔离边界，不能先把全部 UI 行为标 both，再让下游为单测改造整套 UI。
+
 > SSOT 索引见 [`skills/feature/spec/SKILL.md`](../feature/spec/SKILL.md)。本文承载 Step 1.5（术语消歧）、Step 2/2.1（截图分析 + 视觉资产验真，pixel_1to1 相关）、Step 6（acceptance 提取字段表）的完整机制；触发/门禁清单/闭环判定仍以主文档为准。
 
 ## Step 1.5：术语消歧完整机制

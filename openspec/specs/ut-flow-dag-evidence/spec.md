@@ -129,3 +129,24 @@ The framework SHALL derive `dag_required` independently for `ut_layer ∈ {unit,
 - **THEN** the CU-bound Feature may omit use-cases and DAG and satisfy existing coverage rules through UT tags or AC coverage
 
 > **Enforced by (P2 implementation):** `specs/artifact-schemas/use-cases.schema.yaml`, `harness/scripts/utils/types.ts`, `harness/scripts/utils/spec-loader.ts`, `harness/scripts/check-plan.ts`, `harness/scripts/check-ut.ts`, `skills/feature/business-ut/SKILL.md`
+
+### Requirement: Route testability findings to their actual owner
+Valid L3 audit findings SHALL enter the existing repair-candidate chain before tests can run: option_b requests coding-owned production seams; option_a requests spec-owned acceptance clarification. Neither selection SHALL authorize UT to modify product code or weaken required verification.
+
+#### Scenario: Missing test seams
+- **WHEN** a valid unit/both obligation has an L3 option_b finding with a production location
+- **THEN** UT emits a coding repair candidate without requiring an already-executed assertion failure
+- **AND** recovery returns through review and UT using the existing scope mechanism
+
+#### Scenario: Spec is outside the active chain
+- **WHEN** option_a identifies a definition issue for a full-delivery task
+- **THEN** the existing scope revision can include the spec owner for adjudication
+- **AND** device_focus alone does not discharge a retained unit obligation
+
+### Requirement: Use module-specific native test tasks
+Native UT compilation and execution SHALL share module task selection: entry/feature HAP uses assembleHap; HAR/HSP uses genOnDeviceTestHap. Actual module.type SHALL be cross-checked against an applicable contracts format. Both formal UT and independent request execution SHALL consume this selection without changing project-level compile behavior.
+
+#### Scenario: HAP native execution
+- **WHEN** a valid HAP module is selected for ohosTest
+- **THEN** its build uses assembleHap and the actual test package is located, installed, and executed
+- **AND** bracketed task-not-found output is classified without inferring missing targets from the root default target alone

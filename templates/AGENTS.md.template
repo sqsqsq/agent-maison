@@ -96,7 +96,7 @@
 
 **执行规则（正式阶段）**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
 
-**主 agent 与 verifier 子 agent 职责切分**（反误读明示授权，BLOCKER）：结构级 harness 必须由主 agent 自己执行（不得等 verifier/用户）；语义级 verify 在结构级 PASS 后由主 agent 主动通过 Task 工具触发 verifier 子 agent。完整反误读文本见 [agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)。
+**执行者与 verifier 职责**：当前阶段执行者主动运行 harness 并按真实 request 派独立 verifier、完整落报告及核回执；直接交互时该执行者是主 agent，受管 Goal 时是阶段 agent，外层调度者不并行派审查或写报告。closure-only 仅补所缺核验/回执，不重跑完整作业。详见 [agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md) §4.1。
 
 **实例扩展与生命周期钩子**：允许在不改 `framework/` 前提下挂业务 Skill/知识/phase 钩子，落点 `doc/extensions/`（`paths.extension_dir` 可覆盖）。触发询问时机与协议 SSOT 见 reference。
 

@@ -1,5 +1,7 @@
 # coding 阶段详细流程（条件加载：执行对应 Step 时读）
 
+正式交付的可测性随当前 plan/验收一起实现：保留生产实际调用的业务入口和必要依赖接缝；UI/导航留在页面，测试可隔离的状态和异常逻辑，不新增未授权架构。UT 返回的 option_b 是待核查的编码候选，定义矛盾回原 owner，不倒改验收追认实现。
+
 > SSOT 索引见 [`skills/feature/coding/SKILL.md`](../feature/coding/SKILL.md)。本文承载 Step 2.5a（视觉真源 Read，pixel_1to1 8 项 BLOCKER 门禁）、Step 3.5（业务编排命名入口约束）、Step 6.5/7.1（真实编译闭环与修复策略）的完整机制；触发/门禁清单/闭环判定仍以主文档为准。
 
 ## Step 2.5a 视觉真源 Read（`ui_change=new_or_changed` 时·BLOCKER，pixel_1to1 核心红线）

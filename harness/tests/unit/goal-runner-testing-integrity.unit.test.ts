@@ -4330,14 +4330,14 @@ function seedB02SpecEvidence(root: string): void {
 }
 
 /** claude 家族 stream-json 的真实 Read 事件形状（不手拼 refs 回执）。 */
-function claudeReadEventLine(relPath: string): string {
+export function claudeReadEventLine(relPath: string): string {
   return JSON.stringify({
     type: 'assistant',
     message: { content: [{ type: 'tool_use', id: 'toolu_b02', name: 'Read', input: { file_path: relPath } }] },
   });
 }
 
-function writeAgentEvents(outputLogPath: string, lines: string[]): void {
+export function writeAgentEvents(outputLogPath: string, lines: string[]): void {
   if (!outputLogPath) return;
   const eventsAbs = path.join(path.dirname(outputLogPath), 'agent-events.jsonl');
   fs.mkdirSync(path.dirname(eventsAbs), { recursive: true });
@@ -4397,6 +4397,8 @@ function assertB02ClosureOnlyRound(probe: RunProbe, specPrompts: string[], label
   }
   assert(specPrompts.length >= 2, `${label}：应有第二轮 spec invoke（实得 ${specPrompts.length}）`);
   const closure = specPrompts[specPrompts.length - 1];
+  console.log(`[closure-input] ${label}: content=${specPrompts[0].length} chars, closure=${closure.length} chars`);
+  assert(closure.includes('# Closure-only:') && !closure.includes('## Goal scope'), `${label}：须收窄实际 prompt，不能在完整阶段作业后只加收口后缀：${closure}`);
   assert(closure.includes('## Closure-only attempt (BLOCKER)'),
     `${label}：末轮 prompt 须是 closure-only 形态：${closure.slice(-1200)}`);
   assert(closure.includes('## Read-only visual evidencing (spec closure)'),
@@ -4999,6 +5001,7 @@ const UT_DIR = '02-Feature/FinancialCard/src/ohosTest';
 const UT_HELPER = `${UT_DIR}/ets/test/helpers/SpyHelper.ets`;
 
 function seedUtModule(root: string): void {
+  writeFile(root, `${UT_MODULE.package_path}/src/main/module.json5`, JSON.stringify({ module: { name: UT_MODULE.name, type: 'har' } }));
   writeFile(root, `${UT_DIR}/module.json5`, JSON.stringify({ module: { name: 'FinancialCard_test', type: 'feature' } }));
   writeFile(root, `${UT_DIR}/ets/test/List.test.ets`, '// ut list\n');
   writeFile(root, 'AppScope/app.json5', JSON.stringify({ app: { bundleName: 'com.it.opencard', versionCode: 1, versionName: '1.0.0' } }));

@@ -94,7 +94,7 @@ function hostResult(log: string, extra: { exitCode: number; timedOut?: boolean }
   };
 }
 
-const cases: Array<{ name: string; run: () => void }> = [
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     // (a) 本回归的正向锁：exit0 + BUILD SUCCESSFUL + 2 条非致命 ERROR（真实字节，ANSI 保留）→ PASS
     name: 'exit0 + BUILD SUCCESSFUL + 2 条非致命 ERROR → 仍 PASS（errors 不参与终态）',
@@ -209,7 +209,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     // ②传成功 prebuild → 内建被真的跳过，推进到 install 前置段（command 带 install_preflight
     //   前缀），不再报 toolMissing。不靠源码正则，靠真实返回值。
     name: 'V2 prebuild 在场时 runHvigorTest 跳过内建出包（spawn 边界计数为证）',
-    run: () => {
+    run: async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'b03-v2-'));
       // 计数发生在**进程调用边界**（child_process.spawnSync），不是 provider 边界：
       // hvigor 命令一律不真跑（返回合成非零结果），hdc 一律返回空（→ 无设备）。
@@ -228,8 +228,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         return (original as (...a: unknown[]) => unknown).call(cp, file, args, ...rest);
       };
       try {
-        fs.mkdirSync(path.join(tmp, 'entry'), { recursive: true });
-        fs.writeFileSync(path.join(tmp, 'build-profile.json5'), '{}\n');
+        fs.mkdirSync(path.join(tmp, 'entry/src/main'), { recursive: true });
+        fs.writeFileSync(path.join(tmp, 'entry/src/main/module.json5'), '{"module":{"type":"entry"}}');
+        fs.writeFileSync(path.join(tmp, 'build-profile.json5'), '{"app":{"products":[{"name":"default"}]},"modules":[{"name":"entry","srcPath":"./entry"}]}\n');
+        fs.writeFileSync(path.join(tmp, 'hvigorw.bat'), '@exit /b 1\n');
+        fs.writeFileSync(path.join(tmp, 'hvigorw'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
         const base = {
           projectRoot: tmp,
           harnessRoot: path.resolve(hmosProfileDir, '../../harness'),
@@ -243,10 +246,28 @@ const cases: Array<{ name: string; run: () => void }> = [
         spawned.length = 0;
         const noPrebuild = runHvigorTest({ ...base });
         const withoutCount = spawned.length;
+        assert(spawned.some(command => /assembleHap/.test(command) && !/genOnDeviceTestHap/.test(command)), 'HAP 实际构建调用必须选择 assembleHap: ' + JSON.stringify({ spawned, noPrebuild }));
         assert(
           !/install_preflight/.test(noPrebuild.command ?? ''),
           '①无 prebuild 时内建构建失败即返回，不应推进到装机前置段',
         );
+
+        const gate = require('../../../../../harness/scripts/utils/device-readiness-gate');
+        const originalGate = gate.applyPhaseEntryDeviceGate;
+        gate.applyPhaseEntryDeviceGate = async () => ({ ok: true });
+        try {
+          const testPath = 'entry/src/ohosTest/ets/test/Smoke.test.ets';
+          fs.mkdirSync(path.dirname(path.join(tmp, testPath)), { recursive: true });
+          fs.writeFileSync(path.join(tmp, 'entry/src/ohosTest/module.json5'), '{"module":{"name":"entry_test"}}');
+          fs.writeFileSync(path.join(tmp, testPath), "describe('Smoke', () => {\nit('smoke', 0, () => { expect(1).assertEqual(1); });\n});\n");
+          spawned.length = 0;
+          const { runRequestTests } = require('../../providers/ut-run');
+          const result = await runRequestTests({ ...base, reportDir: path.join(tmp, 'request-report'),
+            resolvedProfile: { capabilities: {} }, request: { request_sha256: 'request-fixture', targets: { tests: [testPath] },
+              sourceContents: [{ path: testPath, content: fs.readFileSync(path.join(tmp, testPath), 'utf8') }] } });
+          assert(spawned.some(command => /assembleHap/.test(command) && !/genOnDeviceTestHap/.test(command)), '独立 UT request 必须消费相同 HAP 任务选择');
+          assert(result.checks.some((check: { status: string }) => check.status === 'FAIL'), '构建失败不得成为 request 通过');
+        } finally { gate.applyPhaseEntryDeviceGate = originalGate; }
 
         spawned.length = 0;
         const withPrebuild = runHvigorTest({
@@ -257,14 +278,14 @@ const cases: Array<{ name: string; run: () => void }> = [
             durationMs: 1,
             logExcerpt: 'BUILD SUCCESSFUL',
             errors: [],
-            command: 'genOnDeviceTestHap',
+            command: 'assembleHap',
           },
         });
         assert.strictEqual(spawned.length, 0, `②prebuild 在场时 hvigor spawn 必须为 0，实际=${spawned.join(' | ')}`);
         assert(withoutCount > spawned.length, `①无 prebuild 时应真的 spawn 过 hvigor，实际=${withoutCount}`);
         assert(!withPrebuild.toolMissing, '②prebuild 在场时不得再走内建构建（不应报 toolMissing）');
         assert(
-          /^genOnDeviceTestHap \+/.test(withPrebuild.command ?? ''),
+          /^assembleHap \+/.test(withPrebuild.command ?? ''),
           `②prebuild 在场时应推进到装机段，实际 command=${withPrebuild.command}`,
         );
       } finally {
@@ -275,13 +296,11 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
-  return cases.map(c => {
-    try {
-      c.run();
-      return { name: c.name, ok: true };
-    } catch (e) {
-      return { name: c.name, ok: false, error: (e as Error).stack ?? (e as Error).message };
-    }
-  });
+export async function runAll(): Promise<UnitCaseResult[]> {
+  const results: UnitCaseResult[] = [];
+  for (const c of cases) {
+    try { await c.run(); results.push({ name: c.name, ok: true }); }
+    catch (error) { results.push({ name: c.name, ok: false, error: (error as Error).stack ?? String(error) }); }
+  }
+  return results;
 }

@@ -567,6 +567,34 @@ function sourceFileSetBindingMatches(projectRoot: string, expected: InputBinding
   } catch { return false; }
 }
 
+/** Project a frozen file binding after verified research/classification; never rewrite the frozen scope. */
+export function projectSourceFileBinding(
+  projectRoot: string, binding: InputBinding, targets: readonly string[], research: ReadonlySet<string>,
+  otherTargets: readonly string[], legacyRoot?: string,
+): InputBinding {
+  if (!isSourceFileSet(binding.source)) return binding;
+  const original = binding.source_refs.map(ref => path.posix.normalize(ref.replace(/\\/g, '/')));
+  const selected = [...new Set(targets)];
+  if (original.length === selected.length && original.every(ref => selected.includes(ref))) return binding;
+  if (selected.some(ref => !original.includes(ref) && !research.has(ref))
+    || original.some(ref => !selected.includes(ref) && !otherTargets.includes(ref))) return binding;
+  const read = (files: string[]): { value: unknown; binding: InputBinding } | null => {
+    const result = resolveDerive(projectRoot, undefined, binding.source as Extract<ContractInputSource, { kind: 'derive' }>, {
+      projectRoot, frameworkRoot: '', phase: '', track: 'full', codeTargets: files, testTargets: files,
+      inputContext: { schema_version: '1.1', subject: { feature: '' }, obligations: {}, required_outputs: [] },
+    });
+    if (result.state !== 'resolved' || result.value === undefined) return null;
+    return { value: result.value, binding: { ...binding,
+      dependencies: dedupeDependencies([...binding.dependencies.filter(dep => dep.role !== 'derive')
+        .map(dep => dependency(resolveDependencyPath(projectRoot, dep.path, legacyRoot), dep.role)), ...result.dependencies]),
+      source_refs: result.dependencies.filter(dep => dep.exists).map(dep => path.relative(projectRoot, dep.path).replace(/\\/g, '/')),
+      content_fingerprint: fullFingerprint(result.value) } };
+  };
+  const unchanged = read(original);
+  if (!unchanged || !sourceFileSetBindingMatches(projectRoot, binding, unchanged.binding, unchanged.value, legacyRoot)) return binding;
+  return read(selected)?.binding ?? binding;
+}
+
 /**
  * plan c4e7a9b2 §3.4 B2：登记 artifact（derive.blueprint-* 与同名 artifact 同一 schema）的身份中立摘要；
  * 未登记或算不出（引用解析失败）为 null——调用方回落全值哈希。旧绑定存的是全值哈希，只能按全值命中。

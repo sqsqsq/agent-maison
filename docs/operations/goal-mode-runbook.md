@@ -602,7 +602,7 @@ cd framework/harness && npx ts-node scripts/goal-status.ts \
   --feature <feature-slug> --run-id latest --json
 ```
 
-launcher 已使用 manifest、本次新增 events、liveness 与 progress 完成**有界启动确认**；主 agent 只消费返回 JSON 的 `startup` 四态并汇报 `run_id`、进度路径和续查命令，然后**结束当前轮次**。不得再用 `sleep` / `for` / `grep events.jsonl` 重复握手或等待 phase/verdict/run_end；仅当用户明确要求盯守时才进入 bounded monitor：
+launcher 已完成**有界启动确认**；主 agent 按 `startup` 四态准确呈现，不重复握手。仅要求启动时汇报 run_id/路径并结束当前轮次；明确要求无人值守完整交付/终态回报时已授权 bounded monitor 跟踪，不再索要盯守指令。已知候选/修订由 runner 自动接续；无合法恢复路由时准确停放，不代写产品、不重复派 verifier，不把 repair-notes 当派阶段入口。不用 sleep/status 手搓事件轮询，按宿主时限调用：
 
 ```bash
 cd framework/harness && npx ts-node scripts/goal-monitor.ts \
@@ -619,7 +619,7 @@ cd framework/harness && npx ts-node scripts/goal-monitor.ts \
 | `goal-status --json` | 无法直接解析路径时的命令契约；**实时重算** liveness + `generated_at` 新鲜度降级 |
 | `goal-status --markdown` | agent 向用户汇报 |
 | `goal-status --watch` | **仅供人在终端**；agent 勿跑常驻 watch；可加 `--max-ticks N` 限制轮询次数（测试/脚本用） |
-| `goal-monitor --markdown/json` | **仅 opt-in 盯守用**；边沿触发、最多等待 `--max-seconds`、输出一次通知后退出。**不得当状态查询**（默认游标 -1 会重放最早历史 verdict）——状态查询唯一入口是 `goal-status` |
+| `goal-monitor --markdown/json` | **完整交付或明确盯守用**；边沿触发、最多等待 `--max-seconds`、输出一次通知后退出。**不得当状态查询**（默认游标 -1 会重放最早历史 verdict）——状态查询唯一入口是 `goal-status` |
 
 **新鲜度降级**：非终态快照若 `generated_at` 超过 heartbeat 间隔 2–3 倍，不得信任 raw `status: RUNNING`（后台 terminal 随 IDE 会话回收会留下谎报）。终态快照（`COMPLETED`/`DEFERRED`/`PARTIAL`/`HALTED`）不降级。
 
@@ -682,3 +682,5 @@ npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
 ## 默认额度与用户总上限
 
 只有用户明确同时选择“无人值守＋不要询问＋授权完整交付”，主 Agent 才可在读取原始有效请求及已有更正后，显式提高框架默认额度，并通过现有 manifest / `--override-manifest` / `budget_changed` 继续同一 run。普通静默、“继续”或局部任务不授予该权；用户另行指定的最终时间、轮次或费用总上限不可突破，授权不能证明或冲突时保持原边界。runner 到当前生效额度仍照常停，不自动循环增额；lineage 累计消耗不清零，提额不解除 no_progress_guard、重复回退、外部条件或其它授权。最终回复按现有 manifest 与 budget_changed 披露每次扩容前后值、原因、授权依据及累计消耗；费用只在有可靠数据时给数值。不增加参数、授权字段或预算账本。
+
+返修诊断材料 `--repair-notes` 只在已有本阶段返修候选的窗口消费，不改变冻结起止或需求；无可执行候选时不能靠附加文字声称改道。按实际 phase_start/scope_revised 证明接续；同输入无进展保留原熔断，真实预算/授权/外部缺口准确回报。

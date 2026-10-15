@@ -6,6 +6,8 @@
 
 ## 共享 UT 方法
 
+按行为选择验证层级：可隔离业务逻辑调真实生产入口，UI 展示/焦点/手势/真实导航栈交设备验证；纯 helper 的通过不能冒充业务分支覆盖，替换整个被测仓储不能证明其内部持久化逻辑。相同边界不重复造两套测试。
+
 1. 读被测入口、调用签名、实际依赖、已有测试及套件注册；确认预期来自哪里，现状刻画与正确性断言按主 Skill 的预期来源规则区分。覆盖的是用户指定代码，可能是本地新改代码。
 2. 按真实依赖判断可测性，不因缺文档先产出 audit：
 
@@ -35,9 +37,11 @@
 
 ## Step 1.5 可测性预检（testability-audit.md）
 
+正式交付按已有 ut_layer、device_focus、use-cases 和 plan 说明两层各证明什么；both 不是要求 UT 模拟 ArkUI 或重复全条设备流程。定义与可测性不一致先回原责任方裁定，不由 UT 修改 acceptance、减少 required 义务或新建业务抽象。
+
 写入前自检：已读 `` `profile-skill-asset:business-ut/format_contract` ``；内容是 fenced yaml 块（非 Markdown 表格）；`acceptance_id` 严格来自 acceptance.yaml 已有 ID；写完跑 `npm run validate:ut-artifact -- --type testability-audit --file <path>`。
 
-对每条 `ut_layer∈{unit,both}` 的 AC/BD 给出：`testability_level`（L0-L3）、关键 `dependencies`（含 `global_singleton`/`inline_lambda` 等）、`verdict`（testable/downgrade_device/needs_seam）。**若 L3**：当前 requirement 仍要求 unit/both 时，物化 `recommendation.option_b` 为 coding repair candidate，由 coding owner 修改后重走 review→ut；UT invocation 不改业务源码。只有用户明确提出 requirement correction 时，才把 `option_a` 作为普通需求变更交回 spec owner，把该项改为 device-only 并补 `device_focus`。`selected` 仅记录既有需求/修正路由，不是质量授权。**L3 接缝白名单**：coding repair 仅允许构造注入、包装 wrapper、提取命名方法、setter 注入等显式接缝；禁止"换一种全局单例"式敷衍。L3 candidate 未闭环前禁止进 Step 1.6/2/3。
+对每条 `ut_layer∈{unit,both}` 的 AC/BD 给出：`testability_level`（L0-L3）、关键 `dependencies`（含 `global_singleton`/`inline_lambda` 等）、`verdict`（testable/downgrade_device/needs_seam）。**若 L3**：当前 requirement 仍要求 unit/both 时，物化 `recommendation.option_b` 为 coding repair candidate，由 coding owner 修改后重走 review→ut；UT invocation 不改业务源码。`option_a` 只提交验收分层/定义问题给 spec 裁定，机器检查按当前审计生成 spec 候选；spec 未在链时由已有范围修订接入。候选不批准降级，device_focus 也不取消 unit 义务；改变用户要求或冻结 required 义务仍走有效需求修订。`selected` 仅记录既有需求/修正路由，不是质量授权。**L3 接缝白名单**：coding repair 仅允许构造注入、包装 wrapper、提取命名方法、setter 注入等显式接缝；禁止"换一种全局单例"式敷衍。L3 candidate 未闭环前禁止进 Step 1.6/2/3。
 
 ## Step 1.6 Test Double Plan（mock-plan.yaml）【HARD STOP】
 
