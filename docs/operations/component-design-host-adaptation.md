@@ -50,7 +50,9 @@ checker 不自动升 revision；只有被接受的新事实、权威裁决或冲
 
 设计 owner/App lens/独立质询沿现有问题检查存储的库名/版本、安全级别/是否加密、主键唯一、升级及敏感字段（table_schema + data_domains.security + 既有叙述）；逐项核真实依赖失败与用户中断，已有 selection/OTP 等内容归 boundaries/failure_recovery，真缺才补，不为 mock 编外部故障。错误/幂等键、涉及跨会话重复卡时的策略与主键明确；quality_attributes 对兼容、安全隐私、UX 深浅色/无障碍、打点/性能给实际结论，不涉及给理由，不凑量化阈值。包括 App lens 与质询在内的新叙述用项目语言。这些不增加机器字段/scope/阻断，也不降级现有 typed、来源、授权及 P0 检查。
 
-完整调用由设计 owner 在现有 flow contracts.state_management[].ordered_steps 字符串写明页面→业务对象→Repository→实际 helper/数据库，以及真实 caller/callee、参数/结果、等待/回调、失败分叉和完成/导航/消费者。typed 接口与根存储契约提供同源细节；table_schema 保留单表与库级 tables[]，精确内容约定见[存储内容约定](../concepts/blueprint-design-inputs.md#存储内容约定)。设计 agent 同次生成 generated_graphs 的 sequenceDiagram，graph_id 对应 derived_results.result_id、复用原版本/指纹/状态，原 runtime scope 独立质询核图文一致。一图一事，复杂调用按子问题拆小节，主路与失败/恢复分开，保留调用返回和段间交接；图前先导读，再由 graph_ids 就近放图，正常预览宽度看清才算实读，不以放大、语法通过代替可读验收，不加图规模硬门。图派生非权威，不新增交互 schema 或每箭头 relation；renderer 不从测试动作/端口顺序猜 caller。支持语法与短例见 [P1 时序写作](../../skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。
+完整调用由设计 owner 在现有 flow contracts.state_management[].ordered_steps 字符串写明页面→业务对象→Repository→实际 helper/数据库，以及真实 caller/callee、参数/结果、等待/回调、失败分叉和完成/导航/消费者。typed 接口与根存储契约提供同源细节；table_schema 保留单表与库级 tables[]，精确内容约定见[存储内容约定](../concepts/blueprint-design-inputs.md#存储内容约定)。设计 agent 同次生成 generated_graphs 的 sequenceDiagram，graph_id 对应 derived_results.result_id、复用原版本/指纹/状态，原 runtime scope 独立质询核图文一致。实现时序按一个界面步骤或一次跨层交互拆小节，不把从入口到完成的全过程视为一件事；一次保存可跨页面、业务对象、Repository、实际 helper/数据库并完整返回，不按方法或 ordered_step 机械拆。成功完成与失败退出分别解释，保留调用返回和段间交接；端到端仅用于旅程总览/角色关系图，该例外不套实现时序，中文意图优先、代码名必要时括注；图前先导读，再由 graph_ids 就近放图，正常预览宽度看清才算实读，不以放大、语法通过代替可读验收，不加图规模硬门。图派生非权威，不新增交互 schema 或每箭头 relation；renderer 不从测试动作/端口顺序猜 caller。支持语法与短例见 [P1 时序写作](../../skills/reference/app-component-blueprint-workflow.md#完整调用设计与时序图)。
+
+物理表结构仍按已发布根 `contracts[].table_schema` 约定承载。其它结构位置误写该键时，仅 WARN 指明实际路径及正确位置，作者沿原设计责任修正；不自动搬数据、不扩节点挂载兼容/字段别名/schema、不影响 admission/readiness。合法根级单表/库级不报错位，未声明不告缺失，说明/引用/代码字符串中的同名词不算声明；其它独立 BLOCKER 保持原规则。
 
 读者正文由设计 agent 依据已有事实解释角色与职责，类名只作对照、完整方法目录留参考；组件职责在主责小节解释一次。界面按 journey 小节写操作和反馈，通过 source_refs 精确引用对应图片登记单项，截图紧随说明，不从文件名猜图。正文用一份目录树讲文件落点与用途，CU 段链接各自精确参考，不反复列文件；各节只引用相关来源，设计依据用一个完整参考入口。CU 目的、交付和安全中间态在原字段写完整句子，不在蓝图 guide 固化 CU；写法见 [P1 写作指引](../../skills/reference/app-component-blueprint-workflow.md#按评审问题写说明)。
 
@@ -201,7 +203,9 @@ npm run check:component-blueprint -- --project-root <宿主工程根> --blueprin
 
 写入 resolver 定位的蓝图同目录，不支持第二输出路径。当前可解析、身份有效的蓝图即可生成，含仅定稿蓝图、尚无 CU 的评审交付；草稿显示真实准入与缺口，不要求先通过含质询结果的完整准入。checker FAIL 与 review_document current/refreshed 分别报告：非零退出码不等于未生成，生成成功不等于准入通过；真正解析/来源错误及其它 BLOCKER 仍按原规则处理。无参 checker 只读展示文档当前/过期/缺失及重建命令；`--write-review` 不与材料模式混用。内容变化后的调用结束前重建，包含局部修改、草稿和质询写回；不升 revision、不重签或重做设计。接受、readiness、整批持锁指针调和与 B1 自动刷新；文档失败只披露和重建，不影响原业务结论。
 
-说明由设计 owner 在 canonical 蓝图内撰写：原字段已可读就直接用，仅改表达优先可选 `review_summary.reader_guide`，不强制每节新建 guide；修改原字段仍是设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。按 [P1 写作指引](../../skills/reference/app-component-blueprint-workflow.md#按评审问题写说明) 记录来源引用，acceptance 来源可按对象/三类数组/单项限定编号归属，不必逐 ID 堆来源，首屏先向不了解项目代码的评审人讲现状、变化、结果与范围，产品非目标与本次只执行设计的阶段状态分开；关键取舍逐问题讲选择、理由与代价，摘要施工只链接第 11 节。恢复速查用 guide.prose 的 Markdown 短表，每行对应实际 BD 编号和 source_refs，解释发生什么、用户看到什么、数据是否保存、如何继续，不改精确预期或补造行为。原设计 agent 同次完成可渲染草稿、图与说明，复核后用独立只读 `--reader-guide-digest` 取摘要，记录后先 `--write-review --json`，再派既有独立质询。读者不继承父上下文 YAML/设计摘要，先只读首屏复述、正文答八问，完成前不读 YAML；之后核原 scope 与来源，作者一轮定向修订后复核摘要，交付前重渲读成品。宿主无需 import TS 或自己计算摘要，纯说明不重做产品源码发现；不加用户签字/评分门禁。无图像仍从文档内 Mermaid 核一图一事，指出混讲、拆段与衔接；仅字号/布局/放大未核验。图错章或一段未答章内问题须指出，段落少不自动失败；同图首次绘制、后续回链，不设章节优先级。中文全角标点后多余空格由 renderer 处理，不靠 YAML 字面块规避。
+说明由设计 owner 在 canonical 蓝图内撰写：原字段已可读就直接用，仅改表达优先可选 `review_summary.reader_guide`，不强制每节新建 guide；修改原字段仍是设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。按 [P1 写作指引](../../skills/reference/app-component-blueprint-workflow.md#按评审问题写说明) 记录来源引用，acceptance 来源可按对象/三类数组/单项限定编号归属，不必逐 ID 堆来源，首屏先向不了解项目代码的评审人讲现状、变化、结果与范围，产品非目标与本次只执行设计的阶段状态分开；第8节固定作者开场加 canonical 决策逐项名称/选择/理由/已有被否方案，所选代价仅用已有来源、不反推被否方案缺陷；第13节固定在作者说明后列当前 headless_assumed 术语、review_summary.must_review 与带真实状态的 gaps，导读不遮蔽，不将假定/未决说成已确认/已裁决；摘要施工只链接第 11 节。恢复速查用 guide.prose 的 Markdown 短表，每行对应实际 BD 编号和 source_refs，解释发生什么、用户看到什么、数据是否保存、如何继续，不改精确预期或补造行为。原设计 agent 同次完成可渲染草稿、图与说明，复核后用独立只读 `--reader-guide-digest` 取摘要，记录后先 `--write-review --json`，再派既有独立质询。读者不继承父上下文 YAML/设计摘要，先只读首屏复述、正文答八问，完成前不读 YAML；之后核原 scope 与来源，八问适用缺口须由作者在一轮定向修订中处理，仍未解决就明确披露、不冒称阅读通过；修订后复核摘要，交付前重渲读成品。宿主无需 import TS 或自己计算摘要，纯说明不重做产品源码发现；不加用户签字/评分门禁。无图像仍从文档内 Mermaid 核实现时序的界面步骤/一次跨层交互粒度及衔接，总览例外限旅程/角色关系；仅字号/布局/放大未核验。图错章或一段未答章内问题须指出，段落少不自动失败；同图首次绘制、后续回链，不设章节优先级。普通正文汉字间及中文全角标点后多余空格由 renderer 处理，不靠 YAML 字面块规避。
+
+修安全、导航等质询时，换实现仍须满足原需求；涉及原文明示的数据交接、跳转或清栈，作者和核源环节须回原文复核，同步步骤、旅程、图及数据生命周期，核谁持有/谁接收/何时清理及失败时没有写入标识的情形，不强制明文路由参数。必要偏离沿既有未决决定/待确认写明原要求、拟变更、理由和影响，无用户或既有明确授权不得记已裁决，读者建议本身不构成授权。
 
 没有 guide 时文首提示“尚未补写评审说明”；事实变化或摘要缺失/错误时提示“评审说明需更新”，回退当前事实与完整参考。个别坏引用或图只影响对应位置。生成成功只表示当前输入被忠实展示，不能证明解释充分；只读 checker 分别报告文档与 reader_guide 诊断。接受、readiness、调和及 B1 发布自动刷新均不调用模型、不自动写说明或盖摘要。B1 公开命令只读 canonical，发布前框架还会登记参与摘要的根 provenance，因此当前流程保留原说明摘要、发布后提示需更新，后续由 component-design 复核已发布 canonical 再盖摘要，不扩大草稿授权。CU 集合变化更新施工段与参考，不要求回改蓝图说明。纯 guide 润色不改变 CU/Feature 业务摘要，带戳阶段文件仍沿原调和与等价证明安全刷新；真设计变化仍回原责任阶段。
 
@@ -220,7 +224,7 @@ derived_from:
     - change_unit_id: <unit-id>
       binding: bound
       identity_neutral_digest: <digest> # 仅 canonical 能确定原架构相关集合时提供
-projection: component-blueprint-review@8
+projection: component-blueprint-review@9
 ---
 ```
 

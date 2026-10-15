@@ -13,7 +13,7 @@ derived_from:
     - change_unit_id: ledger-report
       binding: bound
       identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
-projection: component-blueprint-review@8
+projection: component-blueprint-review@9
 ---
 
 # Ledger 完整设计表达样本（非真实需求）
@@ -131,15 +131,20 @@ Repository、Store、报表读取各有明确职责和接口。
 <a id="decisions"></a>
 ## 8 关键取舍
 
+<a id="design-6465636973696f6e3a7365616d2d7368617065"></a>
 ### seam-shape
 
-**选择**：keep\_direct；契约 LedgerDataSource；provider Host LedgerRepository implementations；consumer Host LedgerStore；绑定时机 App composition root；失败语义 Surface source failure and preserve prior projection.；Source variation affects lifecycle, tests, and reconciliation.；再次提取条件 A second source ships in the same release window.
+| 关切 | 结论 |
+| --- | --- |
+| 选了什么 | keep\_direct；契约 LedgerDataSource；provider Host LedgerRepository implementations；consumer Host LedgerStore；绑定时机 App composition root；失败语义 Surface source failure and preserve prior projection.；Source variation affects lifecycle, tests, and reconciliation.；再次提取条件 A second source ships in the same release window. |
+| 理由 | Repository 提交先于发布，重放 Store 统一首次加载与更新；直接宿主实现足以承担当前两个本地切片。|
 
-**理由**：Repository 提交先于发布，重放 Store 统一首次加载与更新；直接宿主实现足以承担当前两个本地切片。
+被否方案：
 
-**被否方案 每个页面独立拉取并写缓存**：提交与显示顺序不可统一
-
-**被否方案 立刻抽出 Maison provider**：尚无跨宿主变体证据
+| 方案 | 被否理由/缺陷 |
+| --- | --- |
+| 每个页面独立拉取并写缓存 | 被否理由：提交与显示顺序不可统一；缺陷：重启、订阅建立期间可能看到旧余额 |
+| 立刻抽出 Maison provider | 被否理由：尚无跨宿主变体证据；缺陷：增加接缝维护面而没有实际复用 |
 
 <a id="recovery"></a>
 ## 9 失败与恢复
@@ -274,7 +279,11 @@ Repository、Store、报表读取各有明确职责和接口。
 <a id="questions"></a>
 ## 13 待补问题
 
-**cloud-sync-future**：Approved cloud sync contract becomes accessible.
+### 缺口及当前状态
+
+| 问题 | 状态 | 责任方 | 解除条件 |
+| --- | --- | --- | --- |
+| [cloud-sync-future](#design-6761703a636c6f75642d73796e632d667574757265) | 待决 | cloud-contract-owner | Approved cloud sync contract becomes accessible. |
 
 
 <a id="reference"></a>
@@ -1078,22 +1087,14 @@ flowchart TD
 <a id="reader-source-details"></a>
 #### 决策精确声明
 
-<a id="design-6465636973696f6e3a7365616d2d7368617065"></a>
 ##### seam-shape
 
-| 关切 | 结论 |
+| 关切 | 声明 |
 | --- | --- |
+| 正文解释 | [seam-shape](#design-6465636973696f6e3a7365616d2d7368617065) |
 | 类型 | 演进候选 |
-| 选了什么 | keep\_direct；契约 LedgerDataSource；provider Host LedgerRepository implementations；consumer Host LedgerStore；绑定时机 App composition root；失败语义 Surface source failure and preserve prior projection.；Source variation affects lifecycle, tests, and reconciliation.；再次提取条件 A second source ships in the same release window. |
-| 理由 | Repository 提交先于发布，重放 Store 统一首次加载与更新；直接宿主实现足以承担当前两个本地切片。 |
-| 状态/责任方 | 已授权裁决 / architecture-owner |
-
-被否方案：
-
-| 方案 | 被否理由 | 缺陷/代价 |
-| --- | --- | --- |
-| 每个页面独立拉取并写缓存 | 提交与显示顺序不可统一 | 重启、订阅建立期间可能看到旧余额 |
-| 立刻抽出 Maison provider | 尚无跨宿主变体证据 | 增加接缝维护面而没有实际复用 |
+| 状态 | 已授权裁决 |
+| 责任方 | architecture-owner |
 
 <a id="review-quality"></a>
 #### 质量属性与数据生命周期

@@ -90,9 +90,23 @@ export function validateComponentBlueprintUpstream(
   return out;
 }
 
-/** 六类可选设计表达的形状诊断；缺失/空数组合法，坏形状也仅 WARN。 */
+/** 可选设计表达的形状与承载位置诊断；缺失/空数组合法，坏形状也仅 WARN。 */
 export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): BlueprintIssue[] {
   const out: BlueprintIssue[] = [...inspectBlueprintReaderGuide(blueprint).diagnostics];
+  const visit = (value: unknown, at: string): void => {
+    if (Array.isArray(value)) { value.forEach((item, i) => visit(item, `${at}[${i}]`)); return; }
+    const record = asRecord(value);
+    if (!record) return;
+    for (const [key, child] of Object.entries(record)) {
+      const childPath = `${at}.${key}`;
+      if (key === 'table_schema' && !/^\$\.contracts\[\d+\]$/.test(at)) {
+        out.push(issue('blueprint_table_schema_misplaced', childPath,
+          'table_schema 位于文档未消费的位置；已发布约定为根 contracts[].table_schema（$.contracts[i].table_schema），请由设计作者核对并修正承载。', 'WARN'));
+      }
+      visit(child, childPath);
+    }
+  };
+  visit(blueprint, '$');
   const string = { type: 'string' };
   const strings = { type: 'array', items: string };
   const rows = (properties: BlueprintRecord): BlueprintRecord => ({ type: 'array', items: { type: 'object', properties, required: Object.keys(properties) } });

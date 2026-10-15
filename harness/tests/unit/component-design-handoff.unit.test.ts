@@ -229,6 +229,40 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  for (const blocked of [false, true]) results.push(test(`table_schema placement: WARN preserves real admission/readiness ${blocked ? 'with an independent BLOCKER' : 'on a valid design'}`, () => {
+    withProject(root => {
+      if (blocked) bumpBlueprint(root, bp => { asRecords(bp.generated_graphs)[0]!.content = 'flowchart TD\nunsupported !'; });
+      const readiness = () => {
+        try {
+          const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
+          return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit: ready.perUnit, entersConstruction: ready.entersConstruction };
+        } catch (error) {
+          assert(String(error).includes('blueprint') || String(error).includes('蓝图'), `readiness 抛出无关错误：${String(error)}`);
+          return { ready: false };
+        }
+      };
+      const baselineEntry = evaluateDesignPreparationEntry(root, BLUEPRINT_ID);
+      const baselineReady = readiness();
+      assert(baselineEntry.canEnter === !blocked && baselineReady.ready === !blocked, '基线未覆盖真实通过/独立失败');
+      let expectedPath = '';
+      bumpBlueprint(root, bp => {
+        const views = asRecords(bp.design_views);
+        const development = views.find(view => view.view_id === 'development')!;
+        asRecords(development.nodes)[0]!.table_schema = { table: 'unrendered-node-table', columns: [{ name: 'id', type: 'TEXT' }] };
+        expectedPath = `$.design_views[${views.indexOf(development)}].nodes[0].table_schema`;
+      });
+      const file = componentBlueprintPath(root, BLUEPRINT_ID);
+      const bytes = fs.readFileSync(file);
+      const checked = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
+      assert(checked.issues.some(item => item.id === 'blueprint_table_schema_misplaced' && item.path === expectedPath && item.message.includes('根 contracts[].table_schema')), '真实 checker 未承接位置提醒');
+      assert(JSON.stringify(evaluateDesignPreparationEntry(root, BLUEPRINT_ID)) === JSON.stringify(baselineEntry), '位置提醒改变真实准入结论');
+      assert(JSON.stringify(readiness()) === JSON.stringify(baselineReady), '位置提醒改变真实 readiness 结论');
+      if (blocked) assert(checked.issues.some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), '原独立 BLOCKER 被放过');
+      else assert(!loadBlueprintReviewSource(root, BLUEPRINT_ID).inputs.sourceGaps.length, '位置提醒升级为评审来源缺口');
+      assert(fs.readFileSync(file).equals(bytes), '真实消费链改写了错位 canonical');
+    });
+  }));
+
   results.push(test('design entry: draft/admitted local checks preserve canonical bytes and do not decompose', () => {
     for (const admitted of [false, true]) withProject(projectRoot => {
       emptyWorkspace(projectRoot);

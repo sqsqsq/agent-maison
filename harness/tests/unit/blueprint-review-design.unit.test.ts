@@ -35,6 +35,78 @@ function target(bp: BlueprintRecord, id: string): BlueprintRecord { return asRec
 function update(f: Fixture, mutate: (bp: BlueprintRecord) => void, bind = true): void { const bp = blueprint(f); mutate(bp); fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); if (bind) f.bind(); }
 function render(f: Fixture): string { return loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').markdown; }
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'canonical decisions always follow authored introductions with unique body anchors and metadata-only reference', run(f) {
+    for (const state of ['missing', 'current', 'stale']) {
+      const bp = blueprint(f); const review = asRecord(bp.review_summary)!;
+      const decisions = [
+        { decision_id: 'direct-choice', name: '直接选择', conclusion: '采用持久快照', rationale: '选择理由唯一', alternatives: [{ option: '放弃轮询', rejected_reason: '轮询缺陷唯一', defect: '轮询缺陷唯一' }, { option: '放弃共享数组', rejected_reason: '共享数组理由唯一', defect: '共享数组缺陷唯一' }, { option: '只有缺陷', defect: '没有拒绝理由的缺陷' }] },
+        { decision_id: 'asset-choice', kind: 'component_asset_selection', asset_resolution: 'reuse', target_ref: 'asset-target', component_ref: 'existing-component', rationale: '复用依据唯一' },
+        { decision_id: 'architecture-choice', kind: 'architecture_impact', change: 'move_module', module: 'ledger', from_layer: 'old-layer', to_layer: 'new-layer', rationale: '移动依据唯一' },
+        { decision_id: 'evolution-choice', kind: 'evolution_candidate', human_decision: 'keep_direct', stable_contract: 'StablePort', provider: 'LocalProvider', consumer: 'LocalConsumer', binding_time: 'startup', failure_semantics: 'preserve', impact: 'bounded', reextract_condition: 'second-host', rationale: '演进依据唯一' },
+        { decision_id: 'risk-choice', kind: 'residual_risk', resolution: '保留已知风险', rationale: '风险依据唯一' },
+        { decision_id: 'missing-choice', label: '未记录选择', rationale: '缺失不冒充理由' },
+      ];
+      asRecord(bp.decisions_and_gaps)!.decisions = decisions;
+      if (state === 'missing') delete review.reader_guide;
+      else review.reader_guide = { source_digest: state === 'stale' ? 'sha256:old' : computeBlueprintReaderGuideSourceDigest(bp), sections: [
+        { section: 'decisions', title: '决策开场', prose: '开场不能替代每项取舍。', source_refs: ['/decisions_and_gaps/decisions/0'] },
+        { section: 'decisions', title: '跨项解释', prose: '另一段开场仍按原顺序保留。', source_refs: ['/decisions_and_gaps/decisions/1'] },
+      ] };
+      const before = JSON.stringify(bp); const document = renderBlueprintReviewMarkdown(bp, 'sha256:decisions');
+      const body = document.slice(document.indexOf('## 8 关键取舍'), document.indexOf('## 9 失败与恢复'));
+      const reference = document.slice(document.indexOf('## 技术与追溯参考'));
+      for (const literal of ['选择理由唯一', '轮询缺陷唯一', '共享数组理由唯一', '共享数组缺陷唯一', '没有拒绝理由的缺陷', '复用依据唯一', '移动依据唯一', '演进依据唯一', '风险依据唯一']) {
+        assert.equal(body.split(literal).length - 1, 1, `${state}: ${literal}`); assert(!reference.includes(literal), literal);
+      }
+      for (const literal of ['采用持久快照', 'reuse', 'asset-target', 'existing-component', 'move', 'old-layer → new-layer', 'keep', 'StablePort', 'LocalProvider', 'LocalConsumer', '保留已知风险']) assert(body.includes(literal), `${state}: ${literal}`);
+      assert(body.includes('| 选了什么 | — |') && body.includes('选了什么（结论）'));
+      assert.equal(body.split('未记录；不推测被否选择。').length - 1, 5);
+      assert(!body.includes('所选代价') && !body.includes('缺陷/代价'));
+      for (const decision of decisions) {
+        const id = blueprintReviewAnchor(`decision:${decision.decision_id}`);
+        assert(body.includes(`<a id="${id}"></a>`)); assert(reference.includes(`](#${id})`)); assert(!reference.includes(`<a id="${id}"></a>`));
+      }
+      if (state === 'current') assert(body.indexOf('开场不能替代') < body.indexOf('另一段开场') && body.indexOf('另一段开场') < body.indexOf('### 直接选择'));
+      else assert(!body.includes('开场不能替代'));
+      const ids = [...document.matchAll(/<a\s+id="([^"]+)"/g)].map(match => match[1]);
+      assert.equal(new Set(ids).size, ids.length, `${state}: 全文显式锚点必须唯一`);
+      assert.equal(JSON.stringify(bp), before);
+    }
+  } },
+  { name: 'canonical assumed terms and real gap statuses remain visible with missing current or stale questions guide', run(f) {
+    for (const state of ['missing', 'current', 'stale']) {
+      const bp = blueprint(f); const review = asRecord(bp.review_summary)!; delete review.must_review;
+      asRecord(bp.discovery)!.facts = [
+        { subject: 'term:卡类型', value: { meaning: '假定卡类型解释' }, provenance: { extraction_method: 'headless_assumed', source_ref: 'term-source-a' } },
+        { subject: 'term:添加入口', value: { meaning: '假定添加入口解释' }, provenance: { extraction_method: 'headless_assumed', source_ref: 'term-source-b' } },
+        { subject: 'term:已确认术语', value: { meaning: '已确认解释' }, provenance: { extraction_method: 'user_confirmed' } },
+      ];
+      asRecord(bp.decisions_and_gaps)!.gaps = [
+        { gap_id: 'pending-gap', label: '等待契约', status: 'open_decision', owner: 'contract-owner', unlock_condition: '获准契约可访问' },
+        { gap_id: 'resolved-gap', label: '已经解决的问题', status: 'resolved', owner: 'design-owner', unlock_condition: '已取得真实证据' },
+        { gap_id: 'missing-status', label: '状态未登记的问题', unlock_condition: '补充状态依据' },
+      ];
+      if (state === 'missing') delete review.reader_guide;
+      else review.reader_guide = { source_digest: state === 'stale' ? 'sha256:old' : computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'questions', title: '结论开场', prose: '业务语义均已裁决。', source_refs: ['/decisions_and_gaps'] }] };
+      const before = JSON.stringify(bp); const document = renderBlueprintReviewMarkdown(bp, 'sha256:questions'); const body = document.slice(document.indexOf('## 13 待补问题'), document.indexOf('## 技术与追溯参考'));
+      for (const literal of ['卡类型', '假定卡类型解释', '添加入口', '假定添加入口解释', '作者自行假定，待确认', '等待契约', '待决', 'contract-owner', '获准契约可访问', '已经解决的问题', '已解决', 'design-owner', '已取得真实证据', '状态未登记的问题', '未记录状态']) assert(body.includes(literal), `${state}: ${literal}`);
+      assert.equal(body.split('作者自行假定，待确认').length - 1, 2); assert(!body.includes('已确认术语')); assert(!body.includes('必须关注的评审问题'));
+      for (const gapId of ['pending-gap', 'resolved-gap', 'missing-status']) assert(document.includes(`<a id="${blueprintReviewAnchor(`gap:${gapId}`)}"></a>`));
+      assert.equal(JSON.stringify(bp), before);
+    }
+  } },
+  { name: 'questions preserve must review once and stop assuming confirmed terms without inventing empty gaps', run(f) {
+    const bp = blueprint(f); const review = asRecord(bp.review_summary)!;
+    asRecord(bp.discovery)!.facts = [{ subject: 'term:现在已确认', value: { meaning: '已确认的解释' }, provenance: { extraction_method: 'user_confirmed' } }];
+    asRecord(bp.decisions_and_gaps)!.gaps = []; review.must_review = ['必须确认需求偏离', '必须确认恢复边界'];
+    review.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'questions', title: '评审开场', prose: '请确认本次边界。', source_refs: ['/review_summary/must_review'] }] };
+    let document = renderBlueprintReviewMarkdown(bp, 'sha256:confirmed'); const referenceStart = document.indexOf('## 技术与追溯参考'); const body = document.slice(document.indexOf('## 13 待补问题'), referenceStart);
+    for (const question of review.must_review as string[]) { assert.equal(document.split(question).length - 1, 1); assert(body.includes(question)); }
+    assert(!body.includes('作者自行假定') && !body.includes('缺口及当前状态'));
+    assert(document.slice(referenceStart).includes('见正文[必须关注的评审问题](#questions)') && document.includes('已确认的解释'));
+    delete review.must_review; delete review.reader_guide; document = renderBlueprintReviewMarkdown(bp, 'sha256:empty');
+    assert(!document.includes('## 13 待补问题'));
+  } },
   { name: 'restart repeated graph references link to the first drawing or its invalid and stale explanation', run(f) {
     for (const state of ['current', 'invalid', 'stale']) {
       const bp = blueprint(f);
@@ -89,10 +161,10 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
   { name: 'restart narrative spacing folds fullwidth punctuation before any text and preserves Markdown literals and line layout', run(f) {
     const bp = blueprint(f); const review = asRecord(bp.review_summary)!;
     review.background = '宿主背景。 next  保留普通空格\n续行， English  words。  \n    缩进。 keep\n\t制表缩进。 keep\n原字段 `inline； keep` 和 [链接。 keep](https://example.com/raw)\n```text\n原字段围栏。 keep\n```\n```npm test```\n单行代码之后。 next\n原字段地址： https://example.com/fallback';
-    const prose = '中文。 继续； English： next， 123！ `code。 keep`、 [链接。 keep](https://example.com/a。keep)\nURL https://example.com/a。keep 与 `inline； keep`。  \n下一行。 next\n\n```text\n代码。 keep\n```\n\n    缩进。 keep\n\t制表缩进。 keep\n说明地址： https://example.com/guide';
+    const prose = '中文。 继续； English： next， 123！ `code。 keep`、 [链接。 keep](https://example.com/a。keep)\nURL https://example.com/a。keep 与 `inline； keep`。  \n下一行。 next\n\n```text\n代码。 keep\n没有 会话边界\n```\n\n    缩进。 keep\n\t制表缩进。 keep\n说明地址： https://example.com/guide\n没有 会话边界，扩充  既有 设计；保留 API 调用与 3 个参数。  \n下一行\n`没有 会话边界` [扩充 既有](https://example.com/扩充%20既有) https://example.com/没有%20会话边界\n    没有 会话边界\n\t扩充 既有';
     review.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'solution', title: '空格样例', prose, source_refs: ['/design_views'] }] };
     const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:restart-spacing'); const body = text.slice(0, text.indexOf('## 技术与追溯参考'));
-    for (const expected of ['宿主背景。next  保留普通空格\n续行，English  words。  \n    缩进。 keep\n\t制表缩进。 keep', '中文。继续；English：next，123！`code。 keep`、[链接。 keep](https://example.com/a。keep)', 'https://example.com/a。keep', '`inline； keep`。  \n下一行。next', '```text\n代码。 keep\n```', '    缩进。 keep', '\t制表缩进。 keep']) assert(body.includes(expected), expected);
+    for (const expected of ['宿主背景。next  保留普通空格\n续行，English  words。  \n    缩进。 keep\n\t制表缩进。 keep', '中文。继续；English：next，123！`code。 keep`、[链接。 keep](https://example.com/a。keep)', 'https://example.com/a。keep', '`inline； keep`。  \n下一行。next', '```text\n代码。 keep\n没有 会话边界\n```', '    缩进。 keep', '\t制表缩进。 keep', '没有会话边界，扩充既有设计；保留 API 调用与 3 个参数。  \n下一行', '`没有 会话边界` [扩充 既有](https://example.com/扩充%20既有) https://example.com/没有%20会话边界', '    没有 会话边界\n\t扩充 既有']) assert(body.includes(expected), expected);
     assert(body.includes('\\`inline； keep\\`') && body.includes('\\[链接。 keep\\](https://example.com/raw)')); assert(body.includes('原字段围栏。 keep'));
     assert(body.includes('\\`\\`\\`npm test\\`\\`\\`\n单行代码之后。next') && body.includes('## 5 整体方案'));
     assert(body.includes('原字段地址： https://example.com/fallback') && body.includes('说明地址： https://example.com/guide'));
@@ -258,7 +330,8 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     ] };
     const text = renderBlueprintReviewMarkdown(bp, 'sha256:retained'); const reference = text.slice(text.indexOf('## 技术与追溯参考'));
     for (const explanation of ['作者背景说明依然有效。', '作者术语说明依然有效。', '作者问题说明依然有效。']) assert(text.slice(0, text.indexOf('## 技术与追溯参考')).includes(explanation));
-    for (const fact of ['必须保留背景', '必须保留问题', '必须保留定位', '必须保留范围', '必须保留非目标', '必须保留目标', '必须保留释义', '精确模块', '易混对象', 'docs/term-confirmed.md', 'docs/conventions.md#explicit-rule', '必须保留评审关注']) assert(reference.includes(fact), fact);
+    for (const fact of ['必须保留背景', '必须保留问题', '必须保留定位', '必须保留范围', '必须保留非目标', '必须保留目标', '必须保留释义', '精确模块', '易混对象', 'docs/term-confirmed.md', 'docs/conventions.md#explicit-rule']) assert(reference.includes(fact), fact);
+    assert(text.slice(0, text.indexOf('## 技术与追溯参考')).includes('必须保留评审关注')); assert(!reference.includes('必须保留评审关注'));
     assert(reference.includes(`[AC-2](#${blueprintReviewAnchor('acceptance:view:development/node:ledger-module/criteria:AC-2')})`));
   } },
   { name: 'authored flowchart preserves its existing validation path and stale guide warnings stay outside the body', run(f) {
@@ -462,12 +535,12 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const text = renderBlueprintReviewMarkdown(bp, 'sha256:dedup');
     assert.equal(text.split('唯一主责动作').length - 1, 1); assert.equal(text.split('不同来源动作').length - 1, 1); assert(!text.includes('UI 边界：SharedPage')); assert(text.includes('界面职责、动作、调用与订阅见'));
     assert.equal(text.slice(text.indexOf('## 技术与追溯参考')).split('唯一恢复说明').length - 1, 1); assert(text.includes('失败与恢复见')); assert(text.includes('（真机补充）')); assert(!text.includes(`UT：${ac.expected_result}`));
-    assert(text.includes('| 方案 | 被否理由/代价 |')); assert.equal(text.slice(text.indexOf('## 技术与追溯参考')).split('完全相同代价').length - 1, 1);
+    assert(text.includes('| 方案 | 被否理由/缺陷 |')); assert.equal(text.split('完全相同代价').length - 1, 1); assert(!text.slice(text.indexOf('## 技术与追溯参考')).includes('完全相同代价'));
     assert(!text.includes('目标写集：')); assert(text.includes('| 文件 | 声明目标 |')); assert(text.includes(blueprintReviewAnchor('writes:view:development/node:ledger-module')));
     assert(text.includes('内容承载于：')); assert(!text.includes('设计内容来源：'));
     asRecords(decision.alternatives)[1].defect = '确实不同代价';
     asRecords(asRecord(flow.contracts)!.state_management)[0].failure_recovery = { handling: '不同恢复处理', retry: '不同恢复重试' };
-    const different = renderBlueprintReviewMarkdown(bp, 'sha256:dedup'); assert(different.includes('| 方案 | 被否理由 | 缺陷/代价 |')); assert(different.includes('不同恢复处理')); assert(different.includes('| 处理 |'));
+    const different = renderBlueprintReviewMarkdown(bp, 'sha256:dedup'); assert(different.includes('被否理由：另一相同代价；缺陷：确实不同代价')); assert(different.includes('不同恢复处理')); assert(different.includes('| 处理 |'));
   } },
   { name: 'saved current sequence content displays beside its flow without relation refs or invented calls and stale graphs only request rebuild', run(f) {
     const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
@@ -547,7 +620,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     (asRecord(bp.decisions_and_gaps)!.decisions as BlueprintRecord[]).push(decision);
     const present = renderBlueprintReviewMarkdown(bp, 'sha256:decision-test'); assert(present.includes('| 选了什么 | 使用本地持久化 |')); assert(present.includes('| 理由 | 离线也需读取 |'));
     delete (decision as BlueprintRecord).conclusion;
-    const missing = renderBlueprintReviewMarkdown(bp, 'sha256:decision-test').slice(renderBlueprintReviewMarkdown(bp, 'sha256:decision-test').indexOf('#### 决策精确声明')).split('##### generic-choice')[1].split('#### 质量属性')[0];
+    const missing = renderBlueprintReviewMarkdown(bp, 'sha256:decision-test').split('### generic-choice')[1].split('<a id="recovery">')[0];
     assert(missing.includes('| 选了什么 | — |')); assert(missing.includes('选了什么（结论）')); assert(missing.includes('| 理由 | 离线也需读取 |'));
   } },
   { name: 'review trace uses exact IDs within the owning target and keeps both focuses and narrative answer arrays', run(f) {

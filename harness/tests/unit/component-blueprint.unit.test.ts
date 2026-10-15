@@ -16,7 +16,7 @@ import {
   resolveComponentBlueprintRef,
 } from '../../scripts/utils/component-blueprint-path';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
-import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
+import { BLUEPRINT_REVIEW_FORMAT, renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
 import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
 import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
@@ -498,6 +498,60 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  results.push(test('table_schema placement: actual object keys report exact paths; valid root shapes and textual mentions stay quiet', () => {
+    const bp = validBlueprint();
+    const misplaced = () => validateFixture(bp).filter(item => item.id === 'blueprint_table_schema_misplaced');
+    assert(misplaced().length === 0, '未声明 table_schema 不得告缺失');
+    const contract = asRecords(bp.contracts)[0]!;
+    for (const schema of [
+      { table: 'entries', columns: [{ name: 'id', type: 'TEXT' }] },
+      { database: 'ledger', version: 1, security_level: 'S2', encrypt: true, tables: [{ name: 'entries', primary_key: ['id'], columns: [{ name: 'id', type: 'TEXT' }] }] },
+    ]) {
+      contract.table_schema = schema;
+      assert(misplaced().length === 0, '合法根级单表/库级结构误报错位');
+    }
+    asRecord(bp.review_summary)!.background = 'table_schema 说明；引用 contracts[0].table_schema；代码 `table_schema: {table: entries}`';
+    const development = findView(bp, 'development');
+    const node = asRecords(development.nodes)[0]!;
+    node.description = '```yaml\ntable_schema:\n  table: entries\n```';
+    assert(misplaced().length === 0, '说明/引用/代码字符串被当作声明');
+    node.table_schema = { table: 'unrendered-node-table', columns: [] };
+    bp.table_schema = { table: 'unrendered-root-table', columns: [] };
+    const paths = misplaced().map(item => item.path).sort();
+    const expected = [`$.design_views[${asRecords(bp.design_views).indexOf(development)}].nodes[0].table_schema`, '$.table_schema'].sort();
+    assert(JSON.stringify(paths) === JSON.stringify(expected), `没有指出实际位置：${JSON.stringify(paths)}`);
+    assert(misplaced().every(item => item.severity === 'WARN' && item.message.includes('根 contracts[].table_schema')), '错位提示缺已发布承载或被升级');
+  }));
+
+  results.push(test('table_schema placement: real checker CLI text/JSON and review reference warn without mutating or rendering misplaced data', () => {
+    withTempProject((projectRoot, filePath) => {
+      const bp = readYaml(filePath);
+      const development = findView(bp, 'development');
+      asRecords(development.nodes)[0]!.table_schema = { table: 'unrendered-node-table', columns: [{ name: 'id', type: 'TEXT' }] };
+      fs.writeFileSync(filePath, YAML.stringify(bp), 'utf8');
+      const original = fs.readFileSync(filePath);
+      const expectedPath = `$.design_views[${asRecords(bp.design_views).indexOf(development)}].nodes[0].table_schema`;
+      const expected = checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint').issues;
+      const harnessRoot = path.resolve(__dirname, '..', '..');
+      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
+        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+        '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
+      const jsonCli = invoke(['--write-review', '--json']);
+      const report = JSON.parse(jsonCli.stdout);
+      assert(jsonCli.status === 0 && report.status === 'PASS', jsonCli.stdout + jsonCli.stderr);
+      assert(JSON.stringify(report.issues) === JSON.stringify(expected), 'CLI 丢失或重算诊断');
+      assert(report.issues.some((item: BlueprintRecord) => item.id === 'blueprint_table_schema_misplaced' && item.path === expectedPath), 'JSON checker 未展示具体错位来源');
+      const textCli = invoke([]);
+      assert(textCli.status === 0 && textCli.stdout.includes(`[WARN] ${expectedPath}:`) && textCli.stdout.includes('根 contracts[].table_schema'), textCli.stdout + textCli.stderr);
+      assert((textCli.stdout.match(/\[WARN\]/g) ?? []).length === expected.filter(item => item.severity === 'WARN').length, '默认 checker 重复或漏报 WARN');
+      const markdown = fs.readFileSync(report.review_document.path, 'utf8');
+      const visibleMarkdown = markdown.replace(/\\([\\`*_[\]])/g, '$1');
+      assert(visibleMarkdown.includes(expectedPath) && visibleMarkdown.includes('根 contracts[].table_schema'), '评审参考未显示位置诊断');
+      assert(!markdown.includes('unrendered-node-table'), '错误位置被兼容为物理表结构');
+      assert(fs.readFileSync(filePath).equals(original), '检查或渲染搬动/改写了 canonical 数据');
+    });
+  }));
+
   results.push(test('canonical path is workspace-owned and rejects arbitrary path identities', () => {
     assert(componentBlueprintPath('C:/project', 'ledger-app-blueprint').replace(/\\/g, '/')
       .endsWith('/doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml'), 'canonical path 错误');
@@ -620,7 +674,7 @@ export function runAll(): UnitCaseResult[] {
     }
     const fixtureProjection = fs.readFileSync(path.join(path.dirname(VALID_PATH), 'component-blueprint.review.md'), 'utf8');
     assert(fixtureProjection !== markdown && fixtureProjection.includes('projection: component-blueprint-review@3'), '旧 Ledger 文档保留作旧格式回归，不重生成原夹具');
-    assert(markdown.includes('projection: component-blueprint-review@8'), '新输出使用默认设计交付格式');
+    assert(markdown.includes(`projection: ${BLUEPRINT_REVIEW_FORMAT}`), '新输出使用默认设计交付格式');
   }));
 
   results.push(test('review presentation selects business fields: DTO tables, ordered flow, decisions and unchanged evidence, without recursive metadata', () => {

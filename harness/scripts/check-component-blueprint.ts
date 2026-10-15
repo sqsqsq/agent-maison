@@ -205,7 +205,7 @@ function main(): void {
       console.log(`✅ Component blueprint PASS — ${result.canonicalPath}`);
       console.log(`   component_id=${String(result.blueprint.component_id)}`);
       console.log(`   artifact_sha256=${result.artifactSha256}`);
-      for (const diagnostic of inspectBlueprintReaderGuide(result.blueprint).diagnostics) console.log(`   [WARN] ${diagnostic.path}: ${diagnostic.message}`);
+      for (const diagnostic of result.issues.filter(item => item.severity === 'WARN')) console.log(`   [WARN] ${diagnostic.path}: ${diagnostic.message}`);
       if (seams.modes.length > 0) console.log(`   host_seam_modes=${seams.modes.join(', ')}`);
     }
     if (!args.json) console.log(`   review_document=${reviewDocument.status} ${reviewDocument.path}\n   重建：${reviewDocument.rebuildCommand}`
