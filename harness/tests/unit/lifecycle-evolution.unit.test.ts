@@ -41,6 +41,7 @@ import {
 import {
   runIds, runFile, readJson, uncoveredOwnerPhases, freezeAndTransfer, supersede, successorScope, auditedBy, completionOriginal,
   changeProjectedAcceptance, NEW_EXPECTED_RESULT,
+  withCurrentSnapshot,
 } from './successor-exit.unit.test';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
@@ -562,8 +563,8 @@ export function rebuildCuDesignInputs(s: Snapshot, p: RealChainProject, preserve
 // ---- 用例 -----------------------------------------------------------------------------------------
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
-  // 发布门基线：本版任何规则让它变 false 即发布失败——除非 MIGRATION 登记可验证迁移路径并重生成快照（plan §5 / §6 ★1）。
-  { name: 'L0 ★1 发布门基线：快照原样加载，两个 Feature assessFeature().complete', run: () => withSnapshot(s => {
+  // 旧 gate 失效已由 MIGRATION 登记；当前完成态须由既有正式迁移产生，原快照不改。
+  { name: 'L0 ★1 发布门基线：旧快照正式迁移后，两个 Feature assessFeature().complete', run: () => withCurrentSnapshot([SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE], s => {
     for (const feature of [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]) {
       const a = assess(s, feature);
       assert.strictEqual(a.complete, true, `${feature}：${brief(a)}`);
@@ -741,9 +742,11 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assertCompleted(s, SNAPSHOT_FLAT_FEATURE, o);
   }) },
 
-  { name: 'L6 #10 晚于凭证的未终局 run（生产 createGoalRun、无 run_end）→ blocking 非空、complete=false、不路由阶段', run: () => withSnapshot(s => {
+  { name: 'L6 #10 晚于凭证的未终局 run（生产 createGoalRun、无 run_end）→ blocking 非空、complete=false、不路由阶段', run: () => withCurrentSnapshot([SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE], s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
-    const [source] = runIds(s.root, feature);
+    const record = assess(s, feature).record;
+    assert(record.state === 'ok' && record.run_id);
+    const source = record.run_id;
     const scope = loadFrozenExecutionScope(s.root, feature, source)!;
     const runId = `${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}-1a7e00`;
     const manifest = buildGoalManifestFromInput({
@@ -782,7 +785,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert.strictEqual(a.record.state, 'ok', `记录不得因规则追溯而 broken：${brief(a)}`);
   }) },
 
-  { name: 'L8 #12 旧 CU 带 revises：可读、不报 schema 错；assess 与 reconcile 行为不变', run: () => withSnapshot(s => {
+  { name: 'L8 #12 旧 CU 带 revises：可读、不报 schema 错；assess 与 reconcile 行为不变', run: () => withCurrentSnapshot([SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE], s => {
     const target = enumerateCanonicalChangeUnits(s.root, BLUEPRINT_ID).find(u => u.changeUnit.change_unit_id !== 'ledger-refresh')!;
     const cu = target.changeUnit;
     const revises = { artifact: cu.artifact, component_id: cu.component_id, blueprint_id: cu.blueprint_id, change_unit_id: cu.change_unit_id, revision: cu.revision, artifact_sha256: target.artifactSha256 };
@@ -802,9 +805,11 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     assert.deepStrictEqual(loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, String(cu.change_unit_id)).changeUnit.revises, revises, 'revises 原样保留');
   }) },
 
-  { name: 'L9 ★3 伪造记录：手改 completion 原件 phases[].run_id → record broken；successor 出生 reused_phases 为空、不新建 CU', run: () => withHost(async s => {
+  { name: 'L9 ★3 伪造记录：手改 completion 原件 phases[].run_id → record broken；successor 出生 reused_phases 为空、不新建 CU', run: () => withCurrentSnapshot([SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE], async s => {
     const feature = SNAPSHOT_CU_FEATURE;
-    const [source] = runIds(s.root, feature);
+    const record = assess(s, feature).record;
+    assert(record.state === 'ok' && record.run_id);
+    const source = record.run_id;
     const projectionFile = featureFilePath(s.root, feature, 'feature-completion.json');
     const projection = readJson<Record<string, unknown> & { original_path: string }>(projectionFile);
     const original = readJson<{ phases: Array<{ run_id: string }> }>(path.join(s.root, projection.original_path));

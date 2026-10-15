@@ -80,6 +80,56 @@ function review(p: PreparedRequest, verdict = '通过') {
   fs.writeFileSync(p.inputs.review_report, `# Review\n## 审查范围\nsrc/value.js\n## 审查方法\nRead source and compare selected baseline.\n## 问题清单\n无问题\n## 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n| INFO | 0 |\n## 修复建议\n无\n## 结论\n**审查结论**: ${verdict}\n`);
 }
 const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixture>): void }> = [
+  ...[
+    { phase: 'ut', ready: true }, { phase: 'testing', ready: true },
+    { phase: 'review', ready: true }, { phase: 'ut', ready: false },
+  ].map(({ phase, ready }) => ({
+    name: `request setup: ${phase} ${ready ? '可自动补齐' : '真实缺失不执行'}；prepare 只读且不要求 adapter`,
+    phase,
+    run(f: ReturnType<typeof fixture>) {
+      const profileFile = path.join(f.framework, 'profiles/request-test/profile.yaml');
+      const profile = YAML.parse(fs.readFileSync(profileFile, 'utf8'));
+      profile.personal_prerequisites = { 'ut.run': ['deveco_toolchain'], 'device_test.run': ['deveco_toolchain'] };
+      fs.writeFileSync(profileFile, YAML.stringify(profile));
+      if (phase === 'testing') {
+        fs.writeFileSync(path.join(f.root, 'doc/requests/cases.txt'), 'open value -> check value equals 42');
+        fs.writeFileSync(path.join(f.root, f.options.requestFile), JSON.stringify({ ...f.request, targets: { ...f.request.targets, tests: ['tests/value.test.cjs'] }, inputs: { cases: 'doc/requests/cases.txt' } }));
+      }
+      const p = prepareExplicitRequest(f.options); facts(p, f.root);
+      if (phase === 'review') review(p);
+      const install = path.join(f.root, 'fake-deveco');
+      const hvigor = path.join(install, 'tools/hvigor/bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw');
+      fs.mkdirSync(path.dirname(hvigor), { recursive: true });
+      fs.writeFileSync(hvigor, process.platform === 'win32' ? '@echo off\necho 6.0.0\n' : '#!/bin/sh\necho 6.0.0\n', { mode: 0o755 });
+      const provider = path.join(f.framework, 'profiles/request-test/harness/providers/native-request.js');
+      fs.writeFileSync(provider, fs.readFileSync(provider, 'utf8').replace('exports.runRequestTests = ctx => {', `exports.runRequestTests = ctx => {
+  const local = JSON.parse(fs.readFileSync(path.join(ctx.projectRoot, 'framework.local.json'), 'utf8'));
+  assert.equal(local.toolchain.devEcoStudio.installPath, ${JSON.stringify(install)});`));
+      const args = { phase, 'request-file': f.options.requestFile, 'report-dir': f.options.reportDir };
+      const program = `
+const assert = require('assert'), fs = require('fs');
+const gate = require(${JSON.stringify(path.join(repo, 'harness/scripts/utils/personal-setup-gate.ts'))});
+const { runExplicitRequest } = require(${JSON.stringify(path.join(repo, 'harness/scripts/utils/request-phase.ts'))});
+let scans = 0;
+gate.__testing_setDetectScanForEnsure(() => { scans++; return { candidates: [], recommended: ${ready ? JSON.stringify({ status: 'ok', installPath: install, source: 'scan', missing: [] }) : 'null'} }; });
+(async () => {
+  const options = ${JSON.stringify({ projectRoot: f.root, frameworkRoot: f.framework, args })};
+  const localPath = ${JSON.stringify(path.join(f.root, 'framework.local.json'))};
+  assert.equal(await runExplicitRequest({ ...options, args: { ...options.args, 'prepare-request': true } }), 0);
+  assert.equal(scans, 0); assert(!fs.existsSync(localPath));
+  assert.equal(await runExplicitRequest(options), ${ready ? 0 : 1});
+  assert.equal(scans, ${phase === 'review' ? 0 : 1});
+  if (${JSON.stringify(phase)} === 'review' || !${ready}) assert(!fs.existsSync(localPath));
+  else assert(!JSON.parse(fs.readFileSync(localPath, 'utf8')).agent_adapter);
+})().catch(error => { console.error(error); process.exitCode = 1; });`;
+      const run = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), '-e', program], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
+      assert.equal(run.status, 0, run.stderr + run.stdout);
+      const evidence = path.join(p.reportDir, 'native-test.log');
+      assert.equal(fs.existsSync(evidence), ready && phase !== 'review');
+      if (fs.existsSync(evidence)) assert.match(fs.readFileSync(evidence, 'utf8'), /# pass 1/);
+      if (!ready) assert.match(fs.readFileSync(path.join(p.reportDir, 'script-report.json'), 'utf8'), /DevEco 工具链未就绪/);
+    },
+  })),
   { name: 'custom Feature reports and receipts are protected before creation while sibling requests run', run(f) {
     const configFile = path.join(f.root, 'framework.config.json');
     const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));

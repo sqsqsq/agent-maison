@@ -97,7 +97,7 @@ import {
   withFreshCuHost,
   withSnapshot,
 } from './lifecycle-evolution.unit.test';
-import { changeProjectedAcceptance, freezeAndTransfer, NEW_EXPECTED_RESULT, runIds as snapshotRunIds, supersede } from './successor-exit.unit.test';
+import { changeProjectedAcceptance, freezeAndTransfer, NEW_EXPECTED_RESULT, runIds as snapshotRunIds, supersede, withCurrentSnapshot } from './successor-exit.unit.test';
 import { loadHostSnapshot, SNAPSHOT_FLAT_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
@@ -628,9 +628,11 @@ export function beScopeAcceptance(root: string, feature: string, _frameworkClaim
 
 const runBe091cScope: ScenarioRunner = async (_entry, done) => {
   // 重演 be091c 第二现场（有人在场入口）：feature 范围已转交给一个中断的后继；宿主重新发起同一请求（prepare-run + 附着）。
-  await withSnapshot(async s => {
+  await withCurrentSnapshot(SNAPSHOT_FLAT_FEATURE, async s => {
     const feature = SNAPSHOT_FLAT_FEATURE;
-    const [source] = snapshotRunIds(s.root, feature);
+    const record = assess(s, feature).record;
+    assert(record.state === 'ok' && record.run_id, '范围转交场景需要正式迁移后的当前完成记录');
+    const source = record.run_id!;
     freezeAndTransfer(s, feature, source);
     fs.rmSync(featureFilePath(s.root, feature, 'ut/reports/phase-evidence-manifest.json'));
     const requirement = (JSON.parse(fs.readFileSync(path.join(runsDirOf(s.root, feature), source, 'manifest.json'), 'utf-8')) as { requirement: string }).requirement;
@@ -640,6 +642,7 @@ const runBe091cScope: ScenarioRunner = async (_entry, done) => {
     assert(holder, 'be091c 第二现场：夹具须先有一个接管了范围、随后中断的后继');
     // 测试桩代际补丁：假 agent 不落 Job 绑定事件（与驱动 resume 路径同一个），不是对故障的预修。
     sealLegacyInvokes(s.root, feature, holder!);
+    const runsBeforeReattach = snapshotRunIds(s.root, feature).sort();
     const again = await requestVia('attended', s.root, {
       frameworkRoot: s.frameworkRoot, featureId: feature, freshRequirement: requirement, freshStartPhase: 'ut', freshEndPhase: 'ut',
     });
@@ -658,7 +661,7 @@ const runBe091cScope: ScenarioRunner = async (_entry, done) => {
         const reasons = [
           t.conclusion === 'correct_completion' || `结论=${t.conclusion}`,
           /COMPLETED/.test(endStatus) || `持有者须完成：${endStatus}`,
-          snapshotRunIds(s.root, feature).length === 2 || `不得新建 run：${snapshotRunIds(s.root, feature).join(',')}`,
+          JSON.stringify(snapshotRunIds(s.root, feature).sort()) === JSON.stringify(runsBeforeReattach) || `不得新建 run：${snapshotRunIds(s.root, feature).join(',')}`,
           again.invokedPhases.includes('ut') || `重新接入后须执行 ut：${again.invokedPhases.join(',')}`,
         ].filter((x): x is string => typeof x === 'string');
         return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : `有人在场重发同一请求即重新接入持有范围的中断后继并完成；操作者动作=${t.operator.rescue_count}（其中 1 次为测试桩代际补丁）` };

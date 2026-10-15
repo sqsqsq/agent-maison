@@ -159,25 +159,25 @@ skills:
     source_rel: feature/coding
     order: 30
     description: >
-      按冻结写集与解析后的契约实现本次义务
+      实现或修复代码，或只编译当前工程。只编译无需需求号，按请求终点停止。
 
   - id: code-review
     scope: feature
     source_rel: feature/code-review
     order: 40
     description: >
-      代码审查报告
+      审查当前 diff、提交或指定文件的代码质量；无需 Feature，默认只审不改。
 
   - id: business-ut
     scope: feature
     source_rel: feature/business-ut
     order: 50
     description: >
-      业务级 UT / DAG
+      为指定函数或本地新改代码补充、修复或运行 UT；无需需求号，写测试前确认载体。
 
   - id: device-testing
     scope: feature
     source_rel: feature/device-testing
     order: 60
     description: >
-      真机测试计划与报告
+      设计测试用例、验证修复、即席跑机，以及解锁手机 / 唤醒设备；无需 Feature，只设计时不跑机。

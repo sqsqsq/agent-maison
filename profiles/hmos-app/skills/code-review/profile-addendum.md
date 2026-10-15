@@ -13,8 +13,8 @@
 
 本 skill 的 asset 键与相对路径**唯一声明**在机器清单 `framework/profiles/hmos-app/skills/skill-assets.yaml`（`assets.code-review` 段）。根 `SKILL.md` 用 `` `profile-skill-asset:code-review/<键>` `` 引用，解析规则见 `framework/skills/README.md` 的 “Profile skill asset protocol”。**本 addendum 不再罗列键与路径**，以清单为单一真相（SSOT），避免散文与清单漂移。
 
-若宿主含 **非 `.ets`** 源码形态，仍以 `contracts.yaml` 与实例 `architecture` 为准，避免套错语言规则。
+若宿主含 **非 `.ets`** 源码形态，以实际语言、实例 `architecture` 和本次适用契约为准，避免套错语言规则；独立审查不因缺 contracts 不能开始。
 
 ## Context Exploration Gate（profile 补充）
 
-审查前除读全 `contracts.yaml > files` 外，建议对 **HAR/HSP 库模块 `Index.ets` 导出**、**`$r()` 资源 key` 定义文件** 与 **`route_map.json` / 页面注册** 做抽查，以验证「问题清单」是否遗漏宿主特有 BLOCKER。
+审查先读本次目标及调用链；正式范围读全 `contracts.files`，独立范围由用户的 diff/提交/文件请求确定。按影响核对 **HAR/HSP 库模块 `Index.ets` 导出**、**`$r()` 资源 key 定义文件** 与 **`route_map.json` / 页面注册**，避免遗漏宿主特有问题。

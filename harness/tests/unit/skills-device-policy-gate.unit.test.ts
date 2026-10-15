@@ -157,6 +157,8 @@ export function runAll(): UnitCaseResult[] {
       'reference/confirmation-registry.yaml',
       GOAL_SKILL,
       ...Object.values(PHASE_SKILL),
+      'reference/business-ut-workflow-detail.md',
+      'reference/device-testing-workflow-detail.md',
     ];
     const staleCmd: string[] = [];
     const absoluteWording: string[] = [];
@@ -194,12 +196,15 @@ export function runAll(): UnitCaseResult[] {
   run(results, 'device-testing SKILL 先分流后前置，且设备就绪请求可识别', () => {
     const skill = fs.readFileSync(path.join(SKILLS, PHASE_SKILL.testing), 'utf-8');
     const routeIdx = skill.indexOf('## 请求分流');
-    const preIdx = skill.indexOf('## 前置');
+    const preIdx = skill.indexOf('#正式-featurecu-阶段');
     assert(routeIdx >= 0, 'SKILL 须有「## 请求分流」顶节（设备级请求先判后进）');
-    assert(preIdx >= 0, 'SKILL 须保留「## 前置」段');
-    assert(routeIdx < preIdx, '「## 请求分流」必须排在「## 前置」之前——否则设备级请求仍会先撞 feature/acceptance 前置');
+    assert(preIdx >= 0, 'SKILL 须链接条件加载的正式阶段前置');
+    assert(routeIdx < preIdx, '须先分流，再条件加载正式前置');
     // 前置只对正式模式成立：即席与设备就绪不该被 feature/receipt/acceptance 挡住
-    const preBlock = skill.slice(preIdx, skill.indexOf('\n## ', preIdx + 1));
+    const detail = fs.readFileSync(path.join(SKILLS, 'reference/device-testing-workflow-detail.md'), 'utf-8');
+    const detailPreIdx = detail.indexOf('## 前置');
+    assert(detailPreIdx >= 0, '正式前置须保留在对应 reference');
+    const preBlock = detail.slice(detailPreIdx, detail.indexOf('\n## ', detailPreIdx + 1));
     assert(/只适用于正式模式/.test(preBlock), '「前置」段首须限定「只适用于正式模式」');
     assert(/解锁手机/.test(skill), '触发条件须含「解锁手机」（自然语言直达设备就绪轨）');
     assert(/--ready --json/.test(skill), 'SKILL 分流表须给出 `--ready --json` 正道命令');
@@ -238,11 +243,11 @@ export function runAll(): UnitCaseResult[] {
       const text = fs.readFileSync(path.join(REPO, rel), 'utf-8');
       const m = /^argument-hint:\s*(.+)$/m.exec(text);
       assert(m !== null, `${rel} 缺 argument-hint`);
-      hints.add((m as RegExpExecArray)[1].trim());
+      hints.add((m as RegExpExecArray)[1].trim().replace(/^['"]|['"]$/g, ''));
       assert(/请求分流/.test(text), `${rel} 须指向 SKILL 的「请求分流」节（无 feature 名也能进）`);
     }
     assertEq(hints.size, 1, `三个 adapter 的 argument-hint 必须一致，实际：${[...hints].join(' | ')}`);
-    assertEq([...hints][0], '[feature-name]', 'feature 名对设备就绪/即席不是必填，argument-hint 须为可选形态');
+    assert(/^\[.*\]$/.test([...hints][0]) && [...hints][0].includes('解锁手机'), '设备入口参数须可选，并明确包含无 Feature 的解锁请求');
 
     const registry = fs.readFileSync(path.join(SKILLS, 'reference/confirmation-registry.yaml'), 'utf-8');
     assert(/--ready/.test(registry), 'registry notes 须改为「落盘/登记后由 agent 跑 `--ready`」确认');

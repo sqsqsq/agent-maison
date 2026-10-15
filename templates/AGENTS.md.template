@@ -48,11 +48,12 @@
 > **两问定路由**：① 本轮要动什么（**范围**）；② 按什么标准算对（**验收语义**）。「不改实现」只回答①，不免除②。
 > **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。
 
-判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识）：查到即复用并写明引用；只有涉及**新增或变更预期**才进入设计职责，再决定复用、修订还是新建蓝图——不因「不改实现」跳过②，也不因「补测试」强制新建蓝图。查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。非正式维护按本次范围直接完成、不创建蓝图；任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑。三条边界。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**走各自的 request 准备路径，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。
+判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识）：查到即复用并写明引用；恢复明确既有预期的普通 bug 按维护处理（包括已完成 Feature），不新建蓝图/Feature/后继 run；只有涉及**新增或变更预期、契约或新的设计决定**才进入设计职责，再决定复用、修订还是新建蓝图——不因「不改实现」跳过②，也不因「补测试」强制新建蓝图。查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。非正式维护按本次范围直接完成、不创建蓝图；任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑。三条边界。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。
 
 | 请求终点 | 主 Agent 的职责 |
 |---|---|
-| 显式 Skill / 局部维护 | 仅执行该职责；project 原生 CLI 或 review/UT/testing 的 request CLI；产出请求结果后结束 |
+| 只编译工程 | `cd framework/harness` 后运行 `npm run compile -- --project-root <宿主根> --json`；不要求 Feature、diff 或修正登记 |
+| 显式 Skill / 局部维护 | 按请求终点使用共享方法；实际执行再用 project CLI 或 request CLI；产出请求结果后结束 |
 | 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
 | 完整实现交付 | **依赖顺序，不是验证流水线**：① **设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源；由当前主 Agent 先完成；写临时 JSON 候选并用 `check:change-unit --accept-candidates <file> --json` 接受，已有/已接受 CU 用 `--readiness --json` 接续，消费返回的 canonical Feature id。无人值守只改变 ready CU 的执行载体，不把初始设计交给平铺 spec/plan。② `goal-mode-entry --prepare-scope` 生成候选并写入 `feature.yaml`（主 Agent 只提供四项输入：**完成终点**、**请求结果**、**明确的请求动作** `--requested-phases`、**影响判断及其来源路径**；绑定、指纹、unit/device/visual 派生、code-review 补齐全部由机器完成），核对它打印的范围投影——**`--prepare-scope` 只生成候选、不冻结范围**；③ 进入受管执行：**不建 run** 则逐阶段 `harness-runner --phase <p> --feature <f>`，**首次阶段调用**冻结 feature 级范围记录并核对候选指纹；**建 run** 则 按用户选择由 `--prepare-run` 创建真实 attended Goal 或由 `goal-runner --detach` 启动 ready CU（以转交时 feature 的有效范围出生）；④ 各阶段产物只在其阶段内产生，两条路都按冻结的 `execution_scope` 推进到完成终点。**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。|
 | 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
@@ -61,7 +62,7 @@
 
 **普通请求由主 Agent 负责**：framework-init 仅用于明确安装、更新、配置或 adapter 物化意图；产物提及 framework 不构成 init 意图。init-next-steps 是可选建议，不授权 catalog、glossary、Graph 或 Feature 全链。入口与独立动作见 [项目请求入口](framework/docs/operations/project-entry.md)。
 
-**修正三问**（中途 NL 修正必答，先分层再动手）：
+**修正三问**（在途 Feature 的中途 NL 修正必答；普通维护不跑 correction-init）：
 
 | 问 | 是 → 落点层 |
 |---|---|
@@ -71,7 +72,7 @@
 
 `--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
 重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。用户反馈是 successor/correction 输入，不是对上一 run 的签名。
-**已完成后的修正**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
+**明确要求已完成 Feature 正式重新交付时**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
 
 ### 4.0.1 阶段 Skill 总表
 
@@ -91,9 +92,9 @@
 {{EXTENSION_SKILL_SECTION}}
 
 {{COMPONENT_DESIGN_KNOWLEDGE}}
-> **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
+> **catalog-bootstrap（catalog+glossary）**：正式需求的术语消歧与模块 Scope 消费相应资料；独立编译不要求先建 Catalog/Glossary，专项请求只补实际缺少的输入。
 
-**执行规则**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
+**执行规则（正式阶段）**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
 
 **主 agent 与 verifier 子 agent 职责切分**（反误读明示授权，BLOCKER）：结构级 harness 必须由主 agent 自己执行（不得等 verifier/用户）；语义级 verify 在结构级 PASS 后由主 agent 主动通过 Task 工具触发 verifier 子 agent。完整反误读文本见 [agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)。
 
@@ -101,7 +102,7 @@
 
 ## 五、交付凭证与阶段闭环判定
 
-每阶段完成须在 `{{FEATURES_DIR}}/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环 = harness verdict=PASS + verifier 一次 PASS + `check-receipt.ts` 通过**（trace.json 由 harness 产出；verifier 只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并如实标 `completed_with_prior_review`；回执是 harness 只读投影，agent 不手填，备注写 `<phase>/notes.md`；harness 输出末尾的 `NEXT:` 行就是下一步）；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
+正式 Feature 每阶段完成须在 `{{FEATURES_DIR}}/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环 = harness verdict=PASS + verifier 一次 PASS + `check-receipt.ts` 通过**（trace.json 由 harness 产出；verifier 只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并如实标 `completed_with_prior_review`；回执是 harness 只读投影，agent 不手填，备注写 `<phase>/notes.md`；harness 输出末尾的 `NEXT:` 行就是下一步）；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
 
 **跨会话恢复**：新会话/继续 feature 前须先 `check-receipt.ts --feature <feature> --phase <phase>`（或 `harness-runner.ts --sync-closure`）；exit 0 → 已闭环，停等 `phase.next_step`，禁止重跑。清理陈旧状态：`harness-runner.ts --clear-state`。会话边界表/resume 完整机制见 reference。
 

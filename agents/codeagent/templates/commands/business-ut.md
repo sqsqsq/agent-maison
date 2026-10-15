@@ -1,6 +1,6 @@
 ---
-description: 进入业务级 UT 阶段（business-ut）
-argument-hint: <feature-name>
+description: 为指定函数或本地新改代码补充、修复或运行 UT；无需需求号，写测试前确认载体。
+argument-hint: '[函数或代码范围 | 测试文件 | feature-name]'
 ---
 
 # /business-ut — 业务级 UT / DAG
@@ -12,8 +12,6 @@ argument-hint: <feature-name>
 > **BLOCKER — 用户交互**：任何用户选择必须先调 **AskUserQuestion**（选项文案从
 > `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
 > 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
-
-> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>`；仅解析 JSON（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

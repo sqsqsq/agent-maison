@@ -1,6 +1,6 @@
 ---
-description: 进入真机测试阶段（含即席跑机与设备解锁 / 就绪）
-argument-hint: [feature-name]
+description: 设计测试用例、验证修复、即席跑机，以及解锁手机 / 唤醒设备；无需 Feature，只设计时不跑机。
+argument-hint: '[用例目标 | bundle 与步骤 | 解锁手机 | feature-name]'
 ---
 
 # /device-testing — 真机测试计划与报告
@@ -12,8 +12,6 @@ argument-hint: [feature-name]
 > **BLOCKER — 用户交互**：任何用户选择必须先调 **AskUserQuestion**（选项文案从
 > `framework/skills/reference/confirmation-registry.yaml` 的 `options` 逐字引用）。
 > 完整协议：[interaction-renderer](../rules/interaction-renderer.md)。
-
-> **BLOCKER — Personal setup**：跑 harness 前先 `cd framework/harness && npx ts-node scripts/check-personal-setup.ts --json --ensure --project-root <repo-root>`；仅解析 JSON（见 [personal-setup-gate](../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

@@ -482,7 +482,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       // 那属于全文语义的人工 review 范围，不在 smoke 射程内（第三轮代码 review 的已知上限）。
       // 三份文件的这句话已统一为完全相同的措辞，故只需一条常量。
       const R4_EXECUTOR_SENTENCE =
-        '任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。';
+        '任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。';
       for (const [label, text] of [['AGENTS 模板', template], ['coding SKILL', coding], ['business-ut SKILL', ut]] as const) {
         assert(
           text.includes(R4_EXECUTOR_SENTENCE),
@@ -496,7 +496,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(text.includes('envProbe'), `${label} 缺同次 metadata 诊断口径（需求 R4 第二条）`);
         assert(text.includes('当前值'), `${label} 未把重新解析出来的值标为「当前值」（需求 R4 第二条）`);
       }
-      assert(coding.includes('框架当前不提供即时编译校验'), 'coding SKILL 缺第三段路径的如实报告措辞（需求 R4 裁决）');
+      assert(coding.includes('npm run compile -- --project-root'), 'coding SKILL 缺独立编译入口');
+      assert(!coding.includes('框架当前不提供即时编译校验'), 'coding SKILL 仍把纯编译请求引向旧停机结论');
       // 「不引导用户去运行宿主自带脚本」已并进上面那条整句常量里，不再单独用正则锁（正则版被
       // 「不建议用户避免运行宿主自带脚本」这种反转绕过，第二轮代码 review 反例 3）。
     },
@@ -518,7 +519,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       // R3 第二条的核心是**停止**语义。同样**整句逐字锁定**：正则版的通配区会把
       // 「不要停在该处」这种反转吞掉（第二轮代码 review 反例 1）。这一句同时覆盖
       // 「不改投其它目录」「不用其它模块的通过代替」两条承诺，故不再单独断言。
-      const UT_CAPABILITY_STOP_SENTENCE = '报 profile 能力缺口时**如实停在该处**，不改投其它目录、不用其它模块的通过代替。';
+      const UT_CAPABILITY_STOP_SENTENCE = '能力未提供或缺口尚未解决时如实停在该处，不改投其它目录、不用其它模块的通过代替。';
       assert(
         ut.includes(UT_CAPABILITY_STOP_SENTENCE),
         `business-ut 缺「能力缺口 → 停在该处」原句（需求 R3 第二条）。期望逐字包含：\n${UT_CAPABILITY_STOP_SENTENCE}`,
@@ -653,7 +654,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const BOUNDARY_PARALLEL_SENTENCE =
         '**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。';
       const BOUNDARY_LOCAL_REQUEST_SENTENCE =
-        '**局部 review / UT / testing 请求**走各自的 request 准备路径，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。';
+        '**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。';
       const BOUNDARY_RESUME_SENTENCE =
         '**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。';
       for (const [why, sentence] of [

@@ -14,6 +14,7 @@ import type { CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckCon
 import { dispatchRequestTests, dispatchRequestTargetProbe, isCapabilitySkipped } from '../../capability-registry';
 import { isInsideProjectRoot } from './project-relative-path';
 import { classifyUtExpectations, extractUtItBlocks, type UtExpectationScan } from './ut-it-blocks';
+import { ensurePersonalSetup } from './personal-setup-gate';
 
 export async function checkRequestTests(ctx: RequestCheckContext): Promise<CheckResult[]> {
   // R2：预期来源登记与 provider 执行**并列产出**，每条 return 路径都带上它（失败、未执行、provider 异常同样要呈现）。
@@ -23,6 +24,12 @@ export async function checkRequestTests(ctx: RequestCheckContext): Promise<Check
   if (ctx.phase === 'ut' && !ctx.request.targets.tests.length) return withExpectation([requestFailure('request_tests_missing', 'UT test targets are not yet prepared')]);
   if (ctx.phase === 'testing' && ctx.resolvedInputs.values.cases?.state !== 'resolved') return [requestFailure('request_cases_missing', 'device cases must resolve through the existing cases provider')];
   try {
+    const capability = ctx.phase === 'ut' ? 'ut.run' : 'device_test.run';
+    const requiredPrerequisites = new Set(ctx.resolvedProfile.personalPrerequisites?.[capability] ?? []);
+    if (!isCapabilitySkipped(ctx.resolvedProfile, capability) && requiredPrerequisites.size) {
+      const setup = ensurePersonalSetup(ctx.projectRoot, { requiredPrerequisites });
+      if (!setup.ok) throw new Error(setup.message);
+    }
     const result = await dispatchRequestTests(ctx) as RequestProviderResult;
     if (Array.isArray(result?.checks) && result.checks.some(check => !check || !['PASS', 'FAIL', 'WARN', 'SKIP'].includes(check.status) || !['BLOCKER', 'MAJOR', 'MINOR'].includes(check.severity) || typeof check.id !== 'string' || typeof check.details !== 'string')) return withExpectation([requestFailure('request_provider_result_invalid', 'provider returned malformed checks')]);
     if (!result || result.executed !== true || !Number.isInteger(result.total) || result.total! < 1 || !Number.isInteger(result.failed) || result.failed! < 0 || result.failed! > result.total!

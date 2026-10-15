@@ -68,3 +68,11 @@ harness 非 0 退出或 `can_claim_done=false` 时，向用户**首段**必须�
 **禁止**：提议 code-review；用 verifier PASS 代替脚本 PASS；称"无法确认是否编译"而不读日志。`--clear-state` 仅当用户明示放弃当前 feature 的 coding 阶段时可用，禁止为进入 code-review 或消除 Stop hook 而用。
 
 `summary.next_action` 分流：`rerun_with_HARNESS_DIFF_BASE_REF_working`/`diff_within_scope` 报 `stale_diff_base` → 自动重跑 `HARNESS_DIFF_BASE_REF=working` 版本，仍越界才进 scope 扩展或撤销流程；`resolve_project_dependencies_then_rerun`/`project_dependency_missing` → harness 应已自动安装，仍 FAIL 读日志按上节处理；`declare_dependencies_then_rerun`/`project_dependency_undeclared` → agent 自补声明重跑；`resolve_dependency_install_blocker_then_rerun`/`project_dependency_install_failed` → 按日志 registry/鉴权/网络原因处理。
+
+## 正式 Feature/CU 前置
+
+本工程须先完成 [`framework-init`](../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
+
+**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](host-harness-readiness.md) 与 [Shell cwd 契约](harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
+
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature；历史 1.0 输入缺失（至少 `plan.md`/`contracts.yaml`/`acceptance.yaml`）须报告并回上游补齐；现代 1.1 输入按 resolved 契约，不补占位文档。

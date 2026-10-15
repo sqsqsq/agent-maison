@@ -777,6 +777,7 @@ function stageGoal(ctx) {
   // plan a1f4d8e6「视觉机制减法」整体剪除，全仓生产代码零引用；这两个事件再也不会
   // 被发出，前者遂成永久失败、后者恒真。**被验的行为本身没变也没放宽**：失配后
   // 仍须自动续跑（spec 真跑）、不裸崩、正常收口——只是不再索取已退役的事件名。
+  runDriver('provision', null, 'first-death');
   const fd = runDriver('seed_head_mismatch', null, 'first-death');
   const fdOk = fd.error === null && (fd.exitCode === 0 || fd.exitCode === 2)
     && fd.phaseStartsThisCall.includes('spec')

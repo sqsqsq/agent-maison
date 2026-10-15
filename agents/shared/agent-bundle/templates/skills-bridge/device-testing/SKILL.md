@@ -1,9 +1,7 @@
 ---
 name: device-testing
-description: 真机测试计划与报告
+description: 设计测试用例、验证修复、即席跑机，以及解锁手机 / 唤醒设备；无需 Feature，只设计时不跑机。
 ---
-
-> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

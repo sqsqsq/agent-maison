@@ -1,6 +1,6 @@
 ---
-description: 进入真机测试阶段（含即席跑机与设备解锁 / 就绪）
-argument-hint: [feature-name]
+description: 设计测试用例、验证修复、即席跑机，以及解锁手机 / 唤醒设备；无需 Feature，只设计时不跑机。
+argument-hint: '[用例目标 | bundle 与步骤 | 解锁手机 | feature-name]'
 ---
 
 # /device-testing

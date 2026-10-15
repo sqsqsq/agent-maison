@@ -11,7 +11,7 @@
 
 ## Context Exploration Gate（profile 补充）
 
-UT 规划前除读 Spec 与业务源码外，须打开：**`**/src/ohosTest/ets/test/`** 下拟扩展的测试文件、**套件注册入口**（如 `List.test.ets`）、以及 **`oh-package.json5`** 中与 Hypium/测试依赖相关的条目；Spy 类目录与 `mock-plan.yaml` 拟落位路径须在 `context-exploration.md` 中写明。
+实际写/跑 UT 前须读业务入口、**`**/src/ohosTest/ets/test/`** 下拟扩展的测试文件、**套件注册入口**（如 `List.test.ets`）及 **`oh-package.json5`** 的测试依赖。独立请求先消费 prepare 的落点与载体结果；正式调用再读本次绑定的 Spec/契约。只有本次需要 Spy/mock-plan 时才记录其路径，facts 使用入口返回的真实位置；只设计测试不要求创建这些产物。
 
 **禁止反改业务架构**：不要为了 UT 新造 `domain/usecase/*.ets` 或 Port；业务嵌在 inline lambda 中时，反馈 coding 抽出命名方法。
 
@@ -23,7 +23,7 @@ UT 规划前除读 Spec 与业务源码外，须打开：**`**/src/ohosTest/ets/
 | `02-Feature/Demo/test/dag/flow.dag.yaml` | `framework/harness/02-Feature/Demo/test/dag/...` |
 | `02-Feature/Demo/src/ohosTest/ets/test/spy/SpyX.ets` | 任意 Write 到 `framework/harness/` 下宿主 module 树 |
 
-路径取自 `contracts.yaml > modules[].package_path`。`cd framework/harness && harness-runner` 后 Write 前须 `cd <repo-root>`（见 `harness-cli-cwd.md` §2.5）。门禁：`harness_host_artifact_pollution`。
+正式路径取自 `contracts.yaml > modules[].package_path`，独立请求取自 prepare/target probe 的配置模块与授权测试目标。`cd framework/harness && harness-runner` 后 Write 前须 `cd <repo-root>`（见 `harness-cli-cwd.md` §2.5）。门禁：`harness_host_artifact_pollution`。
 
 ### skill-assets.yaml 键
 

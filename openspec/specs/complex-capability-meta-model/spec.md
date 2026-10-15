@@ -100,7 +100,7 @@ legacy allowlist 与 `version`/`deferred_to` 既有语义不变。不强制所�
   事实来源；
 - **Change Unit**：凡属某部件蓝图分解产物的单元 MUST 引用恰好一份所属蓝图，只消费显式
   `requires`、只声明显式 `provides`；**非正式维护动作**（不改变部件行为、外部契约、数据/
-  NFR、运行语义或架构责任的纯文档与机械维护）MUST NOT 被要求建立蓝图或 canonical CU，它
+  NFR、运行语义或架构责任的纯文档与机械维护，以及恢复明确既有预期且不需改变验收/契约或新设计的普通 bug 修复）MUST NOT 被要求建立蓝图或 canonical CU，它
   按请求终点与真实输入独立执行，不强造 Feature/CU/run；**存量平铺 Feature**（无 `change_unit_ref`）MUST 保持既有
   行为，MUST NOT 被自动迁移、自动转为 CU 或自动 credit completion；上述两类单元在显式归属
   某份蓝图前 MUST NOT 参与任何 Component closure 聚合；

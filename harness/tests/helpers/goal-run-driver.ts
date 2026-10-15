@@ -22,6 +22,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
+import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 
 export const RESULT_MARK = '<<goal-run-result>>';
 
@@ -845,6 +846,7 @@ if (require.main === module) {
   // provision：只对既有宿主铺 hmos goal 夹具，不跑 run（smoke 对 cloneRoot 用）
   if (scenario === 'provision') {
     provisionHmosGoalFixture(path.resolve(projectRootArg), feature);
+    freezeExistingGoalDelivery(path.resolve(projectRootArg), feature);
     process.stdout.write(`\n${RESULT_MARK}${JSON.stringify({ provisioned: true })}\n`);
     process.exit(0);
   }

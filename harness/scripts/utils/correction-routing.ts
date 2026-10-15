@@ -149,13 +149,14 @@ export type CorrectionTarget =
 /**
  * resolveCorrectionTarget：修正归属判定（**编辑前**执行）。
  *   1. 用户点名 feature 且目录存在 → 归属该 feature；点名但不存在 → 问人（禁止猜）。
- *   2. 未点名但 .current-phase.json 有活跃 feature → 归属之。
+ *   2. 未点名但 .current-phase.json 有 feature → 归属之；可信完成记录排除旧指针。
  *   3. 都没有 → no_feature 模式（--adhoc-correction 载体，不建临时假 feature 目录）。
  */
 export function resolveCorrectionTarget(input: {
   requestedFeature?: string | null;
   activeStateFeature?: string | null;
   featureDirExists: (feature: string) => boolean;
+  hasTrustedCompletion?: (feature: string) => boolean;
 }): CorrectionTarget {
   const requested = input.requestedFeature?.trim();
   if (requested) {
@@ -166,7 +167,7 @@ export function resolveCorrectionTarget(input: {
     };
   }
   const active = input.activeStateFeature?.trim();
-  if (active && input.featureDirExists(active)) {
+  if (active && input.featureDirExists(active) && !input.hasTrustedCompletion?.(active)) {
     return { kind: 'feature', feature: active };
   }
   return { kind: 'no_feature' };

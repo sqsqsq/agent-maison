@@ -1,16 +1,14 @@
 # 编码 Skill (`coding`)
 
-> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`（执行入口，会真 reprobe）；失败诊断读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME`；布尔位只说明变量**是否设置**，不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的只能称「当前值」，安装目录扫描第三顺位；**本阶段（有 Feature 的 coding）编译出口不变**，仍按第 9 条跑到真实 PASS；只有**无 Feature 的非正式纯代码维护**（既没有可用 Feature 契约、目标模块也没有测试载体）才如实报告「框架当前不提供即时编译校验」并停下；确有外部阻塞时准确列出哪些步骤未执行。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
+> **输入协议边界（以下 facts 与阶段约束仅适用于 Feature/CU；只编译先按下方分流）**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`（执行入口，会真 reprobe）；失败诊断读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME`；布尔位只说明变量**是否设置**，不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的只能称「当前值」，安装目录扫描第三顺位；**本阶段（有 Feature 的 coding）编译出口不变**，仍按第 9 条跑到真实 PASS；无 Feature 的纯编译直接运行 `npm run compile`，无需测试载体；确有外部阻塞时准确列出哪些步骤未执行。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` / `coding.ok_to_review` / `phase.next_step`。
 
-## 前置
+## 请求分流与前置
 
-本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
-
-**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
-
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature；输入缺失（至少 `plan.md`/`contracts.yaml`/`acceptance.yaml`）须报告并回上游补齐。
+- **只编译**：在 `framework/harness` 运行 `npm run compile -- --project-root <宿主根> --json`；工程级编译，无 Feature、diff、测试载体或修正登记前置。执行器自行准备实际工具链，交付真实结果后结束，不追加编码/UT/装机。
+- **普通维护**：恢复明确既有预期时按根入口授权范围直接修复；已完成 Feature 的旧指针不要求新建需求或后继 run。编译用上项，review/UT/testing 用各自专项入口；改变预期/契约时回对应设计责任方。
+- **正式 Feature/CU 施工**：先读 [正式前置](../../reference/coding-workflow-detail.md#正式-featurecu-前置)，再执行以下流程；在途任务保持原范围和修正责任。
 
 ## 条件加载索引
 

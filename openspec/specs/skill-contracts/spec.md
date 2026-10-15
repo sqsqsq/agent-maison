@@ -128,3 +128,24 @@ spec owner 对 acceptance 的合法修订 MUST 通过既有 scope revision 路�
 > **Enforced by (planned P1–P6):** `specs/skill-contract-schema.yaml`、
 > `harness/scripts/utils/capability-resolution.ts`、`harness/spec-loader.ts`、
 > `harness/scripts/utils/phase-evidence-manifest.ts`、`harness/scripts/check-contract-consistency.ts`。
+
+### Requirement: Daily operations share professional methods without formal-stage prerequisites
+The review, UT and device-testing skills SHALL share professional methods through the existing references. Method-only review, explanation and test-case design SHALL NOT require Feature identity, request JSON, facts, toolchain/device preparation or a mandatory report template. Actual test writes/execution and checker-validated reports SHALL continue through the existing request interface. Formal delivery SHALL retain its bound scope, inputs and required evidence.
+
+#### Scenario: Review the current diff without a formal report
+- **WHEN** the user requests review without a checker-validated report
+- **THEN** the agent SHALL read the target and relevant project knowledge, apply the shared review method and deliver grounded findings and coverage limits without request/facts artifacts or product edits
+
+#### Scenario: Confirm the test carrier before writing
+- **WHEN** the user requests tests for specified local code
+- **THEN** the agent SHALL prepare the existing request before writing tests, consume the returned bindings and carrier gaps, resolve preparation within granted scope, and seek only missing authorization; explicit expectations and characterization SHALL remain distinct
+
+#### Scenario: Derive and execute cases from a bug description
+- **WHEN** the user supplies target behavior and expected results and requests device verification
+- **THEN** the agent SHALL derive cases using the shared method, execute the existing chain against the intended build, and distinguish pass, failure and unverified outcomes
+
+#### Scenario: Stop at case design
+- **WHEN** the user requests only test-case design
+- **THEN** the agent SHALL deliver cases without device calls, installation or formal stage invocation
+
+> **Enforced by:** `skills/feature/code-review/SKILL.md`、`skills/feature/business-ut/SKILL.md`、`skills/feature/device-testing/SKILL.md`、`docs/operations/request-harness.md`。

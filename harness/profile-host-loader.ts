@@ -11,6 +11,23 @@ import type { GraphExtractor } from './graph-extractor/types';
 import type { CheckContext, CheckResult } from './scripts/utils/types';
 import type { FileAnalysis } from './scripts/utils/ast-analyzer';
 
+export type ProjectCompileContext = Pick<CheckContext, 'projectRoot' | 'frameworkRoot' | 'harnessRoot' | 'resolvedProfile'> & {
+  feature?: string;
+  reportDir?: string;
+};
+
+export interface ProjectCompileResult {
+  checks: CheckResult[];
+  execution?: {
+    executed?: boolean;
+    exitCode?: number;
+    command?: string;
+    logPath?: string;
+    metaPath?: string;
+    durationMs?: number;
+  };
+}
+
 /** ArkTS / 其它宿主下由 profile 贡献的源码后缀列表（不含点也可，调用方 normalize） */
 export type ProfileCodingHost = {
   readonly sourceFileSuffixes: readonly string[];
@@ -18,6 +35,8 @@ export type ProfileCodingHost = {
   runTraceabilityChecks(ctx: CheckContext): CheckResult[];
   /** 真实编译闭环（工具链与失败归因文案由 profile 承担；根 check-coding 仅编排） */
   checkCodingCompile(ctx: CheckContext): CheckResult[];
+  /** 工程级构建与恢复；独立调用必须传宿主报告目录，不依赖 Feature 契约。 */
+  compileProject?(ctx: ProjectCompileContext): ProjectCompileResult;
   /**
    * 可选 lint provider（C1 feature-track：lite exit 门禁派发点）。
    * 未实现 = 宿主无 lint 工具链声明——exit 侧呈现 MAJOR WARN 可见缺项，不阻断闭环。

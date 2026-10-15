@@ -1,9 +1,7 @@
 ---
 name: coding
-description: 按冻结写集与解析后的契约实现本次义务
+description: 实现或修复代码，或只编译当前工程。只编译无需需求号，按请求终点停止。
 ---
-
-> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

@@ -6,7 +6,7 @@ import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/
 import { CHECK_NOT_APPLICABLE_MARKER } from '../../../harness/scripts/utils/types';
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
 import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
-import type { ProfileCodingHost } from '../../../harness/profile-host-loader';
+import type { ProfileCodingHost, ProjectCompileContext, ProjectCompileResult } from '../../../harness/profile-host-loader';
 import { loadFrameworkConfig } from '../../../harness/config';
 import {
   isCapabilitySkipped,
@@ -965,7 +965,7 @@ export function classifyCodingCompileFailure(
     logAbsPath?: string;
     logExcerpt?: string;
   },
-  ctx: CheckContext,
+  ctx: ProjectCompileContext,
   selection?: ProductSelection,
 ): CodingCompileFailureClassification {
   return withUnconfirmedFormLead(classifyCodingCompileFailureCore(res, ctx), selection);
@@ -1002,7 +1002,7 @@ function classifyCodingCompileFailureCore(
     logAbsPath?: string;
     logExcerpt?: string;
   },
-  ctx: CheckContext,
+  ctx: ProjectCompileContext,
 ): CodingCompileFailureClassification {
   const errs = res.errors ?? [];
   if (res.toolMissing) {
@@ -1085,12 +1085,12 @@ function classifyCodingCompileFailureCore(
       explanation:
         '构建日志显示工程依赖解析失败，当前失败更可能来自依赖安装 / 依赖声明或内网 registry，而不是本轮编码实现本身。\n' +
         formatDependencyIssue(depIssue) +
-        '\n这不表示可跳过 coding 出口或进入 code-review（Code Review）；须修复工程依赖或取得用户对放弃本阶段的明示后再执行 --clear-state。',
+        '\n须按当前授权修复工程依赖后重跑；依赖失败不构成编译通过。',
       suggestion:
         'harness 将自动尝试 ohpm install 并重编译（声明齐全且 profile 支持时）；' +
         '若依赖未在 oh-package.json5 声明，agent 须自行补声明后重跑；' +
         '仅在 ohpm 安装本身失败（registry/鉴权/网络）时按日志原因向用户求助。' +
-        '须向用户报告首条编译错误与 summary.next_action，禁止提议进入下一阶段。' +
+        '须报告首条编译错误与实际未完成项。' +
         (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
     };
   }
@@ -1116,7 +1116,7 @@ function classifyCodingCompileFailureCore(
     kind: 'project_build',
     explanation: '编译失败（非零退出或解析到 error），未识别为依赖安装问题。',
     suggestion:
-      '读取完整日志（details 中的日志路径），定位文件/行并回到编码阶段修复。' +
+      '读取完整日志（details 中的日志路径），定位文件/行并在授权范围内修复后重新编译。' +
       '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',
   };
 }
@@ -1195,7 +1195,6 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
 
 function buildCompilePassDetails(
   res: CompileRunResult,
-  modulesCount: number,
   /** 耗时文本（runner 遥测，直接进 details——subject 不承诺稳定，无需分域投影） */
   durationText: string,
   extraNote?: string,
@@ -1203,7 +1202,7 @@ function buildCompilePassDetails(
 ): string {
   return [
     extraNote ? `${extraNote}\n` : '',
-    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${durationText}）。`,
+    `工程级编译通过（耗时 ${durationText}）。`,
     `命令：${res.command ?? '(unknown)'}`,
     ...(selection ? [describeProductSelection(selection)] : []),
     `元数据：${res.metaPath ?? '(无)'}`,
@@ -1265,24 +1264,9 @@ function buildCompileFailDetails(
 
 /** profile 侧：真实编译闭环 + 失败归因 + 依赖自动安装（原根目录 checkCodingHvigorBuild）。 */
 function checkCodingCompile(ctx: CheckContext): CheckResult[] {
-  if (isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
-    const desc =
-      ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
-      ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
-    const details =
-      'project_profile 声明 coding.compile 为 SKIP：未调用真实编译（canonical id: coding_compile）。';
-    return duplicateCompileResults({
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details,
-    });
-  }
-
   const contracts = ctx.featureSpec.contracts;
   const modules = contracts?.modules ?? [];
-  if (modules.length === 0) {
+  if (modules.length === 0 && !isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
     const desc =
       ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
       ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
@@ -1299,6 +1283,31 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
     ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
 
+  const compiled = compileProject({
+    projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot,
+    resolvedProfile: ctx.resolvedProfile, feature: ctx.feature,
+  });
+  return compiled.checks.map(check => ({
+    ...check, description: desc,
+    ...(check.status === 'FAIL' ? { affected_files: modules.map(m => `${m.name} (module)`) } : {}),
+    ...(check.status === 'PASS' ? { details: `本 Feature 涉及 ${modules.length} 个 contract 模块。\n${check.details}` } : {}),
+  }));
+}
+
+export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult {
+  const desc = '工程级真实编译';
+  if (isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
+    const details =
+      'project_profile 声明 coding.compile 为 SKIP：未调用真实编译（canonical id: coding_compile）。';
+    return { checks: duplicateCompileResults({
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details,
+    }) };
+  }
+
   // t5（plan a7c3f9e2 ⑤）：**本作用域内只解析一次**，同一 ProductSelection 对象贯穿
   // 构建参数与分类/详情生成；构建期间外部配置改变也不得二次解析。
   const compileSelection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'coding' });
@@ -1311,25 +1320,25 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   // 编译，报"显式跳过不作为出口"比要求确认 product 更对症（fixture 回归锁）。
   if (compileSelection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR) {
     const guidance = buildProductSelectionUnresolvedGuidance(compileSelection);
-    return duplicateCompileResults({
+    return { checks: duplicateCompileResults({
       category: 'structure',
       description: desc,
       severity: 'BLOCKER',
       status: 'FAIL',
       details: ['coding_compile（真实编译）失败：' + summarizeUnresolvedCause(compileSelection), guidance].join('\n'),
-      affected_files: modules.map(m => `${m.name} (module)`),
       failure_kind: 'project_build_environment_inconsistent',
       blocking_class: resolveCompileBlockingClass('project_build_environment_inconsistent'),
       suggestion:
         '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。' +
         '请按 details 中的指引确认 product（init.product_selection / record-product-selection / env）后重跑。',
-    });
+    }) };
   }
 
   const compileBaseOpts = {
     projectRoot: ctx.projectRoot,
-    harnessRoot: HARNESS_ROOT,
+    harnessRoot: ctx.harnessRoot,
     feature: ctx.feature,
+    reportDir: ctx.reportDir,
     phase: 'coding',
     skipEnvVar: 'HARNESS_SKIP_HVIGOR',
     frameworkRoot: ctx.frameworkRoot,
@@ -1420,13 +1429,13 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   }
 
   if (isCompilePass(res)) {
-    return duplicateCompileResults({
+    return { checks: duplicateCompileResults({
       category: 'structure',
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: buildCompilePassDetails(res, modules.length, `${res.durationMs} ms`, depsAutoFixNote, compileSelection),
-    });
+      details: buildCompilePassDetails(res, `${res.durationMs} ms`, depsAutoFixNote, compileSelection),
+    }), execution: res };
   }
 
   const failure =
@@ -1436,7 +1445,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       ? withUnconfirmedFormLead(overrideFailure, compileSelection)
       : classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
 
-  return duplicateCompileResults({
+  return { checks: duplicateCompileResults({
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
@@ -1448,11 +1457,10 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       [...buildTxnRetryLines, ...installExtraLines],
       compileSelection,
     ),
-    affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),
     suggestion: failure.suggestion,
-  });
+  }), execution: res };
 }
 
 function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
@@ -1618,5 +1626,6 @@ export const profileCodingHost: ProfileCodingHost = {
   runStructureChecks,
   runTraceabilityChecks,
   checkCodingCompile,
+  compileProject,
   checkCodingLint,
 };

@@ -1,5 +1,15 @@
 # Framework 升级与迁移说明
 
+## 3.1.0 日常入口与独立工程编译
+
+- 集成候选/正式发布件后运行 framework-init UPDATE 刷新宿主入口；review、UT、设备技能描述支持无 Feature 目标，并保留“解锁手机 / 唤醒设备”。Claude 内置 `/review` 别名仍不接管，使用自然语言或项目 `/code-review`。
+- 在 `framework/harness` 执行 `npm run compile -- --project-root <宿主根> --json`；只做当前工程级构建，不要求 diff、Feature 或 correction-init，也不接受按模块编译。日志默认写到宿主 `doc/reports/compile/`。
+- 显式 adhoc 综合检查的报告和构建日志改到宿主 `doc/reports/_adhoc/`；旧报告保留原处，不移动删除。
+- 恢复既有预期的普通维护不自动重开已完成 Feature；旧指针仅在完成记录可信时排除，drift 不影响排除，receipt-only 历史任务仍保留现有归属。显式正式重新交付继续使用原有范围与 successor。
+- review、UT、真机用例设计在现有 Skill/reference 中共享方法。只审查、解释或设计用例可直接交付，不要求 Feature、facts 或六章报告；实际写/跑测试或要求 checker 校验报告时继续使用现有 request CLI，正式阶段仍履行原绑定契约与完成义务。
+- UT 在第一次写入前消费 prepare 返回的落点、载体与 gaps；原授权覆盖的载体准备继续执行，超出授权才说明并确认。测试预期可引用用户原文或既有有效要求，现状刻画单列。真机用例可从 bug/行为说明推导，验证修复须对应当前构建；导航成功不等于业务预期通过。
+
+
 本文描述**实例工程**集成新版 Maison 发布件或配置演进时的预期做法。详细操作以 Skill 正文为准。
 
 ## 3.1.0：蓝图人读设计文档默认交付与修订同步

@@ -355,6 +355,13 @@ test('非 Hylyre 通道一律 fail-closed：manual / visual / provider 都触发
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const readGuide = (rel: string): string => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8');
 
+function readProtocolGuide(rel: string): string {
+  const text = readGuide(rel);
+  if (rel !== 'skills/feature/device-testing/SKILL.md') return text;
+  assert.ok(text.includes('../../reference/device-testing-workflow-detail.md'), 'testing 入口须链接实际承载正式协议的 reference');
+  return `${text}\n${readGuide('skills/reference/device-testing-workflow-detail.md')}`;
+}
+
 /** 声明「当前正式协议」的四份发布指引。 */
 const PROTOCOL_GUIDES = [
   'skills/reference/device-testing-workflow-detail.md',
@@ -396,7 +403,7 @@ function matchingWindows(text: string, needle: string): Array<{ line: number; wi
 
 test('发布指引：正式协议统一为 0.5.0 / 0.4-p0 / hylyre.step-outcome/1，无旧版本残留', () => {
   for (const rel of PROTOCOL_GUIDES) {
-    const text = readGuide(rel);
+    const text = readProtocolGuide(rel);
     assert.ok(text.includes(MIN_NATIVE_HYLYRE_VERSION), `${rel} 未声明最低 Hylyre ${MIN_NATIVE_HYLYRE_VERSION}`);
     assert.ok(text.includes(V1_TRACE_SCHEMA_VERSION), `${rel} 未声明 trace schema ${V1_TRACE_SCHEMA_VERSION}`);
     assert.ok(text.includes(V1_RESULT_PROTOCOL), `${rel} 未声明 result_protocol ${V1_RESULT_PROTOCOL}`);
@@ -408,7 +415,7 @@ test('发布指引：正式协议统一为 0.5.0 / 0.4-p0 / hylyre.step-outcome/
 
 test('发布指引：StepResult 口径为 outcome.status + nested failure/cause/reason + selector.request/resolution', () => {
   for (const rel of PROTOCOL_GUIDES) {
-    const text = readGuide(rel);
+    const text = readProtocolGuide(rel);
     for (const token of [
       'outcome.status', 'outcome.failure', 'outcome.cause', 'outcome.reason',
       'selector.request', 'selector.resolution',

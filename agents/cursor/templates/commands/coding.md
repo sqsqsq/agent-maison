@@ -1,6 +1,6 @@
 ---
-description: 进入编码阶段（coding）
-argument-hint: <feature-name>
+description: 实现或修复代码，或只编译当前工程。只编译无需需求号，按请求终点停止。
+argument-hint: '[实现目标 | 只编译工程 | feature-name]'
 ---
 
 # /coding

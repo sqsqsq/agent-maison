@@ -175,7 +175,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 't5(接线) checkCodingCompile 单次解析贯穿构建/分类/详情（生产路径接线回归）',
+    name: 't5(接线) compileProject 单次解析贯穿构建/分类/详情（生产路径接线回归）',
     run: () => {
       const src = fs.readFileSync(path.join(hmosProfileDir, 'harness', 'coding-host-rules.ts'), 'utf-8');
       const calls = src.match(/resolveProductSelection\(\{ projectRoot: ctx\.projectRoot, purpose: 'coding' \}\)/g) ?? [];
@@ -190,7 +190,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       // 裁撤了 details_material 双文本投影：subject 不承诺稳定，遥测换代属合法结果）。
       // 本断言的意图不变——同一 selection 贯穿。
       assert(
-        src.includes('buildCompilePassDetails(res, modules.length, `${res.durationMs} ms`, depsAutoFixNote, compileSelection)'),
+        src.includes('buildCompilePassDetails(res, `${res.durationMs} ms`, depsAutoFixNote, compileSelection)'),
         'PASS details 须传同一 selection',
       );
       assert(

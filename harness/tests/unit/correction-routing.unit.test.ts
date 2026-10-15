@@ -34,6 +34,9 @@ import {
   statefilePath,
 } from '../../config';
 import { resolveEnforcementTier } from '../../scripts/utils/runtime-policy';
+import { seedCleanCompletionChain } from '../utils/completion-chain-seed';
+import { generateFeatureCompletion, inspectCompletionRecord } from '../../scripts/utils/verify-feature-completion';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import {
   classifyFailureKind,
   SIGNATURE_HALT_KINDS,
@@ -92,6 +95,49 @@ function mkGitFeatureProject(evidenceProfile?: 'balanced'): string {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'C5/F1 真实 correction-init 排除 VALID 完成旧指针（含 drift 与旧 lite run），receipt-only 保持归属',
+    run: () => {
+      for (const stateKind of ['receipt-only', 'completed-full', 'completed-lite']) {
+        const completed = stateKind !== 'receipt-only';
+        const track = stateKind === 'completed-lite' ? 'lite' : 'full';
+        const root = mkGitFeatureProject();
+        const feature = 'demo-feat';
+        const chain = track === 'lite' ? ['change', 'coding', 'exit'] : ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+        try {
+          if (completed) {
+            seedCleanCompletionChain({ projectRoot: root, feature, chain });
+            const runDirAbs = path.join(root, 'doc/features', feature, 'goal-runs/RUN1');
+            fs.writeFileSync(path.join(runDirAbs, 'manifest.json'), JSON.stringify({ schema_version: '1.1', feature, run_id: 'RUN1', phase_chain: chain }));
+            generateFeatureCompletion({ projectRoot: root, feature, chain, workflowTrack: track, runId: 'RUN1', runDirAbs, phaseRunIds: {} });
+            const result = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
+            eq(result.verdict, 'VALID', JSON.stringify(result.reasons));
+            fs.appendFileSync(path.join(root, 'doc/features', feature, 'spec.md'), '\ncurrent drift\n');
+            writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase: track === 'lite' ? 'change' : 'spec', extraInputs: [path.join(root, 'baseline.txt')] }));
+            const drifted = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
+            eq(drifted.verdict, 'VALID', '当前输入漂移不损坏历史记录');
+            eq(drifted.drift.length > 0, true, '反例必须包含真实 drift');
+          } else {
+            const receipt = resolveReceiptFilePath(root, feature, 'coding').path;
+            fs.mkdirSync(path.dirname(receipt), { recursive: true }); fs.writeFileSync(receipt, '{}');
+          }
+          const pointer = statefilePath(root);
+          fs.mkdirSync(path.dirname(pointer), { recursive: true });
+          const state = JSON.stringify({ feature, phase: 'coding' }); fs.writeFileSync(pointer, state);
+          const lines: string[] = []; const log = console.log;
+          let code: number;
+          try {
+            console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+            code = runCorrectionInit(root, { frameworkRoot: FRAMEWORK_ROOT, requestText: '修回既有预期', answers: { requirement_changed: false, contract_changed: false, code_change_needed: true } });
+          } finally { console.log = log; }
+          eq(code!, 0, lines.join('\n'));
+          eq(lines.some(line => line.includes(`归属: ${feature}`)), !completed, '可信完成排除；receipt-only 沿用归属');
+          eq(lines.some(line => line.includes('supersede')), false, '不得提示后继 run');
+          eq(fs.readFileSync(pointer, 'utf8'), state, '不删除旧指针');
+        } finally { fs.rmSync(root, { recursive: true, force: true }); }
+      }
+    },
+  },
   {
     name: '三问短路序：Q1>Q2>Q3>纯验证',
     run: () => {

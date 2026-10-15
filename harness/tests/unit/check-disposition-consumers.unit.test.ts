@@ -489,7 +489,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           }));
           if (variant === 'fail') fs.writeFileSync(path.join(root, 'src/demo/value.ts'), 'export const value: number = 42;\n');
           const exit = await runAdhocCorrection(root, harnessRoot, frameworkRoot);
-          const reportsDir = path.join(harnessRoot, 'reports', '_adhoc');
+          const reportsDir = path.join(root, 'doc', 'reports', '_adhoc');
           const report = JSON.parse(fs.readFileSync(path.join(reportsDir, fs.readdirSync(reportsDir)[0], 'correction-report.json'), 'utf-8')) as { verdict: string; results: CheckResult[] };
           const declaredBlocking = report.results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
           assert.strictEqual(report.verdict, declaredBlocking.length ? 'FAIL' : 'PASS', `${variant}: 结论须等于声明计数`);

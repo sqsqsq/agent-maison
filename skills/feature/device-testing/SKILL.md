@@ -1,150 +1,35 @@
 # 真机测试 Skill (`device-testing`)
 
-> **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `testing.module_name` / `testing.packaging` / `testing.plan_confirm` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 无 Feature 专项按[请求 CLI](../../../docs/operations/request-harness.md)由 Agent 执行准备、Research 和实际检查；完成只代表本次请求，不继续 Feature 链。**专项独立调用的能力边界**：testing 专项须提供 `inputs.test_plan` 与 cases，**每条用例含可执行步骤与明确预期结果**，缺一即不可执行；`--prepare-request` 报出的能力缺口如实呈现，不改投其它落点、不用其它用例的通过代替。
+从 bug、改动或目标行为设计用例；按请求进行即席操作或验证，不要求先有 Feature。
 
-## 请求分流（先判后进，BLOCKER）
+## 请求分流（先判后进）
 
-| 请求形态 | 典型输入 | 走哪条 | 需要什么 |
-|---|---|---|---|
-| **设备就绪** | 「解锁手机」「手机准备好了吗」「唤醒设备」 | `cd framework/harness && npx ts-node scripts/device-policy.ts --ready --json`，按 [device-policy-gate 正道节](../../reference/device-policy-gate.md) 处置 | 只需 harness 运行时（Tier_1）与个人 setup；**不需要** feature / bundle / acceptance / receipt / 测试报告 |
-| **即席** | bundle + 自然语言步骤，或「解锁后打开某 App 做…」 | Step 4.B；CLI 内置设备门（**不必先跑 `--ready`**） | 个人 setup；不需要 feature / acceptance / receipt / verifier |
-| **正式** | 「对 `<feature>` 做真机测试」、已存在需求目录 | Step 1–7 全流程 | 下文「前置」全部 + 输入矩阵 |
+| 请求形态 | 走哪条 | 请求终点 |
+|---|---|---|
+| 解锁手机 / 唤醒设备 | `cd framework/harness && npx ts-node scripts/device-policy.ts --ready --json`，按 [device-policy-gate 正道节](../../reference/device-policy-gate.md) 处置 | 交付实际就绪结果；无需 Feature/bundle/报告 |
+| 只设计用例 | [共享用例设计方法](../../reference/device-testing-workflow-detail.md#共享用例设计方法) | 交付用例；不调用设备、setup、安装或 request |
+| 即席导航、观察或调试 | [Step 4.B](../../reference/device-testing-workflow-detail.md#step-4b-即席模式ad-hoc不绑正式需求)；步骤可由 Agent 从目标推导 | 交付实际 trace/观察结果；导航成功不代表业务预期通过 |
+| 设计用例并验证修复 | 先共享设计方法，再 [request CLI](../../../docs/operations/request-harness.md) 的 testing 路径，`--prepare-request` 后执行 | 每条提供可执行步骤与明确预期结果；分别报告通过、失败、未验证 |
+| 正式 Feature/CU testing | 先完整读 [正式阶段](../../reference/device-testing-workflow-detail.md#正式-featurecu-阶段) 再执行 | 消费绑定验收/范围及原 required 证据，按正式完成判定收口 |
 
-两种模式共享 `device-test-case-kernel`：标准轨把 `acceptance.yaml` 的 device/both P0/P1 AC/BD 归一为 cases（`mode=acceptance`），即席轨把自然语言步骤归一为同一 case 结构（`mode=adhoc`）。仅输入模态不同；设备可用性、安装、真实执行、trace、视觉与 device-policy BLOCKER 一律沿用原门禁，不因即席或降档放宽。**即席识别启发**：用户给出 `com.xxx.yyy` 类 bundle 字符串且步骤像「打开应用→点某按钮→…」；或未提供与本仓库已有目录匹配的 feature 名，且核心诉求是「当场跑一遍 UI 流程」而非「完成某需求的 testing 阶段门禁」。
+步骤设计由 Agent 完成；用户只需提供目标行为和可查证的预期，不必先写点击脚本。已有正式交付责任不改走独立路径。
+正式阶段的**闭环停等**按 [用户确认 UX](../../reference/user-confirmation-ux.md) 的 `phase.next_step` 与已有授权裁决；独立请求到本次设计或执行终点结束。
+解锁、即席和正式执行共用 [设备策略](../../reference/device-policy-gate.md)：实际操作时保留授权和 PIN 红线；即席 CLI 已含设备门，不必预先重复 `--ready`。
 
-## 前置
+## 方法与执行
 
-**以下前置只适用于正式模式**；即席与设备就绪按上方分流表。本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
+需要设计/执行测试的独立请求与正式 testing 阶段读取 [共享用例设计方法](../../reference/device-testing-workflow-detail.md#共享用例设计方法)，选择正常、边界、失败与恢复场景，明确测试层级、前置条件、步骤和可观察预期。仅解锁/唤醒按分流表直接结束，不进入用例设计。
+正式调用在同一方法上补 acceptance 的 device/both 追溯、NFR 与视觉义务；独立调用引用 bug/用户预期或现有有效规范，不制造 AC。
+用例设计完成且用户已要求验证时，在原授权内继续执行。仅缺少会影响目标、预期、设备授权或不可逆动作的决定时才澄清。
 
-**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)；宿主打包/装机/设备工具链以本 Skill 的 profile addendum（Tier_2）为 SSOT。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**设备策略（BLOCKER）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止，含**凭据库不可读**，不得当成"未配置"引导重新登记）；**只看 `code` 不看 `configured`**（坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`）；harness-runner 在需设备 phase 另有进程级入口门（同一 `code`，设备操作前 fail-fast + 目标解析一次注入全链）作兜底；`code=device_policy_unset` 就**先问用户四选一**再碰设备（选 ③ 须追问 `existing`/`managed`，禁默认托管）。与 goal 模式同一契约；PIN 只能由用户在自己终端登记，**绝不进对话**。即席 CLI 与 `device:ready` 已内置该门，agent 不必手动先跑 `--check`；unset 时 CLI fail-fast 透传四选一文案，agent 再用 registry `setup.device_policy` 问用户。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
+- 真正需要设备操作才读 `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md`，确认工具与目标应用。bundle/ability 优先从明确目标应用的工程配置解析，存在多候选才问用户。
+- 验证修复前确认设备安装的版本来自本次目标工作树；需要当前构建时复用 `adhoc-device-test --install-current-build`，按原安装权限执行，保留构建/安装 meta；不能用旧包结果归给新代码。
+- testing request 的 cases 沿现有 adhoc case 格式，`inputs.test_plan` 使用既有 Hylyre 派生格式；同一 TC 的步骤与预期一致。执行语法取现有 derive hint/step catalog，写后走现有 lint，不发明另一套 case 协议。
+- 导航/观察使用现有即席链；业务预期使用 request/provider 的原生断言和 expected check。touch 成功、截图存在或页面出现均不自动证明全部业务预期。
+- 缺设备/视觉/断言能力时保留已设计内容及未执行项；真实失败不洗绿。默认不修改产品、测试或构建声明，缺陷按所属责任交回。
 
-**以下三项（归档定位 / Resume Gate / 输入矩阵）同样只适用于正式模式。Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/acceptance/contracts(可选)/use-cases(可选)/test-plan(本阶段产出)）；legacy `device-testing-todo.md` 存在仅 WARN 迁移提示，不得作 SSOT；输入缺失回上游补齐。
+## 结果边界
 
-## 条件加载索引
-
-- 存在 `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md` 时先读（宿主 toolchain/打包装机/设备探测细则）。
-- **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)。
-- **Step 1.5 打包装机协议 / Step 4.5 Hylyre 派生计划全套 / Step 4.B 即席模式全套 / Step 4.6 视觉 diff 回环（含全部事故派生判裁规则）/ Step 5.1 机器报告读取 / Step 6 自检完整清单**：完整读 [device-testing-workflow-detail.md](../../reference/device-testing-workflow-detail.md)。
-- `` `profile-skill-asset:<skill>/<asset_key>` `` 按 [Profile skill asset protocol](../../README.md#profile-skill-asset-protocol) 解析。
-
-## 概述
-
-按当前 `project_profile` 自适配的设备/系统测试工程师：基于 acceptance 标准与 Spec 契约生成测试计划，执行后产出标准化测试报告。流水线**第六环（最终环）**，上游 business-ut 的 DAG 和 UT 代码，输出是功能模块质量交付的最终把关。
-
-**Goal/headless 写边界（BLOCKER）**：只写 testing/device-testing workspace 与本阶段 contract `produces`，不得修改需求 SSOT、plan、产品源码或 UT。缺测试锚点或验收契约错误时写入结构化缺陷，由 runner 自动回对应 owner。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。 本阶段若改了产品源码，`review_closure_attestation` 会分级列出所需的一次复核并如实标注未复核。
-
-## 触发条件
-
-"真机测试"、"设备测试"、"测试计划"、"写测试报告"、"生成测试报告"、"系统测试"、"功能测试"、"验收测试"、"测试方案"、"编写测试用例"、"解锁手机"、"唤醒设备"、"设备准备好了吗"。
-
-## 核心理念
-
-**从 `acceptance.yaml`（`ut_layer` + `device_focus`）派生 test-plan → Hylyre/真机执行 → 结构化报告 → Harness 验证闭环**。business-ut 验证 UseCase/state/port 的业务逻辑正确性；真机测试验证**端到端用户体验**。AC/BD 按 `ut_layer∈{unit,device,both}` 分层：`unit` 已由 UT 覆盖本 Skill 不重复；`device` 须由本 Skill 真机覆盖；`both` UT 覆盖业务侧，本 Skill 补做 UI 侧（Toast/跳转/渲染/交互）。真机要点以 `acceptance.yaml` 的 `device_focus` 为 SSOT（spec 阶段写入）；business-ut 可选产出 `ut/reports/ac-coverage.json`，**非** SSOT。
-
-## 输入（正式模式）
-
-| 输入项 | 必需 | 说明 |
-|--------|------|------|
-| 功能模块名 | ✅ | 定位文件 |
-| spec.md / plan.md | 可选 | 现代调用仅按实际消费读取叙述文档 |
-| resolved acceptance | ✅ | 物理输入或 P3 等价投影，经同一分层检查，作为 test-plan 来源 |
-| use-cases.yaml / contracts.yaml / doc/architecture.md | ⬜ | 了解 UT 已覆盖分支/模块边界/架构全貌 |
-| review-report.md | ⬜ | 可选，确认代码已通过 Review |
-
-**缺 device_focus**：对 `ut_layer∈{device,both}` 的 AC/BD，提示回 spec 阶段补全（`acceptance_device_focus_present` BLOCKER）。**缺 acceptance.yaml**（仅正式模式）：提示先运行 spec 阶段；即席与设备就绪不需要它。
-
-## 流程骨架
-
-现代调用先消费 P2 冻结范围：全 unit 且有效影响依据已明确无设备/视觉义务时不进入 testing，不生成 test-plan/test-report。performance 复用 ut_layer；unit 项交 UT，device/both 项须有 device_focus，缺层级/方法仍 unknown。`--report-reconcile-only` 对已验证的零 testing 范围只输出诊断，不要求 trace、不写报告、不调用设备；有 testing 义务仍走原对账。设备离线、manual、provider/图片缺失不能改判 N/A。
-
-1. **Step 1 收集测试上下文**：确认模块名（`testing.module_name`：`1=确认` `2=修改`）；读 acceptance/spec/plan/use-cases(若有)/contracts(若有)/architecture(若有)；按 ut_layer 统计范围展示给用户（device AC 数/both AC 数/unit AC 数/边界场景/非功能性需求）。**Context Facts Gate（BLOCKER，C4）**：追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: testing` 节（无新增事实写 "none"；缺节或空节会被披露并计入完成缺口，不单独阻断）。
-2. **Step 1.5 准备打包与装机**（`device_test.build`/`device_test.install` 为 BLOCKER 时，详见 reference）：读宿主 addendum → `testing.packaging` 确认 product/buildMode → 先完成下方测试计划与静态通道/R8 检查，零 BLOCKER 后才经原 provider build/install；不先跑设备再审计划。
-3. **Step 2 生成测试计划**：模板 `templates/test-plan-template.md`，**须含 6 章节**：测试范围/测试环境/测试用例清单(表格：编号/名称/前置条件/测试步骤/预期结果/优先级/关联 AC)/测试策略/通过标准/风险与依赖。**用例生成规则**（v2 ut_layer 感知）：每条 device AC → 至少 1 条用例（步骤来自 device_focus）；每条 both AC → 至少 1 条用例，关注点限定 UI 层；`criteria` P0/P1 各生成 1 条、P2 可选；`boundaries` 每个边界场景 1 条；`performance` 仅 device/both 项各生成验证用例，unit 项交 UT、缺层级先澄清；`ut_layer=unit` 不再生成。用例编号 `TC-{NNN}`；步骤须明确可重复；预期结果须可观察可验证；追溯字段另记 `linked_flow`/`linked_branch`/`ut_layer`。
-4. **Step 3 用户确认测试计划**：`testing.plan_confirm`：`1=确认` `2=修改`。
-5. **Step 4 归档**：`<features_dir>/{module-name}/testing/test-plan.md`。正式派生前先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，读取本次 stdout 的完整派生上下文，再生成派生计划。canonical `derive-hint-from-plan.json` 仅在 TC/执行语法/reset 等真实派生输入变化时更新；标题、缓存与诊断变化不刷新基线。最新覆盖、选中/拒绝路径、mtime、逐条 lint/suggested_fix 读取本轮 `script-report.json` 的 `device_test_run.structured.derive_hint`，勿从旧 hint 猜本轮诊断。需要最新缓存/selector 候选的文件时用 `--out <另一文件>` 显式导出；`--out` 指向 canonical 仍按语义幂等写入。不要等 harness 失败才生成 hint。
-6. **Step 4.5 真机自动化派生可执行计划**（`device_test.run` 为 BLOCKER 时，详见 reference）：解析 TC 表并读取每条 TC 的**执行通道**（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`，顶层 test-plan 声明、经 review，缺列/缺值/非法即 BLOCKER 一次性迁移）→ **只编译 `channel=hylyre` 全集**，不得新增/删除/改写通道，也不得写 `explicit_skip_tc_ids` → 按 contracts/plan/snapshot-cache/设备连线四级优先级发现 selector 候选（四级只负责发现；snapshot-cache/设备 dump 不是真值）→ 正式 by_text 必须显式声明 `match: exact|contains` 且由 acceptance 意图决定（禁止字符启发式/运行时 fallback）；feature ui-spec 是开放世界，selector 缺席只 WARN 放行，静态只拦可确定错误 → 译为 Hylyre JSON（裸单行、canonical 直接根键、禁 dump_ui 等 CLI 名作根键；`start_app`/`stop_app` 只允许作为 case **首部**恰好一组复位前奏 `stop_app→start_app`，bundle/page_name 逐字取 hint 的 `reset_preamble`、不得自拟、不得用 `clear_app`，其它位置 STEP-003 BLOCKER），每个 case 首个断言前必须有同 case 的 setup/navigation action → **任一 hylyre case 编译失败即整份计划不启动**，回报该 TC 根因与下一责任阶段（不改成跳过）→ 落盘 `test-plan.hylyre.md` 到 `testing/reports/<timestamp>/hylyre/` → 触发 `harness-runner --phase testing`。**manual/provider 三态**：`manual:<system_settings|perf_sampling|memory_sampling|resource_variant|data_injection|external_precondition>` 且工具确无原语、或 inactive/SKIP provider → `unsupported_gap`（留分母、不算 PASS）；裸/未知 manual、未登记 provider、active 但当前无 per-TC producer 的 provider → 跑机前 `invalid_test`。Hylyre 原语能表达的一律改 `hylyre`；不接受人工确认/receipt 把 gap 洗成 PASS。
-7. **Step 4.B 即席模式**（详见 reference）：Derive hint（不跑机）→ Agent 写 `doc/features/_adhoc/testing/staging/test-steps.json` 并 lint → 执行 `adhoc-device-test`（默认冷重启）→ 观察汇总决策树 → 不写 receipt/verifier，交付 trace.json cases 摘要。
-8. **Step 4.6 视觉 diff 回环**（`ui_change=new_or_changed` 时，详见 reference）：唯一直接像素对图阶段；MVP 覆盖顶层屏+固化 nav 配置到达深层屏/overlay；P0 屏无论 lightweight 与否必须采集评估；执行时先断言屏身份(E3)再双向 diff(正向/反向+G3 样式核对+defects 枚举+**region_attest 逐区域举证**)；采图同时点 dump 布局树(`layout-<screen_id>.json`)供 **T8 几何不变量**消费；产出 `visual-diff.json`(唯一结构化真源)+自动生成 `visual-diff.md`(请勿手改)；`pixel_1to1` 下 T1/T4/T5/P1-C/**T8(布局 hard)/M1(自报退化)/attest 证据/critic 回执**等机器信号任一命中即 BLOCKER（分数字段=reported_* 参考自评、零 gate 权重）；回修由独立 critic 自动迭代至 candidate-pass 或指纹化熔断。当前 attempt/hash/identity 绑定的 deterministic/native/delegated 证据决定 visual 轴；legacy `confirmed_by` 无 gate 权重。确定性 fail 信号必须 verdict=fail+逐条写进 must_fix，不得弃判；testing 禁止写产品源码/需求 SSOT，runner 消费 must_fix 自动回退 coding 修复后重走 review/ut/testing（非硬像素契约下自报样式残差由 gate 降级记视觉债务：不回退、仍阻断发布）。 几何事实用 `harness-runner.ts --measure --feature <feature> [--screen <id>]` 一条命令取得（bounds/间距/重叠/与参考图差值/取色，写 `device-screenshots/measure-<screen>.json`，并把量测事实补进 visual-diff.json 的 defects[].note）；它只测量不裁决，不改 ui-spec，不改 verdict，geometry PASS 不解除 visual/release block；无 delegated 视觉 provider 时不要求 region_attest / critic 回执，agent 看图后给普通视觉判断，content/style 未验证部分如实标 UNKNOWN。
-9. **Step 5 读取机器测试报告**：`test-report.md` 由 harness 从权威 run 的 trace/timing/meta、视觉证据与 stability 整份生成，统计与逐轴结论均由机器派生；agent 不手工回填状态、耗时、表格或计算结论，只读结果并把补充观察写 `testing/notes.md`。known gap 留在分母、不算 PASS，披露后可完成普通开发。能力缺席（如视觉 provider 不可用）= 有条件达标 + 暂缓 gap：相关 visual TC 记「跳过」并注明未验证（能力缺席）、留分母、不列待修缺陷，阶段裁决 INCOMPLETE 等待外部条件；能力恢复后重新发起同一请求由同一检查重验，不改产品、不按失败重试。需刷新已有证据的报告时运行 `--report-reconcile-only --phase testing --feature <feature>`，由 harness 重生成报告并重算 report/static checks、summary 与 quality axes；零设备/hvigor/hdc/Hylyre/视觉采集/lifecycle hook 调用，不改 authoritative trace。修复以机器 blocker/repair candidate 为准，不通过手改报告洗绿；即席模式不强求写 test-report.md。
-   - **Native evidence gate（hmos-app）**：Hylyre `0.5.0+`、trace `0.4-p0` + `result_protocol=hylyre.step-outcome/1`（Step Outcome v1）与 `hylyre-ready.meta.json` 的 installed/manifest/trace environment 版本链必须同时一致，且每个 `CaseResult`/`StepResult` 必需字段真实在场；否则旧 `status=通过`（中文枚举只是兼容投影）不得贡献 verification 通过。P0 通过分子只认 `execution=completed`、`verification=passed`、`evidence=complete` 及 required presence / forbidden absence assertion 的同 index `StepResult`（`outcome.status=passed`，presence 要 `observed_present=true`，absence 要 `observed_present=false` 且 `candidate_count=0`）。native trace 还必须绑定实际执行的 derived plan：`trace.artifacts.plan`、top/derived/trace 路径与 SHA、StepResult count/index/kind 必须同轮一致，唯一尾部 `expected_check` 除外。
-   - 成败结合 `outcome` 与 `observation` 裁决，selector 身份事实读 `selector.request` / `selector.resolution`（`resolution` 不是第二个成功状态），禁止读 flat `status`/`failure_kind`/`failure_code`/`evidence.executed` 重建。已执行失败按 nested `outcome.failure.domain/code` 路由：`outcome.status=failed` + `failure.domain=assertion`（`assertion.mismatch`）且同 case 有较小 index、`outcome.status=passed` 的 action，才可进入 coding candidate；`selector.*` 回 testing 重派生/消歧，`capability.*` defer，`infrastructure.*` 回 external/toolchain。未尝试的步骤零 route：`blocked` 读 `outcome.cause`（`capability`/`infrastructure` 各投 1 次 disposition，`prior_step` 零投影），`skipped` 读 `outcome.reason`（`policy` 不产生 capability defer）。无 StepResult 的未执行 case（包括 P1/P2）保持 testing-owned FAIL，零自动 coding；历史 `explicit_skip_tc_ids` 同等对待，仅只读诊断。
-   - native StepResult 在场时不启用旧 runtime telemetry monkey-patch；历史 telemetry 仅作有限 checkpoint 兼容或一致性告警，不合并为第二真源。
-10. **Step 6 质量门禁自检**：测试计划 11 项 + 测试报告 8 项（完整清单详见 reference）；不通过定位后自动修正重检。
-11. **Step 7 Harness 验证门禁**：见下方门禁清单表。
-
-## 门禁清单表
-
-| 检查类型 | 检查内容 | 严重级别 |
-|----------|---------|---------|
-| 真机构包/装机（可选宿主 BLOCKER） | profile `device_test.build`/`device_test.install` | BLOCKER / SKIP |
-| 真机自动化（profile capability） | `device_test.run` 消费派生用例产出 report+trace | BLOCKER / SKIP |
-| 测试计划必需章节 / 用例清单表格格式 | 6 章节齐全 / 表头 7 列齐全 | BLOCKER |
-| 用例优先级值域 / 测试环境定义 | 仅 P0-P3 / 含设备+系统版本+API 版本 | MAJOR |
-| 通过标准定义 / AC 追溯覆盖 | 含量化阈值 / P0/P1 AC 全覆盖 | BLOCKER |
-| BD 追溯覆盖 | 边界场景已覆盖 | MAJOR |
-| 报告必需章节 / 执行结果表格 / 通过率统计 / 结论一致性 / 计划-报告一致性 | 齐全/状态值合法/含各优先级通过率/结论与数据匹配/用例编号一致 | BLOCKER |
-
-```bash
-cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature {module-name} --summary --failures-only
-```
-
-优先读 `summary.json`，`testing_run_status.can_claim_done` 须为 `YES` 才能宣称阶段完成。
-
-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
-
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
-
-**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
-
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
-
-## 阶段闭环判定（全局入口 §5.1）
-
-> **标准 feature 模式**适用下文四条件。**即席（`_adhoc`）模式**不宣称「某需求 testing 阶段闭环」：不写 receipt、不强求 `harness-runner testing --feature _adhoc` PASS、不要求 verifier；以交付 trace.json 摘要为主。coding 返修窗口用 `adhoc-device-test --install-current-build` / `--measure-screen` / `--dump-ui-only` 做的局部诊断默认落 `_adhoc`：那些构建结果、装机 meta、dump、截图与量测**不是验收证据**，本阶段不读、不采信，照常按自己的规则出包、装机（goal 正式 gate 强制重装）并判定。返修交回前须遵守 [coding Skill](../coding/SKILL.md) 的修后复看要求。
-
-**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
-
-1. `<features_dir>/<feature>/testing/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后真机测试阶段完成（**最终环**）。
-
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落，不自行推导或补写跨阶段建议；recommendation 由 `assess@1` 生成（含回修起点），执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
-
-## 输出规范
-
-| 产出 | 路径 |
-|------|------|
-| 测试计划 | `<features_dir>/{module-name}/testing/test-plan.md` |
-| 测试报告 | `<features_dir>/{module-name}/testing/test-report.md` |
-
-Markdown 格式，用例清单/执行结果用表格；用例编号 `TC-{NNN}`；缺陷编号 `DEF-{NNN}`。
-
-## 约束与注意事项
-
-1. AC 追溯强制：每条用例须关联 acceptance.yaml 中的 AC/BD 编号（推荐同标注 `ut_layer`/`linked_flow`/`linked_branch`）。
-2. 分层分工：`ut_layer=unit` 不出现在本 Skill 测试计划中；`device`/`both` 才是本 Skill 范围。
-3. 按 `ut_layer∈{device,both}` 与 `device_focus` 生成/更新 test-plan，勿再维护 `device-testing-todo.md`。
-4. 测试计划先行，经用户确认后再据执行结果生成测试报告。
-5. 步骤须足够详细可重复；预期结果须可观察可测量，禁止"正常显示"等模糊描述。
-6. 模拟应用适配：预期结果基于模拟数据实际值而非真实后端返回值。
-7. 测试计划与测试报告是独立文档，分别在不同时间点产出。
-8. 中文输出；P0 优先，资源有限时优先覆盖 P0 AC。
-9. Harness 验证闭环：agent 必须自跑 Step 7 + 主动触发 verifier；确保零 BLOCKER+verifier PASS+完成回执通过后才认为阶段完成。
-10. 不修改源码：**整个 testing 阶段**（生成文档、真机执行、视觉回环、重试轮，全程）不得修改任何业务代码、UT 代码、需求 SSOT（acceptance/ui-spec/contracts/spec/plan/use-cases）或根构建配置。runner 对 invoke 前后做快照比对，手工写入=run 终止态（证据作废、gate 不跑、--resume 拒绝）。**framework harness 触发的构建生成物例外**：`device_test.build` 重写的模块根 `BuildProfile.ets` 由 runner 自动分类为合法副作用（不算违规）——放心跑 harness 自检。**禁止在自己的命令里临时覆盖 `HARNESS_DEVICE_TEST_PRODUCT` / `HARNESS_DEVICE_TEST_BUILD_MODE`**：runner 已按 attempt 冻结这两个值并注入环境，覆盖会让生成物与冻结配置不符、被判违规。修码诉求一律写进 must_fix 由回退后的 coding 实施。
-
-## 关联文件
-
-| 类型 | 路径 |
-|------|------|
-| 详细流程 | [reference/device-testing-workflow-detail.md](../../reference/device-testing-workflow-detail.md) |
-| 阶段级规约 | `framework/specs/phase-rules/testing-rules.yaml` |
-| 脚本 Harness | `framework/harness/scripts/check-testing.ts` |
-| 派生提示 JSON | `<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json` |
-| AI Harness Prompt | `framework/harness/prompts/verify-testing.md` |
-| 测试计划/报告模板 | `` `profile-skill-asset:device-testing/test_plan_template` `` / `` `profile-skill-asset:device-testing/test_report_template` `` |
-
-## Slash/trace 与收尾
-
-通过 `/device-testing` 或等价快捷入口触发时，须在阶段结束时产出 trace 凭证：`<features_dir>/<feature>/testing/reports/<timestamp>/<model>-devtest/trace.json`（Schema：[trace.schema.json](../../../../harness/trace/trace.schema.json)，`phase: testing`）；同目录 `gap-notes.md`（模板 [gap-notes.template.md](../../../../harness/trace/gap-notes.template.md)）。
-
-**页面身份与内容验收分工**：复用 visual-diff-nav 的 identity.all_of/any_of/none_of；用稳定 screen/root、route、标题等区分页面，sms_next 这类待验收按钮留在 ui-spec required 与原生业务断言。目标页身份通过但按钮被键盘遮挡/缺失，仍是内容失败，不能隐藏键盘或删业务断言来满足身份。旧 nav 把按钮放 all_of 时，读取原配置和 _identity dump，由 testing 修自己的导航规则后重新判页；gate 不自动删除失败成员。真错页或锁屏不落目标页正式截图；命中其它应用组件 id 只证明应用树在场，不能断言一定是其它页。
-
-**视觉 provider 局部纠错**：同 gate 调用成功而 payload 不合法时，harness 把原body及精确屏/字段/索引错误回给同一冻结provider，最多纠正一次；两次共用原provider timeout与gate剩余deadline的较早截止，独立留原输出/usage/诊断，check structured与NEXT指向诊断。执行者不手改provider证据、hash或region verdict。原图/来源图/导航/目标/HAP变化回原采集/装机/trace路径；局部纠格式不重跑native或capture，也不能洗绿同gate已有native FAIL。IO只重试原提交事务，不让provider重判产品；第二次仍非法或预算不足保留invalid/清场状态，下一整轮真实产品复验仍走原契约。
+输出本次目标与实际版本、已设计用例、通过/失败/未验证及证据路径；只设计时明确未执行。
+独立执行不写 Feature receipt、attestation 或 completion。request facts 仅写 prepare 返回的 `factsPath`，身份按 [输入契约](../../../docs/concepts/skill-contracts.md#facts-11) 解析；即席不要求正式 facts/verifier。
+正式派生、native evidence、视觉回环及阶段闭环细则按 [reference](../../reference/device-testing-workflow-detail.md) 的对应章节条件加载；未执行 testing 不宣称视觉验收或 Feature 完成。

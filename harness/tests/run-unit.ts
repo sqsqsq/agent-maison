@@ -67,6 +67,7 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
  */
 const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> = [
   { id: 'request-entry', modulePath: './unit/request-entry.unit.test' },
+  { id: 'compile-entry', modulePath: './unit/compile-entry.unit.test' },
   { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
   { id: 'obligation-scoped-verification', modulePath: './unit/obligation-scoped-verification.unit.test' },
   { id: 'blueprint-skill-projection', modulePath: './unit/blueprint-skill-projection.unit.test' },

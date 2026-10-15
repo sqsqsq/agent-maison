@@ -58,6 +58,9 @@ import {
 } from './runtime-policy';
 import { isGoalOrchestrationEnv } from './phase-state';
 import { isBlockingCheck } from './check-disposition';
+import { standaloneReportDir } from './standalone-report-dir';
+import { inspectCompletionRecord } from './verify-feature-completion';
+import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 
 // --------------------------------------------------------------------------
 // 公共装配
@@ -142,6 +145,17 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
         return fs.existsSync(featureDir(projectRoot, f));
       } catch {
         return false;
+      }
+    },
+    hasTrustedCompletion: (feature) => {
+      try {
+        // 只检查历史记录，不把本轮代码/证据 drift 当成重新进入正式流程的理由。
+        return inspectCompletionRecord({
+          projectRoot, feature, frameworkRoot: opts.frameworkRoot,
+          ...resolveChangeUnitExpectedExecution(projectRoot, feature, false, opts.frameworkRoot),
+        }).verdict === 'VALID';
+      } catch {
+        return false; // 无可信完成记录（含旧 receipt-only Feature）维持既有归属。
       }
     },
   });
@@ -250,8 +264,8 @@ export function resolveFeatureCorrectionRouting(
   return { ...base, in_scope: false };
 }
 
-export function adhocReportsRoot(harnessRoot: string): string {
-  return path.join(harnessRoot, 'reports', '_adhoc');
+export function adhocReportsRoot(projectRoot: string): string {
+  return path.join(projectRoot, 'doc', 'reports', '_adhoc');
 }
 
 // --------------------------------------------------------------------------
@@ -340,6 +354,8 @@ export async function runAdhocCorrection(
 
   const results: CheckResult[] = [];
   const ctx = buildAdhocCheckContext(projectRoot, harnessRoot, frameworkRoot);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const outDir = standaloneReportDir(projectRoot, frameworkRoot, path.relative(projectRoot, path.join(adhocReportsRoot(projectRoot), ts)));
 
   // 1) changed-files：git diff base_commit ∪ 工作区（含 staged/untracked）
   const diff = diffChangedFiles({ projectRoot, baseRef: state.base_commit });
@@ -407,7 +423,7 @@ export async function runAdhocCorrection(
       status: 'PASS',
       details: 'capability SKIP：按 profile 声明跳过',
     });
-  } else if (!host) {
+  } else if (!host?.compileProject) {
     results.push({
       id: 'adhoc_compile',
       category: 'structure',
@@ -418,7 +434,7 @@ export async function runAdhocCorrection(
     });
   } else {
     try {
-      const rs = await host.checkCodingCompile(ctx);
+      const { checks: rs } = host.compileProject({ projectRoot, frameworkRoot, harnessRoot, resolvedProfile: ctx.resolvedProfile, reportDir: outDir });
       results.push(...rs.map((r) => ({ ...r, id: r.id.startsWith('adhoc_') ? r.id : `adhoc_${r.id}` })));
     } catch (err) {
       results.push({
@@ -554,8 +570,6 @@ export async function runAdhocCorrection(
   }
 
   // 报告落盘（确定性路径，不落 features_dir；不建临时假 feature 目录）
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const outDir = path.join(adhocReportsRoot(harnessRoot), ts);
   fs.mkdirSync(outDir, { recursive: true });
   const blockerFails = results.filter((r) => isBlockingCheck(r));
   const verdict = blockerFails.length === 0 ? 'PASS' : 'FAIL';

@@ -53,8 +53,8 @@ async function withSnapshot(run: (s: Snapshot) => Promise<void>): Promise<void> 
 }
 
 // These consumers explicitly require a current valid completion, not the raw historical fixture.
-async function withCurrentSnapshot(feature: string, run: (s: Snapshot) => Promise<void>): Promise<void> {
-  const s = await loadMigratedHostSnapshot([feature]);
+export async function withCurrentSnapshot(feature: string | readonly string[], run: (s: Snapshot) => Promise<void> | void): Promise<void> {
+  const s = await loadMigratedHostSnapshot(typeof feature === 'string' ? [feature] : feature);
   try { clearFrameworkConfigCache(); await run(s); }
   finally { clearFrameworkConfigCache(); fs.rmSync(s.root, { recursive: true, force: true }); }
 }

@@ -1,6 +1,13 @@
 # code-review 阶段详细流程（条件加载：执行对应 Step 时读）
 
-> SSOT 索引见 [`skills/feature/code-review/SKILL.md`](../feature/code-review/SKILL.md)。本文承载视觉保真维度执行定义（pixel_1to1 相关）与 Step 2 各审查子维度的完整检查项；触发/门禁清单/闭环判定仍以主文档为准。
+> 入口见 [`code-review`](../feature/code-review/SKILL.md)。先读共享方法；只有本次需要报告检查或正式交付时才加载对应包装，不要求通读所有正式流程。
+
+## 共享审查方法
+
+1. 确定目标 diff/提交/文件和基线，区分新增问题与原有问题。读目标文件的实际内容，并沿被改入口的调用方、依赖、数据写入/读取和错误处理追踪影响；不以 diff 摘要替代阅读。
+2. 按目标模块读取架构、catalog、术语、conventions 与 profile 易错知识；资料只作适用依据，不能用索引标题代替源码。模块画像用于定位职责与邻接依赖，惯例按下节核对。
+3. 执行本页「Step 2 审查子维度」的适用项。正式调用以绑定的 contracts/acceptance 为对照；独立审查以用户目标、实际接口/调用者和现有有效规则为依据。缺失的设计/编译/视觉证据明确列未验证，不为凑齐维度补造材料或运行无关工具。
+4. 每个发现说明具体触发、行为后果、代码位置与最小修复方向；按实际影响定级，假设性改进不升为阻断。结论注明已读范围、基线和验证缺口。只审查就交付结论，要求机器报告才执行正式报告结构检查；两者不改产品或测试。
 
 ## 视觉保真维度执行定义（UI 需求必做，pixel_1to1 覆盖要求与实际影响分开）
 
@@ -17,7 +24,7 @@
 
 ## 工程惯例核对（文件存在时）
 
-输入参数是**目标文件集合**；当前 Feature 模式由规范化 `contracts.files` 提供，不以 diff 定义范围。
+输入参数是**目标文件集合**：独立审查来自本次 diff/提交/文件范围；Feature 模式由规范化 `contracts.files` 提供，不以 diff 缩小正式范围。普通方法审查核对适用条目并在结论引用依据；以下声明/完整台账要求仅用于正式 Feature 或机器报告。
 按 `paths.conventions`（缺失键使用框架默认值）读取全文，独立于 plan 的声明逐条执行：
 
 1. 判适用性，再核对目标代码是否符合；gate 索引卡不重判，固定 `GATE_DELEGATED`。
@@ -35,14 +42,157 @@ review 只能建议将重复意见升格为惯例，写入仍由 `/conventions-b
 
 ## Step 2 审查子维度完整检查项
 
-**2.1 架构合规性（BLOCKER）**：①外层依赖合规——逐文件检查 import/包依赖是否违反 `outer_layers[].can_depend_on` 与同层 `intra_layer_deps` 策略；②模块内分层——验证 import 遵循 profile 声明的内层顺序；③文件完整性——对照 `contracts.yaml > files` 检查每个文件是否存在；④资源引用完整性——检查资源引用调用的 key 是否在资源定义中存在。
+**2.1 架构与资源**：按适用 architecture/profile 核查 import/模块依赖与内部分层，核对真实出口和资源 key。正式范围另对照 `contracts.files`；已有机器结果可复用，未编译只能给静态结论。
 
-**2.2 接口一致性（BLOCKER）**：①数据模型一致——对比 `contracts.yaml > data_models` 与实际代码 class/interface（字段名/类型/必填/enum 值）；②接口签名一致——对比 `interfaces` 与实际方法实现（方法名/参数/返回类型/async 标记）；③组件 Props 一致——对比 `components` 与实际组件装饰器声明。
+**2.2 接口与数据一致性**：沿调用者核对字段、可空性、类型/enum、方法签名、异步返回和组件 Props，检查错误传播、旧消费者兼容及持久数据影响。有适用 `data_models` / `interfaces` / `components` 契约时再逐项对照。
 
-**2.3 编码规范（MAJOR）**：①命名规范（模块 PascalCase、struct 名与文件名一致、资源 key snake_case）；②硬编码字符串（presentation 层未走资源机制的 UI 文本）；③禁止 any 类型；④async/await 模式（是否存在 `.then()/.catch()` 回调链，排除 Promise.all 等）。
+**2.3 编码与工程惯例**：依当前语言/profile 核查命名、类型、资源、异步处理和适用惯例；不将 ArkTS 限制套给其它语言，不把单纯风格偏好当产品缺陷。
 
-**2.4 业务逻辑（MAJOR）**：①异常处理完整性——对照 `acceptance.yaml > boundaries` 检查每个异常场景是否有代码处理；②业务流程正确性——对照 plan.md 服务层接口和组件树验证数据流转；③spec 验收标准覆盖——对照 `criteria` 的 P0/P1 项验证代码有对应实现。
+**2.4 业务逻辑与边界**：沿正常、空值/边界、异常、重复操作、并发/状态恢复路径核查返回值和副作用；预期取自用户要求或现有有效依据。有适用 acceptance/plan 时核对其范围内场景；仅实现推测不能声称完整验收通过。
 
-**2.5 数据层（MAJOR/MINOR）**：①数据所有权合规——presentation 层是否绕过 Repository 直接操作数据源；②模拟数据隔离——模拟数据是否封装在 data/repository 内部。
+**2.5 数据责任**：核查读写所有权、状态一致性、失败时是否遗留部分写入及模拟数据隔离；按项目真实架构判断，不强造 Repository 层。
 
 完整检查清单：`framework/profiles/<project_profile.name>/skills/code-review/templates/review-checklist.md`。
+
+## 正式 Feature/CU 前置
+
+本工程须先完成 [`framework-init`](../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
+
+**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](host-harness-readiness.md) 与 [Shell cwd 契约](harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
+
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。历史 1.0 输入缺失（至少 `plan.md`/`contracts.yaml`/`acceptance.yaml`）须报告并回上游补齐；现代 1.1 输入按 resolved 契约，不补占位文档。
+
+review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNESS_DIFF_BASE_REF=working`——这些属于 coding/UT 的构建与 diff 自愈职责。
+
+## 正式 Feature/CU 阶段
+
+以下仅在本次明确承担 Feature/CU 交付责任时加载；普通方法调用与独立 request 不进入这段。
+
+## 概述
+
+按当前 `project_profile` 自适配的代码审查员：基于可用契约、模块画像、术语与代码意图对 coding 产出做系统化 Code Review。审查报告指导修复；完成资格与跨阶段建议由 `assess@1` 输出。
+
+**Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 review 产物；不得直接改 spec/plan、实现源码、UT 或 testing 产物。缺陷须结构化交给 runner 回责任阶段修复。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。
+
+## 触发条件
+
+"代码审查"、"Code Review"、"CR"、"审查代码"、"检查代码质量"、"代码走查"、"Review 代码"、"生成审查报告"。
+
+**上游 coding 闭环 alone 不触发（BLOCKER）**：仅因 coding 阶段已闭环、读完回执/trace、或 coding 正文"可进入 code-review"**不得**激活本 Skill。须用户 review 触发意图、batch 授权（§8.2）、或 `coding.ok_to_review`/`phase.next_step` 确认后再进入。
+
+## 审查与改动权的硬边界（BLOCKER）
+
+**只审不改（默认）**：用户仅表达"帮忙 Code Review/出审查报告/走查"而未明示"按 CR 结论直接改代码"时，只产出结构化审查产物（`review-report.md`）；**不得**批量修改实现层产物。**代改须有授权**：审查同时要求修代码须在指令中明示；未经明示至多给建议不写补丁。**与 Harness 顺位**：脚本 harness 不因"顺带修一点"被跳过或后补；以代改为目标须说明 touch 了哪些契约内文件并接受相关规则复检。
+
+## 核心审查维度
+
+| 审查维度 | 主要依据 | 严重级别 |
+|----------|---------|---------|
+| 架构合规性 | `doc/architecture.md` + `architecture` DSL | BLOCKER |
+| 模块内四层分层 / 接口一致性 / 文件完整性 | `coding-rules.yaml` / `contracts.yaml` | BLOCKER |
+| 资源引用完整性 | `coding_compile` 真实编译结果 | BLOCKER |
+| 命名规范 / 硬编码字符串 | `coding-rules.yaml` | MAJOR |
+| 异常处理 / 业务逻辑正确性 | `acceptance.yaml` / `plan.md` | MAJOR |
+| 数据所有权 / 模拟数据隔离 | `coding-rules.yaml` | MAJOR/MINOR |
+| 视觉保真治理 | spec `fidelity_target`/`fidelity_deferrals` + `fidelity_governance` | 按有效范围、严格度与实际影响；有效 best_effort defer 披露债务，hard 不允许以人签豁免 |
+| **视觉保真**（详见 reference） | spec/coding 落盘的确定性报告 | 按严格度（hard pixel 下适用证据全覆盖）；repo_ref 不强造 crop 证据，覆盖要求不抬细节严重级别 |
+
+## 输入
+
+| 输入项 | 必需 |
+|--------|------|
+| 明确审查目标、代码/diff 基线与适用项目规则 | ✅；专项使用 request CLI，组合使用真实 Feature/run。**专项独立调用**：输入=明确审查目标 + `targets.files` + 基线；报告落点=请求 `report-dir` 内的 `review-report.md`（不得写进 Feature 树）；当前 profile 能机器执行的是章节/问题表/引用/结论一致性等结构检查，**语义结论由你写**；`--prepare-request` 报出的能力缺口如实呈现，不改投其它落点 |
+| contracts / acceptance / 蓝图 runtime 与 design_refs | 组合交付或用户要求按设计验收时必需；来源由 P1/P3 解析 |
+| plan.md / spec.md | 仅本次有实际文档消费时读取；不得强造空文档 |
+| doc/architecture.md / 实际目标源码 | ✅，按请求范围及项目适用规则 |
+| spec.md | 可选，验证功能覆盖完整性 |
+| `paths.conventions`（缺失键用框架默认值） | 文件存在时独立必读全文，不依赖 plan 是否声明 |
+
+**能力解析与上下文**：报告头必须写 `保证等级`，其值只来自 harness summary 1.2 的 `assurance` 与 `capability_resolutions`，不得手写 `full/basic` 或另一套缺失输入政策。review contract 的结构化 source chain 决定 artifact/derive 回退；显式非 UI 由 applicability preflight 判定为不适用，输入存在却不能解析仍是 invalid/blocking，不能伪装为降级。输入裁剪不降低代码问题判真标准。`missing_review_report` 仍须补齐后重跑；`missing_source_from_contracts` 仍须确认 coding 是否完成或同步契约。
+
+**CU-bound Feature**：额外核对 Feature id/`change_unit_ref`、predicate/provide/design-ref ID-only mapping 与真实文件/符号/测试一一落地；`contracts.state_management` 是运行时施工唯一真源。任何复制/重定义 CU/蓝图、平行 runtime section、空 Store/EventBus/interface 或施工发现的蓝图冲突均为 BLOCKER；蓝图冲突回 P1，不在 review 中补造定义。
+
+## 正式流程骨架
+
+先执行本页共享方法，再履行下列正式输入、产物和闭环责任；不复制另一份方法。
+
+1. **收集审查上下文**：先确定请求终点和基线。专项按 [request CLI](../../docs/operations/request-harness.md) prepare→Research→报告→同一 checker 执行，不要求本次 coding。组合交付消费 P1/P3 的契约/验收及全部声明源码，逐项对照 CU design_refs、runtime flow、组件资产与惯例；缺必需对照资料仍失败。叙述文档仅在实际需要时读取。
+2. **Research Sub-Phase**（审查前完成）：读取全部目标源码及适用对照。入口指定 review 为首阶段且无有效 facts 时建立绑定本次身份/基线的 facts；有有效基线时才追加 `## phase_delta: review`（无新增写 "none"）。专项使用 request facts/reportDir，不触碰活跃 Feature 的 facts、attestation、receipt 或 events。复杂问题的独立质询仍按既有要求执行。
+3. **系统化审查**（5 子维度，详见 reference）：架构合规性（BLOCKER）→ 接口一致性（BLOCKER）→ 编码规范（MAJOR）→ 业务逻辑（MAJOR）→ 数据层（MAJOR/MINOR）；UI 需求另做视觉保真维度（详见 reference，pixel_1to1 P0 全覆盖不许抽查）。
+   惯例文件存在时还须执行 reference「工程惯例核对」：以目标文件集合核对全部条目，输出全量台账；适用条目打开范例，存量违反降为 advisory。重复意见只能建议 `/conventions-bootstrap` 升格，不直接写惯例文件。
+4. **生成审查报告**：模板 `templates/review-report-template.md`，**必须包含 6 章节**：审查范围 / 审查方法 / 问题清单（编号+严重程度+分类+描述+涉及文件+修复建议）/ 问题统计 / 修复建议摘要 / 结论。问题分类用预定义类别（分层违规/接口不一致/资源引用/命名规范/硬编码/逻辑错误/异常处理/性能/安全/视觉保真/其他）。严重程度：BLOCKER（架构分层违规/接口签名不一致/文件缺失/资源引用缺失）/ MAJOR（命名/硬编码/异常处理/逻辑错误）/ MINOR（模拟数据隔离/风格/注释）/ INFO（改进建议）。结论：BLOCKER>0→不通过；必须返修的 MAJOR 未闭合不得推进；仅有效 best_effort 非关键视觉保真 MAJOR 时通过/有条件通过均可，保留统计与未关闭状态；hard、功能 MAJOR、BLOCKER 不豁免。
+5. **质量门禁自检**（10 项：审查范围明确/问题清单六列格式/严重程度四级值域/分类值域/统计一致/修复建议可操作/结论一致性/涉及文件真实存在/问题有代码证据/元数据齐全）：不通过定位问题自动修正重检。
+6. **输出与归档**：Feature 使用既有报告与 attestation 路径及单写者规则；专项只写 prepare 返回的 reportDir/review_report。两者均记录实际覆盖与基线，review 完成不代表未完成的实现/测试义务已完成；新实现须审查其当前基线，旧 PASS 不得代替。根因归设计时沿原归因回退，不统一塞给 coding。
+
+## 门禁清单表
+
+| 检查 | 判据 | 严重级别 |
+|---|---|---|
+| 必需章节 | 审查范围/方法/问题清单/统计/建议/结论均存在 | BLOCKER |
+| 问题清单表格 | 表头含编号/严重程度/分类/描述/涉及文件/建议 | BLOCKER |
+| 严重程度值域 | 仅 BLOCKER/MAJOR/MINOR/INFO | BLOCKER |
+| 结论一致性 | 结论与 BLOCKER 数量匹配 | BLOCKER |
+| 涉及文件存在性 | 问题清单引用路径真实存在 | BLOCKER |
+| 分类值域 / 问题统计一致 | 仅预定义分类 / 计数与清单一致 | MAJOR |
+| 工程惯例覆盖 | 台账精确覆盖、声明落位、蓝图贯穿与 gate 委托一致；无文件无声明时 SKIP | MAJOR |
+| 元数据 | 模块标识/审查日期/审查版本齐全 | MINOR |
+
+```bash
+cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {module-name}
+```
+
+**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+
+**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+
+**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
+
+## 阶段闭环判定（仅 Feature/CU）（全局入口 §5.1）
+
+负面审查的逐条验证须覆盖每个未关闭 BLOCKER/MAJOR。缺行、重复冲突、非法 verdict 或 evidence 与当前行不符时，
+按 `readiness_signals` 中 `id=verifier_repair_diagnosis` 的精确问题修报告：只有本轮实际签发了 request 才投给该 verifier。
+合法 refuted/unclear 保留原判断，不因为零候选强制改成 confirmed。 当前 Goal attempt 的格式缺口先如实保留原回复并返回 runtime，由既有调用路径最多自动纠错一次；不在阶段内另叠重投循环。纠错调用与时间照计，重进不重新发放机会；其它条目错误不清掉逐条绑定有效的 confirmed。carried/disabled 或混合资格不足时不补造 request，
+先修当前阶段能合法修的资格原因；用户禁用配置不自动更改。拒修在案的旧 subject 无法重确认，真实 FAIL/open 不由人签放行。
+
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+
+1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或仍有必须返修的 MAJOR，交正确责任阶段修复后复审；被 verifier 驳回的误报须先更正原报告，不能直接洗绿。允许披露的视觉差异不派 coding，review 不另写债务账，不预签 testing 的视觉 PASS/release READY。
+
+**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落，不自行推导或补写跨阶段建议；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+
+## 输出规范
+
+| 产出 | 路径 |
+|------|------|
+| 审查报告 | `<features_dir>/{module-name}/review/review-report.md` |
+
+问题编号格式：`CR-{NNN}`，从 CR-001 递增。
+
+## 约束
+
+1. 所有审查结论须可追溯到具体 Spec 规则（coding-rules.yaml）或契约（contracts.yaml），避免主观判断。
+2. 每条问题须有具体代码证据（文件路径+关键代码），不允许泛泛而谈。
+3. 零误报目标：不确定是否为问题降级 INFO 或不报告，宁可漏报不误报。
+4. 修复建议须具体到修改哪个文件哪段代码。
+5. 本项目模拟数据全部写死，模拟数据类型合法性检查应适度宽容。
+6. 中文输出。
+7. 不重复 Harness 已覆盖的确定性结构检查（文件存在/分层合规等由脚本自动完成），聚焦语义正确性和架构合理性。
+
+## 关联文件
+
+| 类型 | 路径 |
+|------|------|
+| 详细流程 | [reference/code-review-workflow-detail.md](code-review-workflow-detail.md) |
+| 阶段级规约 | `framework/specs/phase-rules/review-rules.yaml` |
+| 脚本 Harness | `framework/harness/scripts/check-review.ts` |
+| 审查报告模板 | [templates/review-report-template.md](../feature/code-review/templates/review-report-template.md) |
+| 审查检查清单 | `` `profile-skill-asset:code-review/review_checklist` `` |
+| Trace | `<features_dir>/<feature>/review/reports/<timestamp>/<model>-review/trace.json`（phase=review）+ 同目录 `gap-notes.md` |
+
+## 组件资产审查（若启用）
+
+读取 [组件资产 SSOT](../../docs/concepts/component-assets.md)、index/catalog 摘要、候选 live 调用点与全部目标源码，核对蓝图决定、合同选型和实际实现是否一致。语义重复由 verifier 结合调用点判断；同一组件包装 ≥2 给 WARN 建议 evolve，不做文本匹配 gate。新共享导出须登记且适用静态项无 fail/unknown；存量 unknown 不阻断，私有 custom 不要求登记，uncurated 仅建议增量策展。三个静态项不代表渲染或真机能力。
+
+**当前范围与延后裁决**：消费共享目标简报的“本次延后”及原 ref-elements 来源；note 是 spec 理由，不是用户原文排除。范围已经明确而意见相反时更正 review 报告，实现违约由 coding 恢复原契约；只有登记错误、定义缺口或目标变化才回原设计/spec 责任方。defer 不豁免真实功能/数据缺陷，按当前严格度披露债务与发布状态。

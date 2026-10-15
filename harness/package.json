@@ -4,6 +4,7 @@
   "description": "Framework phase harness — scripts, fixture regressions, and runner (profile-aware)",
   "private": true,
   "scripts": {
+    "compile": "ts-node scripts/compile.ts",
     "check": "ts-node harness-runner.ts",
     "check:spec": "ts-node harness-runner.ts --phase spec",
     "check:plan": "ts-node harness-runner.ts --phase plan",

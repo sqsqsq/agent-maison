@@ -39,7 +39,8 @@ export interface OhpmInstallResult {
 export interface OhpmInstallOpts {
   projectRoot: string;
   harnessRoot: string;
-  feature: string;
+  feature?: string;
+  reportDir?: string;
   phase: string;
   frameworkRoot?: string;
 }
@@ -133,7 +134,9 @@ export function installProjectDeps(opts: OhpmInstallOpts): OhpmInstallResult {
     };
   }
 
-  const dir = ensureReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  if (!opts.reportDir && !opts.feature) throw new Error('reportDir or Feature is required');
+  const dir = opts.reportDir ?? ensureReportDir(opts.projectRoot, opts.feature!, opts.phase, opts.frameworkRoot);
+  fs.mkdirSync(dir, { recursive: true });
   const logAbs = path.join(dir, 'ohpm-install.log');
   const metaAbs = path.join(dir, 'ohpm-install.meta.json');
   const commandDisplay = resolved.commandDisplay;

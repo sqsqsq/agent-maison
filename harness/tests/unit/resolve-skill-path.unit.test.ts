@@ -75,6 +75,19 @@ const cases: Array<{ name: string; run: () => void }> = [
           readBridgeDescription(id) === resolveSkillDescription(FRAMEWORK_DIR, id),
           `index skill ${id} description 与 checked-in bridge 不一致`,
         );
+        if (['coding', 'code-review', 'business-ut', 'device-testing'].includes(id)) {
+          let expectedHint: string | undefined;
+          for (const host of ['claude', 'cursor', 'codeagent']) {
+            const command = fs.readFileSync(path.join(FRAMEWORK_DIR, 'agents', host, 'templates/commands', `${id}.md`), 'utf8');
+            const description = command.match(/^description: (.+)$/m)?.[1];
+            const hint = command.match(/^argument-hint: (.+)$/m)?.[1]?.replace(/^'|'$/g, '');
+            assert(description === resolveSkillDescription(FRAMEWORK_DIR, id), `${host}/${id} description 偏离索引`);
+            assert(Boolean(hint) && hint !== '<feature-name>' && hint !== '[feature-name]', `${host}/${id} 仍仅提示 Feature`);
+            if (expectedHint) assert(hint === expectedHint, `${host}/${id} argument-hint 与同职责入口不一致`);
+            expectedHint = hint;
+            if (id === 'device-testing') assert(description!.includes('解锁手机') && description!.includes('唤醒设备'), `${host} 丢失设备触发词`);
+          }
+        }
       }
     },
   },

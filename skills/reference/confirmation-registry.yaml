@@ -809,7 +809,7 @@ entries:
         label: "正式需求 — 回 /component-design 建立部件演进蓝图后再施工"
         portable: "1=正式需求"
       - value: non_formal_maintenance
-        label: "非正式维护 — 不改变行为/契约/数据/NFR/运行语义/架构责任，继续 L0/L1 施工分档"
+        label: "非正式维护 — 恢复明确既有预期或不改变契约/数据/NFR/运行语义/架构责任，按请求终点维护"
         portable: "2=非正式维护"
       - value: needs_clarification
         label: "信息不足 — 继续澄清后再判，不猜测、不默认按任一侧处理"

@@ -1,9 +1,7 @@
 ---
 name: business-ut
-description: 业务级 UT / DAG
+description: 为指定函数或本地新改代码补充、修复或运行 UT；无需需求号，写测试前确认载体。
 ---
-
-> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

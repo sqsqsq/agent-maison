@@ -1,9 +1,7 @@
 ---
 name: code-review
-description: 代码审查报告
+description: 审查当前 diff、提交或指定文件的代码质量；无需 Feature，默认只审不改。
 ---
-
-> **BLOCKER — Personal setup**：`check-personal-setup.ts --json --ensure`（见 [personal-setup-gate](../../../framework/skills/reference/personal-setup-gate.md)）。
 
 # 跳板文件
 

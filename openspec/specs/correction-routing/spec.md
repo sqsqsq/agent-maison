@@ -5,13 +5,15 @@ TBD - created by archiving change correction-routing. Update Purpose after archi
 ## Requirements
 ### Requirement: Attribution resolves before any edit
 
-对进行中工程的 NL 修正请求，agent MUST 在任何产物编辑发生前经 `resolveCorrectionTarget` 解析 feature 归属；无法确定时 MUST 先向用户确认或显式进入 no-feature correction 模式。"按 diff 经 catalog 反查"MUST 只作收尾对账手段，MUST NOT 作为首次归属来源。
+对在途 Feature 的 NL 修正请求，agent MUST 在任何产物编辑发生前经 `resolveCorrectionTarget` 解析 feature 归属；无法确定时 MUST 先向用户确认或显式进入 no-feature correction 模式。"按 diff 经 catalog 反查"MUST 只作收尾对账手段，MUST NOT 作为首次归属来源。
 
 #### Scenario: 归属不明先停
 - **WHEN** 修正请求无法映射到已管理 feature 且用户在场
 - **THEN** agent 停下确认归属或声明进入 no-feature 模式，而非先动手改
 
 > **Enforced by:** `harness/scripts/utils/runtime-policy.ts`（resolveCorrectionTarget）, `templates/AGENTS.md.template`
+
+普通维护 SHALL NOT 被要求执行 correction-init。恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。未点名 Feature 时，自动归属的旧 phase 指针 SHALL 在现有 `inspectCompletionRecord` verdict 为 VALID 时排除；drift SHALL NOT 改变记录判据。其余情况（含 receipt-only 历史 Feature）SHALL 保持既有行为，不新增在途/完成解析器。
 
 ### Requirement: Correction classifies to root layer with machine-computed revalidation
 
@@ -28,7 +30,7 @@ Enforcement: `harness/scripts/utils/correction-routing.ts`, `harness/harness-run
 
 The successor candidate SHALL retain the original owner phases of already-required acceptance and design contexts, including contexts previously satisfied by inputs without executing that phase. Current inputs and the existing resolver SHALL still decide reuse and execution: healthy fulfilled definitions SHALL NOT force an extra phase; definitions that lose reuse SHALL return to their responsible phase. A missing or unresolved write set SHALL NOT authorize coding before that owner rebuilds it. Birth start/end checks SHALL use the currently executable `phase_chain`; downstream unknown obligations remain required and are resolved through the existing scope revision path.
 
-A correction to a feature whose completion already exists SHALL be executed by a successor run started with `goal-runner --supersede <completed run>`. The successor's birth scope SHALL be re-resolved in that supersede context through the same candidate path as any birth: obligations are derived from the current inputs, prior phase evidence from the completion record is reused as `satisfied_by` only after the same evidence check, obligations the assessment entry `assessFeature` reports as uncovered are not reused, and `phase_chain` SHALL be the owner phases of the uncovered obligations. The successor SHALL NOT inherit the source run's scope wholesale. Before any run is created the source run MUST be loadable with a complete (or legacy) birth record, and when the feature frozen record exists its current transfer MUST be the supersede source; otherwise birth SHALL be refused without creating a run, writing an audit event or changing the transfer record. After the supersede audit event is written, the feature frozen record SHALL append a transfer to the successor and keep the earlier transfers. A feature completed on the feature carrier (no run) has no run to supersede: `--supersede` SHALL be refused and the correction SHALL append a feature scope revision and start a fresh run. `--revalidate` SHALL NOT be used as the post-completion exit.
+An explicitly requested formal re-delivery of a feature whose completion already exists SHALL be executed by a successor run started with `goal-runner --supersede <completed run>`. The successor's birth scope SHALL be re-resolved in that supersede context through the same candidate path as any birth: obligations are derived from the current inputs, prior phase evidence from the completion record is reused as `satisfied_by` only after the same evidence check, obligations the assessment entry `assessFeature` reports as uncovered are not reused, and `phase_chain` SHALL be the owner phases of the uncovered obligations. The successor SHALL NOT inherit the source run's scope wholesale. Before any run is created the source run MUST be loadable with a complete (or legacy) birth record, and when the feature frozen record exists its current transfer MUST be the supersede source; otherwise birth SHALL be refused without creating a run, writing an audit event or changing the transfer record. After the supersede audit event is written, the feature frozen record SHALL append a transfer to the successor and keep the earlier transfers. A feature completed on the feature carrier (no run) has no run to supersede: `--supersede` SHALL be refused and the correction SHALL append a feature scope revision and start a fresh run. `--revalidate` SHALL NOT be used as the post-completion exit.
 
 Enforcement: `harness/scripts/utils/feature-execution-scope.ts`（`resolveSuccessorExecutionScope`, `registerFeatureScopeTransfer`）, `harness/scripts/utils/feature-track.ts`（`resolveFeatureExecutionScope` reuse branch）, `harness/scripts/goal-phase-runtime.ts`
 
@@ -55,11 +57,11 @@ Enforcement: `harness/scripts/utils/correction-state.ts`, `harness/harness-runne
 
 ### Requirement: No-feature corrections run via adhoc entry
 
-无 feature 归属的修正 MUST 经 `--adhoc-correction` 专用入口执行验证，MUST NOT 为此创建临时 feature 目录。契约：输入 MUST 为含 `base_commit` 的 correction state（缺失/stale → exit 非零）；changed-files MUST 取 `git diff --name-only <base_commit>` ∪ 工作区未提交变更，触及模块经 catalog 反查记录回 state；必跑检查 MUST 含 profile `coding.compile`、`coding.lint`、架构规则（层依赖/跨模块出口）与受保护前缀（no-feature 下以此替代 `diff_within_scope`，越界防护不豁免）；报告 MUST 落 `framework/harness/reports/_adhoc/<timestamp>/` 并逐项列 revalidate 结果；revalidate 含 testing 时 evidence MUST 为 device 即席报告或 `manual_confirm` 记录，缺能力走验证转嫁禁令。
+显式请求 no-feature 综合维护检查时，MUST 经 `--adhoc-correction` 专用入口执行验证；普通维护和仅编译请求 MUST NOT 被强制进入该链，MUST NOT 为此创建临时 feature 目录。契约：输入 MUST 为含 `base_commit` 的 correction state（缺失/stale → exit 非零）；changed-files MUST 取 `git diff --name-only <base_commit>` ∪ 工作区未提交变更，触及模块经 catalog 反查记录回 state；必跑检查 MUST 含 profile `coding.compile`、`coding.lint`、架构规则（层依赖/跨模块出口）与受保护前缀（no-feature 下以此替代 `diff_within_scope`，越界防护不豁免）；报告 MUST 落 `doc/reports/_adhoc/<timestamp>/` 并逐项列 revalidate 结果；revalidate 含 testing 时 evidence MUST 为 device 即席报告或 `manual_confirm` 记录，缺能力走验证转嫁禁令。
 
 #### Scenario: 散修不造假目录
 - **WHEN** no-feature correction 完成实施并自检
-- **THEN** `--adhoc-correction` 读 correction state 跑上述检查清单，features_dir 无新增目录，报告落 `reports/_adhoc/`
+- **THEN** `--adhoc-correction` 读 correction state 跑上述检查清单，features_dir 无新增目录，报告落宿主 `doc/reports/_adhoc/`，内部构建/依赖安装日志使用同一宿主目录
 
 #### Scenario: 缺 base_commit 快速失败
 - **WHEN** `--adhoc-correction` 读到无 base_commit 的 correction state
@@ -91,7 +93,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/capability
 
 ### Requirement: User feedback after completion is successor input, not retrospective confirmation
 
-User feedback received after a valid feature completion SHALL create or amend a new correction/successor input bound to the new run identity. The prior run's evidence and completion result SHALL remain immutable audit history. The feedback SHALL route to spec when it changes the target requirement and to the responsible implementation phase when the requirement is unchanged.
+User feedback explicitly requesting formal re-delivery after a valid feature completion SHALL create or amend a new correction/successor input bound to the new run identity. The prior run's evidence and completion result SHALL remain immutable audit history. The feedback SHALL route to spec when it changes the target requirement and to the responsible implementation phase when the requirement is unchanged.
 
 Enforcement: `harness/scripts/utils/correction-routing.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-feature-completion.ts`
 
@@ -99,3 +101,17 @@ Enforcement: `harness/scripts/utils/correction-routing.ts`, `harness/scripts/goa
 
 - **WHEN** the user changes the desired layout after delivery rather than reporting an implementation mismatch
 - **THEN** the new successor input SHALL route to spec and the old run SHALL NOT gain or lose a confirmation mark
+
+### Requirement: Project compilation is independently callable
+
+The compile CLI SHALL use the existing profile project build and bounded recovery without Feature contracts, Git diff, correction state, receipts or a Goal run. Formal coding SHALL retain its contract checks and use the same project build; adhoc correction SHALL call that build without fabricating contracts. The operation SHALL resolve only the selected capability prerequisites, place logs in an isolated host report directory, and report failure for unavailable, skipped or unsuccessful compilation. It SHALL NOT modify product code, install an application or run other phase checks.
+
+#### Scenario: Compile without a change or Feature
+- **WHEN** the user requests project compilation with no Feature, correction state or Git changes
+- **THEN** the CLI runs the configured project build and returns its real result and precise host log paths
+
+#### Scenario: Completed pointer is not maintenance authority
+- **WHEN** an unqualified maintenance request encounters a phase pointer whose completion record is VALID, including drift
+- **THEN** the pointer does not attribute that request or request a successor run, and the old completion original remains unchanged
+
+> **Enforced by:** `harness/scripts/compile.ts`, `harness/scripts/utils/correction-routing.ts`, `harness/scripts/utils/correction-commands.ts`

@@ -154,7 +154,7 @@ function requireProviderFunction<T extends (...args: any[]) => any>(
 }
 
 export function dispatchCodingCompile(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'resolvedProfile'>,
   options: Record<string, unknown>,
 ): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'coding.compile', 'runHvigorAssembleApp');
@@ -162,7 +162,7 @@ export function dispatchCodingCompile(
 }
 
 export function dispatchDepsInstall(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'resolvedProfile'>,
   options: Record<string, unknown>,
 ): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'coding.deps_install', 'installProjectDeps');
@@ -243,7 +243,7 @@ export function analyzeProjectDependencyIssueViaProfile(
 }
 
 export function analyzeCodingDependencyIssueViaProfile(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'projectRoot' | 'frameworkRoot' | 'resolvedProfile'>,
   result: unknown,
 ): any {
   const fn = requireProviderFunction(
