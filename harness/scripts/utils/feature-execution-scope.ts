@@ -36,7 +36,7 @@ import {
   buildFeatureScopeCandidate, featureScopeCandidateFingerprint, featureTrackDeclPath, resolveFeatureExecutionScope, resolveWithPriorEvidence,
 } from './feature-track';
 import { inferRepoLayout } from '../../repo-layout';
-import { computeRequirementShaFromText } from './fidelity-shared';
+import { computeRequirementShaFromText, type FidelityTarget } from './fidelity-shared';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import type { CheckResult } from './types';
 
@@ -680,6 +680,7 @@ export function resolveBirthExecutionScope(
   workflow: WorkflowSpec,
   frameworkRoot?: string,
   requirement?: string,
+  manifestFidelity?: FidelityTarget,
 ): { scope: ExecutionScope | undefined; source: 'feature-record' | 'candidate' } {
   if (workflow.schema_version === '1.2') {
     const record = readFeatureFrozenScope(projectRoot, feature);
@@ -700,7 +701,7 @@ export function resolveBirthExecutionScope(
       return { scope: featureEffectiveScope(record), source: 'feature-record' };
     }
   }
-  return { scope: resolveFeatureExecutionScope(projectRoot, feature, workflow, frameworkRoot, requirement), source: 'candidate' };
+  return { scope: resolveFeatureExecutionScope(projectRoot, feature, workflow, frameworkRoot, requirement, manifestFidelity), source: 'candidate' };
 }
 
 /**
@@ -720,6 +721,7 @@ export function resolveSuccessorExecutionScope(
   frameworkRoot: string | undefined,
   requirement: string | undefined,
   sourceRunId: string,
+  manifestFidelity?: FidelityTarget,
 ): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return undefined;
   const record = readFeatureFrozenScope(projectRoot, feature);
@@ -753,7 +755,7 @@ export function resolveSuccessorExecutionScope(
   });
   // 需求血缘按 manifest.requirement 原文算（与 computeRunRequirementSha 同口径，不 trim）：需求未变即与源 run 相同、复用不受影响。
   return resolveWithPriorEvidence(candidate, workflow, {
-    projectRoot, feature, frameworkRoot: root, requirement: requirement?.trim() || undefined,
+    projectRoot, feature, frameworkRoot: root, requirement: requirement?.trim() || undefined, manifestFidelity,
     ...(requirement?.trim() ? { requirementSha: computeRequirementShaFromText(projectRoot, feature, requirement) } : {}),
   });
 }
@@ -793,12 +795,12 @@ function phasesWithExistingEvidence(projectRoot: string, feature: string, workfl
  */
 export function resolveBirthScopeForManifest(
   projectRoot: string,
-  manifest: { feature: string; requirement?: string; execution_scope?: unknown },
+  manifest: { feature: string; requirement?: string; execution_scope?: unknown; fidelity?: FidelityTarget },
   workflow: WorkflowSpec,
   frameworkRoot?: string,
 ): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return manifest.execution_scope ? validateExecutionScope(manifest.execution_scope) : undefined;
-  const resolved = resolveBirthExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement);
+  const resolved = resolveBirthExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement, manifest.fidelity);
   if (resolved.source === 'feature-record') return resolved.scope;
   return manifest.execution_scope ? validateExecutionScope(manifest.execution_scope) : resolved.scope;
 }

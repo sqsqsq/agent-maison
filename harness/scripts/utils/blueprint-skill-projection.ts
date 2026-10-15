@@ -622,7 +622,7 @@ const DESIGN_AUTHORITY_CLASS_ROWS: ReadonlyArray<readonly [DesignRepairClass, De
     'component_blueprint_root_invalid', 'component_blueprint_identity_mismatch', 'component_blueprint_invalid']],
   // ---- B2：设计门（§1 #5、§2；change-unit-design-gate）----
   ['B2', 'blueprint', 'CU 的 owner 蓝图或某条 design_ref 在当前蓝图解析不到：缺明确的替代目标，需要设计 owner 给出', ['change_unit_blueprint_unresolvable', 'change_unit_design_ref_unresolvable']],
-  ['B2', 'blueprint', 'CU 设计闭包缺稳定地址或 touch 未指向 development 视图节点：需要设计 owner 补设计闭包', ['change_unit_design_closure_incomplete', 'change_unit_touch_development_owner_missing']],
+  ['B2', 'change_unit', 'CU 设计闭包缺稳定地址或 touch 未指向 development 视图节点：设计 owner 按缺失地址修订 CU 的 design_refs/touches，沿既有 consumer 与恢复入口继续', ['change_unit_design_closure_incomplete', 'change_unit_touch_development_owner_missing']],
   ['B2', 'blueprint', '设计闭包内有未决决策、blocker 或 unknown：需要有权者裁决', ['change_unit_current_design_unresolved']],
   ['B2', 'blueprint', '闭包里的 contract 缺权威来源：需要取得权威来源', ['change_unit_contract_not_admitted']],
   ['B2', 'blueprint', '施工事实推翻了蓝图：需要回设计 owner 调和蓝图', ['change_unit_blueprint_reconciliation_required']],

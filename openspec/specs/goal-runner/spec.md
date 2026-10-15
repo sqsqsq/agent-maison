@@ -2177,6 +2177,21 @@ Enforcement: `harness/scripts/utils/goal-brief.ts`, `harness/scripts/utils/repor
 - **WHEN** spec defers the reference's bank-count difference and keeps the accepted twenty-bank contract
 - **THEN** all brief consumers receive that decision and its source, and an expansion request is checked against that scope rather than automatically dispatched as a coding repair
 
+### Requirement: Derive missing fidelity from the actual requirement in memory
+When fidelity intent is missing, scope-fact derivation SHALL use the existing pure fidelity router to infer only the selected target from an actually supplied requirement, with the same referenced-document expansion and current-feature exclusions as preflight. Preparation, birth and scope revision SHALL consume this common derivation without writing fidelity intent or capability snapshots. Existing valid intent SHALL remain authoritative, and corrupt intent SHALL NOT be treated as missing.
+
+#### Scenario: Pixel requirement exists only in a referenced document
+
+- **WHEN** a real requirement references a document requiring pixel fidelity and visual definitions are missing
+- **THEN** scope derivation SHALL retain that target and schedule spec before plan, without pre-initializing fidelity files
+- **AND** the existing spec initializer and capability checks SHALL remain responsible for persisted intent and hard-target capability decisions
+
+#### Scenario: Scope caller has no real requirement
+
+- **WHEN** a runless checker or CU projection supplies no requirement, or preparation uses only requested-results fallback text
+- **THEN** fidelity SHALL remain missing rather than being inferred from summaries
+- **AND** requested-results fallback SHALL retain its existing UI-relevance and binding semantics
+
 ### Requirement: Preserve unfinished delivery duties through recovery
 A successor SHALL inherit the owners of unfinished required obligations, including stages temporarily omitted from the executable chain by definition gaps. Unknown evidence SHALL be re-derived from current inputs rather than promoted to an explicitly requested phase. Valid completed evidence and cumulative budget SHALL remain governed by the existing recovery rules.
 

@@ -27,7 +27,13 @@ import { validateBlueprintAdmission } from '../../scripts/utils/blueprint-admiss
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
-import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
+import { reconcileChangeUnitBlueprintRefs, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
+import { validateChangeUnitCandidate } from '../../scripts/utils/change-unit-provider-boundary';
+import { diagnoseDesignAuthority } from '../../scripts/utils/blueprint-skill-projection';
+import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
+import { designOwnerBlockers } from '../../scripts/goal-phase-runtime';
+import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { loadResolvedProfile } from '../../profile-loader';
@@ -35,7 +41,7 @@ import { syntheticContractsView } from '../../scripts/check-exit';
 import { resolveModulePathPrefixes } from '../../scripts/utils/diff-scope';
 import { resolveMaterializedBuiltinSkillEntryRel } from '../../scripts/utils/instance-skill-bridge';
 import { resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
-import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
+import { validateChangeUnitDesign, deriveClosure } from '../../scripts/utils/change-unit-design-gate';
 
 const FRAMEWORK = DEFAULT_LAYOUT.frameworkRoot;
 const ID = 'SharedUi/src/SettingRow.ets#SettingRow';
@@ -265,6 +271,71 @@ test('provider/decision negative branches and missing-index admission split', ()
   gap.needed_by = bp.review_summary.admission.current_slice.slice_id;
   assert(validateBlueprintAdmission(bp).some(i => i.id === 'blueprint_current_unknown_not_blocking'));
   gap.status = 'blocker'; assert(!validateBlueprintAdmission(bp).some(i => i.id === 'blueprint_current_unknown_not_blocking'));
+}));
+
+test('66457a08 selection closure reports exact addresses and old CU uses design-owner recovery', () => setup(root => {
+  generate(root); const { bp, file, decision } = blueprintFixture(root);
+  const cu = cuForCurrentBlueprint(root);
+  const cuFile = loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh').canonicalPath;
+  const source = YAML.stringify(cu);
+  write(root, path.relative(root, cuFile), source);
+  const missing = validateChangeUnitDesign(root, cu);
+  assert(missing.issues.some(i => i.id === 'change_unit_design_closure_incomplete' && i.message.includes('decision:asset-row')));
+  assert.throws(() => validateChangeUnitCandidate(root, { providerId: 'consumer-validated-decomposition', artifact: cu }, loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh')), /change_unit_design_closure_incomplete.*decision:asset-row/);
+  assert.equal(fs.readFileSync(cuFile, 'utf8'), source, 'validation must not add references');
+  const ready = deriveDesignPreparationReadiness(root, 'ledger-app-blueprint');
+  assert(ready.perUnit.find(u => u.changeUnitId === 'ledger-refresh')?.issues.some(i => i.message.includes('decision:asset-row')));
+  const value = contracts(); value.feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
+  // Reuse the production check's design-only path: no future plan mapping is required to diagnose this CU.
+  const { validateChangeUnitFeatureProjection } = require('../../scripts/utils/change-unit-feature-projection') as typeof import('../../scripts/utils/change-unit-feature-projection');
+  const projection = validateChangeUnitFeatureProjection(root, value.feature, value, undefined, false, 'plan', [], { changeUnitOverride: cu, designOnly: true });
+  assert(projection.issues.some(i => i.id === 'change_unit_design_closure_incomplete' && i.route === 'repair_change_unit'));
+  value.change_unit = { change_unit_ref: createChangeUnitRef(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh')),
+    predicate_mappings: [], provide_mappings: [], design_ref_mappings: [] };
+  write(root, `doc/features/ledger-app-blueprint/ledger-refresh/contracts.yaml`, YAML.stringify(value));
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+  config.active_workflow = 'obligation-driven'; write(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+  for (const dir of ['harness', 'profiles', 'specs', 'skills', 'docs', 'templates']) fs.symlinkSync(path.join(FRAMEWORK, dir), path.join(root, 'framework', dir), process.platform === 'win32' ? 'junction' : 'dir');
+  fs.cpSync(path.join(FRAMEWORK, 'workflows'), path.join(root, 'framework/workflows'), { recursive: true });
+  prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: FRAMEWORK, feature: value.feature, completionTarget: 'feature',
+    requestedResults: ['交付页面设计'], requestedPhases: ['spec','plan'], requirement: '交付页面设计', overwrite: true });
+  const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: FRAMEWORK, feature: value.feature });
+  assert(frozen.record, JSON.stringify(frozen.checks));
+  const checks = checkChangeUnitFeatureProjection(context(root, value), 'plan');
+  const own = checks.find(c => c.id === 'change_unit_design_closure_incomplete')!;
+  assert.equal(designOwnerBlockers([own]).length, 1);
+  const diagnosis = diagnoseDesignAuthority(root, FRAMEWORK, value.feature, 'plan');
+  const finding = diagnosis.findings.find(f => f.check === own.id);
+  assert(finding, JSON.stringify(diagnosis));
+  assert(finding.artifacts.some(file => file.endsWith('change-unit.yaml')) && !finding.artifacts.some(file => file.endsWith('component-blueprint.yaml')));
+  const probe = () => probeDesignAuthorityRecovered(root, value.feature, 'plan', [own.id]);
+  assert.equal(probe().ready, false);
+  fs.unlinkSync(componentIndexPath(root));
+  assert(!validateChangeUnitDesign(root, cu).issues.some(i => i.message.includes('decision:asset-row')), 'no index must keep the old applicability');
+  write(root, relComponentIndex(root), 'schema_version: "1.0"\ncomponents: []\n');
+  assert(deriveClosure(bp, [decision.target_ref], root).has('decision:asset-row'), 'empty index still enables selection closure');
+  const multi = structuredClone(bp); multi.decisions_and_gaps.decisions.push({ ...decision, decision_id: 'second-selection' });
+  const closure = deriveClosure(multi, [decision.target_ref], root);
+  assert(closure.has('decision:asset-row') && closure.has('decision:second-selection'), 'closure must not choose one decision');
+  assert(!deriveClosure(bp, [], root).has('decision:asset-row'), 'targets outside the current closure must not import the decision');
+  generate(root);
+  const ref = { ...cu.component_blueprint_ref, target: { kind: 'decision', id: decision.decision_id } };
+  cu.design_refs.push(ref);
+  const revision = reviseChangeUnitContent(root, 'ledger-app-blueprint', [{ expectedRef: createChangeUnitRef(loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh')),
+    candidate: { providerId: 'consumer-validated-decomposition', artifact: cu } }]);
+  assert.equal(revision.revised.length, 1);
+  assert.equal(validateChangeUnitDesign(root, revision.revised[0].changeUnit).verdict, 'constructable');
+  assert.equal(probe().ready, true, 'original owner probe must see the CU repair');
+  for (const status of ['open_decision', 'blocker']) {
+    decision.status = status;
+    write(root, path.relative(root, file), YAML.stringify(bp));
+    const gate = validateChangeUnitDesign(root, cuForCurrentBlueprint(root));
+    assert.notEqual(gate.verdict, 'constructable', `${status} must not reach construction`);
+    assert(gate.issues.some(i => /asset-row|open decision|blocker|blueprint_/.test(i.message)), JSON.stringify(gate));
+  }
+  decision.status = 'decided_with_authority'; write(root, path.relative(root, file), YAML.stringify(bp));
+  write(root, relComponentIndex(root), 'invalid: [');
+  assert.notEqual(validateChangeUnitDesign(root, cuForCurrentBlueprint(root)).verdict, 'constructable', 'invalid index must retain its existing rejection');
 }));
 test('mechanical index → blueprint decision → CU refs → loader → plan/review → publication', () => setup(root => {
   generate(root); const { bp, file, decision } = blueprintFixture(root);

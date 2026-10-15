@@ -596,6 +596,22 @@ For architecture_impact decisions relevant to a CU (referenced by its design_ref
 
 ### Requirement: Fresh delivery uses the existing design handoff
 
+When the component index file exists, the existing CU design closure SHALL include every `component_asset_selection` decision whose exact `target_ref` is in that closure. An empty index SHALL NOT disable this expansion; absent indexes SHALL preserve the existing explicit-reference rules. Unresolved decisions SHALL retain their existing disposition checks, and design-only validation SHALL NOT require future plan mappings.
+
+Candidate rejection and readiness SHALL retain issue identifiers and expose their original messages, including missing design addresses. Acceptance SHALL NOT insert references or choose decisions for the author. CU-owned closure and touch errors SHALL use the existing design-owner route and identify the CU artifact; plan-owned mapping errors SHALL retain their plan repair route.
+
+#### Scenario: Selection reference omitted from the candidate
+
+- **WHEN** a CU references a node but omits an applicable selection decision
+- **THEN** acceptance SHALL reject without writing canonical content and report the missing decision address
+- **AND** the author can repair the candidate through the existing acceptance loop, including multiple decisions or a single decision shared by multiple components
+
+#### Scenario: Previously accepted CU has an incomplete closure
+
+- **WHEN** the plan checker discovers that a canonical CU omits a required selection reference
+- **THEN** the existing design-owner halt and probe SHALL receive the issue instead of repeating plan
+- **AND** the probe SHALL become ready only after the original issue is resolved through the existing CU revision path; stale bindings SHALL retain the existing successor rules
+
 `check:change-unit` SHALL expose the existing design preparation consumer using mutually exclusive `--accept-candidates <file>` and `--readiness`, as specified in `complex-capability-meta-model`. Candidates SHALL remain the existing JSON `ChangeUnitCandidate[]`; the command SHALL preserve atomic acceptance, repeated acceptance rejection and canonical identity derivation. Readiness SHALL retain pointer reconciliation/document side effects and accepted facts on subsequent failure, and SHALL NOT start Goal or bypass ready-set/selector dependencies. Default `--unit` checking SHALL stay compatible; mixing it with the new operations SHALL be a usage error.
 
 #### Scenario: Fresh delivery respects the existing handoff boundary

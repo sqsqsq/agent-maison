@@ -196,6 +196,8 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors，有组件索引/合法 typed UI 设计不要求提前写 change_unit；plan 及后续组件映射检查保持完整、组件选型设计原门不变，不新增设计期替代检查。
 
+组件索引文件在场时，CU 的 design_refs 须包含当前闭包目标对应的全部 component_asset_selection 决定；接受/readiness 返回缺失地址时，由设计 Agent 据原 message 修候选并重验，不让 plan 自行选型，也不由接受器自动补引用。
+
 供人评审的蓝图交付默认包含同目录 `component-blueprint.review.md`，仅定稿蓝图、尚无 CU 也适用；已有 canonical CU 同页展示需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
 
 ### 按评审问题写说明

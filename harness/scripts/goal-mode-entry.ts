@@ -173,7 +173,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     console.log(`[goal-mode-entry] 后继预算：${effectiveBudget.basis}`);
     // 与 runtime 合并块同一个函数：没有新内容时保留源合同全文，否则源全文 + 新增段（本次文本已是合并格式也不丢新增内容）
     manifest.requirement = deriveSuccessorRequirement(source.requirement, requirement);
-    const scope = resolveSuccessorExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, manifest.requirement, source.run_id);
+    const scope = resolveSuccessorExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, manifest.requirement, source.run_id, manifest.fidelity);
     if (scope) {
       if (!scope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
       Object.assign(manifest, { execution_scope: scope, start_phase: scope.phase_chain[0], end_phase: scope.phase_chain.at(-1)!, chain_override: [...scope.phase_chain] });

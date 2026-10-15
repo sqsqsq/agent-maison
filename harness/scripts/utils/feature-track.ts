@@ -13,6 +13,8 @@ import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { inferRepoLayout } from '../../repo-layout';
 import { SpecLoader } from './spec-loader';
+import { featureRelativePath } from './feature-identity';
+import type { FidelityTarget } from './fidelity-shared';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 // ============================================================================
 // feature-track.ts — feature.yaml 的 track 声明读取（C1 feature-track，plan d4a7c1e8）
@@ -23,7 +25,7 @@ import { validateChangeUnitFeatureProjection } from './change-unit-feature-proje
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { featureArtifactPath, featureFilePath, featurePhaseReportsDir } from '../../config';
+import { featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import type { FeatureCompletion } from './verify-feature-completion';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
@@ -114,7 +116,7 @@ export function featureRequirementBinding(projectRoot: string, feature: string):
 }
 
 /** Only fresh 1.2 runs read the candidate; resume never consults this mutable file. */
-export function resolveFeatureExecutionScope(projectRoot: string, feature: string, workflow: WorkflowSpec, frameworkRoot?: string, requirement?: string): ExecutionScope | undefined {
+export function resolveFeatureExecutionScope(projectRoot: string, feature: string, workflow: WorkflowSpec, frameworkRoot?: string, requirement?: string, manifestFidelity?: FidelityTarget): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return undefined;
   const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: ExecutionScopeInput };
   if (!raw?.execution_scope) throw new Error('[execution-scope] workflow 1.2 缺少运行前范围输入');
@@ -136,7 +138,7 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
     // requirement source: the real `--requirement` / `manifest.requirement`. Both birth entries
     // have one; the change-unit handoff projection has none, and **不编一份**——凭空拿
     // `requested_results` 当需求文本只会让每条 `derive.requirement` 绑定恒判 stale。
-    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || undefined }),
+    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || undefined, manifestFidelity }),
   );
 }
 
@@ -153,7 +155,7 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
 export function resolveWithPriorEvidence(
   input: ExecutionScopeInput,
   workflow: WorkflowSpec,
-  ctx: { projectRoot: string; feature: string; frameworkRoot: string; requirement?: string; requirementSha?: string },
+  ctx: { projectRoot: string; feature: string; frameworkRoot: string; requirement?: string; requirementSha?: string; manifestFidelity?: FidelityTarget },
 ): ExecutionScope {
   const { projectRoot, feature, frameworkRoot } = ctx;
   /* eslint-disable @typescript-eslint/no-require-imports */
@@ -311,6 +313,9 @@ function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, fe
 export function collectResolvedScopeFacts(
   input: ExecutionScopeInput,
   ctx: { projectRoot: string; feature: string; frameworkRoot: string; currentRunId?: string; requirement?: string | null;
+    manifestFidelity?: FidelityTarget;
+    /** requested_results may support the existing UI heuristic, but is not a fidelity requirement. */
+    requirementIsFallback?: boolean;
     /** True when `request.impact` was inherited from the effective scope rather than supplied by
      *  this proposal — its basis is then a birth-time observation and its content is not re-compared. */
     impactInherited?: boolean },
@@ -320,7 +325,7 @@ export function collectResolvedScopeFacts(
   const legacyRoot = inferLegacyProjectRoot(projectRoot, input);
   const relDep = (dep: { path: string }): string => relPosix(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot));
   /* eslint-disable @typescript-eslint/no-require-imports */
-  const { loadFidelityIntentSsotState, resolveUiRelevanceForRun } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  const { loadFidelityIntentSsotState, resolveUiRelevanceForRun, dereferenceRequirementDocs, resolveFidelityRoutingDecision, computeRequirementShaFromText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
   const { uiSpecAbsPath, loadUiSpecFile } = require('./ui-spec-shared') as typeof import('./ui-spec-shared');
   const { executionScopeEvidenceIssues } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
   /* eslint-enable @typescript-eslint/no-require-imports */
@@ -345,6 +350,20 @@ export function collectResolvedScopeFacts(
     // 执行去填），不降成 WARN、不新开出口。解析复用既有唯一 loader（含形状归一化）。
     visual_acceptance_present: loadUiSpecFile(uiSpecAbsPath(projectRoot, feature)) !== null,
   };
+  if (ssot.state === 'missing' && ctx.requirement?.trim() && !ctx.requirementIsFallback) {
+    const featuresDirRel = relFeaturesDir(projectRoot);
+    const deref = dereferenceRequirementDocs(projectRoot, ctx.requirement, {
+      featuresDirRel, excludePrefixes: [`${featuresDirRel}/${featureRelativePath(feature)}/`],
+    });
+    const manifest = ctx.currentRunId
+      ? (require('./goal-manifest') as typeof import('./goal-manifest')).loadGoalManifestFromRun(projectRoot, ctx.currentRunId, { feature }) : undefined;
+    // Only selected is consumed; capability/defer and signing remain the runtime preflight's job.
+    const routing = resolveFidelityRoutingDecision({ requirementText: deref.combined, manifestFidelity: ctx.manifestFidelity ?? manifest?.fidelity,
+      capability: { hasVision: false, ocrAvailable: false }, executionIdentity: ctx.currentRunId ?? `phase:${feature}:spec`,
+      requirementSha: computeRequirementShaFromText(projectRoot, feature, ctx.requirement, featuresDirRel) ?? '',
+    });
+    Object.assign(fidelity, { state: 'valid', selected_fidelity: routing.selected });
+  }
 
   // Target sets the impact relevance check runs against (§4.1.3). Paths stay project-relative.
   const derivePaths = (predicate: (fact: ExecutionScopeInput['facts'][number]) => boolean): string[] => [...new Set(input.facts.filter(predicate)
@@ -661,7 +680,7 @@ export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput):
   // 同一个 resolver、同一份已解析事实——投影出来的就是冻结时会得到的结果。
   const scope = resolveExecutionScope(candidate, resolveWorkflowSpecForCandidate(projectRoot, frameworkRoot),
     readScopeAcceptance(projectRoot, candidate, { feature, frameworkRoot }),
-    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n') }));
+    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n'), requirementIsFallback: !input.requirement?.trim() }));
 
   const abs = featureTrackDeclPath(projectRoot, feature);
   const existing = fs.existsSync(abs) ? (YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown> | null) ?? {} : {};

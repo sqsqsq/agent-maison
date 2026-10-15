@@ -91,7 +91,7 @@ export function validateChangeUnitCandidate(projectRoot: string, candidate: Chan
   if (design.verdict !== 'constructable') {
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_design_rejected',
-      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => item.id).join(',')}`,
+      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => `${item.id}: ${item.message}`).join('；')}`,
     );
   }
   return target;

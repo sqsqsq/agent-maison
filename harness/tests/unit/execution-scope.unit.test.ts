@@ -85,6 +85,64 @@ function request(phases: string[], completion_target: 'request' | 'feature' = 'r
   return { request: { completion_target, requested_results: ['requested-result'], requested_phases: phases }, facts: [], contract_fingerprints: [] };
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
+  { name: '66457a08 fidelity uses dereferenced real requirements, never writes or promotes fallback text', run() {
+    const { root, frameworkRoot, feature } = setupRunlessProject();
+    try {
+      const { fidelityIntentSsotPath, capabilitySnapshotPath } = require('../../scripts/utils/fidelity-shared') as typeof import('../../scripts/utils/fidelity-shared');
+      const { initializeFidelityRouting } = require('../../scripts/utils/goal-preflight') as typeof import('../../scripts/utils/goal-preflight');
+      fs.mkdirSync(path.join(root, 'doc/requirements'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'doc/requirements/visual.md'), '页面必须逐像素 1:1 还原参考图。\n');
+      const requirement = '实现 doc/requirements/visual.md 中的需求';
+      const candidate = request(['coding', 'review', 'ut'], 'feature');
+      const ctx = { projectRoot: root, frameworkRoot, feature };
+      assert.equal(collectResolvedScopeFacts(candidate, ctx).fidelity.state, 'missing');
+      assert.equal(collectResolvedScopeFacts(candidate, { ...ctx, requirement: '逐像素 1:1', requirementIsFallback: true }).fidelity.state, 'missing');
+      const inferred = collectResolvedScopeFacts(candidate, { ...ctx, requirement }).fidelity;
+      assert.equal(inferred.selected_fidelity, 'pixel_1to1');
+      assert(!fs.existsSync(fidelityIntentSsotPath(root, feature)) && !fs.existsSync(capabilitySnapshotPath(root, feature)), 'scope inference must not initialize files');
+      const prepared = prepareFeatureScopeCandidate({ ...ctx, completionTarget: 'feature', requestedResults: ['实现页面'], requestedPhases: ['spec','plan','coding','review','ut'], requirement, overwrite: true,
+        impact: { userVisibleBehaviorChange: true, reason: '页面变更', basisPaths: ['src/demo/value.ts'] } });
+      assert.equal(prepared.scope.phase_chain[0], 'spec');
+      assert(prepared.scope.obligations.some(o => o.kind === 'visual-evidence' && o.applicability === 'required'));
+      assert(!fs.existsSync(fidelityIntentSsotPath(root, feature)), 'prepare must stay zero-write for fidelity');
+      const fallback = prepareFeatureScopeCandidate({ ...ctx, completionTarget: 'feature', requestedResults: ['逐像素 1:1'], requestedPhases: ['coding','review','ut'], overwrite: true,
+        impact: { userVisibleBehaviorChange: false, reason: '内部改动', basisPaths: ['src/demo/value.ts'] } });
+      assert(!fallback.scope.phase_chain.includes('spec'), 'requested_results is not a fidelity requirement');
+      const self = featureFilePath(root, feature, 'self-request.md'); fs.writeFileSync(self, '逐像素 1:1');
+      assert.equal(collectResolvedScopeFacts(candidate, { ...ctx, requirement: '调整 ' + path.relative(root, self).replace(/\\/g, '/') }).fidelity.selected_fidelity, 'semantic_layout');
+      const routing = initializeFidelityRouting({ ...ctx, requirement, featuresDirRel: 'doc/features', executionIdentity: `phase:${feature}:spec`, requirementProvenance: 'explicit_cli' });
+      assert.equal(routing.routing.selected, inferred.selected_fidelity, 'scope and initializer must consume the same expanded text');
+      const bytes = fs.readFileSync(fidelityIntentSsotPath(root, feature));
+      assert.equal(collectResolvedScopeFacts(candidate, { ...ctx, requirement: '内部取值' }).fidelity.selected_fidelity, 'pixel_1to1');
+      assert(fs.readFileSync(fidelityIntentSsotPath(root, feature)).equals(bytes));
+      fs.writeFileSync(fidelityIntentSsotPath(root, feature), '{');
+      assert.equal(collectResolvedScopeFacts(candidate, { ...ctx, requirement }).fidelity.state, 'corrupt');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: '66457a08 explicit fidelity reaches birth and successor without pixel wording', run() {
+    const { root, frameworkRoot, feature } = setupRunlessProject();
+    try {
+      const requirement = '新增账目页面';
+      const ctx = { projectRoot: root, frameworkRoot, feature };
+      prepareFeatureScopeCandidate({ ...ctx, completionTarget: 'feature', requestedResults: ['交付账目页面'], requestedPhases: ['plan','coding','review','ut'], requirement, overwrite: true,
+        impact: { userVisibleBehaviorChange: true, reason: '新增页面', basisPaths: ['src/demo/value.ts'] } });
+      const workflow = loadWorkflowSpec(frameworkRoot, 'd1');
+      const born = resolveBirthScopeForManifest(root, { feature, requirement, fidelity: 'pixel_1to1' }, workflow, frameworkRoot)!;
+      assert.equal(born.phase_chain[0], 'spec');
+      assert(born.obligations.some(o => o.kind === 'visual-evidence' && o.applicability === 'required'));
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+      execFileSync('git', ['add', '.'], { cwd: root });
+      execFileSync('git', ['-c','user.name=F','-c','user.email=f@e.test','commit','-qm','base'], { cwd: root });
+      prepareGoalModeRun({ ...ctx, runId: 'fidelity-source', adapter: 'generic', requirement });
+      const next = resolveSuccessorExecutionScope(root, feature, workflow, frameworkRoot, requirement, 'fidelity-source', 'pixel_1to1')!;
+      assert.equal(next.phase_chain[0], 'spec');
+      assert(next.obligations.some(o => o.kind === 'visual-evidence' && o.applicability === 'required'));
+      const { initializeFidelityRouting } = require('../../scripts/utils/goal-preflight') as typeof import('../../scripts/utils/goal-preflight');
+      const routing = initializeFidelityRouting({ ...ctx, requirement, manifestFidelity: 'pixel_1to1', featuresDirRel: 'doc/features', executionIdentity: `phase:${feature}:spec`, requirementProvenance: 'explicit_cli' });
+      assert.equal(routing.routing.selected, 'pixel_1to1');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
   { name: '4f spec 实际输入入口对齐冻结测试分组及同阶段调研增补', run() {
     const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec', 'plan', 'coding', 'review', 'ut'] });
     try {
@@ -3012,12 +3070,12 @@ cases.push({ name: 'D1 a superseding successor is born from the source run, not 
     assert(fs.existsSync(succManifestPath), '后继 run 没有建起来：' + out);
     const succ = JSON.parse(fs.readFileSync(succManifestPath, 'utf8')) as { successor_of?: string; execution_scope?: unknown };
     assert.equal(succ.successor_of, 'd1-src');
-    // plan b2d7f4e9 §3.2：后继范围在 supersede 上下文从候选重解析；源 run 没有任何完成证据可复用，
-    // 所以重解析结果与源 run 出生范围一致（有证据时见 successor-exit 套件）
-    assert.equal(
-      executionScopeFingerprint(validateExecutionScope(succ.execution_scope)),
-      executionScopeFingerprint(sourceBirth),
-    );
+    // The runless freeze had no requirement text; successor can now derive fidelity from the real request.
+    // That changes the explanatory reason, not the duties or the executable chain.
+    const successorScope = validateExecutionScope(succ.execution_scope);
+    assert.deepStrictEqual(successorScope.phase_chain, sourceBirth.phase_chain);
+    assert.deepStrictEqual(successorScope.obligations.map(o => [o.id, o.kind, o.owner_phase, o.applicability]),
+      sourceBirth.obligations.map(o => [o.id, o.kind, o.owner_phase, o.applicability]));
     // 转交记录追加式：旧转交保留，最新一条指向后继
     assert.deepStrictEqual(readFeatureFrozenScope(root, feature)!.transfers?.map(item => item.run_id), ['d1-src', 'd1-succ'], out);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }

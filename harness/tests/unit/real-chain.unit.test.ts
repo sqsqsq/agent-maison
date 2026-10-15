@@ -57,6 +57,8 @@ import { BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-d
 import { tryAcquireLock, releaseLock } from '../../scripts/utils/goal-run-lock';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
+import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
+import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -1479,6 +1481,103 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
     else console.log('--- kept root', project.root);
     clearFrameworkConfigCache();
   }
+});
+
+for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU→plan summary→design-owner halt→revision→probe ready' : 'selection rejection→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
+  const project = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(project, 'claude'); writeHostFile(project.root, 'CLAUDE.md', '# CLAUDE\n');
+    const { cu } = seedCuBoundHost(project);
+    const workspace = path.join(cu.root, 'doc/features/ledger-app-blueprint');
+    const names = ['LedgerPage', 'AccountSheet', 'ChoicePage', 'CodeSheet', 'ResultPage', 'HomePage', 'ListPage'];
+    writeHostFile(cu.root, 'doc/component-index.yaml', 'schema_version: "1.0"\ncomponents: []\n');
+    rewriteBlueprint(cu.root, bp => {
+      const unit = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit as any;
+      const node = asRecord(resolveBlueprintTarget(bp, unit.design_refs[0].target))!;
+      (node.contracts as BlueprintRecord).components = names.map(name => ({ name, module: 'ledger', file: CU_SOURCE,
+        kind: 'page', decorator: '@Component', asset_selection: { resolution: 'custom', rationale: '当前账本界面专用' } }));
+      const dev = asRecords(bp.design_views).find(v => v.view_id === 'development')!;
+      const target = asRecords(dev.nodes)[0]; target.kind = 'component'; target.module = 'ledger';
+      (asRecord(bp.decisions_and_gaps)!.decisions as BlueprintRecord[]).push({ decision_id: 'ledger-ui-selection', kind: 'component_asset_selection',
+        target_ref: `view:development/node:${target.node_id}`, asset_resolution: 'custom', rationale: '当前账本界面专用',
+        status: 'answered_with_evidence', owner: 'ledger', verification_refs: [CU_SOURCE],
+        provenance: { ...asRecord(bp.provenance), source_ref: 'doc/component-index.yaml' } });
+      const provider = asRecords(bp.providers).find(p => p.provider_id === 'component-assets')!;
+      provider.available = true; delete provider.missing_disposition;
+    });
+    const loaded = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh');
+    const candidate = { providerId: 'consumer-validated-decomposition', artifact: structuredClone(asChangeUnitArtifact(loaded.changeUnit)) };
+    for (const dir of fs.readdirSync(workspace, { withFileTypes: true }).filter(d => d.isDirectory() && d.name !== 'blueprint')) {
+      fs.rmSync(path.join(workspace, dir.name), { recursive: true, force: true });
+    }
+    let refusal = '';
+    try { acceptChangeUnitDecomposition(cu.root, 'ledger-app-blueprint', [candidate]); } catch (error) { refusal = (error as Error).message; }
+    assert(refusal.includes('decision:ledger-ui-selection'), refusal);
+    assert(!fs.existsSync(loaded.canonicalPath), 'rejected candidate must not create canonical CU');
+    candidate.artifact.design_refs.push({ ...candidate.artifact.component_blueprint_ref, target: { kind: 'decision', id: 'ledger-ui-selection' } });
+    acceptChangeUnitDecomposition(cu.root, 'ledger-app-blueprint', [candidate]);
+    const readiness = deriveDesignPreparationReadiness(cu.root, 'ledger-app-blueprint');
+    assert(readiness.ready, JSON.stringify(readiness));
+    const ref = `${cuRel(cu)}/ux-reference/ledger.png`;
+    writeHostBytes(cu.root, ref, fs.readFileSync(path.join(cu.root, REAL_CHAIN_PNG_EXISTING)));
+    const requirement = oldCu ? CU_REQUIREMENT : `新增账目页面，按参考图 ${ref} 逐像素 1:1 复现，并验证业务入口。`;
+    writeHostFile(cu.root, 'doc/selection-request.md', requirement);
+    const prepare = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(cu.harnessDir, 'scripts/goal-mode-entry.ts'),
+      '--prepare-scope', '--project-root', cu.root, '--framework-root', cu.frameworkRoot, '--feature', cu.feature,
+      '--completion-target', 'feature', '--requested-results', '交付账本页面', '--requested-phases', 'plan,coding,review,ut,testing',
+      '--requirement-file', 'doc/selection-request.md', '--impact-behavior-change', String(!oldCu), '--impact-reason', oldCu ? '内部账本变更' : '新增界面', '--impact-basis', CU_SOURCE],
+      { cwd: cu.root, encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(cu.harnessDir, 'tsconfig.json') } });
+    assert(prepare.status === 0, prepare.stdout + prepare.stderr);
+    const birth = JSON.parse(prepare.stdout.slice(prepare.stdout.indexOf('{'))).phase_chain as string[];
+    assert(birth[0] === (oldCu ? 'plan' : 'spec'), prepare.stdout);
+    assert(!fs.existsSync(path.join(cu.root, `${cuRel(cu)}/spec/reports/fidelity-intent.json`)), 'prepare must not write fidelity');
+    git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'selection handoff baseline']);
+    const probe = await runGoalRuntimeChain(cu.root, { frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'claude', realHarness: true,
+      freshStartPhase: birth[0] as 'spec' | 'plan', freshEndPhase: birth.at(-1), omitRequirement: true, launchArgs: ['--requirement-file', 'doc/selection-request.md'],
+      freshManifestContent: YAML.stringify({ feature: cu.feature, requirement, requirement_source_files: ['doc/selection-request.md'],
+        budget: { max_total_turns: 4 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }),
+      onSpec: ctx => {
+        cu.runId = ctx.runId; writeCuSpecMaterials(cu);
+        writeHostFile(cu.root, `${cuRel(cu)}/spec/spec.md`, '# 页面定义\n```yaml\nui_change: new_or_changed\nfidelity_target: pixel_1to1\nvisual_handoff:\n  kind: repo_assets\n  authoritative_refs:\n    - id: ledger\n      path: ' + ref + '\n```\n');
+        writeHostFile(cu.root, `${cuRel(cu)}/spec/ui-spec.yaml`, YAML.stringify({ schema_version: '1.0', verified: 'verified', verified_method: 'vl_multimodal',
+          screens: [{ id: 'ledger', ref_id: 'ledger', priority: 'P1', root: { type: 'navigation_frame', order: 0, children: [{ id: 'value', type: 'content_display', order: 0, text: '余额' }] } }],
+          tokens: { gap: { kind: 'spacing', value: '16vp' } }, assets: [] }));
+        writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(ref)]); if (ctx.attempt > 1) publishVerifier(cu, 'spec');
+      },
+      onPlan: ctx => {
+        cu.runId = ctx.runId; writeCuPlanMaterials(cu);
+        const file = path.join(cu.root, `${cuRel(cu)}/contracts.yaml`); const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
+        contracts.change_unit.design_ref_mappings.find((m: any) => m.design_ref.target.id === 'ledger-ui-selection').implementation_refs = names.map(name => `planned:${CU_SOURCE}#${name}`);
+        fs.writeFileSync(file, YAML.stringify(contracts));
+        writeHostFile(cu.root, `${cuRel(cu)}/plan/visual-parity.yaml`, YAML.stringify({ mappings: { assets: [], tokens: [{ ui_spec_key: 'gap', contract_resource_key: 'gap' }], components: [] } }));
+        if (oldCu) {
+          // Existing canonical content with the pre-fix omission, discovered during plan.
+          const legacy = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh');
+          const content = asChangeUnitArtifact(legacy.changeUnit);
+          content.design_refs = content.design_refs.filter(r => r.target.id !== 'ledger-ui-selection');
+          fs.writeFileSync(legacy.canonicalPath, YAML.stringify(content));
+          contracts.change_unit.change_unit_ref = createChangeUnitRef(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh'));
+          fs.writeFileSync(file, YAML.stringify(contracts));
+        }
+        if (ctx.attempt > 1) publishVerifier(cu, 'plan');
+      },
+    });
+    assert(probe.invokedPhases[0] === (oldCu ? 'plan' : 'spec') && !probe.invokedPhases.includes('coding'), JSON.stringify(probe.invokedPhases));
+    if (oldCu) {
+      assert(probe.invokedPhases.filter(p => p === 'plan').length === 1, JSON.stringify(probe.invokedPhases));
+      assert(readSummary(cu, 'plan')?.blockers?.some(c => c.id === 'change_unit_design_closure_incomplete'), dumpPhase(cu, 'plan'));
+      assert(probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved' && e.probe === 'design_authority_projectable'), JSON.stringify(probe.events.slice(-8)));
+      const check = () => probeDesignAuthorityRecovered(cu.root, cu.feature, 'plan', ['change_unit_design_closure_incomplete'], cu.runId);
+      assert(!check().ready, 'unrepaired CU must not wake');
+      writeHostFile(cu.root, `${cuRel(cu)}/repair-notes.md`, '已修复（仅说明，无定义变化）');
+      assert(!check().ready, 'notes alone must not wake');
+      const before = loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh');
+      const fixed = asChangeUnitArtifact(before.changeUnit);
+      fixed.design_refs.push({ ...fixed.component_blueprint_ref, target: { kind: 'decision', id: 'ledger-ui-selection' } });
+      const revision = reviseChangeUnitContent(cu.root, 'ledger-app-blueprint', [{ expectedRef: createChangeUnitRef(before), candidate: { providerId: 'consumer-validated-decomposition', artifact: fixed } }]);
+      assert(revision.revised.length === 1 && check().ready, JSON.stringify({ revised: revision.revised.length, probe: check() }));
+    } else for (const phase of ['spec', 'plan']) assert(readSummary(cu, phase)?.verdict === 'PASS' && readSummary(cu, phase)?.closure_status === 'closed', dumpPhase(cu, phase));
+  } finally { if (!DEBUG) fs.rmSync(project.root, { recursive: true, force: true }); else console.log('--- kept root', project.root); clearFrameworkConfigCache(); }
 });
 
 /** 公开入口 `goal-status` 在工程自己的框架根下子进程运行，返回 `feature_status=…` 行（生产 `assessFeature`）。 */

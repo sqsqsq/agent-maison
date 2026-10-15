@@ -599,6 +599,7 @@ export interface DesignPreparationReadiness {
     changeUnitId: string;
     verdict: string;
     issueIds: string[];
+    issues: ReturnType<typeof validateChangeUnitDesign>['issues'];
     projectionIssues: Array<Pick<BlueprintSkillProjection, 'codes' | 'detail'> & { kind: BlueprintProjectionKind }>;
   }>;
   /** 恒为 false —— 设计准备段不进入 selector、Goal Mode 施工循环与 P3 closure。 */
@@ -633,6 +634,7 @@ export function deriveDesignPreparationReadiness(
       changeUnitId: String(loaded.changeUnit.change_unit_id),
       verdict: projectionIssues.length ? 'blocked' : design.verdict as string,
       issueIds: [...new Set([...design.issues.map(item => item.id), ...projectionIssues.flatMap(item => item.codes)])],
+      issues: design.issues,
       projectionIssues,
     };
   }).sort((a, b) => (a.changeUnitId < b.changeUnitId ? -1 : a.changeUnitId > b.changeUnitId ? 1 : 0));

@@ -5550,7 +5550,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 这一步在 createGoalRun 之前：拒绝即不建 run、不写审计、不动转交记录。
     if (manifest.successor_of) {
       try {
-        requestedExecutionScope = resolveSuccessorExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement, manifest.successor_of);
+        requestedExecutionScope = resolveSuccessorExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement, manifest.successor_of, manifest.fidelity);
       } catch (error) {
         throw new Error(`[goal-runner] BLOCKER: successor 出生范围无法解析（源=${manifest.successor_of}）：${(error as Error).message}`);
       }

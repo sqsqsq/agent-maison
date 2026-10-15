@@ -331,7 +331,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8')
         .replace('source_code_paths:\n  - src/demo/value.ts', 'source_code_paths:\n  - src/demo/value.ts\n  - src/demo/researched.ts\n  - src/demo/Legacy.ets')
         .replace('key_inputs_read:\n  - src/demo/value.ts', 'key_inputs_read:\n  - src/demo/value.ts\n  - build-profile.json5\n  - src/demo/Legacy.ets'));
-      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace(`run_id: ${f.manifest.run_id}`, `frozen_scope_fingerprint: ${executionScopeFingerprint(prepared.scope)}`).replace('established_by: coding', 'established_by: spec'));
+      fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace(`run_id: ${f.manifest.run_id}`, `frozen_scope_fingerprint: ${executionScopeFingerprint(frozen.record!.execution_scope)}`).replace('established_by: coding', 'established_by: spec'));
       const first = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', requirement: 'make value 42' });
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'spec', factsContext: first.factsContext,
         requirementSha: computeRequirementShaFromText(f.root, 'demo', 'make value 42', 'doc/features') }));

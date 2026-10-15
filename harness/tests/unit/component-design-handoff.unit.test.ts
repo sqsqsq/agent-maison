@@ -235,7 +235,9 @@ export function runAll(): UnitCaseResult[] {
       const readiness = () => {
         try {
           const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
-          return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit: ready.perUnit, entersConstruction: ready.entersConstruction };
+          // Diagnostic messages include current blueprint hashes; compare the admission fields.
+          const perUnit = ready.perUnit.map(({ issues, ...unit }) => ({ ...unit, issues: issues.map(({ message, ...issue }) => issue) }));
+          return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit, entersConstruction: ready.entersConstruction };
         } catch (error) {
           assert(String(error).includes('blueprint') || String(error).includes('蓝图'), `readiness 抛出无关错误：${String(error)}`);
           return { ready: false };

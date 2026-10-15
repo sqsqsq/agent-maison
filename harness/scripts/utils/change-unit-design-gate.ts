@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import { componentIndexPath } from '../../config';
 import {
   BlueprintRecord,
   ComponentBlueprintRef,
@@ -98,9 +100,11 @@ function contractIsAdmitted(record: BlueprintRecord): boolean {
   return provenance?.evidence_strength === 'authoritative';
 }
 
-function deriveClosure(blueprint: BlueprintRecord, roots: string[]): Set<string> {
+export function deriveClosure(blueprint: BlueprintRecord, roots: string[], projectRoot: string): Set<string> {
   const index = stableAddressIndex(blueprint);
   const required = new Set(roots);
+  const selections = fs.existsSync(componentIndexPath(projectRoot))
+    ? asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).filter(decision => decision.kind === 'component_asset_selection') : [];
   let changed = true;
   while (changed) {
     changed = false;
@@ -112,6 +116,13 @@ function deriveClosure(blueprint: BlueprintRecord, roots: string[]): Set<string>
           required.add(linked);
           changed = true;
         }
+      }
+    }
+    for (const decision of selections) {
+      const id = getId(decision, 'decision_id');
+      if (id && required.has(String(decision.target_ref)) && !required.has(`decision:${id}`)) {
+        required.add(`decision:${id}`);
+        changed = true;
       }
     }
     for (const relation of asRecords(blueprint.relations)) {
@@ -182,7 +193,7 @@ export function validateChangeUnitDesign(
     const ref = asRecord(touch.design_ref) as unknown as ComponentBlueprintRef | undefined;
     if (ref) roots.add(blueprintRefAddress(ref));
   }
-  const required = deriveClosure(blueprint, [...roots]);
+  const required = deriveClosure(blueprint, [...roots], projectRoot);
   const explicit = new Set(explicitAddresses);
   for (const address of [...required].sort()) {
     if (!explicit.has(address)) {
