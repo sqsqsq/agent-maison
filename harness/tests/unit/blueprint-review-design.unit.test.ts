@@ -35,6 +35,75 @@ function target(bp: BlueprintRecord, id: string): BlueprintRecord { return asRec
 function update(f: Fixture, mutate: (bp: BlueprintRecord) => void, bind = true): void { const bp = blueprint(f); mutate(bp); fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); if (bind) f.bind(); }
 function render(f: Fixture): string { return loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').markdown; }
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'restart repeated graph references link to the first drawing or its invalid and stale explanation', run(f) {
+    for (const state of ['current', 'invalid', 'stale']) {
+      const bp = blueprint(f);
+      const graph = { graph_id: 'restart-submit', label: '提交与确认时序', format: 'mermaid', source_view_id: 'runtime',
+        content: 'sequenceDiagram\nparticipant Page\nparticipant Repo\nPage->>Repo: 保存记录', node_refs: ['view:runtime/flow:ledger-refresh-flow'], relation_refs: [] };
+      if (state === 'invalid') graph.content = 'sequenceDiagram\nparticipant Page\nPage->>Missing: 保存记录';
+      bp.generated_graphs = [graph]; bp.derived_results = [{ result_id: graph.graph_id, input_revision: state === 'stale' ? -1 : bp.revision, source_fingerprint: bp.source_fingerprint, decision_fingerprint: bp.decision_fingerprint, status: 'current' }];
+      asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: ['journey', 'flows', 'recovery'].map(section => ({ section, title: `${section}说明`, prose: '提交后等待确认。', source_refs: ['/design_views'], graph_ids: [graph.graph_id, 'unknown-graph'] })) };
+      const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:restart-graph');
+      const id = blueprintReviewAnchor(`graph:${graph.graph_id}`); const first = text.indexOf(`<a id="${id}"></a>`);
+      assert.equal(text.split(`<a id="${id}"></a>`).length - 1, 1);
+      for (const [start, end] of [['## 6 关键流程', '## 7 数据与存储'], ['## 9 失败与恢复', '## 10 质量与安全']]) {
+        const section = text.slice(text.indexOf(start), text.indexOf(end)); assert(section.includes(`[提交与确认时序](#${id})`), state);
+      }
+      assert(first > text.indexOf('## 4 用户旅程与界面') && first < text.indexOf('## 5 整体方案'));
+      assert.equal(text.split(graph.content).length - 1, state === 'current' ? 1 : 0);
+      if (state !== 'current') assert(text.slice(first).includes(state === 'invalid' ? '无效，未展示' : '已过期'));
+      assert(text.includes('说明引用的图不存在：unknown-graph')); assert.equal(JSON.stringify(bp), before);
+    }
+  } },
+  { name: 'restart acceptance object and collection sources expand only their target and deduplicate overlapping entries', run(f) {
+    const bp = blueprint(f); const views = asRecords(bp.design_views); const dev = views.find(view => view.view_id === 'development')!; const nodes = asRecords(dev.nodes);
+    const own = target(bp, 'ledger-module'); const report = target(bp, 'ledger-report-module'); const original = asRecord(own.acceptance)!;
+    const criterion = asRecords(original.criteria)[0];
+    own.acceptance = { ...original, criteria: [{ ...criterion, id: 'AC-1' }, { ...criterion, id: 'AC-2' }], boundaries: [{ ...asRecords(original.boundaries)[0], id: 'BD-1' }], performance: [{ ...asRecords(original.performance)[0], id: 'NFR-1' }] };
+    asRecords(asRecord(report.acceptance)!.criteria)[0].id = 'AC-1';
+    const pointer = (node: BlueprintRecord) => `/design_views/${views.indexOf(dev)}/nodes/${nodes.indexOf(node)}/acceptance`;
+    const rows = [
+      { title: '整个目标', source_refs: [pointer(own), `${pointer(own)}/criteria/0`] },
+      { title: '报表功能', source_refs: [`${pointer(report)}/criteria`] },
+      { title: '仅边界', source_refs: [`${pointer(own)}/boundaries`] },
+      { title: '仅质量', source_refs: [`${pointer(own)}/performance`] },
+      { title: '同名跨目标', source_refs: [`${pointer(own)}/criteria`, `${pointer(own)}/criteria/0`, `${pointer(report)}/criteria`] },
+    ];
+    asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: rows.map(row => ({ section: 'acceptance', ...row, prose: 'AC-1 AC-2 BD-1 NFR-1 AC-999', graph_ids: [] })) };
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:restart-collections');
+    const section = (title: string) => text.split(`### ${title}\n`)[1].split('### ')[0].split('## 技术与追溯参考')[0];
+    const link = (owner: string, key: string, id: string) => `#${blueprintReviewAnchor(`acceptance:view:development/node:${owner}/${key}:${id}`)}`;
+    for (const [key, id] of [['criteria', 'AC-1'], ['criteria', 'AC-2'], ['boundaries', 'BD-1'], ['performance', 'NFR-1']]) assert(section('整个目标').includes(link('ledger-module', key, id)));
+    assert.equal(section('整个目标').split(link('ledger-module', 'criteria', 'AC-1')).length - 1, 1);
+    assert(!section('整个目标').includes(link('ledger-report-module', 'criteria', 'AC-1'))); assert(!section('整个目标').includes('[AC-999]'));
+    assert(section('报表功能').includes(link('ledger-report-module', 'criteria', 'AC-1')) && !section('报表功能').includes(link('ledger-module', 'criteria', 'AC-1')));
+    assert(!section('仅边界').includes('[AC-1]') && section('仅边界').includes('[BD-1]') && !section('仅边界').includes('[NFR-1]'));
+    assert(section('仅质量').includes('[NFR-1]') && !section('仅质量').includes('[BD-1]'));
+    for (const owner of ['ledger-module', 'ledger-report-module']) assert.equal(section('同名跨目标').split(link(owner, 'criteria', 'AC-1')).length - 1, 1);
+    assert.equal(JSON.stringify(bp), before);
+    asRecord(own.acceptance)!.criteria = []; asRecord(own.acceptance)!.boundaries = 'invalid';
+    asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'acceptance', title: '空和非法', prose: 'AC-1 BD-1', source_refs: [`${pointer(own)}/criteria`, `${pointer(own)}/boundaries`, `${pointer(own)}/missing`], graph_ids: [] }] };
+    const invalid = renderBlueprintReviewMarkdown(bp, 'sha256:restart-empty');
+    assert(invalid.includes('说明来源无法解析：')); assert(invalid.includes('boundaries 应为数组')); assert(invalid.includes('AC-1 BD-1')); assert(!invalid.includes('AC-1](#' + blueprintReviewAnchor('acceptance:view:development/node:ledger-module/criteria:AC-1')));
+  } },
+  { name: 'restart narrative spacing folds fullwidth punctuation before any text and preserves Markdown literals and line layout', run(f) {
+    const bp = blueprint(f); const review = asRecord(bp.review_summary)!;
+    review.background = '宿主背景。 next  保留普通空格\n续行， English  words。  \n    缩进。 keep\n\t制表缩进。 keep\n原字段 `inline； keep` 和 [链接。 keep](https://example.com/raw)\n```text\n原字段围栏。 keep\n```\n```npm test```\n单行代码之后。 next\n原字段地址： https://example.com/fallback';
+    const prose = '中文。 继续； English： next， 123！ `code。 keep`、 [链接。 keep](https://example.com/a。keep)\nURL https://example.com/a。keep 与 `inline； keep`。  \n下一行。 next\n\n```text\n代码。 keep\n```\n\n    缩进。 keep\n\t制表缩进。 keep\n说明地址： https://example.com/guide';
+    review.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'solution', title: '空格样例', prose, source_refs: ['/design_views'] }] };
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:restart-spacing'); const body = text.slice(0, text.indexOf('## 技术与追溯参考'));
+    for (const expected of ['宿主背景。next  保留普通空格\n续行，English  words。  \n    缩进。 keep\n\t制表缩进。 keep', '中文。继续；English：next，123！`code。 keep`、[链接。 keep](https://example.com/a。keep)', 'https://example.com/a。keep', '`inline； keep`。  \n下一行。next', '```text\n代码。 keep\n```', '    缩进。 keep', '\t制表缩进。 keep']) assert(body.includes(expected), expected);
+    assert(body.includes('\\`inline； keep\\`') && body.includes('\\[链接。 keep\\](https://example.com/raw)')); assert(body.includes('原字段围栏。 keep'));
+    assert(body.includes('\\`\\`\\`npm test\\`\\`\\`\n单行代码之后。next') && body.includes('## 5 整体方案'));
+    assert(body.includes('原字段地址： https://example.com/fallback') && body.includes('说明地址： https://example.com/guide'));
+    assert.equal(JSON.stringify(bp), before);
+  } },
+  { name: 'restart success measure arrays render separate entries without sentence and semicolon collisions', run(f) {
+    const bp = blueprint(f); const review = asRecord(bp.review_summary)!; delete review.reader_guide;
+    review.goals = [{ goal_id: 'restart-goal', statement: '确认结果。 next', success_measures: ['第一条。', '第二条。'] }];
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:restart-measures');
+    assert(text.includes('- 第一条。\n- 第二条。')); assert(text.includes('第一条。<br>第二条。')); assert(!text.includes('第一条。；')); assert.equal(JSON.stringify(bp), before);
+  } },
   { name: 'closeout author broken overview stays WARN through real admission and readiness at its guide placement', run(f) {
     const baseline = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'); assert(baseline.ready, JSON.stringify(baseline));
     for (const relation_refs of [undefined, []]) for (const broken of ['syntax', 'reference']) {

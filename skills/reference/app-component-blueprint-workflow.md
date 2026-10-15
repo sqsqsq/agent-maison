@@ -25,7 +25,7 @@
 2. `conventions-knowledge`（optional）：按 `paths.conventions`（缺失用 `doc/conventions.md`）解析；文件存在时必读全文，只把真正适用的 `##` id 交给既有 facts/provenance；默认未启用记 `not_applicable`，显式配置却不可读记 `unknown|degraded`。
 3. `se-manual-contracts`：消费 SE/授权 owner 的 operation、DTO、mapping、错误、幂等和 NFR；来源不可达时保持 unknown，不编造字段。
 4. `app-design-lens`：回答模块边界、能力接缝、feature flag、生产者/消费者、生命周期、state owner、初始化、发布订阅、UI refresh、进程恢复十个根问题。
-5. `independent-design-questioning`：在隔离上下文质询适用视图、关系、flow、根问题，以及适用惯例是否已被相关视图/decision 引用；编写方不得自证。
+5. `independent-design-questioning`：草稿文档生成后，在隔离上下文先读首屏/正文答八问，再核适用视图、关系、flow、根问题，以及适用惯例是否已被相关视图/decision 引用；不继承父上下文 YAML/设计摘要，不提前读 YAML，编写方不得自证。
 
 provider 固定内置并消费同一协议；id 必须唯一，requirement 只允许 `required|optional`，权威与来源规则不得由蓝图作者覆盖。不得动态加载、注册第二个全局 provider 真源，亦不得写 Goal events/receipt/evidence 或 P2/P3 状态。
 
@@ -179,9 +179,9 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 ### 4. 质询、准入与调和
 
-- 独立质询从 canonical YAML 派生 scope，唯一覆盖每个 view/relation/runtime flow 和十个 App 根问题，并逐项给出 evidence、disposition、frontier fingerprint、owner 和 verification refs。
+- 派出独立质询前，原设计 agent 先完成可渲染事实/图草稿、说明及摘要，按 §5 执行 `--write-review --json`；不要求先通过含质询结果的完整准入。读者不继承父上下文 YAML 或设计事实摘要，先只读已生成首屏/正文答八问，正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区或 YAML，之后再核参考/YAML；之后才从 canonical YAML 派生原 scope，唯一覆盖每个 view/relation/runtime flow 和十个 App 根问题，逐项给出 evidence、disposition、frontier fingerprint、owner 和 verification refs。
 - 在同一批既有 scope 内按 §2 深度问题实读 4+1 与 typed 细节：核术语定义、存储安全/主键/升级、真实失败/中断、错误/跨会话幂等和质量结论，检查来源、共享继承/写集、本侧外部证据与验收关系；runtime/flow 逐段核完整调用、等待、返回、失败及完成链与 generated_graphs 一致。区分已有内容展示遗漏与真实设计缺失，不因标题齐全、parser PASS 或一段 summary 宣称充分；不新增平行 scope/缺字段门禁、不豁免既有检查。
-- 正式设计交付把 §5 的一次成品阅读合并到这次独立质询：读者先只读正文回答八问，再定向核源。问题沿既有质询输出/报告记录，作者随后做一轮定向修订；不另起阅读管线、不循环到评分达标。纯说明润色不要求重做原设计质询；发现事实错误则回原设计字段并沿原修订/准入规则处理。
+- 供人评审的蓝图交付（含仅定稿蓝图、尚无 CU）把 §5 的首屏/正文阅读合并到这次独立质询，再按原 scope 定向核源。问题沿既有质询输出/报告记录，作者随后一轮定向修订，交付前重渲并读成品；不另起阅读管线、不循环到评分达标。纯说明润色不要求重做原设计质询；事实错误回原设计字段并沿原修订/准入规则处理。
 - root questions、contracts/design refs readiness 和 admission status 由实际质询/App lens 及 checker 结果派生，不接受自报布尔值。
 - 当前切片依赖的 unknown 必须 blocker；远期 open decision 必须有 owner、needed-by 和解除条件。
 - 仅重入、查看或重跑 checker 不增加 revision；意见、建议与未接受反馈不自动触发修订。接受新事实、权威裁决或解决冲突后，才按既有调和规则生成新 revision，不回写旧 revision。
@@ -192,7 +192,7 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors，有组件索引/合法 typed UI 设计不要求提前写 change_unit；plan 及后续组件映射检查保持完整、组件选型设计原门不变，不新增设计期替代检查。
 
-完整交接默认交付同目录 `component-blueprint.review.md`，同页展示蓝图与 canonical CU 的需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
+供人评审的蓝图交付默认包含同目录 `component-blueprint.review.md`，仅定稿蓝图、尚无 CU 也适用；已有 canonical CU 同页展示需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
 
 ### 按评审问题写说明
 
@@ -217,9 +217,9 @@ review_summary:
           - sequence:submit
 ```
 
-上面的路径与图名仅示形状，须替换为当前蓝图的真实位置。`section` 取 `summary|background|terms|journey|solution|flows|data|decisions|recovery|quality|delivery|acceptance|questions`；方案摘要优先原 summary，使用 guide.summary 时不重复打印原段落。同位置可有多个小节，按作者顺序讲述。`source_refs` 是蓝图内 JSON Pointer，不是新稳定设计地址；验收主题须引用条目的完整位置，让编号链接归属实际来源目标。`graph_ids` 引已有 generated_graphs，prose 不另存 Mermaid 或截图。无效引用只诊断并跳过受影响部分，图仍沿自身 freshness 判断。
+上面的路径与图名仅示形状，须替换为当前蓝图的真实位置。`section` 取 `summary|background|terms|journey|solution|flows|data|decisions|recovery|quality|delivery|acceptance|questions`；方案摘要优先原 summary，使用 guide.summary 时不重复打印原段落。同位置可有多个小节，按作者顺序讲述。`source_refs` 是蓝图内 JSON Pointer，不是新稳定设计地址；验收主题可引用 acceptance 对象、三类数组或完整单项，以该来源集合限定编号归属，不必逐 ID 堆来源，不得借其它目标的同号条目补链接。`graph_ids` 引已有 generated_graphs，同图首次引用绘制、后续位置保留图名回链，不另设章节优先级；prose 不另存 Mermaid 或截图。无效引用只诊断并跳过受影响部分，图仍沿自身 freshness 判断。
 
-按每节要回答的问题选来源，只引用支撑本节说法的精确位置；不要每节都附同一批决策或全景来源。正文设计依据用一个入口追到该节完整参考来源，不堆多个同名“方案取舍依据”链接。验收编号仍逐项指向正确的完整条目。
+按每节要回答的问题选来源，只引用支撑本节说法的位置；不要每节都附同一批决策或全景来源。正文设计依据用一个入口追到该节完整参考来源，不堆多个同名“方案取舍依据”链接。验收编号仍逐项链接正确的完整条目，来源可按上述集合限定。
 
 界面设计有已登记截图时，每个界面写一个 `journey` 小节，解释用户在这里做什么、系统如何反馈，再跟对应截图。该小节的 `source_refs` 精确指向 canonical 中包含这张已登记图片路径的单个登记项，或只含此图路径的来源对象；不要引用包含全部截图的数组/整个场景，也不要从图片文件名猜界面。作者自行核读图片与设计后对应，一张图片只展示一次，其余位置链接；不新增图片字段，不在 prose 手写图片路径。
 
@@ -227,7 +227,7 @@ review_summary:
 
 prose 使用普通 Markdown 段落、列表与代码名称，不写 Markdown 标题；章节层级由 section/title 决定。误写的标题会保留文字、降为加粗段落并给 WARN，代码块内的 `#` 保留。段落写完整因果，首次解释代码角色，避免斜杠串、省略主语和“已实读/F1 已修复”等过程话术。导航清理应在已有规则支持下举前后页面栈，说明保留/移除哪些页面及返回行为，不只写“清栈”；不要编造原设计未声明的页面或路由。存储安全级别（如 S4）与是否加密分开解释，不把级别自动等同于加密。验收主题标注原 AC/BD/NFR 编号并指向同文档完整条目，不另编号。
 
-失败与恢复用 `recovery` 小节 `guide.prose` 的 Markdown 短表作速查：每行说明发生什么、用户看到什么、数据是否保存、如何继续，并写出实际 BD 编号，`source_refs` 定位对应 BD 条目的完整位置及所需恢复事实。编号最终链接到该来源目标的完整条目；短表只解释已有预期，不改精确 BD 预期，也不补造重试、回退或数据保存行为。材料不能回答的单元格明确未定，列入待补问题。
+失败与恢复用 `recovery` 小节 `guide.prose` 的 Markdown 短表作速查：每行说明发生什么、用户看到什么、数据是否保存、如何继续，并写出实际 BD 编号，`source_refs` 指对应单项或包含它的 acceptance 集合及所需恢复事实，编号最终链接到该来源目标的完整条目；短表只解释已有预期，不改精确 BD 预期，也不补造重试、回退或数据保存行为。材料不能回答的单元格明确未定，列入待补问题。
 
 **仅示例，非业务要求**：给定事实是“用户点击保存；Repository 写入成功才通知页面；写入失败保留输入”。坏写法：“保存/成功/失败由 Repo 处理”。好写法：“用户点击保存后，页面等待 Repository 写入。写入成功才显示保存完成；失败时保留输入，供用户重试。”示例只说明怎样写清主体、顺序与结果。
 
@@ -235,19 +235,19 @@ prose 使用普通 Markdown 段落、列表与代码名称，不写 Markdown 标
 
 ### 摘要、渲染与读成品
 
-作者完成事实、图与说明并复核后，在 `framework/harness` 使用独立只读入口：
+原设计 agent 在同一任务完成可渲染的事实/图草稿与说明并复核后，在 `framework/harness` 使用独立只读入口；先写说明、摘要并渲染草稿，再派既有独立质询，不另派专职写作 agent：
 
 ```bash
 npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blueprint-id> --reader-guide-digest
 ```
 
-stdout 为一行 `sha256:<64hex>`；加 `--json` 得 `reader_guide_source_digest`、`canonical_path`、`artifact_sha256`。命令只加载 canonical 并计算，不运行完整 validator、不写文件、不自动盖章；不能与 `--write-review` 等操作模式混用。作者把结果写入 guide.source_digest，再执行下方 `--write-review`，**实际打开生成的 Markdown/预览，以正常阅读宽度读成品**，核图前导读、图文位置、角色与消息是否看清、调用返回/段间交接、引用及图片可见性。需放大才能看清的图应回设计按子问题拆分；放大、图语法通过或生成成功都不能替代普通宽度的可读验收。按实际阅读问题修订，不设参与者/消息/分支数量硬门。
+stdout 为一行 `sha256:<64hex>`；加 `--json` 得 `reader_guide_source_digest`、`canonical_path`、`artifact_sha256`。命令只加载 canonical 并计算，不运行完整 validator、不写文件、不自动盖章；不能与 `--write-review` 等操作模式混用。作者把结果写入 guide.source_digest，再执行下方 `--write-review --json`，**实际打开生成的 Markdown/预览，以正常阅读宽度读成品**，核图前导读、图文位置、角色与消息是否看清、调用返回/段间交接、引用及图片可见性。需放大才能看清的图应回设计按子问题拆分；放大、图语法通过或生成成功都不能替代普通宽度的可读验收。中文全角标点后多余空格与成功衡量句末拼接由 renderer 统一处理，不靠改用 YAML 字面块规避。按实际阅读问题修订，不设参与者/消息/分支数量硬门。
 
 已有 canonical CU 时，即使只补说明也会改变蓝图精确 SHA。盖好说明摘要后，先运行 `npm run check:change-unit -- --project-root <宿主根> --blueprint <blueprint-id> --readiness --json`，复用既有指针调和与文档物化；非 busy 后再读成品。不要手改 CU 指针或来源戳，也不要把调和前的“待升版”施工部分当成交接结果；该入口不启动施工。
 
 摘要按当前解析蓝图 stableStringify/SHA256 计算，只剔除根 revision、derived_results 和 review_summary 内 reader_guide/authored_by/questioning/admission/reconciliation；其余事实、图内容及数组顺序保留，只按精确位置剔除。它仅判说明可展示，不是施工证据。无 guide 时文首提示“尚未补写评审说明”并展示当前字段；事实变化或摘要缺失/错误时提示“评审说明需更新”，回退当前字段与完整参考。仅升 revision 或更新质询/准入记录不要求改稿，图仍沿原 freshness。草稿同 revision 改事实也须复核说明；摘要保守按整份说明失效，不要求逐段依赖图。
 
-每次正式设计交付复用 §4 独立读者，以不了解项目代码的评审人视角先**只读首屏**，复述现状、变化、结果与范围，再只看正文回答下列八问，逐项指出答案所在章节和仍看不懂的位置；不要用框架经验替正文补全含义：
+每次供人评审的蓝图交付复用 §4 独立读者，以不了解项目代码的评审人视角先**只读首屏**，复述现状、变化、结果与范围，再只看正文回答下列八问，逐项指出答案所在章节和仍看不懂的位置；读者不继承父上下文 YAML/设计摘要，正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区或 YAML，之后再核参考/YAML，不用框架经验或作者口头解释替正文补全含义：
 
 1. 能否在约十分钟内讲清方案？
 2. 关键取舍和被否方案是什么？
@@ -258,7 +258,9 @@ stdout 为一行 `sha256:<64hex>`；加 `--json` 得 `reader_guide_source_digest
 7. 开发具体改哪些文件，各自什么用途？
 8. 怎样验收，分别对应哪些原验收条目？
 
-随后定向对源核关键说法、图箭头和编号归属。作者做一轮定向修订，再重渲读成品；非关键表达问题如实报告后交接，不加评分、通过状态、用户签字或停机原因。真实事实/授权错误仍交原责任方解决。十分钟是阅读体验问题，不是计时门禁；readiness 与阅读效果分别报告。
+读者明确指出缺少图示解释的关键链路、放错章节的图、只有一段且未回答本章问题的位置；段落少本身不自动失败。使用宿主已有预览能力核普通宽度图像；没有图像时仍从评审 Markdown 内 Mermaid 源审“一图一事”，指出混讲的独立问题和应拆段落及衔接，不提前读 YAML、不跳过整项图审查。总览讲完整旅程不因跨阶段机械判错，不用参与者数量代替判断；仅字号、布局、是否需放大标“未核验”，不以语法通过或图源审查冒充视觉通过，不新增预览依赖或门禁。
+
+完成上述阅读后才按原 scope 定向核源，核关键说法、图箭头和编号归属。作者做一轮定向修订，按实际来源变化复核摘要，交付前重渲读成品；非关键表达问题如实报告后交接，不加评分、次数/通过状态、用户签字或停机原因。真实事实/授权错误仍交原责任方解决。十分钟是阅读体验问题，不是计时门禁；readiness 与阅读效果分别报告。
 
 首次写作在原设计任务内完成；局部修改按变化复核，不盲目全文重写。接受 CU、readiness、指针调和、B1 发布与只读/发布校验只做确定性刷新或诊断，新增模型调用为 0，不自动写 guide 或盖摘要。B1 agent 只改简报授权的草稿位置，可按事实变化与 source_refs 定向阅读说明，但公开摘要命令只读 canonical，不能为草稿盖章；框架之后登记的根 provenance 也参与摘要，会使发布前摘要失效。当前公开 B1 流程保留原说明摘要，发布后显示“评审说明需更新”并展示当前事实；不扩大授权、不因观感停止 run。后续由设计 owner 复核已发布 canonical，再沿正常写作入口记录摘要与读成品。
 
@@ -272,24 +274,24 @@ stdout 为一行 `sha256:<64hex>`；加 `--json` 得 `reader_guide_source_digest
 
 所有单元格共用取值规则：string/number/bool/list 保真，false/0 非空；已知业务键用专用格式，陌生业务键只一层键值、不递归 dump，深层已有声明未展开时如实说明范围。机制元数据按所在结构排除，来源/验证引用留原列，不全局删同名业务键；有值不假报未记录。不产表头空表/整空列，每节一行集中真正源缺项，缺失、明确未知、明确不适用分开；空值不推不适用。
 
-整体方案只编排已有事实与有效说明，不重复打印 summary；跨视图图只 canonical relations。运行阶段节点取 state_model.phases，边仅各 branch.expected_phase_seq 相邻项，按起止对去重保留全部分支来源，首分支作具名基准不假定到 Success 已含完成；模块图仅 contracts 根级 module_dependencies，声明模块补层级/变化、其余仅名称，替代同内容依赖表，不合成冲突并集。三类确定性图复用 flowchart/parser，逐边追真实来源，不按 phases 排列造边、状态/模块名不伪装稳定地址；结构/CU 依赖图仍限显式关系/requires。完整时序按 §2 一图一事，拆分后由各小节 graph_ids 放到导读附近；每图不重复展示，完整调用与用例分支仍在参考。界面截图按上述精确 source_refs 就近展示，未建立对应时如实保留集中查询；页面清单/旅程去向表不推路由，每张登记图片一次，其余链接，不从共享动作生成页面导航图。
+整体方案只编排已有事实与有效说明，不重复打印 summary；跨视图图只 canonical relations。运行阶段节点取 state_model.phases，边仅各 branch.expected_phase_seq 相邻项，按起止对去重保留全部分支来源，首分支作具名基准不假定到 Success 已含完成；模块图仅 contracts 根级 module_dependencies，声明模块补层级/变化、其余仅名称，替代同内容依赖表，不合成冲突并集。三类确定性图复用 flowchart/parser，逐边追真实来源，不按 phases 排列造边、状态/模块名不伪装稳定地址；结构/CU 依赖图仍限显式关系/requires。完整时序按 §2 一图一事，拆分后由各小节 graph_ids 放到导读附近；同图首次引用绘制，后续引用保留可读图名回链，坏图/过期图回链指向原位说明，完整调用与用例分支仍在参考。界面截图按上述精确 source_refs 就近展示，未建立对应时如实保留集中查询；页面清单/旅程去向表不推路由，每张登记图片一次，其余链接，不从共享动作生成页面导航图。
 
 同源 DTO/模型须核字段、语义、约束和来源才复用，required/nullable 独立、差异保留，同名不判等；UI 动作、完全相同恢复、验收及 files 在主责处完整展示，其余链接，CU 精确范围/多源关联不能丢、touches 不替代 files。不全局删相同列，指定说明列至少三行内容/链接全同才可提表前。显式空集合显示“无”，仅来源键对象才称“仅来源信息”；缺项汇总只处理 renderer 标记，不改作者标题/正文。布尔含义列是/否、框架枚举仅在消费字段中文化，未知值/业务状态/API 保原样。
 
-文档不运行完整投影门、不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog，不用 touches/predicate 估算或过滤集合；图片仅输出已登记引用，不将外部图像字节作为新设计事实/新绑定输入。隔离重渲染复制图片并保相对路径，以实际可见验证引用。canonical 可确定架构相关集合时沿用原 identityNeutralDigest；某层级相关性依赖外部 catalog 才能确定时省略摘要，精确 CU 绑定/集合仍可展示，不承诺 carry-forward。待升版集合写“待指针升版后显示”；无效 canonical 图不展示并说明原因。共享夹具与[完整样例](../../docs/operations/samples/blueprint-review-projection.valid.md)不代表真实宿主验收，当前时序效果由用户在原工作区定向补设计后实读，后续端到端验收独立。
+文档不运行完整投影门、不读取 Feature 的 use-cases.yaml、需求原文或外部 catalog，不用 touches/predicate 估算或过滤集合；图片仅输出已登记引用，不将外部图像字节作为新设计事实/新绑定输入。隔离重渲染复制图片并保相对路径，以实际可见验证引用。canonical 可确定架构相关集合时沿用原 identityNeutralDigest；某层级相关性依赖外部 catalog 才能确定时省略摘要，精确 CU 绑定/集合仍可展示，不承诺 carry-forward。待升版集合写“待指针升版后显示”；无效 canonical 图不展示并说明原因。共享夹具与[完整样例](../../docs/operations/samples/blueprint-review-projection.valid.md)不代表真实宿主验收，后续端到端验收独立。
 
-隔离 A 原样保留宿主 canonical/CU/图片，只验展示；B 另存补完整调用步骤/图及派生身份的设计变体，明确增量并走原 runtime 质询，不混入 A、不承诺原样无时序数据凭空四图。当前宿主复检由用户集成发布件后定向补时序并按原修订重建文档/readiness，保留其余有效设计；设计专项不等于产品施工闭环。
+隔离 A 原样保留 canonical/CU/图片只验展示，B 另存补完整调用步骤/图及派生身份的设计变体、明确增量并走原 runtime 质询，不混入 A、不承诺无数据凭空四图；这些既有隔离与前轮实读通过记录保留，不作为新需求默认流程已通过的依据。本轮由用户在 SimulatedWalletForHmos-br 干净基线集成发布件，沿相同话术和任务边界从需求开始，原设计 agent 同次完成设计、说明、草稿渲染、既有独立质询及一轮修订后重渲；不另派写作 agent 产样稿，不修改当前宿主稿或重置现场。开发方仅可在只读隔离副本验证确定性展示，设计发现仍可按原授权读取必要源码；设计专项不等于产品施工闭环。
 
 **本次调用改了 canonical 蓝图或 CU 内容，结束前必须重建**：继续草稿、质询/准入写回、局部修改、新增/替代 CU、正式修订均适用，不以 admitted 或 revision 增加作触发条件。新增 CU 仍经 consumer 接受，不能直接写 canonical。接受、readiness、持锁整批调和与 B1 已自动调用同一物化入口；agent 直接改蓝图后执行：
 
 ```bash
 cd framework/harness
-npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blueprint-id> --write-review
+npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blueprint-id> --write-review --json
 ```
 
-草稿可生成，显示真实准入与未决项；生成不会改 YAML、升 revision、重签 CU 或重新质询。`--write-review` 不与材料检查模式混用。查看/解释使用无参 checker 的只读文档状态，缺失/过期如实披露；用户明确要求补生成时直接重建。
+草稿可生成，显示真实准入与未决项；仅待质询不妨碍供人阅读，不要求伪填 admitted 或质询结果。`--write-review --json` 的整体 checker 状态/退出码与 `review_document` 分别报告：checker FAIL 时文档仍可能 current/refreshed，不能一概判未生成，也不能以生成成功冒称准入通过。真实解析、来源及其它设计错误仍按原规则处理，不吞 BLOCKER。生成不会改 YAML、升 revision、重签 CU 或重新质询；不与材料检查模式混用。查看/解释使用无参 checker 的只读文档状态，缺失/过期如实披露；用户明确要求补生成时直接重建。
 
-生成失败保留 canonical 与原 readiness/接受结果，只重试物化。完整交接最终回复必须链接当前文档并概述变化与未决项，单独报告 readiness；失败时明确文档未交付/过期，不声称交付完成。文档结果看整个尝试最终状态：内部已刷新而外层同字节未写仍是已刷新，最后失败不得被先前成功遮盖。
+生成失败保留 canonical 与原 readiness/接受结果，只重试物化。供人评审的蓝图交付最终回复必须链接当前文档并概述变化与未决项，单独报告已派生的 readiness；失败时明确文档未交付/过期，不声称交付完成。文档结果看整个尝试最终状态：内部已刷新而外层同字节未写仍是已刷新，最后失败不得被先前成功遮盖。
 
 
 在消费者工程的 `framework/harness` 中运行：

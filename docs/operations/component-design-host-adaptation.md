@@ -196,12 +196,12 @@ npm run check:component-blueprint -- \
 默认本地文档由 Maison 生成：
 
 ```bash
-npm run check:component-blueprint -- --project-root <宿主工程根> --blueprint <blueprint-id> --write-review
+npm run check:component-blueprint -- --project-root <宿主工程根> --blueprint <blueprint-id> --write-review --json
 ```
 
-写入 resolver 定位的蓝图同目录，不支持第二输出路径。只有当前可解析、身份有效的蓝图即可生成；草稿显示准入与缺口，检查失败仍按原结论退出。无参 checker 只读展示文档当前/过期/缺失及重建命令；`--write-review` 不与材料模式混用。内容变化后的调用结束前重建，包含局部修改、草稿和质询写回；不升 revision、不重签或重做设计。接受、readiness、整批持锁指针调和与 B1 自动刷新；文档失败只披露和重建，不影响原业务结论。
+写入 resolver 定位的蓝图同目录，不支持第二输出路径。当前可解析、身份有效的蓝图即可生成，含仅定稿蓝图、尚无 CU 的评审交付；草稿显示真实准入与缺口，不要求先通过含质询结果的完整准入。checker FAIL 与 review_document current/refreshed 分别报告：非零退出码不等于未生成，生成成功不等于准入通过；真正解析/来源错误及其它 BLOCKER 仍按原规则处理。无参 checker 只读展示文档当前/过期/缺失及重建命令；`--write-review` 不与材料模式混用。内容变化后的调用结束前重建，包含局部修改、草稿和质询写回；不升 revision、不重签或重做设计。接受、readiness、整批持锁指针调和与 B1 自动刷新；文档失败只披露和重建，不影响原业务结论。
 
-说明由设计 owner 在 canonical 蓝图内撰写：原字段已可读就直接用，仅改表达优先可选 `review_summary.reader_guide`，不强制每节新建 guide；修改原字段仍是设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。按 [P1 写作指引](../../skills/reference/app-component-blueprint-workflow.md#按评审问题写说明) 记录来源引用，首屏先向不了解项目代码的评审人讲现状、变化、结果与范围，产品非目标与本次只执行设计的阶段状态分开；关键取舍逐问题讲选择、理由与代价，摘要施工只链接第 11 节。恢复速查用 guide.prose 的 Markdown 短表，每行对应实际 BD 编号和 source_refs，解释发生什么、用户看到什么、数据是否保存、如何继续，不改精确预期或补造行为。作者完成复核后用独立只读 `--reader-guide-digest` 取摘要，记录后再 `--write-review` 并实际打开成品。宿主无需 import TS 或自己计算摘要。仅补说明不重做产品源码发现；正式交付独立读者先只读首屏复述，再将一次正文八问阅读与一轮定向修订并入既有独立质询，不加用户签字/评分门禁。
+说明由设计 owner 在 canonical 蓝图内撰写：原字段已可读就直接用，仅改表达优先可选 `review_summary.reader_guide`，不强制每节新建 guide；修改原字段仍是设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。按 [P1 写作指引](../../skills/reference/app-component-blueprint-workflow.md#按评审问题写说明) 记录来源引用，acceptance 来源可按对象/三类数组/单项限定编号归属，不必逐 ID 堆来源，首屏先向不了解项目代码的评审人讲现状、变化、结果与范围，产品非目标与本次只执行设计的阶段状态分开；关键取舍逐问题讲选择、理由与代价，摘要施工只链接第 11 节。恢复速查用 guide.prose 的 Markdown 短表，每行对应实际 BD 编号和 source_refs，解释发生什么、用户看到什么、数据是否保存、如何继续，不改精确预期或补造行为。原设计 agent 同次完成可渲染草稿、图与说明，复核后用独立只读 `--reader-guide-digest` 取摘要，记录后先 `--write-review --json`，再派既有独立质询。读者不继承父上下文 YAML/设计摘要，先只读首屏复述、正文答八问，完成前不读 YAML；之后核原 scope 与来源，作者一轮定向修订后复核摘要，交付前重渲读成品。宿主无需 import TS 或自己计算摘要，纯说明不重做产品源码发现；不加用户签字/评分门禁。无图像仍从文档内 Mermaid 核一图一事，指出混讲、拆段与衔接；仅字号/布局/放大未核验。图错章或一段未答章内问题须指出，段落少不自动失败；同图首次绘制、后续回链，不设章节优先级。中文全角标点后多余空格由 renderer 处理，不靠 YAML 字面块规避。
 
 没有 guide 时文首提示“尚未补写评审说明”；事实变化或摘要缺失/错误时提示“评审说明需更新”，回退当前事实与完整参考。个别坏引用或图只影响对应位置。生成成功只表示当前输入被忠实展示，不能证明解释充分；只读 checker 分别报告文档与 reader_guide 诊断。接受、readiness、调和及 B1 发布自动刷新均不调用模型、不自动写说明或盖摘要。B1 公开命令只读 canonical，发布前框架还会登记参与摘要的根 provenance，因此当前流程保留原说明摘要、发布后提示需更新，后续由 component-design 复核已发布 canonical 再盖摘要，不扩大草稿授权。CU 集合变化更新施工段与参考，不要求回改蓝图说明。纯 guide 润色不改变 CU/Feature 业务摘要，带戳阶段文件仍沿原调和与等价证明安全刷新；真设计变化仍回原责任阶段。
 

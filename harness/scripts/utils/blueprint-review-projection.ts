@@ -207,6 +207,13 @@ function renderReviewGraph(graph: BlueprintRecord, blueprint: BlueprintRecord): 
   return [`结构图：${text(graph.label ?? graph.graph_id)}`, '', '```mermaid', String(graph.content).trimEnd(), '```', ''];
 }
 
+function renderPlacedGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, shown: Set<string>): string[] {
+  const address = `graph:${graph.graph_id}`;
+  if (shown.has(String(graph.graph_id))) return [`相关图：${designLink(address, String(graph.label ?? graph.graph_id))}。`, ''];
+  shown.add(String(graph.graph_id));
+  return [anchor(address), ...renderReviewGraph(graph, blueprint)];
+}
+
 interface ModelGroup { model: BlueprintRecord; sources: ReviewContent[] }
 function sameDtoFields(dto: BlueprintRecord, candidate: BlueprintRecord): boolean {
   const fields = asRecords(dto.fields); const modelFields = asRecords(candidate.fields);
@@ -410,21 +417,31 @@ function finishPresentation(lines: string[], blueprint: BlueprintRecord): string
   const expression = new RegExp(addresses.map(address => address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
   const output: string[] = []; let appendix = false; let fence: { marker: string; length: number } | undefined; const missing = new Set<string>(); const unregistered = new Set<string>();
   const flush = () => { if (missing.size) output.push(`未记录：${[...missing].join('；')}。`, ''); missing.clear(); };
-  const bodyStart = lines[0] === '---' ? lines.indexOf('---', 1) + 1 : 0;
-  for (const [lineIndex, original] of lines.entries()) {
+  const sourceLines = lines.flatMap(line => line.split(/\r?\n/));
+  const bodyStart = sourceLines[0] === '---' ? sourceLines.indexOf('---', 1) + 1 : 0;
+  for (const [lineIndex, original] of sourceLines.entries()) {
     let line = original;
     if (lineIndex < bodyStart) { output.push(line); continue; }
     if (!fence && (line.startsWith('内容承载于：') || line.startsWith('<a id="'))) flush();
     if (!fence && /^#{2,6} /.test(line)) { flush(); if (line.startsWith('## 技术与追溯参考') || line.startsWith('## 附录')) appendix = true; }
     const marker = /^<!-- review-missing:(.+) -->$/.exec(line);
     if (!fence && marker) { marker[1].split('、').forEach(value => missing.add(value)); continue; }
-    const codeFence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const codeFence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line.replace(/\\`/g, '`'));
     const inCode = Boolean(fence || codeFence);
     if (codeFence) {
-      if (!fence) fence = { marker: codeFence[1][0], length: codeFence[1].length };
+      if (!fence) {
+        if (codeFence[1][0] === '~' || !codeFence[2].includes('`')) fence = { marker: codeFence[1][0], length: codeFence[1].length };
+      }
       else if (codeFence[1][0] === fence.marker && codeFence[1].length >= fence.length && !codeFence[2].trim()) fence = undefined;
     }
-    if (!appendix && !inCode && !line.startsWith('<a ') && !line.startsWith('<!--') && !line.startsWith('---') && !line.startsWith('    ')) {
+    if (!appendix && !inCode && !line.startsWith('<a ') && !line.startsWith('<!--') && !line.startsWith('---') && !/^( {4}|\t)/.test(line)) {
+      // 只折叠叙述标点后的行内空格；代码、链接与 URL 的内容保持原样。
+      const parts = line.split(/(\\?`+[^`]*?\\?`+|\\?\[[^\]\n]*\\?\]\([^)]*\)|https?:\/\/[^\s<>]+)/g);
+      line = parts.map((part, i) => {
+        if (i % 2) return part;
+        const folded = part.replace(/([，。；：！？、（）【】《》〈〉「」『』“”‘’〔〕…]) +(?=\S)/g, '$1');
+        return i < parts.length - 1 && !/^https?:\/\//.test(parts[i + 1]) ? folded.replace(/([，。；：！？、（）【】《》〈〉「」『』“”‘’〔〕…]) +$/g, '$1') : folded;
+      }).join('');
       line = line.split(/(\[[^\]\n]*\]\([^)]*\)|<a id="[^"]+"><\/a>)/g).map(part => {
         const link = /^\[([^\]\n]*)\]\(#(design-[0-9a-f]+)\)$/.exec(part);
         if (link) return anchorLabels.has(link[2]) && !/[\u3400-\u9fff]/.test(link[1]) ? `[${cell(anchorLabels.get(link[2]))}](#${link[2]})` : part;
@@ -479,7 +496,7 @@ function renderFileTree(files: string[]): string[] {
 function readerGuideSourceAnchor(index: number): string { return `reader-guide-source-${index + 1}`; }
 
 /** 来源限定到承载目标与条目，不能把同名 AC 关联到其它目标。 */
-function readerSourceLink(blueprint: BlueprintRecord, pointer: string): { address?: string; label: string; id?: string } {
+function readerSourceLinks(blueprint: BlueprintRecord, pointer: string): Array<{ address?: string; label: string; id?: string }> {
   const parts = pointer.slice(1).split('/').map(part => part.replace(/~1/g, '/').replace(/~0/g, '~'));
   let address: string | undefined; let offset = 0;
   if (parts[0] === 'design_views') {
@@ -498,11 +515,17 @@ function readerSourceLink(blueprint: BlueprintRecord, pointer: string): { addres
     if (decision) { address = `decision:${decision.decision_id}`; offset = 3; }
   }
   const target = address ? stableAddressIndex(blueprint).get(address) : undefined;
-  if (address && parts[offset] === 'acceptance' && ['criteria', 'boundaries', 'performance'].includes(parts[offset + 1])) {
-    const entry = asRecords(asRecord(target?.acceptance)?.[parts[offset + 1]])[Number(parts[offset + 2])];
-    if (entry) return { address: `acceptance:${address}/${parts[offset + 1]}:${entry.id}`, id: String(entry.id), label: `${entry.id}（${target?.label ?? target?.name ?? address.split(':').pop()}）` };
+  if (address && parts[offset] === 'acceptance') {
+    const keys = ['criteria', 'boundaries', 'performance'];
+    const selectedKeys = parts.length === offset + 1 ? keys : keys.filter(key => key === parts[offset + 1]);
+    const entries = selectedKeys.flatMap(key => {
+      const rows = asRecord(target?.acceptance)?.[key];
+      const selected = !Array.isArray(rows) ? [] : parts.length <= offset + 2 ? rows : [rows[Number(parts[offset + 2])]];
+      return selected.map(asRecord).filter((entry): entry is BlueprintRecord => Boolean(entry && nonEmptyString(entry.id))).map(entry => ({ address: `acceptance:${address}/${key}:${entry.id}`, id: String(entry.id), label: `${entry.id}（${target?.label ?? target?.name ?? address!.split(':').pop()}）` }));
+    });
+    if (entries.length) return entries;
   }
-  return { address, label: String(target?.label ?? target?.name ?? '设计来源') };
+  return [{ address, label: String(target?.label ?? target?.name ?? '设计来源') }];
 }
 
 function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInputs, content: ReviewContent[], shownGraphs: Set<string>, guide: ReturnType<typeof inspectBlueprintReaderGuide>): string[] {
@@ -524,10 +547,7 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
     if (Array.isArray(value)) return value.flatMap(sourceImages);
     return asRecord(value) ? Object.values(asRecord(value)!).flatMap(sourceImages) : [];
   };
-  const graphLines = (graph: BlueprintRecord): string[] => {
-    const id = String(graph.graph_id); if (shownGraphs.has(id)) return [];
-    shownGraphs.add(id); return renderReviewGraph(graph, blueprint);
-  };
+  const graphLines = (graph: BlueprintRecord): string[] => renderPlacedGraph(graph, blueprint, shownGraphs);
   const sections = [
     ['summary', '方案摘要'], ['background', '背景、目标与边界'], ['terms', '术语'], ['journey', '用户旅程与界面'],
     ['solution', '整体方案'], ['flows', '关键流程'], ['data', '数据与存储'], ['decisions', '关键取舍'],
@@ -538,7 +558,11 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
     if (section === 'summary') paragraph(review.summary);
     if (section === 'background') {
       paragraph(review.background); paragraph(review.problem, '当前问题'); paragraph(review.positioning, '方案定位');
-      for (const goal of asRecords(review.goals)) { paragraph(goal.statement, '目标'); if (goal.success_measures !== undefined) paragraph(goal.success_measures, '成功衡量'); }
+      for (const goal of asRecords(review.goals)) {
+        paragraph(goal.statement, '目标');
+        if (Array.isArray(goal.success_measures)) out.push('**成功衡量**：', '', ...goal.success_measures.map(value => `- ${text(value)}`), '');
+        else if (goal.success_measures !== undefined) paragraph(goal.success_measures, '成功衡量');
+      }
       for (const [key, label] of [['in_scope', '本次范围'], ['non_goals', '不做什么']] as const) if (!absent(review[key])) out.push(`**${label}**`, '', ...(Array.isArray(review[key]) ? asStrings(review[key]).map(value => `- ${text(value)}`) : [text(review[key])]), '');
     }
     if (section === 'terms') for (const term of asRecords(asRecord(blueprint.discovery)?.facts).filter(f => String(f.subject).startsWith('term:'))) paragraph(asRecord(term.value)?.meaning, String(term.subject).slice(5));
@@ -583,7 +607,7 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
     const authored = guide.sections.filter(item => item.section === section);
     const block: string[] = [];
     for (const item of authored) {
-      const sources = item.resolvedSources.map(source => readerSourceLink(blueprint, source.pointer));
+      const sources = item.resolvedSources.flatMap(source => readerSourceLinks(blueprint, source.pointer));
       const linkedProse = item.prose.split(/\r?\n/); let fence: { char: string; length: number } | undefined;
       for (const [i, line] of linkedProse.entries()) {
         const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
@@ -674,7 +698,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     '参考保留全部声明；不从名称、目录或数组顺序推断调用、依赖与未声明存储设计。正文的验收链接按来源目标与条目编号定位。', '',
     '### A 字段与类型', '', '<a id="review-summary-details"></a>', '#### 原概述与目标', '',
     ...table(['关切', '设计说明'], [['背景', review.background], ['问题', review.problem], ['本次改变', review.summary], ['整体定位', review.positioning], ['范围', meaning(review.in_scope)], ['不做什么', meaning(review.non_goals)]]),
-    ...table(['目标', '目标说明', '成功衡量'], asRecords(review.goals).map(goal => [goal.goal_id, goal.statement, acceptanceLinks(goal.success_measures)])));
+    ...table(['目标', '目标说明', '成功衡量'], asRecords(review.goals).map(goal => [goal.goal_id, goal.statement, Array.isArray(goal.success_measures) ? goal.success_measures.map(value => acceptanceLinks(value)).join('\n') : acceptanceLinks(goal.success_measures)])));
   lines.push('<a id="review-terms"></a>');
   const facts = asRecords(asRecord(blueprint.discovery)?.facts); const terms = facts.filter(fact => String(fact.subject).startsWith('term:'));
   if (terms.length) lines.push('#### 完整术语', '', ...table(['术语', '含义', '模块', '易混项', '确认依据'], terms.map(fact => [String(fact.subject).slice(5), asRecord(fact.value)?.meaning, asRecord(fact.value)?.canonical_module, refs(asRecord(fact.value)?.easily_confused_with), asRecord(fact.provenance)?.source_ref])));
@@ -736,7 +760,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   lines.push('#### 运行流与状态明细', '');
   for (const flow of asRecords(view('runtime')?.runtime_data_flows)) lines.push(...renderFlow(flow, 'runtime', acceptanceLinks));
   for (const graph of asRecords(blueprint.generated_graphs).filter(graph => /^\s*sequenceDiagram\b/.test(String(graph.content)) && !shownGraphs.has(String(graph.graph_id)))) {
-    shownGraphs.add(String(graph.graph_id)); lines.push(...renderSequenceGraph(graph, blueprint));
+    lines.push(...renderPlacedGraph(graph, blueprint, shownGraphs));
   }
   for (const item of typed('contracts').filter(i => asRecords(i.value.state_management).length)) {
     lines.push(origin(item), '', '#### 施工状态与有序步骤', '');

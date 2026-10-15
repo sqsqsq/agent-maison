@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import {
   BlueprintRecord,
@@ -459,6 +460,42 @@ export function runAll(): UnitCaseResult[] {
   results.push(test('canonical fixture passes all P1 completeness checks', () => {
     const issues = validateFixture(validBlueprint());
     assert(issues.length === 1 && issues[0].id === 'blueprint_reader_guide_missing' && issues[0].severity === 'WARN', issues.map(item => `[${item.id}] ${item.path}: ${item.message}`).join('\n'));
+  }));
+
+  results.push(test('restart write-review renders an unquestioned unadmitted draft without clearing failures and rejects unparseable YAML', () => {
+    withTempProject((projectRoot, filePath) => {
+      const blueprint = readYaml(filePath);
+      const review = asRecord(blueprint.review_summary)!;
+      delete review.questioning;
+      delete review.admission;
+      fs.writeFileSync(filePath, YAML.stringify(blueprint), 'utf8');
+      const original = fs.readFileSync(filePath);
+      const expectedIssues = checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint').issues;
+      const target = path.join(path.dirname(filePath), 'component-blueprint.review.md');
+      fs.rmSync(target, { force: true });
+      const harnessRoot = path.resolve(__dirname, '..', '..');
+      const invoke = () => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
+        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+        '--blueprint', 'ledger-app-blueprint', '--write-review', '--json'], { cwd: harnessRoot, encoding: 'utf8' });
+      for (const status of ['refreshed', 'current']) {
+        const cli = invoke();
+        const report = JSON.parse(cli.stdout);
+        assert(cli.status === 1 && report.status === 'FAIL', cli.stdout + cli.stderr);
+        assert(report.review_document.status === status && report.review_document.path === target, cli.stdout);
+        assert(JSON.stringify(report.issues) === JSON.stringify(expectedIssues), '生成文档改变了原检查问题');
+        for (const id of ['blueprint_questioning_provider_missing', 'blueprint_admission_missing']) {
+          assert(report.issues.some((item: BlueprintRecord) => item.id === id && item.severity === 'BLOCKER'), `草稿失败诊断被清除：${id}`);
+        }
+        assert(fs.existsSync(target) && !fs.readFileSync(target, 'utf8').includes('准入 通过'), '未准入草稿没有生成文档或冒称准入通过');
+        assert(fs.readFileSync(filePath).equals(original), '生成文档改写了草稿或补造质询/准入');
+      }
+      fs.rmSync(target);
+      fs.writeFileSync(filePath, '[broken YAML', 'utf8');
+      const invalid = invoke();
+      const report = JSON.parse(invalid.stdout);
+      assert(invalid.status === 1 && report.status === 'FAIL' && report.issues.some((item: BlueprintRecord) => item.id === 'component_blueprint_yaml_invalid'), invalid.stdout + invalid.stderr);
+      assert(report.review_document === undefined && !fs.existsSync(target), '不可解析输入产出了假当前文档');
+    });
   }));
 
   results.push(test('canonical path is workspace-owned and rejects arbitrary path identities', () => {
