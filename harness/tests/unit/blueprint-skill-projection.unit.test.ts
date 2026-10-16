@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, designScopeRevisionChecks, checkTypedConstructionContent } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
@@ -27,6 +27,10 @@ import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
 import { readScopeAcceptance } from '../../scripts/utils/feature-track';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
+import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
+import { diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
+import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-unit-design-preparation';
+import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseItem } from '../../scripts/utils/design-content-checks';
 import { collectCleanPassIssues } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
 import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
@@ -85,6 +89,121 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'content rules: shared own defects retain original BLOCKER wrappers and cross-entry obligations', run(f) {
+    const read = (name: string) => YAML.parse(fs.readFileSync(path.join(__dirname, '../fixtures/blueprint-design-inputs', `${name}.yaml`), 'utf8'));
+    const acceptance = read('acceptance'); const contracts = read('contracts'); const useCases = read('use-cases');
+    contracts.interfaces = [{ class: 'LedgerFeature', file: 'src/ledger/LedgerFeature.ets', methods: [{ name: 'run', return: 'void', params: [] }] }];
+    const ctx = { featureSpec: { acceptance, contracts, useCases }, projectRoot: f.root, feature: f.feature, frameworkRoot, phaseRule: {} } as CheckContext;
+    const before = JSON.stringify(ctx.featureSpec);
+    const check = (result: ReturnType<typeof checkAcceptanceContent>[number], id: string, status: string) => {
+      assert.equal(result.id, id); assert.equal(result.category, 'structure'); assert.equal(result.severity, 'BLOCKER'); assert.equal(result.status, status);
+    };
+    check(checkAcceptanceContent(ctx)[0]!, 'acceptance_content_complete', 'PASS');
+    check(checkTypedConstructionContent(ctx)[0]!, 'construction_content_complete', 'PASS');
+    check(checkUseCaseSpecSchema(ctx)[0]!, 'usecase_spec_schema', 'PASS');
+    assert.equal(JSON.stringify(ctx.featureSpec), before, 'shared checks mutate their input');
+    delete acceptance.criteria[0].expected_result;
+    contracts.interfaces[0].methods[0].return = 'any';
+    delete useCases.use_cases[0].coordinator;
+    for (const [result, id, problems] of [
+      [checkAcceptanceContent(ctx)[0]!, 'acceptance_content_complete', inspectAcceptanceItem(acceptance.criteria[0], true, 'criteria[0]')],
+      [checkTypedConstructionContent(ctx)[0]!, 'construction_content_complete', inspectTypedConstructionContent(contracts)],
+      [checkUseCaseSpecSchema(ctx)[0]!, 'usecase_spec_schema', inspectUseCaseItem(useCases.use_cases[0], 'use_cases[0]')],
+    ] as const) {
+      check(result, id, 'FAIL'); assert(problems.length > 0);
+      for (const problem of problems) assert(result.details?.includes(problem.message), `${id}未消费共用判断`);
+    }
+    Object.assign(acceptance.criteria[0], read('acceptance').criteria[0]);
+    acceptance.criteria.push(structuredClone(acceptance.criteria[0]));
+    assert(checkAcceptanceContent(ctx)[0]!.details?.includes('验收 ID 非法或重复'), '原跨条目ID约束丢失');
+    ctx.featureSpec.acceptance = { criteria: [], boundaries: [] } as unknown as CheckContext['featureSpec']['acceptance'];
+    check(checkAcceptanceContent(ctx)[0]!, 'acceptance_content_complete', 'FAIL');
+    contracts.files = [];
+    check(checkTypedConstructionContent(ctx)[0]!, 'construction_content_complete', 'FAIL');
+    delete useCases.schema_version;
+    assert(checkUseCaseSpecSchema(ctx)[0]!.details?.includes('schema_version'), '元数据检查从原消费入口移除');
+  } },
+  { name: 'content rules: noniterable fields and methods retain uncoded consumer exceptions while blueprint warns', run(f) {
+    for (const kind of ['fields', 'methods'] as const) {
+      const contracts = kind === 'fields'
+        ? { files: ['src/model.ts'], data_models: [{ name: 'Model', file: 'src/model.ts', kind: 'interface', fields: { malformed: true } }] }
+        : { files: ['src/api.ts'], interfaces: [{ class: 'Api', file: 'src/api.ts', methods: { malformed: true } }] };
+      const before = JSON.stringify(contracts);
+      const issues = inspectTypedConstructionContent(contracts);
+      const expression = kind === 'fields' ? 'model.fields' : 'api.methods';
+      assert(issues.some(issue => issue.path.endsWith(`.${kind}`) && issue.consumerError === `(${expression} ?? []) is not iterable`));
+      const ctx = { featureSpec: { contracts }, projectRoot: f.root, feature: f.feature } as unknown as CheckContext;
+      assert.throws(() => checkTypedConstructionContent(ctx), { name: 'TypeError', message: `(${expression} ?? []) is not iterable` });
+      const bp: BlueprintRecord = { blueprint_id: 'malformed', design_views: [{ view_id: 'development', nodes: [{ node_id: 'model', contracts }] }] };
+      const warnings = diagnoseBlueprintContent(bp);
+      assert(warnings.some(issue => issue.path.endsWith(`.${kind}`) && issue.severity === 'WARN' && issue.message.includes('应为数组')));
+      assert.equal(JSON.stringify(contracts), before);
+    }
+  } },
+  { name: 'content rules: nested nulls survive the real loader and retain uncoded derive failures with blueprint WARN', run(f) {
+    const original = fs.readFileSync(f.blueprintFile, 'utf8');
+    const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    for (const variant of ['field', 'method', 'parameter', 'performance'] as const) {
+      const bp = YAML.parse(original);
+      const node = asRecord(resolveBlueprintTarget(bp, unit.design_refs[0].target))!;
+      const contracts = node.contracts as Record<string, any>;
+      const acceptance = node.acceptance as Record<string, any>;
+      let pointer: string;
+      if (variant === 'field') {
+        contracts.data_models = [{ name: 'Model', file: 'src/ledger/LedgerFeature.ets', kind: 'interface', fields: [null] }]; pointer = 'data_models[0].fields[0]';
+      } else if (variant === 'method') {
+        contracts.interfaces = [{ class: 'LedgerFeature', file: 'src/ledger/LedgerFeature.ets', methods: [null] }]; pointer = 'interfaces[0].methods[0]';
+      } else if (variant === 'parameter') {
+        contracts.interfaces = [{ class: 'LedgerFeature', file: 'src/ledger/LedgerFeature.ets', methods: [{ name: 'run', return: 'void', params: [null] }] }]; pointer = 'interfaces[0].methods[0]';
+      } else { acceptance.performance = [null]; pointer = 'performance[0]'; }
+      const kind = variant === 'performance' ? 'acceptance' : 'contracts';
+      const inputs = { context: { schema_version: '1.1' as const, subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase: '', values: {}, artifacts: { 'contracts@1': contracts, 'acceptance@1': acceptance } };
+      const parsed = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, inputs);
+      assert(!parsed.shape_issues?.length, `原loader不应清掉内层null：${JSON.stringify(parsed.shape_issues)}`);
+      const preserved = variant === 'field' ? parsed.contracts!.data_models![0]!.fields
+        : variant === 'method' ? parsed.contracts!.interfaces![0]!.methods
+        : variant === 'parameter' ? parsed.contracts!.interfaces![0]!.methods[0]!.params : parsed.acceptance!.performance;
+      assert.deepStrictEqual(preserved, [null], '反例绕过了真实loader或被归一清除');
+      const ctx = { projectRoot: f.root, feature: f.feature, featureSpec: parsed } as CheckContext;
+      const message = `Cannot read properties of null (reading '${variant === 'performance' ? 'id' : 'name'}')`;
+      assert.throws(() => kind === 'acceptance' ? checkAcceptanceContent(ctx) : checkTypedConstructionContent(ctx), { name: 'TypeError', message });
+      fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); f.bind();
+      const before = fs.readFileSync(f.blueprintFile);
+      const warnings = diagnoseBlueprintContent(bp);
+      assert(warnings.some(issue => issue.path.endsWith(pointer) && issue.severity === 'WARN'), `${variant}蓝图诊断崩溃或漏报`);
+      const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, kind);
+      assert.equal(projected.state, 'invalid'); assert.deepStrictEqual(projected.codes, []);
+      assert.equal(projected.detail, `TypeError: ${message}`);
+      const readiness = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint');
+      const readyUnit = readiness.perUnit.find(item => item.changeUnitId === 'ledger-refresh')!;
+      assert(!readiness.ready && readyUnit.verdict === 'blocked');
+      assert(readyUnit.projectionIssues.some(issue => issue.kind === kind && issue.codes?.length === 0 && issue.detail === projected.detail));
+      assert(fs.readFileSync(f.blueprintFile).equals(before), '诊断/derive改写了原canonical');
+    }
+    // 原方法谓词与 some 会短路；不把尚未读取的后续 null 升为异常。
+    for (const method of [{ return: 'void', params: [null] }, { name: 'run', return: 'void', params: [{}, null] }]) {
+      const contracts = { files: ['src/ledger/LedgerFeature.ets'], interfaces: [{ class: 'LedgerFeature', file: 'src/ledger/LedgerFeature.ets', methods: [method] }] };
+      const parsed = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature,
+        { context: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase: '', values: {}, artifacts: { 'contracts@1': contracts } });
+      assert.equal(checkTypedConstructionContent({ featureSpec: parsed } as CheckContext)[0]!.status, 'FAIL');
+    }
+  } },
+  { name: 'content rules: state shape WARN and original loader normalization agree and never mutate authority', run(f) {
+    const contracts = { files: [], state_management: [{ ordered_steps: [1, 'valid'], lifecycle_triggers: {}, mutations: {}, consumers: [null, { consumer_id: 'ok' }] }] };
+    const before = JSON.stringify(contracts);
+    const inputs = { context: { schema_version: '1.1' as const, subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase: '', values: {}, artifacts: { 'contracts@1': contracts } };
+    const spec = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, inputs);
+    assert.equal(JSON.stringify(contracts), before, 'loader修改了原权威片段');
+    for (const key of ['ordered_steps', 'lifecycle_triggers', 'mutations', 'consumers']) assert(spec.shape_issues?.some(issue => issue.includes(key)), `原loader丢失${key}问题`);
+    const state = spec.contracts!.state_management![0]!;
+    assert.deepStrictEqual(state.ordered_steps, ['valid']);
+    assert.deepStrictEqual(state.lifecycle_triggers, []); assert.deepStrictEqual(state.mutations, []);
+    assert.deepStrictEqual(state.consumers, [{ consumer_id: 'ok' }]);
+    const bp: BlueprintRecord = { blueprint_id: 'shape', design_views: [{ view_id: 'runtime', runtime_data_flows: [{ flow_id: 'flow', contracts }] }] };
+    const issues = diagnoseBlueprintContent(bp);
+    for (const key of ['ordered_steps[0]', 'lifecycle_triggers', 'mutations', 'consumers[0]']) assert(issues.some(issue => issue.path.endsWith(key)), `蓝图未定位${key}`);
+    assert.equal(JSON.stringify(contracts), before, 'WARN修改了原权威片段');
+  } },
   { name: 'P7 completion retains derived P0 device responsibility without materialized acceptance', run(f) {
     const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
@@ -420,9 +539,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(result.detail, `${mode} lost its gap`);
   } })),
 ];
-export async function runAll(): Promise<UnitCaseResult[]> {
+async function runCases(selected: typeof cases): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  for (const test of cases) {
+  for (const test of selected) {
     const f = fixture();
     try { await test.run(f); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
@@ -430,3 +549,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   }
   return results;
 }
+
+export const runAll = (): Promise<UnitCaseResult[]> => runCases(cases);
+export const runContentWarnCases = (): Promise<UnitCaseResult[]> => runCases(cases.filter(item => item.name.startsWith('content rules:')));

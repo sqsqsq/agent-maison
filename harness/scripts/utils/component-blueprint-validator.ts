@@ -24,6 +24,7 @@ import { validateBlueprintProviders } from './blueprint-provider-boundary';
 import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
 import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
 import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
+import { inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstructionContent, inspectUseCaseItem, inspectDesignContentCollections, type DesignContentIssue } from './design-content-checks';
 
 export interface ComponentBlueprintValidationContext {
   projectRoot?: string;
@@ -92,7 +93,7 @@ export function validateComponentBlueprintUpstream(
 
 /** 可选设计表达的形状与承载位置诊断；缺失/空数组合法，坏形状也仅 WARN。 */
 export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): BlueprintIssue[] {
-  const out: BlueprintIssue[] = [...inspectBlueprintReaderGuide(blueprint).diagnostics];
+  const out: BlueprintIssue[] = [...inspectBlueprintReaderGuide(blueprint).diagnostics, ...diagnoseBlueprintContent(blueprint)];
   const visit = (value: unknown, at: string): void => {
     if (Array.isArray(value)) { value.forEach((item, i) => visit(item, `${at}[${i}]`)); return; }
     const record = asRecord(value);
@@ -128,6 +129,48 @@ export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): 
     }
   });
   return out;
+}
+
+/** 只看既有设计目标中的条目自身；不合并片段、不派生 CU、不改变准入。 */
+export function diagnoseBlueprintContent(blueprint: BlueprintRecord): BlueprintIssue[] {
+  let targets: ReturnType<typeof stableAddressIndex>;
+  try { targets = stableAddressIndex(blueprint); } catch { return []; } // 重复地址仍由原 BLOCKER 负责。
+  const paths = new Map<object, string>();
+  const locate = (value: unknown, at: string): void => {
+    if (!value || typeof value !== 'object' || paths.has(value)) return;
+    paths.set(value, at);
+    if (Array.isArray(value)) value.forEach((item, i) => locate(item, `${at}[${i}]`));
+    else for (const [key, child] of Object.entries(value)) locate(child, `${at}.${key}`);
+  };
+  locate(blueprint, '$');
+  const found: DesignContentIssue[] = [];
+  for (const [address, target] of targets) {
+    // 根 contracts 为业务 operation/DTO 集合；gap 不是可消费的设计目标。
+    if (address.startsWith('blueprint:') || address.startsWith('gap:')) continue;
+    const targetPath = paths.get(target)!;
+    for (const kind of ['acceptance', 'contracts', 'use_cases'] as const) {
+      const content = asRecord(target[kind]);
+      if (!content) continue;
+      const at = `${targetPath}.${kind}`;
+      found.push(...inspectDesignContentCollections(kind, content, at));
+      if (kind === 'acceptance') {
+        for (const key of ['criteria', 'boundaries', 'performance'] as const) {
+          if (!Array.isArray(content[key])) continue;
+          (content[key] as unknown[]).forEach((item, i) => found.push(...(key === 'performance'
+            ? inspectPerformanceItem(item, `${at}.${key}[${i}]`) : inspectAcceptanceItem(item, key === 'criteria', `${at}.${key}[${i}]`))));
+        }
+      } else if (kind === 'contracts') found.push(...inspectTypedConstructionContent(content, at));
+      else if (Array.isArray(content.use_cases)) content.use_cases.forEach((item, i) => found.push(...inspectUseCaseItem(item, `${at}.use_cases[${i}]`)));
+    }
+  }
+  const seen = new Set<string>();
+  return found.flatMap(problem => {
+    const message = `${problem.message}${problem.fields?.length ? `；字段：${problem.fields.join(', ')}` : ''}`;
+    const identity = `${problem.path}\n${message}`;
+    if (seen.has(identity)) return [];
+    seen.add(identity);
+    return [issue('blueprint_content_incomplete', problem.path, message, 'WARN')];
+  });
 }
 
 export function blockerIssues(issues: BlueprintIssue[]): BlueprintIssue[] {

@@ -29,7 +29,7 @@ import {
   CHECK_NOT_APPLICABLE_MARKER,
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
-import { takeArray } from './utils/shape-guards';
+import { inspectUseCaseItem } from './utils/design-content-checks';
 import {
   diffChangedFiles,
   filterBusinessSourceChanges,
@@ -1531,55 +1531,7 @@ export function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
     issues.push('顶层 use_cases 必须为非空数组');
   }
 
-  for (const uc of spec.use_cases ?? []) {
-    const tag = uc.id ? `use_case[${uc.id}]` : 'use_case[?]';
-    const required: Array<keyof UseCaseDef> = ['id', 'coordinator', 'ui_bindings', 'state_model', 'branches'];
-    for (const key of required) {
-      if (uc[key] === undefined || uc[key] === null) {
-        issues.push(`${tag}: 缺少字段 ${String(key)}`);
-      }
-    }
-    const roleEnum = new Set(['entry', 'progress', 'dialog', 'result', 'passive']);
-    // P0-2 复审：嵌套集合 dict 形防崩（takeArray 归空 + 结构化 issue，agent 可修——
-    // 不再落 safeRun 的 framework_bug 误归因）。
-    for (const ub of takeArray<NonNullable<typeof uc.ui_bindings>[number]>(uc.ui_bindings, `${tag}.ui_bindings`, issues)) {
-      if (!ub.ui) issues.push(`${tag} > ui_binding: 缺少 ui`);
-      if (!ub.role) issues.push(`${tag} > ui_binding[${ub.ui ?? '?'}]: 缺少 role`);
-      else if (!roleEnum.has(ub.role as string)) {
-        issues.push(`${tag} > ui_binding[${ub.ui}]: role 非法（当前：${ub.role}）`);
-      }
-      if (!Array.isArray(ub.user_actions)) {
-        issues.push(`${tag} > ui_binding[${ub.ui ?? '?'}]: user_actions 必须为数组（空数组表示纯展示）`);
-      } else {
-        for (const ua of ub.user_actions) {
-          if (!ua.trigger) issues.push(`${tag} > ui_binding[${ub.ui}] > user_action: 缺少 trigger`);
-          if (!ua.calls) issues.push(`${tag} > ui_binding[${ub.ui}] > user_action: 缺少 calls（必须是命名函数符号）`);
-        }
-      }
-    }
-    const kindEnum = new Set(['cloud', 'storage', 'system']);
-    for (const b of takeArray<NonNullable<typeof uc.data_boundaries>[number]>(uc.data_boundaries, `${tag}.data_boundaries`, issues)) {
-      if (!b.name) issues.push(`${tag} > data_boundary: 缺少 name`);
-      if (!b.type) issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: 缺少 type`);
-      if (!b.kind) issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: 缺少 kind`);
-      else if (!kindEnum.has(b.kind as string)) {
-        issues.push(`${tag} > data_boundary[${b.name}]: kind 必须属于 {cloud, storage, system}（当前：${b.kind}）`);
-      }
-      if (!Array.isArray(b.methods) || b.methods.length === 0) {
-        issues.push(`${tag} > data_boundary[${b.name ?? '?'}]: methods[] 必填且非空`);
-      }
-    }
-    if (uc.state_model && !Array.isArray(uc.state_model.phases)) {
-      issues.push(`${tag}: state_model.phases 必须为数组`);
-    }
-    for (const br of uc.branches ?? []) {
-      if (!br.id) issues.push(`${tag} > branch: 缺少 id`);
-      if (!br.scenario) issues.push(`${tag} > branch[${br.id ?? '?'}]: 缺少 scenario`);
-      if (!Array.isArray(br.linked_acceptance) || br.linked_acceptance.length === 0) {
-        issues.push(`${tag} > branch[${br.id ?? '?'}]: linked_acceptance[] 必填且非空`);
-      }
-    }
-  }
+  for (const [index, uc] of (spec.use_cases ?? []).entries()) issues.push(...inspectUseCaseItem(uc, `use_cases[${index}]`).map(issue => issue.message));
 
   if (issues.length === 0) {
     return [{

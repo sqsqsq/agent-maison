@@ -1,0 +1,783 @@
+# Read-only target-content extraction; source: .codex/reports/reader-oriented-6b3f8c21/host-review-397b092f/isolated/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml
+# Source SHA256: 397b092f1859e34fc72f543455a636bc2f6bec0ffe2557e6f56bae4cc1b38326
+# All typed target content and original array indices retained; no content corrected.
+blueprint_id: bc-openCard-2
+design_views:
+  - view_id: logical
+    nodes:
+      - node_id: bank-card-opening-domain
+      - node_id: bank-card-record
+  - view_id: runtime
+    nodes:
+      - node_id: opening-runtime-coordinator
+      - node_id: card-record-publication
+    runtime_data_flows:
+      - flow_id: bank-card-opening-flow
+        contracts:
+          state_management:
+            - design_ref: view:runtime/flow:bank-card-opening-flow
+              owner: BankCardOpeningCoordinator
+              states:
+                - selecting_type
+                - selecting_card
+                - phone_unavailable
+                - awaiting_sms
+                - submitting
+                - result_success
+                - result_failure
+              ordered_steps:
+                - 两个银行入口调用 begin(bank) 并共享同一后续状态机。
+                - 提交验证码后等待 RDB 结果，再进入成功或失败结果页。
+                - 完成按钮按结果清理导航栈，结果页本身禁止返回。
+              cleanup: 页面取消时停止计时器并销毁瞬时会话；结果完成后释放完整卡号交接对象。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningCoordinator.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+            - 02-Feature/WalletMain/src/main/ets/data/local/BankCardRdbHelper.ets
+        use_cases:
+          artifact: use-cases@1
+          use_cases:
+            - id: UC-bank-card-opening
+              name: 银行卡开卡
+              state_model:
+                phases:
+                  - selecting_type
+                  - selecting_card
+                  - phone_unavailable
+                  - awaiting_sms
+                  - submitting
+                  - result_success
+                  - result_failure
+              ui_bindings:
+                - trigger: 点击任一银行
+                  calls: BankCardOpeningCoordinator.begin
+                - trigger: 点击同意并继续
+                  calls: BankCardOpeningCoordinator.chooseCardType
+                - trigger: 输入六位验证码并点击下一步
+                  calls: BankCardOpeningCoordinator.submitSmsCode
+              branches:
+                - id: BR-happy
+                  label: 写库成功
+                  expected_phase_seq:
+                    - selecting_type
+                    - selecting_card
+                    - awaiting_sms
+                    - submitting
+                    - result_success
+                  expected_port_calls:
+                    - BankCardRepository.addCard
+                  linked_acceptance:
+                    - AC-1
+                    - AC-7
+                    - BD-8
+                - id: BR-write-failed
+                  label: 写库失败
+                  expected_phase_seq:
+                    - selecting_type
+                    - selecting_card
+                    - awaiting_sms
+                    - submitting
+                    - result_failure
+                  expected_port_calls:
+                    - BankCardRepository.addCard
+                  linked_acceptance:
+                    - AC-8
+                    - BD-5
+                - id: BR-phone-unavailable
+                  label: 账号手机号不可用
+                  expected_phase_seq:
+                    - selecting_type
+                    - selecting_card
+                    - phone_unavailable
+                  expected_port_calls:
+                    - AccountService.getVerificationPhoneView
+                  linked_acceptance:
+                    - BD-7
+      - flow_id: bank-card-home-refresh-flow
+        contracts:
+          state_management:
+            - design_ref: view:runtime/flow:bank-card-home-refresh-flow
+              owner: HomeTabPage
+              states:
+                - no_completion_payload
+                - completion_payload_consumed
+                - home_no_card
+                - home_with_card
+                - home_load_failed
+              ordered_steps:
+                - 成功完成先发布一次性交接，再清栈回首页。
+                - 首页 consume 后立即清空桥接值，并以 RDB 查询结果决定有卡态。
+              cleanup: 失败、取消和进程重建都没有桥接值；成功值只允许一次消费。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/shared/BankCardCompletionBridge.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+  - view_id: development
+    nodes:
+      - node_id: add-bank-page-entry
+        contracts:
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+      - node_id: all-banks-page-entry
+        contracts:
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+      - node_id: card-type-sheet
+        contracts:
+          components:
+            - name: BankCardTypeSheet
+              module: WalletMain
+              kind: dialog
+              description: 银行卡类型单选半模态。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/components/BankCardTypeSheet.ets
+      - node_id: bank-card-selection-page
+        contracts:
+          components:
+            - name: BankCardSelectionPage
+              module: WalletMain
+              kind: page
+              description: 具体银行卡单选页。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+      - node_id: sms-code-sheet
+        contracts:
+          components:
+            - name: SmsCodeSheet
+              module: WalletMain
+              kind: dialog
+              description: 六位数字验证码半模态。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/components/SmsCodeSheet.ets
+      - node_id: opening-result-page
+        contracts:
+          components:
+            - name: BankCardOpeningResultPage
+              module: WalletMain
+              kind: page
+              description: 开卡成功或失败的全屏收口页。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets
+      - node_id: bank-card-domain-service
+        contracts:
+          interfaces:
+            - name: BankCardOpeningCoordinator
+              methods:
+                - begin(bankInfo): OpeningSessionView
+                - chooseCardType(cardType): BankCardCandidate[]
+                - selectCard(cardId): SelectedCardView
+                - sendMockSms(): SmsCountdownState
+                - submitSmsCode(code): Promise<CardOpeningResult>
+          files:
+            - 02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningCoordinator.ets
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankCardOpeningModels.ets
+      - node_id: bank-card-mock-catalog
+        contracts:
+          data_models:
+            - name: BankInfo
+              fields:
+                - name: supportedCardTypes
+                  type: BankCardType[]
+                  description: 该银行支持的 debit/credit 集合，至少一项。
+            - name: BankCardCandidate
+              fields:
+                - name: cardId
+                  type: string
+                - name: fullCardNumber
+                  type: string
+                - name: maskedCardNumber
+                  type: string
+                - name: bankCode
+                  type: string
+                - name: bankCardType
+                  type: debit|credit
+          files:
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankCardOpeningModels.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+      - node_id: bank-card-rdb
+        contracts:
+          files:
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+            - 02-Feature/WalletMain/src/main/ets/data/local/BankCardRdbHelper.ets
+      - node_id: bank-card-completion-bridge
+        contracts:
+          interfaces:
+            - name: BankCardCompletionBridge
+              methods:
+                - publish(payload): void
+                - consume(): BankCardCompletionPayload | null
+          files:
+            - 02-Feature/WalletMain/src/main/ets/shared/BankCardCompletionBridge.ets
+      - node_id: wallet-home-refresh
+        contracts:
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+      - node_id: account-verification-phone-provider
+        contracts:
+          interfaces:
+            - name: AccountService.getVerificationPhoneView
+              returns: VerificationPhoneView { maskedPhone }
+              description: 为本地模拟验证码提供账号侧脱敏手机号。
+          files:
+            - 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/data/model/VerificationPhoneView.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/index.ets
+      - node_id: walletmain-route-export-registration
+        contracts:
+          files:
+            - 02-Feature/WalletMain/src/main/ets/index.ets
+            - 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets
+            - 02-Feature/WalletMain/src/main/resources/base/profile/route_map.json
+      - node_id: screenshot-derived-visual-assets
+        contracts:
+          files:
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_sheet_close.png
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_selected_blue.png
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_selected_red.png
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_result_success.png
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_result_failure.png
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_result_guide.png
+            - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/color.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/float.json
+      - node_id: phone-route-registration
+        contracts:
+          files:
+            - 01-Product/Phone/src/main/ets/pages/index.ets
+  - view_id: deployment
+    nodes:
+      - node_id: phone-app-process
+      - node_id: wallet-cards-rdb-file
+  - view_id: scenarios
+    nodes:
+      - node_id: scenario-card-type
+        acceptance:
+          criteria:
+            - id: AC-1
+              priority: P0
+              steps:
+                - 分别从添加银行卡页和全部银行页点击同一银行
+                - 选择一种卡类型并点击同意并继续
+              expected: 两个入口展示同一半模态；最多选一种卡类型；继续后进入对应银行的具体卡片页。
+              ut_layer: both
+              ut_focus: begin 与 chooseCardType 的状态迁移和支持卡类型过滤。
+              device_focus: 半模态布局、单选状态和两个入口路由一致性。
+          boundaries:
+            - id: BD-1
+              priority: P1
+              steps:
+                - 在半模态未选择卡类型
+              expected: 同意并继续按钮不可用；关闭半模态后仍停留在原银行列表页。
+              ut_layer: both
+              ut_focus: 未选择状态不触发导航。
+              device_focus: 按钮禁用和关闭行为。
+          performance: []
+      - node_id: scenario-select-card
+        acceptance:
+          criteria:
+            - id: AC-2
+              priority: P0
+              steps:
+                - 进入具体卡片页
+                - 检查候选卡展示并选择一张卡
+                - 勾选协议后点击下一步
+              expected: 每个银行和卡类型展示 1 到 2 张 mock 卡；UI 只显示前四后四；下一步拉起验证码半模态。
+              ut_layer: both
+              ut_focus: 候选过滤、单选和掩码格式。
+              device_focus: 全屏布局、协议与按钮状态。
+          boundaries:
+            - id: BD-2
+              priority: P0
+              steps:
+                - 搜索页面语义树和日志输出
+              expected: 完整卡号不出现在 Text、可访问性文本、Toast 或日志中。
+              ut_layer: both
+              ut_focus: 掩码函数与页面 view model 不暴露完整卡号。
+              device_focus: 页面可见文本与无障碍树不含完整卡号。
+          performance: []
+      - node_id: scenario-sms
+        acceptance:
+          criteria:
+            - id: AC-3
+              priority: P0
+              steps:
+                - 打开验证码半模态
+                - 输入少于六位、非数字和六位数字
+              expected: 打开即开始 60 秒倒计时；只保留数字且最多六位；恰好六位时下一步可用。
+              ut_layer: both
+              ut_focus: 输入过滤、按钮派生和倒计时状态。
+              device_focus: 键盘、倒计时和按钮视觉状态。
+            - id: AC-4
+              priority: P1
+              steps:
+                - 等待倒计时归零
+                - 点击重新发送
+              expected: 倒计时期间不可重复发送；归零后显示重新发送，点击后重新从 60 秒开始。
+              ut_layer: both
+              ut_focus: 计时器边界和重复点击抑制。
+              device_focus: 倒计时文案与重发交互。
+          boundaries:
+            - id: BD-3
+              priority: P1
+              steps:
+                - 在倒计时期间关闭验证码半模态
+              expected: 计时器被取消，不再更新已销毁 UI；重新进入时触发一轮新的模拟发送。
+              ut_layer: both
+              ut_focus: detach 清理和重新初始化。
+              device_focus: 关闭后无后台弹窗或残留更新。
+            - id: BD-7
+              priority: P1
+              steps:
+                - 让 AccountService.getVerificationPhoneView 返回不可用
+                - 在具体银行卡页点击下一步
+              expected: 不拉起验证码半模态，停留在具体银行卡页并提示账号信息不可用；不启动计时器、不写数据库。
+              ut_layer: both
+              ut_focus: 手机号不可用分支不触发 sendMockSms 或 BankCardRepository。
+              device_focus: 提示可见且页面、选择与协议状态保持。
+          performance: []
+      - node_id: scenario-result
+        acceptance:
+          criteria:
+            - id: AC-5
+              priority: P0
+              steps:
+                - 让 RDB 写入成功
+                - 检查记录字段
+              expected: bank_cards 保存完整卡号及要求字段；UI 仍只展示掩码；recordId 返回结果对象。
+              ut_layer: both
+              ut_focus: 表映射、唯一约束、成功结果和查询恢复。
+              device_focus: 成功页内容不泄露完整卡号。
+            - id: AC-6
+              priority: P0
+              steps:
+                - 分别制造写库成功和失败
+              expected: 两种结果都进入结果页，结果对象都携带完整卡号；失败时 recordId 为空且数据库无新记录。
+              ut_layer: unit
+              ut_focus: 成功/失败结果构造与不伪造记录。
+              device_focus: 成功/失败文案切换。
+            - id: AC-7
+              priority: P0
+              steps:
+                - 成功结果页点击完成
+              expected: 清理从添加银行卡页开始的开卡路径，把完整卡号和 recordId 一次性交给钱包首页；首页消费后清空交接值、重新查库并展示有卡态。
+              ut_layer: both
+              ut_focus: 成功完成动作的一次性交接、消费清理、导航意图和首页刷新事件。
+              device_focus: 无法左滑回开卡页面且首页为有卡态。
+            - id: AC-8
+              priority: P0
+              steps:
+                - 失败结果页点击完成
+              expected: 清理添加银行卡页及其后的开卡路径，回到已有添加卡片页，不创建银行卡记录。
+              ut_layer: both
+              ut_focus: 失败完成动作的导航意图和数据库零写入。
+              device_focus: 返回添加卡片页且无法左滑回结果页。
+          boundaries:
+            - id: BD-4
+              priority: P0
+              steps:
+                - 在结果页触发系统返回或左滑返回
+              expected: 结果页不退出；只有完成按钮能结束本次流程。
+              ut_layer: device
+              ut_focus: 无纯业务逻辑断言。
+              device_focus: 系统返回键和返回手势均被拦截。
+            - id: BD-5
+              priority: P0
+              steps:
+                - 对同一完整卡号重复提交
+              expected: full_card_number 唯一约束避免重复行；返回既有记录并保持成功结果一致。
+              ut_layer: unit
+              ut_focus: 幂等键和唯一约束冲突处理。
+              device_focus: 重复提交只出现一次结果收口。
+            - id: BD-6
+              priority: P1
+              steps:
+                - 对照结果参考图
+              expected: 本轮不展示或实现 NFC 激活区；只保留结果状态、说明、截图裁剪插画和完成按钮。
+              ut_layer: device
+              ut_focus: 无纯业务逻辑断言。
+              device_focus: NFC 激活区域不存在。
+            - id: BD-8
+              priority: P0
+              steps:
+                - 成功完成后连续调用两次 BankCardCompletionBridge.consume()
+                - 分别验证失败、取消和进程重建场景
+              expected: 成功时首次消费返回 fullCardNumber 与 recordId、第二次为空；失败、取消和进程重建均没有桥接值，完整卡号不残留。
+              ut_layer: both
+              ut_focus: publish/consume 单次语义、清空、失败不发布与进程内存不恢复。
+              device_focus: 成功回首页后不能通过返回或再次 attach 重放本次开卡交接。
+          performance:
+            - id: NFR-1
+              priority: P1
+              metric: 用户提交到结果页可见时间
+              threshold: 2
+              unit: 秒
+              description: 本地 mock 与 RDB 正常时，提交后两秒内展示结果页。
+              ut_layer: device
+              ut_focus: 无纯业务逻辑断言。
+              device_focus: 量测提交到结果页首帧。
+relations:
+  - relation_id: scenario-type-realized-by-sheet
+  - relation_id: scenario-card-realized-by-page
+  - relation_id: scenario-sms-realized-by-sheet
+  - relation_id: scenario-result-realized-by-page
+  - relation_id: flow-owned-by-coordinator
+  - relation_id: record-deployed-in-rdb
+decisions_and_gaps:
+  decisions:
+    - decision_id: pan-storage
+    - decision_id: completion-navigation
+    - decision_id: sms-countdown
+    - decision_id: asset-add-bank-page
+    - decision_id: asset-all-banks-page
+    - decision_id: asset-card-type-sheet
+    - decision_id: asset-card-selection-page
+    - decision_id: asset-sms-sheet
+    - decision_id: asset-result-page
+    - decision_id: asset-home-page
+contracts:
+  - contract_id: bank-card-opening
+    label: 本地银行卡开卡提交契约
+    owner: WalletMain domain
+    needed_by: bank-card-opening-blueprint
+    operation:
+      operation_id: commitBankCardOpening
+      direction: local
+      version: "1"
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/operation
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+    request_dto:
+      dto_id: CardOpeningCommitRequest
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+      fields:
+        - field_id: bankCode
+          type: string
+          semantics: BankRepository 中的稳定银行短码。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/0
+          provenance: &a1
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            source_revision: bc-openCard-2
+            observed_at: 2026-10-15
+            evidence_strength: authoritative
+            extraction_method: direct_local_source
+        - field_id: bankName
+          type: string
+          semantics: 银行展示名称。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/1
+          provenance: *a1
+        - field_id: bankCardType
+          type: debit|credit
+          semantics: 本次选择的储蓄卡或信用卡。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/2
+          provenance: *a1
+        - field_id: fullCardNumber
+          type: string
+          semantics: 完整银行卡号；不得进入 UI、日志、Toast 或埋点。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/3
+          provenance: *a1
+        - field_id: flowId
+          type: string
+          semantics: 本次开卡会话标识，与完整卡号共同形成提交幂等键。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/4
+          provenance: *a1
+    response_dto:
+      dto_id: CardOpeningResult
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+      fields:
+        - field_id: success
+          type: boolean
+          semantics: RDB 写入或幂等命中成功为 true。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/0
+          provenance: *a1
+        - field_id: fullCardNumber
+          type: string
+          semantics: 无论成功或失败都携带本次完整卡号，只供结果交接和后续路由使用。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/1
+          provenance: *a1
+        - field_id: recordId
+          type: string
+          semantics: 成功时的数据库记录标识，失败时为空。
+          nullable: true
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/2
+          provenance: *a1
+        - field_id: failureReason
+          type: string
+          semantics: 失败时供结果页映射用户文案的本地原因，成功时为空。
+          nullable: true
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/3
+          provenance: *a1
+    mappings:
+      - mapping_id: map-bank-code
+        kind: direct
+        source_fields:
+          - bankCode
+        target_field: BankCardRecord.bankCode
+        rule: 原值写入。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/0
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-bank-name
+        kind: direct
+        source_fields:
+          - bankName
+        target_field: BankCardRecord.bankName
+        rule: 原值写入。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/1
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-card-type
+        kind: direct
+        source_fields:
+          - bankCardType
+        target_field: BankCardRecord.bankCardType
+        rule: debit 或 credit 原值写入。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/2
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-full-card-number
+        kind: direct
+        source_fields:
+          - fullCardNumber
+        target_field: BankCardRecord.fullCardNumber
+        rule: 写入加密 RDB，同时派生 maskedCardNumber 供展示。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/3
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-flow-id
+        kind: derivation
+        source_fields:
+          - flowId
+        target_field: submitIdempotencyKey
+        rule: 与 fullCardNumber 组合用于一次会话内防重复提交，不持久化。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/4
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-success
+        kind: derivation
+        source_fields:
+          - success
+        target_field: CardOpeningResult.success
+        rule: 根据 insertOrGetByCardNumber 的成功或异常结果生成。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/5
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-result-card-number
+        kind: direct
+        source_fields:
+          - fullCardNumber
+        target_field: CardOpeningResult.fullCardNumber
+        rule: 无论成功或失败均原值交接，结果页不展示。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/6
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-record-id
+        kind: direct
+        source_fields:
+          - recordId
+        target_field: CardOpeningResult.recordId
+        rule: 成功时写入，失败时保持空值。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/7
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - mapping_id: map-failure-reason
+        kind: direct
+        source_fields:
+          - failureReason
+        target_field: CardOpeningResult.failureReason
+        rule: 失败时写入本地原因，成功时保持空值。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/8
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+    errors:
+      semantics:
+        - code: local-rdb-open-failed
+          behavior: 返回失败结果且不创建记录。
+        - code: local-rdb-write-failed
+          behavior: 返回失败结果且不伪造 recordId。
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/errors
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+    idempotency:
+      key: flowId+fullCardNumber
+      scope: 当前提交会话；数据库以 full_card_number 唯一约束处理跨会话重复卡。
+      repeated_result: 返回既有 recordId 和成功结果，不插入第二行。
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/idempotency
+      verification_refs:
+        - acceptance:BD-5
+    nfr:
+      privacy: 完整卡号不得进入 UI、日志、Toast、埋点或未加密存储。
+      responsiveness: 正常本地写入两秒内进入结果页。
+      accessibility: 所有单选、关闭和主按钮提供可读标签与可操作状态。
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/nfr
+      verification_refs:
+        - acceptance:BD-2
+        - acceptance:NFR-1
+    table_schema:
+      database: wallet_cards.db
+      version: 1
+      security_level: S4
+      encrypt: true
+      tables:
+        - name: bank_cards
+          primary_key: record_id
+          columns:
+            - name: record_id
+              type: TEXT
+              description: UUID 字符串，单条银行卡记录主键。
+              constraints:
+                - PRIMARY KEY
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: full_card_number
+              type: TEXT
+              description: 完整银行卡号，仅存于加密数据库和领域对象。
+              constraints:
+                - NOT NULL
+                - UNIQUE
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: masked_card_number
+              type: TEXT
+              description: 前四后四展示值，用于避免查询后再把完整卡号交给 UI。
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: category
+              type: TEXT
+              description: 卡片大类，本轮固定 bank_card，保留交通卡和门禁卡扩展语义。
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: bank_code
+              type: TEXT
+              description: 银行稳定短码。
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: bank_name
+              type: TEXT
+              description: 银行显示名称。
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: bank_card_type
+              type: TEXT
+              description: debit 或 credit。
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: added_at
+              type: INTEGER
+              description: 添加成功时的 Unix 毫秒时间戳。
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: huawei_pay_enabled
+              type: INTEGER
+              description: 0/1 布尔，本轮默认 0，不代表真实开通。
+              default: 0
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: unionpay_quickpass_enabled
+              type: INTEGER
+              description: 0/1 布尔，本轮默认 0，不代表真实开通。
+              default: 0
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            - name: transaction_records_json
+              type: TEXT
+              description: 交易记录 JSON 数组，本轮默认 []，后续页面只读解析。
+              default: "[]"
+              constraints:
+                - NOT NULL
+              source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          constraints:
+            - full_card_number 必须唯一，重复卡返回既有记录。
+          upgrade: v1 首次建表；后续版本只允许向前迁移，不删除 full_card_number 唯一约束。
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+    provenance: *a1
+  - contract_id: account-verification-phone
+    label: 账号验证码手机号只读契约
+    owner: AccountManager domain
+    needed_by: bank-card-opening-blueprint
+    operation:
+      operation_id: getVerificationPhoneView
+      direction: AccountManager_to_WalletMain
+      version: "1"
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/operation
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md#页面说明
+    request_dto:
+      dto_id: VerificationPhoneRequest
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/request_dto
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md#页面说明
+      fields: []
+    response_dto:
+      dto_id: VerificationPhoneView
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/response_dto
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md#页面说明
+      fields:
+        - field_id: maskedPhone
+          type: string
+          semantics: 账号 mock 手机号的脱敏展示值，例如 185****3841；WalletMain 不接收完整手机号。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/response_dto/fields/0
+          provenance: *a1
+    mappings:
+      - mapping_id: map-masked-phone
+        kind: direct
+        source_fields:
+          - maskedPhone
+        target_field: SmsCodeSheet.maskedPhone
+        rule: 原值只读展示，不持久化到开卡数据库。
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/mappings/0
+        provenance: *a1
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md#页面说明
+    errors:
+      semantics:
+        - code: account-phone-unavailable
+          behavior: 不拉起验证码半模态，停留在具体银行卡页并提示账号信息不可用。
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/errors
+      verification_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md#页面说明
+    idempotency:
+      key: no-argument-read
+      scope: 同一账号 mock 会话内重复读取返回相同 maskedPhone。
+      repeated_result: 无副作用地返回当前脱敏手机号。
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/idempotency
+      verification_refs:
+        - contract:account-verification-phone
+    nfr:
+      privacy: 完整 mock 手机号留在 AccountManager 内部，WalletMain 只接收 maskedPhone。
+      responsiveness: 本地同步读取，不引入网络或后台任务。
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/1/nfr
+      verification_refs:
+        - acceptance:AC-3
+    provenance: *a1

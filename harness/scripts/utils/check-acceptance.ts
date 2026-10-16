@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { CheckContext, CheckResult } from './types';
+import { ACCEPTANCE_ID_PATTERN, inspectAcceptanceItem, inspectPerformanceItem } from './design-content-checks';
 import {
   VALID_UT_LAYERS,
   acceptanceYamlRel,
@@ -23,7 +24,7 @@ import {
  * AC-GN 同一词法（BD 同构）。所有"行内 AC 引用解析"的承载点必须以本词法为唯一
  * 依据（p0-semantic-gates 曾自写 `/AC-\d+/gi` 第二套规则 → AC-G* 恒报零覆盖）。
  */
-export const ACCEPTANCE_ID_PATTERN = /^(AC|BD)-(G\d+|\d+)$/i;
+export { ACCEPTANCE_ID_PATTERN } from './design-content-checks';
 
 /**
  * e9d4b7a3 t2：从任意文本做**包含匹配**提取行内 AC/BD 引用（test-plan 用例行/正文），
@@ -299,21 +300,18 @@ export function checkAcceptanceContent(ctx: CheckContext): CheckResult[] {
   if (!acceptance?.criteria?.length) issues.push('criteria 缺少真实验收条目');
   const ids = new Set<string>();
   for (const { item, criterion } of [...(acceptance?.criteria ?? []).map(item => ({ item, criterion: true })), ...(acceptance?.boundaries ?? []).map(item => ({ item, criterion: false }))]) {
-    if (!item || typeof item !== 'object') { issues.push('AC/BD 条目必须是对象'); continue; }
-    const id = typeof item.id === 'string' ? item.id.toUpperCase() : '';
-    if (!ACCEPTANCE_ID_PATTERN.test(id) || ids.has(id)) issues.push(`${item.id}: 验收 ID 非法或重复`);
+    const content = inspectAcceptanceItem(item, criterion, '');
+    const id = item && typeof item.id === 'string' ? item.id.toUpperCase() : '';
+    if (ACCEPTANCE_ID_PATTERN.test(id) && ids.has(id)) issues.push(`${item.id}: 验收 ID 非法或重复`);
     ids.add(id);
-    if (!['P0', 'P1', 'P2'].includes(item.priority) || !nonEmptyString(item.description)) issues.push(`${item.id}: 缺 priority/description`);
-    if (isUnitUtLayer(item.ut_layer) && !hasNonEmptyFocus(item.ut_focus)) issues.push(`${item.id}: 缺 ut_focus`);
-    if (criterion) {
-      const ac = item as NonNullable<typeof acceptance>['criteria'][number];
-      if (ac.testable !== true || !Array.isArray(ac.verification_steps) || !ac.verification_steps.length || ac.verification_steps.some(step => !nonEmptyString(step)) || !nonEmptyString(ac.expected_result)) issues.push(`${item.id}: 缺可执行步骤或精确预期`);
-    } else {
-      const bd = item as NonNullable<typeof acceptance>['boundaries'][number];
-      if (!nonEmptyString(bd.scenario) || !nonEmptyString(bd.handling) || !nonEmptyString(bd.expected_behavior)) issues.push(`${item.id}: 缺边界条件、处理或预期`);
-    }
+    issues.push(...content.map(issue => issue.message));
   }
-  for (const item of acceptance?.performance ?? []) if (![item.id, item.metric, item.threshold, item.unit, item.description].every(nonEmptyString)) issues.push('performance 缺指标、阈值、单位或描述');
+  for (const item of acceptance?.performance ?? []) {
+    const content = inspectPerformanceItem(item, '');
+    const consumerError = content.find(issue => issue.consumerError)?.consumerError;
+    if (consumerError) throw new TypeError(consumerError);
+    issues.push(...content.map(issue => issue.message));
+  }
   return [{ id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', description: '验收内容可执行且有精确预期', status: issues.length ? 'FAIL' : 'PASS', details: issues.join('; ') || '验收内容完整' }];
 }
 

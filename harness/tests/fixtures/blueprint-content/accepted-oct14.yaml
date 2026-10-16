@@ -1,0 +1,2593 @@
+# Read-only target-content extraction; source: .codex/reports/reader-oriented-6b3f8c21/final-closeout/final-workspace/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml
+# Source SHA256: 2f80825dfa3d6d93d7b6f95a8dae07fed342720d6bd0fb16ba1e56a05bcaece9
+# All typed target content and original array indices retained; no content corrected.
+blueprint_id: bc-openCard-2
+design_views:
+  - view_id: logical
+    nodes:
+      - node_id: bank-capability
+      - node_id: card-ledger
+      - node_id: open-session
+  - view_id: runtime
+    nodes:
+      - node_id: opening-state
+    runtime_data_flows:
+      - flow_id: bank-opening
+        contracts:
+          state_management:
+            - data: BankOpenState
+              scope: page_session
+              decorator: ordinary_class
+              holder: BankOpenFlow
+              module: WalletMain
+              owner_ref: view:development/node:open-flow
+              contract_refs:
+                - contract:local-card-save
+              ordered_steps:
+                - "【01
+                  银行目录/旧入口】AddBankCardPage.loadBanks或AllBanksPage.loadGroups →
+                  await BankRepository.getBanks():
+                  Promise<BankInfo[]>；返回20家mock银行及supportedCardTypes。两页继续使用原有排序\
+                  /展开/分组/索引组件；异常仍为各自空态/资源化错误，不调用开卡save。此处是先加载列表，再由用户点银行，不画用户直接调\
+                  用业务对象。"
+                - 【02 创建本轮依赖】Phone
+                  Index的navDestinationMap以WalletMain出口装配入口页，向本轮BankOpeningNavigation注入现有NavPathContext.stack()同源栈和Index.handleBankOpeningCompleted(cardNumber)回调。入口页用宿主Context创建BankCardRepository/CardRdbHelper依赖，将BankRepository、AccountService.getInstance()和既有clock函数注入一个普通BankOpenFlow；没有第二个导航栈、全局flow注册表或短信provider。
+                - "【03
+                  银行点击/账号快照】AddBankCardPage.handleBankTap(bank)或AllBanksPage.ha\
+                  ndleBankTap(bank) → await flow.start(bank):
+                  Promise<void>。Flow拒绝重复活动会话，生成一次sessionId，await
+                  AccountService.getUserProfile():
+                  Promise<UserProfile>，捕获accountId与phoneNumber/登录态，读取bank.suppo\
+                  rtedCardTypes并默认第一项，进入ChoosingType。start返回void，UI通过已绑定onState\
+                  Changed(state)取得快照，不把void误写为卡列表返回值。"
+                - "【04 入口导航边界】银行入口页 → navigation.begin(flow):
+                  boolean；助手调用同源NavPathStack.getAllPathName()记录起始AddBankCard及可确\
+                  认的钱包祖先路径，并核对sessionId。true才展示BankCardTypeSheet；false保持原银行页错误态\
+                  、flow.cancel()清草稿，不产生选卡路由或RDB写入。正常路径已有导航上下文由入口预置，单元用例可使用同一夹具，\
+                  不新增业务分支。"
+                - "【05 支持类型/文本同意】BankCardTypeSheet的单选事件 → flow.chooseType(type):
+                  void，仅允许supportedCardTypes中一个值；两类或单类展示随银行数据，更换类型重置卡片及协议。用户点“同\
+                  意并继续” → await flow.continueToCards(): Promise<void>；Flow await
+                  BankRepository.getCards(bank.code,selectedType):
+                  Promise<BankCardInfo[]>。返回完整16位合成卡，Flow保存cards并通知UI；空数组、读取错误或\
+                  银行/类型不匹配显示错误并禁下一步，不调用showSelection或save。"
+                - "【06
+                  全屏选卡/同一会话交接】continueToCards返回且state.cards非空后，BankCardTypeShee\
+                  t/入口页的具名继续处理 → navigation.showSelection(flow):
+                  boolean；导航助手调用NavPathStack.pushPath({name:BankCardSelectionPa\
+                  ge,param:{flow,navigation,sessionId}})。true后关闭类型sheet，BankCar\
+                  dSelectionPage.onReady从内存param核对sessionId并接管同一个Flow的最终销毁责任；旧银\
+                  行页隐藏只off本页状态回调，不dispose已转交Flow。push失败返回false，原类型sheet保留可重试，未转\
+                  移owner、不再次读写卡库。"
+                - "【07 卡片与协议】BankCardSelectionPage的卡行事件 → flow.chooseCard(card):
+                  void，核对完整bankCode/bankCardType及目录成员；显示值经BankCardMaskUtil.mask\
+                  CardNumber(card.cardNumber)保留前四后四，内部selectedCard仍为完整卡。协议check\
+                  box → flow.setAgreement(accepted):
+                  void；选卡/协议缺任一，下一步不可用。更换银行/类型不继承旧卡或旧协议。"
+                - "【08 拉起OTP与首次假发送】BankCardSelectionPage下一步 → await
+                  flow.openOtp(): Promise<void>。Flow先检查卡片及协议，await
+                  AccountService.getUserProfile()核对捕获账号、登录态和手机号；未登录/账号已变/手机号不可用\
+                  不进入WaitingOtp，按既有引导登录或取消语义处理。合法时仅执行一次内部模拟发送（无网络/真实短信），保存resen\
+                  dDeadlineMs=clock()+60000、WaitingOtp和phoneNumber并通知状态；Page在vo\
+                  id返回及状态就绪后展示BankOtpSheet。手机号展示用现有MaskUtil.maskPhone(state.pho\
+                  neNumber)，不打印完整值。"
+                - "【09 OTP输入/重发】BankOtpSheet输入事件 → flow.setOtp(value):
+                  void，仅接受ASCII数字且最多6位；恰好6位才允许下一步。可见timer或页面warm resume →
+                  flow.refreshCountdown():
+                  void，按max(0,ceil((deadline-clock())/1000))重算，不累加漏掉的tick。重发按钮 →
+                  flow.resendOtp():
+                  void；剩余>0直接无副作用返回，归零后内部再假发送一次并重置60秒，仍无Repository/短信网络调用。"
+                - "【10 关闭OTP/监听清理】BankOtpSheet关闭 → flow.cancelOtp():
+                  void，清验证码/计时器回ChoosingCard，保留该页选卡及协议，重新openOtp重新核对账号并只假发送一次。类\
+                  型sheet关闭、选卡真正返回退出 →
+                  flow.cancel()/dispose()，清原始参数与账号监听；前进到结果只隐藏/解绑当前UI，不销毁仍有效Flow\
+                  。账号监听沿AccountService.onLoginStateChanged/offLoginStateChanged\
+                  同引用注册/释放，回调重取UserProfile后交flow.handleAccountChanged(accountId\
+                  )。"
+                - "【11 OTP提交前校验/await账号】BankOtpSheet下一步具名处理 → await
+                  flow.confirmOtp():
+                  Promise<BankOpenResult|null>。Flow先检查6位数字、匹配selectedCard、agree\
+                  mentAccepted、sessionId和非Submitting；无效返回null且不调用AccountService\
+                  或save。合法时await
+                  AccountService.getUserProfile()复核accountId；变化时Cancelled/清码并返回\
+                  null，不落库。相同账号才锁住Submitting，捕获该accountId/完整cardNumber/银行/两层卡类型\
+                  /首次addedAt/支付flag=false/transactionsJson=[]构造WalletCardRecord\
+                  ，await cardRepo.save(record)。"
+                - "【12 Repository到真实设计helper】BankCardRepository.save(record) →
+                  await CardRdbHelper.getStore(context):
+                  Promise<relationalStore.RdbStore>。helper复用同一个在途开库Promise，调用aw\
+                  ait
+                  relationalStore.getRdbStore(context,{name:wallet_cards.db,sec\
+                  urityLevel:S4,encrypt:true})，await
+                  ensureSchema(store)。getStore/ensureSchema是本次已有CardRdbHelper文件\
+                  内补明的方法签名，不新增层/文件。开库失败抛DB_OPEN_FAILED，建表/版本失败分别抛DB_SCHEMA_FAIL\
+                  ED/DB_VERSION_UNSUPPORTED，原链返回给save/confirmOtp，不回退明文。"
+                - "【13 库版本/创建确认】CardRdbHelper.ensureSchema(store):
+                  Promise<void>读取store.version；v0按根table_schema在事务中CREATE TABLE
+                  IF NOT EXISTS
+                  cards及已声明主键/CHECK，所有建表操作成功后才置v1并确认；v1直接复用；>1拒绝降级或删库重建。事务失败按平台\
+                  能力回滚并抛DB_SCHEMA_FAILED，helper不返回可用store。初建不等于银行卡已保存，只有下一步保存/查\
+                  询确认才算添卡成功。"
+                - 【14
+                  唯一键写入/完整返回】获得RdbStore后，BankCardRepository.save把WalletCardRecord按根mapping转换为snake_case列值（boolean↔0/1、有效JSON数组），await
+                  RdbStore.executeSql的参数绑定INSERT OR IGNORE语句，然后await
+                  RdbStore.query按(account_id,card_number)查询确认；读取ResultSet并在finally关闭。新行或已有同行都映射成直接WalletCardRecord返回，重复卡保留首次addedAt和原支付状态；未确认/查询异常抛DB_CONFIRM_FAILED，写入异常抛DB_WRITE_FAILED，不使用replace/delete-upsert。数据库确认→Repository返回→Flow
+                  await完成的顺序不能省略。
+                - 【15 Flow返回成功/失败/已销毁】cardRepo.save
+                  resolve真实记录后，仍有效Flow才构造result={sessionId,accountId,cardNumber完整,success:true,errorCode空}、清OTP/timer，发布commit-result并进入Success；save
+                  reject则构造本轮原完整卡号、success:false/errorCode，发布同一结果通道并Failed。状态回调是页面快照，不是RDB真源。如果save
+                  pending期间dispose，原捕获账号写入可完成，但Flow不更新已销毁UI且confirmOtp返回null；进程重建丢草稿、不自动补提交。
+                - "【16 提交中账号切换】save pending时AccountService账号变化回调 →
+                  flow.handleAccountChanged(newId):
+                  void；Flow只记录消费端账号已变，仍await原record.accountId的save，不将记录改绑新账号。已有\
+                  account_change_during_submit/dispose_during_submit夹具在controll\
+                  ed_promise.before_resolve中注入事件，不把交错伪画成confirmOtp返回后的普通顺序调用。旧账\
+                  号结果可完成；向新账号首页传空号。"
+                - "【17 拉起结果/重试与返回拦截】confirmOtp
+                  resolve非null后由BankOtpSheet的具名提交处理（UI消费方）→
+                  navigation.showResult(result):
+                  boolean；导航助手关闭OTP并调用NavPathStack.pushPath({name:BankOpenResul\
+                  tPage,param:{result,navigation}})。结果页只显示success/error的脱敏图文，不显\
+                  示/日志完整卡号；push失败false保留提交快照并可再次showResult，同一次成功/失败不可再次save。结果N\
+                  avDestination.onBackPressed → navigation.rejectBack():
+                  true，禁止左右侧滑/系统返回；只有完成按钮可调用finish。"
+                - "【18
+                  完成与当前账号】BankOpenResultPage完成具名处理先取得当前AccountService/UserProfi\
+                  le账号（可复用仍有效账号监听快照），然后 →
+                  navigation.finish(result,currentAccountId):
+                  boolean。助手getAllPathName预检原路径快照、当前session/页面参数及可确认的钱包祖先；不匹配或上\
+                  下文失败返回false、保留结果供完成重试，禁止clear全栈、禁止再save。双入口经过AllBanks的路径由同一捕获\
+                  快照判断，不按路由字符串猜任意外来页的归属。"
+                - 【19 成功完成链】预检通过且result.success=true，BankOpeningNavigation →
+                  NavPathStack.removeByIndexes(已确认本轮钱包祖先和后缀索引)，然后调用构造时Phone注入的onHome(cardNumber或空串)。当前账号仍等于result.accountId才传完整cardNumber；账号变化传空串。onHome实际绑定Index.handleBankOpeningCompleted(cardNumber)，Index置首页Tab并以短期prop交HomeTabPage；助手内部随后flow.markCompleted()/dispose()一次并返回true。Root负责Tab/参数，不把所有navStack操作画给Flow。
+                - 【20
+                  失败完成链】预检通过且result.success=false，BankOpeningNavigation先removeByIndexes起始AddBankCard及以上旧本轮后缀，保留下方原CardPack/AddCardEntry，再pushPath一个新的AddBankCardPage；流程消费完成后内部markCompleted()/dispose()一次，返回true。不调用onHome/find或save，不留下旧选卡/OTP/结果；导航错误仍走既有BD-6恢复责任，不新造路由机制。
+                - "【21
+                  首页完整卡号消费/只读确认】Index.handleBankOpeningCompleted把短期完整号交HomeTabP\
+                  age.consumeOpenedCard(cardNumber): Promise<void>并由页面等待消费。Home
+                  await AccountService.getUserProfile()取得当前账号；有号时await
+                  BankCardRepository.find(accountId,cardNumber):
+                  Promise<WalletCardRecord|null>，无号/冷启动/onShown晚加入时await
+                  hasCards(accountId):
+                  Promise<boolean>。Repository复用helper.getStore、按账号约束query、final\
+                  ly关闭ResultSet，返回记录/存在布尔；当前账号/页面仍有效才更新UI并清短期号，旧异步回应丢弃，查询失败显示首页\
+                  错误态而不改已有开卡结果。"
+                - 【22
+                  首页恢复与显示优先】当前账号RDB有卡优先WITH_CARD；RDB空时复用HomeRepository.getCardDisplayMode()既有演示override，不把演示写成存储事实。cold
+                  start、warm
+                  resume/onShown和账号切换时只重查当前账号RDB，无全局成功缓存；v0清数据可重建空库，>1错误不破坏旧记录。原已存卡的跨会话重复仍由(accountId,cardNumber)唯一键去重，后续详情/交易/NFC不在本期调用链。
+              lifecycle_triggers:
+                - cold_start
+                - warm_resume
+                - page_attach
+                - page_detach
+                - account_switch
+                - process_recreation
+                - background_write
+              failure_recovery:
+                recovery_id: restart
+                handling: 本地读空/失败禁继续；DB错误展示失败；取消清OTP不落库；导航失败留结果可重试；进程重建只查库不恢复验证码；账号变化隔离捕获账号；提交已确认而showResult
+                  push失败留原页提交快照和具名重试入口，禁再次save；finish失败保留结果；生命周期UI回调与RDB提交事实分开。
+                retry: 用户重新选择或完成重试；同卡跨会话幂等，DB未知版本不删库
+              mutations:
+                - mutation_id: commit-card
+                  kind: user
+                  owner: view:development/node:card-data
+                  persistence_ref: wallet_cards.db/cards
+                  publication_ref: publication:commit-result
+                  recovery_ref: recovery:restart
+              publications:
+                - publication_id: commit-result
+                  payload: BankOpenResult
+                    {sessionId,accountId,cardNumber完整,success,errorCode}；仅当前存活会话及同账号consumer可接收
+                  timing: save完成或失败后一次；不广播银行卡记录
+              subscriptions:
+                - subscription_id: page-state
+                  consumer_ref: consumer:result-page
+                  attach: 旧银行入口创建flow并读快照，选卡push成功后同一flow转交选卡页；每个可见UI绑定一次同引用回调
+                  detach: 仅隐藏解绑显示回调；真正取消/finish成功/销毁时才dispose，父页隐藏不销毁已转交flow
+                  cleanup: 移除同一回调/账号监听、清timer；sessionId失效后忽略异步UI写入；showResult后选卡页仅隐藏保持flow，结果finish成功后由助手统一清理；结果压栈失败保留原owner。
+                  replay_or_snapshot: 新挂载读取当前BankOpenState；结果参数为提交快照，不重新写入
+                  ordering: 先提交确认，再结果；先预检清栈再完成，不让旧会话覆盖新页
+                  publication_ref: publication:commit-result
+              consumers:
+                - consumer_id: result-page
+                  initial_load_ref: initial-load:load
+                  update_ref: publication:commit-result
+                  ref: view:development/node:result-ui
+                - consumer_id: home
+                  initial_load_ref: initial-load:load
+                  update_ref: publication:commit-result
+                  ref: view:development/node:home-ui
+                  handling: Index.handleBankOpeningCompleted→HomeTabPage.consumeOpenedCard(profile/find或hasCards)，仅当前账号接受完整卡号；失败保留页面错误态；首次/onShown再次按账号查询
+        use_cases:
+          schema_version: "2.0"
+          use_cases:
+            - id: bank_opening
+              description: 银行类型/具体卡/OTP/RDB/结果完成的单一会话，所有入口调用可测试命名方法
+              coordinator: BankOpenFlow
+              coordinator_file: 02-Feature/WalletMain/src/main/ets/domain/flow/BankOpenFlow.ets
+              ui_bindings:
+                - ui: AddBankCardPage
+                  role: entry
+                  subscribes: []
+                  user_actions:
+                    - trigger: 点击银行
+                      calls: flow.start
+                - ui: AllBanksPage
+                  role: entry
+                  subscribes: []
+                  user_actions:
+                    - trigger: 点击银行
+                      calls: flow.start
+                - ui: BankCardTypeSheet
+                  role: dialog
+                  subscribes:
+                    - flow.state.phase=ChoosingType
+                  user_actions:
+                    - trigger: 单选卡类型
+                      calls: flow.chooseType
+                    - trigger: 同意并继续
+                      calls: flow.continueToCards
+                    - trigger: 关闭
+                      calls: flow.cancel
+                    - trigger: continueToCards成功后全屏跳转
+                      calls: navigation.showSelection
+                - ui: BankCardSelectionPage
+                  role: entry
+                  subscribes:
+                    - flow.state.phase=ChoosingCard
+                  user_actions:
+                    - trigger: 选择卡片
+                      calls: flow.chooseCard
+                    - trigger: 勾选协议
+                      calls: flow.setAgreement
+                    - trigger: 下一步
+                      calls: flow.openOtp
+                - ui: BankOtpSheet
+                  role: dialog
+                  subscribes:
+                    - flow.state.phase=WaitingOtp
+                  user_actions:
+                    - trigger: 输入数字
+                      calls: flow.setOtp
+                    - trigger: 倒计时归零重发
+                      calls: flow.resendOtp
+                    - trigger: 下一步
+                      calls: flow.confirmOtp
+                    - trigger: 关闭
+                      calls: flow.cancelOtp
+                    - trigger: 确认结果后跳结果/失败重试
+                      calls: navigation.showResult
+                    - trigger: 恢复/可见tick
+                      calls: flow.refreshCountdown
+                    - trigger: 账号变化通知
+                      calls: flow.handleAccountChanged
+                    - trigger: 销毁
+                      calls: flow.dispose
+                - ui: BankOpenResultPage
+                  role: result
+                  subscribes:
+                    - result.success
+                  user_actions:
+                    - trigger: 点击完成
+                      calls: navigation.finish
+                    - trigger: 系统返回/侧滑
+                      calls: navigation.rejectBack
+                - ui: HomeTabPage
+                  role: passive
+                  subscribes: []
+                  user_actions:
+                    - trigger: 接收完整卡号并首次/onShown重查
+                      calls: home.consumeOpenedCard
+              data_boundaries:
+                - name: bankRepo
+                  type: BankRepository
+                  kind: storage
+                  methods:
+                    - name: getCards
+                      params:
+                        - string
+                        - BankCardType
+                      returns: Promise<BankCardInfo[]>
+                      async: true
+                - name: accountService
+                  type: AccountService
+                  kind: system
+                  methods:
+                    - name: getUserProfile
+                      params: []
+                      returns: Promise<UserProfile>
+                      async: true
+                - name: cardRepo
+                  type: BankCardRepository
+                  kind: storage
+                  methods:
+                    - name: save
+                      params:
+                        - WalletCardRecord
+                      returns: Promise<WalletCardRecord>
+                      async: true
+                    - name: find
+                      params:
+                        - string
+                        - string
+                      returns: Promise<WalletCardRecord | null>
+                      async: true
+                    - name: hasCards
+                      params:
+                        - string
+                      returns: Promise<boolean>
+                      async: true
+                - name: navStack
+                  type: NavPathStack
+                  kind: system
+                  methods:
+                    - name: getAllPathName
+                      params: []
+                      returns: string[]
+                      async: false
+                    - name: removeByIndexes
+                      params:
+                        - number[]
+                      returns: number
+                      async: false
+                    - name: pushPath
+                      params:
+                        - NavPathInfo
+                      returns: void
+                      async: false
+              state_model:
+                phases:
+                  - Idle
+                  - ChoosingType
+                  - ChoosingCard
+                  - WaitingOtp
+                  - Submitting
+                  - Success
+                  - Failed
+                  - Cancelled
+                  - Completed
+                fields:
+                  - name: otp
+                    type: string
+                  - name: errorCode
+                    type: string
+                  - name: selectedCard
+                    type: BankCardInfo | null
+              branches:
+                - id: success
+                  scenario: 双入口完整添卡成功；同卡重复成功保留旧数据；每种支持类型、两入口、双击及协议缺失由同分支的参数化夹具覆盖，不让无效选择进入WaitingOtp。
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.save: ok
+                  expected_state:
+                    otp: ""
+                    errorCode: ""
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                  linked_acceptance:
+                    - AC-1
+                    - AC-2
+                    - AC-3
+                    - AC-4
+                    - AC-5
+                    - AC-9
+                    - AC-10
+                - id: db_failure
+                  scenario: 开库/表/写入/确认失败，均进入失败结果
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Failed
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.save: throw:DB_WRITE_FAILED
+                  expected_state:
+                    otp: ""
+                    errorCode: DB_WRITE_FAILED
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                  linked_acceptance:
+                    - AC-6
+                    - BD-7
+                - id: invalid_otp
+                  scenario: 少于6位或混合输入下一步不可提交
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_state:
+                    otp: "12345"
+                  not_called:
+                    - cardRepo.save
+                  local_expect: []
+                  linked_acceptance:
+                    - AC-4
+                - id: empty_cards
+                  scenario: 银行类型/卡目录为空或读取失败，仍可返回
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                  cloud_stubs: {}
+                  local_stubs:
+                    bankRepo.getCards: []
+                  expected_state:
+                    selectedCard: null
+                  not_called: []
+                  local_expect: []
+                  linked_acceptance:
+                    - BD-1
+                - id: cancel_otp
+                  scenario: 关闭验证码回选卡、清码timer，重新打开首次发送
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - cancelOtp
+                    - openOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - ChoosingCard
+                    - WaitingOtp
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_state:
+                    otp: ""
+                  not_called: []
+                  local_expect: []
+                  linked_acceptance:
+                    - BD-2
+                - id: resume_countdown
+                  scenario: clock夹具前进60000ms，refreshCountdown将剩余设0，resendOtp重设deadline；不调用真实系统时间、不等真60秒
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - refreshCountdown
+                    - resendOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_state: {}
+                  not_called: []
+                  local_expect: []
+                  linked_acceptance:
+                    - BD-4
+                - id: account_change
+                  scenario: 仅提交前getUserProfile已变为另一个账号，Cancelled且save未调用；提交中变化由单独分支覆盖
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Cancelled
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                  cloud_stubs: {}
+                  local_stubs:
+                    accountService.getUserProfile: changed_after_otp
+                  expected_state:
+                    otp: ""
+                    selectedCard: null
+                  not_called: []
+                  local_expect: []
+                  linked_acceptance:
+                    - BD-5
+                    - AC-10
+                - id: dispose_during_submit
+                  scenario: 保存尚未完成时销毁/进程模拟，确认结果不得回写旧UI；save
+                    fake在pending期间调用dispose后resolve，confirmOtp返回null且旧UI状态不继续Success。
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.save:
+                      mode: controlled_promise
+                      before_resolve:
+                        calls: flow.dispose
+                        args: []
+                      resolve: persisted_original_account_record
+                  expected_state:
+                    otp: ""
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                  linked_acceptance:
+                    - BD-3
+                    - AC-9
+                - id: success_finish
+                  scenario: 成功结果携完整卡号完成；stack夹具为首页直添卡或CardPack添卡含AllBanks，每个可确认索引被删除；主页按当前accountId/fullNumber查库
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - finish
+                    - consumeOpenedCard
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                    - Completed
+                  linked_acceptance:
+                    - AC-5
+                    - AC-7
+                    - AC-8
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.getAllPathName
+                    - navStack.removeByIndexes
+                    - accountService.getUserProfile
+                    - cardRepo.find
+                  cloud_stubs: {}
+                  local_stubs:
+                    navStack.getAllPathName:
+                      - AddCardEntryPage
+                      - AddBankCardPage
+                      - AllBanksPage
+                      - BankCardSelectionPage
+                      - BankOpenResultPage
+                    cardRepo.find: ok
+                  expected_state:
+                    phase: Completed
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                    - cardRepo.find
+                - id: failure_finish
+                  scenario: 写入失败结果完成；删除AddBankCard起始及本轮后缀，仅保留原CardPack/AddCardEntry，再推一个新AddBankCard
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - finish
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Failed
+                    - Completed
+                  linked_acceptance:
+                    - AC-6
+                    - AC-7
+                    - AC-8
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.getAllPathName
+                    - navStack.removeByIndexes
+                    - navStack.pushPath
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.save: throw:DB_WRITE_FAILED
+                    navStack.getAllPathName:
+                      - CardPackPage
+                      - AddCardEntryPage
+                      - AddBankCardPage
+                      - BankCardSelectionPage
+                      - BankOpenResultPage
+                  expected_state:
+                    phase: Completed
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                - id: finish_navigation_failure
+                  scenario: 已成功结果调用finish，getAllPathName抛错或边界不匹配，false；不remove、不save第二次，仍Success可再次完成
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - finish
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                  linked_acceptance:
+                    - BD-6
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.getAllPathName
+                  cloud_stubs: {}
+                  local_stubs:
+                    navStack.getAllPathName: throw:NAV_CONTEXT_FAILED
+                  expected_state:
+                    phase: Success
+                  not_called:
+                    - navStack.removeByIndexes
+                  local_expect:
+                    - cardRepo.save
+                - id: foreign_prefix
+                  scenario: 成功结果栈中出现未纳入原始快照的外来前缀/会话；finish拒绝，不清任何路径、不传卡号
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - finish
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                  linked_acceptance:
+                    - BD-6
+                    - AC-8
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.getAllPathName
+                  cloud_stubs: {}
+                  local_stubs:
+                    navStack.getAllPathName:
+                      - ForeignPage
+                      - AddCardEntryPage
+                      - AddBankCardPage
+                      - BankOpenResultPage
+                  expected_state:
+                    phase: Success
+                  not_called:
+                    - navStack.removeByIndexes
+                  local_expect:
+                    - cardRepo.save
+                - id: account_change_during_submit
+                  scenario: save为可控制pending
+                    promise，进入Submitting后handleAccountChanged新账号，resolve原账号保存；Success所属旧账号，finish回首页传空卡号，首页hasCards仅查新账号；在save
+                    fake内部、confirmOtp的await尚未完成时触发before_resolve，不按await返回后的user_sequence切号。
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - finish
+                    - consumeOpenedCard
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                    - Completed
+                  linked_acceptance:
+                    - BD-5
+                    - AC-10
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.getAllPathName
+                    - navStack.removeByIndexes
+                    - accountService.getUserProfile
+                    - cardRepo.hasCards
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.save:
+                      mode: controlled_promise
+                      before_resolve:
+                        calls: flow.handleAccountChanged
+                        args:
+                          - mock-account-002
+                      resolve: persisted_original_account_record
+                    accountService.getUserProfile: new_account_on_home
+                  expected_state:
+                    phase: Completed
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                    - cardRepo.hasCards
+                - id: show_result_retry
+                  scenario: RDB成功但showResult第一次push失败，第二次重试成功；同一result快照，不调用save两次
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - showResult
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                  linked_acceptance:
+                    - BD-6
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.pushPath
+                  cloud_stubs: {}
+                  local_stubs:
+                    navStack.pushPath:
+                      - ok
+                      - throw:NAV_PUSH_FAILED
+                      - ok
+                  expected_state:
+                    phase: Success
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                - id: repeated_existing
+                  scenario: 现有同账号同卡行支付状态/addedAt已存在，save返回该旧WalletCardRecord；反复确认与跨会话添加不更新旧值
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                  linked_acceptance:
+                    - AC-9
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.save: existing_record_original_added_at_flags
+                  expected_state:
+                    phase: Success
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                - id: home_read_fail
+                  scenario: 结果成功完成，首页find抛异常则保留首页并显示错误；不把读失败写成开卡失败，不复制全卡记录
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - finish
+                    - consumeOpenedCard
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                    - Completed
+                  linked_acceptance:
+                    - AC-5
+                    - BD-1
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                    - navStack.getAllPathName
+                    - navStack.removeByIndexes
+                    - accountService.getUserProfile
+                    - cardRepo.find
+                  cloud_stubs: {}
+                  local_stubs:
+                    cardRepo.find: throw:DB_READ_FAILED
+                  expected_state:
+                    phase: Completed
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+                    - cardRepo.find
+                - id: reject_back
+                  scenario: 成功/失败结果系统返回与左右侧滑的命名回调恒true，无pop/remove调用；最终UI手势效果仍真机验收
+                  user_sequence:
+                    - start
+                    - chooseType
+                    - continueToCards
+                    - showSelection
+                    - chooseCard
+                    - setAgreement
+                    - openOtp
+                    - setOtp
+                    - confirmOtp
+                    - showResult
+                    - rejectBack
+                  expected_phase_seq:
+                    - Idle
+                    - ChoosingType
+                    - ChoosingCard
+                    - WaitingOtp
+                    - Submitting
+                    - Success
+                  linked_acceptance:
+                    - AC-7
+                  expected_port_calls:
+                    - accountService.getUserProfile
+                    - bankRepo.getCards
+                    - navStack.pushPath
+                    - accountService.getUserProfile
+                    - accountService.getUserProfile
+                    - cardRepo.save
+                    - navStack.pushPath
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_state:
+                    phase: Success
+                  not_called: []
+                  local_expect:
+                    - cardRepo.save
+  - view_id: development
+    nodes:
+      - node_id: card-data
+        contracts:
+          version: "1.0"
+          modules:
+            - name: WalletMain
+              layer: 02-Feature
+              format: HAR
+              change_type: modify
+              package_path: 02-Feature/WalletMain
+              export_file: 02-Feature/WalletMain/src/main/ets/index.ets
+            - name: AccountManager
+              layer: 04-BusinessBase
+              format: HAR
+              change_type: modify
+              package_path: 04-BusinessBase/AccountManager
+            - name: Phone
+              layer: 01-Product
+              format: HAP
+              change_type: modify
+              package_path: 01-Product/Phone
+          module_dependencies:
+            WalletMain:
+              - AccountManager
+              - CommUI
+              - CommFunc
+            AccountManager:
+              - CommFunc
+            Phone:
+              - WalletMain
+              - AccountManager
+              - CommUI
+              - CommFunc
+          data_models:
+            - name: BankInfo
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets
+              kind: interface
+              fields:
+                - name: supportedCardTypes
+                  type: BankCardType[]
+                  required: true
+                  description: 支持DEBIT/CREDIT有序非重复集合；空则无法继续
+            - name: BankCardType
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets
+              kind: enum
+              fields: []
+              values:
+                - name: DEBIT
+                  value: DEBIT
+                - name: CREDIT
+                  value: CREDIT
+            - name: BankCardInfo
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets
+              kind: interface
+              fields:
+                - name: cardNumber
+                  type: string
+                  required: true
+                  description: 合成16位ASCII数字，未脱敏；展示单独处理
+                - name: bankCode
+                  type: string
+                  required: true
+                  description: 对应BankInfo.code
+                - name: bankName
+                  type: string
+                  required: true
+                  description: 对应BankInfo.name
+                - name: bankCardType
+                  type: BankCardType
+                  required: true
+                  description: DEBIT或CREDIT
+                - name: walletKind
+                  type: WalletCardKind
+                  required: true
+                  description: 固定BANK，区分未来TRANSIT/ACCESS
+            - name: WalletCardRecord
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/WalletCardRecord.ets
+              kind: interface
+              fields:
+                - name: accountId
+                  type: string
+                  required: true
+                  description: 账号mock稳定ID，不取脱敏邮箱
+                - name: cardNumber
+                  type: string
+                  required: true
+                  description: 复合主键部分，完整卡号
+                - name: walletKind
+                  type: WalletCardKind
+                  required: true
+                  description: BANK/TRANSIT/ACCESS，本轮仅写BANK
+                - name: bankCode
+                  type: string
+                  required: true
+                  description: 银行短码
+                - name: bankName
+                  type: string
+                  required: true
+                  description: 保存时银行名快照
+                - name: bankCardType
+                  type: BankCardType
+                  required: true
+                  description: 银行子类型
+                - name: addedAt
+                  type: number
+                  required: true
+                  description: 首次添加UTC epoch milliseconds，重复添加保留
+                - name: huaweiPayEnabled
+                  type: boolean
+                  required: true
+                  description: 本轮false，非真实激活
+                - name: unionPayFlashEnabled
+                  type: boolean
+                  required: true
+                  description: 本轮false
+                - name: transactionsJson
+                  type: string
+                  required: true
+                  description: 有效JSON数组，首次[]，本轮无交易产生
+            - name: UserProfile
+              module: AccountManager
+              file: 04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets
+              kind: class
+              fields:
+                - name: accountId
+                  type: string
+                  required: true
+                  description: 登录时mock-account-001，未登录为空
+                - name: phoneNumber
+                  type: string
+                  required: true
+                  description: 登录时合成11位手机号，未登录为空；仅OTP提示脱敏后显示
+            - name: BankOpenState
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankOpenState.ets
+              kind: interface
+              fields:
+                - name: phase
+                  type: BankOpenPhase
+                  required: true
+                  description: Idle/ChoosingType/ChoosingCard/WaitingOtp/Submitting/Success/Failed/Cancelled/Completed
+                - name: sessionId
+                  type: string
+                  required: true
+                  description: 一次开卡流程的内存标识，取消/完成失效
+                - name: selectedCard
+                  type: BankCardInfo | null
+                  required: true
+                  description: 完整卡片只在当前会话持有
+                - name: otp
+                  type: string
+                  required: true
+                  description: 0-6位ASCII数字，取消/提交后清空
+                - name: resendDeadlineMs
+                  type: number
+                  required: true
+                  description: clock当前毫秒+60000
+                - name: errorCode
+                  type: string
+                  required: true
+                  description: 类型化内部错误码，日志不带卡号/手机号
+                - name: accountId
+                  type: string
+                  required: true
+                  description: 开始时捕获账号，提交时再次核对
+                - name: bank
+                  type: BankInfo | null
+                  required: true
+                  description: 本会话银行快照
+                - name: selectedType
+                  type: BankCardType | null
+                  required: true
+                  description: 只选支持类型
+                - name: cards
+                  type: BankCardInfo[]
+                  required: true
+                  description: 当前银行+类型目录
+                - name: agreementAccepted
+                  type: boolean
+                  required: true
+                  description: 更换银行/类型时false
+                - name: resendRemainingSeconds
+                  type: number
+                  required: true
+                  description: 按deadline计算max(0,ceil(delta/1000))，不按tick累计
+                - name: result
+                  type: BankOpenResult | null
+                  required: true
+                  description: 提交确认后唯一快照，完成清空
+                - name: phoneNumber
+                  type: string
+                  required: true
+                  default: "''"
+                  description: 由已有AccountService
+                    UserProfile快照提供，仅本轮内存OTP提示；UI通过MaskUtil脱敏，取消/dispose清空，不落库/日志
+            - name: BankOpenResult
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankOpenState.ets
+              kind: interface
+              fields:
+                - name: sessionId
+                  type: string
+                  required: true
+                  description: 结果所属会话
+                - name: accountId
+                  type: string
+                  required: true
+                  description: 提交所属账号
+                - name: cardNumber
+                  type: string
+                  required: true
+                  description: 需求要求的完整卡号，内存路由参数，不展示/打印
+                - name: success
+                  type: boolean
+                  required: true
+                  description: 仅RDB记录确认成功为true
+                - name: errorCode
+                  type: string
+                  required: true
+                  description: 失败原因/成功为空
+            - name: WalletCardKind
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/WalletCardRecord.ets
+              kind: enum
+              fields: []
+              values:
+                - name: BANK
+                  value: BANK
+                - name: TRANSIT
+                  value: TRANSIT
+                - name: ACCESS
+                  value: ACCESS
+            - name: BankOpenPhase
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankOpenState.ets
+              kind: enum
+              fields: []
+              values:
+                - name: IDLE
+                  value: Idle
+                - name: CHOOSINGTYPE
+                  value: ChoosingType
+                - name: CHOOSINGCARD
+                  value: ChoosingCard
+                - name: WAITINGOTP
+                  value: WaitingOtp
+                - name: SUBMITTING
+                  value: Submitting
+                - name: SUCCESS
+                  value: Success
+                - name: FAILED
+                  value: Failed
+                - name: CANCELLED
+                  value: Cancelled
+                - name: COMPLETED
+                  value: Completed
+            - name: BankSelectionRouteParams
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigation.ets
+              kind: interface
+              fields:
+                - name: flow
+                  type: BankOpenFlow
+                  required: true
+                  description: 当前页面作用域同一个普通业务对象，通过内存NavPathInfo.param转交；不序列化
+                - name: navigation
+                  type: BankOpeningNavigation
+                  required: true
+                  description: 当前本轮单栈清理助手，presentation层定义不被domain/data反向引用
+                - name: sessionId
+                  type: string
+                  required: true
+                  description: 核对flow当前session，缺失或不一致拒绝进入
+            - name: BankResultRouteParams
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigation.ets
+              kind: interface
+              fields:
+                - name: result
+                  type: BankOpenResult
+                  required: true
+                  description: 完整卡号+账号+提交成功/失败快照
+                - name: navigation
+                  type: BankOpeningNavigation
+                  required: true
+                  description: 完成只调用此本轮助手；完整卡号不在结果UI展示
+            - name: BankOpeningNavigationContext
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigation.ets
+              kind: interface
+              fields:
+                - name: originalPathNames
+                  type: string[]
+                  required: true
+                  description: begin时同源stack实际名称快照，必须是当前已存在钱包入口路径
+                - name: bankEntryIndex
+                  type: number
+                  required: true
+                  description: 本轮初始AddBankCard索引，失败删除从此及以上旧本轮页
+                - name: sessionId
+                  type: string
+                  required: true
+                  description: 校验新页param所属同一flow；不建立全局registry
+                - name: onHome
+                  type: "(cardNumber: string) => void"
+                  required: true
+                  description: Phone root注入的真实完成回调，当前账号变化传空串；不能无声noop
+          interfaces:
+            - module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+              class: BankRepository
+              layer: data
+              methods:
+                - name: getBanks
+                  params: []
+                  return: Promise<BankInfo[]>
+                  async: true
+                  description: 保持20家排序和标识，附两类支持能力
+                - name: getCards
+                  params:
+                    - name: bankCode
+                      type: string
+                    - name: type
+                      type: BankCardType
+                  return: Promise<BankCardInfo[]>
+                  async: true
+                  description: 返回匹配银行/类型1-2张稳定合成卡；不允许UI生成卡号
+            - module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+              class: BankCardRepository
+              layer: data
+              methods:
+                - name: constructor
+                  params:
+                    - name: context
+                      type: Context
+                  return: BankCardRepository
+                  async: false
+                  description: 宿主UI上下文创建data repository；供helper懒开库，save/find/hasCards签名不变
+                - name: save
+                  params:
+                    - name: record
+                      type: WalletCardRecord
+                  return: Promise<WalletCardRecord>
+                  async: true
+                  description: INSERT OR IGNORE+按复合键查询；唯一保存/确认边界，失败抛内部码；重复返回旧记录
+                - name: find
+                  params:
+                    - name: accountId
+                      type: string
+                    - name: cardNumber
+                      type: string
+                  return: Promise<WalletCardRecord | null>
+                  async: true
+                  description: 完整双键查询，ResultSet finally关闭
+                - name: hasCards
+                  params:
+                    - name: accountId
+                      type: string
+                  return: Promise<boolean>
+                  async: true
+                  description: 当前账号查询，仅首页状态刷新，不替代完整卡数据
+            - module: AccountManager
+              file: 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+              class: AccountService
+              layer: domain
+              methods:
+                - name: getUserProfile
+                  params: []
+                  return: Promise<UserProfile>
+                  async: true
+                  description: 扩展mock身份/手机号，保持现有展示邮箱/监听接口兼容
+            - module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/domain/flow/BankOpenFlow.ets
+              class: BankOpenFlow
+              layer: domain
+              methods:
+                - name: constructor
+                  params:
+                    - name: bankRepo
+                      type: BankRepository
+                    - name: cardRepo
+                      type: BankCardRepository
+                    - name: accountService
+                      type: AccountService
+                    - name: clock
+                      type: () => number
+                  return: BankOpenFlow
+                  async: false
+                  description: 沿原页面普通对象依赖注入；clock提供毫秒时间，无新Port/全局store
+                - name: start
+                  params:
+                    - name: bank
+                      type: BankInfo
+                  return: Promise<void>
+                  async: true
+                  description: 捕获账号和session；多入口防重入，载入支持类型
+                - name: chooseType
+                  params:
+                    - name: type
+                      type: BankCardType
+                  return: void
+                  async: false
+                  description: 只选支持类型，重置卡/协议
+                - name: continueToCards
+                  params: []
+                  return: Promise<void>
+                  async: true
+                  description: 读mock卡列表，切ChoosingCard
+                - name: chooseCard
+                  params:
+                    - name: card
+                      type: BankCardInfo
+                  return: void
+                  async: false
+                  description: 验证银行/类型且最多单卡
+                - name: setAgreement
+                  params:
+                    - name: accepted
+                      type: boolean
+                  return: void
+                  async: false
+                  description: 协议同意归会话
+                - name: openOtp
+                  params: []
+                  return: Promise<void>
+                  async: true
+                  description: 选卡+协议+账号条件通过后假发送一次，60秒deadline
+                - name: setOtp
+                  params:
+                    - name: value
+                      type: string
+                  return: void
+                  async: false
+                  description: 仅ASCII数字，最多6位
+                - name: resendOtp
+                  params: []
+                  return: void
+                  async: false
+                  description: deadline到时才新发，重置60秒
+                - name: confirmOtp
+                  params: []
+                  return: Promise<BankOpenResult | null>
+                  async: true
+                  description: 先检查6位/卡/协议/非Submitting，无效不调用账号或save；随后getUserProfile核账号，捕获完整记录await唯一save。若dispose发生，保存可完成但返回null且不改变旧UI；成功返回同一BankOpenResult用于结果路由。
+                - name: cancelOtp
+                  params: []
+                  return: void
+                  async: false
+                  description: 清OTP/timer，回ChoosingCard保留卡和协议
+                - name: cancel
+                  params: []
+                  return: void
+                  async: false
+                  description: 销毁草稿、清OTP/timer与监听，提交中禁止UI取消
+                - name: dispose
+                  params: []
+                  return: void
+                  async: false
+                  description: 释放所有UItimer/listener；已开始持久化可完成但不得写已销毁UI
+                - name: onStateChanged
+                  params:
+                    - name: callback
+                      type: "(state: BankOpenState) => void"
+                  return: void
+                  async: false
+                  description: 绑定同引用回调并立即给当前快照
+                - name: offStateChanged
+                  params:
+                    - name: callback
+                      type: "(state: BankOpenState) => void"
+                  return: void
+                  async: false
+                  description: 释放同引用回调，不创建全局事件总线
+                - name: refreshCountdown
+                  params: []
+                  return: void
+                  async: false
+                  description: 可见tick或warm resume用注入clock()重算deadline，dispose后不更新
+                - name: handleAccountChanged
+                  params:
+                    - name: accountId
+                      type: string
+                  return: void
+                  async: false
+                  description: 账号监听事实：提交前Cancelled；Submitting只记录当前consumer账号变化，保存仍用原accountId
+                - name: markCompleted
+                  params: []
+                  return: void
+                  async: false
+                  description: 成功导航后置Completed清原始会话字段与回调；未完成导航不得提前清除结果
+            - module: WalletMain
+              layer: presentation
+              file: 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigation.ets
+              class: BankOpeningNavigation
+              methods:
+                - name: constructor
+                  params:
+                    - name: stack
+                      type: NavPathStack
+                    - name: onHome
+                      type: "(cardNumber: string) => void"
+                  return: BankOpeningNavigation
+                  async: false
+                  description: Phone提供现有同源stack与真实完成回调；不是第二路由系统
+                - name: begin
+                  params:
+                    - name: flow
+                      type: BankOpenFlow
+                  return: boolean
+                  async: false
+                  description: 点击银行后记录现有实际栈名称/参数快照与起始AddBankCard位置，同一会话单实例；要求已存在AddBankCard或AllBanks来源，快照无法确定则不拉流程
+                - name: showSelection
+                  params:
+                    - name: flow
+                      type: BankOpenFlow
+                  return: boolean
+                  async: false
+                  description: 关闭类型sheet后push新全屏，内存param传同一flow/navigation/sessionId；成功后选卡页接管dispose，旧入口隐藏不销毁已转交flow
+                - name: showResult
+                  params:
+                    - name: result
+                      type: BankOpenResult
+                  return: boolean
+                  async: false
+                  description: 确认提交结果后关闭OTP并push结果全屏，失败保留提交快照可重试跳转，不再次save
+                - name: finish
+                  params:
+                    - name: result
+                      type: BankOpenResult
+                    - name: currentAccountId
+                      type: string
+                  return: boolean
+                  async: false
+                  description: 预检当前栈/session与原快照；成功按受控实际钱包路径退出并回调onHome(result.cardNumber)，账号变化回调空号；失败移除旧添卡后缀并推唯一新AddBankCard。异常false留结果，不重写RDB；助手持begin的同一flow，成功清理后内部只markCompleted/dispose一次，不要求用户另点或测试另调markCompleted。
+                - name: rejectBack
+                  params: []
+                  return: boolean
+                  async: false
+                  description: 结果NavDestination.onBackPressed命名处理恒true，不调用pop，系统返回/侧滑真机验收
+            - module: WalletMain
+              layer: presentation
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets
+              class: HomeTabPage
+              methods:
+                - name: consumeOpenedCard
+                  params:
+                    - name: cardNumber
+                      type: string
+                  return: Promise<void>
+                  async: true
+                  description: 从当前AccountService读取账号，用完整卡号find；晚加入/无号走hasCards；读取失败维持既有可见页并显示错误；账号变化丢旧结果，消费后清短期完整卡号；当前账号RDB有卡时卡态优先WITH_CARD；RDB空时复用原HomeRepository.getCardDisplayMode的launch/title演示，不修改HomeRepository，也不以演示override改变存储事实。
+            - module: Phone
+              layer: presentation
+              file: 01-Product/Phone/src/main/ets/pages/index.ets
+              class: Index
+              methods:
+                - name: handleBankOpeningCompleted
+                  params:
+                    - name: cardNumber
+                      type: string
+                  return: void
+                  async: false
+                  description: 根navDestinationMap注入本轮onHome回调；成功清栈后currentTabIndex=0，将完整卡号作为短期prop给HomeTabPage.consumeOpenedCard并清空；空号只切首页且按当前账号查卡
+            - module: WalletMain
+              layer: data
+              file: 02-Feature/WalletMain/src/main/ets/data/local/CardRdbHelper.ets
+              class: CardRdbHelper
+              methods:
+                - name: getStore
+                  params:
+                    - name: context
+                      type: Context
+                  return: Promise<relationalStore.RdbStore>
+                  async: true
+                  description: 唯一开库Promise，wallet_cards.db/v1/S4/encrypt，await
+                    ensureSchema后才返回store；失败不回退明文
+                - name: ensureSchema
+                  params:
+                    - name: store
+                      type: relationalStore.RdbStore
+                  return: Promise<void>
+                  async: true
+                  description: 实现已选v0事务创建/v1复用/>1拒绝策略，建表/版本确认失败抛本侧码，不删除旧库
+          components:
+            - name: AddBankCardPage
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+              kind: page
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 两页复用同一私有卡类型sheet，保留现有列表/展开/索引布局
+            - name: BankCardTypeSheet
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/components/BankCardTypeSheet.ets
+              kind: component
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 图3银行信息、单选类型、文本协议、同意继续/关闭
+              props:
+                - name: flow
+                  type: BankOpenFlow
+                  decorator: ordinary_field
+                - name: navigation
+                  type: BankOpeningNavigation
+                  decorator: ordinary_field
+            - name: BankCardSelectionPage
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+              kind: page
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 图4全屏银行title、单选脱敏卡号、协议checkbox及下一步
+            - name: BankOtpSheet
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/components/BankOtpSheet.ets
+              kind: component
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 图5脱敏账号手机号、数字输入、60秒重发和有效下一步
+              props:
+                - name: flow
+                  type: BankOpenFlow
+                  decorator: ordinary_field
+                - name: navigation
+                  type: BankOpeningNavigation
+                  decorator: ordinary_field
+            - name: BankOpenResultPage
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/BankOpenResultPage.ets
+              kind: page
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 图6成功/失败图文、近似引导图、完成；拦截系统返回/左滑，无NFC区
+              props:
+                - name: result
+                  type: BankOpenResult
+                  decorator: "@Prop"
+                - name: navigation
+                  type: BankOpeningNavigation
+                  decorator: ordinary_field
+            - name: HomeTabPage
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets
+              kind: page
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 仅当前账号完成参数查询RDB并刷新卡状态，cold/onShown查库；保持已有首页内容
+            - name: AllBanksPage
+              module: WalletMain
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+              kind: page
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 与AddBankCard共用同一选择半模态
+            - name: Index
+              module: Phone
+              file: 01-Product/Phone/src/main/ets/pages/index.ets
+              kind: page
+              asset_selection:
+                resolution: custom
+                rationale: 已读8个导出资产及live调用点。半模态/单选/OTP/结果具有开卡语义，ActionListItem的箭头行和SectionCard固定留白不满足图3-6；原页面保留已有代码，不演进共享组件。
+              description: 同源单栈装配与首页完成参数回调
+          files:
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets
+            - 02-Feature/WalletMain/src/main/ets/data/model/WalletCardRecord.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+            - 02-Feature/WalletMain/src/main/ets/data/local/CardRdbHelper.ets
+            - 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/shared/constant/MockAccount.ets
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankOpenState.ets
+            - 02-Feature/WalletMain/src/main/ets/domain/flow/BankOpenFlow.ets
+            - 02-Feature/WalletMain/src/main/ets/shared/utils/BankCardMaskUtil.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/components/BankCardTypeSheet.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/components/BankOtpSheet.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankOpenResultPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets
+            - 01-Product/Phone/src/main/ets/pages/index.ets
+            - 02-Feature/WalletMain/src/main/ets/index.ets
+            - 02-Feature/WalletMain/src/main/resources/base/profile/route_map.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/color.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/float.json
+            - 02-Feature/WalletMain/src/main/resources/base/media/bank_open_guide.svg
+            - 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigation.ets
+          navigation:
+            config_files:
+              - 02-Feature/WalletMain/src/main/resources/base/profile/route_map.json
+          integration_points:
+            - consumer_module: Phone
+              provider_module: WalletMain
+              requires_modification: true
+              entry_symbol: buildBankCardSelectionPage
+            - consumer_module: WalletMain
+              provider_module: AccountManager
+              requires_modification: true
+              entry_symbol: AccountService.getUserProfile
+      - node_id: account-data
+      - node_id: open-flow
+      - node_id: entry-ui
+      - node_id: type-sheet
+      - node_id: selection-ui
+      - node_id: otp-ui
+      - node_id: result-ui
+      - node_id: home-ui
+      - node_id: host-navigation
+      - node_id: routes-resources
+      - node_id: journey-navigation
+  - view_id: deployment
+    nodes:
+      - node_id: phone-local
+  - view_id: scenarios
+    nodes:
+      - node_id: open-bank-card
+        acceptance:
+          version: "1.0"
+          criteria:
+            - id: AC-1
+              prd_function: 需求规格1
+              priority: P0
+              description: 两个既有银行入口一致拉起卡类型半模态
+              testable: true
+              verification_steps:
+                - 从AddBankCard收起/展开点击同一银行
+                - 从AllBanks点击同一银行
+              expected_result: 只出现一个图3半模态，银行logo/名称对应点击项，原有更多/字母索引/返回仍正常。
+              ut_layer: both
+              ut_focus: 只出现一个图3半模态，银行logo/名称对应点击项，原有更多/字母索引/返回仍正常。
+              device_focus: 只出现一个图3半模态，银行logo/名称对应点击项，原有更多/字母索引/返回仍正常。
+            - id: AC-2
+              prd_function: 需求规格2
+              priority: P0
+              description: 支持类型由银行数据单选
+              testable: true
+              verification_steps:
+                - mock配置两类、只有储蓄卡、只有信用卡
+                - 切换类型并继续
+              expected_result: 只渲染支持项，最多一项选中；默认第一项。继续携同一银行和所选类型到全屏选卡页。
+              ut_layer: both
+              ut_focus: 只渲染支持项，最多一项选中；默认第一项。继续携同一银行和所选类型到全屏选卡页。
+              device_focus: 只渲染支持项，最多一项选中；默认第一项。继续携同一银行和所选类型到全屏选卡页。
+            - id: AC-3
+              prd_function: 需求规格3
+              priority: P0
+              description: 具体卡片和协议选择
+              testable: true
+              verification_steps:
+                - 每家银行分别进入储蓄卡/信用卡
+                - 未选卡或未勾协议时点击下一步
+                - 选一张卡且勾协议
+              expected_result: 每类型1-2张；只显示前四后四。选卡/协议缺任一按钮禁用，满足后拉OTP。UI数据仍保留完整卡号。
+              ut_layer: both
+              ut_focus: 每类型1-2张；只显示前四后四。选卡/协议缺任一按钮禁用，满足后拉OTP。UI数据仍保留完整卡号。
+              device_focus: 每类型1-2张；只显示前四后四。选卡/协议缺任一按钮禁用，满足后拉OTP。UI数据仍保留完整卡号。
+            - id: AC-4
+              prd_function: 需求规格4
+              priority: P0
+              description: OTP自动发送、输入及重发
+              testable: true
+              verification_steps:
+                - 首次拉OTP
+                - 输入5位、字母、7位、粘贴混合输入
+                - 输入000000
+                - 等待60秒后点重新发送
+              expected_result: 首次模拟发送一次；60秒倒计时不可重复点；输入仅允许ASCII数字且最多6位，恰好6位下一步有效；重发重新60秒。
+              ut_layer: both
+              ut_focus: 首次模拟发送一次；60秒倒计时不可重复点；输入仅允许ASCII数字且最多6位，恰好6位下一步有效；重发重新60秒。
+              device_focus: 首次模拟发送一次；60秒倒计时不可重复点；输入仅允许ASCII数字且最多6位，恰好6位下一步有效；重发重新60秒。
+            - id: AC-5
+              prd_function: 需求规格5
+              priority: P0
+              description: 完整记录持久化与结果参数
+              testable: true
+              verification_steps:
+                - 确认6位OTP提交
+                - 查询RDB同账号同卡号记录及结果路由参数
+              expected_result: 成功只在RDB提交被确认后成立，记录包含完整卡号、钱包种类、银行、DEBIT/CREDIT、添加时间、两类支付状态false和空交易数组；结果携完整卡号与成功状态。
+              ut_layer: both
+              ut_focus: 成功只在RDB提交被确认后成立，记录包含完整卡号、钱包种类、银行、DEBIT/CREDIT、添加时间、两类支付状态false和空交易数组；结果携完整卡号与成功状态。
+              device_focus: 成功只在RDB提交被确认后成立，记录包含完整卡号、钱包种类、银行、DEBIT/CREDIT、添加时间、两类支付状态false和空交易数组；结果携完整卡号与成功状态。
+            - id: AC-6
+              prd_function: 需求规格6
+              priority: P0
+              description: 失败结果
+              testable: true
+              verification_steps:
+                - 注入开库/建表/写入/确认查询失败
+                - 输入6位并提交
+              expected_result: 进入失败全屏结果，携本轮完整卡号和失败原因码；不显示添卡成功，不更新首页有卡状态。
+              ut_layer: both
+              ut_focus: 进入失败全屏结果，携本轮完整卡号和失败原因码；不显示添卡成功，不更新首页有卡状态。
+              device_focus: 进入失败全屏结果，携本轮完整卡号和失败原因码；不显示添卡成功，不更新首页有卡状态。
+            - id: AC-7
+              prd_function: 需求规格6
+              priority: P0
+              description: 结果页禁止返回且完成清栈
+              testable: true
+              verification_steps:
+                - 成功/失败结果左右侧滑、系统返回、点空白
+                - 点击完成
+                - 完成后再次返回
+              expected_result: 无title/返回箭头，无NFC激活区。仅完成可退出；成功携卡号到首页，失败只留下一个新AddBankCard入口；所有旧本轮选卡/OTP/结果无法返回。
+              ut_layer: device
+              device_focus: 无title/返回箭头，无NFC激活区。仅完成可退出；成功携卡号到首页，失败只留下一个新AddBankCard入口；所有旧本轮选卡/OTP/结果无法返回。
+            - id: AC-8
+              prd_function: 需求规格6
+              priority: P0
+              description: 新旧路由双向回归
+              testable: true
+              verification_steps:
+                - 首页→CardPack→AddCardEntry→AddBankCard→AllBanks→选择→返回
+                - 首页直添卡→选卡→OTP取消→重新选择
+                - 成功完成后重进添加
+              expected_result: 旧CardPack/AddCardEntry/更多/字母定位/返回路径可用，只有本轮路径被清理，使用同源Navigation栈且首页Tab正确。
+              ut_layer: device
+              device_focus: 旧CardPack/AddCardEntry/更多/字母定位/返回路径可用，只有本轮路径被清理，使用同源Navigation栈且首页Tab正确。
+            - id: AC-9
+              prd_function: 需求规格6
+              priority: P0
+              description: 幂等和重复触发
+              testable: true
+              verification_steps:
+                - 快速双击银行、继续、下一步、验证码提交
+                - 同账号同卡重新添加
+                - 重建进程后再次添加
+              expected_result: 同一会话只开一个sheet/一个写任务；复合主键去重，已有记录返回成功并保留首次added_at/状态；没有重复记录。
+              ut_layer: both
+              ut_focus: 同一会话只开一个sheet/一个写任务；复合主键去重，已有记录返回成功并保留首次added_at/状态；没有重复记录。
+              device_focus: 同一会话只开一个sheet/一个写任务；复合主键去重，已有记录返回成功并保留首次added_at/状态；没有重复记录。
+            - id: AC-10
+              prd_function: 需求规格6
+              priority: P0
+              description: 账号数据来源与隔离
+              testable: true
+              verification_steps:
+                - 用正常login和launch preset进入OTP
+                - 不同账号夹具查询同卡号
+                - 选卡时注销
+              expected_result: 两个登录路径返回同一稳定mock身份/手机号，OTP显示脱敏手机号；未登录禁止OTP，按accountId查询不串卡；注销取消草稿。
+              ut_layer: both
+              ut_focus: 两个登录路径返回同一稳定mock身份/手机号，OTP显示脱敏手机号；未登录禁止OTP，按accountId查询不串卡；注销取消草稿。
+              device_focus: 两个登录路径返回同一稳定mock身份/手机号，OTP显示脱敏手机号；未登录禁止OTP，按accountId查询不串卡；注销取消草稿。
+            - id: AC-11
+              prd_function: 需求规格6
+              priority: P0
+              description: 视觉参考和输入可达
+              testable: true
+              verification_steps:
+                - 在四张原始图片对应页面检查布局
+                - 显示数字键盘和增大字号
+              expected_result: 半模态标题/关闭/银行块、全屏银行标题、脱敏卡片、协议、按钮和结果图布局遵循图3-6；OTP按钮不被键盘遮挡；文字资源化，结果引导图允许近似。
+              ut_layer: device
+              device_focus: 半模态标题/关闭/银行块、全屏银行标题、脱敏卡片、协议、按钮和结果图布局遵循图3-6；OTP按钮不被键盘遮挡；文字资源化，结果引导图允许近似。
+          boundaries:
+            - id: BD-1
+              prd_exception: 类型/卡片空数据、读取抛异常或参数银行不匹配
+              scenario: 类型/卡片空数据、读取抛异常或参数银行不匹配
+              description: 类型/卡片空数据、读取抛异常或参数银行不匹配
+              priority: P0
+              handling: 保留当前页并显示资源化空态/错误；禁继续；不把已失效选中卡提交。
+              expected_behavior: 没有OTP/落库/伪成功；返回可用，重新进入能重取。
+              ut_layer: both
+              ut_focus: 没有OTP/落库/伪成功；返回可用，重新进入能重取。
+              device_focus: 没有OTP/落库/伪成功；返回可用，重新进入能重取。
+            - id: BD-2
+              prd_exception: 半模态关闭、返回、改银行/卡类型、OTP取消
+              scenario: 半模态关闭、返回、改银行/卡类型、OTP取消
+              description: 半模态关闭、返回、改银行/卡类型、OTP取消
+              priority: P0
+              handling: 取消时清验证码和计时器；保留当前选卡页卡片/协议，重新开OTP新发一次；改银行/类型重置卡片及协议。
+              expected_behavior: 无写入；计时器/监听都释放；新OTP从60秒开始且旧异步回应不改新会话。
+              ut_layer: both
+              ut_focus: 无写入；计时器/监听都释放；新OTP从60秒开始且旧异步回应不改新会话。
+              device_focus: 无写入；计时器/监听都释放；新OTP从60秒开始且旧异步回应不改新会话。
+            - id: BD-3
+              prd_exception: 提交期间退后台、页面离开或进程终止
+              scenario: 提交期间退后台、页面离开或进程终止
+              description: 提交期间退后台、页面离开或进程终止
+              priority: P0
+              handling: 提交进入Submitting后禁重复提交及关闭。退后台完成原写入；销毁后不发布旧UI。重建丢草稿，冷查RDB确认事实。
+              expected_behavior: 已提交记录仍在；未提交不出现记录；重进同卡可幂等完成，不保存OTP或自动重放。
+              ut_layer: both
+              ut_focus: 已提交记录仍在；未提交不出现记录；重进同卡可幂等完成，不保存OTP或自动重放。
+              device_focus: 已提交记录仍在；未提交不出现记录；重进同卡可幂等完成，不保存OTP或自动重放。
+            - id: BD-4
+              prd_exception: 60秒倒计时遇到退后台/恢复
+              scenario: 60秒倒计时遇到退后台/恢复
+              description: 60秒倒计时遇到退后台/恢复
+              priority: P0
+              handling: 页面可见时tick刷新，恢复按同一deadline重算剩余；<=0变重新发送。
+              expected_behavior: 挂起60秒后立即可重发，不按漏掉的tick延长等待；关闭后无活动timer。
+              ut_layer: both
+              ut_focus: 挂起60秒后立即可重发，不按漏掉的tick延长等待；关闭后无活动timer。
+              device_focus: 挂起60秒后立即可重发，不按漏掉的tick延长等待；关闭后无活动timer。
+            - id: BD-5
+              prd_exception: 提交前与提交中账号变化
+              scenario: 提交前与提交中账号变化
+              description: 提交前与提交中账号变化
+              priority: P0
+              handling: 提交前取消；提交中只写捕获的accountId，变化后结果允许完成但不给新账号首页传卡号，首页按当前账号重查。
+              expected_behavior: 新账号不读上一账号数据，无写入改绑；旧账号已提交记录不被清除。
+              ut_layer: both
+              ut_focus: 新账号不读上一账号数据，无写入改绑；旧账号已提交记录不被清除。
+              device_focus: 新账号不读上一账号数据，无写入改绑；旧账号已提交记录不被清除。
+            - id: BD-6
+              prd_exception: 完成路由失败/边界丢失
+              scenario: 完成路由失败/边界丢失
+              description: 完成路由失败/边界丢失
+              priority: P0
+              handling: 本地读空/失败禁继续；DB错误展示失败；取消清OTP不落库；导航失败留结果可重试；进程重建只查库不恢复验证码；账号变化隔离捕获账号；提交已确认而showResult
+                push失败留原页提交快照和具名重试入口，禁再次save；finish失败保留结果；生命周期UI回调与RDB提交事实分开。
+              expected_behavior: showResult或finish导航异常保留原提交结果、具名重试且不再次save；边界/外来前缀不匹配不移除路径；成功重试后完成一次清理。
+              ut_layer: both
+              ut_focus: 用户可重试完成；无clear全栈兜底，不移除无关路径，不把导航失败当落库失败。
+              device_focus: 用户可重试完成；无clear全栈兜底，不移除无关路径，不把导航失败当落库失败。
+            - id: BD-7
+              prd_exception: 清应用数据/首次开库、版本不支持
+              scenario: 清应用数据/首次开库、版本不支持
+              description: 清应用数据/首次开库、版本不支持
+              priority: P0
+              handling: v0创建表后置v1；v1复用；>1拒绝降级和破坏性重建。清数据重新建空库。
+              expected_behavior: 版本失败给失败结果，旧记录不删除；清数据后可重新添加。
+              ut_layer: both
+              ut_focus: 版本失败给失败结果，旧记录不删除；清数据后可重新添加。
+              device_focus: 版本失败给失败结果，旧记录不删除；清数据后可重新添加。
+            - id: BD-8
+              prd_exception: 完整卡号、手机号与验证码的展示/日志泄漏
+              scenario: 完整卡号、手机号与验证码的展示/日志泄漏
+              description: 完整卡号、手机号与验证码的展示/日志泄漏
+              priority: P0
+              handling: 页面卡号前四后四，手机号前三后四；日志只错误码和银行代码；销毁清原始会话值/OTP。
+              expected_behavior: 日志和可见UI无完整敏感值；完整卡号只在内存参数和加密RDB中用于业务。
+              ut_layer: device
+              device_focus: 日志和可见UI无完整敏感值；完整卡号只在内存参数和加密RDB中用于业务。
+          performance:
+            - id: NFR-1
+              metric: 重复提交的新增行数
+              threshold: 同账号同卡号最多1行
+              unit: row
+              description: 跨会话/进程幂等由RDB唯一约束决定
+              ut_layer: unit
+              ut_focus: 快速双击、重进、进程重建后新增行数不超过1
+            - id: NFR-2
+              metric: 离开OTP后的活动计时器
+              threshold: "0"
+              unit: timer
+              description: 退出/销毁释放计时器与账号监听，不泄漏会话
+              ut_layer: both
+              ut_focus: dispose后timer/listener计数为0且旧异步回调失效
+              device_focus: 关闭重开无叠加倒计时；后台恢复按deadline重算
+relations:
+  - relation_id: R-scenario-flow
+  - relation_id: R-flow-contract
+  - relation_id: R-data-ledger
+  - relation_id: R-flow-owner
+  - relation_id: R-deploy-data
+decisions_and_gaps:
+  decisions:
+    - decision_id: D-result
+    - decision_id: D-types
+    - decision_id: D-mock
+    - decision_id: D-storage
+    - decision_id: D-account
+    - decision_id: D-lifecycle
+    - decision_id: D-navigation
+    - decision_id: D-refresh
+    - decision_id: D-cu
+    - decision_id: S-entry-ui
+    - decision_id: S-type-sheet
+    - decision_id: S-selection-ui
+    - decision_id: S-otp-ui
+    - decision_id: S-result-ui
+    - decision_id: S-home-ui
+    - decision_id: S-host-navigation
+contracts:
+  - contract_id: local-card-save
+    label: 本地模拟开卡落库契约
+    owner: WalletMain（本侧设计权威，不代表银行云契约）
+    needed_by: bc-openCard-2
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+      observed_at: 2026-10-13T07:36:13Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    operation:
+      operation_id: save-card
+      direction: client_to_local_rdb
+      version: "1"
+      description: BankCardRepository.save：只写本机合成卡，不发网络/短信/支付请求
+      verification_refs:
+        - AC-5
+        - AC-6
+        - AC-9
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/operation
+    request_dto:
+      dto_id: WalletCardRecord
+      fields:
+        - field_id: accountId
+          type: string
+          semantics: 账号mock稳定ID，不取脱敏邮箱
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/0
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: cardNumber
+          type: string
+          semantics: 复合主键部分，完整卡号
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/1
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: walletKind
+          type: WalletCardKind
+          semantics: BANK/TRANSIT/ACCESS，本轮仅写BANK
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/2
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: bankCode
+          type: string
+          semantics: 银行短码
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/3
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: bankName
+          type: string
+          semantics: 保存时银行名快照
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/4
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: bankCardType
+          type: BankCardType
+          semantics: 银行子类型
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/5
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: addedAt
+          type: number
+          semantics: 首次添加UTC epoch milliseconds，重复添加保留
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/6
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: huaweiPayEnabled
+          type: boolean
+          semantics: 本轮false，非真实激活
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/7
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: unionPayFlashEnabled
+          type: boolean
+          semantics: 本轮false
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/8
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: transactionsJson
+          type: string
+          semantics: 有效JSON数组，首次[]，本轮无交易产生
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto/fields/9
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+      verification_refs:
+        - AC-5
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/request_dto
+    response_dto:
+      dto_id: WalletCardRecord
+      description: save直接返回WalletCardRecord，不添加persistedCard包装对象
+      fields:
+        - field_id: accountId
+          type: string
+          semantics: 账号mock稳定ID，不取脱敏邮箱
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/0
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: cardNumber
+          type: string
+          semantics: 复合主键部分，完整卡号
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/1
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: walletKind
+          type: WalletCardKind
+          semantics: BANK/TRANSIT/ACCESS，本轮仅写BANK
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/2
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: bankCode
+          type: string
+          semantics: 银行短码
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/3
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: bankName
+          type: string
+          semantics: 保存时银行名快照
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/4
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: bankCardType
+          type: BankCardType
+          semantics: 银行子类型
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/5
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: addedAt
+          type: number
+          semantics: 首次添加UTC epoch milliseconds，重复添加保留
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/6
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: huaweiPayEnabled
+          type: boolean
+          semantics: 本轮false，非真实激活
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/7
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: unionPayFlashEnabled
+          type: boolean
+          semantics: 本轮false
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/8
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+        - field_id: transactionsJson
+          type: string
+          semantics: 有效JSON数组，首次[]，本轮无交易产生
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto/fields/9
+          provenance:
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: 2026-10-13T07:36:13Z
+            evidence_strength: authoritative
+            extraction_method: authorized_design
+          verification_refs:
+            - AC-5
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/response_dto
+      verification_refs:
+        - AC-5
+        - AC-9
+    mappings:
+      - mapping_id: map-accountId
+        kind: direct
+        source_fields:
+          - accountId
+        target_field: cards.account_id
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/0
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-cardNumber
+        kind: direct
+        source_fields:
+          - cardNumber
+        target_field: cards.card_number
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/1
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-walletKind
+        kind: direct
+        source_fields:
+          - walletKind
+        target_field: cards.wallet_kind
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/2
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-bankCode
+        kind: direct
+        source_fields:
+          - bankCode
+        target_field: cards.bank_code
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/3
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-bankName
+        kind: direct
+        source_fields:
+          - bankName
+        target_field: cards.bank_name
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/4
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-bankCardType
+        kind: direct
+        source_fields:
+          - bankCardType
+        target_field: cards.bank_card_type
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/5
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-addedAt
+        kind: direct
+        source_fields:
+          - addedAt
+        target_field: cards.added_at
+        rule: WalletCardRecord字段直接映射对应snake_case列；cardNumber保持完整原值，重复返回原记录
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/6
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-huaweiPayEnabled
+        kind: direct
+        source_fields:
+          - huaweiPayEnabled
+        target_field: cards.huawei_pay_enabled
+        rule: boolean显式转换为0/1，读取反向转换，重复添加保留旧列值
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/7
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-unionPayFlashEnabled
+        kind: direct
+        source_fields:
+          - unionPayFlashEnabled
+        target_field: cards.unionpay_flash_enabled
+        rule: boolean显式转换为0/1，读取反向转换，重复添加保留旧列值
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/8
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+      - mapping_id: map-transactionsJson
+        kind: direct
+        source_fields:
+          - transactionsJson
+        target_field: cards.transactions_json
+        rule: 验证有效JSON数组后写transactions_json；读取保留原有效数组字符串
+        source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/9
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-13T07:36:13Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - AC-5
+    errors:
+      codes:
+        - ACCOUNT_CHANGED
+        - INVALID_SELECTION
+        - DB_OPEN_FAILED
+        - DB_SCHEMA_FAILED
+        - DB_WRITE_FAILED
+        - DB_CONFIRM_FAILED
+        - DB_VERSION_UNSUPPORTED
+      semantics: save抛失败即结果Failed；幂等重复成功；页面导航错误单独处理不改变RDB结果
+      verification_refs:
+        - AC-6
+        - BD-5
+        - BD-6
+        - BD-7
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/errors
+    idempotency:
+      key:
+        - accountId
+        - cardNumber
+      strategy: 复合主键，INSERT OR IGNORE后查询旧/新行确认，重复保留首次时间及状态；禁止replace/delete-upsert
+      verification_refs:
+        - AC-9
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/idempotency
+    nfr:
+      security: S4且encrypt=true；无明文日志；不持久化OTP；仅合成数据
+      recovery: 冷启动重新查询，清数据重建v1，>1不降级
+      verification_refs:
+        - BD-3
+        - BD-7
+        - BD-8
+      source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/nfr
+    table_schema:
+      database: wallet_cards.db
+      version: 1
+      security_level: S4
+      encrypt: true
+      tables:
+        - name: cards
+          primary_key:
+            - account_id
+            - card_number
+          columns:
+            - name: account_id
+              type: TEXT NOT NULL
+              description: 稳定mock账号ID
+              from: accountId
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/0
+            - name: card_number
+              type: TEXT NOT NULL
+              description: 完整16位卡号
+              from: cardNumber
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/1
+            - name: wallet_kind
+              type: TEXT NOT NULL DEFAULT 'BANK'
+              description: BANK/TRANSIT/ACCESS
+              from: walletKind
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/2
+              default: BANK
+            - name: bank_code
+              type: TEXT NOT NULL
+              description: 银行标识
+              from: bankCode
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/3
+            - name: bank_name
+              type: TEXT NOT NULL
+              description: 银行名快照
+              from: bankName
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/4
+            - name: bank_card_type
+              type: TEXT NOT NULL
+              description: DEBIT/CREDIT
+              from: bankCardType
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/5
+            - name: added_at
+              type: INTEGER NOT NULL
+              description: UTC epoch ms首次添加时间
+              from: addedAt
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/6
+              encoding: UTC epoch milliseconds，重复卡保留首次值
+            - name: huawei_pay_enabled
+              type: INTEGER NOT NULL DEFAULT 0
+              description: 0/1
+              from: huaweiPayEnabled
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/7
+              default: 0
+              encoding: boolean ↔ INTEGER 0/1
+            - name: unionpay_flash_enabled
+              type: INTEGER NOT NULL DEFAULT 0
+              description: 0/1
+              from: unionPayFlashEnabled
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/8
+              default: 0
+              encoding: boolean ↔ INTEGER 0/1
+            - name: transactions_json
+              type: TEXT NOT NULL DEFAULT '[]'
+              description: 有效JSON数组
+              from: transactionsJson
+              source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#/contracts/0/mappings/9
+              default: "[]"
+              encoding: 有效JSON数组字符串，写前验证，读取保留
+          constraints:
+            - PRIMARY KEY(account_id,card_number)
+            - CHECK(wallet_kind IN ('BANK','TRANSIT','ACCESS'))
+            - CHECK(bank_card_type IN ('DEBIT','CREDIT'))
+            - CHECK(huawei_pay_enabled IN (0,1))
+            - CHECK(unionpay_flash_enabled IN (0,1))
+          upgrade: v0事务建表后置v1；v1复用；>1失败且不删库/重建
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md

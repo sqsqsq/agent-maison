@@ -15,7 +15,7 @@ import {
   loadCanonicalBlueprint,
   resolveComponentBlueprintRef,
 } from '../../scripts/utils/component-blueprint-path';
-import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
+import { validateComponentBlueprint, diagnoseBlueprintContent } from '../../scripts/utils/component-blueprint-validator';
 import { BLUEPRINT_REVIEW_FORMAT, renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { collectBlueprintReviewInputs } from '../../scripts/utils/blueprint-review-inputs';
 import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidModuleDependencyGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
@@ -393,8 +393,92 @@ function test(name: string, run: () => void): UnitCaseResult {
   }
 }
 
+export function runContentWarnCases(): UnitCaseResult[] {
+  const results: UnitCaseResult[] = [];
+  results.push(test('content WARN: original 397b092f target content locates all 16 AC/BD and other own defects; accepted sample stays quiet', () => {
+    const fixtureDir = path.resolve(FIXTURE_ROOT, '..', 'blueprint-content');
+    for (const name of ['397b092f', 'accepted-oct14']) {
+      const bp = readYaml(path.join(fixtureDir, `${name}.yaml`));
+      const before = JSON.stringify(bp);
+      const issues = diagnoseBlueprintContent(bp);
+      assert(JSON.stringify(bp) === before, '只读条目诊断改写了输入');
+      assert(issues.every(item => item.severity === 'WARN'), '内容诊断升级为阻断');
+      if (name === 'accepted-oct14') { assert(issues.length === 0, JSON.stringify(issues)); continue; }
+      const acceptance = issues.filter(item => /acceptance\.(criteria|boundaries)\[/.test(item.path));
+      assert(new Set(acceptance.map(item => item.path)).size === 16, '16条原始AC/BD未逐条定位');
+      assert(acceptance.some(item => item.message.includes('description') && item.path.endsWith('criteria[0]')), '缺description没有明确缺键');
+      assert(acceptance.some(item => item.message.includes('testable, verification_steps, expected_result')), 'AC缺键被含糊摘要替代');
+      assert(acceptance.some(item => item.message.includes('scenario, handling, expected_behavior')), 'BD缺键被含糊摘要替代');
+      for (const field of ['performance', 'interfaces', 'data_models', 'use_cases']) assert(issues.some(item => item.path.includes(`.${field}`)), `遗漏${field}自身问题`);
+      assert(!issues.some(item => item.path.includes('state_management')), '为397b样本新增了state必填');
+      assert(new Set(issues.map(item => `${item.path}:${item.message}`)).size === issues.length, '重复目标引用造成重复诊断');
+    }
+  }));
+
+  results.push(test('content WARN: legal distributed fragments and derived metadata do not require a whole Feature', () => {
+    const bp = validBlueprint();
+    const view = findView(bp, 'development');
+    const useCases = readYaml(path.resolve(FIXTURE_ROOT, '..', 'blueprint-design-inputs', 'use-cases.yaml'));
+    delete useCases.schema_version; delete useCases.feature;
+    const bd = { id: 'BD-1', priority: 'P1', description: '边界', ut_layer: 'device', scenario: '失败', handling: '重试', expected_behavior: '保留输入' };
+    const nfr = { id: 'NFR-1', metric: 'latency', threshold: '1', unit: 's', description: '耗时' };
+    const model = { name: 'Model', file: 'src/Model.ts', kind: 'interface', fields: [{ name: 'ok', type: 'boolean', required: false }] };
+    const existing = asRecords(view.nodes)[0]!;
+    view.nodes = [
+      { ...existing, node_id: 'boundaries-only', acceptance: { boundaries: [bd] } },
+      { ...existing, node_id: 'performance-only', acceptance: { performance: [nfr] } },
+      { ...existing, node_id: 'no-files', contracts: { data_models: [model], state_management: [{}] } },
+      { ...existing, node_id: 'case-content', use_cases: useCases },
+      { ...existing, node_id: 'case-metadata', use_cases: { schema_version: '2' } },
+      { ...existing, node_id: 'duplicate-local-id', acceptance: { boundaries: [bd] } },
+      { ...existing, node_id: 'empty-optional', acceptance: { criteria: [], boundaries: null }, contracts: { interfaces: null }, use_cases: { use_cases: [] } },
+    ];
+    const issues = diagnoseBlueprintContent(bp);
+    assert(issues.length === 0, JSON.stringify(issues));
+    // 根业务契约的 operation/DTO 不属于 typed contracts。
+    bp.contracts = [{ contract_id: 'business-operation', operations: [{ name: 'open' }], dtos: [{ name: 'Request', fields: [{ name: 'value' }] }] }];
+    assert(diagnoseBlueprintContent(bp).length === 0, '根operation/DTO被误当施工类型');
+  }));
+
+  results.push(test('content WARN: written state collections share loader shape rules without new required state fields', () => {
+    const bp = validBlueprint(); const flow = runtimeFlow(bp);
+    flow.contracts = { state_management: [{}] };
+    assert(diagnoseBlueprintContent(bp).length === 0, '空state被新增必填');
+    flow.contracts = { state_management: [{ ordered_steps: [1, 'valid'], lifecycle_triggers: {}, mutations: {}, consumers: [null, { consumer_id: 'ok' }] }] };
+    const issues = diagnoseBlueprintContent(bp);
+    for (const field of ['ordered_steps[0]', 'lifecycle_triggers', 'mutations', 'consumers[0]']) assert(issues.some(item => item.path.endsWith(field)), `遗漏state坏形状${field}`);
+    assert(issues.every(item => !item.message.includes('data/holder')), '添加了新state规则');
+  }));
+
+  results.push(test('content WARN: real checker CLI text/JSON and review reference preserve paths and source bytes', () => {
+    withTempProject((projectRoot, filePath) => {
+      const bp = readYaml(filePath); const views = asRecords(bp.design_views);
+      views[0]!.acceptance = { boundaries: [{ id: 'BD-99', priority: 'P1', ut_layer: 'device' }] };
+      fs.writeFileSync(filePath, YAML.stringify(bp), 'utf8');
+      const original = fs.readFileSync(filePath);
+      const expectedPath = '$.design_views[0].acceptance.boundaries[0]';
+      const harnessRoot = path.resolve(__dirname, '..', '..');
+      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
+        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+        '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
+      const jsonCli = invoke(['--write-review', '--json']); const report = JSON.parse(jsonCli.stdout);
+      assert(jsonCli.status === 0 && report.status === 'PASS', jsonCli.stdout + jsonCli.stderr);
+      assert(report.issues.some((item: BlueprintRecord) => item.id === 'blueprint_content_incomplete' && item.path === expectedPath && String(item.message).includes('expected_behavior')), 'JSON漏了自身内容WARN');
+      const textCli = invoke([]);
+      assert(textCli.status === 0 && textCli.stdout.includes(`[WARN] ${expectedPath}:`) && textCli.stdout.includes('expected_behavior'), textCli.stdout + textCli.stderr);
+      const markdown = fs.readFileSync(report.review_document.path, 'utf8').replace(/\\([\\`*_[\]])/g, '$1');
+      assert(markdown.includes(expectedPath) && markdown.includes('expected_behavior'), '评审参考漏了同源内容诊断');
+      assert(fs.readFileSync(filePath).equals(original), '诊断或渲染修正了canonical');
+    });
+  }));
+
+  return results;
+}
+
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+
+  results.push(...runContentWarnCases());
 
   // M5A §7.4：同一 component_id 的两个 blueprint_id 工作区共存，互不覆盖、无可见副作用（proof 1）
   results.push(test('two workspaces of the same component coexist without overwriting (proof 1)', () => {

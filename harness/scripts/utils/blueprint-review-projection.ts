@@ -15,7 +15,7 @@ import { extractAcceptanceIdRefs } from './check-acceptance';
 import { normalizeUseCasePortCalls } from './spec-loader';
 import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
 
-export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@9';
+export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@10';
 
 const PRESENTATION_METADATA = new Set(['provenance', 'source_ref', 'source_refs', 'verification_refs', 'evidence_refs', 'artifact_sha256', 'source_fingerprint']);
 const SUMMARY_KEYS = new Set(['semantics', 'description', 'rule', 'answer', 'summary']);
@@ -145,8 +145,13 @@ function renderUnit(item: ReviewChangeUnit, blueprint: BlueprintRecord): string[
   return lines;
 }
 
+function decisionTitle(decision: BlueprintRecord, blueprint: BlueprintRecord): unknown {
+  const target = decision.kind === 'component_asset_selection' && nonEmptyString(decision.target_ref) ? stableAddressIndex(blueprint).get(decision.target_ref) : undefined;
+  return decision.label ?? target?.label ?? target?.name ?? decision.name ?? decision.decision_id;
+}
+
 function decisionConclusion(decision: BlueprintRecord): string {
-  if (decision.kind === 'component_asset_selection') return `选型结果：${prose(decision.asset_resolution)}；选型目标：${prose(decision.target_ref)}；组件：${prose(decision.component_ref)}`;
+  if (decision.kind === 'component_asset_selection') return `选型结果：${enumText(decision.asset_resolution, { reuse: '直接复用已有组件', configure: '用已有参数表达需求', adapt: '在使用方编写局部包装或组合', evolve: '兼容演进共享定义', custom: '自定义实现' })}；选型目标：${prose(decision.target_ref)}${decision.asset_resolution === 'custom' && absent(decision.component_ref) ? '' : `；组件：${prose(decision.component_ref)}`}`;
   if (decision.kind === 'architecture_impact') {
     switch (decision.change) {
       case 'dependency_edge': return `${prose(decision.change)}：${prose(decision.from)} → ${prose(decision.to)}；方向 ${prose(decision.direction)}`;
@@ -582,10 +587,10 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
     if (section === 'data') for (const domain of asRecords(blueprint.data_domains)) { paragraph(domain.usage, prose(domain.label ?? domain.name ?? domain.data_domain_id)); paragraph(domain.isolation, '隔离'); paragraph(domain.retention, '有效期'); paragraph(domain.cleanup, '清理'); paragraph(domain.security, '安全'); }
     if (section === 'decisions') for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
       const alternatives = asRecords(decision.alternatives);
-      out.push(anchor(`decision:${decision.decision_id}`), `### ${text(decision.label ?? decision.name ?? decision.decision_id)}`, '',
+      out.push(anchor(`decision:${decision.decision_id}`), `### ${text(decisionTitle(decision, blueprint))}`, '',
         ...table(['关切', '结论'], [['选了什么', decisionConclusion(decision)], ['理由', decision.rationale]]), '被否方案：', '',
         ...(alternatives.length ? table(['方案', '被否理由/缺陷'], alternatives.map(a => [a.option,
-          projectionContentEqual(a.rejected_reason, a.defect) ? a.rejected_reason : [absent(a.rejected_reason) ? undefined : `被否理由：${prose(a.rejected_reason)}`, absent(a.defect) ? undefined : `缺陷：${prose(a.defect)}`].filter(Boolean).join('；')])) : ['未记录；不推测被否选择。', '']));
+          projectionContentEqual(a.rejected_reason, a.defect) ? a.rejected_reason : [a.rejected_reason, a.defect].filter(value => !absent(value)).map(value => prose(value)).join('\n')])) : ['未记录；不推测被否选择。', '']));
     }
     if (section === 'recovery') for (const flow of flows) {
       const recovery = asRecord(flow.failure_recovery); if (!recovery) continue;
@@ -845,7 +850,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   lines.push('#### 决策精确声明', '');
   if (!decisions.length) lines.push('未记录决策及被否方案。', '');
   for (const d of decisions) {
-    lines.push(`##### ${text(d.label ?? d.name ?? d.decision_id)}`, '', ...table(['关切', '声明'], [['正文解释', designLink(`decision:${d.decision_id}`)], ['类型', enumText(d.kind, { component_asset_selection: '组件选型', architecture_impact: '架构影响', evolution_candidate: '演进候选', residual_risk: '残余风险', design_choice: '设计取舍' })], ['状态', enumText(d.status, DISPOSITIONS)], ['责任方', d.owner]]));
+    lines.push(`##### ${text(decisionTitle(d, blueprint))}`, '', ...table(['关切', '声明'], [['正文解释', designLink(`decision:${d.decision_id}`)], ['类型', enumText(d.kind, { component_asset_selection: '组件选型', architecture_impact: '架构影响', evolution_candidate: '演进候选', residual_risk: '残余风险', design_choice: '设计取舍' })], ['状态', enumText(d.status, DISPOSITIONS)], ['责任方', d.owner]]));
   }
   lines.push('<a id="review-quality"></a>', '#### 质量属性与数据生命周期', '', ...(asRecords(blueprint.quality_attributes).length ? table(['要求', '类别', '要求说明', '落点', '来源', '验证引用'], asRecords(blueprint.quality_attributes).map(q => [q.qa_id, q.category, q.requirement, q.landing, q.source_ref, acceptanceLinks(q.verification_refs)])) : ['部件级质量属性未记录；精确阈值见已有 NFR。', '']),
     '<a id="review-data-domains"></a>', '#### 数据用途与生命周期', '', ...(asRecords(blueprint.data_domains).length ? table(['数据域', '用途', '有效期', '隔离', '清理', '安全', '使用流'], asRecords(blueprint.data_domains).map(d => [d.data_domain_id, d.usage, d.retention, d.isolation, d.cleanup, d.security, asRecords(view('runtime')?.runtime_data_flows).filter(f => asStrings(f.data_domain_refs).includes(String(d.data_domain_id))).map(f => prose(f.name ?? f.flow_id)).join('；') || '未登记使用流'])) : ['数据生命周期未记录。', '']));
@@ -853,7 +858,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const gaps = asRecords(dg?.gaps); if (gaps.length) lines.push(gaps.map(g => anchor(`gap:${g.gap_id}`)).join(''), ...table(['缺口', '状态', '责任方', '需要方', '解除条件'], gaps.map(g => [g.gap_id, enumText(g.status, DISPOSITIONS), g.owner, g.needed_by, g.unlock_condition])));
   const risks = decisions.filter(d => d.kind === 'residual_risk' || ['open_decision', 'blocker'].includes(String(d.status))); if (risks.length) lines.push(...table(['风险/待决项', '主责说明', '状态', '责任方'], risks.map(d => [d.decision_id, designLink(`decision:${d.decision_id}`), enumText(d.status, DISPOSITIONS), d.owner])));
   const unavailable = asRecords(blueprint.providers).filter(p => p.available !== true || ['unknown', 'degraded'].includes(String(p.missing_disposition))); if (unavailable.length) lines.push('#### 来源不可用与降级影响', '', ...table(['来源能力', '可用', '实际处置'], unavailable.map(p => [p.provider_id, booleanText(p.available), enumText(p.missing_disposition, { unknown: '待确认', degraded: '已降级', not_applicable: '不适用' })])));
-  const presentationIssues = diagnoseBlueprintPresentationShape(blueprint); if (presentationIssues.length) lines.push('#### 可选表达未能完整显示（非阻断）', '', ...presentationIssues.map(i => `- ${text(i.path)}：${text(i.message)}`), '');
+  const presentationIssues = diagnoseBlueprintPresentationShape(blueprint); if (presentationIssues.length) lines.push('#### 设计内容与表达诊断（非阻断）', '', ...presentationIssues.map(i => `- ${text(i.path)}：${text(i.message)}`), '');
   if (inputs.sourceGaps.length) lines.push('#### CU 来源缺口', '', ...inputs.sourceGaps.map(g => `- ${text(g)}`), '', '以上直接引用与合并声明不能作为完整覆盖证明。', '');
   const lens = asRecord(blueprint.app_lens); if (lens) lines.push('#### App 根问题', '', ...table(['问题', '回答', '裁决', '依据'], Object.entries(APP_QUESTIONS).filter(([key]) => asRecord(lens[key])).map(([key, question]) => [question, meaning(asRecord(lens[key])?.answer), enumText(asRecord(lens[key])?.disposition, DISPOSITIONS), refs(asRecord(lens[key])?.evidence_refs)])));
   const questioning = asRecord(review.questioning); if (questioning) lines.push('#### 独立质询', '', ...table(['范围', '问题', '裁决', '回答'], asRecords(questioning.items).map(q => [q.scope_ref, q.question, enumText(q.disposition, DISPOSITIONS), q.answer ?? '未记录'])));

@@ -22,6 +22,7 @@ import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptance
 import { isInsideProjectRoot } from './project-relative-path';
 import { evaluateAcceptanceFlowStructure } from './p0-semantic-gates';
 import { SpecLoader, normalizeUseCasePortCalls } from './spec-loader';
+import { inspectTypedConstructionContent } from './design-content-checks';
 import { checkUseCaseSpecSchema } from '../check-ut';
 import type { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
 import type { ResolutionDependency } from './capability-resolution';
@@ -130,14 +131,10 @@ export function checkTypedConstructionContent(ctx: CheckContext): CheckResult[] 
   const contracts = ctx.featureSpec.contracts;
   const issues: string[] = [];
   if (!contracts?.files?.length) issues.push('contracts.files 缺少明确授权文件');
-  for (const model of contracts?.data_models ?? []) {
-    if (!model.name || !model.file || !model.kind) issues.push('data_models 缺 name/file/kind');
-    for (const field of model.fields ?? []) if (!field.name || !field.type || field.type === 'any' || typeof field.required !== 'boolean') issues.push(`${model.name}: 字段缺明确类型/required`);
-  }
-  for (const api of contracts?.interfaces ?? []) {
-    if (!api.class || !api.file || !api.methods?.length) issues.push('interfaces 缺 class/file/methods');
-    for (const method of api.methods ?? []) if (!method.name || !method.return || method.return === 'any' || !Array.isArray(method.params) || method.params.some(param => !param.name || !param.type || param.type === 'any')) issues.push(`${api.class}: 方法缺精确签名`);
-  }
+  const content = inspectTypedConstructionContent(contracts);
+  const consumerError = content.find(issue => issue.consumerError)?.consumerError;
+  if (consumerError) throw new TypeError(consumerError); // 保留原消费异常与归因；蓝图只读诊断仍可 WARN。
+  issues.push(...content.map(issue => issue.message));
   return [{ id: 'construction_content_complete', description: '施工类型、签名与用例引用完整', category: 'structure', severity: 'BLOCKER', status: issues.length ? 'FAIL' : 'PASS', details: issues.join('; ') || '施工内容完整' }, ...checkAcceptanceLinkedUseCases(ctx), ...(ctx.featureSpec.useCases ? checkUseCaseSpecSchema(ctx) : [])];
 }
 function canonical(value: unknown): string {

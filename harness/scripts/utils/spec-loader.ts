@@ -16,6 +16,7 @@ import * as YAML from 'yaml';
 import { TextDecoder } from 'util';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import { selectionShapeIssues } from './component-assets';
+import { inspectMapArray, inspectStringArray } from './design-content-checks';
 import {
   Phase,
   PhaseRuleSpec,
@@ -584,13 +585,14 @@ function normalizeStringArrayField(
   const label = parentLabel ? `${parentLabel}.${field}` : field;
   const value = obj[field];
   if (value === undefined || value === null) return;
-  if (!Array.isArray(value)) {
+  const shape = inspectStringArray(value);
+  if (shape.nonArray) {
     shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 应为 string[]——已按空数组防崩处理`);
     obj[field] = [];
     return;
   }
-  const strings = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-  if (strings.length !== value.length) {
+  const strings = (value as unknown[]).filter((_, index) => !shape.invalidIndices.includes(index));
+  if (shape.invalidIndices.length) {
     shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 含非空字符串以外条目——非法条目已剔除`);
   }
   obj[field] = strings;
@@ -613,7 +615,8 @@ function normalizeArrayField(
   const label = parentLabel ? `${parentLabel}.${field}` : field;
   const v = obj[field];
   if (v === undefined || v === null) return;
-  if (!Array.isArray(v)) {
+  const shape = inspectMapArray(v);
+  if (shape.nonArray) {
     const kind = typeof v === 'object' ? 'object(dict)' : typeof v;
     shapeIssues.push(
       `${path.basename(filePath)} 的 \`${label}\` 应为数组（YAML list），实际是 ${kind}——已按空数组防崩处理；最小合法样例：\`${field}: []\`（每项以 \`- \` 开头）`,
@@ -625,12 +628,8 @@ function normalizeArrayField(
   // 第五轮复审（codex P1）：容器合法不等于条目合法——`- null` / `- 42` / 嵌套数组条目
   // 会在下游 `mod.package_path` / `uc.id` 等解引用处崩成 framework_bug 误归因。
   // 本 loader 的这些集合语义上都是 map 数组：剔除非 map 条目 + 带索引留痕。
-  const badIdx: number[] = [];
-  const cleaned = (v as unknown[]).filter((it, i) => {
-    const ok = it !== null && typeof it === 'object' && !Array.isArray(it);
-    if (!ok) badIdx.push(i);
-    return ok;
-  });
+  const badIdx = shape.invalidIndices;
+  const cleaned = (v as unknown[]).filter((_, i) => !badIdx.includes(i));
   if (badIdx.length > 0) {
     shapeIssues.push(
       `${path.basename(filePath)} 的 \`${label}[${badIdx.join(',')}]\` 应为映射（map，形如 \`- key: value\`），实际为 null/标量/数组——非法条目已剔除、合法条目保留`,

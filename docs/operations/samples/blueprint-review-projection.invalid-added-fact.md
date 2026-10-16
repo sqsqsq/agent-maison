@@ -13,7 +13,7 @@ derived_from:
     - change_unit_id: ledger-report
       binding: bound
       identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
-projection: component-blueprint-review@9
+projection: component-blueprint-review@10
 ---
 
 # Ledger 完整设计表达样本（非真实需求）
@@ -143,8 +143,8 @@ Repository、Store、报表读取各有明确职责和接口。
 
 | 方案 | 被否理由/缺陷 |
 | --- | --- |
-| 每个页面独立拉取并写缓存 | 被否理由：提交与显示顺序不可统一；缺陷：重启、订阅建立期间可能看到旧余额 |
-| 立刻抽出 Maison provider | 被否理由：尚无跨宿主变体证据；缺陷：增加接缝维护面而没有实际复用 |
+| 每个页面独立拉取并写缓存 | 提交与显示顺序不可统一<br>重启、订阅建立期间可能看到旧余额 |
+| 立刻抽出 Maison provider | 尚无跨宿主变体证据<br>增加接缝维护面而没有实际复用 |
 
 <a id="recovery"></a>
 ## 9 失败与恢复
@@ -1128,7 +1128,7 @@ flowchart TD
 | conventions-knowledge | 否 | 不适用 |
 | component-assets | 否 | 不适用 |
 
-#### 可选表达未能完整显示（非阻断）
+#### 设计内容与表达诊断（非阻断）
 
 - $.review\_summary.reader\_guide：尚未补写评审说明；按当前设计字段展示。
 

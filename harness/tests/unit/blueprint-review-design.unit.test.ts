@@ -35,6 +35,41 @@ function target(bp: BlueprintRecord, id: string): BlueprintRecord { return asRec
 function update(f: Fixture, mutate: (bp: BlueprintRecord) => void, bind = true): void { const bp = blueprint(f); mutate(bp); fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); if (bind) f.bind(); }
 function render(f: Fixture): string { return loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').markdown; }
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'component selection uses existing target names and honest custom references with readable alternatives', run(f) {
+    const bp = blueprint(f); const named = target(bp, 'ledger-module'); named.label = '账目刷新组件'; named.name = '原有英文名';
+    const nameOnly = target(bp, 'ledger-report-module'); delete nameOnly.label; nameOnly.name = '账页报表组件';
+    const decisions: BlueprintRecord[] = [
+      { decision_id: 'evolve-choice', kind: 'component_asset_selection', name: '原决策名', target_ref: 'view:development/node:ledger-module', asset_resolution: 'evolve', component_ref: 'component:ledger', alternatives: [{ option: '方案甲', rejected_reason: '不支持账号边界。', defect: '缓存会跨账号共享。' }, { option: '方案乙', rejected_reason: '重复内容。', defect: '重复内容。' }] },
+      ...['reuse', 'configure', 'adapt'].map(asset_resolution => ({ decision_id: `${asset_resolution}-choice`, kind: 'component_asset_selection', target_ref: 'view:development/node:ledger-module', asset_resolution, component_ref: 'component:ledger' })),
+      ...[undefined, null, ''].map((component_ref, i) => ({ decision_id: `custom-empty-${i}`, kind: 'component_asset_selection', target_ref: 'view:development/node:ledger-report-module', asset_resolution: 'custom', component_ref })),
+      { decision_id: 'custom-with-ref', kind: 'component_asset_selection', label: '明确指定的决策名', target_ref: 'view:development/node:ledger-module', asset_resolution: 'custom', component_ref: 'component:new-ledger' },
+      { decision_id: 'missing-target', kind: 'component_asset_selection', target_ref: 'view:development/node:missing', asset_resolution: 'future-kind' },
+      { decision_id: 'missing-target-named', kind: 'component_asset_selection', name: '已有回退名称', target_ref: 'view:development/node:missing', asset_resolution: 'future-kind' },
+    ];
+    asRecord(bp.decisions_and_gaps)!.decisions = decisions;
+    const before = JSON.stringify(bp); const document = renderBlueprintReviewMarkdown(bp, 'sha256:selection');
+    const body = document.slice(document.indexOf('## 8 关键取舍'), document.indexOf('## 9 失败与恢复'));
+    const reference = document.slice(document.indexOf('## 技术与追溯参考'));
+    assert(body.includes('### 账目刷新组件') && !body.includes('### 原决策名') && !body.includes('### 原有英文名'));
+    assert.equal(body.split('### 账页报表组件').length - 1, 3); assert(body.includes('### 明确指定的决策名'));
+    assert(body.includes('### missing-target\n') && body.includes('### 已有回退名称'));
+    for (const label of ['直接复用已有组件', '用已有参数表达需求', '在使用方编写局部包装或组合', '兼容演进共享定义']) assert.equal(body.split(`选型结果：${label}；选型目标：`).length - 1, 1, label);
+    assert(body.includes('；组件：component:ledger'));
+    assert.equal(body.split('选型结果：自定义实现').length - 1, 4); assert(body.includes('组件：component:new-ledger'));
+    assert(!body.includes('选型结果：本次新建') && !body.includes('选型结果：沿用并改造'));
+    const custom = body.slice(body.indexOf(blueprintReviewAnchor('decision:custom-empty-0')), body.indexOf(blueprintReviewAnchor('decision:missing-target')));
+    assert(!custom.includes('组件：未记录') && !custom.includes('组件：null') && !custom.includes('组件：""'));
+    assert(body.includes('选型结果：future-kind'), '未知值按原值披露，不猜译');
+    assert(body.includes('| 方案甲 | 不支持账号边界。<br>缓存会跨账号共享。|'));
+    assert(!body.includes('。；') && !body.includes('被否理由：') && !body.includes('缺陷：'));
+    assert.equal(body.split('重复内容。').length - 1, 1); assert.equal(body.split('未记录；不推测被否选择。').length - 1, 9);
+    for (const decision of decisions) {
+      const id = blueprintReviewAnchor(`decision:${decision.decision_id}`);
+      assert(body.includes(`<a id="${id}"></a>`)); assert(reference.includes(`](#${id})`)); assert(!reference.includes(`<a id="${id}"></a>`));
+    }
+    const ids = [...document.matchAll(/<a\s+id="([^"]+)"/g)].map(match => match[1]); assert.equal(new Set(ids).size, ids.length);
+    assert(!reference.includes('不支持账号边界') && !reference.includes('缓存会跨账号共享')); assert.equal(JSON.stringify(bp), before);
+  } },
   { name: 'canonical decisions always follow authored introductions with unique body anchors and metadata-only reference', run(f) {
     for (const state of ['missing', 'current', 'stale']) {
       const bp = blueprint(f); const review = asRecord(bp.review_summary)!;
@@ -58,7 +93,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
       for (const literal of ['选择理由唯一', '轮询缺陷唯一', '共享数组理由唯一', '共享数组缺陷唯一', '没有拒绝理由的缺陷', '复用依据唯一', '移动依据唯一', '演进依据唯一', '风险依据唯一']) {
         assert.equal(body.split(literal).length - 1, 1, `${state}: ${literal}`); assert(!reference.includes(literal), literal);
       }
-      for (const literal of ['采用持久快照', 'reuse', 'asset-target', 'existing-component', 'move', 'old-layer → new-layer', 'keep', 'StablePort', 'LocalProvider', 'LocalConsumer', '保留已知风险']) assert(body.includes(literal), `${state}: ${literal}`);
+      for (const literal of ['采用持久快照', '直接复用已有组件', 'asset-target', 'existing-component', 'move', 'old-layer → new-layer', 'keep', 'StablePort', 'LocalProvider', 'LocalConsumer', '保留已知风险']) assert(body.includes(literal), `${state}: ${literal}`);
       assert(body.includes('| 选了什么 | — |') && body.includes('选了什么（结论）'));
       assert.equal(body.split('未记录；不推测被否选择。').length - 1, 5);
       assert(!body.includes('所选代价') && !body.includes('缺陷/代价'));
@@ -540,7 +575,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(text.includes('内容承载于：')); assert(!text.includes('设计内容来源：'));
     asRecords(decision.alternatives)[1].defect = '确实不同代价';
     asRecords(asRecord(flow.contracts)!.state_management)[0].failure_recovery = { handling: '不同恢复处理', retry: '不同恢复重试' };
-    const different = renderBlueprintReviewMarkdown(bp, 'sha256:dedup'); assert(different.includes('被否理由：另一相同代价；缺陷：确实不同代价')); assert(different.includes('不同恢复处理')); assert(different.includes('| 处理 |'));
+    const different = renderBlueprintReviewMarkdown(bp, 'sha256:dedup'); assert(different.includes('另一相同代价<br>确实不同代价')); assert(different.includes('不同恢复处理')); assert(different.includes('| 处理 |'));
   } },
   { name: 'saved current sequence content displays beside its flow without relation refs or invented calls and stale graphs only request rebuild', run(f) {
     const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
@@ -759,7 +794,7 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const issues = validateComponentBlueprint(blueprint(f), { projectRoot: f.root }); assert(issues.some(i => i.id === 'blueprint_presentation_shape_invalid')); assert(!issues.some(i => i.severity === 'BLOCKER'), JSON.stringify(issues));
     assert(deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint').ready);
     const loaded = loadCanonicalBlueprint(f.root, 'ledger-app-blueprint'); const draft = renderBlueprintReviewMarkdown(loaded.blueprint, loaded.artifactSha256);
-    assert(draft.includes('尚未拆分')); assert(draft.includes('AC-2')); assert(draft.includes('LedgerEntry')); assert(draft.includes('可选表达未能完整显示'));
+    assert(draft.includes('尚未拆分')); assert(draft.includes('AC-2')); assert(draft.includes('LedgerEntry')); assert(draft.includes('设计内容与表达诊断（非阻断）')); assert(!draft.includes('可选表达未能完整显示'));
     update(f, bp => { target(bp, 'ledger-module').acceptance = '请测试刷新'; asRecords(asRecord(target(bp, 'review-common').contracts)!.data_models)[0].fields = ['broken']; });
     const invalidText = render(f); assert(invalidText.includes('acceptance 无效')); assert(invalidText.includes('fields 无效'));
   } },
