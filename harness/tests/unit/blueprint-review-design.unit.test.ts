@@ -623,6 +623,63 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert(text.includes('用例调用声明无效')); assert(text.includes('use\\_cases[0].branches[0]') || text.includes('use\\_cases\\[0\\].branches\\[0\\]'));
     assert(text.includes('other.call')); assert(text.includes('repository.commit'));
   } },
+  { name: 'flat record arrays render every error semantic and other business collections without changing input', run(f) {
+    const bp = blueprint(f); const contract = asRecords(bp.contracts)[0];
+    const host = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'harness/tests/fixtures/blueprint-content/ad508cb9.yaml'), 'utf8'));
+    contract.errors = asRecords(host.contracts)[0].errors;
+    contract.nfr = { rules: [{ metric: 'latency', threshold: 0, enabled: false }, { description: '已有业务说明', value: null }] };
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:flat-records');
+    assert(text.includes('错误：（code：INVALID\\_OTP；meaning：验证码不是六位数字，禁止提交且不写库。）' +
+      '；（code：PERSIST\\_FAILED；meaning：卡片 RDB 写入失败，仍进入失败结果页并携带完整卡号。）' +
+      '；（code：NAVIGATION\\_FAILED；meaning：导航栈操作失败，保留当前页并提示，不伪造完成状态。）'));
+    assert(text.includes('非功能要求：rules：（metric：latency；threshold：0；enabled：false）；（description：已有业务说明；value：null）'));
+    assert(text.includes('bank-card-opening-contract.yaml#/errors') && text.includes('acceptance:AC-6'));
+    const ids = [...text.matchAll(/<a id="([^"]+)"><\/a>/g)].map(match => match[1]); assert.equal(new Set(ids).size, ids.length);
+    for (const match of text.matchAll(/\]\(#(design-[0-9a-f]+)\)/g)) assert(ids.includes(match[1]), `缺锚点 ${match[1]}`);
+    assert.equal(JSON.stringify(bp), before);
+  } },
+  { name: 'direct flat record arrays preserve structural metadata boundaries and isolate deeper members', run(f) {
+    const bp = blueprint(f); const contract = asRecords(bp.contracts)[0];
+    const values = [
+      { code: 'FIRST', meaning: '首项', source_refs: ['hidden-source-array'], verification_refs: ['hidden-verification-array'], evidence_refs: ['hidden-evidence-array'], provenance: { source_ref: 'hidden-provenance' }, artifact_sha256: 'hidden-hash', source_fingerprint: 'hidden-fingerprint' },
+      { code: 'DEEP', details: { meaning: 'hidden-nested-object' } },
+      [{ code: 'hidden-nested-array' }],
+      { code: 'DEEP_LIST', details: ['hidden-record-array'] },
+      { code: 'LAST', meaning: '末项' }, {}, false, 0, '', null,
+    ];
+    contract.errors = values; contract.idempotency = { rules: structuredClone(values) };
+    const branch = asRecords(asRecords(asRecord(target(bp, 'ledger-refresh-flow').use_cases)!.use_cases)[0].branches)[0];
+    branch.expected_state = { observations: [{ provenance: '业务来源状态', source_ref: '业务来源键', ready: false }] };
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:flat-boundaries');
+    const rendered = '（code：FIRST；meaning：首项）；已声明（结构未展开）；已声明（结构未展开）；已声明（结构未展开）；（code：LAST；meaning：末项）；无；false；0；""；null';
+    assert(text.includes(`错误：${rendered}`)); assert(text.includes(`幂等：rules：${rendered}`));
+    assert(text.includes('observations：（provenance：业务来源状态；source\\_ref：业务来源键；ready：false）'));
+    assert(!text.includes('hidden-'), '来源结构过滤仍在原位置；深层记录只占位，不展开内容');
+    contract.errors = []; contract.idempotency = { rules: [] };
+    const empty = renderBlueprintReviewMarkdown(bp, 'sha256:flat-empty'); assert(empty.includes('错误：无')); assert(empty.includes('幂等：rules：无'));
+    contract.errors = values; contract.idempotency = { rules: structuredClone(values) }; assert.equal(JSON.stringify(bp), before);
+  } },
+  { name: 'known contract collections filter flat record metadata without deleting same-named business state keys', run(f) {
+    const bp = blueprint(f); const contract = asRecords(bp.contracts)[0];
+    const records = [{ code: 'RULE', meaning: '业务处理', source_ref: 'hidden-source', artifact_sha256: 'hidden-hash', source_fingerprint: 'hidden-fingerprint', source_refs: ['hidden-sources'], verification_refs: ['hidden-verification'], evidence_refs: ['hidden-evidence'], provenance: { source_ref: 'hidden-provenance' } }];
+    contract.errors = { items: structuredClone(records) }; contract.nfr = { requirements: structuredClone(records) };
+    const branch = asRecords(asRecords(asRecord(target(bp, 'ledger-refresh-flow').use_cases)!.use_cases)[0].branches)[0];
+    branch.expected_state = { observations: [{ source_ref: '业务来源键', artifact_sha256: '业务校验值', provenance: '业务来源状态' }] };
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:contract-collection-metadata');
+    assert(text.includes('错误：（code：RULE；meaning：业务处理）')); assert(text.includes('非功能要求：（code：RULE；meaning：业务处理）'));
+    assert(!text.includes('hidden-'), '契约集合与 semantics 沿相同结构边界过滤元数据');
+    assert(text.includes('observations：（source\\_ref：业务来源键；artifact\\_sha256：业务校验值；provenance：业务来源状态）'));
+    assert.equal(JSON.stringify(bp), before);
+  } },
+  { name: 'flat record arrays keep cell escaping links line breaks and explicit empty values', run(f) {
+    const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
+    const link = `[AC-1](#${blueprintReviewAnchor('acceptance:view:logical/node:review-common/criteria:AC-1')})`;
+    asRecords(flow.consumers)[0].consumption = [{ key: 'a|b', value: '<tag> & *literal* _name_\n下一行', empty: '', nil: null }, { only: link, leading: `${link}后文`, trailing: `前文${link}`, adjacent: `${link}${link}` }];
+    const text = renderBlueprintReviewMarkdown(bp, 'sha256:flat-escaping');
+    assert(text.includes('（key：a&#124;b；value：&lt;tag&gt; &amp; \\*literal\\* \\_name\\_<br>下一行；empty：""；nil：null）'));
+    assert(text.includes(`（only：${link}；leading：${link}后文；trailing：前文${link}；adjacent：${link}${link}）`));
+    assert(!text.includes('""[') && !text.includes(')""'), '链接分段边界不引入空字符串');
+  } },
   { name: 'explicit empty and null business expectations stay distinct from absent declarations and source-only metadata', run(f) {
     const bp = blueprint(f); const flow = target(bp, 'ledger-refresh-flow');
     const branches = asRecords(asRecords(asRecord(flow.use_cases)!.use_cases)[0].branches);

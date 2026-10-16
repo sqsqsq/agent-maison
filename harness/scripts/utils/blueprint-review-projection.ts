@@ -15,24 +15,34 @@ import { extractAcceptanceIdRefs } from './check-acceptance';
 import { normalizeUseCasePortCalls } from './spec-loader';
 import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
 
-export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@10';
+export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@11';
 
 const PRESENTATION_METADATA = new Set(['provenance', 'source_ref', 'source_refs', 'verification_refs', 'evidence_refs', 'artifact_sha256', 'source_fingerprint']);
 const SUMMARY_KEYS = new Set(['semantics', 'description', 'rule', 'answer', 'summary']);
 const isScalar = (value: unknown): boolean => ['string', 'number', 'boolean'].includes(typeof value);
 const absent = (value: unknown): boolean => value === undefined || value === null || value === '' || value === '未记录' || value === '—';
+function arrayProse(value: unknown[], structural: boolean): string {
+  return value.map(item => {
+    if (item === null || isScalar(item)) return prose(item);
+    const record = asRecord(item);
+    if (!record) return '已声明（结构未展开）';
+    const entries = Object.entries(record).filter(([key]) => !structural || !PRESENTATION_METADATA.has(key));
+    if (entries.some(([, entry]) => entry !== null && !isScalar(entry))) return '已声明（结构未展开）';
+    return entries.length ? `（${entries.map(([key, entry]) => `${key}：${prose(entry)}`).join('；')}）` : Object.keys(record).length ? '已声明（仅来源信息）' : '无';
+  }).join('；') || '无';
+}
 /** 一层业务键值；更深结构只说明已声明，不能伪装成缺失。 */
 function prose(value: unknown, structural = false): string {
   if (value === null) return 'null';
   if (isScalar(value)) return value === '' ? '""' : String(value);
   if (value === undefined) return '未记录';
-  if (Array.isArray(value)) return value.map(item => item === null || isScalar(item) ? prose(item) : '已声明（结构未展开）').join('；') || '无';
+  if (Array.isArray(value)) return arrayProse(value, structural);
   const record = asRecord(value);
   if (!record) return '未能表达（值类型不支持）';
   if (!Object.keys(record).length) return '无';
   const entries = Object.entries(record).filter(([key]) => !structural || !PRESENTATION_METADATA.has(key));
   return entries.map(([key, entry]) => {
-    const valueText = entry === null || isScalar(entry) ? prose(entry) : Array.isArray(entry) && entry.every(item => item === null || isScalar(item)) ? entry.map(item => prose(item)).join('；') || '无' : entry === undefined ? '未记录' : '已声明（结构未展开）';
+    const valueText = entry === null || isScalar(entry) ? prose(entry) : Array.isArray(entry) ? arrayProse(entry, structural) : entry === undefined ? '未记录' : '已声明（结构未展开）';
     return entries.length === 1 && SUMMARY_KEYS.has(key) ? valueText : `${key}：${valueText}`;
   }).join('；') || '已声明（仅来源信息）';
 }
@@ -48,7 +58,7 @@ function refs(value: unknown): string { return value === undefined || value === 
 function meaning(value: unknown): string {
   return prose(value, true);
 }
-/** errors.items / nfr.requirements 的业务键值集合只读一层。 */
+/** 用例预期状态与桩的业务键值保留同名来源字段。 */
 function namedMeanings(value: unknown): string {
   return prose(value);
 }
@@ -58,7 +68,7 @@ function declaredMeaning(value: unknown): string {
 function contractMeaning(value: unknown, collection: string): string {
   const record = asRecord(value);
   if (!record || record[collection] === undefined) return meaning(value);
-  return Object.entries(record).filter(([key]) => !PRESENTATION_METADATA.has(key)).map(([key, entry]) => key === collection ? namedMeanings(entry) : `${key}：${declaredMeaning(entry)}`).join('；');
+  return Object.entries(record).filter(([key]) => !PRESENTATION_METADATA.has(key)).map(([key, entry]) => key === collection ? declaredMeaning(entry) : `${key}：${declaredMeaning(entry)}`).join('；');
 }
 export function blueprintReviewAnchor(address: string): string { return `design-${Buffer.from(address).toString('hex')}`; }
 function anchor(address: string): string { return `<a id="${blueprintReviewAnchor(address)}"></a>`; }

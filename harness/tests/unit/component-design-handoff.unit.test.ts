@@ -18,6 +18,8 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, componentIndexPath, relComponentIndex, featureFilePath, featuresDirPath } from '../../config';
 import { deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
 import { loadHostSnapshot, SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { BlueprintRecord, ComponentBlueprintRef, asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { componentBlueprintPath, loadCanonicalBlueprint, sha256Bytes } from '../../scripts/utils/component-blueprint-path';
@@ -38,7 +40,7 @@ import {
   resolveChangeUnitRef,
 } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
-import { ContractsSpec } from '../../scripts/utils/types';
+import { CheckContext, ContractsSpec } from '../../scripts/utils/types';
 import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design-gate';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { evaluateChangeUnitDependencies } from '../../scripts/utils/change-unit-dependencies';
@@ -140,6 +142,34 @@ function assertStoppedAtHandoff(projectRoot: string): void {
 
 export function runContentWarnCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  results.push(test('content WARN: original ad508cb9 through SpecLoader keeps missing-version FAIL/BLOCKER; only a version in the test copy passes', () => {
+    withProject(root => {
+      const file = path.resolve(BASE_PROJECT, '..', '..', 'blueprint-content', 'ad508cb9.yaml');
+      const originalBytes = fs.readFileSync(file);
+      const bp = YAML.parse(originalBytes.toString('utf8')) as BlueprintRecord;
+      const fragment = asRecord(asRecords(asRecords(bp.design_views)[1]!.runtime_data_flows)[0]!.use_cases)!;
+      const before = JSON.stringify(fragment);
+      const feature = 'ad508cb9-consumption-probe';
+      // 只在内存补真实派生负责的 feature/source；不创建 CU 或物化 Feature。
+      const projected = { ...structuredClone(fragment), feature, source: 'derive.blueprint-contracts:read-only-probe' };
+      const consume = (useCases: BlueprintRecord) => {
+        const featureSpec = new SpecLoader(root, undefined, undefined, FRAMEWORK_ROOT).loadFeatureSpec(feature, {
+          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+          phase: 'plan', values: {}, artifacts: { 'use-cases@1': useCases },
+        });
+        assert(!featureSpec.shape_issues?.length, JSON.stringify(featureSpec.shape_issues));
+        const checked = checkUseCaseSpecSchema({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature, featureSpec, phaseRule: {} } as CheckContext);
+        assert(checked.length === 1 && checked[0]!.id === 'usecase_spec_schema' && checked[0]!.severity === 'BLOCKER', JSON.stringify(checked));
+        return checked[0]!;
+      };
+      const missing = consume(projected);
+      assert(missing.status === 'FAIL' && missing.details?.includes('1 处 Schema 问题') && missing.details.includes('顶层缺少 schema_version'), JSON.stringify(missing));
+      assert(consume({ ...projected, schema_version: '2.0' }).status === 'PASS', '测试副本只补版本仍不能消费');
+      assert(JSON.stringify(fragment) === before && fs.readFileSync(file).equals(originalBytes), '真实消费反例改写了原片段/fixture');
+      assert(!fs.existsSync(featureFilePath(root, feature, 'use-cases.yaml')), '探针物化了Feature');
+    });
+  }));
+
   for (const blocked of [false, true]) results.push(test(`content WARN: diagnostic-only fragment WARN preserves real admission/readiness ${blocked ? 'with an independent BLOCKER' : 'on a valid design'}`, () => {
     withProject(root => {
       if (blocked) bumpBlueprint(root, bp => { asRecords(bp.generated_graphs)[0]!.content = 'flowchart TD\nunsupported !'; });
@@ -158,16 +188,21 @@ export function runContentWarnCases(): UnitCaseResult[] {
       const baselineReady = readiness();
       assert(baselineEntry.canEnter === !blocked && baselineReady.ready === !blocked, '基线未覆盖真实通过/独立失败');
       let expectedPath = '';
+      let versionPath = '';
       bumpBlueprint(root, bp => {
         const views = asRecords(bp.design_views);
         const development = views.find(view => view.view_id === 'development')!;
         development.acceptance = { boundaries: [{ id: 'BD-99', priority: 'P1', ut_layer: 'device' }] };
         expectedPath = `$.design_views[${views.indexOf(development)}].acceptance.boundaries[0]`;
+        const original = YAML.parse(fs.readFileSync(path.resolve(BASE_PROJECT, '..', '..', 'blueprint-content', 'ad508cb9.yaml'), 'utf8')) as BlueprintRecord;
+        development.use_cases = asRecords(asRecords(original.design_views)[1]!.runtime_data_flows)[0]!.use_cases;
+        versionPath = `$.design_views[${views.indexOf(development)}].use_cases.schema_version`;
       });
       const file = componentBlueprintPath(root, BLUEPRINT_ID);
       const bytes = fs.readFileSync(file);
       const checked = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
       assert(checked.issues.some(item => item.id === 'blueprint_content_incomplete' && item.path === expectedPath && item.message.includes('expected_behavior')), '真实 checker 未承接内容提醒');
+      assert(checked.issues.filter(item => item.id === 'blueprint_content_incomplete' && item.severity === 'WARN' && item.path === versionPath).length === 1, '真实 checker 未承接唯一版本提醒');
       assert(JSON.stringify(evaluateDesignPreparationEntry(root, BLUEPRINT_ID)) === JSON.stringify(baselineEntry), '内容提醒改变真实准入结论');
       assert(JSON.stringify(readiness()) === JSON.stringify(baselineReady), '内容提醒改变真实 readiness 结论');
       if (blocked) assert(checked.issues.some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), '原独立 BLOCKER 被放过');

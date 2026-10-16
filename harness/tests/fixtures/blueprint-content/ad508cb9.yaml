@@ -1,0 +1,125 @@
+# Read-only use-case target and contract-errors extraction; source: .codex/reports/reader-oriented-6b3f8c21/host-review-ad508cb9/component-blueprint.yaml
+# Source SHA256: ad508cb939726ae2b6d4de0171d12028670e8734bd0dd8fff1087d23e2ce1978
+# Original fragment and view/flow indices retained; no content corrected.
+blueprint_id: bc-openCard-2
+design_views:
+  - view_id: logical
+  - view_id: runtime
+    runtime_data_flows:
+      - flow_id: bank-card-opening-flow
+        use_cases:
+          use_cases:
+            - id: UC-BANK-OPENING
+              coordinator: BankCardOpeningCoordinator
+              ui_bindings:
+                - ui: AddBankCardPage|AllBanksPage
+                  role: entry
+                  user_actions:
+                    - trigger: tapBank(bankCode)
+                      calls: openCardTypeSheet
+                - ui: BankCardTypeSheet
+                  role: dialog
+                  user_actions:
+                    - trigger: agreeAndContinue(cardType)
+                      calls: selectTypeAndOpenCards
+                - ui: BankCardSelectionPage
+                  role: progress
+                  user_actions:
+                    - trigger: next(cardNumber)
+                      calls: openSmsVerification
+                - ui: BankSmsVerificationSheet
+                  role: dialog
+                  user_actions:
+                    - trigger: submit(code)
+                      calls: completeOpening
+                - ui: BankCardAddResultPage
+                  role: result
+                  user_actions:
+                    - trigger: finish()
+                      calls: finishAndCleanupNavigation
+              data_boundaries:
+                - name: AccountManager
+                  type: WalletAccountContext
+                  kind: system
+                  methods:
+                    - getWalletAccountContext
+                - name: wallet_cards
+                  type: RDB
+                  kind: storage
+                  methods:
+                    - saveCard
+                    - findByAccountAndNumber
+              state_model:
+                phases:
+                  - TYPE_SELECTION
+                  - CARD_SELECTION
+                  - OTP_ACTIVE
+                  - SAVING
+                  - RESULT_SUCCESS
+                  - RESULT_FAILURE
+                  - CANCELLED
+              branches:
+                - id: BR-SUCCESS
+                  scenario: 六位验证码提交且 RDB 保存成功或记录已存在。
+                  expected_phase_seq:
+                    - TYPE_SELECTION
+                    - CARD_SELECTION
+                    - OTP_ACTIVE
+                    - SAVING
+                    - RESULT_SUCCESS
+                  linked_acceptance:
+                    - AC-1
+                    - AC-2
+                    - AC-3
+                    - AC-5
+                    - AC-6
+                    - AC-7
+                    - AC-10
+                  expected_port_calls:
+                    - getOpeningOptions
+                    - getCardCandidates
+                    - getWalletAccountContext
+                    - saveCard
+                    - clear
+                - id: BR-PERSIST-FAILURE
+                  scenario: 六位验证码提交但 RDB 保存失败。
+                  expected_phase_seq:
+                    - TYPE_SELECTION
+                    - CARD_SELECTION
+                    - OTP_ACTIVE
+                    - SAVING
+                    - RESULT_FAILURE
+                  linked_acceptance:
+                    - AC-7
+                    - AC-11
+                    - BD-3
+                  expected_port_calls:
+                    - saveCard
+                    - popToName
+                - id: BR-CANCEL
+                  scenario: 用户在结果生成前关闭半模态或返回。
+                  expected_phase_seq:
+                    - TYPE_SELECTION
+                    - CARD_SELECTION
+                    - OTP_ACTIVE
+                    - CANCELLED
+                  linked_acceptance:
+                    - AC-12
+                    - BD-2
+                  expected_port_calls:
+                    - cancelSession
+contracts:
+  - contract_id: bank-card-opening-local
+    errors:
+      semantics:
+        - code: INVALID_OTP
+          meaning: 验证码不是六位数字，禁止提交且不写库。
+        - code: PERSIST_FAILED
+          meaning: 卡片 RDB 写入失败，仍进入失败结果页并携带完整卡号。
+        - code: NAVIGATION_FAILED
+          meaning: 导航栈操作失败，保留当前页并提示，不伪造完成状态。
+      source_ref: doc/features/bc-openCard-2/blueprint/sources/bank-card-opening-contract.yaml#/errors
+      verification_refs:
+        - acceptance:AC-6
+        - acceptance:BD-3
+        - acceptance:BD-5

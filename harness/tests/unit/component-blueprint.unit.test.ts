@@ -395,6 +395,52 @@ function test(name: string, run: () => void): UnitCaseResult {
 
 export function runContentWarnCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  results.push(test('content WARN: original ad508cb9 reports whole-blueprint missing use-case version once at its canonical fragment', () => {
+    const bp = readYaml(path.resolve(FIXTURE_ROOT, '..', 'blueprint-content', 'ad508cb9.yaml'));
+    const before = JSON.stringify(bp);
+    const issues = diagnoseBlueprintContent(bp);
+    assert(issues.length === 1 && issues[0]!.id === 'blueprint_content_incomplete' && issues[0]!.severity === 'WARN', JSON.stringify(issues));
+    assert(issues[0]!.path === '$.design_views[1].runtime_data_flows[0].use_cases.schema_version'
+      && issues[0]!.message.includes('整份蓝图') && issues[0]!.message.includes('schema_version'), JSON.stringify(issues));
+    assert(JSON.stringify(bp) === before, '版本提醒改写了原用例片段');
+  }));
+
+  results.push(test('content WARN: missing version requires entries and follows the existing consumer truthiness without validating version values', () => {
+    const source = readYaml(path.resolve(FIXTURE_ROOT, '..', 'blueprint-content', 'ad508cb9.yaml'));
+    const fragment = asRecord(asRecords(asRecords(source.design_views)[1]!.runtime_data_flows)[0]!.use_cases)!;
+    const versionIssues = (bp: BlueprintRecord) => diagnoseBlueprintContent(bp).filter(item => item.path.endsWith('.schema_version'));
+    for (const value of [undefined, {}, [], '仅说明', { use_cases: [] }, { use_cases: {} }]) {
+      const bp = { blueprint_id: 'empty', design_views: [{ view_id: 'runtime', use_cases: value }] };
+      assert(versionIssues(bp).length === 0, `无条目却要求版本：${JSON.stringify(value)}`);
+    }
+    for (const version of [undefined, null, false, 0, '', '2.0', 'unknown-version', 1, {}, []]) {
+      const bp = { blueprint_id: 'version', design_views: [{ view_id: 'runtime', use_cases: { ...fragment, schema_version: version } }] };
+      assert(versionIssues(bp).length === (version ? 0 : 1), `与原版本真值判据不一致：${JSON.stringify(version)}`);
+    }
+  }));
+
+  results.push(test('content WARN: root targets and distributed metadata count; gaps and non-target records do not; physical references report once', () => {
+    const source = readYaml(path.resolve(FIXTURE_ROOT, '..', 'blueprint-content', 'ad508cb9.yaml'));
+    const fragment = asRecord(asRecords(asRecords(source.design_views)[1]!.runtime_data_flows)[0]!.use_cases)!;
+    const shared = { node_id: 'shared', use_cases: fragment };
+    const bp: BlueprintRecord = { blueprint_id: 'distributed', schema_version: '2.0', design_views: [
+      { view_id: 'runtime', nodes: [shared] }, { view_id: 'development', nodes: [shared, { node_id: 'other', use_cases: clone(fragment) }] },
+    ], decisions_and_gaps: { gaps: [{ gap_id: 'not-consumable', use_cases: { schema_version: '2.0' } }] },
+    metadata: { use_cases: { schema_version: '2.0' } } };
+    const issues = diagnoseBlueprintContent(bp);
+    assert(issues.length === 1 && issues[0]!.path === '$.design_views[0].nodes[0].use_cases.schema_version', JSON.stringify(issues));
+    bp.use_cases = { schema_version: '2.0' };
+    assert(diagnoseBlueprintContent(bp).length === 0, '可直接引用的根蓝图版本未被计入');
+    bp.use_cases = fragment;
+    assert(diagnoseBlueprintContent(bp)[0]?.path === '$.use_cases.schema_version', '根蓝图条目未成为首个可消费片段');
+    bp.design_views = [...asRecords(bp.design_views), { view_id: 'metadata', use_cases: { schema_version: '2.0' } }];
+    assert(diagnoseBlueprintContent(bp).length === 0, '另一个仅版本片段未消除整图缺版本提醒');
+    const rootOnly = { blueprint_id: 'root-only', use_cases: fragment };
+    assert(diagnoseBlueprintContent(rootOnly)[0]?.path === '$.use_cases.schema_version', '只有根蓝图用例时漏报');
+    assert(diagnoseBlueprintContent({ blueprint_id: 'gap-only', decisions_and_gaps: { gaps: [{ gap_id: 'unavailable', use_cases: fragment }] },
+      metadata: { use_cases: fragment } }).length === 0, '非可消费位置的条目被要求补版本');
+  }));
+
   results.push(test('content WARN: original 397b092f target content locates all 16 AC/BD and other own defects; accepted sample stays quiet', () => {
     const fixtureDir = path.resolve(FIXTURE_ROOT, '..', 'blueprint-content');
     for (const name of ['397b092f', 'accepted-oct14']) {
@@ -450,13 +496,17 @@ export function runContentWarnCases(): UnitCaseResult[] {
     assert(issues.every(item => !item.message.includes('data/holder')), '添加了新state规则');
   }));
 
-  results.push(test('content WARN: real checker CLI text/JSON and review reference preserve paths and source bytes', () => {
+  results.push(test('content WARN: real checker CLI text/JSON and review reference preserve item and ad508cb9 version paths and source bytes', () => {
     withTempProject((projectRoot, filePath) => {
       const bp = readYaml(filePath); const views = asRecords(bp.design_views);
       views[0]!.acceptance = { boundaries: [{ id: 'BD-99', priority: 'P1', ut_layer: 'device' }] };
+      const original = readYaml(path.resolve(FIXTURE_ROOT, '..', 'blueprint-content', 'ad508cb9.yaml'));
+      const runtimeIndex = views.findIndex(view => view.view_id === 'runtime');
+      asRecords(views[runtimeIndex]!.runtime_data_flows)[0]!.use_cases = asRecords(asRecords(original.design_views)[1]!.runtime_data_flows)[0]!.use_cases;
       fs.writeFileSync(filePath, YAML.stringify(bp), 'utf8');
-      const original = fs.readFileSync(filePath);
+      const originalBytes = fs.readFileSync(filePath);
       const expectedPath = '$.design_views[0].acceptance.boundaries[0]';
+      const versionPath = `$.design_views[${runtimeIndex}].runtime_data_flows[0].use_cases.schema_version`;
       const harnessRoot = path.resolve(__dirname, '..', '..');
       const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
         path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
@@ -464,11 +514,14 @@ export function runContentWarnCases(): UnitCaseResult[] {
       const jsonCli = invoke(['--write-review', '--json']); const report = JSON.parse(jsonCli.stdout);
       assert(jsonCli.status === 0 && report.status === 'PASS', jsonCli.stdout + jsonCli.stderr);
       assert(report.issues.some((item: BlueprintRecord) => item.id === 'blueprint_content_incomplete' && item.path === expectedPath && String(item.message).includes('expected_behavior')), 'JSON漏了自身内容WARN');
+      assert(report.issues.filter((item: BlueprintRecord) => item.path === versionPath && item.severity === 'WARN').length === 1, 'JSON遗漏或重复整图缺版本WARN');
       const textCli = invoke([]);
       assert(textCli.status === 0 && textCli.stdout.includes(`[WARN] ${expectedPath}:`) && textCli.stdout.includes('expected_behavior'), textCli.stdout + textCli.stderr);
+      assert(textCli.stdout.includes(`[WARN] ${versionPath}:`) && textCli.stdout.includes('schema_version'), textCli.stdout + textCli.stderr);
       const markdown = fs.readFileSync(report.review_document.path, 'utf8').replace(/\\([\\`*_[\]])/g, '$1');
       assert(markdown.includes(expectedPath) && markdown.includes('expected_behavior'), '评审参考漏了同源内容诊断');
-      assert(fs.readFileSync(filePath).equals(original), '诊断或渲染修正了canonical');
+      assert(markdown.includes(versionPath) && markdown.includes('schema_version'), '评审参考漏了同源版本诊断');
+      assert(fs.readFileSync(filePath).equals(originalBytes), '诊断或渲染修正了canonical');
     });
   }));
 
