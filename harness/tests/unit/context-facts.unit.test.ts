@@ -14,6 +14,9 @@ import * as YAML from 'yaml';
 import type { ResolvedPhaseInputs } from '../../scripts/utils/capability-resolution';
 import { checkFactsArtifact, resolveFactsAbsPath, isFactsEstablishingPhase, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { featureTrackDeclPath } from '../../scripts/utils/feature-track';
+import { parseContextExploration } from '../../scripts/utils/context-exploration';
+import { resolveCheckDisposition } from '../../scripts/utils/check-disposition';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
 
 export interface UnitCaseResult {
   name: string;
@@ -596,6 +599,44 @@ function unboundDeclaredSourceIsLedgerWarn(): void {
 }
 
 cases.push(
+  { name: '38e5a7c2 host facts: HMOS consumes plan delta, preserves baseline and substantive failures', run() {
+    const dir = mkProject();
+    try {
+      const original = fs.readFileSync(path.join(__dirname, '../fixtures/facts-plan-handoff/facts.md'), 'utf8');
+      const { fm } = parseContextExploration(original);
+      const feature = String(fm.feature);
+      const sources = fm.source_code_paths as string[];
+      for (const source of sources) {
+        const abs = path.join(dir, source); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, 'fixture source\n');
+      }
+      const dependencies = sources.map(source => ({ path: path.join(dir, source), exists: true,
+        sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, source))).digest('hex'), role: 'derive' as const }));
+      const frameworkRoot = path.resolve(__dirname, '../../..');
+      const phaseRule = new SpecLoader(dir, undefined, undefined, frameworkRoot).loadPhaseRule('plan');
+      const run = (raw: string, baseline = original, phase = 'plan') => {
+        writeFactsFile(dir, feature, raw);
+        const subject = { feature, run_id: String((fm as Record<string, unknown>).run_id) };
+        const factsContext: FactsInvocationContext = { subject, first_phase: 'plan', source_paths: sources, required_input_snippets: [],
+          baseline: { established_by: 'spec', fingerprint: factsBaselineFingerprint(baseline), dependencies } };
+        const resolvedInputs: ResolvedPhaseInputs = { context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] }, phase, values: {}, artifacts: {} };
+        return checkFactsArtifact(dir, feature, phase, { frameworkRoot, phaseRule, profileName: 'hmos-app', factsContext, resolvedInputs });
+      };
+      eq(run(original).filter(c => c.status === 'FAIL'), [], 'actual host delta satisfies HMOS without rewriting the header');
+      const minimal = original.replace('exploration_mode: "sequential"', 'exploration_mode: "minimal"');
+      for (const phase of ['plan', 'coding']) {
+        const checks = run(minimal + (phase === 'coding' ? '\n## phase_delta: coding\nnone\n' : ''), minimal, phase);
+        eq(checks.filter(c => /context_exploration_(mode_|subagent_required)/.test(c.id)), [], 'downstream must not rejudge spec mode');
+      }
+      const baselineOnly = original.split('## phase_delta: plan')[0];
+      const otherPhase = baselineOnly + '\n## phase_delta: ut\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| module.json5 | read | test |\n';
+      const missing = run(otherPhase).find(c => c.id === 'context_exploration_inputs_coverage');
+      eq(missing?.status, 'FAIL', 'later phase cannot supply plan input');
+      eq(missing && resolveCheckDisposition(missing).action, 'disclose', 'missing registration is disclosed');
+      eq(includesId(run(original.replace('ready_to_produce: true', 'ready_to_produce: false')), 'context_exploration_facts_baseline_stale', 'FAIL'), true, 'baseline edit still fails');
+      fs.unlinkSync(path.join(dir, sources[0]));
+      eq(run(original).some(c => c.status === 'FAIL' && /source_stale|scope_coverage|sources_exist/.test(c.id)), true, 'unreadable source still fails');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } },
   { name: 'facts 1.1: coding establishes real baseline and successor preserves provenance', run: () => modernFactsCase(false) },
   { name: 'facts 1.1: request review uses explicit report directory and exclusive subject', run: () => modernFactsCase(true) },
   { name: 'P3-T9 an unregistered declared source is disclosed as a ledger WARN, while a changed source still blocks', run: unboundDeclaredSourceIsLedgerWarn },

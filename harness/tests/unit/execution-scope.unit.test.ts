@@ -37,13 +37,16 @@ import { writeReviewClosureAttestation } from '../../scripts/utils/closure-attes
 import { createHash } from 'crypto';
 import { stableStringify, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { setupGoalRuntimeHost, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
-import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
+import { designScopeRevisionChecks, checkTypedConstructionContent } from '../../scripts/utils/blueprint-skill-projection';
+import { resolvePhaseWriteBoundary, resolvePhasePathOwnership } from '../../scripts/utils/phase-write-boundary';
+import { readRunBoundContracts } from '../../scripts/utils/capability-resolution';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
-import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
+import { clearFrameworkConfigCache, loadFrameworkConfig, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
+import { loadResolvedProfile, loadPhaseRuleWithOverlays } from '../../profile-loader';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
 import { configureFeature } from './component-closure.unit.test';
 import { resolveCapabilityInputs, projectSourceFileBinding, type InputBinding } from '../../scripts/utils/capability-resolution';
-import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityResolutionEntryInput, resolveFactsPhaseOwnedSources } from '../../scripts/utils/capability-resolution-entry-input';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildSummaryRepairCandidates, scopeRevisionInputFromRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
@@ -141,6 +144,106 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const { initializeFidelityRouting } = require('../../scripts/utils/goal-preflight') as typeof import('../../scripts/utils/goal-preflight');
       const routing = initializeFidelityRouting({ ...ctx, requirement, manifestFidelity: 'pixel_1to1', featuresDirRel: 'doc/features', executionIdentity: `phase:${feature}:spec`, requirementProvenance: 'explicit_cli' });
       assert.equal(routing.routing.selected, 'pixel_1to1');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: '38e5a7c2 host contracts first materialize in plan and reach coding through real scope revision', async run() {
+    const { root, frameworkRoot } = setupRunlessProject();
+    try {
+      const contractsRaw = fs.readFileSync(path.join(__dirname, '../fixtures/facts-plan-handoff/contracts.yaml'), 'utf8');
+      const useCasesRaw = fs.readFileSync(path.join(__dirname, '../fixtures/facts-plan-handoff/use-cases.yaml'), 'utf8');
+      const hostContracts = YAML.parse(contractsRaw);
+      const feature = hostContracts.feature as string;
+      fs.cpSync(path.join(__dirname, '../fixtures/facts-plan-handoff/project'), root, { recursive: true });
+      const configPath = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      config.materialized_adapters = ['generic'];
+      for (const layer of config.architecture.outer_layers) fs.mkdirSync(path.join(root, layer.id), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
+      const deveco = path.join(root, 'fake-deveco');
+      fs.mkdirSync(path.join(deveco, 'tools/hvigor/bin'), { recursive: true });
+      fs.writeFileSync(path.join(deveco, 'tools/hvigor/bin', process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw'), 'fixture toolchain');
+      fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({ schema_version: '1.0', agent_adapter: 'generic', toolchain: { devEcoStudio: { installPath: deveco } } }));
+      const inputSource = '02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets';
+      const contractFile = featureFilePath(root, feature, 'contracts.yaml');
+      assert(!fs.existsSync(contractFile));
+      const requirement = '补齐施工契约并实施';
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature', requestedResults: ['交付实现'], requestedPhases: ['plan','coding','review','ut'], requirement, overwrite: true,
+        impact: { userVisibleBehaviorChange: false, reason: '契约物化回归', basisPaths: [inputSource] } });
+      assert.equal(prepared.scope.phase_chain[0], 'plan');
+      execFileSync('git', ['init','-q'], { cwd: root }); fs.writeFileSync(path.join(root, '.gitignore'), 'framework\n');
+      execFileSync('git', ['add','.'], { cwd: root }); execFileSync('git', ['-c','user.name=F','-c','user.email=f@e.test','commit','-qm','base'], { cwd: root });
+      // This case starts from admitted run authority; initial CU design is outside the handoff under test.
+      const manifest = buildGoalManifestFromInput({ feature, run_id: '38e5a7c2-handoff', requirement, adapter: 'generic',
+        start_phase: 'plan', end_phase: prepared.scope.phase_chain.at(-1), chain_override: prepared.scope.phase_chain,
+        execution_scope: prepared.scope, budget: { max_total_turns: 3 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }, { projectRoot: root, featuresDir: 'doc/features' });
+      createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
+      let runId = manifest.run_id, reachedCoding = false, planCalls = 0;
+      const boundary = () => resolvePhaseWriteBoundary({ projectRoot: root, frameworkRoot, feature, runId,
+        phaseOrder: ['spec','plan','coding','review','ut','testing'], track: 'full', profileDir: path.join(frameworkRoot,'profiles/hmos-app'), productLayerDirs: ['01-Product','02-Feature','04-BusinessBase'] });
+      const context = (phase: 'plan' | 'coding') => {
+        const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase, featuresDir: 'doc/features', goalRunId: runId });
+        const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase, track: 'full', ...bridge }).inputs!;
+        const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
+        const resolvedProfile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
+        return { projectRoot: root, frameworkRoot, feature, phase, featureSpec: loader.loadFeatureSpec(feature, resolvedInputs), resolvedInputs, factsContext: bridge.factsContext,
+          resolvedProfile, phaseRule: loadPhaseRuleWithOverlays(phase, loader.loadPhaseRule(phase), resolvedProfile) } as never;
+      };
+      const outcome = await runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, adapter: 'generic', resume: runId,
+        onPlan: ctx => {
+          runId = ctx.runId; planCalls++;
+          if (planCalls === 1) assert(!fs.existsSync(contractFile), 'birth must not pre-seed contracts');
+          assert.equal(resolvePhasePathOwnership(boundary(), path.relative(root, contractFile)).owner, 'plan');
+          fs.writeFileSync(contractFile, planCalls === 1 ? YAML.stringify({ ...hostContracts, files: [] }) : contractsRaw);
+          fs.writeFileSync(featureFilePath(root, feature, 'use-cases.yaml'), useCasesRaw);
+          assert.equal(resolvePhasePathOwnership(boundary(), inputSource).status, 'none', 'unverified plan output cannot grant coding scope');
+        },
+        onCoding: ctx => {
+          runId = ctx.runId;
+          const read = readRunBoundContracts(root, frameworkRoot, feature, runId);
+          assert.deepStrictEqual(read.modules.map(m => m.name), hostContracts.modules.map((m: { name: string }) => m.name));
+          assert.equal(resolvePhasePathOwnership(boundary(), inputSource).owner, 'coding');
+          assert(context('coding')); reachedCoding = true;
+        },
+        onHarnessSummary: ({ phase }) => {
+          const ctx = context(phase as 'plan' | 'coding');
+          const checks = checkTypedConstructionContent(ctx).filter(c => c.id === 'construction_content_complete');
+          const revision = phase === 'plan' ? designScopeRevisionChecks(ctx, checks) : [];
+          return { checks: [...checks, ...revision] };
+        },
+      });
+      assert(reachedCoding, JSON.stringify(outcome.events.filter(e => ['phase_halt','phase_verdict'].includes(String(e.type)))
+        .map(e => ({ type: e.type, phase: e.phase, verdict: e.verdict, action: e.action, reason: e.reason, halt_reason: e.halt_reason }))));
+      assert.equal(planCalls, 2, 'real invalid construction must retry the plan owner before publishing');
+      assert(outcome.events.some(e => e.type === 'scope_revised' && (e.trigger as { phase?: string })?.phase === 'plan'));
+      assert(!outcome.events.some(e => e.type === 'phase_write_boundary_degraded'));
+      assert.equal(fs.readFileSync(contractFile, 'utf8'), contractsRaw, 'binding handoff must not rewrite the host contract');
+    } catch (error) { throw new Error((error as Error).stack); }
+    finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  } },
+  { name: '38e5a7c2 rejected design decision keeps valid coding authority and facts ownership', run() {
+    const { root, frameworkRoot, feature } = setupRunlessProject({ uiFile: true });
+    try {
+      const file = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(file, 'utf8')); config.project_profile.name = 'hmos-app';
+      fs.writeFileSync(file, JSON.stringify(config)); clearFrameworkConfigCache();
+      const requirement = '把 value 改成 42';
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'feature', requestedResults: ['value is 42'], requestedPhases: ['coding','review','ut'], requirement, overwrite: true,
+        impact: { userVisibleBehaviorChange: false, reason: '内部取值', basisPaths: ['src/demo/value.ts'] } });
+      assert(prepared.scope.obligations.find(o => o.kind === 'design-context')?.satisfied_by?.length);
+      prepared.scope.obligations.push({ id: 'design-decision:declined', kind: 'design-decision', owner_phase: 'plan', applicability: 'required', reason: 'plan 已裁定无需改契约', basis: [] });
+      prepared.scope.phase_chain.unshift('plan');
+      execFileSync('git', ['init','-q'], { cwd: root }); fs.writeFileSync(path.join(root,'.gitignore'), 'framework\n');
+      execFileSync('git', ['add','.'], { cwd: root }); execFileSync('git', ['-c','user.name=F','-c','user.email=f@e.test','commit','-qm','base'], { cwd: root });
+      const manifest = buildGoalManifestFromInput({ feature, run_id: '38-valid-contract', requirement, adapter: 'generic', start_phase: 'plan', end_phase: 'ut',
+        execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }, { projectRoot: root, featuresDir: 'doc/features' });
+      createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
+      const source = 'src/demo/Page.ets';
+      const boundary = resolvePhaseWriteBoundary({ projectRoot: root, frameworkRoot, feature, runId: manifest.run_id, phaseOrder: ['plan','coding','review','ut'], track: 'full', profileDir: path.join(frameworkRoot,'profiles/hmos-app'), productLayerDirs: ['src'] });
+      assert.equal(resolvePhasePathOwnership(boundary, source).owner, 'coding');
+      const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'coding', goalRunId: manifest.run_id, featuresDir: 'doc/features' });
+      const owned = resolveFactsPhaseOwnedSources({ projectRoot: root, frameworkRoot, feature, phase: 'coding', runId: manifest.run_id },
+        bridge.factsContext!);
+      assert(owned.has(source), JSON.stringify([...owned]));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: '4f spec 实际输入入口对齐冻结测试分组及同阶段调研增补', run() {

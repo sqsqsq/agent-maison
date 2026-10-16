@@ -2177,6 +2177,16 @@ Enforcement: `harness/scripts/utils/goal-brief.ts`, `harness/scripts/utils/repor
 - **WHEN** spec defers the reference's bank-count difference and keeps the accepted twenty-bank contract
 - **THEN** all brief consumers receive that decision and its source, and an expansion request is checked against that scope rather than automatically dispatched as a coding repair
 
+### Requirement: Construction ownership precedes downstream contract consumption
+
+While plan still owns an unsatisfied construction output, phase write attribution SHALL retain the existing artifact domains without granting source domains from that unfinished contract. After validated plan output is published through the existing scope revision, coding SHALL consume its effective binding using the existing strict reader. This SHALL NOT rewrite the birth manifest, accept an invalid contract or introduce a new rebind channel.
+
+#### Scenario: Plan creates a previously absent construction contract
+
+- **WHEN** contracts.yaml was absent at freeze time and plan creates it during the same run
+- **THEN** plan retry SHALL retain its artifact write boundary
+- **AND** coding SHALL read the newly validated contract only after the existing scope revision publishes its binding
+
 ### Requirement: Derive missing fidelity from the actual requirement in memory
 When fidelity intent is missing, scope-fact derivation SHALL use the existing pure fidelity router to infer only the selected target from an actually supplied requirement, with the same referenced-document expansion and current-feature exclusions as preflight. Preparation, birth and scope revision SHALL consume this common derivation without writing fidelity intent or capability snapshots. Existing valid intent SHALL remain authoritative, and corrupt intent SHALL NOT be treated as missing.
 

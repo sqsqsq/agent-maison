@@ -189,6 +189,25 @@ function runReviewCli(report: string, facts: Record<string, unknown> = {}): {
 // ---------------------------------------------------------------------------
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  { name: '38e5a7c2 four real process checks disclose through report, axes, summary and verifier eligibility', run() {
+    const { root } = makeVerifierProject();
+    try {
+      const ids = ['context_exploration_inputs_coverage', 'context_exploration_mode_allowed', 'context_exploration_mode_required', 'context_exploration_subagent_required'];
+      const checks = ids.map(id => check(id, 'BLOCKER', 'FAIL'));
+      const report = generateScriptReport('', 'plan', 'demo', root, checks, FRAMEWORK_ROOT);
+      assert.equal(report.summary.verdict, 'PASS');
+      assert.equal(report.summary.fail, 4, 'raw failures remain visible');
+      const summary = writeRunSummaryBase(root, report, FRAMEWORK_ROOT);
+      assert.equal(summary.verdict, 'PASS');
+      assert.equal(summary.blocker_count, 0);
+      assert.deepStrictEqual(summary.blockers, []);
+      assert.deepStrictEqual(summary.disclosed_failures?.map(c => c.id), ids);
+      for (const blocked of Object.values(predicateConsumerViews(checks))) assert.deepStrictEqual(blocked, []);
+      for (const id of ['context_exploration_facts_baseline_stale', 'context_exploration_facts_scope_coverage', 'context_exploration_facts_run_match', 'ut_hvigor_build']) {
+        assert.equal(resolveVerdictFromChecks([...checks, check(id, 'BLOCKER', 'FAIL')]), 'FAIL', id);
+      }
+    } finally { rmDir(root); }
+  } },
   {
     name: 'A4 改用谓词的消费者对同一组检查给出一致的"挡不挡"（去向表为空与非空）',
     run: () => {
@@ -208,7 +227,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'A4 保留原生语义的消费者：报告合法性、compat 降级、request 入口在去向表为空与非空时判据不变',
+    name: 'A4 报告合法性/compat 保留语义，request 仅放行统一处置已披露项',
     run: () => {
       // 把报告合法性检查与 compat 豁免检查都登记为账本与形状：谓词不挡，但原生判据照旧。
       const ledger: DispositionEntry[] = [
@@ -231,14 +250,16 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
             const { results, stats } = applyCompatDowngrade([check('ctx_gate', 'BLOCKER', 'FAIL')], { feature: 'f', phase: 'spec', projectRoot: root }, Date.UTC(2098, 0, 1));
             assert.deepStrictEqual(stats.appliedIds, ['ctx_gate'], `compat 判据变了（表 ${table.length}）`);
             assert.strictEqual(results[0].status, 'WARN');
-            // request 入口：任意失败即失败
+            // Request shares disclosures; other failures retain its stricter policy.
             const reportDir = path.join(root, 'req', String(table.length));
             const ctx = {
               phase: 'coding', projectRoot: root, reportDir,
               request: { request_sha256: 'a'.repeat(64), requested_result: 'r', baseline: null, bindings: [] },
               resolvedInputs: { values: {} },
             } as unknown as RequestCheckContext;
-            assert.strictEqual(generateRequestScriptReport(ctx, [check('p4_ledger_gate', 'BLOCKER', 'FAIL')]).verdict, 'FAIL', `request 入口判据变了（表 ${table.length}）`);
+            assert.strictEqual(generateRequestScriptReport(ctx, [check('p4_ledger_gate', 'BLOCKER', 'FAIL')]).verdict, table.length ? 'PASS' : 'FAIL');
+            const requestSummary = JSON.parse(fs.readFileSync(path.join(reportDir, 'summary.json'), 'utf8'));
+            assert.strictEqual(requestSummary.disclosed_failures.length, table.length ? 1 : 0);
             assert.strictEqual(generateRequestScriptReport(ctx, [check('p4_major_gate', 'MAJOR', 'FAIL')]).verdict, 'FAIL');
           });
         }

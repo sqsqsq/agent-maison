@@ -706,7 +706,7 @@ export function successorBoundsRefusal(reason: string, conflicts: readonly strin
 export function staleFrozenBindings(projectRoot: string, feature: string, runId: string, haltedPhase?: string): string[] {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { readBoundInput, bindingHasParsedValue } = require('./capability-resolution') as typeof import('./capability-resolution');
-  const { phaseOwnsDesignOutput } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+  const { phaseOwnsDesignOutput } = require('./skill-contract') as typeof import('./skill-contract');
   const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
   const { inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
   const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');

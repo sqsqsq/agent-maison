@@ -61,6 +61,8 @@
 
 `enforced_by`：context-facts。
 
+后续阶段的必读输入登记以已核基线加本阶段 `phase_delta` 路径表共同核对；探索模式只在建立事实时检查。输入登记/探索模式的四项过程差异按统一去向表披露，普通 Feature 与 request 一致，不靠改头部、换 run 或填豁免绕过。真实来源、目标覆盖、身份、基线新鲜度和产品检查仍须满足；已有 verifier 的真实否决仍有效。
+
 ## Agent 行为规约（BLOCKER）
 
 1. 进入任一 feature 阶段（spec/plan/coding/review/UT）的 Research Sub-Phase 前，须完整阅读 `framework/skills/reference/agent-behavioral-principles.md`。

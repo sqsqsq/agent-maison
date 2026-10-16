@@ -185,6 +185,13 @@ function checkFactsFile(
   const results: CheckResult[] = [];
   const schemaVersion = typeof fm.schema_version === 'string' ? fm.schema_version.trim() : '';
   const invocation = options?.factsContext;
+  const deltaPaths = extractTables(findPhaseDeltaSection(body, phase, true).content)
+    .filter(table => table.headers.some(header => /事实/.test(header)))
+    .flatMap(table => { const column = table.headers.findIndex(header => /路径/.test(header)); return column < 0 ? [] : table.rows.map(row => {
+      const source = (row[column] ?? '').replace(/`/g, '').trim().replace(/\\/g, '/');
+      const absolute = path.resolve(projectRoot, source);
+      return source && isInsideProjectRoot(projectRoot, absolute) ? path.relative(projectRoot, absolute).replace(/\\/g, '/') : '';
+    }); });
   let ownedSourceDelta = false;
   if (invocation) {
     const issue = (id: string, details: string): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'BLOCKER', status: 'FAIL', details, suggestion: id === 'context_exploration_facts_baseline_stale'
@@ -230,13 +237,6 @@ function checkFactsFile(
       issue('context_exploration_facts_request_match', 'request subject 不匹配或混入 Feature/run 身份');
     }
     const expectedPhase = invocation.baseline?.established_by ?? invocation.first_phase;
-    const deltaPaths = extractTables(findPhaseDeltaSection(body, phase, true).content)
-      .filter(table => table.headers.some(header => /事实/.test(header)))
-      .flatMap(table => { const column = table.headers.findIndex(header => /路径/.test(header)); return column < 0 ? [] : table.rows.map(row => {
-        const source = (row[column] ?? '').replace(/`/g, '').trim().replace(/\\/g, '/');
-        const absolute = path.resolve(projectRoot, source);
-        return source && isInsideProjectRoot(projectRoot, absolute) ? path.relative(projectRoot, absolute).replace(/\\/g, '/') : '';
-      }); });
     const currentTargets = new Set(Object.values(options?.resolvedInputs?.values ?? {}).flatMap(input => input.state === 'resolved'
       && input.binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets'].includes(input.binding.source.provider_id)
       ? input.binding.dependencies.filter(dep => dep.exists && dep.role === 'derive').map(dep => path.resolve(dep.path)) : []));
@@ -403,7 +403,9 @@ function checkFactsFile(
   }
 
   if ((invocation && options?.resolvedInputs) || (!invocation && isFactsEstablishingPhase(phase))) {
-    results.push(...checkEstablishingFacts(projectRoot, feature, phase, fm, body, relPath, options));
+    results.push(...checkEstablishingFacts(projectRoot, feature, phase, fm, body, relPath, {
+      ...options, deltaSourcePaths: deltaPaths, checkExplorationMode: isFactsEstablishingPhase(phase, invocation),
+    }));
   }
   if (!isFactsEstablishingPhase(phase, invocation)) {
     results.push(...checkDeltaFacts(body, phase, relPath).map(check => ownedSourceDelta && check.status === 'FAIL'

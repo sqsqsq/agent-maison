@@ -1,0 +1,721 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBpbXBsZW1lbnQtYmFuay1jYXJkLW9wZW5pbmc"
+version: "1.0"
+source: "derive.blueprint-contracts:sha256:783304f9d7c7ba25260ba46620f97abff6a95e8e36bc9716d5660479750becc2:sha256:366f54c2b14a5f28e18cd08cc76b669deff9a4ad919762f3bd2c5b012c09cfce"
+
+modules:
+  - name: WalletMain
+    layer: 02-Feature
+    format: HAR
+    change_type: modify
+    package_path: 02-Feature/WalletMain
+    export_file: 02-Feature/WalletMain/src/main/ets/index.ets
+  - name: AccountManager
+    layer: 04-BusinessBase
+    format: HAR
+    change_type: modify
+    package_path: 04-BusinessBase/AccountManager
+  - name: Phone
+    layer: 01-Product
+    format: HAP
+    change_type: modify
+    package_path: 01-Product/Phone
+
+module_dependencies:
+  WalletMain: [AccountManager, CommFunc, CommUI]
+  Phone: [WalletMain]
+
+data_models:
+  - name: BankCardType
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets
+    kind: enum
+    fields: []
+    values:
+      - { name: DEBIT, value: DEBIT }
+      - { name: CREDIT, value: CREDIT }
+  - name: BankInfo
+    file: 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets
+    kind: interface
+    fields:
+      - { name: code, type: string, required: true, description: 银行短码 }
+      - { name: name, type: string, required: true, description: 银行显示名 }
+      - { name: pinyin, type: string, required: true, description: 排序用拼音 }
+      - { name: initial, type: string, required: true, description: 分组首字母 }
+      - { name: logo, type: Resource, required: true, description: 银行 logo 资源 }
+      - { name: badgeRes, type: Resource, required: false, description: 可选营销角标 }
+      - { name: supportedTypes, type: "BankCardType[]", required: true, description: 该银行支持的卡类型；默认 mock 银行均为 DEBIT 与 CREDIT。 }
+  - name: BankCardCandidate
+    file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets
+    kind: interface
+    fields:
+      - { name: cardId, type: string, required: true, description: 完整 mock 卡号；UI 通过 maskCardNumber 派生前四后四。 }
+      - { name: bankCode, type: string, required: true, description: 关联 BankInfo.code。 }
+      - { name: bankName, type: string, required: true, description: 银行显示名。 }
+      - { name: bankCardType, type: BankCardType, required: true, description: DEBIT 或 CREDIT。 }
+  - name: CardCategory
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets
+    kind: enum
+    fields: []
+    values:
+      - { name: BANK_CARD, value: BANK_CARD }
+  - name: BankCardRecord
+    file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets
+    kind: interface
+    fields:
+      - { name: cardId, type: string, required: true, description: 完整卡号；主键，界面禁止直出。 }
+      - { name: category, type: CardCategory, required: true, description: 卡片大类，本需求为 BANK_CARD。 }
+      - { name: bankName, type: string, required: true, description: 银行名称。 }
+      - { name: bankCardType, type: BankCardType, required: true, description: DEBIT 或 CREDIT。 }
+      - { name: addedAt, type: number, required: true, description: Unix 毫秒时间戳。 }
+      - { name: huaweiPayEnabled, type: boolean, required: true, default: "false", description: 华为支付开通状态。 }
+      - { name: unionPayQuickPassEnabled, type: boolean, required: true, default: "false", description: 银联手机闪付状态。 }
+      - { name: transactionsJson, type: string, required: true, default: "[]", description: 交易记录 JSON。 }
+  - name: BankCardSaveResult
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets
+    kind: interface
+    fields:
+      - { name: success, type: boolean, required: true, description: 真实 RDB 保存结果 }
+      - { name: fullCardNumber, type: string, required: true, description: 本次完整卡号，仅内存结果流转 }
+  - name: BankCardCompletionTarget
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets
+    kind: enum
+    fields: []
+    values:
+      - { name: HOME, value: HOME }
+      - { name: ADD_CARD_ENTRY, value: ADD_CARD_ENTRY }
+  - name: BankCardNavigationOutcome
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets
+    kind: interface
+    fields:
+      - { name: target, type: BankCardCompletionTarget, required: true, description: HOME 或 ADD_CARD_ENTRY }
+      - { name: removableRouteNames, type: "string[]", required: true, description: 本轮开卡中间页名称，不含敏感数据 }
+  - name: UserProfile
+    module: AccountManager
+    file: 04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets
+    kind: class
+    fields:
+      - { name: isLoggedIn, type: boolean, required: true, description: 登录态 }
+      - { name: displayAccount, type: string, required: true, description: 脱敏展示账号 }
+      - { name: avatar, type: Resource|null, required: true, description: 可选头像 }
+      - { name: mobile, type: string, required: true, description: OTP 提示使用的 mock 手机号 }
+
+interfaces:
+  - module: WalletMain
+    layer: 02-Feature
+    file: 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets
+    class: BankCardOpeningSession
+    methods:
+      - { name: getInstance, params: [], return: BankCardOpeningSession, async: false, description: 返回进程内唯一开卡会话。 }
+      - name: start
+        params:
+          - { name: bank, type: BankInfo }
+          - { name: context, type: Context }
+        return: boolean
+        async: false
+        description: 初始化一次流程与 Repository；已有活动会话时拒绝重复启动。
+      - name: subscribe
+        params:
+          - { name: callback, type: BankCardOpeningStateCallback }
+        return: void
+        async: false
+        description: 订阅不可变流程快照并立即回放当前状态。
+      - name: unsubscribe
+        params:
+          - { name: callback, type: BankCardOpeningStateCallback }
+        return: void
+        async: false
+        description: 页面离开时解除订阅。
+      - name: selectType
+        params:
+          - { name: type, type: BankCardType }
+        return: void
+        async: false
+        description: 设置唯一卡类型并发布 SelectingCard。
+      - name: selectCard
+        params:
+          - { name: card, type: BankCardCandidate }
+        return: void
+        async: false
+        description: 保存具体候选卡业务对象，UI 仍只消费掩码。
+      - { name: prepareOtp, params: [], return: Promise<boolean>, async: true, description: 读取账号手机号并触发首次 60 秒模拟发送。 }
+      - name: normalizeOtp
+        params:
+          - { name: input, type: string }
+        return: string
+        async: false
+        description: 过滤非数字并截断到六位，同时派生 canSubmit。
+      - { name: resendOtp, params: [], return: boolean, async: false, description: 仅倒计时归零时重置为 60 秒。 }
+      - name: submitOtp
+        params:
+          - { name: code, type: string }
+        return: Promise<BankCardSaveResult>
+        async: true
+        description: 六位验证码提交并防 Saving 重入；任何六位数字均通过。
+      - { name: finish, params: [], return: BankCardNavigationOutcome, async: false, description: 只生成不含卡号的成功/失败导航命令；不清理会话，清栈成功后由调用方执行 reset。 }
+      - { name: reset, params: [], return: void, async: false, description: 取消或完成后停止定时器、清空监听与完整卡号/验证码。 }
+  - module: WalletMain
+    layer: 02-Feature
+    file: 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+    class: BankRepository
+    methods:
+      - { name: getBanks, params: [], return: "Promise<BankInfo[]>", async: true, description: 保持既有 20 家银行顺序与资源。 }
+      - name: getCards
+        params:
+          - { name: bankCode, type: string }
+          - { name: cardType, type: BankCardType }
+        return: Promise<BankCardCandidate[]>
+        async: true
+        description: 按银行和卡类型返回一至两张 mock 卡；未知银行或不支持类型返回空数组。
+  - module: WalletMain
+    layer: 02-Feature
+    file: 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+    class: BankCardRepository
+    methods:
+      - name: getInstance
+        params:
+          - { name: context, type: Context }
+        return: BankCardRepository
+        async: false
+        description: 绑定应用 Context 并复用单一懒加载 RDB 连接。
+      - name: saveCard
+        params:
+          - { name: card, type: BankCardRecord }
+        return: Promise<BankCardSaveResult>
+        async: true
+        description: 幂等初始化 RDB/表并插入卡片；重复同记录调和为成功。
+      - name: getCard
+        params:
+          - { name: cardId, type: string }
+        return: Promise<BankCardRecord|null>
+        async: true
+        description: 按完整卡号读取已提交记录，供重启读回与重复提交调和。
+  - module: AccountManager
+    layer: 04-BusinessBase
+    file: 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+    class: AccountService
+    methods:
+      - { name: getInstance, params: [], return: AccountService, async: false, description: 返回账号域唯一服务实例。 }
+      - { name: getUserProfile, params: [], return: Promise<UserProfile>, async: true, description: 返回含 mock 手机号的账号资料。 }
+
+components:
+  - name: AddBankCardPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+    kind: page
+    decorator: "@Component"
+    events:
+      - { name: handleBankTap, description: 以所选 BankInfo 启动唯一 Session 并打开卡类型 sheet }
+    children: [SelectBankCardTypeSheet]
+    asset_selection:
+      resolution: evolve
+      component_ref: WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#buildAddBankCardPage
+      rationale: 既有 AddBankCardPage 与 AllBanksPage 已是权威银行列表入口，只替换点击行为并接入统一半模态，不复制银行列表页面。
+  - name: AllBanksPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+    kind: page
+    decorator: "@Component"
+    events:
+      - { name: handleBankTap, description: 与 AddBankCardPage 相同的统一流程入口 }
+    children: [SelectBankCardTypeSheet]
+    asset_selection:
+      resolution: evolve
+      component_ref: WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#buildAddBankCardPage
+      rationale: 既有 AddBankCardPage 与 AllBanksPage 已是权威银行列表入口，只替换点击行为并接入统一半模态，不复制银行列表页面。
+  - name: SelectBankCardTypeSheet
+    file: 02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets
+    kind: sheet
+    decorator: "@Component"
+    state:
+      - { name: selectedType, decorator: "@State", type: BankCardType|null }
+    props:
+      - { name: bank, decorator: "@Prop", type: BankInfo }
+    events:
+      - { name: onContinue, description: 选定类型后进入具体卡片页 }
+      - { name: onClose, description: 关闭 sheet 且不保存 }
+    asset_selection:
+      resolution: custom
+      rationale: 组件索引中没有等价的卡类型选择、银行卡选择、验证码与不可返回结果页组合；新 UI 仍复用项目资源、NavPathContext 与既有页面视觉语言。
+  - name: BankCardSelectionPage
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+    kind: page
+    decorator: "@Component"
+    nav_destination: BankCardSelectionPage
+    state:
+      - { name: candidates, decorator: "@State", type: "BankCardCandidate[]" }
+      - { name: agreementChecked, decorator: "@State", type: boolean }
+    events:
+      - { name: handleCardSelect, description: 具体卡片单选 }
+      - { name: handleNext, description: 选卡且同意协议后打开 OTP sheet }
+    children: [OtpVerificationSheet]
+    asset_selection:
+      resolution: custom
+      rationale: 组件索引中没有等价的卡类型选择、银行卡选择、验证码与不可返回结果页组合；新 UI 仍复用项目资源、NavPathContext 与既有页面视觉语言。
+  - name: OtpVerificationSheet
+    file: 02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets
+    kind: sheet
+    decorator: "@Component"
+    state:
+      - { name: otp, decorator: "@State", type: string }
+      - { name: resendSeconds, decorator: "@State", type: number }
+    events:
+      - { name: handleInputChange, description: 调用 normalizeOtp }
+      - { name: handleResend, description: 归零后调用 resendOtp }
+      - { name: handleSubmit, description: 六位时调用 submitOtp }
+    asset_selection:
+      resolution: custom
+      rationale: 组件索引中没有等价的卡类型选择、银行卡选择、验证码与不可返回结果页组合；新 UI 仍复用项目资源、NavPathContext 与既有页面视觉语言。
+  - name: BankCardResultPage
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets
+    kind: page
+    decorator: "@Component"
+    nav_destination: BankCardResultPage
+    events:
+      - { name: handleComplete, description: 按 outcome 清栈，成功后才 reset }
+    asset_selection:
+      resolution: custom
+      rationale: 组件索引中没有等价的卡类型选择、银行卡选择、验证码与不可返回结果页组合；新 UI 仍复用项目资源、NavPathContext 与既有页面视觉语言。
+
+state_management:
+  - name: BankCardOpeningSessionState
+    state_owner: BankCardOpeningSession
+    lifecycle: 新开卡流程创建，结果完成或用户退出时销毁。
+    data: 银行、卡类型、完整卡号、验证码、倒计时与保存结果
+    scope: 单次银行卡开卡流程
+    decorator: singleton-observable-session
+    holder: BankCardOpeningSession
+    module: WalletMain
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: WalletMain
+      blueprint_id: bc-openCard-2
+      revision: 7
+      source_fingerprint: sha256:ad09cb8164f86c79508d0262cfa350038e29f6870123b2f59780fff4f5533aae
+      artifact_sha256: sha256:366f54c2b14a5f28e18cd08cc76b669deff9a4ad919762f3bd2c5b012c09cfce
+      target: { kind: flow, id: bank-card-opening-flow, view_id: runtime }
+    owner_ref: view:runtime/node:bank-card-opening-runtime
+    contract_refs: [contract:saveBankCard]
+    lifecycle_triggers: [start, page_attach, page_detach, finish, reset, process_recreation]
+    failure_recovery:
+      recovery_ref: recovery:bank-card-opening-recovery
+      description: 存储与导航失败按 BD-2～BD-6 保留或清理确定状态。
+    mutations:
+      - mutation_id: persist-selected-bank-card
+        kind: foreground
+        publication_ref: publication:bank-card-save-finished
+        recovery_ref: recovery:bank-card-opening-recovery
+    publications:
+      - { publication_id: bank-card-save-finished }
+    subscriptions:
+      - subscription_id: result-page-observer
+        consumer_ref: consumer:bank-card-result-page
+        publication_ref: publication:bank-card-save-finished
+        replay_or_snapshot: 只读取当前保存动作产生的一次结果快照。
+        cleanup: 清栈成功后 unsubscribe/reset；清栈失败保留快照。
+    consumers:
+      - consumer_id: bank-card-result-page
+        initial_load_ref: initial-load:load-bank-card-opening
+        update_ref: publication:bank-card-save-finished
+    ordered_steps:
+      - AddBankCardPage 或 AllBanksPage 从 UIAbility Context 调用 BankCardOpeningSession.getInstance().start(bank, context)；start 构造 BankCardRepository.getInstance(context)、重置上次会话并发出 SelectingType 快照，活动会话中的重复 start 被拒绝。
+      - 各页面与半模态只通过 BankCardOpeningSession.getInstance() 取得同一会话，subscribe(callback) 接收不可变快照，aboutToDisappear 时 unsubscribe；用户单选 BankCardType 后调用 selectType(type)。
+      - 继续按钮调用 NavPathContext.stack().pushPath 进入 BankCardSelectionPage(bankCode, type)，页面从 BankRepository 取得 1 至 2 张完整卡记录并只渲染掩码号。
+      - 用户选择卡片并同意协议后打开 OtpVerificationSheet；Flow 调 AccountService.getUserProfile() 读取 mock 手机号并立即调用 resendOtp() 开始 60 秒倒计时。
+      - 输入框每次变化调用 normalizeOtp(input)，只保留最多六位数字；canSubmit 仅在长度为六时成立。
+      - 用户提交后页面等待 BankCardRepository.saveCard(selectedCard)；Repository 用 start 注入的 Context 懒加载单一 RDB Promise，以 CREATE TABLE IF NOT EXISTS 初始化 v1 表并插入完整字段。
+      - insert 主键冲突时 Repository 调 getCard(cardId)；关键字段一致返回幂等成功，否则返回冲突失败。进程重启后 getCard 也可读回已确认记录。
+      - Session 收到成功或失败结果后清理验证码，携 fullCardNumber 与 success 替换到 BankCardResultPage；不在日志输出完整卡号。
+      - 结果页拦截返回与左滑；点击完成时 Session.finish() 先生成不含卡号的 BankCardNavigationOutcome，再由 NavPathContext.stack() 精确删除 BankCardResultPage、BankCardSelectionPage、AllBanksPage 与 AddBankCardPage；栈操作成功后才 unsubscribe/reset 并清除完整卡号，失败则保留当前结果快照供再次点击完成。成功回首页根目标，失败回 AddCardEntryPage。
+
+navigation:
+  routes:
+    - { name: BankCardSelectionPage, owner: Phone, builder: buildBankCardSelectionPage }
+    - { name: BankCardResultPage, owner: Phone, builder: buildBankCardResultPage }
+  completion:
+    success: 清除从 AddBankCardPage 到结果页的全部开卡页面并切到钱包首页。
+    failure: 清除从 AddBankCardPage 到结果页的全部开卡页面并回 AddCardEntryPage。
+  config_files:
+    - 01-Product/Phone/src/main/ets/pages/index.ets
+
+resource_keys:
+  WalletMain:
+    strings:
+      - { key: bank_card_type_sheet_title, value: 选择卡类型, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_type_debit, value: 储蓄卡, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_type_credit, value: 信用卡, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_service_notice, value: 为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给%s。, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_type_agreement, value: 我已阅读快捷支付服务协议、银联无卡自助消费授权协议, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_agree_continue, value: 同意并继续, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_select_hint, value: 请选择您要绑定的银行卡, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_select_agreement, value: 同意并阅读《云闪付App一键绑卡用户授权协议》、《%s信用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信息。, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_next, value: 下一步, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_otp_title, value: 输入验证码, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_otp_instruction, value: 为确认是您本人操作，请输入发送至手机, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_otp_suffix, value: 的验证码。, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_otp_placeholder, value: 请输入短信验证码, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_otp_retry_countdown, value: "%d 秒后重试", path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_otp_resend, value: 重新发送, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_account_unavailable, value: 账号资料暂不可用, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_result_success_title, value: 添卡成功, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_result_success_desc, value: 可用于实体店二维码支付和网上商城支付, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_result_failure_title, value: 添卡失败, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_result_failure_desc, value: 银行卡添加失败，请稍后重试, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_complete, value: 完成, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+      - { key: bank_card_cleanup_failed, value: 页面退出失败，请重试, path: 02-Feature/WalletMain/src/main/resources/base/element/string.json }
+    colors:
+      - { key: color_page_bg, value: "#F2F3F5", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: color_card_bg, value: "#FFFFFF", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: color_text_primary, value: "#1A1A1A", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: color_text_secondary, value: "#606163", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: brand_primary, value: "#007DFF", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: brand_danger, value: "#FF3B30", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: brand_fuel_green, value: "#34C759", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: color_nav_btn_bg, value: "#E7E8EA", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: color_line_divider, value: "#CCCCCC", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: button_tonal_bg, value: "#E8F3FF", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+      - { key: bank_card_scrim, value: "#66000000", path: 02-Feature/WalletMain/src/main/resources/base/element/color.json }
+    floats:
+      - { key: bank_space_page_margin, value: 16vp, path: 02-Feature/WalletMain/src/main/resources/base/element/float.json }
+      - { key: bank_radius_card, value: 16vp, path: 02-Feature/WalletMain/src/main/resources/base/element/float.json }
+      - { key: bank_font_page_title, value: 20fp, path: 02-Feature/WalletMain/src/main/resources/base/element/float.json }
+      - { key: bank_font_caption, value: 14fp, path: 02-Feature/WalletMain/src/main/resources/base/element/float.json }
+    media:
+      - key: bank_logo_cmb
+        value: app.media.bank_logo_cmb
+        description: 既有 BankRepository 资源；本轮只读复用，不扩大 contracts.files 写集。
+      - key: bank_card_result_guide
+        value: app.media.bank_card_result_guide
+        path: 02-Feature/WalletMain/src/main/resources/base/media/bank_card_result_guide.png
+
+prd_to_code_traceability:
+  - { prd_id: F1, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets, 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets] }
+  - { prd_id: F2, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets, 02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets] }
+  - { prd_id: F3, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets, 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets] }
+  - { prd_id: F4, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets, 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets] }
+  - { prd_id: F5, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets, 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets] }
+  - { prd_id: F6, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets, 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets] }
+  - { prd_id: F7, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets, 01-Product/Phone/src/main/ets/pages/index.ets] }
+  - { prd_id: F8, priority: P0, key_files: [04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets, 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets, 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets] }
+  - { prd_id: F9, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/index.ets, 01-Product/Phone/src/main/ets/pages/index.ets, 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets] }
+  - { prd_id: F10, priority: P0, key_files: [02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets, 02-Feature/WalletMain/src/main/resources/base/media/bank_card_result_guide.png] }
+
+files:
+  - 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets
+  - 02-Feature/WalletMain/src/main/ets/index.ets
+  - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+  - 02-Feature/WalletMain/src/main/resources/base/element/color.json
+  - 02-Feature/WalletMain/src/main/resources/base/element/float.json
+  - 02-Feature/WalletMain/src/main/resources/base/media/bank_card_result_guide.png
+  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets
+  - 04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets
+  - 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+  - 01-Product/Phone/src/main/ets/pages/index.ets
+
+change_unit:
+  change_unit_ref:
+    artifact: change-unit@1
+    component_id: WalletMain
+    blueprint_id: bc-openCard-2
+    change_unit_id: implement-bank-card-opening
+    revision: 8
+    artifact_sha256: sha256:783304f9d7c7ba25260ba46620f97abff6a95e8e36bc9716d5660479750becc2
+  predicate_mappings:
+    - predicate_id: bank-card-flow-behavior
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets#SelectBankCardTypeSheet
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets#BankCardSelectionPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets#OtpVerificationSheet
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#BankCardResultPage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_card_flow_behavior
+    - predicate_id: bank-card-state-owner
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#BankCardRepository
+      test_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_card_state_owner
+    - predicate_id: bank-card-result-consumer
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#BankCardResultPage
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#finish
+      test_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_card_result_consumer
+    - predicate_id: bank-card-recovery
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#saveCard
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#reset
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#handleComplete
+      test_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_card_recovery
+  provide_mappings:
+    - provide_id: bank-card-opening-complete
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#BankCardRepository
+        - planned:04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets#getUserProfile
+        - planned:01-Product/Phone/src/main/ets/pages/index.ets#navDestinationMap
+      test_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_card_opening_complete
+  design_ref_mappings:
+    - design_ref: &blueprint_ref
+        artifact: &bp_artifact component-blueprint@1
+        component_id: &bp_component WalletMain
+        blueprint_id: &bp_blueprint bc-openCard-2
+        revision: &bp_revision 7
+        source_fingerprint: &bp_source sha256:ad09cb8164f86c79508d0262cfa350038e29f6870123b2f59780fff4f5533aae
+        artifact_sha256: &bp_sha sha256:366f54c2b14a5f28e18cd08cc76b669deff9a4ad919762f3bd2c5b012c09cfce
+        target: { kind: node, id: bank-card-opening-capability, view_id: logical }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets#BankCardRecord
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#logical_capability_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: bank-card-opening-runtime, view_id: runtime }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#runtime_owner_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: flow, id: bank-card-opening-flow, view_id: runtime }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#submitOtp
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#finish
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#runtime_flow_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: wallet-bank-entry-pages, view_id: development }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#AddBankCardPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets#AllBanksPage
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_entry_pages_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: wallet-bank-card-flow-ui, view_id: development }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets#SelectBankCardTypeSheet
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets#BankCardSelectionPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets#OtpVerificationSheet
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#BankCardResultPage
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_flow_ui_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: wallet-bank-card-storage, view_id: development }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#BankCardRepository
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#bank_storage_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: account-mock-phone, view_id: development }
+      implementation_refs:
+        - planned:04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets#mobile
+        - planned:04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets#getUserProfile
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#account_mock_phone_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: phone-bank-card-routes, view_id: development }
+      implementation_refs:
+        - planned:01-Product/Phone/src/main/ets/pages/index.ets#navDestinationMap
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#phone_routes_verification
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: on-device-wallet-runtime, view_id: deployment }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#BankCardRepository
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#device_runtime_contract
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: node, id: scenario-open-bank-card, view_id: scenarios }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#handleBankTap
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#handleComplete
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#scenario_open_bank_card
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: relation, id: logical-to-runtime }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#logical_runtime_relation
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: relation, id: runtime-to-wallet-ui }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#subscribe
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#BankCardResultPage
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#runtime_ui_relation
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: relation, id: scenario-to-flow }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#start
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#submitOtp
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#scenario_flow_relation
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: relation, id: deployment-to-storage }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#saveCard
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#getCard
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#deployment_storage_relation
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: decision, id: decision-local-rdb }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#BankCardRepository
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#local_rdb_decision
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: decision, id: decision-single-flow-owner }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets#BankCardOpeningSession
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#single_flow_owner_decision
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: decision, id: selection-existing-bank-entry }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#AddBankCardPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets#AllBanksPage
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#existing_bank_entry_selection
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: decision, id: selection-new-bank-flow-ui }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/SelectBankCardTypeSheet.ets#SelectBankCardTypeSheet
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets#BankCardSelectionPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets#OtpVerificationSheet
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets#BankCardResultPage
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#new_bank_flow_ui_selection
+    - design_ref:
+        artifact: *bp_artifact
+        component_id: *bp_component
+        blueprint_id: *bp_blueprint
+        revision: *bp_revision
+        source_fingerprint: *bp_source
+        artifact_sha256: *bp_sha
+        target: { kind: contract, id: saveBankCard }
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets#BankCardSaveResult
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets#saveCard
+      verification_refs:
+        - planned:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets#save_bank_card_contract

@@ -11,7 +11,7 @@ import * as path from 'path';
 import { resolveEffectiveScopeSource, eventsWithScopeRevocations } from './goal-run-creation';
 import { loadAuthoritativeEvents } from './goal-runner-phase';
 import { executionScopeFingerprint } from './execution-scope';
-import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } from './skill-contract';
+import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory, phaseOwnsDesignOutput } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { assertFactsSourceReadable, parseContextExploration } from './context-exploration';
 import { evidenceEntryMatchesCurrentFile, factsBaselineBusinessDependencies, phaseEvidenceBusinessInputs, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
@@ -54,25 +54,6 @@ export interface PreparedRequest {
 
 export { realProjectPath as realRequestPath } from './project-relative-path';
 import { realProjectPath as realRequestPath } from './project-relative-path';
-
-/**
- * spec / plan 是否仍持有这条 artifact 绑定的改写权：它产出该 artifact，且本阶段还有未满足的 required/unknown 义务。
- * 持有时该绑定由本阶段在链内改写并经范围修订重签，不作为期望绑定去比对。阶段输入解析与恢复判断（plan 9c3d7e1a §5.3）共用。
- */
-export function phaseOwnsDesignOutput(
-  produces: ReadonlyArray<{ artifact?: string }>,
-  scope: { obligations: ReadonlyArray<{ owner_phase: string; applicability: string; satisfied_by?: readonly unknown[] }> },
-  phase: string,
-  binding: import('./capability-resolution').InputBinding,
-): boolean {
-  const artifact = binding.source.kind === 'artifact' ? binding.source.artifact
-    : binding.source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1'
-      : binding.source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
-  return ['spec', 'plan'].includes(phase)
-    && !!artifact && produces.some(output => output.artifact === artifact)
-    && scope.obligations.some(obligation => obligation.owner_phase === phase
-      && (obligation.applicability === 'required' || obligation.applicability === 'unknown') && !obligation.satisfied_by?.length);
-}
 
 export function requestProtectedPaths(root: string, frameworkRoot: string): string[] {
   const protectedDirs = [frameworkRoot, path.join(root, '.git'), featuresDirPath(root)];

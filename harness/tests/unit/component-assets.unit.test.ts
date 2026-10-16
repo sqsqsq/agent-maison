@@ -379,11 +379,11 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   normalized.contracts!.change_unit!.design_ref_mappings = [];
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
   const review = loadBlueprintReviewSource(root, 'ledger-app-blueprint').markdown;
-  for (const field of ['选型目标：', '选型结果：reuse', `组件：${ID}`, '理由']) assert(review.includes(field), field);
+  for (const field of ['选型目标：', '选型结果：直接复用已有组件', `组件：${ID}`, '理由']) assert(review.includes(field), field);
   const output = path.join(path.dirname(file), 'component-blueprint.review.md'); write(root, path.relative(root, output), review);
   const checked = checkCanonicalComponentBlueprint(root, 'ledger-app-blueprint');
   assert.equal(checkHostSeamMaterials(root, checked, { projection: output }).issues.length, 0);
-  write(root, path.relative(root, output), review.replace('选型结果：reuse', '选型结果：custom'));
+  write(root, path.relative(root, output), review.replace('选型结果：直接复用已有组件', '选型结果：自定义实现'));
   assert(checkHostSeamMaterials(root, checked, { projection: output }).issues.some(i => i.id === 'publication_projection_content_mismatch'));
 }));
 

@@ -37,10 +37,16 @@ export interface DispositionEntry {
  * 首批分类（§6，2026-09-29）：取证见 dist/reliability-baseline/p4-first-classification.md，codex 逐条评审后 7 条。
  * 暂缓：`authoritative_content_aligned`（drift/invalid 两分支责任方不同，检查结果无结构字段可区分），仍按声明阻断，
  * 归因经既有确定性门禁表。
- * 第二批（plan 3abca824 t4，2026-09-29）：探索记录 4 条，取证与 codex 逐条评审见该 plan §12；三条探索方式声明与
- * 必读输入覆盖不登记，`origin_tag_required`、`seed_no_technical_words` 暂缓。
+ * 第二批（plan 3abca824 t4，2026-09-29）：探索记录 4 条，取证与评审见该 plan §12。
+ * 38e5a7c2 再将必读登记与三条模式声明归入披露；`origin_tag_required`、`seed_no_technical_words` 仍暂缓。
  */
 export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
+  ...['context_exploration_inputs_coverage', 'context_exploration_mode_allowed',
+    'context_exploration_mode_required', 'context_exploration_subagent_required'].map(id => ({
+    match: { id }, protects: 'ledger_shape' as const,
+    basis: '38e5a7c2：spec 冻结基线与 plan 追加登记冲突；建立阶段模式不应被下游重判',
+    consequence: '探索输入登记或模式声明不完整；真实来源、目标覆盖、身份、新鲜度和产品契约仍由原检查判定',
+  })),
   {
     // spec 门是排除登记引文约束的执行点；授权判定处另做同源引文核验（visual-diff-check elementScope）。
     match: { id: 'ref_elements_excluded' }, protects: 'result_basis', owner: 'current_phase',
@@ -49,13 +55,13 @@ export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
   },
   {
     // 自报估计值，框架无法核实；可核实的探索门（source_code_paths_min/exist、code_facts_min）继续阻断。
-    // request 保留原生语义（request-phase 输入检查遇任意 FAIL 即不执行 checker；request 结论任意 FAIL 即失败）。
+    // Feature 与 request 均消费披露；request 的其它 FAIL/SKIP 语义保留。
     match: { id: 'context_exploration_searches_min' }, protects: 'ledger_shape',
     basis: '取证清单 #37（无宿主 FAIL 事故）',
     consequence: '探索记录上的"估计搜索次数"偏低；探索是否真实发生仍由可核实的检查裁决',
   },
   {
-    // 自报字符串，且声明 sequential 即可合法绕开；request 限制同上。
+    // 自报字符串，且声明 sequential 即可合法绕开。
     match: { id: 'context_exploration_subagents_used' }, protects: 'ledger_shape',
     basis: '取证清单 #38（无宿主 FAIL 事故）',
     consequence: '探索记录里"用了哪些子 agent"缺失',
@@ -63,7 +69,7 @@ export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
   {
     // 版本标签无消费者按其分支，身份由 context_exploration_facts_run_match 独立核。
     // 入口边界：链首建立阶段仍被 capability-resolution-entry-input 以 capability_resolution_contract 拦下（确定性门禁，保留）；
-    // request 限制同上。披露只在非链首阶段与无调用上下文的旧路径生效。
+    // 输入契约仍独立核验建立资格；这里不改变该前置判据。
     match: { id: 'context_exploration_facts_schema_version' }, protects: 'ledger_shape',
     basis: 'd9b4f7e2 P1-8（宿主 chrys i4/i5 两轮在版本号写混上失败重试）；取证清单 #39',
     consequence: 'facts 的版本标签写错；没有代码按这个版本号走不同解析',

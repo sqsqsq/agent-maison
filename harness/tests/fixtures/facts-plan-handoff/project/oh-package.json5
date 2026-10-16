@@ -1,0 +1,17 @@
+{
+  "modelVersion": "6.0.2",
+  "description": "Please describe the basic information.",
+  "dependencies": {
+    "@aspect/WalletMain": "file:./02-Feature/WalletMain",
+    "@aspect/AccountManager": "file:./04-BusinessBase/AccountManager",
+    "@aspect/CommUI": "file:./05-SystemBase/CommUI",
+    "@aspect/CommFunc": "file:./05-SystemBase/CommFunc"
+  },
+  "devDependencies": {
+    "@ohos/hypium": "1.0.25",
+    "@ohos/hamock": "1.0.0"
+  },
+  "scripts": {
+    "ut": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-ut.ps1"
+  }
+}

@@ -1,0 +1,114 @@
+operation:
+  operation_id: saveBankCard
+  direction: internal
+  version: "1.0"
+request_dto:
+  dto_id: BankCardSaveRequest
+  fields:
+    - field_id: cardId
+      type: string
+      semantics: 完整银行卡号；仅持久化与业务处理使用，UI 不得直接展示。
+      nullable: false
+    - field_id: category
+      type: CardCategory
+      semantics: 卡片大类，本需求固定为 BANK_CARD。
+      nullable: false
+    - field_id: bankName
+      type: string
+      semantics: 发卡银行显示名称。
+      nullable: false
+    - field_id: bankCardType
+      type: BankCardType
+      semantics: DEBIT 或 CREDIT。
+      nullable: false
+    - field_id: addedAt
+      type: number
+      semantics: 添加完成时的 Unix 毫秒时间戳。
+      nullable: false
+    - field_id: huaweiPayEnabled
+      type: boolean
+      semantics: 是否已开通华为支付，本需求 mock 初始值为 false。
+      nullable: false
+    - field_id: unionPayQuickPassEnabled
+      type: boolean
+      semantics: 是否已开通银联手机闪付，本需求 mock 初始值为 false。
+      nullable: false
+    - field_id: transactionsJson
+      type: string
+      semantics: 交易记录 JSON；本需求初始为空数组。
+      nullable: false
+response_dto:
+  dto_id: BankCardSaveResult
+  fields:
+    - field_id: success
+      type: boolean
+      semantics: RDB 写入是否成功。
+      nullable: false
+    - field_id: fullCardNumber
+      type: string
+      semantics: 无论成功或失败都返回本次选择的完整卡号供结果流转。
+      nullable: false
+mappings:
+  - mapping_id: map-card-id
+    kind: direct
+    source_fields: [cardId]
+    target_field: bank_cards.card_id
+    rule: 原值写入主键列。
+  - mapping_id: map-category
+    kind: direct
+    source_fields: [category]
+    target_field: bank_cards.category
+    rule: 枚举原值写入。
+  - mapping_id: map-bank-name
+    kind: direct
+    source_fields: [bankName]
+    target_field: bank_cards.bank_name
+    rule: 原值写入。
+  - mapping_id: map-bank-card-type
+    kind: direct
+    source_fields: [bankCardType]
+    target_field: bank_cards.bank_card_type
+    rule: 枚举原值写入。
+  - mapping_id: map-added-at
+    kind: direct
+    source_fields: [addedAt]
+    target_field: bank_cards.added_at
+    rule: 毫秒时间戳写入。
+  - mapping_id: map-huawei-pay
+    kind: direct
+    source_fields: [huaweiPayEnabled]
+    target_field: bank_cards.huawei_pay_enabled
+    rule: 布尔值按整数列写入。
+  - mapping_id: map-unionpay
+    kind: direct
+    source_fields: [unionPayQuickPassEnabled]
+    target_field: bank_cards.unionpay_quickpass_enabled
+    rule: 布尔值按整数列写入。
+  - mapping_id: map-transactions
+    kind: direct
+    source_fields: [transactionsJson]
+    target_field: bank_cards.transactions_json
+    rule: JSON 字符串原值写入。
+  - mapping_id: map-save-success
+    kind: direct
+    source_fields: [success]
+    target_field: result.success
+    rule: 保存结果原值返回。
+  - mapping_id: map-result-card-number
+    kind: direct
+    source_fields: [fullCardNumber]
+    target_field: result.fullCardNumber
+    rule: 完整卡号原值返回且不写日志。
+errors:
+  semantics:
+    - code: STORAGE_WRITE_FAILED
+      handling: 结果页展示失败；不把未确认写入的数据当作已添加卡片。
+idempotency:
+  key: cardId
+  scope: bank_cards
+  equality_fields: [cardId, category, bankName, bankCardType, huaweiPayEnabled, unionPayQuickPassEnabled, transactionsJson]
+  added_at_policy: 重复提交时沿用既有记录的 addedAt，不参与等价比较，也不覆盖。
+  behavior: 相同完整卡号重复提交时先读取既有记录；关键字段一致则返回幂等成功，不一致才返回冲突失败，且不覆盖既有记录。
+nfr:
+  privacy: 完整卡号仅在内存流转与 RDB 中保存，日志和 UI 只使用掩码值。
+  durability: 下一次进程启动可从 RDB 读取已添加卡片。

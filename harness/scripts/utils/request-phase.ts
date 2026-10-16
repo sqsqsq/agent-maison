@@ -10,6 +10,7 @@ import { SpecLoader } from './spec-loader';
 import { assembleKnowledge, renderKnowledge } from './knowledge-context';
 import { checkFactsArtifact } from './context-facts';
 import { generateRequestScriptReport } from './report-generator';
+import { resolveCheckDisposition } from './check-disposition';
 import type { CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckContext } from './types';
 import { dispatchRequestTests, dispatchRequestTargetProbe, isCapabilitySkipped } from '../../capability-registry';
 import { isInsideProjectRoot } from './project-relative-path';
@@ -241,7 +242,7 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
     };
     let checks = checkRequestInputs(ctx);
     if (ctx.resolvedProfile.phasesDisabled.has(ctx.phase)) checks.push(requestFailure('request_phase_disabled', 'active profile disables this phase'));
-    if (!checks.some(check => check.status === 'FAIL')) {
+    if (!checks.some(check => check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose')) {
       const checkerPath = path.resolve(ctx.harnessRoot, 'scripts', artifact.check);
       if (!checkerPath.startsWith(path.resolve(ctx.harnessRoot) + path.sep)) throw new Error('workflow checker escaped harness');
       const loaded = require(checkerPath); const checker: PhaseChecker = loaded.default ?? loaded.checker ?? loaded;

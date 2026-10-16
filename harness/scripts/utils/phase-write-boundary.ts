@@ -22,6 +22,7 @@ import {
   loadArtifactInventory,
   loadFeatureContracts,
   phaseContractIndex,
+  phaseOwnsDesignOutput,
 } from './skill-contract';
 import { SpecLoader } from './spec-loader';
 
@@ -106,6 +107,7 @@ function artifactCandidatePaths(
 
 function loadCodingScope(
   options: ResolvePhaseWriteBoundaryOptions,
+  planProduces: ReadonlyArray<{ artifact?: string }>,
 ): {
   prefixes: string[];
   modules: Array<{ name: string; package_path: string }>;
@@ -113,7 +115,15 @@ function loadCodingScope(
 } {
   if (options.runId) {
     const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
-    const contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId);
+    let contracts: ReturnType<typeof readRunBoundContracts>;
+    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId); }
+    catch (error) {
+      const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+      const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId);
+      if (!scope || !phaseOwnsDesignOutput(planProduces, scope, 'plan', 'contracts@1')) throw error;
+      // Keep valid authority when plan rejects a repair; unfinished output grants no new source domain.
+      return { prefixes: [], modules: [], diagnostics: ['plan still owns construction output; source domains are not yet authorized'] };
+    }
     const modules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
     const resolution = resolveModulePathPrefixes(options.projectRoot, modules.map(module => module.name), modules);
     return { prefixes: resolution.allowedPrefixes, modules, diagnostics: resolution.unmapped.map(name => `bound module has no path: ${name}`) };
@@ -210,7 +220,7 @@ export function resolvePhaseWriteBoundary(
     }
   }
 
-  const codingScope = loadCodingScope(options);
+  const codingScope = loadCodingScope(options, contracts.get('plan')?.phase.produces ?? []);
   diagnostics.push(...codingScope.diagnostics);
   const codingContract = contracts.get('coding')?.phase;
   const codingProducesSource =

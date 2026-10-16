@@ -118,6 +118,10 @@ export interface ContextExplorationFrontmatter {
 }
 
 export interface ContextExplorationCheckOptions {
+  /** context-facts supplies its already parsed current-phase additions; no reverse import. */
+  deltaSourcePaths?: readonly string[];
+  /** Only the facts establishing call checks the recorded exploration mode. */
+  checkExplorationMode?: boolean;
   goalAttemptId?: string;
   request?: import('./capability-resolution-entry-input').PreparedRequest;
   factsContext?: import('./context-facts').FactsInvocationContext;
@@ -485,7 +489,7 @@ export function runQuantitativeChecks(
   const allowedModes = (thresholds.exploration_mode_allowed ?? ['subagent', 'sequential', 'minimal']).map(
     m => m.toLowerCase(),
   );
-  if (mode && !allowedModes.includes(mode)) {
+  if (options?.checkExplorationMode !== false && mode && !allowedModes.includes(mode)) {
     results.push({
       id: 'context_exploration_mode_allowed',
       category: 'structure',
@@ -497,7 +501,7 @@ export function runQuantitativeChecks(
     });
   }
 
-  if (decision.requiresSubagent) {
+  if (options?.checkExplorationMode !== false && decision.requiresSubagent) {
     if (mode === 'minimal') {
       results.push({
         id: 'context_exploration_subagent_required',
@@ -546,6 +550,7 @@ export function runQuantitativeChecks(
   const haystack = [
     flattenKeyInputs(fm.key_inputs_read),
     ...sourcePaths.map(p => p.toLowerCase()),
+    ...(options?.deltaSourcePaths ?? []).map(p => p.toLowerCase()),
   ].join('\n');
   const missingSnippets = requiredSnippets.filter(sub => !haystack.includes(sub.toLowerCase()));
   if (missingSnippets.length > 0) {
@@ -553,7 +558,7 @@ export function runQuantitativeChecks(
       id: 'context_exploration_inputs_coverage',
       category: 'structure',
       description:
-        'context-exploration key_inputs_read / source_code_paths 须覆盖本阶段最低输入（含 profile overlay）',
+        'context-exploration key_inputs_read / source_code_paths 或本阶段 phase_delta 路径表须覆盖本阶段最低输入（含 profile overlay）',
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `缺少可匹配项：${missingSnippets.join('、')}`,

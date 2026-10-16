@@ -13,9 +13,9 @@ P5（plan 3abca824）按同一标准继续取证：每条回答保护什么、�
 - **第二批分类**：去向表追加四条 `ledger_shape`（披露，检查照常产出原始 FAIL）：
   `context_exploration_files_inspected_min`、`context_exploration_decisions_unlocked`、
   `context_exploration_facts_phase_delta_missing`、`context_exploration_facts_phase_delta_empty`。
-- 不登记：三条探索方式声明（`context_exploration_mode_allowed`、`context_exploration_mode_required`、
-  `context_exploration_subagent_required`）与必读输入覆盖（`context_exploration_inputs_coverage`）——它们落实阶段探索策略与必读输入声明；
-  暂缓：`origin_tag_required`、`seed_no_technical_words`。
+- **38e5a7c2 追加收口**：三条探索方式声明（`context_exploration_mode_allowed`、`context_exploration_mode_required`、
+  `context_exploration_subagent_required`）与必读输入覆盖（`context_exploration_inputs_coverage`）也归披露；实际覆盖读取基线加本阶段增量，模式只在建立时检查。
+  `origin_tag_required`、`seed_no_technical_words` 仍暂缓。
 - **facts.md 增量小节**：仍须每个非建立阶段追加（无新增写 none）；缺节或空节的后果由阶段失败改为披露并计入完成缺口。
 
 ## Capabilities
@@ -36,4 +36,4 @@ P5（plan 3abca824）按同一标准继续取证：每条回答保护什么、�
   RC-8a/8b 的失败载体换为 `contract_file_reference_closure`）。
 - 指引：`skills/reference/agents-entry-detail.md`、`skills/feature/device-testing/SKILL.md` 如实写明这几项缺了会被披露、不单独阻断。
 - 消费者可见：见 `MIGRATION.md` 3.1.0「失败检查按保护对象处置」一节的第二批条目。
-- 不改任何检查本身的判定逻辑；request 入口仍是任意失败即失败；违规钩子仍响应原始 FAIL。
+- 原第二批保持检查判定；38e5a7c2 仅修正上述输入覆盖与探索模式的阶段读取。request 的输入前检和报告共同消费已有披露规则，其它 FAIL/SKIP 语义不变；违规钩子仍响应原始 FAIL。

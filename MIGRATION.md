@@ -211,7 +211,9 @@ npx ts-node scripts/goal-status.ts --feature <feature>
   - `context_exploration_decisions_unlocked`：没列出本次探索解锁的决策；
   - `context_exploration_facts_phase_delta_missing` / `context_exploration_facts_phase_delta_empty`：非建立阶段没写或写空了本阶段增量小节
     （仍须写，无新增写 "none"）。
-  探索类各条（首批前三条与第二批四条）在 request 入口不适用：request 的输入检查与结论仍是"任意失败即失败"。
+  后续 38e5a7c2 同时将 `context_exploration_inputs_coverage`、`context_exploration_mode_allowed`、`context_exploration_mode_required`、`context_exploration_subagent_required` 归为披露。必读覆盖读取已核基线和本阶段增量；探索模式只在建立时检查，不要求下游改基线。
+  普通 request 的输入检查与结论也消费同一去向表：已披露项保留原始 FAIL 和披露清单，并允许真实 checker 执行；其它 FAIL、阻断 SKIP、来源/身份/新鲜度失败保持原语义。违规钩子仍接收原始失败，verifier 的真实否决不被披露盖过。
+  plan 尚在生产施工契约时，写边界保留其工件权限，未获验证的契约不授予编码写域；通过原检查和范围修订后，下游按有效绑定读取。无需手动改冻结范围或填写豁免账本。
 - **聚合的运行状态检查**（`coding_run_status`、`testing_run_status`）在同一失败已由源检查表达时，不再重复计入阻断清单、
   `blocker_count` 与重试签名；只由关键跳过或文档缺失引起时照常列出。脚本报告、控制台与合并报告里的阻断计数与 summary 一致。
 - **归因**：`ref_elements_excluded` 与 `authoritative_content_aligned` 失败时 goal 归为确定性门禁 / 产物缺失，不再当作代码回归，

@@ -32,7 +32,7 @@ import {
   RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
-import { dropRedundantAggregates, isBlockingCheck } from './check-disposition';
+import { collectDisclosedFailures, dropRedundantAggregates, isBlockingCheck, resolveCheckDisposition } from './check-disposition';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
 import { collectBlockedCapabilityFacts } from './capability-resolution';
 import type { CapabilityResolutionReport } from './capability-resolution';
@@ -72,7 +72,8 @@ export function resolveEffectiveSuggestion(check: CheckResult, phase: Phase): st
   }
   return (
     `（自动指引）按 details 与 affected_files 修产物；` +
-    `修复路径不明时如实 halt 上报，不要为绕过门禁读改 framework 实现。`
+    `本阶段负责的产物在本阶段修复并复验；属于其它责任方或涉及验收/范围/授权裁定时，若报告已有 repair_owner/repair_candidates，按其走原责任入口。` +
+    `没有合法恢复条件时如实报告缺口，不用 notes 代替路由，不读改 framework 实现绕过检查。`
   );
 }
 
@@ -156,8 +157,8 @@ export function generateScriptReport(
 /** Request reports reuse checks/summary serializers without Feature compatibility or closure writes. */
 export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
   const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
-  const summary = computeSummary(finalized);
-  if (finalized.some(check => check.status === 'FAIL' || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const summary = { ...computeSummary(finalized), disclosed_failures: collectDisclosedFailures(finalized) };
+  if (finalized.some(check => (check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose') || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
   const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
     requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
     timestamp: new Date().toISOString(), project_root: ctx.projectRoot };

@@ -13,6 +13,22 @@ export type FeatureTrackName = 'full' | 'lite';
 export type Assurance = 'blocked' | 'degraded' | 'full';
 export type MinimumAssurance = Exclude<Assurance, 'blocked'>;
 
+/** A design producer may replace its own unsatisfied output, then publish a scope revision. */
+export function phaseOwnsDesignOutput(
+  produces: ReadonlyArray<{ artifact?: string }>,
+  scope: { obligations: ReadonlyArray<{ owner_phase: string; applicability: string; satisfied_by?: readonly unknown[] }> },
+  phase: string,
+  binding: import('./capability-resolution').InputBinding | string,
+): boolean {
+  const artifact = typeof binding === 'string' ? binding : binding.source.kind === 'artifact' ? binding.source.artifact
+    : binding.source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1'
+      : binding.source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
+  return ['spec', 'plan'].includes(phase)
+    && !!artifact && produces.some(output => output.artifact === artifact)
+    && scope.obligations.some(obligation => obligation.owner_phase === phase
+      && (obligation.applicability === 'required' || obligation.applicability === 'unknown') && !obligation.satisfied_by?.length);
+}
+
 export const ASSURANCE_RANK: Readonly<Record<Assurance, number>> = {
   blocked: 0,
   degraded: 1,

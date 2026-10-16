@@ -1,4 +1,5 @@
 import assert from 'assert';
+import type { CheckResult } from '../../scripts/utils/types';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -80,6 +81,17 @@ function review(p: PreparedRequest, verdict = '通过') {
   fs.writeFileSync(p.inputs.review_report, `# Review\n## 审查范围\nsrc/value.js\n## 审查方法\nRead source and compare selected baseline.\n## 问题清单\n无问题\n## 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n| INFO | 0 |\n## 修复建议\n无\n## 结论\n**审查结论**: ${verdict}\n`);
 }
 const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixture>): void }> = [
+  { name: '38e5a7c2 request executes real checker with disclosed exploration mode and keeps raw failure', phase: 'ut', run(f) {
+    const p = prepareExplicitRequest(f.options); facts(p, f.root);
+    fs.writeFileSync(p.factsPath, fs.readFileSync(p.factsPath, 'utf8').replace('exploration_mode: sequential', 'exploration_mode: unknown'));
+    const result = cli(f);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    const report = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'script-report.json'), 'utf8'));
+    const summary = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'summary.json'), 'utf8'));
+    assert(report.checks.some((c: CheckResult) => c.id === 'context_exploration_mode_allowed' && c.status === 'FAIL'));
+    assert(summary.disclosed_failures.some((c: { id: string }) => c.id === 'context_exploration_mode_allowed'));
+    assert(report.checks.some((c: CheckResult) => c.id === 'request_test_execution' && c.status === 'PASS'), JSON.stringify(report.checks));
+  } },
   ...[
     { phase: 'ut', ready: true }, { phase: 'testing', ready: true },
     { phase: 'review', ready: true }, { phase: 'ut', ready: false },

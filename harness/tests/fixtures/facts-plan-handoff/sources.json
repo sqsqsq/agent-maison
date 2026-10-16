@@ -1,0 +1,132 @@
+[
+  {
+    "path": "01-Product/Phone/oh-package.json5",
+    "sha256": "61cc9d91c11cb0fd990c581e7e0a6ad718bd1ce4e6de034dc92bed811f97f610",
+    "bytes": 443,
+    "fixture_sha256": "d21620f7ab37b76e6dbf71718334dbb9544f34dfa8124187ab822ca74ed5d776",
+    "fixture_bytes": 429
+  },
+  {
+    "path": "01-Product/Phone/src/main/ets/pages/index.ets",
+    "sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0",
+    "bytes": 2649
+  },
+  {
+    "path": "01-Product/Phone/src/main/module.json5",
+    "sha256": "cdd69fb607b6abceae142a25343b23f5a83b087a1d218c2d41424f1ae10a3f20",
+    "bytes": 1311,
+    "fixture_sha256": "105a4a8bf227d24b66e0ad71cf35f786454e2e21691542430f29e16c7d3165a4",
+    "fixture_bytes": 1262
+  },
+  {
+    "path": "02-Feature/WalletMain/oh-package.json5",
+    "sha256": "9d9e5b8c353a12c0b531a1b8665feb9630d1ddd3387dbe5fb3a89bb2f1122295",
+    "bytes": 402,
+    "fixture_sha256": "41e2a1e86f02c41e33d9871125840d36d4dc4ef75660209e07278c438e475099",
+    "fixture_bytes": 389
+  },
+  {
+    "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+    "sha256": "5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754",
+    "bytes": 10835
+  },
+  {
+    "path": "02-Feature/WalletMain/src/main/module.json5",
+    "sha256": "e53bd64e9ac975940e6ba578379d296c4e7188aa4393e6ccd38e4fe708e3acf1",
+    "bytes": 160,
+    "fixture_sha256": "2c6ef520936e4295902004a602219b9c63e8b62effa1979902eae42a42cb13c2",
+    "fixture_bytes": 150
+  },
+  {
+    "path": "04-BusinessBase/AccountManager/oh-package.json5",
+    "sha256": "3a5b28fc46f096f9f61d9d1a58581f50ea51a9c9269407471e0be28d3f990642",
+    "bytes": 269,
+    "fixture_sha256": "675fccb48129e7082c0ced0925ac747c7dd8bdabbed8cc725a7eee4fb9b2ab59",
+    "fixture_bytes": 258
+  },
+  {
+    "path": "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+    "sha256": "1c81bfc6faa5cb81bc7bce2155e81db84be7bacae59dabcbda81e4aadb7ca366",
+    "bytes": 710
+  },
+  {
+    "path": "04-BusinessBase/AccountManager/src/main/module.json5",
+    "sha256": "db1476a429e00690c2f64d8790d829bc223448f26562405ba469ae25cdb992d7",
+    "bytes": 164,
+    "fixture_sha256": "923c754caa6f337ae566734af8e1a0f3272893cd66a5371cabdf48096d7b78cb",
+    "fixture_bytes": 154
+  },
+  {
+    "path": "AppScope/app.json5",
+    "sha256": "c5d966f00c43d7859a690ec9991adcf0f4e7445494c11f01ab11326f62d3bef9",
+    "bytes": 224,
+    "fixture_sha256": "e26f1764a800c1e662284b3738b5d4277bf29d168d6713b2dbad0ab401c7b232",
+    "fixture_bytes": 214
+  },
+  {
+    "path": "build-profile.json5",
+    "sha256": "a8d1740aa90598642cb007b9b9c53b787a792401d6236f389774c6ec09e5c7c1",
+    "bytes": 1798,
+    "fixture_sha256": "fd8a30efa45316690d825c08baac741c713898e0440c5e7a5ad59251f10d2fa8",
+    "fixture_bytes": 1727
+  },
+  {
+    "path": "doc/architecture.md",
+    "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+    "bytes": 4951,
+    "fixture_sha256": "9d2d9463c92596a3f8c698b61348545ab487512733660b13ea1fc1c2b6c92784",
+    "fixture_bytes": 4949
+  },
+  {
+    "path": "doc/component-index.yaml",
+    "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+    "bytes": 4128
+  },
+  {
+    "path": "doc/features/bc-openCard-2/blueprint/bank-card-contract-authority.yaml",
+    "sha256": "c7b886cb65f0f51a8cfd86c4e6e1054fbcd6d7a326c6d3039d374396c7692b98",
+    "bytes": 3978
+  },
+  {
+    "path": "doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+    "sha256": "141b5043e2988c57c082425791f87a9e72a02a12169113d371588a01c90d1c03",
+    "bytes": 125836
+  },
+  {
+    "path": "doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+    "sha256": "366f54c2b14a5f28e18cd08cc76b669deff9a4ad919762f3bd2c5b012c09cfce",
+    "bytes": 101993
+  },
+  {
+    "path": "doc/features/bc-openCard-2/implement-bank-card-opening/change-unit.yaml",
+    "sha256": "783304f9d7c7ba25260ba46620f97abff6a95e8e36bc9716d5660479750becc2",
+    "bytes": 15383
+  },
+  {
+    "path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+    "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+    "bytes": 5549
+  },
+  {
+    "path": "doc/glossary.yaml",
+    "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+    "bytes": 43978
+  },
+  {
+    "path": "doc/module-catalog.yaml",
+    "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+    "bytes": 21957
+  },
+  {
+    "path": "framework.config.json",
+    "sha256": "0af1767358ce189d1e8410638423fb32d3ae4e51d8aba9f89c539db8fcb5022d",
+    "bytes": 3389
+  },
+  {
+    "path": "oh-package.json5",
+    "sha256": "bdf8cb29b26f842711ca027428606ed03c7bba57ed18ba4c61afe8a43995d0c5",
+    "bytes": 560,
+    "fixture_sha256": "7be0d4803240bc249459707e1bc5035c45e4a45b9d00c2181197574d23a796c8",
+    "fixture_bytes": 543
+  }
+]

@@ -1,0 +1,233 @@
+schema_version: "2.1"
+feature: "cu-YmMtb3BlbkNhcmQtMgBpbXBsZW1lbnQtYmFuay1jYXJkLW9wZW5pbmc"
+source: "derive.blueprint-contracts:sha256:783304f9d7c7ba25260ba46620f97abff6a95e8e36bc9716d5660479750becc2:sha256:366f54c2b14a5f28e18cd08cc76b669deff9a4ad919762f3bd2c5b012c09cfce"
+
+use_cases:
+  - id: bank_card_opening
+    description: 银行选择到结果页完成的完整银行卡开卡流程。
+    coordinator: BankCardOpeningSession
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/domain/flow/BankCardOpeningSession.ets
+    ui_bindings:
+      - ui: AddBankCardPage/AllBanksPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 点击银行
+            calls: flow.start
+      - ui: SelectBankCardTypeSheet
+        role: progress
+        subscribes:
+          - flow.state.phase=SelectingType
+        user_actions:
+          - trigger: 选择卡类型并继续
+            calls: flow.selectType
+      - ui: BankCardSelectionPage
+        role: progress
+        subscribes:
+          - flow.state.phase=SelectingCard
+        user_actions:
+          - trigger: 选择卡片并点击下一步
+            calls: flow.selectCard
+      - ui: OtpVerificationSheet
+        role: dialog
+        subscribes:
+          - flow.state.phase=WaitingOtp
+        user_actions:
+          - trigger: 输入六位验证码并点击下一步
+            calls: flow.submitOtp
+      - ui: BankCardResultPage
+        role: result
+        subscribes:
+          - flow.state.phase=Success
+          - flow.state.phase=Failed
+        user_actions:
+          - trigger: 点击完成
+            calls: flow.finish
+
+    data_boundaries:
+      - name: cards
+        type: BankCardRepository
+        kind: storage
+        methods:
+          - name: saveCard
+            params: [BankCardRecord]
+            returns: BankCardSaveResult
+            async: true
+          - name: getCard
+            params: [string]
+            returns: BankCardRecord|null
+            async: true
+      - name: account
+        type: AccountService
+        kind: system
+        methods:
+          - name: getUserProfile
+            params: []
+            returns: UserProfile
+            async: true
+      - name: banks
+        type: BankRepository
+        kind: system
+        methods:
+          - name: getCards
+            params: [string, BankCardType]
+            returns: BankCardCandidate[]
+            async: true
+
+    state_model:
+      phases: [SelectingType, SelectingCard, WaitingOtp, Saving, Success, Failed]
+      fields:
+        - { name: selectedBankCode, type: string }
+        - { name: selectedType, type: BankCardType|null }
+        - { name: selectedFullCardNumber, type: string|null }
+        - { name: otp, type: string }
+        - { name: saveSuccess, type: boolean|null }
+
+    branches:
+      - id: happy_path
+        scenario: 六位验证码后 RDB 写入成功。
+        setup:
+          cards.saveCard: ok
+          account.getUserProfile: ok
+        triggers:
+          - call: flow.start
+            with: { bankCode: cmb }
+          - call: flow.selectType
+            with: { type: DEBIT }
+          - call: flow.selectCard
+            with: { cardId: "4392123412342269" }
+          - call: flow.submitOtp
+            with: { code: "123456" }
+          - call: flow.finish
+            with: {}
+        user_sequence: [flow.start, flow.selectType, flow.selectCard, flow.submitOtp, flow.finish]
+        local_stubs:
+          account.getUserProfile: ok
+          cards.saveCard: ok
+        expected_phase_sequence: [SelectingType, SelectingCard, WaitingOtp, Saving, Success]
+        expected_phase_seq: [SelectingType, SelectingCard, WaitingOtp, Saving, Success]
+        expected_port_calls: [account.getUserProfile, cards.saveCard]
+        expected_state:
+          saveSuccess: true
+        linked_acceptance: [AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-7]
+
+      - id: storage_failure
+        scenario: 六位验证码后 RDB 写入失败。
+        setup:
+          cards.saveCard: throw
+          account.getUserProfile: ok
+        triggers:
+          - call: flow.submitOtp
+            with: { code: "654321" }
+          - call: flow.finish
+            with: {}
+        user_sequence: [flow.submitOtp, flow.finish]
+        local_stubs:
+          cards.saveCard: throw:RdbError
+        expected_phase_sequence: [WaitingOtp, Saving, Failed]
+        expected_phase_seq: [WaitingOtp, Saving, Failed]
+        expected_port_calls: [cards.saveCard]
+        expected_state:
+          saveSuccess: false
+        linked_acceptance: [AC-5, AC-6, AC-7, BD-2]
+
+      - id: duplicate_after_commit
+        scenario: 上次 insert 已提交但结果尚未展示，重新提交同一张卡。
+        setup:
+          cards.saveCard: duplicate_same_record
+          cards.getCard: existing_same_record
+        triggers:
+          - call: flow.submitOtp
+            with: { code: "112233" }
+        user_sequence: [flow.submitOtp]
+        local_stubs:
+          cards.saveCard: duplicate_same_record
+          cards.getCard: existing_same_record
+        expected_phase_sequence: [WaitingOtp, Saving, Success]
+        expected_phase_seq: [WaitingOtp, Saving, Success]
+        expected_port_calls: [cards.saveCard, cards.getCard]
+        expected_state:
+          saveSuccess: true
+        linked_acceptance: [AC-5, BD-3, BD-4]
+
+      - id: duplicate_conflict
+        scenario: 相同完整卡号对应的既有记录关键字段不同。
+        user_sequence: [flow.submitOtp]
+        local_stubs:
+          cards.saveCard: duplicate_conflicting_record
+          cards.getCard: existing_conflicting_record
+        expected_phase_seq: [WaitingOtp, Saving, Failed]
+        expected_port_calls: [cards.saveCard, cards.getCard]
+        expected_state:
+          saveSuccess: false
+        linked_acceptance: [AC-5, BD-3]
+
+      - id: dismiss_sheet_without_save
+        scenario: 用户关闭卡类型或 OTP 半模态。
+        user_sequence: []
+        local_stubs: {}
+        expected_phase_seq: [SelectingType]
+        expected_port_calls: []
+        expected_state:
+          saveSuccess: null
+        not_called: [cards.saveCard]
+        linked_acceptance: [BD-1]
+
+      - id: account_profile_failure
+        scenario: OTP 准备阶段账号资料读取失败。
+        user_sequence: [flow.selectCard]
+        local_stubs:
+          account.getUserProfile: throw:AccountUnavailable
+        expected_phase_seq: [SelectingCard]
+        expected_port_calls: [account.getUserProfile]
+        expected_state:
+          saveSuccess: null
+        not_called: [cards.saveCard]
+        linked_acceptance: [AC-3, BD-5]
+
+      - id: navigation_cleanup_failure
+        scenario: 结果页完成动作清栈失败，结果快照保留供重试。
+        user_sequence: [flow.finish]
+        local_stubs: {}
+        expected_phase_seq: [Success]
+        expected_port_calls: []
+        expected_state:
+          saveSuccess: true
+          resultSnapshotRetained: true
+        not_called: [flow.reset]
+        linked_acceptance: [AC-7, BD-6]
+
+      - id: unsupported_type_or_empty_candidates
+        scenario: 银行不支持所选卡型或候选卡为空。
+        user_sequence: [flow.start, flow.selectType]
+        local_stubs:
+          banks.getCards: ok_empty
+        expected_phase_seq: [SelectingType, SelectingCard]
+        expected_port_calls: [banks.getCards]
+        expected_state:
+          saveSuccess: null
+        not_called: [cards.saveCard]
+        linked_acceptance: [AC-1, AC-2, BD-7]
+
+      - id: reentrant_start_and_submit
+        scenario: 连续点击银行或 Saving 状态重复提交。
+        user_sequence: [flow.start, flow.start, flow.submitOtp, flow.submitOtp]
+        local_stubs:
+          cards.saveCard: ok
+        expected_phase_seq: [SelectingType, WaitingOtp, Saving, Success]
+        expected_port_calls: [cards.saveCard]
+        expected_state:
+          saveSuccess: true
+        linked_acceptance: [AC-1, AC-5, BD-8]
+
+      - id: process_recreation
+        scenario: 进程重建丢弃未完成会话，但已提交记录可由新 Repository 读回。
+        user_sequence: []
+        local_stubs:
+          cards.getCard: existing_same_record
+        expected_phase_seq: []
+        expected_port_calls: [cards.getCard]
+        expected_state:
+          draftRestored: false
+          persistedRecordReadable: true
+        linked_acceptance: [AC-5, BD-4]

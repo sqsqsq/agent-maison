@@ -484,6 +484,21 @@ function phaseOutputRelPath(root: string, phase: string, basename: string): stri
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  { name: '38e5a7c2 disclosed process failure does not erase a real verifier veto', run() {
+    const { root } = buildProject('review', { omitVerifier: true, claimedAttemptId: 'i8' });
+    try {
+      const frameworkRoot = path.dirname(HARNESS_ROOT);
+      const reportsDir = featurePhaseReportsDir(root, 'demo', 'review', frameworkRoot);
+      const report = passScriptReport('review', root, [{ id: 'context_exploration_inputs_coverage', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '登记缺失', details: 'module.json5' }]);
+      const subjectId = issueStrictSubject(root, 'review', report, []);
+      publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: 'review', subjectId, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
+      setEvidenceProfile(root, 'balanced');
+      const summary = withGoalRunEnv('run-X', () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan('review') }));
+      assert(summary.verifier_subject_id === subjectId, '须保留同一份真实否决');
+      assert(!!summary.disclosed_failures?.some(c => c.id === 'context_exploration_inputs_coverage'), '过程失败须披露');
+      assert(summary.next_action === 'fix_verifier_findings_then_rerun_harness', summary.next_action);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } },
   {
     name: 'goal sync-closure 检查通过仍 open；无 goal 的独立入口照常完成闭环',
     run: () => {

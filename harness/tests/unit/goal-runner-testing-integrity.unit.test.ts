@@ -881,6 +881,7 @@ export async function runGoalRuntimeChain(
             verdict: 'PASS',
           },
         };
+        if (opts.frameworkRoot) fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(passReport));
         writeRunSummaryBase(pr, passReport, _fr);
         writeManifestAndPointer();
         opts.afterHarnessPass?.({
