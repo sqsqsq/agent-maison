@@ -99,19 +99,22 @@ npx ts-node scripts/prepare-blueprint-design.ts --feature <canonical-CU-feature-
 
 设计准备的接点为 change-unit-design-preparation.ts 的 `reviseChangeUnitContent(projectRoot, blueprintId, [{ expectedRef, candidate }])`；expectedRef 来自 canonical resolver，候选使用原 ChangeUnitCandidate 格式，revision 由框架计算。结果分别列 revised、unchanged、busy 与 reviewDocument，不把文档刷新故障改成修订失败。
 
-当前没有 CU 内容修订 CLI；`--accept-candidates` 只接受新候选，不能用它覆盖已有 CU。需要调用上述既有 API 时，可从已安装依赖的 `framework/harness` 用 ts-node 运行表达式。先完成必要的蓝图指针调和，再取当前 CU 快照及精确 ref 到**临时候选**，例如下面的 PowerShell 用法（所有占位符由当前项目替换，providerId 使用原 provenance 中已登记的 provider）：
+当前没有 CU 内容修订 CLI；`--accept-candidates` 只接受新候选，不能用它覆盖已有 CU。需要调用上述既有 API 时，可从已安装依赖的 `framework/harness` 用 ts-node 运行表达式。先完成必要的蓝图指针调和，再取当前 CU 快照及精确 ref 到**临时候选** `<features_dir>/<blueprint_id>/blueprint/change-unit-revisions.json`，由既有 resolver 定位蓝图目录，不放工作区根或宿主根级 scratch。例如下面的 PowerShell 用法（所有占位符由当前项目替换，providerId 使用原 provenance 中已登记的 provider）：
 
 ```powershell
 cd framework/harness
 npx ts-node --eval @'
 const fs = require('fs');
+const path = require('path');
+const { componentBlueprintPath } = require('./scripts/utils/component-blueprint-path');
 const p = require('./scripts/utils/change-unit-path');
 const loaded = p.loadCanonicalChangeUnit('<宿主绝对路径>', '<blueprint-id>', '<cu-id>');
+const candidateFile = path.join(path.dirname(componentBlueprintPath('<宿主绝对路径>', '<blueprint-id>')), 'change-unit-revisions.json');
 const revisions = [{
   expectedRef: p.createChangeUnitRef(loaded),
   candidate: { providerId: '<原provider-id>', artifact: p.asChangeUnitArtifact(loaded.changeUnit) }
 }];
-fs.writeFileSync('<临时候选绝对路径.json>', JSON.stringify(revisions, null, 2) + '\n', 'utf8');
+fs.writeFileSync(candidateFile, JSON.stringify(revisions, null, 2) + '\n', 'utf8');
 '@
 ```
 
@@ -120,14 +123,21 @@ fs.writeFileSync('<临时候选绝对路径.json>', JSON.stringify(revisions, nu
 ```powershell
 npx ts-node --eval @'
 const fs = require('fs');
+const path = require('path');
+const { componentBlueprintPath } = require('./scripts/utils/component-blueprint-path');
 const api = require('./scripts/utils/change-unit-design-preparation');
-const revisions = JSON.parse(fs.readFileSync('<临时候选绝对路径.json>', 'utf8'));
+const candidateFile = path.join(path.dirname(componentBlueprintPath('<宿主绝对路径>', '<blueprint-id>')), 'change-unit-revisions.json');
+const revisions = JSON.parse(fs.readFileSync(candidateFile, 'utf8'));
 const result = api.reviseChangeUnitContent('<宿主绝对路径>', '<blueprint-id>', revisions);
 console.log(JSON.stringify(result, null, 2));
+if (!result.busy) {
+  try { fs.unlinkSync(candidateFile); }
+  catch (error) { console.warn('修订已完成，临时候选清理失败，请清理该文件，不要重复提交：', candidateFile, error); }
+}
 '@
 ```
 
-这是既有 consumer API 的调用示例，不新增命令或交接脚本。旧 ref 竞争应重新读取并复核候选，busy 等原运行/锁结束后再提交；修订后沿已有 readiness/文档物化读成品。普通润色也遵守下述未完成资格，不能为改说明修订已完成或退役 CU；不在蓝图 guide 固化 CU 文字。
+这是既有 consumer API 的调用示例，不新增命令或交接脚本。本批 `revised/unchanged` 完成后示例即删除候选，文档物化失败不阻止清理；busy、拒绝或异常时保留，清理失败只提示。旧 ref 竞争应重新读取并复核候选，busy 等原运行/锁结束后再提交；修订后沿已有 readiness/文档物化读成品。普通润色也遵守下述未完成资格，不能为改说明修订已完成或退役 CU；不在蓝图 guide 固化 CU 文字。
 
 资格依历史完成事实、run 和 Feature completion 原件判断；曾完成后变 INCOMPLETE、成功终局缺投影、broken/corrupt 记录不能当从未完成。完成后只补原义务走既有同 Feature successor；新增交付、拆分/合并/迁移使用新 CU，精确退役前身保持原字节。修订复用 schema/provenance/设计/角色/依赖校验、精确旧 ref、锁与原子事务，旧 ref 竞争或任一失败不写。提供承诺改变时同批对齐消费者或显式改 provide_id，旧 VALID 不证明新提供项。
 

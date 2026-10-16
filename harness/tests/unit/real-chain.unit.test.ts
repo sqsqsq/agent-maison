@@ -1698,8 +1698,8 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
   }
 });
 
-function deliveryCli(p: RealChainProject, script: string, args: string[]) {
-  const result = spawnSync(process.execPath, [path.join(p.harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only', path.join(p.harnessDir, 'scripts', script), ...args],
+function deliveryCli(p: RealChainProject, script: string, args: string[], nodeArgs: string[] = []) {
+  const result = spawnSync(process.execPath, [...nodeArgs, path.join(p.harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only', path.join(p.harnessDir, 'scripts', script), ...args],
     { cwd: p.harnessDir, encoding: 'utf8', env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(p.root, '.test-checkpoints') } });
   const stdout = result.stdout ?? '';
   let json: any;
@@ -1743,6 +1743,7 @@ test('5f8c2d70 raw requirement → main Agent design/questioning → public cons
       const result = deliveryCli(p, script, args);
       assert(result.status === 0 && result.json?.type === 'design_preparation_required', result.diagnostic);
       assert(result.json.steps[1].command.includes('--accept-candidates') && result.json.steps[2].parameters.project_root === p.root, 'next steps must carry executable commands and parameter sources');
+      assert(result.json.steps[1].command.includes(`--accept-candidates "${result.json.materials.features_dir}/<actual-blueprint-id>/blueprint/change-unit-candidates.json"`), 'candidate command must use the configured blueprint directory');
       assert(!fs.existsSync(path.join(p.root, 'doc/features', rawFeature)), 'raw entry must not create a flat candidate/run/log directory');
     }
     for (const detached of [false, true]) {
@@ -1806,8 +1807,10 @@ test('5f8c2d70 raw requirement → main Agent design/questioning → public cons
     const draft = deliveryCli(p, 'check-component-blueprint.ts', checkArgs);
     assert(draft.status === 1 && draft.json?.issues?.some((row: any) => row.id.startsWith('blueprint_questioning_')), draft.diagnostic);
     const cuArgs = ['--project-root', p.root, '--blueprint', 'ledger-app-blueprint', '--json'];
-    writeHostFile(p.root, 'candidates.json', '[]');
-    assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', 'candidates.json']).status === 1, 'draft must not enter decomposition');
+    const candidatesRel = 'doc/features/ledger-app-blueprint/blueprint/change-unit-candidates.json';
+    writeHostFile(p.root, candidatesRel, '[]');
+    assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]).status === 1, 'draft must not enter decomposition');
+    assert(fs.existsSync(path.join(p.root, candidatesRel)), 'entry rejection must preserve candidates');
     // Isolated questioning substitute consumes the draft/evidence, writes its own coverage rows.
     blueprint.review_summary.questioning.items = questions.map((q: any, index: number) => ({ ...q, question_id: `isolated-${index}`, question: `证据是否支持 ${q.scope_ref}？`, answer: `已核对 ${q.evidence_refs.join(', ')}；${q.answer}` }));
     blueprint.review_summary.questioning.status = 'complete';
@@ -1846,32 +1849,39 @@ test('5f8c2d70 raw requirement → main Agent design/questioning → public cons
     candidate.provenance.extraction_method = providerId;
     const candidates = [{ providerId, artifact: candidate }];
     const malformed = structuredClone(candidate); malformed.change_unit_id = 'invalid-unit'; malformed.target_predicates = [];
-    writeHostFile(p.root, 'candidates.json', JSON.stringify([...candidates, { providerId, artifact: malformed }]));
-    assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', 'candidates.json']).status === 1, 'invalid batch must fail');
+    const invalidCandidates = JSON.stringify([...candidates, { providerId, artifact: malformed }]);
+    writeHostFile(p.root, candidatesRel, invalidCandidates);
+    assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]).status === 1, 'invalid batch must fail');
+    assert(fs.readFileSync(path.join(p.root, candidatesRel), 'utf8') === invalidCandidates, 'rejected batch must preserve candidate bytes');
     const cuPath = path.join(p.root, 'doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml');
     assert(!fs.existsSync(cuPath), 'batch must not partly accept the valid candidate');
-    writeHostFile(p.root, 'candidates.json', JSON.stringify(candidates));
+    writeHostFile(p.root, candidatesRel, JSON.stringify(candidates));
     const lock = path.join(p.root, 'doc/features/ledger-app-blueprint', BLUEPRINT_RECONCILE_LOCK_NAME);
     const locked = tryAcquireLock(lock, { ownerId: 'readiness-test', pid: process.pid });
     assert(locked !== null, 'test must own readiness lock');
-    const accepted = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', 'candidates.json']);
+    const accepted = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]);
     releaseLock(lock, 'readiness-test');
     assert(accepted.status === 1 && accepted.json?.accepted?.length === 1 && accepted.json?.readiness?.blueprintRefs?.busy
       && accepted.json.readiness.ready === false && accepted.json.ready_ids.length === 0, accepted.diagnostic);
+    assert(!fs.existsSync(path.join(p.root, candidatesRel)), 'accepted candidates must be removed even when readiness is busy');
     const bytes = fs.readFileSync(cuPath, 'utf8');
-    const duplicate = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', 'candidates.json']);
+    writeHostFile(p.root, candidatesRel, JSON.stringify(candidates));
+    const duplicate = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]);
     assert(duplicate.status === 1 && duplicate.json.issues[0].id === 'change_unit_candidate_already_exists', duplicate.diagnostic);
+    assert(fs.existsSync(path.join(p.root, candidatesRel)), 'duplicate rejection must retain its input');
     // A real filesystem failure in review materialization cannot revoke accepted/ready CUs.
     const reviewPath = path.join(p.root, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.review.md');
     fs.rmSync(reviewPath);
     fs.mkdirSync(reviewPath);
     const documentCandidate = { ...structuredClone(candidate), change_unit_id: 'z-document-failure' };
-    writeHostFile(p.root, 'document-candidates.json', JSON.stringify([{ providerId, artifact: documentCandidate }]));
-    const documentFailure = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', 'document-candidates.json']);
+    const documentCandidatesRel = 'doc/features/ledger-app-blueprint/blueprint/document-candidates.json';
+    writeHostFile(p.root, documentCandidatesRel, JSON.stringify([{ providerId, artifact: documentCandidate }]));
+    const documentFailure = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', documentCandidatesRel]);
     assert(documentFailure.status === 0 && documentFailure.json.status === 'PASS'
       && documentFailure.json.accepted.length === 1 && documentFailure.json.accepted[0].change_unit_id === 'z-document-failure'
       && documentFailure.json.readiness.ready && documentFailure.json.ready_ids.includes('z-document-failure')
       && documentFailure.json.ready_ids.includes('ledger-refresh'), documentFailure.diagnostic);
+    assert(!fs.existsSync(path.join(p.root, documentCandidatesRel)), 'accepted candidates must be removed even when review materialization fails');
     assert(documentFailure.json.acceptanceReview.status === 'failed' && documentFailure.json.readiness.reviewDocument.status === 'failed'
       && documentFailure.json.acceptanceReview.reason && documentFailure.json.readiness.reviewDocument.rebuildCommand
       && documentFailure.json.next.includes('文档物化失败') && documentFailure.json.next.includes('独立重建'), documentFailure.diagnostic);
@@ -1887,6 +1897,19 @@ test('5f8c2d70 raw requirement → main Agent design/questioning → public cons
     assert(ready.status === 0 && ready.json.readiness.ready && fs.readFileSync(cuPath, 'utf8') === bytes, ready.diagnostic);
     const again = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--readiness']);
     assert(again.status === 0 && fs.readFileSync(cuPath, 'utf8') === bytes, 'repeated readiness must retain canonical identity/content');
+    const cleanupCandidate = { ...structuredClone(candidate), change_unit_id: 'z-cleanup-failure' };
+    writeHostFile(p.root, candidatesRel, JSON.stringify([{ providerId, artifact: cleanupCandidate }]));
+    const cleanupPreload = path.join(p.root, 'fail-candidate-cleanup.cjs');
+    fs.writeFileSync(cleanupPreload, `const fs = require('fs'); const unlink = fs.unlinkSync;
+fs.unlinkSync = (file, ...args) => {
+  if (file === ${JSON.stringify(path.join(p.root, candidatesRel))}) throw new Error('simulated candidate cleanup failure');
+  return unlink(file, ...args);
+};\n`);
+    const cleanupFailure = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel], ['--require', cleanupPreload]);
+    assert(cleanupFailure.status === 0 && cleanupFailure.json.accepted.length === 1 && cleanupFailure.json.readiness.ready
+      && fs.existsSync(cleanupFailure.json.accepted[0].canonical_path), cleanupFailure.diagnostic);
+    assert(fs.existsSync(path.join(p.root, candidatesRel)) && cleanupFailure.stderr.includes('临时文件清理失败')
+      && cleanupFailure.stderr.includes('--readiness'), 'cleanup failure must warn without revoking acceptance or requesting reacceptance');
     assert(fs.existsSync(path.join(p.root, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.review.md')), 'readiness retains document materialization side effect');
     const canonical = loadCanonicalChangeUnit(p.root, 'ledger-app-blueprint', 'ledger-refresh');
     const writeUnit = (id: string, patch: any = {}) => {
@@ -1918,7 +1941,7 @@ test('5f8c2d70 raw requirement → main Agent design/questioning → public cons
     assert(feature === deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh'), 'Feature must come from canonical CU identity');
     const old = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--unit', 'ledger-refresh']);
     assert(old.status === 0 && old.json.status === 'PASS' && old.json.canonical_path === cuPath && !old.json.readiness, old.diagnostic);
-    for (const args of [['--readiness', '--unit', 'ledger-refresh'], ['--readiness', '--accept-candidates', 'candidates.json']]) assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, ...args]).status === 2, 'operations must reject mixed arguments');
+    for (const args of [['--readiness', '--unit', 'ledger-refresh'], ['--readiness', '--accept-candidates', candidatesRel]]) assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, ...args]).status === 2, 'operations must reject mixed arguments');
     // Consume the returned command/arguments, rather than reconstructing the original CLI.
     const scopeStep = decompositionNext.json.steps[2];
     const scopeCommand = deliveryStepArgs(scopeStep, feature);

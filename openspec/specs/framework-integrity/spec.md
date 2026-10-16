@@ -103,7 +103,7 @@ Enforcement: `agents/shared/guard-framework-write-core.mjs`, adapter hook shells
 #### Scenario: Editing-tool write is denied
 
 - **WHEN** an ordinary host agent uses a covered editing tool to write a framework control-plane file
-- **THEN** the guard SHALL deny the operation and point to scratch or an explicit updater/upstream release path
+- **THEN** the guard SHALL deny the operation and direct requirement-related temporary files to the owning blueprint's `blueprint/` directory or Feature's `tmp/` subdirectory, unrelated one-off diagnostics to the system temporary directory, and framework changes to an explicit updater/upstream release path; cleanup follows `consumer-framework-boundary.md`
 
 #### Scenario: Shell coverage is not invented
 

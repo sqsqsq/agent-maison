@@ -55,13 +55,19 @@ function main(): void {
       let accepted: Array<{ change_unit_id: string; canonical_path: string; feature_id: string }> = [];
       let acceptanceReview;
       if (args['accept-candidates']) {
-        const candidates: unknown = JSON.parse(fs.readFileSync(path.resolve(projectRoot, args['accept-candidates']), 'utf8'));
+        const candidatesFile = path.resolve(projectRoot, args['accept-candidates']);
+        const candidates: unknown = JSON.parse(fs.readFileSync(candidatesFile, 'utf8'));
         if (!Array.isArray(candidates)) throw new Error('候选文件须为 JSON 数组 [{providerId, artifact}]');
         const entry = evaluateDesignPreparationEntry(projectRoot, args.blueprint);
         if (!entry.canEnter) throw new Error(entry.reasons.join('; '));
         const result = acceptChangeUnitDecomposition(projectRoot, args.blueprint, candidates as ChangeUnitCandidate[]);
         accepted = result.accepted.map(row => ({ change_unit_id: String(row.changeUnit.change_unit_id), canonical_path: row.canonicalPath, feature_id: deriveChangeUnitFeatureId(args.blueprint!, String(row.changeUnit.change_unit_id)) }));
         acceptanceReview = result.reviewDocument;
+        try {
+          fs.unlinkSync(candidatesFile);
+        } catch (error) {
+          console.warn(`候选已接受，但临时文件清理失败：${candidatesFile}；${(error as Error).message}。请清理该文件，后续使用 --readiness，不要重复接受。`);
+        }
       }
       // Acceptance is already committed. A later readiness failure must never ask for reacceptance.
       let payload;

@@ -1,5 +1,9 @@
 # Framework 升级与迁移说明
 
+## 3.1.0：需求材料归属与临时候选清理
+
+需求相关材料归所属蓝图/Feature：蓝图临时件放既有 `blueprint/` 内，CU/legacy Feature 临时件放其 `tmp/`；正式产物和已引用证据沿原路径保留，无关需求的一次性诊断放系统临时目录。独立 request、compile、`_adhoc` 报告路径不变，详见[材料归属与清理](skills/reference/consumer-framework-boundary.md#材料归属与临时文件清理)。`check:change-unit --accept-candidates` 接受成功后会删除传入的临时候选文件，即使后续 readiness 未通过；拒绝时保留，清理失败只提示，已接受 CU 后续使用 `--readiness`。新规则不自动迁移或删除历史文件；历史材料按归属与引用情况另行处理。
+
 ## 3.1.0 日常入口与独立工程编译
 
 - 集成候选/正式发布件后运行 framework-init UPDATE 刷新宿主入口；review、UT、设备技能描述支持无 Feature 目标，并保留“解锁手机 / 唤醒设备”。Claude 内置 `/review` 别名仍不接管，使用自然语言或项目 `/code-review`。

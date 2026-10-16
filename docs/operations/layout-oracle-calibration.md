@@ -61,7 +61,7 @@ bounds，且首版 **advisory**；真机 D5 在 8 屏跑 FP 观察，零误伤�
 
 | # | 步骤 | 判定 |
 |---|------|------|
-| D1 | `hylyre session start` → 按 `visual-diff-nav.json` 导航至 card_type_sheet 开启态 → `hylyre dump-ui --out <scratch>/dump-card-type-sheet.json` | 树内检索「选择卡类型/储蓄卡/信用卡/招商银行」文本节点与关闭钮（clickable 节点位于 sheet 右上）——**overlay 进树=通过**；不进树 → t2/t3 依赖布局树的子信号置 cancelled，登记 Hylyre 上游需求 |
+| D1 | `hylyre session start` → 按 `visual-diff-nav.json` 导航至 card_type_sheet 开启态 → `hylyre dump-ui --out <Feature目录>/tmp/dump-card-type-sheet.json`（正式采用的证据沿该 Feature 既有证据路径保留，其余用完清理） | 树内检索「选择卡类型/储蓄卡/信用卡/招商银行」文本节点与关闭钮（clickable 节点位于 sheet 右上）——**overlay 进树=通过**；不进树 → t2/t3 依赖布局树的子信号置 cancelled，登记 Hylyre 上游需求 |
 | D2 | 同 D1 对 sms_verify overlay 复测 | 同上 |
 | D3 | 对已设 `.id()` 的组件（home_header_add）设 responseRegion 扩热区后重 dump | bounds 是否随热区变化——不变=视觉边界（§1.2 判定成立） |
 | D4 | 对 Visibility.Hidden/None 组件重 dump | 隐藏节点是否仍在树/bounds 表达——决定 A 类是否需可见性过滤增强 |

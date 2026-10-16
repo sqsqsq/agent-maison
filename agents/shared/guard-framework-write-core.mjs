@@ -171,7 +171,7 @@ function denyText(target) {
   return [
     `[framework 写保护] 已阻止写入 ${target}。`,
     'framework/ 是 Maison 发布件控制面（consumer-framework-boundary.md）：',
-    '  - 临时诊断脚本请放 <repo-root>/scratch/ 或系统临时目录，不要写进 framework/；',
+    '  - 需求相关临时件放所属蓝图 blueprint/ 或 Feature tmp/，无关需求诊断放系统临时目录；用完清理，细则见 consumer-framework-boundary.md；',
     '  - 升级分两步：①用户/CI 的 updater 或集成操作镜像覆盖已验证发布件；',
     '    ②随后运行 /framework-init UPDATE，刷新宿主 config/adapter 物化产物并执行全局 phase；',
     '  - 没有放行通道：integrity.drift_allowlist / allow_local_drift 已退役，写入这里不再有"具名审批"可用',

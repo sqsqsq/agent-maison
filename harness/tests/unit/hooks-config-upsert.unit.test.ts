@@ -289,7 +289,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         assert(deny.status === 0, `deny 协议 = JSON + exit 0（exit 2 不消费 JSON），实际 exit ${deny.status}`);
         const denyOut = JSON.parse(deny.stdout.trim());
         assert(denyOut.permission === 'deny', deny.stdout);
-        assert(typeof denyOut.agent_message === 'string' && denyOut.agent_message.includes('scratch/'), '教育文案应经 agent_message 送达');
+        assert(typeof denyOut.agent_message === 'string' && denyOut.agent_message.includes('Feature tmp/') && denyOut.agent_message.includes('系统临时目录'), '材料归属文案应经 agent_message 送达');
+        assert(!denyOut.agent_message.includes('scratch/'), '不得再推荐宿主根级 scratch');
         assert(typeof denyOut.user_message === 'string' && denyOut.user_message.length > 0, 'user_message 应在');
 
         // allow：非 framework 路径

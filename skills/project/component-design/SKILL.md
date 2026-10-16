@@ -95,13 +95,13 @@ current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
 仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
-**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。主 Agent 写 JSON 数组 `[{providerId, artifact}]` 到临时候选文件，然后在 `framework/harness` 调用公开 consumer 命令；`--accept-candidates` 相对路径按 `--project-root` 解析：
+**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。主 Agent 写 JSON 数组 `[{providerId, artifact}]` 到既有蓝图目录的 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（`<features_dir>` 从 `paths.features_dir` 解析）；蓝图工作区根不放临时件，材料归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。然后在 `framework/harness` 调用公开 consumer 命令；`--accept-candidates` 相对路径按 `--project-root` 解析：
 ```bash
-npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates <candidates.json> --json
+npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates "<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json" --json
 npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --readiness --json
 ```
 
-已有 CU 或接受成功但未就绪时只用 `--readiness`，不重复接受。结果分别报告 accepted ids/paths、readiness/perUnit/原因、人读文档与 canonical Feature id；readiness 含既有指针调和与文档物化副作用。内部实现见 [`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)，宿主无需 import TS 或写交接脚本。
+命令接受成功后立即删除本次候选文件，即使后续 readiness 未就绪或文档物化失败；拒绝时保留供修复，清理失败只提示、不撤销接受结果。已有 CU 或接受成功但未就绪时只用 `--readiness`，不重复接受。结果分别报告 accepted ids/paths、readiness/perUnit/原因、人读文档与 canonical Feature id；readiness 含既有指针调和与文档物化副作用。内部实现见 [`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)，宿主无需 import TS 或写交接脚本。
 
 1. 入口 = admitted blueprint —— **canonical CU 数量为 0 是合法入口**；
 2. decomposition provider / 设计者只提出**临时候选**（内存 / 临时报告）；

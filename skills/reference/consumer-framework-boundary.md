@@ -31,12 +31,15 @@ framework 控制面写权限来自模型外执行环境，不来自 env、`frame
 
 历史 `integrity.drift_allowlist` 与 `integrity.allow_local_drift` 已退役：为存量 config 无损读取可继续解析，但读取即忽略，不能解锁守卫、不能改变 verdict，也不会产生运行时迁移 advisory。迁移说明见 schema/template/MIGRATION。
 
-## 临时诊断脚本去处
+## 材料归属与临时文件清理
 
-- 放 `<repo-root>/scratch/`（宿主自行决定是否忽略）或系统临时目录；
-- 不放 `framework/`；
-- 需要调用 framework 内部函数时，从 scratch 以相对/绝对路径 import；
-- 用完即删，正式脚本回宿主合法目录并按项目规则管理。
+- 需求相关的正式产物、证据和临时材料归对应的既有蓝图/Feature 目录；正式产物与已引用证据沿现有路径保留，不因是截图、日志或 JSON 就当作临时件删除。
+- 蓝图阶段的临时件放 `<features_dir>/<blueprint_id>/blueprint/` 内；**蓝图工作区根 `<features_dir>/<blueprint_id>/` 不放任何临时件**。首次 CU 候选固定为 `blueprint/change-unit-candidates.json`，内容修订候选为同目录 `change-unit-revisions.json`。
+- 已有 CU 或 legacy Feature 的临时脚本、文本、截图、日志放该 Feature 内的 `tmp/` 子目录；不放 Feature 根目录或 `ux-reference/`，避免被读成需求原文或正式参考图。Feature 路径与 `<features_dir>` 复用框架解析（`paths.features_dir` 默认 `doc/features`），不按显示名另建目录。
+- 无关需求的一次性诊断放系统临时目录。独立 request、compile、`_adhoc` 的正式输出仍沿各自既有报告目录，不借用 Feature 证据目录。
+- 临时材料在所服务的操作完成、且不再承担恢复或证据责任时，由创建者清理。新 CU 候选由 `check:change-unit --accept-candidates` 在接受成功后立即删除，即使后续 readiness 未就绪或文档物化失败；拒绝时保留。CU 修订示例在本批 `revised/unchanged` 完成后删除，busy、拒绝或异常时保留。清理失败只提示，不撤销已接受/修订事实，不要求重复提交。
+- 上述目录约定不扩大写权限：不放 `framework/`，仅允许写草稿的无人值守设计修复仍只写指定草稿。需要调用 framework 内部函数或依赖时，可在 `framework/harness` 用 `ts-node --eval`，文件输出仍用所属目录的明确路径，见 [CU 内容修订示例](../../docs/concepts/blueprint-design-inputs.md#未完成-cu-内容修订)。正式脚本回宿主合法目录并按项目规则管理。
+- 新规则不自动迁移或删除历史文件；历史材料按归属与引用情况另行处理。
 
 ## package identity 与完整性
 

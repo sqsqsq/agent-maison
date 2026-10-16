@@ -105,7 +105,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const r = runHook(root, { file_path: path.join(root, 'framework', 'harness', 'scripts', 'tmp-ocr-audit.mjs') });
         assert(r.exit === 2, `应 exit 2 拦截，实际 ${r.exit}；stderr=${r.stderr}`);
         assert(r.stderr.includes('framework 写保护'), r.stderr);
-        assert(r.stderr.includes('scratch/'), '教育文案应指向 scratch 约定');
+        assert(r.stderr.includes('blueprint/') && r.stderr.includes('Feature tmp/') && r.stderr.includes('系统临时目录'), '教育文案应按材料归属给出临时路径');
+        assert(!r.stderr.includes('scratch/'), '不得再推荐宿主根级 scratch');
         assert(r.stderr.includes('updater 或集成操作镜像覆盖已验证发布件'), '第一步须指向真实发布件集成');
         assert(r.stderr.includes('/framework-init UPDATE'), '第二步须指向宿主物化与全局 phase 刷新');
         assert(!/framework-init[^\n]*(下载|解包|覆盖|重铺)/i.test(r.stderr), '不得声称 framework-init 会获取或覆盖发布件字节');

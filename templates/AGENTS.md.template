@@ -39,7 +39,7 @@
 | 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
 | 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | agent-behavioral-principles + Layer 2 量化门禁 |
 | 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
-| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
+| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，需求临时件放所属蓝图 `blueprint/` 或 Feature `tmp/`，无关需求诊断放系统临时目录，用完清理（[材料归属细则](framework/skills/reference/consumer-framework-boundary.md#材料归属与临时文件清理)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
 
 ## 四、工作流与 Skill 路由
 
@@ -55,7 +55,7 @@
 | 只编译工程 | `cd framework/harness` 后运行 `npm run compile -- --project-root <宿主根> --json`；不要求 Feature、diff 或修正登记 |
 | 显式 Skill / 局部维护 | 按请求终点使用共享方法；实际执行再用 project CLI 或 request CLI；产出请求结果后结束 |
 | 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
-| 完整实现交付 | **依赖顺序，不是验证流水线**：① **设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源；由当前主 Agent 先完成；写临时 JSON 候选并用 `check:change-unit --accept-candidates <file> --json` 接受，已有/已接受 CU 用 `--readiness --json` 接续，消费返回的 canonical Feature id。无人值守只改变 ready CU 的执行载体，不把初始设计交给平铺 spec/plan。② `goal-mode-entry --prepare-scope` 生成候选并写入 `feature.yaml`（主 Agent 只提供四项输入：**完成终点**、**请求结果**、**明确的请求动作** `--requested-phases`、**影响判断及其来源路径**；绑定、指纹、unit/device/visual 派生、code-review 补齐全部由机器完成），核对它打印的范围投影——**`--prepare-scope` 只生成候选、不冻结范围**；③ 进入受管执行：**不建 run** 则逐阶段 `harness-runner --phase <p> --feature <f>`，**首次阶段调用**冻结 feature 级范围记录并核对候选指纹；**建 run** 则 按用户选择由 `--prepare-run` 创建真实 attended Goal 或由 `goal-runner --detach` 启动 ready CU（以转交时 feature 的有效范围出生）；④ 各阶段产物只在其阶段内产生，两条路都按冻结的 `execution_scope` 推进到完成终点。**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。|
+| 完整实现交付 | **依赖顺序，不是验证流水线**：① **设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源；由当前主 Agent 先完成；在 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json` 写临时 JSON 候选（`<features_dir>` 沿配置解析；[归属细则](framework/skills/reference/consumer-framework-boundary.md#材料归属与临时文件清理)），用 `check:change-unit --accept-candidates <file> --json` 接受，已有/已接受 CU 用 `--readiness --json` 接续，消费返回的 canonical Feature id。无人值守只改变 ready CU 的执行载体，不把初始设计交给平铺 spec/plan。② `goal-mode-entry --prepare-scope` 生成候选并写入 `feature.yaml`（主 Agent 只提供四项输入：**完成终点**、**请求结果**、**明确的请求动作** `--requested-phases`、**影响判断及其来源路径**；绑定、指纹、unit/device/visual 派生、code-review 补齐全部由机器完成），核对它打印的范围投影——**`--prepare-scope` 只生成候选、不冻结范围**；③ 进入受管执行：**不建 run** 则逐阶段 `harness-runner --phase <p> --feature <f>`，**首次阶段调用**冻结 feature 级范围记录并核对候选指纹；**建 run** 则 按用户选择由 `--prepare-run` 创建真实 attended Goal 或由 `goal-runner --detach` 启动 ready CU（以转交时 feature 的有效范围出生）；④ 各阶段产物只在其阶段内产生，两条路都按冻结的 `execution_scope` 推进到完成终点。**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。|
 | 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
 
 阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。新任务按义务计算范围；旧运行恢复见 MIGRATION。
