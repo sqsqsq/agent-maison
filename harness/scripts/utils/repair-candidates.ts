@@ -1254,7 +1254,7 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
 const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review', 'ut', 'testing']);
 
 /** 候选类别 → 它要求的设计事实种类（review 归因 spec 时是验收定义）。 */
-const SCOPE_REVISION_FACT_KIND: Readonly<Record<RepairOwnerCategory, string>> = Object.freeze({
+export const SCOPE_REVISION_FACT_KIND: Readonly<Record<RepairOwnerCategory, string>> = Object.freeze({
   plan: 'design-decision',
   spec: 'acceptance-definition',
   coding: 'implementation',
@@ -1285,14 +1285,14 @@ export function scopeRevisionInputFromRepairCandidates(
   if (!owned.length) return null;
   const runId = ctx.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
   /* eslint-disable @typescript-eslint/no-require-imports */
-  const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { OBLIGATION_PROVIDERS } = require('./execution-scope') as typeof import('./execution-scope');
   const { resolveCapabilityInputs, readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
   /* eslint-enable @typescript-eslint/no-require-imports */
   // 第五轮必修 1：无 run 时**不能**直接返回 null——那样 D0.3 的修订触发在交互路径上整条失效
   //（无 run 出口读到的提案永远是空）。统一入口自己按载体选来源：有 run 读 run 的有效范围，
   // 无 run 读 feature 冻结记录；两者皆无才不产提议。不新增第二套校验。
-  const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
+  const scope = resolveEffectiveScopeSource(ctx.projectRoot, ctx.feature, runId)?.scope;
   if (!scope) return null;
   // 责任阶段取自**本 run 的有效范围**：同一 provider 家族里已有义务的 owner_phase 就是这一轮
   // 解析出来的责任映射。不重读当前 active workflow——workflow 漂移时那会选错阶段甚至选不到；
@@ -1316,9 +1316,9 @@ export function scopeRevisionInputFromRepairCandidates(
     const kind = SCOPE_REVISION_FACT_KIND[candidate.category];
     const phase = ownerPhase(kind);
     if (!phase) continue;
-    if (candidate.category === 'coding' && (!runId || scope.completion_target !== 'feature' || scope.phase_chain.includes(phase))) continue;
+    if (candidate.category === 'coding' && (!runId || scope.completion_target !== 'feature')) continue;
     const id = `${kind}:${candidate.id}`;
-    if (facts.some(fact => fact.id === id)) continue;
+    const priorFact = facts.find(fact => fact.id === id);
     let targets = [...candidate.files];
     let invalidated: string[] = [];
     if (candidate.category === 'coding') {
@@ -1351,6 +1351,7 @@ export function scopeRevisionInputFromRepairCandidates(
       inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
     }).inputs?.values?.codebase;
     if (!resolved || resolved.state !== 'resolved') continue;
+    if (priorFact) facts.splice(facts.indexOf(priorFact), 1);
     for (const fact of facts) if (scope.obligations.some(obligation => obligation.id === fact.id && invalidated.includes(obligation.owner_phase))) delete fact.satisfied_by;
     facts.push({
       id, kind, applicability: 'required',

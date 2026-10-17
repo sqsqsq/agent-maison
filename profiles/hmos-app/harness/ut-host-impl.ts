@@ -61,6 +61,7 @@ import {
 } from './product-selection';
 import {
   buildUtHvigorTestFailDetails,
+  repeatedUtExecutionFailureNote,
   unresolvedModulePathNote,
   utAffectedFiles,
   type UtHvigorTestFailureModule,
@@ -1315,6 +1316,7 @@ export function checkUtHvigorTest(
   }
 
   const formatted = buildUtHvigorTestFailDetails(bad);
+  const repeatedFailure = repeatedUtExecutionFailureNote(reportsBase, runDir, executionKey, bad);
   return [
     {
       id: 'ut_hvigor_test',
@@ -1322,7 +1324,7 @@ export function checkUtHvigorTest(
       description: ruleDesc(ctx, 'structure_checks', 'ut_hvigor_test'),
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: formatted.lines.join('\n') + ratchetNote + reuseNote,
+      details: formatted.lines.join('\n') + ratchetNote + reuseNote + (repeatedFailure ? `\n${repeatedFailure}` : ''),
       affected_files: formatted.affectedFiles,
       // D1（plan 3a7f9c12）：格式器只对**工具链/设备/安装**族给 failureKind，普通用例断言
       // 失败一路走默认分支返回 undefined——于是 code_regression 合取（回修候选、verifier
@@ -1330,7 +1332,7 @@ export function checkUtHvigorTest(
       // 全部选中模块真实跑完、且每个 bad 模块都是"跑起来了、跑出用例、有用例失败"。
       failure_kind: formatted.failureKind ?? (isRealAssertionFailure(bad, allModulesExecuted) ? 'code_regression' : undefined),
       blocking_class: formatted.blockingClass,
-      suggestion: formatted.suggestion,
+      suggestion: repeatedFailure ?? formatted.suggestion,
     },
   ];
 }

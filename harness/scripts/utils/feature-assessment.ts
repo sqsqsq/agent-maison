@@ -107,7 +107,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
     : { state: 'absent' };
 
   let scope = opts.scope ?? inspected?.scope;
-  if (!scope) { try { scope = loadEffectiveExecutionScope(projectRoot, feature, runId ?? undefined); } catch { scope = undefined; } }
+  if (!scope) { try { scope = loadEffectiveExecutionScope(projectRoot, feature, runId ?? undefined, opts.frameworkRoot); } catch { scope = undefined; } }
 
   const rows = new Map<string, AssessedObligation>();
   for (const o of scope?.obligations ?? []) rows.set(o.id, { id: o.id, kind: o.kind, owner_phase: o.owner_phase, applicability: o.applicability, status: 'covered' });

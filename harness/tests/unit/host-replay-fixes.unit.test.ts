@@ -491,7 +491,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       // plan 4e6fb3b6 返修 3：overrideAuthorizedIdentityFields 对 --override-manifest 返回 'all'——是整体授权
       if (/字段级授权|只放行这次预算/.test(g)) throw new Error('不得把整体 manifest 授权说成只授权预算');
       if (!/整体授权/.test(g) || !/只应.{0,8}预算/.test(g)) throw new Error('须写明整体授权、本次修改只应涉及预算');
-      if (!/活跃/.test(g)) throw new Error('未说明活跃时间口径');
+      if (!g.includes('已累计 480m / 预算 480m') || g.includes('活跃')) throw new Error('须如实显示累计预算时间，不把待机说成模型活跃');
+      if (!g.includes('无人值守长跑请接电源并关闭睡眠')) throw new Error('预算停机须提示长跑供电与睡眠设置');
       // plan a2f7c9e4 §3.2/§3.3：只改预算时重新发起同一请求与显式续跑都接回本 run——不再要求 --force-resume、不再提冷却，
       // 也不再写"起后继、沿用来源旧预算"的限定。
       if (!g.includes('--resume r1 --override-manifest') || !/重新发起同一请求/.test(g)) throw new Error('须给出重新发起与已填好的显式续跑两条路');

@@ -170,7 +170,9 @@ const utFails = {
     : null,
 };
 
-async function bornSuccessor(s: Snapshot, source: string, chain: string[] = ['ut']): Promise<{ successor: string; turns?: number; backtracks?: number }> {
+async function bornSuccessor(s: Snapshot, source: string, chain?: string[]): Promise<{ successor: string; turns?: number; backtracks?: number }> {
+  const requirement = readJson<{ requirement: string }>(runFile(s.root, B1_FEATURE, source, 'manifest.json')).requirement;
+  chain ??= resolveSuccessorExecutionScope(s.root, B1_FEATURE, resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), s.frameworkRoot, requirement, source)!.phase_chain;
   const { result, turns, backtracks } = await withRunnerBudgetLine(() => supersede(s, B1_FEATURE, source, chain, { supersede: [source, RUN_N, RUN_O], ...utFails }));
   assert(result.successor, `后继未出生：${result.error}`);
   return { successor: result.successor!, turns, backtracks };

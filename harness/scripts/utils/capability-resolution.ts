@@ -657,8 +657,8 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
  * 其余判据（找 `contracts@1` / `derive.blueprint-contracts` 绑定后 `readBoundInput`）一行不改。
  */
 export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId?: string): import('./types').ContractsSpec {
-  const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-  const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+  const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const scope = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
   const binding = scope?.obligations.flatMap(obligation => [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)])
     .find(binding => binding.source.kind === 'artifact' ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts');
   if (!binding) throw new Error('frozen construction contract missing; return to design owner');

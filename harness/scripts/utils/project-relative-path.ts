@@ -5,6 +5,25 @@
 import * as path from 'path';
 import * as fs from 'fs';
 
+/** Resolve an existing path's spelling without merging distinct files on case-sensitive hosts. */
+export function existingProjectPathSpelling(projectRoot: string, declared: string): string | undefined {
+  const abs = path.resolve(projectRoot, declared);
+  if (!isInsideProjectRoot(projectRoot, abs)) return undefined;
+  const parts = path.relative(projectRoot, abs).split(path.sep).filter(Boolean);
+  let current = path.resolve(projectRoot);
+  for (const part of parts) {
+    let names: string[];
+    try { names = fs.readdirSync(current); } catch { return undefined; }
+    const match = names.includes(part) ? part : (() => {
+      const candidates = names.filter(name => name.toLowerCase() === part.toLowerCase());
+      return candidates.length === 1 ? candidates[0] : undefined;
+    })();
+    if (!match) return undefined;
+    current = path.join(current, match);
+  }
+  return current;
+}
+
 /**
  * 绝对路径 `abs` 是否落在 `root` 内。
  *

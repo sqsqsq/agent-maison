@@ -345,17 +345,18 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     name: 'e9d4b7a3 t1（review1）：backtrack_target_absent 指引三处可见——builder 文案要素 + 事件/outcome 接线（b3f7d9a2 硬学习）',
     run: () => {
       const guidance = buildBacktrackTargetAbsentGuidance('coding');
-      assert(guidance.includes('--supersede'), '须含 --supersede 交接路径');
-      assert(guidance.includes('--requirement-file'), '须用 --requirement-file 携带增量');
-      assert(guidance.includes('任务点名'), '增量须含任务点名');
-      assert(guidance.includes('关键证据摘要'), '增量须含关键证据摘要');
+      assert(!guidance.includes('--supersede') && !guidance.includes('--requirement-file'), '不得引导自写需求或拼后继');
+      assert(guidance.includes('--repair-notes') && guidance.includes('已有返修窗口'), '修法假设只进返修窗口');
+      assert(guidance.includes('包含 coding 阶段的请求'), '越界目标须由用户授权对应范围');
+      assert(buildBacktrackTargetAbsentGuidance(null).includes('重新发起同一请求'), '缺失输入补齐后重发原请求');
+      assert(guidance.includes('须先取得用户确认'), '设计变更须用户确认');
       assert(guidance.includes('coding'), `须带 recommendation.phase：${guidance}`);
       // 三处可见接线（b3f7d9a2 硬学习：同一文案契约枚举全部承载处）——
       // ① phase_halt 事件 halt_guidance；② outcome halt_guidance；
       // ③ console banner。detach 停机后宿主只读 events/goal-report，console 早滚走。
       const src = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'goal-phase-runtime.ts'), 'utf-8');
       const snippet = '...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {})';
-      const branchIdx = src.indexOf('if (targetIdxBt < 0 || roundRepeated)');
+      const branchIdx = src.indexOf('if (!targetAuthorized || roundRepeated)');
       const emitIdx = src.indexOf('halt_guidance: backtrackHaltGuidance', branchIdx);
       const outcomeIdx = src.indexOf(snippet, emitIdx + 1);
       const consoleIdx = src.indexOf('===== ${haltReason} =====', emitIdx);

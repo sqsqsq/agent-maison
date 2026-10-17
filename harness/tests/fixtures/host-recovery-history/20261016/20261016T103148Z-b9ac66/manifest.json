@@ -1,0 +1,231 @@
+{
+  "requirement_source_files": [
+    "doc/features/原始需求/1-2-银行卡/原始需求.md",
+    "doc/features/bc-openCard-2/bank-card-opening-flow/goal-repair-20261016T1028.md"
+  ],
+  "schema_version": "1.0",
+  "start_phase": "spec",
+  "end_phase": "plan",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "requirement": "# BankCard原始需求描述\n\n> **需求名**: `bc-openCard-2`\n> **创建日期**: 2026-06-10\n\n---\n\n## 一、需求描述\n\n### 需求内容\n\n本次需求内容是银行卡开卡需求，我把原始图片都归档到了本文件同级目录下。\n\n#### 需求规格：\n\n1.用户进入已有的添加卡片页面，之前已经开发过了。之前点击任一银行点击后，提示暂不支持，本次需求改为拉起选择卡类型半模态页面。\n\n2.用户在全部银行页面，任一银行点击后，效果与添加银行卡页面效果一致。\n\n3.选择卡类型半模态页面，会展示本银行支持的储蓄卡+信用卡，如果只支持储蓄卡或者信用卡则只展示一个即可。最多只能选择一种卡类型添加，选择后，下方可点击同意并继续按钮进入对应银行的选择具体卡片页面。\n\n4.银行的选择具体卡片页面，展示该银行支持的银行卡信息，卡号只显示前四后四，但实际后台数据要按完整卡号处理。用户选择一张银行卡后，同意协议，点击下一步，拉起输入验证码半模态页面。\n\n5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。\n\n6.添加结果页是个全屏页面，没有左滑箭头，也禁止左滑事件。添加结果页根据带过来的添卡结果，展示成功或者失败状态。同时本页面只有点击完成按钮才能退出页面，并且在页面退出时，关闭当前栈中1-6的所有页面（都是本轮银行卡添卡页面）。如果本次添加是成功状态，则带着卡片卡号跳转到钱包首页（后续等银行卡详情页开发完，这里会引导跳到银行卡详情页，并携带当前卡片参数）。如果本次添加失败则仅将过程中的页面全部退出，回到最开始的添加卡片页面。\n\n#### 页面说明：\n\n- 1）选择卡类型半模态：页面布局完全参考'3-点击任意银行拉起添卡选卡半模态.jpg'。在添加银行卡或全部银行页面，点击某个银行后，拉起选择卡类型半模态（默认所有mock银行都支持储蓄卡和信用卡，该数据随银行数据走），上方是银行信息，然后是储蓄卡/信用卡二选一，下方有小字提示，然后是协议内容（本次默认按文本展示，不需要可点击富文本），最下方是同意并继续按钮。\n\n- 2）选择具体卡片页面：页面布局完全参考'4-点击信用卡或储蓄卡后拉起选卡页面.jpg'。在第3步选择银行+卡类型后点击继续，跳转全屏的银行内部选卡页面，页面title就是银行名称，上方是小字提示，中间是可选择的不同卡片（每个银行，储蓄卡/信用卡，分别mock 1-2张卡数据），下方是协议（文本即可，不需要富文本），最下方是下一步。\n\n- 3）输入验证码半模态：页面布局完全参考'5-选中某张卡片后拉起短信验证.jpg'。第4步选择具体卡片下一步后，拉起短语输入弹框，上方是小字提示（里面要展示用户手机号，从账号mock数据读），中间是输入框，左边输入右边发送按钮，用户点击发送后，需要将按钮变为60s倒计时，倒计时过程中按钮不允许再次点击。倒计时清零后，按钮重新变成再次发送，并且可再次点击。用户在短信输入框中，只能输入6位数字（需要校验），只有输入正确，下方下一步按钮才从置灰状态变为可点击。点击下一步后，则绑卡完成，进入添卡成功结果页。\n\n- 4）添加结果页：页面布局完全参考'6-短信验证完成后结果页.jpg'。无title，全屏页面。上方根据前一个页面传递的添卡结果，控制上方图标/文案/下方小字的提示内容，然后附一张引导图片（大差不差就行了），再往下的激活nfc部分本次先不需要。最下方是完成按钮。点击完成按钮后，跳转到卡详情页。并且本次添加的卡片数据则需要写入数据库中，数据库要包含卡片的详细数据，比如卡号/类型/哪家银行/支持华为支付或银联手机闪付/交易记录，后续的卡详情等页面都是根据数据库读取卡数据并展示。有一点要注意：到了添加结果页，要屏蔽左滑事件，并且在点击完成按钮后，要把整个开卡过程中的所有开卡相关页面全部从页面栈中剔除（从添加银行卡页面开始，一直到结果页自身）。避免开卡完成后还能一直左滑看到开卡过程页面。\n\n#### 路由规格\n\n1. 所有页面跳转要遵循已有路由规则，相关代码参考模块画像去找，不要自由发挥或者另外写一套。\n2. 测试用例要包含老代码和本轮新开发代码的页面互相跳转功能，不能导致原有路由受损。\n## 本轮修复增量 (successor requirement increment)\n# bc-openCard-2 施工链修复增量\n\n## 任务点名\n\n从 halted run `20261016T083014Z-b5ada8` 创建 fresh successor，重新消费 canonical CU revision 6 与已修订蓝图，修复 plan 绑定后继续完成 coding、review、UT、testing/真机验收。此文件只承载施工恢复，不新增或改变产品需求。\n\n## 关键证据摘要\n\n- halt：`backtrack_target_absent`；coding 发现的责任阶段为 plan，但旧 run 当前执行链没有可回退的 plan 目标。\n- verifier 缺陷：`doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml` 错把 `NavPathStack` 当作 data boundary，并以 `relationalStore.RdbStore` 承载 `BankCardRepository` 方法。\n- verifier 缺陷：`AccountService.getUserProfile()` 实际签名为 `async getUserProfile(): Promise<UserProfile>`，旧 plan 投影为同步返回。\n- verifier 缺陷：Phone 根页真实路径为 `01-Product/Phone/src/main/ets/pages/index.ets`，旧投影存在 `Index.ets` 大小写漂移。\n- 设计修复已落地：`doc/features/bc-openCard-2/blueprint/component-blueprint.yaml` 已改为 `BankCardRepository` storage boundary、移除 `NavPathStack` data boundary、补 `AccountService.getUserProfile` 异步接口并统一小写路径。\n- 设计门已复验：`check:component-blueprint` PASS；`check:change-unit --readiness` PASS；canonical CU 已升到 revision 6，constructable，无 projection issue。\n\n## 恢复要求\n\n1. plan 重新投影 revision 6 的 `change_unit_ref`、predicate/provide/design_ref mappings，不复用旧 rev5 sidecar。\n2. `use-cases.yaml` 仅保留真实业务/存储边界，导航副作用由 acceptance device focus 与 testing 承担。\n3. `contracts.yaml` 使用 `Promise<UserProfile>`、`async: true` 与真实小写 Phone 路径。\n4. plan 闭环后继续原完整交付范围，不跳过 compile、review、业务 UT、设备交互和参考图视觉验收。",
+  "adapter": "codex",
+  "adapter_provenance": "local_config",
+  "chain_override": [
+    "spec",
+    "plan"
+  ],
+  "budget": {
+    "max_retries_per_phase": 2,
+    "max_total_turns": 30,
+    "wall_clock_minutes": 480,
+    "max_transient_api_retries": 3
+  },
+  "dependency_policy": {
+    "deferrable_blocking_classes": [
+      "externalBlocked"
+    ],
+    "deferrable_failure_kinds": [
+      "device_blocked"
+    ],
+    "propagate_to_downstream": true
+  },
+  "unattended": {
+    "write_mode": "full-access",
+    "approval_mode": "never",
+    "max_turns": 20
+  },
+  "run_id": "20261016T103148Z-b9ac66",
+  "report_dir": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T103148Z-b9ac66",
+  "created_at": "2026-10-16T10:32:13.771Z",
+  "visual_provider_pin": {
+    "adapter": "codex",
+    "model": "gpt-6.1-sol"
+  },
+  "execution_scope": {
+    "schema_version": "1.0",
+    "completion_target": "feature",
+    "requested_results": [
+      "完整实现 bc-openCard-2 银行卡开卡流程并完成业务 UT、真机交互与参考图验收"
+    ],
+    "obligations": [
+      {
+        "id": "acceptance-context:pending",
+        "kind": "acceptance-context",
+        "applicability": "unknown",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "basis": [
+          {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "13ccf74aa5ca92040856e601fe202ee64f37f0eb06199ae7141fb23a6041be31"
+          }
+        ],
+        "owner_phase": "spec"
+      },
+      {
+        "id": "acceptance-context:request:spec",
+        "kind": "acceptance-context",
+        "owner_phase": "spec",
+        "applicability": "required",
+        "reason": "用户明确请求 spec",
+        "basis": []
+      },
+      {
+        "id": "design-context:pending",
+        "kind": "design-context",
+        "applicability": "unknown",
+        "reason": "本 feature 尚无可解析的设计来源（仅有需求）",
+        "basis": [
+          {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "13ccf74aa5ca92040856e601fe202ee64f37f0eb06199ae7141fb23a6041be31"
+          }
+        ],
+        "owner_phase": "plan"
+      },
+      {
+        "id": "design-context:request:plan",
+        "kind": "design-context",
+        "owner_phase": "plan",
+        "applicability": "required",
+        "reason": "用户明确请求 plan",
+        "basis": []
+      },
+      {
+        "id": "implementation:request:coding",
+        "kind": "implementation",
+        "owner_phase": "coding",
+        "applicability": "required",
+        "reason": "用户明确请求 coding",
+        "basis": []
+      },
+      {
+        "id": "code-review:request:review",
+        "kind": "code-review",
+        "owner_phase": "review",
+        "applicability": "required",
+        "reason": "用户明确请求 review",
+        "basis": []
+      },
+      {
+        "id": "unit-evidence:request:ut",
+        "kind": "unit-evidence",
+        "owner_phase": "ut",
+        "applicability": "required",
+        "reason": "用户明确请求 ut",
+        "basis": []
+      },
+      {
+        "id": "visual-evidence:fidelity",
+        "kind": "visual-evidence",
+        "applicability": "required",
+        "reason": "fidelity ssot: pixel_1to1",
+        "basis": [],
+        "owner_phase": "testing"
+      }
+    ],
+    "phase_chain": [
+      "spec",
+      "plan"
+    ],
+    "reused_phases": [],
+    "unresolved": [
+      {
+        "obligation_id": "acceptance-context:pending",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "coding",
+          "review",
+          "ut",
+          "testing"
+        ]
+      },
+      {
+        "obligation_id": "design-context:pending",
+        "owner": "plan",
+        "reason": "本 feature 尚无可解析的设计来源（仅有需求）",
+        "needed_by": []
+      },
+      {
+        "obligation_id": "implementation:request:coding",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "coding"
+        ]
+      },
+      {
+        "obligation_id": "code-review:request:review",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "review"
+        ]
+      },
+      {
+        "obligation_id": "unit-evidence:request:ut",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "ut"
+        ]
+      },
+      {
+        "obligation_id": "visual-evidence:fidelity",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "testing"
+        ]
+      }
+    ],
+    "policy_fingerprint": "e4b8b3b4f42f824faeebc561d2a99c74e9bccf59ae5e5f941b156673b76047d8",
+    "request_impact": {
+      "user_visible_behavior_change": true,
+      "reason": "现有 AddBankCardPage.handleBankTap 仅提示不支持，本轮改为启动完整开卡流程并改变导航与持久化运行语义",
+      "basis": [
+        {
+          "input_id": "codebase",
+          "source": {
+            "kind": "derive",
+            "provider_id": "derive.codebase"
+          },
+          "dependencies": [
+            {
+              "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+              "exists": true,
+              "sha256": "d9c72409a6aa5de9b8c4e41eb5e8648d68665b75ee296218a3566c70dd0ddb38",
+              "role": "derive"
+            }
+          ],
+          "source_refs": [
+            "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets"
+          ],
+          "content_fingerprint": "dc877ce354e3fdee2f28f422b9af667ecaac26b19f5e5d639ab1c91a13fdab90"
+        }
+      ]
+    }
+  },
+  "phase_chain": [
+    "spec",
+    "plan"
+  ],
+  "run_base_sha": "1534dbc0365001b20acab01bbf5b5e54d9d8eea0",
+  "successor_of": "20261016T083014Z-b5ada8",
+  "inherited_round_fingerprints": [
+    "bbebda3083b67a633f2711c9ccc0406d9d85c3fc99097dcc0d57fad6c3687610"
+  ],
+  "inherited_drift_fingerprints": []
+}

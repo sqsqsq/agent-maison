@@ -1248,7 +1248,7 @@ Enforcement: `harness/scripts/utils/repair-candidates.ts`, `harness/harness-runn
 
 ### Requirement: Assess routes repair candidates to the responsible phase via strict workflow mapping
 
-Assess SHALL map repair-candidate ownership through the current resolved workflow/track, returning no phantom phase and no chain-head fallback. Multiple owners target the most-upstream real phase while retaining the grouped facts. Goal and unattended batch execution SHALL automatically authorize any in-chain earlier target through the single `backtrack_to_phase` branch, existing invalidation transaction, budget, and fingerprint fuse. Manual UI MAY display the routing but MUST NOT require confirmation to preserve quality. A target absent from the narrowed chain SHALL first use the existing scope revision when complete feature delivery authorizes the real workflow owner; request-only or unauthorized targets retain `backtrack_target_absent`. Chain-external coding revision SHALL require a run carrier and SHALL resolve its implementation basis from that run's existing implementation source dependencies or bound contract write set, excluding directories and missing placeholder paths; diagnostic candidate files SHALL only trigger and summarize the repair. Old phase-specific execution branches and dead recommendation actions MUST NOT coexist.
+Assess SHALL map repair-candidate ownership through the current resolved workflow/track, returning no phantom phase and no chain-head fallback. Multiple owners target the most-upstream real phase while retaining the grouped facts. Goal and unattended batch execution SHALL route any already-authorized earlier owner through the single `backtrack_to_phase` branch, existing invalidation transaction, budget, and fingerprint fuse. Manual UI MAY display the routing but MUST NOT require confirmation to preserve quality. An owner absent from the remaining queue SHALL be reopened through the existing scope-revision or backtrack event and the shared effective-proof projection; a repair candidate or new revision proposal is not a prerequisite. Only a target outside the original authorization retains `backtrack_target_absent`. Chain-external coding revision SHALL require a run carrier and SHALL resolve its implementation basis from that run's existing implementation source dependencies or bound contract write set, excluding directories and missing placeholder paths; diagnostic candidate files SHALL only trigger and summarize the repair. Old phase-specific execution branches and dead recommendation actions MUST NOT coexist.
 
 Enforcement: `harness/scripts/utils/assess.ts`, `harness/scripts/utils/correction-routing.ts`, `harness/scripts/utils/goal-assess-driver.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-in-session-driver.ts`
 
@@ -1368,7 +1368,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/verify-fea
 
 ### Requirement: Downstream-start runs must not rewrite spec-owned frozen decision files
 
-A downstream-start run SHALL read and reuse upstream frozen decision files byte-for-byte. If requirement/fidelity identity differs, files are corrupt/missing where required, or upstream closure is stale, the runner SHALL produce the total earlier-gap disposition: return to the actual owner through `backtrack_to_phase` when the resolved chain/run can execute it, otherwise surface `backtrack_target_absent` with a successor/full-chain route. A hard capability conflict still defers using in-memory capability facts. The runner MUST NOT rewrite upstream files, emit a dead `rerun_phase:*` recommendation, or classify a known owner gap as `framework_bug`.
+A downstream-start run SHALL read and reuse upstream frozen decision files byte-for-byte. If requirement/fidelity identity differs, files are corrupt/missing where required, or upstream closure is stale, the runner SHALL return to the authorized owner through the existing `backtrack_to_phase` and shared proof invalidation, including gaps without repair candidates or a revision proposal. An unauthorized target retains `backtrack_target_absent` and guidance naming its owner and required user confirmation. Guidance MUST NOT instruct the driver to author requirement increments or construct successors to refresh opportunities; repair hypotheses use the existing repair-notes window. A hard capability conflict still defers using in-memory capability facts. The runner MUST NOT rewrite upstream files, emit a dead `rerun_phase:*` recommendation, or classify a known owner gap as `framework_bug`.
 
 Enforcement: `harness/scripts/utils/goal-preflight.ts`, `harness/scripts/goal-runner.ts`, `harness/scripts/utils/assess.ts`, `harness/scripts/utils/goal-assess-driver.ts`
 
@@ -1802,7 +1802,7 @@ Enforcement: `harness/scripts/utils/goal-runner-phase.ts`, `harness/scripts/goal
 #### Scenario: genuine exhaustion halts with visible reason and real routes
 
 - **WHEN** accumulated active time reaches the wall budget at resume
-- **THEN** the run SHALL halt with `budget_wall_clock` present on outcome/phase_halt/run_end and guidance offering a new-manifest run or `--override-manifest` resume
+- **THEN** the run SHALL halt with `budget_wall_clock` present on outcome/phase_halt/run_end and guidance naming the existing manifest and authorized `--override-manifest` continuation, without creating an exhausted successor
 
 ### Requirement: Rule changes have an executable migration without rewriting historical completion
 
@@ -1959,7 +1959,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/goal-manif
 
 ### Requirement: Compatibility recovery is part of the frozen actual chain
 
-Any compatibility condition that requires an earlier owner phase SHALL be resolved before modern fresh creation and included in the ordered chain passed to `createGoalRun`. After `run_created`, the runtime MUST execute only its recorded `phase_chain`; a recovery target absent from that chain MUST halt as framework corruption and MUST NOT be inserted locally.
+Any compatibility condition that requires an earlier owner phase SHALL be resolved before modern fresh creation and included in the ordered chain passed to `createGoalRun`. After `run_created`, birth identity MUST remain unchanged. Current execution SHALL derive from authorized obligations, valid proofs and existing revision/backtrack events; a target absent from the remaining queue MUST NOT be treated as unauthorized merely because it was previously satisfied. A genuinely unauthorized target retains the existing refusal. No independent mutable stage-state ledger SHALL be added.
 
 Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-run-creation.ts`
 
@@ -2204,6 +2204,23 @@ When fidelity intent is missing, scope-fact derivation SHALL use the existing pu
 
 ### Requirement: Preserve unfinished delivery duties through recovery
 A successor SHALL inherit the owners of unfinished required obligations, including stages temporarily omitted from the executable chain by definition gaps. Unknown evidence SHALL be re-derived from current inputs rather than promoted to an explicitly requested phase. Valid completed evidence and cumulative budget SHALL remain governed by the existing recovery rules.
+
+Current satisfaction SHALL be projected once from obligations, applicable evidence and causal revision/backtrack history. A previous phase PASS SHALL NOT satisfy a later new or reopened repair duty. The same projection SHALL govern proof supplementation, live scheduling, resume and completion; recorded birth/revision fingerprints remain immutable identity facts. A fresh later PASS may close its repair. Normal downstream-owned test files and reports SHALL NOT invalidate unrelated upstream work. Runless delivery SHALL consume its existing feature revision and phase evidence, without creating a run-event ledger.
+
+#### Scenario: Old PASS cannot discharge a newly discovered repair
+- **WHEN** review adds a required plan repair after plan previously passed, or repeats a previously satisfied finding
+- **THEN** the authorized plan owner is reopened through the existing recovery path, and old downstream proofs cannot prematurely close the repair
+- **AND** unaffected spec evidence remains reusable and a new valid owner PASS is accepted
+
+#### Scenario: Device parking cannot skip the unfinished UT
+- **WHEN** UT remains device-blocked after the existing bounded wait
+- **THEN** its parking outcome stops dependent testing; after recovery the unfinished UT runs first
+- **AND** successful recovery within the wait does not emit a later stale parking event
+
+#### Scenario: Exhausted delivery budget prevents successor creation
+- **WHEN** the existing delivery-cycle fold has no usable time or turns after authorized budget overrides are applied
+- **THEN** the public entry refuses before creating a successor directory and names the existing manifest and override path
+- **AND** text and Markdown status show the same stop reason and elapsed/limit wall budget; running-session sleep remains counted
 
 #### Scenario: Definition work temporarily hides implementation
 - **WHEN** a full-delivery run has required coding/review duties held behind an unresolved definition

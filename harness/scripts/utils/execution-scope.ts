@@ -14,6 +14,9 @@ export interface ScopeEvidenceRef {
   evidence_manifest_aggregate: string;
 }
 export type EvidenceOrInputRef = InputBinding | ScopeEvidenceRef;
+export function acceptsDefinitionInputProof(kind: string): boolean {
+  return kind === 'acceptance-context' || kind === 'design-context';
+}
 export interface ExecutionObligation {
   id: string;
   kind: string;
@@ -423,6 +426,17 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     if (!reviewer) fail('实现交付缺少审查责任 provider');
     obligations.push({ id: 'code-review:implementation', kind: 'code-review', owner_phase: reviewer.id, applicability: 'required', reason: '本次实现交付需要审查', basis: [...implementation.basis] });
   }
+  return projectScopeSchedule({ schema_version: '1.0', completion_target: request.completion_target, requested_results: [...request.requested_results], obligations, phase_chain: [], reused_phases: [], unresolved: [],
+    policy_fingerprint: executionScopeFingerprint({ workflow, contracts: input.contract_fingerprints }),
+    ...(input.control_edges ? { control_edges: structuredClone(input.control_edges) } : {}),
+    ...(request.impact ? { request_impact: structuredClone(request.impact) } : {}) }, workflow);
+}
+
+/** One schedule projection for initial resolution and current effective obligations. */
+export function projectScopeSchedule(scope: ExecutionScope, workflow: WorkflowSpec): ExecutionScope {
+  const obligations = structuredClone(scope.obligations);
+  const phases = new Map(workflow.artifacts.map(a => [a.id, a]));
+  const definitionKinds = new Set<string>([...OBLIGATION_PROVIDERS['obligations.spec'], ...OBLIGATION_PROVIDERS['obligations.plan']]);
   const needed = new Set(obligations.filter(o => o.applicability === 'required' && !o.satisfied_by?.length).map(o => o.owner_phase));
   const unresolved: ExecutionScope['unresolved'] = obligations.filter(o => o.applicability === 'unknown').map(o => ({ obligation_id: o.id, owner: o.owner_phase, reason: o.reason, needed_by: [o.owner_phase] }));
   const investigation = new Set(workflow.artifacts.filter(a => ['obligations.spec', 'obligations.plan'].includes(a.obligation_provider_id ?? '')).map(a => a.id));
@@ -457,7 +471,7 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   do {
     removed = false;
     for (const phase of [...needed]) {
-      const predecessors = [...(phases.get(phase)?.requires ?? []), ...(input.control_edges ?? []).filter(edge => edge.after === phase).map(edge => edge.before)];
+      const predecessors = [...(phases.get(phase)?.requires ?? []), ...(scope.control_edges ?? []).filter(edge => edge.after === phase).map(edge => edge.before)];
       const missing = predecessors.find(before => unavailable.has(before)
         && obligations.some(o => o.owner_phase === before && o.applicability !== 'not_applicable' && !o.satisfied_by?.length));
       if (!missing) continue;
@@ -468,10 +482,10 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       }
     }
   } while (removed);
-  const edges = (input.control_edges ?? []).filter(edge => needed.has(edge.after));
+  const edges = (scope.control_edges ?? []).filter(edge => needed.has(edge.after));
   for (const edge of edges) if (!phases.has(edge.before) || !phases.has(edge.after) || !edge.basis.length) fail('控制边缺少合法阶段或真实依据');
   for (const edge of edges) if (!needed.has(edge.before) && !obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'evidence_manifest_aggregate' in ref && ref.phase === edge.before))) fail(`真实控制前置尚未满足：${edge.before} → ${edge.after}`);
-  for (const edge of edges) for (const obligation of obligations.filter(o => o.owner_phase === edge.after && o.applicability === 'required')) obligation.basis.push(...edge.basis);
+  for (const edge of edges) for (const obligation of obligations.filter(o => o.owner_phase === edge.after && o.applicability === 'required')) for (const binding of edge.basis) if (!obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding))) obligation.basis.push(binding);
   const defaults = [...new Set([...(workflow.auto_chain ?? []), ...phases.keys()])];
   const chain: string[] = [];
   while (needed.size) {
@@ -487,14 +501,112 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       if (refs.length) reused.push({ phase, obligation_ids: obligationsForPhase.map(o => o.id), evidence_refs: refs });
     }
   }
-  return validateExecutionScope({ schema_version: '1.0', completion_target: request.completion_target, requested_results: [...request.requested_results], obligations, phase_chain: chain, reused_phases: reused, unresolved,
-    policy_fingerprint: executionScopeFingerprint({ workflow, contracts: input.contract_fingerprints }), ...(edges.length ? { control_edges: structuredClone(edges) } : {}),
-    // Carried so every revision rebuild inherits the sourced impact judgement instead of
-    // silently dropping it (which would send device back to `unknown` on each revision).
-    ...(request.impact ? { request_impact: structuredClone(request.impact) } : {}) });
+  return validateExecutionScope({ ...scope, obligations, phase_chain: chain, reused_phases: reused, unresolved });
 }
 
 export function executionCompletionPhases(scope: ExecutionScope): string[] {
   validateExecutionScope(scope);
   return [...new Set([...scope.reused_phases.map(p => p.phase), ...scope.phase_chain])];
+}
+
+/** A new/reopened duty invalidates its owner and affected successors, never its predecessors. */
+export function scopeRevisionInvalidations(previous: ExecutionScope, next: Pick<ExecutionScope, 'obligations'>, order: readonly string[], completed: ReadonlySet<string> = new Set()): string[] {
+  const roots = next.obligations.filter(after => {
+    if (after.applicability !== 'required') return false;
+    const before = previous.obligations.find(item => item.id === after.id && item.kind === after.kind);
+    if (!before || before.applicability !== 'required') return !after.satisfied_by?.length;
+    return (!!before.satisfied_by?.length || completed.has(before.owner_phase)) && !after.satisfied_by?.length;
+  }).map(item => item.owner_phase);
+  const owners = new Set([...previous.obligations, ...next.obligations].map(item => item.owner_phase));
+  return affectedScopePhases(roots, order).filter(phase => owners.has(phase));
+}
+
+export function affectedScopePhases(roots: readonly string[], order: readonly string[]): string[] {
+  const first = Math.min(...roots.map(phase => order.indexOf(phase)).filter(index => index >= 0));
+  return Number.isFinite(first) ? order.slice(first) : [];
+}
+
+export function authorizedScopePhases(birth: ExecutionScope, workflow: WorkflowSpec): string[] {
+  return birth.completion_target === 'request' ? [...birth.phase_chain] : workflow.artifacts.filter(phase => phase.scope === 'feature').map(phase => phase.id);
+}
+
+export interface ScopeHistoryEvent {
+  type?: string;
+  phase?: string;
+  verdict?: string;
+  action?: string;
+  advance_blocked?: boolean;
+  execution_scope?: ExecutionScope;
+  invalidated_phases?: unknown;
+  to_phase?: string;
+  ts?: string;
+  applied_at?: string;
+}
+
+export function isEffectivePhasePass(event: ScopeHistoryEvent): boolean {
+  return event.type === 'phase_verdict' && event.verdict === 'PASS' && !event.advance_blocked
+    && (event.action === undefined || event.action === 'advance');
+}
+
+/** Derived causal state only: history remains immutable and file mtimes never establish a PASS. */
+export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeHistoryEvent[], order: readonly string[], currentPhasePass?: string) {
+  let scope = birth;
+  const invalidated = new Set<string>();
+  const passed = new Set<string>();
+  const invalidatedAt = new Map<string, string>();
+  const revisions = new Map<number, string[]>();
+  const observed = currentPhasePass ? [...events, { type: 'phase_verdict', phase: currentPhasePass, verdict: 'PASS', action: 'advance' }] : events;
+  observed.forEach((event, index) => {
+    let revoked: string[] = [];
+    if (event.type === 'scope_revised' && event.execution_scope) {
+      revoked = scopeRevisionInvalidations(scope, event.execution_scope, order, passed);
+      scope = event.execution_scope;
+      revisions.set(index, revoked);
+    } else if (event.type === 'phase_backtrack_requested') {
+      revoked = affectedScopePhases([...Array.isArray(event.invalidated_phases) ? event.invalidated_phases.filter((p): p is string => typeof p === 'string') : [], ...(event.to_phase ? [event.to_phase] : [])], order);
+    } else if (event.type === 'phase_invalidated' && event.phase) revoked = affectedScopePhases([event.phase], order);
+    else if (event.phase && (event.type === 'phase_halt' || (event.type === 'phase_verdict' && event.verdict === 'FAIL'))) {
+      revoked = affectedScopePhases([event.phase], order);
+    }
+    for (const phase of revoked) {
+      invalidated.add(phase); passed.delete(phase);
+      invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+    }
+    if (event.type === 'phase_verdict' && event.phase && event.action !== 'retry') {
+      if (isEffectivePhasePass(event)) { invalidated.delete(event.phase); passed.add(event.phase); }
+      else passed.delete(event.phase);
+    }
+  });
+  return { scope, invalidated, passed, invalidatedAt, revisions };
+}
+
+/** The queue is a view of effective duties; historical outcomes cannot independently skip it. */
+export function effectiveScopeView(input: {
+  birth: ExecutionScope; events: readonly ScopeHistoryEvent[]; workflow: WorkflowSpec;
+  proofs?: ReadonlyMap<string, ScopeEvidenceRef>;
+  stalePhases?: readonly string[];
+  reopen?: string;
+}): ExecutionScope {
+  if (input.reopen && !authorizedScopePhases(input.birth, input.workflow).includes(input.reopen)) throw new Error(`[execution-scope] recovery target outside authorization: ${input.reopen}`);
+  const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
+  const history = scopeProofHistory(input.birth, input.events, order);
+  const scope = structuredClone(history.scope);
+  const invalid = new Set([...history.invalidated].filter(phase => !input.proofs?.has(phase)));
+  for (const phase of [...affectedScopePhases(input.stalePhases ?? [], order), ...affectedScopePhases(input.reopen ? [input.reopen] : [], order)]) invalid.add(phase);
+  for (const obligation of scope.obligations) {
+    if (obligation.applicability !== 'required') continue;
+    if (invalid.has(obligation.owner_phase)) delete obligation.satisfied_by;
+    else if (input.proofs?.has(obligation.owner_phase)) obligation.satisfied_by = [input.proofs.get(obligation.owner_phase)!];
+  }
+  const projected = projectScopeSchedule(scope, input.workflow);
+  // A direct authorized backtrack is itself an existing instruction to re-run the owner,
+  // even when its former duties were not_applicable. Resume derives it from the same event.
+  const recoveryTargets = [...input.events.filter(event => event.type === 'phase_backtrack_requested'
+    && event.to_phase && invalid.has(event.to_phase)).map(event => event.to_phase!), ...(input.reopen ? [input.reopen] : [])]
+    .filter(phase => authorizedScopePhases(input.birth, input.workflow).includes(phase));
+  if (!recoveryTargets.length) return projected;
+  return validateExecutionScope({ ...projected,
+    phase_chain: order.filter(phase => projected.phase_chain.includes(phase) || recoveryTargets.includes(phase)),
+    reused_phases: projected.reused_phases.filter(item => !recoveryTargets.includes(item.phase)),
+  });
 }

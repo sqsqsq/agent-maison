@@ -1225,6 +1225,27 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: '28e31f53 real b632bb events project the budget halt reason and lineage wall time',
+    run: () => {
+      const history = path.resolve(__dirname, '../fixtures/host-recovery-history/20261016');
+      const runId = '20261016T121435Z-b632bb';
+      const manifest = JSON.parse(fs.readFileSync(path.join(history, runId, 'manifest.json'), 'utf8')) as GoalManifest;
+      const events = loadEventsJsonl(path.join(history, runId, 'events.jsonl'));
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-budget-history-'));
+      try {
+        // Preserve raw records, including ancestors required by the production budget fold.
+        fs.cpSync(history, path.dirname(path.join(root, manifest.report_dir)), { recursive: true });
+        const snap = projectGoalProgress({ projectRoot: root, manifest, events, workflow,
+          nowMs: Date.parse(events.at(-1)!.ts) });
+        assert(snap.status === 'HALTED' && snap.status_reason === 'budget_wall_clock', JSON.stringify(snap));
+        for (const rendered of [formatGoalStatusText(snap, manifest.feature, runId), generateProgressMarkdown(snap)]) {
+          assert(rendered.includes('Reason: budget_wall_clock'), rendered);
+          assert(rendered.includes('Budget: turns 23/30, wall 479m/480m'), rendered);
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
     name: 'runStatusWatchLoop: maxTicks=2 renders twice',
     run: async () => {
       let renders = 0;

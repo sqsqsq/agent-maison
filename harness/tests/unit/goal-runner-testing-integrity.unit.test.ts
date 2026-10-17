@@ -19,6 +19,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { runDeviceReadinessGate, evaluateDeviceReadinessProbe } from '../../scripts/utils/device-readiness-gate';
 import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
@@ -845,7 +846,10 @@ export async function runGoalRuntimeChain(
           const written = writePhaseEvidenceManifest(pr, manifest);
           const rel = path.relative(pr, written.absPath).split(path.sep).join('/');
           writeReceiptManifestPointer(pr, feat, String(ph), rel, written.sha256);
-        } catch { /* manifest 失败 → clean-pass 会如实判 needs_fix（非本套被测对象） */ }
+        } catch (error) {
+          if (opts.checkFactsAdmission) throw error;
+          /* Legacy fixtures without real admission leave clean-pass to diagnose the missing manifest. */
+        }
       };
       // plan 2f8a6d40 §6：PASS 出口的真实 writer 支路——用真实 gate 本轮产出的 PASS
       // CheckResult 组 ScriptReport 交给生产 `writeRunSummaryBase`（与 FAIL 出口同一实现），
@@ -1895,6 +1899,47 @@ test('M1 supersede 单写者：自指拒绝；他指只在新 run 落审计且�
   assert(sourceBefore.equals(fs.readFileSync(sourceEventsPath)), 'supersede 不得回写旧 run events');
 });
 
+test('28e31f53 actual runtime handles authorized queue-external recovery without a candidate or revision', async () => {
+  const { prepareFeatureScopeCandidate } = await import('../../scripts/utils/feature-track');
+  const { ensureFeatureExecutionScopeFrozen } = await import('../../scripts/utils/feature-execution-scope');
+  const assessModule = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
+  const original = assessModule.assessFeature;
+  for (const completionTarget of ['feature', 'request'] as const) {
+    const { root } = setupGoalRuntimeHost('codex', false);
+    let injected = false;
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8'));
+      config.active_workflow = 'obligation-driven';
+      writeFile(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
+      const requirement = 'internal value implementation and unit verification';
+      prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE,
+        completionTarget, requestedResults: ['internal value and unit verification'], requestedPhases: ['coding', 'ut'], requirement, overwrite: true });
+      ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: REPO_ROOT, feature: FEATURE });
+      // Only the assessment decision is controlled; queue, authorization, transaction and replay are production.
+      assessModule.assessFeature = ((input: Parameters<typeof original>[0]) => {
+        const result = original(input);
+        if (!injected && input.projectRoot === root && input.attemptId?.startsWith('ut-') && input.reconcile) {
+          injected = true;
+          return { ...result, gaps: [...result.gaps, { phase: 'plan', kind: 'evidence_invalid', detail: 'controlled owner recovery' }],
+            recommendation: { ...result.recommendation, action: 'rerun_phase', phase: 'plan', runner_action: 'backtrack_to_phase', requires_driver_authorization: false } } as ReturnType<typeof original>;
+        }
+        return result;
+      }) as typeof original;
+      const probe = await runChain(root, { adapter: 'codex', freshRequirement: requirement, freshStartPhase: 'coding', freshEndPhase: 'ut' });
+      assert(injected, 'decision must reach actual runtime');
+      const recovery = probe.events.find(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'plan');
+      if (completionTarget === 'feature') {
+        assert(!!recovery && probe.invokedPhases.includes('plan'), 'authorized owner must execute: ' + JSON.stringify(probe.invokedPhases));
+        assert(!(recovery!.repair_candidates as unknown[] | undefined)?.length, 'no fabricated repair candidate');
+        assert(!probe.events.some(e => e.halt_reason === 'backtrack_target_absent'), 'queue omission is not lost authorization');
+      } else {
+        assert(!recovery && !probe.invokedPhases.includes('plan'), 'request must not expand authorization');
+        assert(probe.events.some(e => e.halt_reason === 'backtrack_target_absent'), 'out-of-scope target stays parked');
+      }
+    } finally { assessModule.assessFeature = original; clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 async function currentBudgetFixture() {
   const { provisionRealChainProject, scaffoldRealChainHost } = await import('../utils/real-chain-host');
   const { seedCuBoundHost, CU_REQUIREMENT, writeCuPlanMaterials, writeCuCodingMaterials,
@@ -2773,36 +2818,18 @@ test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断'
 test('t3 就绪门：只在需设备 phase 执行；BLOCKED 时不产生 agent_invoke_start 且走 external_block', async () => {
   const { root } = setupHost();
   const gateCalls: string[] = [];
-  const probe = await runChain(root, {
-    deviceGate: (opts: {
-      phase: string;
-      retries: number;
-      emitEvent: (e: Record<string, unknown>) => void;
-    }) => {
+  let online = false;
+  const deviceGate = (opts: Parameters<typeof runDeviceReadinessGate>[0]) => {
       gateCalls.push(opts.phase);
-      // 注入缝替换的是**整个** gate，事件发射也在其内——桩须自行发，否则事件面失真
-      opts.emitEvent({
-        type: 'phase_halt',
-        phase: opts.phase,
-        halt_reason: 'device_not_ready',
-        verdict: 'FAIL',
-        reason: '测试注入：设备不可用',
-      });
-      return {
-        outcome: {
-          phase: opts.phase,
-          verdict: 'FAIL' as const,
-          halted: false,
-          retries: opts.retries,
-          halt_reason: 'device_not_ready',
-          halt_guidance: '设备锁屏且未授权自动解锁',
-          blocking_class: 'externalBlocked',
-          failure_kind: 'device_blocked',
-        },
-        notes: ['测试注入：设备不可用'],
-      };
-    },
-  });
+      return runDeviceReadinessGate({ ...opts, input: { ...opts.input, configuredSerial: null, credentialRef: null,
+        emulatorFallback: 'disabled', existingManaged: null, deps: {
+          listTargets: () => online ? ['FIXTURE-DEVICE'] : [], isLocked: () => false, wake: () => {}, attestPhysical: () => true,
+        } } });
+  };
+  const conditionWait = { maxWaitMs: 5, pollMs: 1, runProbe: (name: string) => evaluateDeviceReadinessProbe({
+    targets: online ? ['FIXTURE-DEVICE'] : [], snapshot: { locked: false, cooldown: { state: 'not_cooldown' } } as never,
+  }, name as 'device_readiness') };
+  const probe = await runChain(root, { deviceGate, conditionWait });
 
   // ① 门只在 profile 声明需设备的 phase 执行（hmos-app：ut/testing；spec/plan/coding 不碰设备）
   assert(gateCalls.length > 0, '需设备 phase 必须过门');
@@ -2824,6 +2851,9 @@ test('t3 就绪门：只在需设备 phase 执行；BLOCKED 时不产生 agent_i
     `设备未就绪时 ut 不得产生 agent_invoke_start，实得 ${utInvokeStarts.length} 条`,
   );
   assert(!probe.invokedPhases.includes('ut'), `agent 不得被调用，实得 [${probe.invokedPhases.join(',')}]`);
+  assert(!probe.invokedPhases.includes('testing'), '71c521 regression: a parked UT must not advance into dependent testing');
+  const parked = probe.events.findIndex(event => event.type === 'phase_halt' && event.phase === 'ut');
+  assert(parked >= 0 && !probe.events.slice(parked + 1).some(event => event.type === 'phase_start'), 'parking event and actual stop must agree');
 
   // ③ 走 external_block 契约（可 defer、指引修环境），不是 capability FAIL
   const halts = probe.events.filter(e => e.type === 'phase_halt');
@@ -2833,6 +2863,10 @@ test('t3 就绪门：只在需设备 phase 执行；BLOCKED 时不产生 agent_i
     !halts.some(e => (e as { halt_reason?: string }).halt_reason === 'await_human_capability_gap'),
     '设备不可用不得冒充静态 capability 缺口',
   );
+  online = true;
+  const resumed = await runChain(root, { resume: path.basename(probe.reportDir), deviceGate, conditionWait,
+    onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot) });
+  assert(resumed.invokedPhases.join(',') === 'ut,testing', `device recovery must finish UT before testing: ${resumed.invokedPhases.join(',')}`);
 });
 
 test('t5 outer_layers 前移：缺目录在**第一个 phase invoke 之前**即 HALTED；spec-only 链路不受影响', async () => {
@@ -5962,8 +5996,18 @@ for (const entry of ['resume', 'successor'] as const) {
       assert(used === 30 && events.some(e => e.halt_reason === 'budget_turns'), '生产运行真实耗尽原30调用，不补造历史次数');
       backdateLastRunEnd(root, source);
       writeFile(root, PRODUCT_FILE, 'new input after original budgets exhausted');
+      if (entry === 'successor') {
+        const before = goalRunIds(root).join(',');
+        let refused = false;
+        try { await runChain(root, { supersede: [source], testingGateChecks: relatedNativeFailure }); }
+        catch (error) { refused = String(error).includes('budget_turns'); }
+        assert(refused && goalRunIds(root).join(',') === before, '耗尽后在出生前拒绝，不以新目录刷新资源');
+        const originalManifest = JSON.parse(fs.readFileSync(path.join(seed.reportDir, 'manifest.json'), 'utf8'));
+        assert(originalManifest.budget.max_total_turns === 30, '原预算合同不变');
+        return;
+      }
       const next = await runChain(root, {
-        ...(entry === 'resume' ? { resume: source, forceResume: true } : { supersede: [source] }),
+        resume: source, forceResume: true,
         testingGateChecks: relatedNativeFailure,
       });
       assert(next.invokedPhases.length === 0 && next.exitCode !== 0, '耗尽后零实际调用，不靠新SHA重置');
@@ -6255,6 +6299,22 @@ test('P3 t5 A12/A14 attended：执行者停在授权确认处——有人在场�
   }
 });
 
+test('28e31f53 exhausted successor is rejected before birth and points to the existing manifest', async () => {
+  const { root } = setupHost('codex');
+  try {
+    await requestVia('foreground', root, { freshBudget: { max_total_turns: 1 }, freshEndPhase: 'plan' });
+    const before = goalRunIds(root);
+    assert(before.length === 1, 'one source run');
+    let failure = '';
+    try {
+      const next = await requestVia('foreground', root, { freshEndPhase: 'plan', freshRequirement: '用户明确追加验收说明，保持原交付周期' });
+      assert(next.exitCode !== 0, 'exhausted successor cannot start');
+    } catch (error) { failure = String(error); }
+    assert(goalRunIds(root).join() === before.join(), `不得出生废后继：${goalRunIds(root).join()}`);
+    assert(failure.includes('budget_turns') && failure.includes(before[0]) && failure.includes('--override-manifest'), failure);
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('P3 t5 A14 foreground：预算耗尽（结构终局）后无人脚本连续重发同一请求、什么都没变 → run 数量不增加、不写事件', async () => {
   const { root } = setupHost('codex');
   try {
@@ -6485,7 +6545,7 @@ for (const { genuineSourceChange, completeEvidence } of [
       assert(goalRunIds(root).length === 1 && providerCalls > 0, '原地恢复并至少调用一次新 provider');
       assert(!session.some(event => event.halt_reason === 'no_progress_guard'), '不在零 executor gate 空转熔断');
       if (genuineSourceChange) {
-        assert(session.some(event => event.type === 'phase_backtrack_requested' && event.to_phase === firstPhase) && second.invokedPhases.includes(firstPhase) && researchCalls === 2, '真实来源变化第一轮回实际责任并重建');
+        assert(second.invokedPhases.includes(firstPhase) && researchCalls === 2, '真实来源变化必须执行实际责任并重建：' + JSON.stringify({ invoked: second.invokedPhases, researchCalls, events: session.filter(event => ['scope_revised', 'phase_backtrack_requested', 'run_end'].includes(String(event.type))) }));
         assert(fs.readFileSync(path.join(root, facts), 'utf8').includes('v2 genuine source'), '新事实来自实际读取');
       } else {
         assert(!second.invokedPhases.some(phase => ['spec', 'plan', 'coding', 'review', 'ut'].includes(phase)), `provider-only 不重调上游：${second.invokedPhases}`);

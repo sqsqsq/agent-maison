@@ -11,7 +11,7 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
 import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
-import { loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
 import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 import { runlessCompletionThenRevision, setupRunlessProject } from './execution-scope.unit.test';
 import {
@@ -386,9 +386,10 @@ const cases: Case[] = [
         assert(r.gaps.length === 0, `已完成不得保留缺口：${JSON.stringify(r.gaps)}`);
         const chain = r.observed.phases.map(p => p.phase);
         const recordRun = JSON.parse(fs.readFileSync(path.join(s.root, JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'feature-completion.json'), 'utf8')).original_path), 'utf8')).run_id;
-        const scope = loadEffectiveExecutionScope(s.root, feature, recordRun)!;
+        const scope = resolveEffectiveScopeSource(s.root, feature, recordRun)!.scope;
+        assert(loadEffectiveExecutionScope(s.root, feature, recordRun)!.phase_chain.length === 0, '已完成记录的当前执行队列必须为空');
         assert(JSON.stringify(scope.phase_chain) === '["review"]' && JSON.stringify(scope.reused_phases.map(p => p.phase)) === '["coding","ut"]', '前提：正式迁移只执行 review、复用 coding/UT');
-        assert(JSON.stringify(chain) === '["coding","ut","review"]', `观察范围须含记录中的真实复用与本次执行：${JSON.stringify(chain)}`);
+        assert(JSON.stringify(chain) === '["coding","review","ut"]', `观察范围须按工作流顺序包含真实复用与本次执行：${JSON.stringify(chain)}`);
         const rendered = formatAssessNextStep(r, { phase: 'ut', mode: 'manual', status: 'PASS/closed' });
         assert(rendered.includes('recommendation=feature_completed') && rendered.includes('authorization=none'), rendered);
         const action = selectRunnerActionFromAssess({

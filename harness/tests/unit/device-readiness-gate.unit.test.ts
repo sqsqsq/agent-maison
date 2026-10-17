@@ -612,6 +612,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       emitEvent: event => events.push(event),
     });
     assertEq(decision.outcome?.halt_reason, 'device_not_ready', '仍走既有 external_block 通道');
+    assertEq(decision.outcome?.halted, true, '停放事件必须让 runtime 停止推进，不能跳过 UT');
     const halt = events.find(e => e.type === 'phase_halt');
     assertEq(halt?.unlock_failure_kind, 'credential_unavailable', 'halt 须带结构化归因');
     const attemptEvent = events.find(e => e.type === 'device_unlock_attempt');

@@ -619,8 +619,8 @@ export async function runDeviceReadinessGate(opts: {
     };
   }
 
-  const halted = res.state === 'AMBIGUOUS';
-  const haltReason = halted ? 'device_target_ambiguous' : 'device_not_ready';
+  const halted = true;
+  const haltReason = res.state === 'AMBIGUOUS' ? 'device_target_ambiguous' : 'device_not_ready';
   opts.emitEvent({
     type: 'phase_halt',
     phase: opts.phase,

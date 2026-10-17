@@ -862,18 +862,14 @@ export function recomputePhaseEvidenceStaleness(
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
   const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
-  const ownerFreshness = new Map<string, boolean>();
   const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
     if (pendingOwnerPaths.has(entry.path)) return true;
     if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
     if (entry.owner_phase === opts?.pendingOwnerPhase) return true;
     const owner = loadPhaseEvidenceManifest(projectRoot, feature, entry.owner_phase);
-    let fresh = ownerFreshness.get(entry.owner_phase);
-    if (fresh === undefined) {
-      fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [entry.owner_phase], { ...opts, pendingOwnerPaths: [...pendingOwnerPaths] })[0]?.verdict === 'fresh';
-      ownerFreshness.set(entry.owner_phase, fresh);
-    }
-    return fresh && !!owner?.integrityOk && owner.manifest.outputs.some(output =>
+    // The owner validates its own result. A later failure there must not reopen an upstream
+    // observation when the declared output still has the exact bytes that owner recorded.
+    return !!owner?.integrityOk && owner.manifest.outputs.some(output =>
       output.path === entry.path && output.owner_phase === entry.owner_phase
       && evidenceEntryMatchesCurrentFile(projectRoot, output, feature));
   };

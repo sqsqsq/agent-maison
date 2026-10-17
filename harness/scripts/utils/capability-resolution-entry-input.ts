@@ -8,7 +8,7 @@ import type { FactsInvocationContext } from './context-facts';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveEffectiveScopeSource, eventsWithScopeRevocations } from './goal-run-creation';
+import { resolveEffectiveScopeSource, loadEffectiveExecutionScope, eventsWithScopeRevocations } from './goal-run-creation';
 import { loadAuthoritativeEvents } from './goal-runner-phase';
 import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory, phaseOwnsDesignOutput } from './skill-contract';
@@ -196,12 +196,12 @@ export interface CapabilityResolutionEntryInputOptions {
 
 /** Same-attempt runtime admission, never reconstructed from authored facts or a label invocation. */
 export function loadFactsInvocationContext(options: {
-  projectRoot: string; feature: string; phase: string; runId: string; attemptId?: string; featuresDir?: string;
+  projectRoot: string; feature: string; phase: string; runId: string; attemptId?: string; featuresDir?: string; frameworkRoot?: string;
 }): FactsInvocationContext | undefined {
   if (!options.attemptId) return undefined;
   const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature, featuresDir: options.featuresDir });
   const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
-  if (!scope?.phase_chain.includes(options.phase)) return undefined;
+  if (!scope || !executionCompletionPhases(scope).includes(options.phase)) return undefined;
   const events = eventsWithScopeRevocations(manifest.execution_scope,
     loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl')));
   const index = events.map((event, i) => event.type === 'agent_invoke_start' && event.phase === options.phase
@@ -212,17 +212,17 @@ export function loadFactsInvocationContext(options: {
       && (event as { invalidated_phases: string[] }).invalidated_phases.includes(options.phase)))) return undefined;
   const context = events[index].facts_context;
   if (!context || !('run_id' in context.subject) || context.subject.feature !== options.feature || context.subject.run_id !== options.runId
-    || context.first_phase !== scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
+    || context.first_phase !== resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
   return structuredClone(context);
 }
 
 /** The runtime write boundary for facts ownership; throws without a construction binding. */
-function resolveFactsWriteBoundary(options: { projectRoot: string; frameworkRoot: string; feature: string; runId?: string },
+function resolveFactsWriteBoundary(options: { projectRoot: string; frameworkRoot: string; feature: string; runId?: string; phase?: string },
   scope: import('./execution-scope').ExecutionScope) {
   const config = loadFrameworkConfig(options.projectRoot);
   const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
   return resolvePhaseWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, feature: options.feature, runId: options.runId,
-    phaseOrder: executionCompletionPhases(scope), track: 'full',
+    pendingOwnerPhase: options.phase, phaseOrder: executionCompletionPhases(scope), track: 'full',
     profileDir: profile.profileDir, productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
 }
@@ -233,7 +233,7 @@ export function resolveFactsPhaseOwnedSources(options: {
 }, context: FactsInvocationContext): Set<string> {
   try {
     const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
-    if (!scope?.phase_chain.includes(options.phase)) return new Set();
+    if (!scope || !executionCompletionPhases(scope).includes(options.phase)) return new Set();
     const boundary = resolveFactsWriteBoundary(options, scope);
     if (boundary.unresolvedSourcePhases.includes(options.phase)) return new Set();
     return new Set(Object.entries(context.source_owners ?? {}).filter(([source, owner]) => {
@@ -248,7 +248,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   if (!/^i\d+$/.test(options.goalAttemptId ?? '')) return undefined;
   const manifest = loadGoalManifestFromRun(options.projectRoot, runId, { feature: options.feature, featuresDir: options.featuresDir });
   const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope;
-  if (!scope?.phase_chain.includes(options.phase)) return undefined;
+  if (!scope || !executionCompletionPhases(scope).includes(options.phase)) return undefined;
   const events = eventsWithScopeRevocations(manifest.execution_scope,
     loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl')));
   // An existing exact start belongs to the original admission/resume path, including legacy records.
@@ -263,7 +263,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   const first = starts[0];
   const context = events[first].facts_context;
   if (!context?.baseline || !Array.isArray(context.baseline.dependencies) || !('run_id' in context.subject) || context.subject.run_id !== runId || context.subject.feature !== options.feature
-    || context.first_phase !== scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
+    || context.first_phase !== resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
   const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
   if (!fs.existsSync(factsPath) || factsBaselineFingerprint(fs.readFileSync(factsPath, 'utf8')) !== context.baseline.fingerprint) return undefined;
   const ownedSources = resolveFactsPhaseOwnedSources({ ...options, frameworkRoot, runId }, context);
@@ -393,7 +393,7 @@ export function resolveCapabilityResolutionEntryInput(
       requirement = manifest.requirement?.trim() || undefined;
       requirementSourceFiles = manifest.requirement_source_files;
     }
-    const scope = authority?.scope;
+    const scope = goalRunId ? loadEffectiveExecutionScope(options.projectRoot, options.feature, goalRunId, options.frameworkRoot, options.phase) : authority?.scope;
     if (scope) {
       const frameworkRoot = options.frameworkRoot ?? path.resolve(__dirname, '../../..');
       const contractIndex = phaseContractIndex(loadFeatureContracts(frameworkRoot));
@@ -428,10 +428,10 @@ export function resolveCapabilityResolutionEntryInput(
         // G3：facts 身份位按载体二分——run 载体绑 run_id，feature 载体绑 feature（指纹在 facts 侧校验）。
         subject: goalRunId ? { feature: options.feature, run_id: goalRunId } : { feature: options.feature },
         ...(goalRunId ? {} : { frozen_scope_fingerprint: executionScopeFingerprint(scope) }),
-        first_phase: scope.phase_chain[0],
+        first_phase: authority?.scope.phase_chain[0] ?? scope.phase_chain[0],
         source_paths: sourcePaths, required_input_snippets: [],
       };
-      const admitted = goalRunId ? loadFactsInvocationContext({ projectRoot: options.projectRoot, feature: options.feature,
+      const admitted = goalRunId ? loadFactsInvocationContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature,
         phase: options.phase, runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir })
         ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
       if (admitted) {
@@ -676,7 +676,7 @@ export function resolveCapabilityResolutionEntryInput(
       const inCodeWriteBoundary = (file: string): boolean => {
         try {
           if (codeBoundary === undefined) {
-            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId }, scope);
+            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId, phase: options.phase }, scope);
             codeBoundary = boundary.unresolvedSourcePhases.includes(codeOwner!) ? null : boundary;
           }
           const granted = codeBoundary && resolvePhasePathOwnership(codeBoundary, file);

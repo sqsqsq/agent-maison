@@ -1113,8 +1113,14 @@ export function installHap(hapPath: string): HdcInstallResult {
  * `hdc shell aa test -b <bundle> -m <module> -s unittest <runner> -w <ms>`。
  * 触发 OpenHarmonyTestRunner 在设备上执行 hypium 测试，stdout 同步回流。
  */
-export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTestResult {
+export function runAaTest(meta: OhosTestMetadata, testClasses?: string[], execute = runHdc): AaTestResult {
   const t0 = Date.now();
+  const { snapshotFaultlogSet, diagnoseNavigationFailure, applicationHilogWindow } = require('./device-crash-diagnostics') as typeof import('./device-crash-diagnostics');
+  const probe = { runHdc: (args: string[]): string | null => {
+    try { const result = execute(args, 8000); return result.error || result.status !== 0 ? null : result.stdout ?? ''; } catch { return null; }
+  } };
+  const faultBaseline = snapshotFaultlogSet(probe);
+  const hilogBefore = probe.runHdc(['shell', 'hilog', '-x']);
   const cmdParts = [
     'shell', 'aa', 'test',
     '-b', meta.bundleName,
@@ -1128,8 +1134,8 @@ export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTes
   }
   // aa test 的整体 walltime 上界：每条用例 timeoutMs * 估算（最少 5 分钟）
   const walltimeMs = Math.max(5 * 60_000, meta.testTimeoutMs * 10);
-  const ret = runHdc(cmdParts, walltimeMs);
-  const out = truncate(`$ hdc ${cmdParts.join(' ')}\n${ret.stdout ?? ''}\n${ret.stderr ?? ''}`);
+  const ret = execute(cmdParts, walltimeMs);
+  let out = truncate(`$ hdc ${cmdParts.join(' ')}\n${ret.stdout ?? ''}\n${ret.stderr ?? ''}`);
 
   const report = parseHypiumStdout(out);
   // 判定是否真的跑过：
@@ -1139,9 +1145,23 @@ export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTes
   const hasResult = !!report;
   const noFailure = report ? report.failed === 0 : false;
   const ok = ret.status === 0 && hasResult && noFailure;
-  const diagnosis = ok
+  let diagnosis = ok
     ? undefined
     : classifyAaTestFailure(out, ret.status ?? -1, report);
+  if (!report) {
+    const crash = diagnoseNavigationFailure(meta.bundleName, faultBaseline, probe);
+    const hilog = applicationHilogWindow(hilogBefore, probe.runHdc(['shell', 'hilog', '-x']), meta.bundleName);
+    const crashNote = crash.kind === 'crash_suspected' ? `本应用新增崩溃：${crash.faultFiles.join(', ')}\n${crash.excerpt}`
+      : crash.kind === 'diagnosis_unavailable' ? `崩溃诊断不可用：${crash.reason}` : '未发现本应用新增 faultlog；不能据此判定设备或代码责任。';
+    out += `\n[aa-test diagnosis]\n${crashNote}\n[application hilog]\n${hilog}\n`;
+    if (crash.kind === 'crash_suspected') diagnosis = { kind: 'test_failed', summary: crashNote,
+      suggestion: '按本次新增崩溃证据诊断 UT/执行载体；涉及业务源码时交 coding，不因无结果盲目重跑。' };
+    else if (diagnosis) {
+      const device = classifyAaTestFailure(hilog, ret.status ?? -1);
+      if (device.kind === 'device_locked') diagnosis = device;
+      diagnosis = { ...diagnosis, summary: `${diagnosis.summary}\n${crashNote}\n${hilog}` };
+    }
+  }
 
   return {
     ok,

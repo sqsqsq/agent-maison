@@ -30,7 +30,8 @@ import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-rev
 import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
 import { reconcileChangeUnitBlueprintRefs, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
 import { validateChangeUnitCandidate } from '../../scripts/utils/change-unit-provider-boundary';
-import { diagnoseDesignAuthority, selectBlueprintSkillContent, compareAuthoritativeContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
+import { diagnoseDesignAuthority, selectBlueprintSkillContent, compareAuthoritativeContent, checkAuthoritativeContentAligned, designWriteSetExpansion } from '../../scripts/utils/blueprint-skill-projection';
+import { existingProjectPathSpelling } from '../../scripts/utils/project-relative-path';
 import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
 import { designOwnerBlockers } from '../../scripts/goal-phase-runtime';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
@@ -390,6 +391,33 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   assert(checkHostSeamMaterials(root, checked, { projection: output }).issues.some(i => i.id === 'publication_projection_content_mismatch'));
 }));
 
+test('28e31f53 distinguishes omitted authorization, resource references and real design expansion', () => setup(root => {
+  const expected = contracts(); expected.files = ['02-Feature/Feature/Page.ets'];
+  expected.modules = []; expected.interfaces = []; expected.components = []; expected.resource_keys = {};
+  const actual = structuredClone(expected); actual.files = [];
+  actual.components = [{ name: 'Page', file: expected.files[0] }] as ContractsSpec['components'];
+  assert.deepEqual(designWriteSetExpansion(root, expected, actual), [], 'plan omission is not new authorization');
+  write(root, '02-Feature/Feature/logo.png', 'existing');
+  actual.resource_keys = { Feature: { media: [{ key: 'logo', value: 'app.media.logo', path: '02-Feature/Feature/logo.png' }] } };
+  assert.deepEqual(designWriteSetExpansion(root, expected, actual), [], 'read-only resource misuse stays with plan');
+  actual.components[0].file = '02-Feature/Feature/NewPage.ets';
+  assert.deepEqual(designWriteSetExpansion(root, expected, actual), ['02-Feature/Feature/NewPage.ets']);
+  actual.files = ['02-Feature/Feature/NewPage.ets'];
+  assert.deepEqual(designWriteSetExpansion(root, expected, actual), ['02-Feature/Feature/NewPage.ets']);
+}));
+
+test('28e31f53 source spelling preserves exact files and does not require future outputs', () => setup(root => {
+  const declared = '02-Feature/Feature/page.ets';
+  assert.equal(existingProjectPathSpelling(root, declared), path.join(root, '02-Feature/Feature/Page.ets'));
+  assert.equal(existingProjectPathSpelling(root, '02-Feature/Feature/Page.ets'), path.join(root, '02-Feature/Feature/Page.ets'));
+  assert.equal(existingProjectPathSpelling(root, '02-Feature/Feature/Future.ets'), undefined);
+  assert.equal(existingProjectPathSpelling(root, '../outside.ets'), undefined);
+  if (process.platform !== 'win32') {
+    write(root, declared, 'distinct');
+    assert.equal(existingProjectPathSpelling(root, declared), path.join(root, declared), 'distinct Linux files must remain distinct');
+  }
+}));
+
 test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已有资源键不扩大写集', () => setup(root => {
   const fixture = path.join(__dirname, '../fixtures/component-selection-handoff');
   fs.cpSync(path.join(fixture, 'dependencies'), root, { recursive: true });
@@ -429,9 +457,12 @@ test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已�
   assert.equal(resolveVerdictFromChecks([closure(repaired)]), 'PASS');
   const repairedContext = context(root, repaired);
   repairedContext.featureSpec = { ...spec, contracts: repaired };
-  assert.equal(resolveVerdictFromChecks(checkAuthoritativeContentAligned(repairedContext, 'contracts')), 'PASS');
+  const sourceCase = checkAuthoritativeContentAligned(repairedContext, 'contracts');
+  assert(sourceCase.some(check => check.status === 'FAIL' && check.repair_owner === 'external' && check.details?.includes('index.ets')),
+    'resource correction does not conceal the original host blueprint Index.ets/index.ets mismatch');
   const projectionChecks = checkChangeUnitFeatureProjection(repairedContext, 'plan');
-  assert.equal(resolveVerdictFromChecks(projectionChecks), 'PASS', JSON.stringify(projectionChecks));
+  assert.equal(resolveVerdictFromChecks(projectionChecks.filter(check => check.id !== 'authoritative_content_aligned')), 'PASS', JSON.stringify(projectionChecks));
+  assert(projectionChecks.some(check => check.id === 'authoritative_content_aligned' && check.details?.includes('index.ets')));
   for (const mutate of [
     (c: ContractsSpec) => { c.components[0].asset_selection!.resolution = 'reuse'; },
     (c: ContractsSpec) => { c.components[0].asset_selection!.component_ref = 'OtherUi/Index.ets#Small'; },

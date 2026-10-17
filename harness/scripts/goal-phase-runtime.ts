@@ -5,10 +5,10 @@ import { validateProjectRelativePath } from './utils/project-relative-path';
 import { loadVerifierEvidence } from './utils/verifier-evidence';
 import { diffChangedFiles, resolveEffectiveDiffBaseline } from './utils/git-diff';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
-import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
+import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
-import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal } from './utils/feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal, resolveCurrentScopeView } from './utils/feature-track';
 import { resolveBirthScopeForManifest, resolveSuccessorExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
 import { featureFilePath } from '../config';
 import { designDeliveryNextStep } from './utils/design-delivery-entry';
@@ -1559,17 +1559,18 @@ async function runHarnessPhase(
 }
 
 /**
- * e9d4b7a3 t1（review1 阻断修复）：backtrack_target_absent 的跨 run 修复任务交接指引——
+ * e9d4b7a3 t1（review1 阻断修复）：backtrack_target_absent 的责任与授权交接指引——
  * 单点生成，phase_halt 事件 / outcome / console 三处消费同一文案（b3f7d9a2 硬学习：
  * 同一文案契约须枚举全部承载处含测试断言）。检测器只保证文案要素在场。
  */
+const DESIGN_MODIFICATION_CONFIRMATION = '修改已交接的蓝图或 CU 须先取得用户确认，无人值守也一样。只有预授权 design_repair.unattended_b1 才允许框架沿原通道做一次有界自动修复；主 Agent 不自行修改设计、摘要或指纹。';
+
 export function buildBacktrackTargetAbsentGuidance(targetPhase: string | null): string {
   return (
-    `责任阶段映射不到当前执行链（recommendation.phase=${targetPhase ?? '<unmapped>'}）——无处回退，本 run 终止。\n` +
-    '修复任务交接：起 fresh successor run，用 `--supersede <本 run id>` 废弃本 run，并以 ' +
-    '`--requirement-file <增量文件>` 携带本轮修复增量（须含：**任务点名** + **关键证据摘要**，' +
-    '如缺陷 id / 责任文件路径 / 复现要点 / 必要素材清单）。增量会与源 requirement 合并，' +
-    '成为 successor coding prompt 的唯一任务真源。'
+    `责任阶段不在本次授权域内或尚未确定（recommendation.phase=${targetPhase ?? '<unmapped>'}），已停放。\n` +
+    (targetPhase ? `请用户确认责任范围，再发起包含 ${targetPhase} 阶段的请求。` : '请用户补齐缺失输入后重新发起同一请求，由框架选择接续。') +
+    '不得自行写需求增量或拼后继来刷新机会。\n' +
+    '修法假设在已有返修窗口中通过显式续跑附 --repair-notes，不改变原需求或授权。\n' + DESIGN_MODIFICATION_CONFIRMATION
   );
 }
 
@@ -1629,13 +1630,14 @@ export function buildDesignOwnerGuidance(opts: {
     ...(opts.contentRepairNote ? [`无人值守设计修复（预授权 design_repair.unattended_b1）：${opts.contentRepairNote}`] : []),
     ...(opts.brief ? [
       b1
-        ? '分类：B1——在既有授权内、依据明确，设计 owner 可以直接修，不需要新的产品决定。'
+        ? '分类：B1——既有范围内的确定修法；仍遵守下方设计修改确认边界。'
         : '分类：B2——需要有权者先做决定、扩大范围或补事实，设计 owner 不能自行修；缺什么见下。',
       '修复简报：',
       ...opts.brief.items.map((item) => `  - 检查 ${item.check}${item.codes.length ? `［${item.codes.join(', ')}］` : ''}（${item.class}）→ 产物 ${item.artifacts.join('、') || '蓝图 / CU'}；${item.class === 'B1' ? '修法' : '缺'}：${item.needs.join('；')}`),
     ] : []),
     '责任方：设计 owner（/component-design：canonical 蓝图与 Change Unit），不在 feature 阶段链内。',
-    '下一步：在 /component-design 修复蓝图 / CU 中的上述问题，经 design-handoff readiness 原位升版 CU 指针并刷新派生投影，'
+    DESIGN_MODIFICATION_CONFIRMATION,
+    '下一步：取得用户确认后，在 /component-design 修复蓝图 / CU 中的上述问题，经 design-handoff readiness 原位升版 CU 指针并刷新派生投影，'
       + '然后重新发起同一请求（框架按接续决策选择续跑或起后继）。',
     ...(opts.brief ? ['本 run 已停放并释放 feature 锁（readiness 调和要取这把锁）。修好后重新发起同一请求即自动续跑，冷却期内也可以、不需要任何旗标：'
       + '冻结的输入绑定仍有效就重新接入本 run，已失效就自动起后继并承接本 run。已安装 supervisor 时探针就绪会自动拉起（同一任务最多 3 次，不重置，用完需人工重发）。'] : []),
@@ -3335,8 +3337,7 @@ export function applyInvalidationsToResume(
         (events[lastRequestIdx] as { to_phase?: unknown }).to_phase === phase;
       const ownerCompleted = !ownerRequest || repairWindowCompleted(later, phase);
       const revalidated = ownerCompleted && later.some(
-        later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS'
-          && later.action !== 'retry' && later.advance_blocked !== true,
+        later => later.phase === phase && isEffectivePhasePass(later),
       );
       // review 收口：**只看最新 request 窗口内该 target phase 的最后一条执行事件**——
       // 判据（与复用身份同一判据，消除「有 settled 即跳、却取最后一条」的不一致）：
@@ -5622,6 +5623,24 @@ Goal runner — tool-agnostic multi-phase orchestrator
   });
   let freshCreation: GoalRunCreationResult | null = null;
 
+  if (!argv.resume && !attachCreatedRunId && manifest.successor_of) {
+    const seeds = [...new Set([...requestedSupersedeTargets, manifest.successor_of])];
+    const cycleBoundary = resolveDeliveryCycleBoundary({ projectRoot, featuresDir, feature: manifest.feature, frameworkRoot, seedTargets: seeds, currentEvents: [] });
+    const lineage = foldBudgetLineage({ projectRoot, featuresDir, feature: manifest.feature, seedTargets: seeds, currentEvents: [], cycleBoundary });
+    const spent = resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() });
+    const wall = resolveWallClockMs(manifest, actualBirthChain);
+    const admission = checkRunBudget(spent.totalTurns, manifest.budget.max_total_turns, spent.priorActiveMs, wall - FINALIZE_RESERVE_MS);
+    if (admission !== 'ok') {
+      const source = loadGoalManifestFromRun(projectRoot, manifest.successor_of, { feature: manifest.feature });
+      const kind = admission === 'turns' ? 'budget_turns' : 'budget_wall_clock';
+      const guidance = buildBudgetExhaustedGuidance({ feature: manifest.feature, runId: manifest.successor_of,
+        phase: source.end_phase, kind, activeElapsedMs: spent.priorActiveMs,
+        limit: kind === 'budget_turns' ? manifest.budget.max_total_turns : wall,
+        harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness' });
+      throw new Error(`${kind}: 后继未创建。应修改现存 ${path.join(projectRoot, source.report_dir, 'manifest.json')} 的预算。\n${guidance.join('\n')}`);
+    }
+  }
+
   // Survival guard (code-level enforcement of the launch contract): block a real unattended
   // run started in the foreground without --detach — it would be reaped when the host
   // session/turn ends (the 2026-06 incident). --foreground-ok downgrades it to a warning.
@@ -6902,6 +6921,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 投影只在 run_end 落盘，旧 run 崩溃后其 phases 落后于 events（review/ut 已
       // advance 仍显示旧 halt），曾造成每次 resume 把已 PASS 闭环回滚重跑。事件缺失/
       // 损坏已在上方 fail-closed（本分支可达时 events 必完整）。
+      if (birthScope) {
+        const view = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
+          previous: applyScopeRevisions(birthScope, priorEvents), currentRunId: manifest.run_id });
+        chain = [...view.phase_chain];
+        fullWorkflowChain = executionCompletionPhases(view);
+      }
       const resume = resolveResumeFromEvents(chain, priorEvents);
       outcomes = [...resume.priorOutcomes];
       deferredUpstream = [...resume.deferredUpstream];
@@ -6918,6 +6943,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const inv = applyInvalidationsToResume(chain, outcomes, recoveryEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
+      if (birthScope) chainStartIndex = 0;
       resumePostAgentPhases = new Set(inv.postAgentPhases);
       resumePostAgentAttemptIds = inv.postAgentAttemptIds;
       // plan b5f1d9c3 t1：resume 验证优先——普通 phase_halt 停等（WAITING 投影）后 resume 时，
@@ -6928,6 +6954,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
       if (haltEligibility && !resumePostAgentPhases.has(haltEligibility.phase)) {
         resumePostAgentPhases.add(haltEligibility.phase);
         resumePostAgentAttemptIds[haltEligibility.phase] = haltEligibility.invoke_id;
+      }
+      // An earlier unsatisfied owner in the effective queue invalidates downstream old attempts.
+      if (birthScope) for (const pending of resumePostAgentPhases) {
+        if (chain.indexOf(pending as FeaturePhase) <= chainStartIndex) continue;
+        resumePostAgentPhases.delete(pending);
+        delete resumePostAgentAttemptIds[pending];
       }
       // Phase-only revalidation writes a current summary without a goal verdict event.
       // Restore its failed phase before replay can spend an unrelated downstream call.
@@ -7706,6 +7738,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             frameworkRoot,
             feature: manifest.feature,
             runId: manifest.execution_scope ? manifest.run_id : undefined,
+            pendingOwnerPhase: String(phase),
             phaseOrder: fullWorkflowChain.map(String),
             track: goalTrack,
             profileDir: resolvedProfile.profileDir,
@@ -8084,8 +8117,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               return !decision.outcome;
             });
           }
-          for (const ev of deferredDeviceHalts) goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
           if (decision.outcome) {
+            for (const ev of deferredDeviceHalts) goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
             recordBlockedManaged(decision);
             halted = decision.outcome.halted;
             outcomes.push(decision.outcome as GoalPhaseOutcome);
@@ -10194,7 +10227,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ? `【${manifest.feature} · run ${manifest.run_id} · ${phase}】无人值守设计修复的${caller}调用改了草稿之外的文件，修复作废、未发布。`
               : `【${manifest.feature} · run ${manifest.run_id} · ${phase}】无人值守设计修复的${caller}调用之后，草稿之外的文件无法核对（${contentRepair.reason}），不当作干净继续：修复作废、未发布。`,
             ...violationFacts.slice(0, 20).map((fact) => `  - ${fact.path}（${fact.how}）pre=${fact.pre_sha256 ?? 'missing'} post=${fact.post_sha256 ?? 'missing'}`),
-            '链外调用没有责任阶段可回退，本 run 终止。框架只检测、不还原：请用版本控制核对并恢复工程文件，再以 `--supersede <本 run id>` 起后继。',
+            '链外调用没有已授权的责任阶段可回退，本 run 终止。框架只检测、不还原：请用户核对并恢复工程文件，再重新发起同一请求；不得自行写需求增量或拼后继。',
+            DESIGN_MODIFICATION_CONFIRMATION,
           ].join('\n');
           console.error(`\n===== ${haltReason}（无人值守设计修复越界写入）=====\n${awaitConfirmGuidance}\n`);
           postVerdictHaltEvent = {
@@ -10616,15 +10650,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const repairRevision = scopeRevisionInputFromRepairCandidates(summaryRepairCandidates, { projectRoot, frameworkRoot, feature: manifest.feature, runId: manifest.run_id });
             if (repairRevision) proposals.push(repairRevision.input);
           }
-          pendingScopeRevisionCheckId = proposalChecks[0]?.id;
+          pendingScopeRevisionCheckId = summaryRepairCandidates.find(candidate => proposals.some(proposal => proposal.facts.some(fact => fact.id.endsWith(`:${candidate.id}`))))?.id ?? proposalChecks[0]?.id;
           // D2.7 / 批次 3 阻断 6：提案校验走**与 feature 路径同一个**
           // `resolveScopeRevisionProposal`——单提案、请求边界、已完成阶段补证明、impact
           // 继承与修正、失效 satisfied_by 剔除、「范围变了必须有新来源」全部同源实现。
           const old = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath));
           // A successful definition repair can stale an earlier reused phase. Re-resolve the same
           // obligations with this run's fresh proof instead of inventing a product repair candidate.
-          if (!proposals.length && old.completion_target === 'feature' && verdict === 'PASS'
-            && !resolved.advance_blocked && old.reused_phases.length) {
+          if (!proposals.length && old.completion_target === 'feature' && old.reused_phases.length) {
             assessmentBeforeRevision = runAssess();
             const target = assessmentBeforeRevision.recommendation.phase;
             if (assessmentBeforeRevision.recommendation.action === 'rerun_phase' && target
@@ -10651,6 +10684,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // 授权边界取**出生冻结链**（`old` 是应用过修订的有效链，会缩短）。
             authorizedPhases: validateExecutionScope(manifest.execution_scope).phase_chain,
             completedPhases: completed,
+            currentPhase: String(phase),
             repairCandidates: summaryRepairCandidates,
             currentRunId: manifest.run_id,
             requirement: manifest.requirement,
@@ -10929,33 +10963,29 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const runEvents = loadAuthoritativeEvents(eventsPath);
             const birth = validateExecutionScope(manifest.execution_scope);
             const applied = loadScopeRevisions(runEvents, birth);
-            const inputFingerprint = executionScopeFingerprint(pendingScopeRevisionInput ?? pendingScopeRevision);
-            // Idempotence (D2.8 'revision written then interrupted'): dedupe by revision input
-            // fingerprint, so a re-entry after the append does not add a second entry.
-            const duplicate = applied.some(revision => executionScopeFingerprint(revision.revision_input) === inputFingerprint);
-            if (!duplicate) {
-              const previous = applied.length ? applied[applied.length - 1].execution_scope : birth;
-              assertRevisionKeepsRequiredObligations(previous, pendingScopeRevision);
-              // run_base_sha: a [spec]-born run has none in its manifest (birth identity field,
-              // write-once). The FIRST coding/ut-bearing revision freezes it at the event layer;
-              // all three conditions must hold or this entry must not carry it.
-              const needsBaseline = !manifest.run_base_sha
-                && !applied.some(revision => typeof revision.run_base_sha === 'string' && revision.run_base_sha)
-                && pendingScopeRevision.phase_chain.some(phase => phase === 'coding' || phase === 'ut');
-              goalEvents.emit({
-                type: 'scope_revised',
-                revision_index: applied.length + 1,
-                previous_scope_fingerprint: executionScopeFingerprint(previous),
-                execution_scope: pendingScopeRevision,
-                revision_input: pendingScopeRevisionInput ?? null,
-                trigger: { phase: String(phase), check_id: pendingScopeRevisionCheckId ?? 'scope_revision_input' },
-                allowed_fields: [...SCOPE_REVISION_FIELDS],
-                ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}),
-              });
-              options.onScopeRevision?.('applied');
-            }
+            // The shared proposal resolver already adjudicated idempotence against current proofs.
+            const previous = applied.length ? applied[applied.length - 1].execution_scope : birth;
+            assertRevisionKeepsRequiredObligations(previous, pendingScopeRevision);
+            // run_base_sha: a [spec]-born run has none in its manifest (birth identity field,
+            // write-once). The FIRST coding/ut-bearing revision freezes it at the event layer;
+            // all three conditions must hold or this entry must not carry it.
+            const needsBaseline = !manifest.run_base_sha
+              && !applied.some(revision => typeof revision.run_base_sha === 'string' && revision.run_base_sha)
+              && pendingScopeRevision.phase_chain.some(phase => phase === 'coding' || phase === 'ut');
+            goalEvents.emit({
+              type: 'scope_revised',
+              revision_index: applied.length + 1,
+              previous_scope_fingerprint: executionScopeFingerprint(previous),
+              execution_scope: pendingScopeRevision,
+              revision_input: pendingScopeRevisionInput ?? null,
+              trigger: { phase: String(phase), check_id: pendingScopeRevisionCheckId ?? 'scope_revision_input' },
+              allowed_fields: [...SCOPE_REVISION_FIELDS],
+              ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}),
+            });
+            options.onScopeRevision?.('applied');
             // Re-read the effective scope and re-target the execution chain / cursor from it.
-            const revised = applyScopeRevisions(birth, loadAuthoritativeEvents(eventsPath));
+            const recorded = applyScopeRevisions(birth, loadAuthoritativeEvents(eventsPath));
+            const revised = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow, previous: recorded, currentRunId: manifest.run_id });
             chain = [...revised.phase_chain] as FeaturePhase[];
             // The completion projection follows the revision too, or phases it added never reach it.
             fullWorkflowChain = executionCompletionPhases(revised) as FeaturePhase[];
@@ -10964,16 +10994,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             outcomes = applyInvalidationsToResume(chain, outcomes, eventsWithScopeRevocations(birth, loadAuthoritativeEvents(eventsPath))).outcomes;
             wallMs = resolveWallClockMs(manifest, chain);
             wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
-            // Cursor is re-derived, never incremented: a revision may delete, insert or rewind
-            // phases, and 'first phase with no effective PASS yet' covers all three shapes.
-            // `latest`, not `some` — a historical PASS that a later result superseded is not a
-            // current satisfied result (review B1), the same ruler the terminal judgement uses.
-            const latestFor = (candidate: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === candidate);
-            phaseIdx = chain.findIndex(candidate => {
-              const last = latestFor(String(candidate));
-              return !(last && last.verdict === 'PASS' && !last.advance_blocked);
-            }) - 1;
-            if (phaseIdx < -1) phaseIdx = chain.length;
+            // The effective view already removed valid proofs; dispatch its first remaining owner.
+            phaseIdx = -1;
           }
           phaseDone = true;
           if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
@@ -11051,7 +11073,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let backtrackHaltGuidance: string | undefined;
         if (action === 'backtrack_to_phase') {
           const targetPhaseBt = assessment?.recommendation?.phase ?? null;
-          const targetIdxBt = targetPhaseBt ? chain.indexOf(targetPhaseBt as FeaturePhase) : -1;
+          const authorizedTargets = birthScope ? authorizedScopePhases(birthScope, workflow) : chain;
+          const targetAuthorized = !!targetPhaseBt && authorizedTargets.includes(targetPhaseBt);
+          let targetIdxBt = targetAuthorized ? chain.indexOf(targetPhaseBt!) : -1;
           const upstreamGap = assessment.gaps.find((gap) => gap.phase === targetPhaseBt) ?? null;
           const gapDriven = summaryRepairCandidates.length === 0 && upstreamGap !== null;
           const roundFp = gapDriven
@@ -11095,11 +11119,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // 由 guard 前置 halt（唯一裁决面，boundary 发布一致 verdict），本分支只负责：
           //   · 注入过滤：signal@1 只回退 eligible 身份，legacy 原样保留（不误伤）；
           //   · 仍保留既有熔断（target 缺席 / 预算 / 整轮指纹重复）。
-          if (targetIdxBt < 0 || roundRepeated) {
+          if (!targetAuthorized || roundRepeated) {
             action = 'halt';
-            haltReason = targetIdxBt < 0 ? 'backtrack_target_absent' : 'backtrack_fingerprint_repeat';
+            haltReason = !targetAuthorized ? 'backtrack_target_absent' : 'backtrack_fingerprint_repeat';
             const disputeLines = declineDisputeLines(summaryRepairCandidates, repairDeclines);
-            backtrackHaltGuidance = targetIdxBt < 0
+            backtrackHaltGuidance = !targetAuthorized
               ? buildBacktrackTargetAbsentGuidance(targetPhaseBt ?? null)
               : [repeatGuidance, ...disputeLines].join('\n');
             goalEvents.emit({
@@ -11109,6 +11133,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             });
             console.error(`\n===== ${haltReason} =====\n${backtrackHaltGuidance}\n`);
           } else {
+            if (birthScope) {
+              const view = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
+                previous: applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)), currentRunId: manifest.run_id, reopen: targetPhaseBt! });
+              chain = [...view.phase_chain];
+              fullWorkflowChain = executionCompletionPhases(view);
+              targetIdxBt = chain.indexOf(targetPhaseBt!);
+              phaseIdx = chain.indexOf(String(phase));
+            }
             backtracksUsed++;
             seenRoundFingerprints.add(roundFp);
             // mixed-owner：eligible 过滤后的候选保留（prompt 注入按当前 phase 类别过滤——见
@@ -11116,7 +11148,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // M1 收敛（review 修复）：signal@1 只注入 eligible（attempted 已排除），
             // legacy 恒 eligible 原样保留——eligibleForBacktrack 在 assess 前一次性算出。
             backtrackRepairCandidates = eligibleForBacktrack.slice(0, 20);
-            const invalidatedBt = chain.slice(targetIdxBt, phaseIdx + 1);
+            const invalidatedBt = chain.slice(targetIdxBt);
             for (const invalidatedPhase of invalidatedBt) {
               resumePostAgentPhases.delete(invalidatedPhase);
               delete resumePostAgentAttemptIds[invalidatedPhase];
@@ -11248,7 +11280,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan e7c2a4d8 T3c（codex 二轮采纳）：凡有 guidance 一律附着——渲染侧
           //（goal-report-generator）本已 reason 无关，枚举白名单是第三处漂移点，废。
           ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
-          // e9d4b7a3 t1（review1 阻断）：backtrack_target_absent 的 successor 交接指引
+          // e9d4b7a3 t1（review1 阻断）：backtrack_target_absent 的责任交接指引
           // 三处可见（事件/outcome/console）——detach 停机后宿主只读 events/report。
           ...(backtrackHaltGuidance ? { halt_guidance: backtrackHaltGuidance } : {}),
           // P0-5：integrity subtype 多值透传进最终报告。
@@ -11287,22 +11319,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return 0;
     }
 
-    // D2 §4.2.3: after a revision the chain can shrink, grow or rewind, so a length equality is
-    // no longer meaningful. Judge by the LATEST effective result per chain phase.
-    // `outcomes` stays what it always was — a current-effective projection, pruned on backtrack
-    // (:6677 / :9509); execution history lives in events, not here (third-round M1).
+    // Modern completion and dispatch consume one view; legacy runs retain outcome replay.
     const latestOutcome = (phase: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === phase);
-    // plan a9f3c7d2 第二笔（R5）：单职责（`completion_target=request`）请求跑完本阶段、修订把出生
-    // 时的定义缺口关掉之后，有效链**本来就该是空的**——「没有下一步」正是它的成功终局。空链在这里
-    // 被原判「未达链尾」→ PARTIAL，单职责请求于是永远到不了成功终局。只对 request 终点二分，
-    // feature 终点一字不变；`outcomes` 里至少有一条干净 PASS 才算数（本阶段没跑或失败时链不会空）。
-    const requestSliceDone = birthScope?.completion_target === 'request' && chain.length === 0
-      && outcomes.some(outcome => outcome.verdict === 'PASS' && !outcome.advance_blocked);
-    const reachedEnd = !halted && (requestSliceDone || (chain.length > 0 && chain.every(phase => {
+    const terminalScope = birthScope ? resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
+      previous: applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)), currentRunId: manifest.run_id }) : undefined;
+    const reachedEnd = !halted && (terminalScope ? terminalScope.phase_chain.length === 0 : (chain.length > 0 && chain.every(phase => {
       const latest = latestOutcome(String(phase));
       return latest?.verdict === 'PASS' && !latest.advance_blocked;
     })));
-    const terminalChain = chain.map(String);
+    const terminalChain = terminalScope ? executionCompletionPhases(terminalScope) : chain.map(String);
 
     // 全链跑完时消费与 completion 同源的 issue 集。legacy needs_human 会在 collector 中
     // 重投影为 needs_fix；当前 writer 不再生成 AWAITING_HUMAN_REVIEW。

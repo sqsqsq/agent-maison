@@ -248,7 +248,7 @@ function checkFactsFile(
     const { loadFactsInvocationContext, resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
     if ('run_id' in invocation.subject) {
       try {
-        admission = loadFactsInvocationContext({ projectRoot, feature: invocation.subject.feature, phase, runId: invocation.subject.run_id,
+        admission = loadFactsInvocationContext({ projectRoot, frameworkRoot: options?.frameworkRoot, feature: invocation.subject.feature, phase, runId: invocation.subject.run_id,
           attemptId: options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT });
       } catch { /* No verifiable admission: strict dependency comparison below. */ }
     }

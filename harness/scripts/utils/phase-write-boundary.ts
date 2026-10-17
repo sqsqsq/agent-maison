@@ -57,6 +57,7 @@ export interface ResolvePhaseWriteBoundaryOptions {
   frameworkRoot: string;
   feature: string;
   runId?: string;
+  pendingOwnerPhase?: string;
   phaseOrder: readonly string[];
   track: FeatureTrack;
   profileDir: string;
@@ -119,7 +120,7 @@ function loadCodingScope(
     try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId); }
     catch (error) {
       const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-      const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId);
+      const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.pendingOwnerPhase);
       if (!scope || !phaseOwnsDesignOutput(planProduces, scope, 'plan', 'contracts@1')) throw error;
       // Keep valid authority when plan rejects a repair; unfinished output grants no new source domain.
       return { prefixes: [], modules: [], diagnostics: ['plan still owns construction output; source domains are not yet authorized'] };

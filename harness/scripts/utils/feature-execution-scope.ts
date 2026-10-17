@@ -625,6 +625,7 @@ export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
     // 拿它当边界时，重复收尾会把同一份合法提案判成越权、连后面的 no-op 判断都到不了）。
     authorizedPhases: record!.execution_scope.phase_chain,
     completedPhases,
+    currentPhase: input.phase,
   });
   if (outcome) {
     record = appendFeatureScopeRevision({ projectRoot, feature, nextScope: outcome.scope, trigger: { phase: input.phase }, revisionInput: outcome.input }).record;

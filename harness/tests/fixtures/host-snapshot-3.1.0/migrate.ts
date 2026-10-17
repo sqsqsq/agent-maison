@@ -62,7 +62,6 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   clearFrameworkConfigCache();
   const after = assessFeature(s.root, feature, { ...resolveChangeUnitExpectedExecution(s.root, feature), frameworkRoot: s.frameworkRoot });
   assert.equal(hash(original), originalHash, '迁移不得改写旧 completion 原件');
-  if (owners.has('spec')) assert(probe.events.some(event => event.type === 'scope_revised'), 'spec补定义后应在同一run接回失效的复用阶段');
   const failedPhase = [...probe.events].reverse().find(event => event.type === 'phase_verdict' && event.verdict !== 'PASS')?.phase;
   const failedReport = failedPhase ? featureFilePath(s.root, feature, `${failedPhase}/reports/script-report.json`) : '';
   const failureChecks = failedReport && fs.existsSync(failedReport)
@@ -70,6 +69,7 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   assert.equal(probe.exitCode, 0, JSON.stringify({ events: probe.events.slice(-5), checks: failureChecks }));
   assert(after.complete, JSON.stringify({ record: after.record, obligations: after.obligations.filter(o => o.status === 'uncovered') }));
   assert(after.record.state === 'ok' && after.record.run_id, '新完成必须仍可信并有 run 身份');
+  if (owners.has('spec')) assert(probe.invokedPhases.includes('spec'), 'invalid spec proof must be replaced by a real spec execution, without requiring an extra scope write');
   const successorRun = after.record.run_id;
   assert.notEqual(successorRun, sourceRun, '已完成后必须用新 run 生成新 completion');
   assert(probe.events.some(event => event.type === 'supersede' && event.target_run_id === sourceRun), '须有正式承接审计');

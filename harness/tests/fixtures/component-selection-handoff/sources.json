@@ -60,9 +60,10 @@
     "fixture_sha256": "5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754"
   },
   {
-    "path": "01-Product/Phone/src/main/ets/pages/Index.ets",
+    "path": "01-Product/Phone/src/main/ets/pages/index.ets",
     "source_sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0",
-    "fixture_sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0"
+    "fixture_sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0",
+    "note": "28e31f53: corrected fixture entity spelling to host Git index. Original blueprint/contracts retain Index.ets as the observed invalid input; bytes unchanged."
   },
   {
     "path": "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",

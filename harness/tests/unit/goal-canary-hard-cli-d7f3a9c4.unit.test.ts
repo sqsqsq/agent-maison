@@ -1218,12 +1218,12 @@ cases.push(
           canary: () => ({ exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
         });
         assert.deepStrictEqual(resumedAgain.canaryCalls, [], `预算耗尽后再次恢复不得重新获得探测额度：${JSON.stringify(resumedAgain.canaryCalls)}`);
-        const successor = await runModelChain({
+        const beforeSuccessor = fs.readdirSync(path.dirname(first.reportDir)).sort();
+        await assert.rejects(runModelChain({
           root, feature, ui: true, args: [...REQ_ARGS(UI_REQ), '--supersede', runId],
           canary: () => ({ exitCode: 0, stdout: 'CANNOT_SEE_IMAGE', stderr: '', command: 'fake-canary' }),
-        });
-        assert.ok(path.basename(successor.reportDir) !== runId, '夹具：后继须是新 run');
-        assert.deepStrictEqual(successor.canaryCalls, [], `后继不得重新获得探测额度：${JSON.stringify(successor.canaryCalls)}`);
+        }), /budget_wall_clock.*后继未创建/);
+        assert.deepStrictEqual(fs.readdirSync(path.dirname(first.reportDir)).sort(), beforeSuccessor, '预算耗尽后无后继目录，也不执行金丝雀');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

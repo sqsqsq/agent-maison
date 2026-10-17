@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, designScopeRevisionChecks, checkTypedConstructionContent } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
@@ -12,7 +12,9 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { resolveCapabilityInputs, readBoundInput } from '../../scripts/utils/capability-resolution';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import checkSpec from '../../scripts/check-spec';
-import checkPlan from '../../scripts/check-plan';
+import checkPlan, { checkContractFileReferenceClosure } from '../../scripts/check-plan';
+import { designOwnerBlockers, buildDesignOwnerGuidance } from '../../scripts/goal-phase-runtime';
+import { buildSummaryBlockers } from '../../scripts/utils/summary-blockers';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { checkDesignToCode } from '../../scripts/check-coding';
 import type { CheckContext, ContractsSpec } from '../../scripts/utils/types';
@@ -89,6 +91,41 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: '28e31f53 actual closure and alignment route only real write expansion to the design owner', run(f) {
+    const original = planContracts(f);
+    const context = (contracts: ContractsSpec) => ({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan',
+      featureSpec: { contracts }, phaseRule: {} } as CheckContext);
+    const actual = structuredClone(original);
+    actual.interfaces = [{ module: 'ledger', layer: '02-Feature', class: 'LedgerFeature', file: original.files[0], methods: [{ name: 'run', params: [], return: 'void', async: false, description: 'execute ledger operation' }] }];
+    actual.files = actual.files.filter(file => file !== original.files[0]);
+    const omitted = checkContractFileReferenceClosure(context(actual))[0];
+    assert.equal(omitted.status, 'FAIL'); assert.equal(omitted.repair_owner, undefined);
+    const resource = 'src/ledger/existing.png'; fs.writeFileSync(path.join(f.root, resource), 'existing');
+    actual.files = [...original.files]; actual.resource_keys = { ledger: { media: [{ key: 'icon', value: 'app.media.icon', path: resource }] } };
+    const readOnly = checkContractFileReferenceClosure(context(actual))[0];
+    assert.equal(readOnly.status, 'FAIL'); assert.equal(readOnly.repair_owner, undefined);
+    actual.interfaces[0].file = 'src/ledger/ExtraService.ets';
+    const expanded = checkContractFileReferenceClosure(context(actual))[0];
+    const blockers = designOwnerBlockers(buildSummaryBlockers([expanded], (value, max) => value.slice(0, max), () => undefined));
+    assert.equal(blockers.length, 1, 'the production summary must enter the existing first-occurrence owner branch');
+    const guidance = buildDesignOwnerGuidance({ feature: f.feature, runId: 'r', phase: 'plan', blockers });
+    assert(guidance.includes('须先取得用户确认') && guidance.includes('design_repair.unattended_b1'));
+    actual.files.push('src/ledger/ExtraService.ets');
+    assert(checkAuthoritativeContentAligned(context(actual), 'contracts').some(check => check.repair_owner === 'external' && check.details?.includes('ExtraService.ets')));
+  } },
+  { name: '28e31f53 shared projection rejects existing case mismatch and accepts author-corrected binding', run(f) {
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').state, 'resolved', 'planned output need not exist');
+    const actual = 'src/ledger/ledgerFeature.ets'; fs.writeFileSync(path.join(f.root, actual), 'export class LedgerFeature {}');
+    const invalid = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(invalid.state, 'invalid'); assert(invalid.detail?.includes('LedgerFeature.ets') && invalid.detail?.includes('ledgerFeature.ets'));
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    const contract = node.contracts as ContractsSpec;
+    contract.files = contract.files.map(file => file === 'src/ledger/LedgerFeature.ets' ? actual : file);
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').state, 'resolved');
+  } },
   { name: 'content rules: shared own defects retain original BLOCKER wrappers and cross-entry obligations', run(f) {
     const read = (name: string) => YAML.parse(fs.readFileSync(path.join(__dirname, '../fixtures/blueprint-design-inputs', `${name}.yaml`), 'utf8'));
     const acceptance = read('acceptance'); const contracts = read('contracts'); const useCases = read('use-cases');
@@ -285,11 +322,15 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
   { name: 'validated spec facts reach actual P2 acceptance reader with derived and materialized sources', run(f) {
     const workflow: WorkflowSpec = { schema_version: '1.2', name: 'p3-scoped', auto_chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], artifacts: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
     const localFramework = path.join(f.root, 'projection-framework');
+    const repositoryFramework = path.resolve(__dirname, '../../..');
+    const frameworkRoot = localFramework;
     fs.mkdirSync(path.join(localFramework, 'workflows'), { recursive: true }); fs.writeFileSync(path.join(localFramework, 'workflows/p3-scoped.workflow.yaml'), YAML.stringify(workflow));
     // The revision budget re-resolves bindings through P1, which reads the artifact inventory from
     // the framework root it is given — so this stub framework must expose the real specs/ too,
     // otherwise it is a framework root that cannot resolve any artifact.
-    fs.symlinkSync(path.join(frameworkRoot, 'specs'), path.join(localFramework, 'specs'), process.platform === 'win32' ? 'junction' : 'dir');
+    for (const dir of ['specs', 'skills', 'profiles', 'harness', 'agents', 'docs', 'templates']) fs.symlinkSync(path.join(repositoryFramework, dir), path.join(localFramework, dir), process.platform === 'win32' ? 'junction' : 'dir');
+    fs.cpSync(path.join(repositoryFramework, 'workflows'), path.join(localFramework, 'workflows'), { recursive: true });
+    fs.copyFileSync(path.join(repositoryFramework, 'package.json'), path.join(localFramework, 'package.json'));
     const configFile = path.join(f.root, 'framework.config.json');
     const config = { schema_version: '1.1', project_name: 'P3 design fixture', project_profile: { name: 'generic' }, paths: { features_dir: 'doc/features' }, active_workflow: 'p3-scoped' }; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
     // D0.1: a Feature-target scope needs the sourced impact before device verification can be
@@ -297,8 +338,8 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     // The blueprint fixture declares no contracts.files, so the write set comes from the
     // implementation duty's own source binding (D0.1 rule (a): an implementation duty must name a
     // verifiable write set). Both bindings come from the production resolver.
-    const srcRel = 'src/demo-implementation.ts';
-    fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
+    const srcRel = 'src/ledger/LedgerFeature.ets';
+    fs.mkdirSync(path.dirname(path.join(f.root, srcRel)), { recursive: true });
     fs.writeFileSync(path.join(f.root, srcRel), 'export const demo = 1;\n');
     const contractsProbe = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', track: 'full', testTargets: [srcRel],
       inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] } });

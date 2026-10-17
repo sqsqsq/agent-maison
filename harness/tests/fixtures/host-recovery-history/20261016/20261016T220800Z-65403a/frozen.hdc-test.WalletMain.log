@@ -1,0 +1,12 @@
+[meta] bundle=com.example.simulatedwallet module=walletmain_test runner=/ets/testrunner/OpenHarmonyTestRunner timeoutMs=60000
+[hap] D:\1.code\SimulatedWalletForHmos\02-Feature\WalletMain\build\default\outputs\ohosTest\WalletMain-ohosTest-signed.hap
+[device] hdcPresent=true available=true targets=3UJ0225321000395
+[device-ready/ut-install] 设备未锁屏
+$ hdc install -r D:\1.code\SimulatedWalletForHmos\02-Feature\WalletMain\build\default\outputs\ohosTest\WalletMain-ohosTest-signed.hap
+[Info]App install path:D:\1.code\SimulatedWalletForHmos\02-Feature\WalletMain\build\default\outputs\ohosTest\WalletMain-ohosTest-signed.hap msg:install bundle successfully. 
+AppMod finish
+
+
+$ hdc shell aa test -b com.example.simulatedwallet -m walletmain_test -s unittest /ets/testrunner/OpenHarmonyTestRunner -w 60000
+start ability successfully.
+

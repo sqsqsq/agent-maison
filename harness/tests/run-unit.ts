@@ -121,6 +121,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-post-harness-drift', modulePath: './unit/goal-post-harness-drift.unit.test' },
   { id: 'goal-product-preflight', modulePath: './unit/goal-product-preflight.unit.test' },
   { id: 'host-replay-fixes', modulePath: './unit/host-replay-fixes.unit.test' },
+  { id: 'host-recovery-history', modulePath: './unit/host-recovery-history.unit.test' },
   // plan c6a9e4d2 t2/t3：Windows containment 装帧 + guardian 接管对账矩阵（只读投影/匹配才终止）
   { id: 'agent-containment', modulePath: './unit/agent-containment.unit.test' },
   { id: 'doc-freshness',    modulePath: './unit/doc-freshness.unit.test' },

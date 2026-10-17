@@ -1,0 +1,228 @@
+{
+  "description": "Read-only original host records; historical defects remain defects. No events were synthesized.",
+  "missing": [
+    "2026-10-14 wallet-bank-card original manifest/events not found"
+  ],
+  "files": [
+    {
+      "file": "20261016/20261016T065049Z-408844/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T065049Z-408844/manifest.json",
+      "sha256": "b3f5eaea49c609fe3de03bbca8d18070a30be90056d6153e5f5ce193e88927df",
+      "bytes": 52905
+    },
+    {
+      "file": "20261016/20261016T065049Z-408844/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T065049Z-408844/events.jsonl",
+      "sha256": "e0d0b8a5ba16e7a7815f4ab9b62d96844a1ab4de4004e20c8610534d8943fc45",
+      "bytes": 192246
+    },
+    {
+      "file": "20261016/20261016T083014Z-b5ada8/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T083014Z-b5ada8/manifest.json",
+      "sha256": "204bd9c20084610580963c21969726dba39745fe2f070afb307d79b3dd33359e",
+      "bytes": 12310
+    },
+    {
+      "file": "20261016/20261016T083014Z-b5ada8/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T083014Z-b5ada8/events.jsonl",
+      "sha256": "bf1c82b9037bf7de8ed526ad57b49715b078a1b1b91ea459a7625b408757f4e3",
+      "bytes": 603981
+    },
+    {
+      "file": "20261016/20261016T103148Z-b9ac66/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T103148Z-b9ac66/manifest.json",
+      "sha256": "ff49722bd27a821589c5d4027f2826139f363c5b47582924bfef1b2fa830fe53",
+      "bytes": 14452
+    },
+    {
+      "file": "20261016/20261016T103148Z-b9ac66/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T103148Z-b9ac66/events.jsonl",
+      "sha256": "7f7ad440b9addc864ab6fc04ab0469d18da6e6eff1bda34ad613c9cb84fa8b07",
+      "bytes": 618887
+    },
+    {
+      "file": "20261016/20261016T121435Z-b632bb/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T121435Z-b632bb/manifest.json",
+      "sha256": "a03b21a83d0fc7b3335ee705d583e845e942a78575915f184d03bc176a2bc298",
+      "bytes": 66418
+    },
+    {
+      "file": "20261016/20261016T121435Z-b632bb/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T121435Z-b632bb/events.jsonl",
+      "sha256": "53524e4026ee20bb678ac6a386292a04a8092b74592b8923e3756d6f8d3c44ff",
+      "bytes": 58451
+    },
+    {
+      "file": "20261016/20261016T155250Z-4ca610/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T155250Z-4ca610/manifest.json",
+      "sha256": "648c40e40a0a148c4251f367a05de4a956899253f1957daccf486a31792e8817",
+      "bytes": 66418
+    },
+    {
+      "file": "20261016/20261016T155250Z-4ca610/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T155250Z-4ca610/events.jsonl",
+      "sha256": "85f7a6720ca89a11e20a5a10044562c2422438506d8875f43d872887a5246172",
+      "bytes": 4255
+    },
+    {
+      "file": "20261016/20261016T160736Z-b23184/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T160736Z-b23184/manifest.json",
+      "sha256": "c98b206c289a4879daf9bb4691f3e3f224ed31d3e41833da09db9478d9ffdfad",
+      "bytes": 66418
+    },
+    {
+      "file": "20261016/20261016T160736Z-b23184/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T160736Z-b23184/events.jsonl",
+      "sha256": "1828fde3d6df84820dfa60b5f2c947b5df14262965b2ade285be823082c7456f",
+      "bytes": 201977
+    },
+    {
+      "file": "20261016/20261016T170800Z-71c521/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T170800Z-71c521/manifest.json",
+      "sha256": "48a395a116322f4760a4d649eefc0d1660ef173b5b1565f2703dc3dc9f09aeb5",
+      "bytes": 68978
+    },
+    {
+      "file": "20261016/20261016T170800Z-71c521/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T170800Z-71c521/events.jsonl",
+      "sha256": "86f012b27df0a23e1f0e7db8a98f2d7171ab580642395e378c0de246cb6efa5b",
+      "bytes": 197359
+    },
+    {
+      "file": "20261016/20261016T193756Z-1b12f4/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T193756Z-1b12f4/manifest.json",
+      "sha256": "b0281ca6f44875164a8e68562ab189075e01e5266f42eefdb508ef51be9fee99",
+      "bytes": 71450
+    },
+    {
+      "file": "20261016/20261016T193756Z-1b12f4/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T193756Z-1b12f4/events.jsonl",
+      "sha256": "10738e3a097f18abd4faf75c7e0159c82fa84efe25d989950b8e874c615bec5c",
+      "bytes": 661422
+    },
+    {
+      "file": "20261016/20261016T220800Z-65403a/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T220800Z-65403a/manifest.json",
+      "sha256": "e624c2edc788127411d5e862871ba2390d9549b8f055052c92c2be2419bf0659",
+      "bytes": 73724
+    },
+    {
+      "file": "20261016/20261016T220800Z-65403a/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261016T220800Z-65403a/events.jsonl",
+      "sha256": "995df82ae17c47f085cc5be3fc6285e3607feba6668215b9d7f353af170e3173",
+      "bytes": 94399
+    },
+    {
+      "file": "r5/20261012T121727Z-23f8d5/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T121727Z-23f8d5/manifest.json",
+      "sha256": "cb2eeb289aa9f247506f6987e1e6553d7b54e46c1e65c5b927379fb30356c8c4",
+      "bytes": 56572
+    },
+    {
+      "file": "r5/20261012T121727Z-23f8d5/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T121727Z-23f8d5/events.jsonl",
+      "sha256": "2f1dc3093104901cf94b7ab9d27d132090648c14ef0f5a11be19445ddbfbb973",
+      "bytes": 31666
+    },
+    {
+      "file": "r5/20261012T131449Z-ee81fd/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T131449Z-ee81fd/manifest.json",
+      "sha256": "dd888f1e717e0f6f173f7b88c3701b68b37a5943ce0a1772f2fb89b0f881810d",
+      "bytes": 21314
+    },
+    {
+      "file": "r5/20261012T131449Z-ee81fd/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T131449Z-ee81fd/events.jsonl",
+      "sha256": "89ae78c55825976470bb4fd99eaacb1d6a82116cb5261779d9c5300c7ea196d4",
+      "bytes": 137248
+    },
+    {
+      "file": "r5/20261012T144628Z-66d180/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T144628Z-66d180/manifest.json",
+      "sha256": "1550b1ed329fbb3fb1f99c0a1847c4738e22bdec23dcd0ee02c5560cef0d49ff",
+      "bytes": 39985
+    },
+    {
+      "file": "r5/20261012T144628Z-66d180/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T144628Z-66d180/events.jsonl",
+      "sha256": "a305dd21db6d67399945994d6c942f57db067001c17f807b8975f0808ffcba60",
+      "bytes": 84204
+    },
+    {
+      "file": "r5/20261012T161922Z-dca0e5/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T161922Z-dca0e5/manifest.json",
+      "sha256": "334c65ca9860b348829cee549858f8fa2fbd0a5ab327d215c3338ec1d7eea0bf",
+      "bytes": 15963
+    },
+    {
+      "file": "r5/20261012T161922Z-dca0e5/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T161922Z-dca0e5/events.jsonl",
+      "sha256": "b2e0d46212a8b8b723de908765920dd71c3b9d2909a8741a3851136c8e90ddbd",
+      "bytes": 397254
+    },
+    {
+      "file": "r5/20261012T204232Z-847ca7/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T204232Z-847ca7/manifest.json",
+      "sha256": "042f639726a926ac11e9762a97f84d1779ceb115e3c44f4d8301e536db1b109d",
+      "bytes": 40322
+    },
+    {
+      "file": "r5/20261012T204232Z-847ca7/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261012T204232Z-847ca7/events.jsonl",
+      "sha256": "231f9ad2d785c6d88fff61b793f33c19d66d61c2944e666e8db3ff59ce46668b",
+      "bytes": 361164
+    },
+    {
+      "file": "r5/20261013T001316Z-0eecab/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261013T001316Z-0eecab/manifest.json",
+      "sha256": "43b363f3dc2304a77c7bcc6baddbfd0e12bf37aad8b9cf3e17b5ac576ff31e8f",
+      "bytes": 34768,
+      "source_sha256": "49b1ed0b28f2523e8a5263b9aba76c9cd1365a5e389e332c488e2a3a6c984b7d",
+      "transform": "CRLF to LF only"
+    },
+    {
+      "file": "r5/20261013T001316Z-0eecab/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261013T001316Z-0eecab/events.jsonl",
+      "sha256": "53a2310dca89e1e7aa451e51eb2e1848372cf47ba97917ad1a468c9523dbe951",
+      "bytes": 146185
+    },
+    {
+      "file": "r5/20261013T015410Z-8ff819/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261013T015410Z-8ff819/manifest.json",
+      "sha256": "d502c5380717942c610f07582c1225b6362d7d2460af9f977c73bd08a6688056",
+      "bytes": 40469
+    },
+    {
+      "file": "r5/20261013T015410Z-8ff819/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261013T015410Z-8ff819/events.jsonl",
+      "sha256": "bdaca69a0bcf285151eeb2482789344fdd247007aaabee290e8da687ed353c55",
+      "bytes": 218196
+    },
+    {
+      "file": "r5/20261013T055551Z-f84ff8/manifest.json",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261013T055551Z-f84ff8/manifest.json",
+      "sha256": "43a63b5fb71ed674b6cf643b644b07a4f14e47b4301b817717f1d6b9727e76bd",
+      "bytes": 48187
+    },
+    {
+      "file": "r5/20261013T055551Z-f84ff8/events.jsonl",
+      "source": "dist/bc-openCard-2-r5-20261013/feature/bc-openCard-2/goal-runs/20261013T055551Z-f84ff8/events.jsonl",
+      "sha256": "5e7d5f50dc2199001c0755e6b2b540c63756429bec542dc644c42f3935b55d99",
+      "bytes": 346342
+    },
+    {
+      "file": "20261016/20261016T220800Z-65403a/frozen.hdc-test.WalletMain.log",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261016T225415Z-501/ut/frozen.hdc-test.WalletMain.log",
+      "sha256": "0265f2f7fec00cf25878c4203779a88e2934f92eb5a762603e9aa4e06526ab74",
+      "bytes": 838,
+      "source_sha256": "50dc6964b7df3942847e8ef239b4ad3229b4fe85c97bed9de4d00656cf0da6da",
+      "transform": "CRLF to LF only"
+    },
+    {
+      "file": "20261016/20261016T220800Z-65403a/frozen.ut-result.WalletMain.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261016T225415Z-501/ut/frozen.ut-result.WalletMain.json",
+      "sha256": "d506ce090950bd176557393eb53e396433b624575e91d24cd1db7f16713020d2",
+      "bytes": 10564
+    }
+  ]
+}

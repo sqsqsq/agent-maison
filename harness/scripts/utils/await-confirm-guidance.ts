@@ -169,7 +169,7 @@ export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts):
   const { feature, runId, phase, kind, activeElapsedMs, limit, harnessPrefixRel } = opts;
   const spent =
     kind === 'budget_wall_clock'
-      ? `已累计活跃 ${Math.round(activeElapsedMs / 60000)}m / 预算 ${Math.round(limit / 60000)}m`
+      ? `已累计 ${Math.round(activeElapsedMs / 60000)}m / 预算 ${Math.round(limit / 60000)}m`
       : `已消耗 agent 轮次达上限 ${limit}`;
   // plan 4e6fb3b6 §3.3：删去"复制 manifest、以新 run_id 启动、旧 run 用 --supersede 废弃"一路——它要求用户自己拼 run 与旗标。
   // plan a2f7c9e4 §3.2/§3.3：预算耗尽且只改了预算时，带 --override-manifest 重新发起同一请求或显式续跑都接回本 run，
@@ -177,7 +177,7 @@ export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts):
   return [
     `【${feature} · run ${runId} · ${phase}】run 预算已耗尽（${kind}，${spent}）。`,
     `影响：${feature} 停在 ${phase} 阶段，本 run 的剩余阶段未执行；已完成的阶段结果保留。`,
-    '预算按活跃执行时间累计（停机等待不计入）——本次熔断是真实消耗，不是隔夜钟漂。',
+    '预算按运行会话时间累计：停机等待不计入；合盖或待机期间执行可能暂停，但运行会话计时照走，睡眠时间仍计入墙钟预算。无人值守长跑请接电源并关闭睡眠。',
     '谁能修：预算有权者；runner 不自行增额。用户已明确无人值守＋不要询问＋授权完整交付时，主 Agent 可显式提高默认额度并沿现有入口恢复；用户单独总上限不可突破，累计消耗与无进展熔断不重置。',
     '',
     '怎么恢复：调大本 run manifest.json 的 budget.wall_clock_minutes / budget.max_total_turns，然后带 --override-manifest 重新发起同一请求，',

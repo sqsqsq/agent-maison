@@ -7,7 +7,7 @@
 
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { loadRefElementsFile, refElementsAbsPath, resolveCurrentRequirementSource } from './fidelity-shared';
-import { loadEffectiveExecutionScope } from './goal-run-creation';
+import { resolveEffectiveScopeSource } from './goal-run-creation';
 import { effectiveHeadlessUnattended } from './goal-manifest';
 import { parseScope } from './scope-parser';
 import { loadRepairDeclineState } from './repair-candidates';
@@ -49,7 +49,7 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
   const brief: GoalBrief = { requirement: requirementText || null, resolved_conflicts: [] };
 
   try {
-    const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+    const scope = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
     if (scope) brief.requested = { completion_target: scope.completion_target, requested_results: [...scope.requested_results] };
   } catch { /* 范围不可得 → 省略该栏 */ }
 

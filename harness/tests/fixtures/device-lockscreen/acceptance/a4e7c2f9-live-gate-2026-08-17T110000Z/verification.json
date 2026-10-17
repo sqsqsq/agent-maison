@@ -38,7 +38,7 @@
       {
         "path": "harness/scripts/utils/device-readiness-gate.ts",
         "verified_sha256": "fd0e6deb64ecf16a01c853084fa5426dbaefdc0eccb82cce75a58e8eb24627a1",
-        "current_sha256": "49b735fe81c062dedb6927f44c3b92750b9080b71b5c66434e1bbe2a6d989fbc"
+        "current_sha256": "505877f85366325444d74b36f9458e0a482fc0d09d932c1cfc574bfcc0ae580b"
       },
       {
         "path": "harness/scripts/utils/device-readiness-deps.ts",

@@ -1,4 +1,5 @@
-import { validateExecutionScope, assertRevisionKeepsRequiredObligations } from './execution-scope';
+import { validateExecutionScope, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView } from './execution-scope';
+import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 /**
  * Fresh goal-run birth contract.
  *
@@ -110,21 +111,10 @@ export function applyScopeRevisions(birth: ExecutionScope, events: readonly Goal
  */
 export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[]): Map<number, string[]> {
   const out = new Map<number, string[]>();
-  const revisions = loadScopeRevisions(events, birth);
-  revisions.forEach((revision, index) => {
-    const previous = index === 0 ? birth : revisions[index - 1].execution_scope;
-    const phases = new Set<string>();
-    for (const before of previous.obligations) {
-      const proof = (before.satisfied_by ?? []).filter(ref => 'evidence_manifest_aggregate' in ref);
-      if (!proof.length) continue;
-      const after = revision.execution_scope.obligations.find(obligation => obligation.id === before.id);
-      const kept = (after?.satisfied_by ?? []).filter(ref => 'evidence_manifest_aggregate' in ref);
-      // Only a duty left with NO phase evidence at all is revoked: dropping one of several proofs
-      // while keeping another still leaves the duty satisfied, so its phase must not be re-run.
-      if (!kept.length) phases.add(String(before.owner_phase));
-    }
-    if (phases.size) out.set(revision.revision_index, [...phases]);
-  });
+  loadScopeRevisions(events, birth);
+  const order = [...new Set([...FEATURE_PHASE_ORDER, ...birth.obligations.map(o => o.owner_phase)])];
+  const history = scopeProofHistory(birth, events, order);
+  for (const [index, phases] of history.revisions) if (phases.length) out.set(Number((events[index] as unknown as ScopeRevisedEvent).revision_index), phases);
   return out;
 }
 
@@ -198,8 +188,16 @@ export function resolveEffectiveScopeSource(
   return { scope: featureEffectiveScope(record), source: 'feature', run_id: null };
 }
 
-export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string): ExecutionScope | undefined {
-  return resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
+export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string, providedFrameworkRoot?: string, pendingOwnerPhase?: string): ExecutionScope | undefined {
+  const recorded = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
+  if (!recorded || !runId) return recorded;
+  const { resolveWorkflowSpec, workflowForExistingRun } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+  const { resolveCurrentScopeView } = require('./feature-track') as typeof import('./feature-track');
+  const frameworkRoot = providedFrameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
+  const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
+  return resolveCurrentScopeView({ projectRoot, frameworkRoot, feature,
+    workflow: workflowForExistingRun(resolveWorkflowSpec(projectRoot, { frameworkRoot }), manifest, frameworkRoot), previous: recorded, currentRunId: runId, currentPhase: pendingOwnerPhase });
 }
 
 /**

@@ -572,7 +572,7 @@ async function main(): Promise<void> {
     }
     const { loadEffectiveExecutionScope } = require('./scripts/utils/goal-run-creation') as typeof import('./scripts/utils/goal-run-creation');
     const { hasNoTestingObligation } = require('./scripts/utils/execution-scope') as typeof import('./scripts/utils/execution-scope');
-    const scope = loadEffectiveExecutionScope(projectRoot, feature, goalRunId);
+    const scope = loadEffectiveExecutionScope(projectRoot, feature, goalRunId, resolvedFrameworkRoot, phase);
     if (scope && hasNoTestingObligation(scope)) {
       const { executionScopeEvidenceIssues } = require('./scripts/utils/verify-feature-completion') as typeof import('./scripts/utils/verify-feature-completion');
       // D2: same-run evidence is not sealed yet (a revision never seals), so the terminal check is

@@ -8,8 +8,8 @@ import * as path from 'path';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（锁/run 路径必须经它展开）
 import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
-import { inspectGoalRunCreationFiles, applyScopeRevisions } from './goal-run-creation';
-import { validateExecutionScope } from './execution-scope';
+import { inspectGoalRunCreationFiles, applyScopeRevisions, eventsWithScopeRevocations } from './goal-run-creation';
+import { validateExecutionScope, effectiveScopeView } from './execution-scope';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -315,7 +315,7 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
     }
     // plan c4e7a9b2 §3.5：回退失效的阶段与来源阶段重置（同 resume）——否则 `ended` 锁存让重跑的
     // phase_start 被挡、当前阶段停在来源阶段。
-    if (e.type === 'phase_backtrack_requested') {
+    if (e.type === 'phase_backtrack_requested' || e.type === 'phase_invalidated') {
       const b = e as { from_phase?: string; invalidated_phases?: string[] };
       for (const p of [...(b.invalidated_phases ?? []), b.from_phase ?? e.phase]) {
         const j = spanByPhase.get(p as FeaturePhase);
@@ -831,7 +831,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   let revisedChain: FeaturePhase[] | undefined;
   try {
     if (manifest.execution_scope) {
-      const effective = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), events);
+      const birth = validateExecutionScope(manifest.execution_scope);
+      applyScopeRevisions(birth, events);
+      const effective = effectiveScopeView({ birth, events, workflow });
       if (effective !== manifest.execution_scope) {
         revisedChain = effective.phase_chain.map(p => normalizePhaseId(p, p)).filter((p): p is FeaturePhase => allowedPhases.includes(p));
       }
@@ -844,7 +846,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);
 
-  const spans = buildPhaseSpans(events, chain);
+  const spans = buildPhaseSpans(eventsWithScopeRevocations(manifest.execution_scope, events), chain);
   const currentSpan = findCurrentSpan(spans);
   const currentPhase = currentSpan?.phase ?? null;
   const currentIndex = currentPhase ? chain.indexOf(currentPhase) : 0;
@@ -933,6 +935,8 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     status = 'PENDING';
   } else if (lastRunEnd?.status) {
     status = lastRunEnd.status as ProgressRunStatus;
+    const endReason = (lastRunEnd as { reason?: unknown }).reason;
+    statusReason = typeof lastRunEnd.halt_reason === 'string' ? lastRunEnd.halt_reason : typeof endReason === 'string' ? endReason : null;
   } else if (liveness.state === 'ORPHAN_SUSPECTED') {
     status = 'UNKNOWN';
     statusReason = 'feature_lock_orphan_suspected';
@@ -1166,9 +1170,10 @@ export function formatGoalStatusText(
   return [
     `Goal ${feature} · run ${runId} · ${snapshot.status}`,
     `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})`,
+    ...(snapshot.status_reason ? [`Reason: ${snapshot.status_reason}`] : []),
     `Liveness: ${snapshot.liveness.state} · progress ${pct}`,
     ...(outputStall ? [outputStall] : []),
-    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}`,
+    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
   ].join('\n');
 }
 
@@ -1270,6 +1275,7 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     '',
     `- Run ID: ${snapshot.run_id}`,
     `- Status: ${snapshot.status}`,
+    ...(snapshot.status_reason ? [`- Reason: ${snapshot.status_reason}`] : []),
     `- Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status}`,
     `- Liveness: ${snapshot.liveness.state}${
       snapshot.liveness.seconds_since_activity != null

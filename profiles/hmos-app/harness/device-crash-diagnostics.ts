@@ -30,6 +30,17 @@ export interface CrashProbeDeps {
   runHdc: (args: string[]) => string | null;
 }
 
+/** Only the new log window and this application's lines/PIDs, including follow-up OnPrepare. */
+export function applicationHilogWindow(before: string | null, after: string | null, bundle: string): string {
+  if (before === null || after === null) return 'hilog 诊断不可用：无法取得执行前后日志窗口。';
+  const prior = new Set(before.split(/\r?\n/));
+  const fresh = after.split(/\r?\n/).filter(line => !prior.has(line));
+  const pid = (line: string): string | undefined => line.match(/^\s*\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+(\d+)\s+\d+\s+[DFIWEF]\b/)?.[1];
+  const pids = new Set(fresh.filter(line => line.includes(bundle)).map(pid).filter(Boolean));
+  const selected = fresh.filter(line => line.includes(bundle) || (pids.has(pid(line)) && /BMS|AppKit|JsRuntime|OpenHarmonyTestRunner/.test(line)));
+  return selected.slice(-60).join('\n').slice(-16000) || '本次窗口未取得该应用的 hilog 线索；原因仍未知。';
+}
+
 const FAULTLOG_DIR = '/data/log/faultlog/faultlogger';
 /** faultlog 文件名形如 `cppcrash-com.example.app-20260724150102` / `jscrash-...` / `appfreeze-...` */
 const FAULT_LINE_RE = /^\s*(\S*(?:cppcrash|jscrash|appfreeze)\S*)\s*$/gim;

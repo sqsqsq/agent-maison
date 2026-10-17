@@ -1376,7 +1376,8 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const codingInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...codingBridge }).inputs!;
       const codingFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: codingBridge.factsContext, resolvedInputs: codingInputs, frameworkRoot, goalAttemptId: 'i1' });
       assert(!codingFactsChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 facts gate 不得要求旧源码 hash: ' + JSON.stringify(codingFactsChecks.filter(check => check.status === 'FAIL')));
-      assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'), 'coding 改动后的 upstream gate 不得要求预先存在 coding manifest');
+      const upstreamChecks = checkUpstreamVerdictGate({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', runId: manifest.run_id });
+      assert(!upstreamChecks.some(check => check.status === 'FAIL'), 'coding 改动后的 upstream gate 不得要求预先存在 coding manifest: ' + JSON.stringify(upstreamChecks));
       assert.doesNotThrow(() => writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: codingInputs, factsContext: codingBridge.factsContext })), '责任阶段须能按真实 gate 顺序收口自己刚写的新字节');
       const codingFreshness = recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding'], { frameworkRoot });
       assert.deepStrictEqual(codingFreshness.map(item => item.verdict), ['fresh', 'fresh'], JSON.stringify(codingFreshness));
@@ -1408,7 +1409,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const repairInputs = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...repairBridge }).inputs!;
       const repairFactsChecks = checkFactsArtifact(f.root, 'demo', 'coding', { factsContext: repairBridge.factsContext, resolvedInputs: repairInputs, frameworkRoot, goalAttemptId: 'i3' });
       assert(!repairFactsChecks.some(check => check.status === 'FAIL'), JSON.stringify(repairFactsChecks.filter(check => check.status === 'FAIL')));
-      assert(!checkUpstreamVerdictGate({ projectRoot: f.root, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'));
+      assert(!checkUpstreamVerdictGate({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', runId: manifest.run_id }).some(check => check.status === 'FAIL'));
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', resolvedInputs: repairInputs, factsContext: repairBridge.factsContext }));
       const staleReview = recomputePhaseEvidenceStaleness(f.root, 'demo', ['review'], { frameworkRoot });
       assert.equal(staleReview[0].verdict, 'stale', 'coding 返修后已闭环 review 必须 stale: ' + JSON.stringify({ staleReview, current: fs.readFileSync(path.join(f.root, 'src/demo/value.ts'), 'utf8'), manifest: loadPhaseEvidenceManifest(f.root, 'demo', 'review')?.manifest }));
@@ -1416,7 +1417,9 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       assert.equal(recomputePhaseEvidenceStaleness(f.root, 'demo', ['plan', 'coding', 'review', 'ut'], { frameworkRoot })[0].verdict, 'stale');
       fs.writeFileSync(path.join(f.root, 'doc/features/demo/contracts.yaml'), YAML.stringify(nextContracts));
       fs.rmSync(path.join(f.root, 'src/demo/NewPage.ts'));
-      assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'ut', featuresDir: 'doc/features', goalRunId: manifest.run_id }), /facts baseline stale/);
+      const missingSource = recomputePhaseEvidenceStaleness(f.root, 'demo', ['coding'], { frameworkRoot })[0];
+      assert.equal(missingSource.verdict, 'stale', 'missing product source invalidates its responsible phase');
+      assert(missingSource.changed_paths.includes('src/demo/NewPage.ts'), JSON.stringify(missingSource));
     } finally {
       removeShimFramework(frameworkRoot);
     }

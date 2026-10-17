@@ -3,6 +3,22 @@ import {
   mapInstallBlockingToUtCheckFields,
 } from './device-install-diag';
 import * as path from 'path';
+import * as fs from 'fs';
+import { listExecutionKeyRuns } from './execution-key';
+
+export function repeatedUtExecutionFailureNote(reportsBase: string, currentRunDir: string, executionKey: string, failures: readonly UtHvigorTestFailureModule[]): string | undefined {
+  const previous = listExecutionKeyRuns(reportsBase, 'ut').find(run => path.resolve(run.runDir) !== path.resolve(currentRunDir));
+  if (!previous || previous.record.execution_key !== executionKey || previous.record.outcome !== 'failed') return undefined;
+  const repeated = failures.filter(item => {
+    const kind = item.result.onDeviceFailureEvidence?.runDiagnosis?.kind;
+    if (!kind || !['aa_test_no_result', 'aa_test_timeout', 'ability_start_failed'].includes(kind) || !/^[\w.-]+$/.test(item.module)) return false;
+    try {
+      const prior = JSON.parse(fs.readFileSync(path.join(previous.runDir, `frozen.ut-result.${item.module}.json`), 'utf8')) as HvigorRunResult;
+      return prior.onDeviceFailureEvidence?.runDiagnosis?.kind === kind;
+    } catch { return false; }
+  });
+  return repeated.length ? `同键同因执行链失败再次出现（${previous.dirStamp} → 当前；${repeated.map(item => item.module).join(', ')}）。相同输入下继续真跑没有新信息，请停止并上报本次诊断；修复环境/输入或取得新依据后再执行。` : undefined;
+}
 import type { HvigorRunResult } from './hvigor-runner';
 
 export type UtHvigorTestFailureKind =
@@ -143,6 +159,9 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
   const runKind = evidence?.runDiagnosis?.kind;
   if (runKind && DEVICE_BLOCKING_RUN_DIAGNOSIS_KINDS.has(runKind)) {
     return { ...entry, toolchain: false, phase, deviceBlocked: true, deviceSubkind: runKind };
+  }
+  if (runKind && ['aa_test_no_result', 'aa_test_timeout', 'ability_start_failed'].includes(runKind)) {
+    return { ...entry, toolchain: true, phase };
   }
   return { ...entry, toolchain: false, phase };
 }
@@ -311,6 +330,9 @@ function actionFor(item: ClassifiedFailure): string {
     );
   }
   const stageHint = stageHintOf(item.result);
+  if (['aa_test_no_result', 'aa_test_timeout', 'ability_start_failed'].includes(item.result.onDeviceFailureEvidence?.runDiagnosis?.kind ?? '')) {
+    return '执行链尚无有效结果，先依据本次 faultlog/hilog 诊断定位；仅在修复输入/环境或取得新诊断依据后再执行，原因不明时上报，不猜测为业务代码回归。';
+  }
   // t1：改用结构化 deviceBlocked 判定（此前为 stageHint 散文子串匹配——同类子串误判已有前科）。
   return item.deviceBlocked
     ? '设备已连接但锁屏：请人解锁真机并保持在桌面/前台后重跑；这是环境问题，不要改动代码或 UT。'
@@ -357,6 +379,7 @@ export function buildUtHvigorTestFailDetails(
     blockingClass = 'externalBlocked';
     failureKind = 'device_blocked';
   }
+  if (items.some(item => !item.result.testResult && item.result.onDeviceFailureEvidence?.runDiagnosis?.kind === 'test_failed')) failureKind = 'code_regression';
   // plan 423e5d0f P0-4：runtime 降级（全员）→ needsConfirmation 契约，decideNextAction
   // 才会落 confirm 分支而不是 device_toolchain 的"修工具链"误导。
   if (failureKind === 'install_needs_confirmation') {
