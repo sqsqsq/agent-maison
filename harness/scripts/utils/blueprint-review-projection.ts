@@ -1,5 +1,5 @@
 import * as YAML from 'yaml';
-import { BlueprintRecord, asRecord, asRecords, asStrings, nonEmptyString } from './component-blueprint-model';
+import { BlueprintIssue, BlueprintRecord, asRecord, asRecords, asStrings, nonEmptyString } from './component-blueprint-model';
 import { stableAddressIndex } from './blueprint-addressing';
 import { validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { currentScopeItems, requirementTraceability } from './blueprint-requirement-traceability';
@@ -13,9 +13,9 @@ import { evaluateDerivedConclusionFreshness } from './derived-conclusion-freshne
 import { diagnoseBlueprintPresentationShape } from './component-blueprint-validator';
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import { normalizeUseCasePortCalls } from './spec-loader';
-import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
+import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
 
-export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@11';
+export const BLUEPRINT_REVIEW_FORMAT = 'component-blueprint-review@12';
 
 const PRESENTATION_METADATA = new Set(['provenance', 'source_ref', 'source_refs', 'verification_refs', 'evidence_refs', 'artifact_sha256', 'source_fingerprint']);
 const SUMMARY_KEYS = new Set(['semantics', 'description', 'rule', 'answer', 'summary']);
@@ -205,8 +205,7 @@ function renderFlow(flow: BlueprintRecord, viewId: unknown, acceptanceLinks: (va
   return lines;
 }
 
-function renderSequenceGraph(graph: BlueprintRecord, blueprint: BlueprintRecord): string[] {
-  const issues = validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [graph] });
+function renderSequenceGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, issues: BlueprintIssue[]): string[] {
   if (issues.length) return [`时序图 ${text(graph.graph_id)} 无效，未展示（非阻断）：`, '', ...issues.map(i => `- ${text(i.message)}`), ''];
   const result = asRecords(blueprint.derived_results).find(row => row.result_id === graph.graph_id);
   if (!result) return [`时序图 ${text(graph.graph_id)} 未记录对应派生结果，请由设计责任方重建。`, ''];
@@ -215,18 +214,17 @@ function renderSequenceGraph(graph: BlueprintRecord, blueprint: BlueprintRecord)
   return [`完整调用时序：${text(graph.label ?? graph.graph_id)}`, '', '```mermaid', String(graph.content).trimEnd(), '```', ''];
 }
 
-function renderReviewGraph(graph: BlueprintRecord, blueprint: BlueprintRecord): string[] {
-  if (/^\s*sequenceDiagram\b/.test(String(graph.content))) return renderSequenceGraph(graph, blueprint);
-  const issues = validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [graph] });
+function renderReviewGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, issues: BlueprintIssue[]): string[] {
+  if (/^\s*sequenceDiagram\b/.test(String(graph.content))) return renderSequenceGraph(graph, blueprint, issues);
   if (issues.length) return [`结构图 ${text(graph.graph_id)} 无效，未展示${issues.every(issue => issue.severity === 'WARN') ? '（非阻断）' : ''}：`, '', ...issues.map(issue => `- ${text(issue.message)}`), ''];
   return [`结构图：${text(graph.label ?? graph.graph_id)}`, '', '```mermaid', String(graph.content).trimEnd(), '```', ''];
 }
 
-function renderPlacedGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, shown: Set<string>): string[] {
+function renderPlacedGraph(graph: BlueprintRecord, blueprint: BlueprintRecord, shown: Set<string>, issues: BlueprintIssue[]): string[] {
   const address = `graph:${graph.graph_id}`;
   if (shown.has(String(graph.graph_id))) return [`相关图：${designLink(address, String(graph.label ?? graph.graph_id))}。`, ''];
   shown.add(String(graph.graph_id));
-  return [anchor(address), ...renderReviewGraph(graph, blueprint)];
+  return [anchor(address), ...renderReviewGraph(graph, blueprint, issues)];
 }
 
 interface ModelGroup { model: BlueprintRecord; sources: ReviewContent[] }
@@ -328,20 +326,21 @@ function readReviewContent(blueprint: BlueprintRecord): { content: ReviewContent
   }
   return { content, diagnostics };
 }
-function renderView(view: BlueprintRecord | undefined, blueprint: BlueprintRecord, graph = false, shownGraphs = new Set<string>()): string[] {
+function renderView(view: BlueprintRecord | undefined, blueprint: BlueprintRecord, display: BlueprintGraphDisplayInspection, shownGraphs: Set<string>): string[] {
   if (!view) return ['该视图未记录。', ''];
   const nodes = asRecords(view.nodes);
   const lines = [anchor(`view:${view.view_id}`), text(view.purpose), '',
     ...table(['适用性', '本次影响', '当前', '目标', '变化/依据'], [[enumText(view.applicability, APPLICABILITY), enumText(view.evolution_impact, IMPACT), meaning(view.current_state), meaning(view.target_state), view.applicability === 'not_applicable' ? refs(asRecord(view.applicability_evidence)?.evidence_refs) : view.evolution_impact === 'verified_unchanged' ? refs(asRecord(view.unchanged_evidence)?.evidence_refs) : meaning(view.delta)]]),
     nodes.map(node => anchor(`view:${view.view_id}/node:${node.node_id}`)).join('')];
-  if (view.applicability === 'not_applicable') return [...lines, '该视图不适用；保留上述依据，不能随单次需求自行切换适用性。', ''];
-  if (view.evolution_impact === 'verified_unchanged') return [...lines, `核实未变：${text(asRecord(view.unchanged_evidence)?.current_state_ref)}。`, ''];
+  if (!display.viewGraphs.has(String(view.view_id))) return [...lines, view.applicability === 'not_applicable'
+    ? '该视图不适用；保留上述依据，不能随单次需求自行切换适用性。'
+    : `核实未变：${text(asRecord(view.unchanged_evidence)?.current_state_ref)}。`, ''];
   if (nodes.length) lines.push(...explainedTable(['设计对象', '模块/责任方', '当前', '目标', '依据'], nodes.map(n => [n.label ?? n.name ?? n.node_id, `${prose(n.module ?? '—')} / ${prose(n.owner)}`, meaning(n.current_state), meaning(n.target_state), refs(n.design_basis_refs)]), ['依据']));
-  if (graph) {
-    const declared = asRecords(blueprint.generated_graphs).filter(g => g.source_view_id === view.view_id && !/^\s*sequenceDiagram\b/.test(String(g.content)) && asStrings(g.relation_refs).length > 0);
+  {
+    const declared = display.viewGraphs.get(String(view.view_id)) ?? [];
     const graphs = declared.length ? declared.filter(g => !shownGraphs.has(String(g.graph_id))) : [generateMermaidViewGraph(blueprint, String(view.view_id)) as unknown as BlueprintRecord];
     for (const g of graphs) {
-      const issues = validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [g] });
+      const issues = display.graphIssues.get(g) ?? validateGeneratedBlueprintGraphs({ ...blueprint, generated_graphs: [g] });
       if (issues.length) lines.push('结构图无效，未展示：', '', ...issues.map(i => `- ${text(i.message)}`), '');
       else if (asStrings(g.relation_refs).length) lines.push('```mermaid', String(g.content).trimEnd(), '```', '');
     }
@@ -543,13 +542,13 @@ function readerSourceLinks(blueprint: BlueprintRecord, pointer: string): Array<{
   return [{ address, label: String(target?.label ?? target?.name ?? '设计来源') }];
 }
 
-function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInputs, content: ReviewContent[], shownGraphs: Set<string>, guide: ReturnType<typeof inspectBlueprintReaderGuide>): string[] {
+function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInputs, content: ReviewContent[], shownGraphs: Set<string>, display: BlueprintGraphDisplayInspection): string[] {
+  const guide = display.guide;
   const review = asRecord(blueprint.review_summary) ?? {};
   const views = asRecords(blueprint.design_views); const view = (id: string) => views.find(row => row.view_id === id);
   const typed = (field: ReviewContent['field']) => content.filter(row => row.field === field);
   const current = inputs.units.filter(unit => !unit.retiredBy);
   const flows = asRecords(view('runtime')?.runtime_data_flows);
-  const graphs = asRecords(blueprint.generated_graphs);
   const images = registeredImages(blueprint); const shownImages = new Set<string>();
   const lines: string[] = [];
   const imageLines = (image: string): string[] => {
@@ -562,7 +561,7 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
     if (Array.isArray(value)) return value.flatMap(sourceImages);
     return asRecord(value) ? Object.values(asRecord(value)!).flatMap(sourceImages) : [];
   };
-  const graphLines = (graph: BlueprintRecord): string[] => renderPlacedGraph(graph, blueprint, shownGraphs);
+  const graphLines = (graph: BlueprintRecord): string[] => renderPlacedGraph(graph, blueprint, shownGraphs, display.graphIssues.get(graph)!);
   const sections = [
     ['summary', '方案摘要'], ['background', '背景、目标与边界'], ['terms', '术语'], ['journey', '用户旅程与界面'],
     ['solution', '整体方案'], ['flows', '关键流程'], ['data', '数据与存储'], ['decisions', '关键取舍'],
@@ -592,7 +591,7 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
       if (flow.description !== undefined) paragraph(flow.description);
       const steps = asStrings(flow.ordered_steps); if (steps.length) out.push(...steps.map((step, i) => `${i + 1}. ${text(step)}`), '');
       else if (asRecords(flow.consumers).length) for (const consumer of asRecords(flow.consumers)) paragraph(consumer.consumption, prose(consumer.consumer_id));
-      for (const graph of graphs.filter(graph => /^\s*sequenceDiagram\b/.test(String(graph.content)) && asStrings(graph.node_refs).includes(`view:runtime/flow:${flow.flow_id}`))) out.push(...graphLines(graph));
+      for (const graph of display.flowGraphs.get(String(flow.flow_id)) ?? []) out.push(...graphLines(graph));
     }
     if (section === 'data') for (const domain of asRecords(blueprint.data_domains)) { paragraph(domain.usage, prose(domain.label ?? domain.name ?? domain.data_domain_id)); paragraph(domain.isolation, '隔离'); paragraph(domain.retention, '有效期'); paragraph(domain.cleanup, '清理'); paragraph(domain.security, '安全'); }
     if (section === 'decisions') for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
@@ -642,7 +641,7 @@ function renderReaderBody(blueprint: BlueprintRecord, inputs: BlueprintReviewInp
       block.push(...linkedProse, '');
       if (section === 'journey') for (const image of item.resolvedSources.flatMap(source => sourceImages(source.value))) block.push(...imageLines(image));
       block.push(`[设计依据](#${readerGuideSourceAnchor(guide.sections.indexOf(item))})`, '');
-      for (const id of item.graph_ids) { const graph = graphs.find(row => row.graph_id === id); if (graph) block.push(...graphLines(graph)); }
+      for (const graph of display.sectionGraphs.get(item) ?? []) block.push(...graphLines(graph));
     }
     if (!authored.length || section === 'decisions' || section === 'questions') block.push(...fallback(section));
     if (section === 'journey') {
@@ -705,14 +704,15 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
     lastOrigin = key;
     return `内容承载于：${designLink(item.address)} · ${enumText(item.field, { contracts: '契约设计', acceptance: '验收设计', use_cases: '用例设计' })}`;
   };
-  const guide = inspectBlueprintReaderGuide(blueprint);
+  const graphDisplay = inspectBlueprintGraphDisplay(blueprint);
+  const guide = graphDisplay.guide;
   const shownGraphs = new Set<string>();
   const lines: string[] = ['---', YAML.stringify({ derived_from: { artifact: blueprint.artifact, component_id: blueprint.component_id, blueprint_id: blueprint.blueprint_id,
     revision: blueprint.revision, source_fingerprint: blueprint.source_fingerprint, artifact_sha256: artifactSha256, change_units: reviewChangeUnitBindings(inputs) }, projection: BLUEPRINT_REVIEW_FORMAT }).trimEnd(), '---', '',
     `# ${text(review.title ?? blueprint.component_id)}`, '', anchor(`blueprint:${blueprint.blueprint_id}`)];
   if (guide.status !== 'current') lines.push(guide.status === 'missing' ? '> 尚未补写评审说明；正文按当前已有字段展示。' : '> 评审说明需更新；旧说明未作为当前方案展示，正文按当前已有字段展示。', '');
   lines.push('阅读入口：先阅读方案、旅程、关键流程和交付安排；类型、方法、完整分支与验收全文见同文档的[技术与追溯参考](#reference)。', '',
-    ...renderReaderBody(blueprint, inputs, content, shownGraphs, guide), '<a id="reference"></a>', '## 技术与追溯参考', '',
+    ...renderReaderBody(blueprint, inputs, content, shownGraphs, graphDisplay), '<a id="reference"></a>', '## 技术与追溯参考', '',
     `部件 ${text(blueprint.component_id)} · 蓝图 ${text(blueprint.blueprint_id)} · revision ${text(blueprint.revision)} · 准入 ${text(enumText(admission?.status, DISPOSITIONS))}`, '',
     '本文根据 canonical 蓝图与当前施工单元确定性生成，文首保留精确来源身份。是否通过设计交接见 readiness；施工授权、映射与完成结论由原责任阶段确认。可选说明缺失或过期不改变这些结论。', '',
     '参考保留全部声明；不从名称、目录或数组顺序推断调用、依赖与未声明存储设计。正文的验收链接按来源目标与条目编号定位。', '',
@@ -779,8 +779,8 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   }
   lines.push('#### 运行流与状态明细', '');
   for (const flow of asRecords(view('runtime')?.runtime_data_flows)) lines.push(...renderFlow(flow, 'runtime', acceptanceLinks));
-  for (const graph of asRecords(blueprint.generated_graphs).filter(graph => /^\s*sequenceDiagram\b/.test(String(graph.content)) && !shownGraphs.has(String(graph.graph_id)))) {
-    lines.push(...renderPlacedGraph(graph, blueprint, shownGraphs));
+  for (const graph of graphDisplay.sequenceGraphs.filter(graph => !shownGraphs.has(String(graph.graph_id)))) {
+    lines.push(...renderPlacedGraph(graph, blueprint, shownGraphs, graphDisplay.graphIssues.get(graph)!));
   }
   for (const item of typed('contracts').filter(i => asRecords(i.value.state_management).length)) {
     lines.push(origin(item), '', '#### 施工状态与有序步骤', '');
@@ -868,7 +868,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const gaps = asRecords(dg?.gaps); if (gaps.length) lines.push(gaps.map(g => anchor(`gap:${g.gap_id}`)).join(''), ...table(['缺口', '状态', '责任方', '需要方', '解除条件'], gaps.map(g => [g.gap_id, enumText(g.status, DISPOSITIONS), g.owner, g.needed_by, g.unlock_condition])));
   const risks = decisions.filter(d => d.kind === 'residual_risk' || ['open_decision', 'blocker'].includes(String(d.status))); if (risks.length) lines.push(...table(['风险/待决项', '主责说明', '状态', '责任方'], risks.map(d => [d.decision_id, designLink(`decision:${d.decision_id}`), enumText(d.status, DISPOSITIONS), d.owner])));
   const unavailable = asRecords(blueprint.providers).filter(p => p.available !== true || ['unknown', 'degraded'].includes(String(p.missing_disposition))); if (unavailable.length) lines.push('#### 来源不可用与降级影响', '', ...table(['来源能力', '可用', '实际处置'], unavailable.map(p => [p.provider_id, booleanText(p.available), enumText(p.missing_disposition, { unknown: '待确认', degraded: '已降级', not_applicable: '不适用' })])));
-  const presentationIssues = diagnoseBlueprintPresentationShape(blueprint); if (presentationIssues.length) lines.push('#### 设计内容与表达诊断（非阻断）', '', ...presentationIssues.map(i => `- ${text(i.path)}：${text(i.message)}`), '');
+  const presentationIssues = diagnoseBlueprintPresentationShape(blueprint, graphDisplay); if (presentationIssues.length) lines.push('#### 设计内容与表达诊断（非阻断）', '', ...presentationIssues.map(i => `- ${text(i.path)}：${text(i.message)}`), '');
   if (inputs.sourceGaps.length) lines.push('#### CU 来源缺口', '', ...inputs.sourceGaps.map(g => `- ${text(g)}`), '', '以上直接引用与合并声明不能作为完整覆盖证明。', '');
   const lens = asRecord(blueprint.app_lens); if (lens) lines.push('#### App 根问题', '', ...table(['问题', '回答', '裁决', '依据'], Object.entries(APP_QUESTIONS).filter(([key]) => asRecord(lens[key])).map(([key, question]) => [question, meaning(asRecord(lens[key])?.answer), enumText(asRecord(lens[key])?.disposition, DISPOSITIONS), refs(asRecord(lens[key])?.evidence_refs)])));
   const questioning = asRecord(review.questioning); if (questioning) lines.push('#### 独立质询', '', ...table(['范围', '问题', '裁决', '回答'], asRecords(questioning.items).map(q => [q.scope_ref, q.question, enumText(q.disposition, DISPOSITIONS), q.answer ?? '未记录'])));
@@ -877,7 +877,7 @@ export function renderBlueprintReviewMarkdown(blueprint: BlueprintRecord, artifa
   const bodyLink = (id: string, label: string) => lines.includes(`<a id="${id}"></a>`) ? `[${label}](#${id})` : `${label}（正文无此部分）`;
   lines.push('### H 4+1 与章节对照', '',
     ...table(['建模视图', '正文阅读位置'], [['场景（+1）', `${bodyLink('journey', '用户旅程与界面')}、${bodyLink('acceptance', '验收')}`], ['逻辑', `${bodyLink('solution', '整体方案')}、${bodyLink('data', '数据与存储')}`], ['运行时', `${bodyLink('flows', '关键流程')}、${bodyLink('recovery', '失败与恢复')}`], ['开发', `${bodyLink('solution', '整体方案')}、${bodyLink('delivery', '施工与上线')}`], ['部署', `${bodyLink('quality', '质量与安全')}、${bodyLink('delivery', '施工与上线')}`]]));
-  for (const [id, label] of [['scenarios', '场景视图（+1）'], ['logical', '逻辑视图'], ['runtime', '运行时视图'], ['development', '开发视图'], ['deployment', '部署视图']]) lines.push(`#### ${label}`, '', ...renderView(view(id), blueprint, true, shownGraphs));
+  for (const [id, label] of [['scenarios', '场景视图（+1）'], ['logical', '逻辑视图'], ['runtime', '运行时视图'], ['development', '开发视图'], ['deployment', '部署视图']]) lines.push(`#### ${label}`, '', ...renderView(view(id), blueprint, graphDisplay, shownGraphs));
   const deployment = view('deployment');
   if (deployment?.applicability === 'applicable') lines.push('#### 本部件落点与外部参与方', '', ...table(['参与方', '职责', '输入', '输出', '不负责范围', '失败影响'], asRecords(deployment.nodes).map(n => [n.label ?? n.node_id, refs(n.responsibilities), refs(n.inputs), refs(n.outputs), refs(n.not_responsible_for), n.failure_impact])),
     '#### 外部契约与关系的本侧责任', '', ...table(['契约', '责任方', '本侧需要方', '认领 CU'], contracts.map(c => [c.contract_id, c.owner, c.needed_by, claimedBy(`contract:${c.contract_id}`)])));

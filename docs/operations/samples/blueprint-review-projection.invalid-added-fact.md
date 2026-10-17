@@ -13,7 +13,7 @@ derived_from:
     - change_unit_id: ledger-report
       binding: bound
       identity_neutral_digest: 28ae8de49a05459d5c44bb22113d32110099d464701ff2adc59a383494e65654
-projection: component-blueprint-review@11
+projection: component-blueprint-review@12
 ---
 
 # Ledger 完整设计表达样本（非真实需求）

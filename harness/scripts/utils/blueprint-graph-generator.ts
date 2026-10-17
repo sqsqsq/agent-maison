@@ -181,27 +181,38 @@ export function generateMermaidModuleDependencyGraph(contracts: BlueprintRecord,
   return { content: lines.join('\n') + '\n', edges };
 }
 
-export function validateGeneratedBlueprintGraphs(blueprint: BlueprintRecord): BlueprintIssue[] {
+export function inspectGeneratedBlueprintGraphs(blueprint: BlueprintRecord): { issues: BlueprintIssue[]; graphIssues: ReadonlyMap<BlueprintRecord, BlueprintIssue[]> } {
   const out: BlueprintIssue[] = [];
+  const graphs = asRecords(blueprint.generated_graphs);
+  const graphIssues = new Map<BlueprintRecord, BlueprintIssue[]>();
   let addresses: Map<string, BlueprintRecord>;
   try {
     addresses = stableAddressIndex(blueprint);
   } catch (error) {
-    return [issue('blueprint_graph_address_index_invalid', '$.generated_graphs', (error as Error).message)];
+    const issues = [issue('blueprint_graph_address_index_invalid', '$.generated_graphs', (error as Error).message)];
+    return { issues, graphIssues: new Map(graphs.map(graph => [graph, issues])) };
   }
-  asRecords(blueprint.generated_graphs).forEach((graph, index) => {
+  graphs.forEach((graph, index) => {
+    const issues: BlueprintIssue[] = [];
+    graphIssues.set(graph, issues);
     const base = `$.generated_graphs[${index}]`;
     const presentationOnly = graph.relation_refs === undefined || (Array.isArray(graph.relation_refs) && graph.relation_refs.length === 0);
     const severity = presentationOnly || (typeof graph.content === 'string' && /^sequenceDiagram\b/.test(graph.content.trimStart())) ? 'WARN' : 'BLOCKER';
     if (graph.format !== 'mermaid' || !nonEmptyString(graph.content)) {
-      out.push(issue('blueprint_generated_graph_shape_invalid', base, '生成图必须声明 format=mermaid 和 content。', severity));
+      issues.push(issue('blueprint_generated_graph_shape_invalid', base, '生成图必须声明 format=mermaid 和 content。', severity));
+      out.push(...issues);
       return;
     }
     const parseError = parseMermaidSubset(graph.content);
-    if (parseError) out.push(issue('blueprint_generated_graph_parse_failed', `${base}.content`, parseError, severity));
+    if (parseError) issues.push(issue('blueprint_generated_graph_parse_failed', `${base}.content`, parseError, severity));
     for (const ref of [...asStrings(graph.node_refs), ...asStrings(graph.relation_refs)]) {
-      if (!addresses.has(ref)) out.push(issue('blueprint_generated_graph_ref_missing', base, `生成图引用无法落地：${ref}。`, severity));
+      if (!addresses.has(ref)) issues.push(issue('blueprint_generated_graph_ref_missing', base, `生成图引用无法落地：${ref}。`, severity));
     }
+    out.push(...issues);
   });
-  return out;
+  return { issues: out, graphIssues };
+}
+
+export function validateGeneratedBlueprintGraphs(blueprint: BlueprintRecord): BlueprintIssue[] {
+  return inspectGeneratedBlueprintGraphs(blueprint).issues;
 }

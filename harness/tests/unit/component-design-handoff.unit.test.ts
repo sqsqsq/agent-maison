@@ -341,6 +341,42 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  for (const blocked of [false, true]) results.push(test(`graph display: omitted legal author graph WARN preserves real admission/readiness ${blocked ? 'with an independent BLOCKER' : 'on a valid design'}`, () => {
+    withProject(root => {
+      if (blocked) bumpBlueprint(root, bp => { asRecords(bp.generated_graphs)[0]!.content = 'flowchart TD\nunsupported !'; });
+      const readiness = () => {
+        try {
+          const ready = deriveDesignPreparationReadiness(root, BLUEPRINT_ID);
+          const perUnit = ready.perUnit.map(({ issues, ...unit }) => ({ ...unit, issues: issues.map(({ message, ...issue }) => issue) }));
+          return { ready: ready.ready, nextEntry: ready.nextEntry, perUnit, entersConstruction: ready.entersConstruction };
+        } catch (error) {
+          assert(String(error).includes('blueprint') || String(error).includes('蓝图'), `readiness 抛出无关错误：${String(error)}`);
+          return { ready: false };
+        }
+      };
+      const baselineEntry = evaluateDesignPreparationEntry(root, BLUEPRINT_ID);
+      const baselineReady = readiness();
+      assert(baselineEntry.canEnter === !blocked && baselineReady.ready === !blocked, '基线未覆盖真实通过/独立失败');
+      bumpBlueprint(root, bp => {
+        bp.generated_graphs = [...asRecords(bp.generated_graphs), { graph_id: 'graph:journey', label: '用户旅程总览', format: 'mermaid',
+          content: 'flowchart TD\n  journey["用户进入记账"]', node_refs: ['view:scenarios/node:add-entry-scenario'], relation_refs: [] }];
+      });
+      const file = componentBlueprintPath(root, BLUEPRINT_ID);
+      const bytes = fs.readFileSync(file);
+      const checked = checkCanonicalComponentBlueprint(root, BLUEPRINT_ID);
+      const omitted = checked.issues.filter(item => item.id === 'blueprint_generated_graph_not_displayed');
+      assert(omitted.length === 1 && omitted[0]!.path === '$.generated_graphs[1]' && omitted[0]!.severity === 'WARN'
+        && omitted[0]!.message.includes('graph:journey') && omitted[0]!.message.includes('用户旅程总览'), JSON.stringify(omitted));
+      assert(JSON.stringify(evaluateDesignPreparationEntry(root, BLUEPRINT_ID)) === JSON.stringify(baselineEntry), '图遗漏提醒改变真实准入结论');
+      assert(JSON.stringify(readiness()) === JSON.stringify(baselineReady), '图遗漏提醒改变真实readiness结论');
+      const source = loadBlueprintReviewSource(root, BLUEPRINT_ID);
+      assert(source.markdown.replace(/\\([\\`*_[\]])/g, '$1').includes(omitted[0]!.message), '物化入口未承接同源图遗漏提醒');
+      if (blocked) assert(checked.issues.some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), '原独立BLOCKER被放过');
+      else assert(!source.inputs.sourceGaps.length, '图遗漏提醒升级为评审来源缺口');
+      assert(fs.readFileSync(file).equals(bytes), '真实消费链改写了canonical');
+    });
+  }));
+
   results.push(...runContentWarnCases());
 
   results.push(test('design entry: draft/admitted local checks preserve canonical bytes and do not decompose', () => {

@@ -13,7 +13,7 @@ import { loadBlueprintReviewSource, blueprintReviewDifferences, materializeBluep
 import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, selectBlueprintSkillContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
 import { deriveDesignPreparationReadiness, evaluateDesignPreparationEntry } from '../../scripts/utils/change-unit-design-preparation';
 import { checkCanonicalComponentBlueprint } from '../../scripts/check-component-blueprint';
-import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
+import { diagnoseBlueprintPresentationShape, validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
 import { validateChangeUnit } from '../../scripts/utils/change-unit-validator';
 import { validateCrossViewRelations } from '../../scripts/utils/blueprint-cross-view';
 import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidRelationGraph, parseMermaidSubset, validateGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
@@ -35,6 +35,78 @@ function target(bp: BlueprintRecord, id: string): BlueprintRecord { return asRec
 function update(f: Fixture, mutate: (bp: BlueprintRecord) => void, bind = true): void { const bp = blueprint(f); mutate(bp); fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); if (bind) f.bind(); }
 function render(f: Fixture): string { return loadBlueprintReviewSource(f.root, 'ledger-app-blueprint').markdown; }
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: 'graph omission WARN follows rendered effective guide sections rather than raw graph ids', run(f) {
+    for (const state of ['current', 'partial-source', 'missing-source', 'invalid-section', 'stale']) {
+      const bp = blueprint(f);
+      const graph = { graph_id: 'graph:journey', label: '用户旅程总览', format: 'mermaid', source_view_id: 'scenarios', content: 'flowchart LR\nstart["旅程独有起点"]\nfinish["旅程独有终点"]\nstart --> finish', relation_refs: [] };
+      bp.generated_graphs = [graph]; delete bp.derived_results;
+      asRecord(bp.review_summary)!.reader_guide = { source_digest: state === 'stale' ? 'old-digest' : computeBlueprintReaderGuideSourceDigest(bp), sections: [{
+        section: state === 'invalid-section' ? 'custom' : 'journey', title: '旅程说明', prose: '阅读已有旅程。',
+        source_refs: state === 'missing-source' ? ['/missing'] : state === 'partial-source' ? ['/missing', '/design_views'] : ['/design_views'], graph_ids: [graph.graph_id],
+      }] };
+      const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:graph-placement');
+      const omitted = diagnoseBlueprintPresentationShape(bp).filter(row => row.id === 'blueprint_generated_graph_not_displayed');
+      const displayed = ['current', 'partial-source'].includes(state);
+      assert.equal(text.includes('```mermaid\n' + graph.content), displayed, state);
+      assert.equal(omitted.length, displayed ? 0 : 1, state);
+      assert.equal(text.split('没有正文或技术参考的实际展示出口').length - 1, omitted.length, state);
+      if (omitted.length) {
+        assert.equal(omitted[0].path, '$.generated_graphs[0]'); assert.equal(omitted[0].severity, 'WARN');
+        assert(omitted[0].message.includes(graph.graph_id) && omitted[0].message.includes(graph.label));
+      }
+      assert.equal(JSON.stringify(bp), before);
+    }
+  } },
+  { name: 'graph omission WARN follows actual reference view availability and early returns including unknown impact', run(f) {
+    for (const state of ['active', 'unknown', 'missing', 'not_applicable', 'verified_unchanged', 'body-overrides-return', 'bad-reference']) {
+      const bp = blueprint(f); const runtime = asRecords(bp.design_views).find(view => view.view_id === 'runtime')!;
+      const graph = { ...generateMermaidViewGraph(bp, 'runtime'), graph_id: 'graph:reference-runtime', label: '运行结构关系', content: 'flowchart LR\nrepo["参考独有存储"]\nstore["参考独有缓存"]\nrepo --> store' };
+      bp.generated_graphs = [graph]; delete asRecord(bp.review_summary)!.reader_guide; delete bp.derived_results;
+      if (state === 'unknown') { runtime.applicability = 'unknown'; runtime.evolution_impact = 'unknown'; }
+      if (state === 'missing') graph.source_view_id = 'missing';
+      if (['not_applicable', 'body-overrides-return', 'bad-reference'].includes(state)) runtime.applicability = 'not_applicable';
+      if (state === 'verified_unchanged') runtime.evolution_impact = 'verified_unchanged';
+      if (state === 'bad-reference') graph.relation_refs = ['relation:does-not-exist'];
+      if (state === 'body-overrides-return') asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'solution', title: '结构说明', prose: '正文显示已有结构。', source_refs: ['/design_views'], graph_ids: [graph.graph_id] }] };
+      const text = renderBlueprintReviewMarkdown(bp, 'sha256:view-outlet');
+      const omitted = diagnoseBlueprintPresentationShape(bp).filter(row => row.id === 'blueprint_generated_graph_not_displayed');
+      assert.equal(text.includes('```mermaid\n' + graph.content), ['active', 'unknown', 'body-overrides-return'].includes(state), state);
+      assert.equal(omitted.length, ['missing', 'not_applicable', 'verified_unchanged'].includes(state) ? 1 : 0, state);
+      if (state === 'bad-reference') assert(validateGeneratedBlueprintGraphs(bp).some(row => row.id === 'blueprint_generated_graph_ref_missing' && row.severity === 'BLOCKER'));
+    }
+  } },
+  { name: 'graph omission excludes sequence reference fallback and original invalid stale or absent derived explanations', run(f) {
+    for (const state of ['flow-body', 'reference', 'authored-flow-fallback', 'invalid', 'stale', 'missing-result', 'bad-flowchart']) {
+      const bp = blueprint(f);
+      const graph = { graph_id: 'graph:sequence', label: '保存调用', format: 'mermaid', source_view_id: 'runtime', content: 'sequenceDiagram\nparticipant Page\nparticipant Repo\nPage->>Repo: 保存独有记录', node_refs: state === 'flow-body' ? ['view:runtime/flow:ledger-refresh-flow'] : [], relation_refs: [] };
+      bp.generated_graphs = [graph]; delete asRecord(bp.review_summary)!.reader_guide;
+      bp.derived_results = [{ result_id: graph.graph_id, input_revision: bp.revision, source_fingerprint: bp.source_fingerprint, decision_fingerprint: bp.decision_fingerprint, status: state === 'stale' ? 'stale' : 'current' }];
+      if (state === 'missing-result') delete bp.derived_results;
+      if (state === 'invalid') graph.content = 'sequenceDiagram\nparticipant Page\nPage->>Missing: 保存独有记录';
+      if (state === 'bad-flowchart') graph.content = 'flowchart LR\nunsupported syntax!';
+      if (state === 'authored-flow-fallback') asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ section: 'flows', title: '调用说明', prose: '不引用该图。', source_refs: ['/design_views'], graph_ids: [] }] };
+      const text = renderBlueprintReviewMarkdown(bp, 'sha256:sequence-outlet');
+      assert(!diagnoseBlueprintPresentationShape(bp).some(row => row.id === 'blueprint_generated_graph_not_displayed'), state);
+      const displayed = ['flow-body', 'reference', 'authored-flow-fallback'].includes(state);
+      assert.equal(text.includes('```mermaid\n' + graph.content), displayed, state);
+      if (displayed) assert.equal(text.indexOf(graph.content) < text.indexOf('## 技术与追溯参考'), state === 'flow-body', state);
+      if (state === 'stale') assert(text.includes('已过期，请由设计责任方重建'));
+      if (state === 'missing-result') assert(text.includes('未记录对应派生结果'));
+      if (state === 'invalid') assert(text.includes('无效，未展示（非阻断）'));
+      if (state === 'bad-flowchart') assert(validateGeneratedBlueprintGraphs(bp).some(row => row.id === 'blueprint_generated_graph_parse_failed' && row.severity === 'WARN'));
+    }
+  } },
+  { name: 'repeated flowchart references draw once and link back without omission or invented freshness requirements', run(f) {
+    const bp = blueprint(f); const graph = { graph_id: 'graph:journey', label: '用户旅程总览', format: 'mermaid', content: 'flowchart LR\nstart["重复引用独有起点"]', relation_refs: [] };
+    bp.generated_graphs = [graph]; delete bp.derived_results;
+    asRecord(bp.review_summary)!.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: ['journey', 'solution'].map(section => ({ section, title: '旅程说明', prose: '阅读已有旅程。', source_refs: ['/design_views'], graph_ids: [graph.graph_id, graph.graph_id] })) };
+    const before = JSON.stringify(bp); const text = renderBlueprintReviewMarkdown(bp, 'sha256:repeated-flowchart');
+    assert.equal(text.split('```mermaid\n' + graph.content).length - 1, 1);
+    assert.equal(text.split(`[用户旅程总览](#${blueprintReviewAnchor(`graph:${graph.graph_id}`)})`).length - 1, 3);
+    assert(!diagnoseBlueprintPresentationShape(bp).some(row => row.id === 'blueprint_generated_graph_not_displayed'));
+    const ids = [...text.matchAll(/<a id="([^"]+)"><\/a>/g)].map(match => match[1]); assert.equal(new Set(ids).size, ids.length);
+    assert.equal(JSON.stringify(bp), before);
+  } },
   { name: 'component selection uses existing target names and honest custom references with readable alternatives', run(f) {
     const bp = blueprint(f); const named = target(bp, 'ledger-module'); named.label = '账目刷新组件'; named.name = '原有英文名';
     const nameOnly = target(bp, 'ledger-report-module'); delete nameOnly.label; nameOnly.name = '账页报表组件';

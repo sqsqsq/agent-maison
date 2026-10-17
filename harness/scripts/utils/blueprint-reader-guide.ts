@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
-import { asRecord, asRecords, BlueprintIssue, BlueprintRecord, issue, nonEmptyString } from './component-blueprint-model';
+import { asRecord, asRecords, asStrings, BlueprintIssue, BlueprintRecord, issue, nonEmptyString } from './component-blueprint-model';
+import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 
 export const BLUEPRINT_READER_SECTIONS = ['summary', 'background', 'terms', 'journey', 'solution', 'flows', 'data', 'decisions', 'recovery', 'quality', 'delivery', 'acceptance', 'questions'] as const;
 export type BlueprintReaderSection = typeof BLUEPRINT_READER_SECTIONS[number];
@@ -17,6 +18,49 @@ export interface BlueprintReaderGuideInspection {
   status: 'missing' | 'stale' | 'current';
   sections: BlueprintReaderGuideSection[];
   diagnostics: BlueprintIssue[];
+}
+
+export interface BlueprintGraphDisplayInspection {
+  guide: BlueprintReaderGuideInspection;
+  sectionGraphs: ReadonlyMap<BlueprintReaderGuideSection, BlueprintRecord[]>;
+  flowGraphs: ReadonlyMap<string, BlueprintRecord[]>;
+  viewGraphs: ReadonlyMap<string, BlueprintRecord[]>;
+  sequenceGraphs: BlueprintRecord[];
+  graphIssues: ReadonlyMap<BlueprintRecord, BlueprintIssue[]>;
+  diagnostics: BlueprintIssue[];
+}
+
+/** 正文与参考共用实际出口；只选择已有图，不替作者补引用或放置遗漏图。 */
+export function inspectBlueprintGraphDisplay(blueprint: BlueprintRecord, graphIssues = inspectGeneratedBlueprintGraphs(blueprint).graphIssues): BlueprintGraphDisplayInspection {
+  const guide = inspectBlueprintReaderGuide(blueprint);
+  const graphs = asRecords(blueprint.generated_graphs);
+  const sequenceGraphs = graphs.filter(graph => /^\s*sequenceDiagram\b/.test(String(graph.content)));
+  const sectionGraphs = new Map(guide.sections.map(section => [section, section.graph_ids.flatMap(id => {
+    const graph = graphs.find(row => row.graph_id === id);
+    return graph ? [graph] : [];
+  })]));
+  const flowGraphs = new Map<string, BlueprintRecord[]>();
+  const views = asRecords(blueprint.design_views);
+  if (!guide.sections.some(section => section.section === 'flows')) {
+    for (const flow of asRecords(views.find(view => view.view_id === 'runtime')?.runtime_data_flows)) {
+      flowGraphs.set(String(flow.flow_id), sequenceGraphs.filter(graph => asStrings(graph.node_refs).includes(`view:runtime/flow:${flow.flow_id}`)));
+    }
+  }
+  const viewGraphs = new Map<string, BlueprintRecord[]>();
+  for (const id of ['scenarios', 'logical', 'runtime', 'development', 'deployment']) {
+    const view = views.find(row => row.view_id === id);
+    if (!view || view.applicability === 'not_applicable' || view.evolution_impact === 'verified_unchanged') continue;
+    viewGraphs.set(id, graphs.filter(graph => graph.source_view_id === id && !sequenceGraphs.includes(graph) && asStrings(graph.relation_refs).length > 0));
+  }
+  const selected = new Set([...sectionGraphs.values(), ...flowGraphs.values(), ...viewGraphs.values(), sequenceGraphs].flat());
+  const diagnostics = [...guide.diagnostics];
+  for (const graph of graphs) {
+    if (selected.has(graph) || graphIssues.get(graph)!.length) continue;
+    const index = (blueprint.generated_graphs as unknown[]).indexOf(graph);
+    diagnostics.push(issue('blueprint_generated_graph_not_displayed', `$.generated_graphs[${index}]`,
+      `已有图 ${String(graph.graph_id)}（${String(graph.label ?? graph.graph_id)}）没有正文或技术参考的实际展示出口；请由设计作者核对说明中的图引用与现有视图展示条件。`, 'WARN'));
+  }
+  return { guide, sectionGraphs, flowGraphs, viewGraphs, sequenceGraphs, graphIssues, diagnostics };
 }
 
 /** 仅在整份蓝图进入施工摘要的位置调用；同名业务对象仍参与摘要。 */

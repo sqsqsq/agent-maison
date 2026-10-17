@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { spawnSync } from 'child_process';
-import { computeBlueprintReaderGuideSourceDigest, demoteBlueprintReaderHeadings, inspectBlueprintReaderGuide, resolveBlueprintReaderSource } from '../../scripts/utils/blueprint-reader-guide';
+import { computeBlueprintReaderGuideSourceDigest, demoteBlueprintReaderHeadings, inspectBlueprintGraphDisplay, inspectBlueprintReaderGuide, resolveBlueprintReaderSource } from '../../scripts/utils/blueprint-reader-guide';
 import { identityNeutralDigest } from '../../scripts/utils/identity-neutral-digest';
 import { fixture } from './blueprint-skill-projection.unit.test';
 import { clearFrameworkConfigCache } from '../../config';
@@ -12,6 +12,34 @@ import type { UnitCaseResult } from '../run-unit';
 const section = { section: 'solution', title: '责任与协作', prose: '只解释已有设计。', source_refs: ['/title'] };
 const blueprint = () => ({ revision: 1, title: '方案', review_summary: { background: '问题', reader_guide: {} }, generated_graphs: [{ graph_id: 'sequence:submit', content: 'original' }], contracts: [{ revision: 3, reader_guide: '业务字段', authored_by: '业务作者' }] });
 const cases: Array<{ name: string; run(): void }> = [
+  { name: 'graph display selects only parsed guide sections and preserves canonical data', run() {
+    const bp: any = blueprint(); bp.generated_graphs = [{ graph_id: 'graph:journey', label: '用户旅程', format: 'mermaid', content: 'flowchart LR\nstart["进入页面"]', relation_refs: [] }];
+    const place = (sources: string[], extra = {}) => {
+      bp.review_summary.reader_guide = { source_digest: computeBlueprintReaderGuideSourceDigest(bp), sections: [{ ...section, source_refs: sources, graph_ids: ['graph:journey'], ...extra }] };
+    };
+    for (const sources of [['/title'], ['/missing', '/title']]) {
+      place(sources); const before = JSON.stringify(bp); const display = inspectBlueprintGraphDisplay(bp);
+      assert.equal(display.sectionGraphs.get(display.guide.sections[0])![0], bp.generated_graphs[0]);
+      assert(!display.diagnostics.some(row => row.id === 'blueprint_generated_graph_not_displayed'));
+      assert.equal(JSON.stringify(bp), before);
+    }
+    for (const configure of [() => place(['/missing']), () => place(['/title'], { section: 'invalid' }), () => { place(['/title']); bp.title += '!'; }]) {
+      configure(); const before = JSON.stringify(bp); const display = inspectBlueprintGraphDisplay(bp);
+      const omitted = display.diagnostics.filter(row => row.id === 'blueprint_generated_graph_not_displayed');
+      assert.equal(display.sectionGraphs.size, 0); assert.equal(omitted.length, 1);
+      assert.equal(omitted[0].path, '$.generated_graphs[0]'); assert.equal(omitted[0].severity, 'WARN');
+      assert(omitted[0].message.includes('graph:journey') && omitted[0].message.includes('用户旅程'));
+      assert.equal(JSON.stringify(bp), before);
+    }
+  } },
+  { name: 'graph display ignores temporary generated graphs and preserves existing bad graph diagnostics', run() {
+    const bp: any = blueprint(); bp.generated_graphs = []; delete bp.review_summary.reader_guide;
+    assert(!inspectBlueprintGraphDisplay(bp).diagnostics.some(row => row.id === 'blueprint_generated_graph_not_displayed'));
+    bp.generated_graphs = [{ graph_id: 'broken', format: 'mermaid', content: 'flowchart LR\nA --> Missing', node_refs: ['view:missing/node:missing'], relation_refs: [] }];
+    const display = inspectBlueprintGraphDisplay(bp);
+    assert(display.graphIssues.get(bp.generated_graphs[0])!.some(row => row.id === 'blueprint_generated_graph_ref_missing'));
+    assert(!display.diagnostics.some(row => row.id === 'blueprint_generated_graph_not_displayed'));
+  } },
   { name: 'reader source digest removes only the prescribed exact positions and preserves arrays', run() {
     const bp: any = blueprint(); const digest = computeBlueprintReaderGuideSourceDigest(bp);
     const changed = structuredClone(bp); changed.revision++; changed.derived_results = [{ status: 'new' }];

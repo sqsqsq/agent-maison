@@ -310,7 +310,11 @@ guide MUST NOT 固化 CU 数量/ID/修订/依赖；正文施工 SHALL 按当前�
 
 供人评审的蓝图交付（含仅定稿蓝图、尚无 CU）SHALL 将一次“先只读首屏复述现状/变化/结果/范围，再读正文答八问，最后按原 scope 定向核源”合并到已有独立质询，随后一轮定向修订并在交付前重渲，问题沿既有质询输出/报告记录；读者 MUST NOT 继承父上下文 YAML/设计摘要或在答完前读取 YAML，SHALL 以不了解项目代码的评审人视角阅读，不靠框架经验补全正文。读者 SHALL 具体指出缺图解释的关键链路、图错章、只有一段且未回答本章问题的位置，段落少本身 MUST NOT 自动失败。无渲染图像时 SHALL 仍从评审 Markdown 的 Mermaid 源核实现时序的界面步骤/一次跨层交互粒度，指出混讲的独立问题及应拆段落/衔接，MUST NOT 提前读 YAML 或跳过整项图审查；总览例外 SHALL 仅限用户旅程/角色关系图，不以参与者数量代替判断。仅字号/布局/是否需放大 SHALL 标未核验，MUST NOT 把图源或语法检查冒充视觉通过，不新增预览依赖/门禁。八问 SHALL 覆盖十分钟讲清方案、选择/被否方案、调用责任、存储安全/账号隔离、失败恢复、施工/安全中间态、文件用途、原验收编号；十分钟不是计时门禁。八问适用缺口 SHALL 由作者在既有一轮定向修订中处理：事实已有补说明/图、事实矛盾回原设计修正、材料不足明确未决及缺少依据；仍未解决 SHALL 明确披露且 MUST NOT 宣称阅读通过，MUST NOT 将未解释的取舍/调用/恢复归为非关键表达而略过。已能回答问题后的措辞偏好 MAY 如实报告后交接，MUST NOT 新增评分/次数状态、签章、用户签字或无限重试；事实/授权错误仍归原责任方。纯 guide 润色 MUST NOT 要求重做原设计质询。
 
-设计修订 SHALL 优先换实现以满足原需求。修安全、导航等质询涉及原文明示的携带数据、跳转目的地或页面清理时，作者与核源环节 SHALL 回原文复核，同步步骤、旅程、图、恢复及数据生命周期，核谁持有/谁接收/何时清理及失败无写入标识的情形，MUST NOT 强制明文路由参数交接。必要偏离 SHALL 沿既有未决决定/待确认说明原要求、拟变更、理由和影响，无用户或既有明确授权 MUST NOT 标已裁决；读者建议本身 MUST NOT 作为变更授权。该责任 MUST NOT 新增逐句比对或签字门。
+主 agent SHALL 按 P1 workflow §4“派出独立质询”条目把通用规则及材料位置写入实际派发任务，MUST NOT 依赖质询者自行读取 P1，MUST NOT 附父会话设计结论、目标样稿或宿主答案。任务 SHALL 明确：先只读首屏/正文答八问，答完前不读参考区、YAML 或需求原文；之后首次核源逐条对照本次适用原需求、有效人类裁决、最终设计与验收，沿既有报告引原句/出处及设计/验收位置，MUST NOT 以来源路径、scope 齐全或检查 PASS 代替行为满足。质询者提出删除/收窄明示数据交接、跳转或清栈建议前 SHALL 引受影响原句及适用裁决、说明风险，并给出兼顾原行为与约束的替代；无法兼顾或缺依据 SHALL 沿已有未决决定/待确认说明，MUST NOT 直接删后闭项。返修任务 SHALL 只复核旧意见及修法直接影响的原要求和验收，MUST NOT 每轮重审全部需求。
+
+设计修订 SHALL 优先换实现以满足原需求。作者采纳建议前 SHALL 核需求与授权；涉及原文明示的携带数据、跳转目的地或页面清理时，SHALL 回原文复核，同步步骤、旅程、图、恢复及数据生命周期，核谁持有/谁接收/交接渠道/何时清理及失败无写入标识的情形，MUST NOT 强制明文路由参数交接或将具体样本实现固化成通用模板。必要偏离 SHALL 沿既有未决决定/待确认说明原要求、拟变更、理由和影响，无用户或既有明确授权 MUST NOT 删除或标已裁决；质询建议和作者核对本身 MUST NOT 构成人类变更授权，有效裁决仅在其真实范围生效。该责任 SHALL 复用原质询/报告，MUST NOT 新增文件、持久状态、强制调用轮次、评分、逐句机器比较或签字/准入门。
+
+流程效果 SHALL 以用户相同话术和任务边界的真实回归判断，MUST NOT 手修测试宿主或修改原需求后宣称框架通过。派发原文可见 SHALL 核原文是否转达上述约束；因加密等原因不可见 SHALL 如实标原文未核验，按质询实际是否引原句、给保需求替代或沿原承载待确认判断，MUST NOT 单因不可见阻止验收或声称已核过原文。未发生删减建议 SHALL 不刻意制造意见，仍核最终设计保留原要求；确定性展示验证 MUST NOT 冒充真实流程与实读通过。
 
 发布件指引 SHALL 教完整因果、首次角色解释、已有导航规则的清栈前后例子、S4 与加密分开、验收主题原编号；MUST NOT 放本次宿主目标样稿或业务栈答案。通用好坏示例 SHALL 标明仅示例，不新增业务要求。接受 CU/readiness/指针调和/B1 发布/只读与发布校验 SHALL 零新增模型调用，不自动写说明或盖摘要。B1 agent SHALL 仅改授权草稿，MAY 按事实变化和 source_refs 定向阅读说明，MUST NOT 扩权补盖。公开摘要命令只读 canonical，框架随后登记的根 provenance 参与摘要；当前公开 B1 流程 SHALL 保留原摘要、发布后提示说明需更新并回退当前事实，由后续 component-design 复核已发布 canonical 再记录摘要，MUST NOT 因观感停止 run。
 
@@ -331,8 +335,18 @@ guide MUST NOT 固化 CU 数量/ID/修订/依赖；正文施工 SHALL 按当前�
 
 #### Scenario: Reading feedback cannot silently change an explicit requirement
 
-- **WHEN** 八问发现适用缺口，作者为处理安全/导航质询拟改变需求原文明示的数据交接、跳转或清栈行为
-- **THEN** 作者 SHALL 在一轮修订中处理或如实保留未解决，先回原文核换实现是否仍满足需求；必要偏离 SHALL 沿既有未决决定/待确认表达，无授权 MUST NOT 标已裁决或宣称阅读通过
+- **WHEN** 正文八问完成后，质询者因安全/导航等原因拟建议删除或收窄原文明示的数据交接、跳转或清栈行为
+- **THEN** 质询者 SHALL 先引原句及适用裁决、说明风险，给兼顾需求与约束的替代，无法兼顾沿原承载待确认；作者 SHALL 核授权并在一轮修订中处理或如实保留未解决，返修只复核旧意见及直接影响的原要求和验收，无授权 MUST NOT 删除、标已裁决或宣称阅读通过
+
+#### Scenario: Independent questioning receives the source-check rules in its task
+
+- **WHEN** 主 agent 按 P1 §4 派出已有独立质询
+- **THEN** 实际任务 SHALL 带材料位置、先正文八问后读需求/YAML、首次逐条核适用原需求/裁决/设计/验收、删减建议先引原句并给保需求替代或待确认、返修核旧意见及受影响原要求的规则，MUST NOT 依赖质询者自行读 P1 或传入父设计结论
+
+#### Scenario: An encrypted task is assessed from observable questioning behavior
+
+- **WHEN** 真实回归的派发原文因加密不可见
+- **THEN** 报告 SHALL 标原文未核验并按可见质询行为与最终设计核需求保留，MUST NOT 声称已读原文或单因不可见阻止验收；没有删减建议时 MUST NOT 为验收刻意制造意见
 
 #### Scenario: A misplaced table schema only reports its location
 
@@ -618,6 +632,25 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 完整时序 SHALL 复用 generated_graphs 的 graph_id/format/source_view_id/content/node_refs/relation_refs，format=mermaid、source_view_id=runtime。node_refs SHALL 指真实 flow/参与对象承载地址，可多角色共用目标；数据库指已有数据节点/根存储契约，不造 table: 地址。relation_refs MAY 为空，MUST NOT 为每箭头创建顶层 relation/closure 义务。图 SHALL 在既有 derived_results 以同 graph_id 对应 result_id，沿 input_revision/source_fingerprint/decision_fingerprint/status 与 evaluateDerivedConclusionFreshness；事实变化 SHALL 同次重生成，MUST NOT 仅换来源戳。renderer 按 flow 引用原样展示，缺对应结果或 stale 的新时序图 SHALL 原位提示重建、不展示、不改变 readiness；旧 flowchart 不新增迁移门槛。不新增 sequence_diagrams/interactions 字段/schema、图权威文件、hash/签名/状态或自动语义比较器。
 
 原 parser SHALL 只扩 sequenceDiagram 最小子集：participant/actor（可带 as 标签）、->>、-->>、Note over、alt/else/end、空行、%% 注释；核重复声明、消息/注记端点、块配对及原地址。flowchart 当前子集 SHALL 仅支持 flowchart/graph 方向声明、ASCII id、`id["标签"]`、`-->`、`-->|标签|`，不支持 `{}`、subgraph 或注释。超子集/坏端点/块/地址等时序图自身问题及 relation_refs 缺省或空数组的作者展示图问题 SHALL 全部 WARN，renderer 在对应流程或 graph_ids 放置点说明原因且不展示该图，MUST NOT 经 sourceGaps、投影 invalid 或其它汇总阻断 admission/readiness。声明 relation_refs 的关系结构图 MUST 保持原 BLOCKER；真正关系/canonical/契约/来源缺陷仍经原门。确需并发而时序子集不足 SHALL 保留步骤并披露，不假画串行；不扩 activation/loop/par/HTML/include/主题。
+
+canonical generated_graphs 中已有合法图无实际展示出口 SHALL 每图只报一条遗漏 WARN，含 canonical 路径、graph_id/可读名称及作者应在合适说明小节引用的提示，复用文本/JSON/评审参考输出。诊断与 renderer SHALL 共用只读选择判断，消费 inspectBlueprintReaderGuide 解析后真正生效的 sections，共同判断正文放置、对应视图参考结构图选择、未放置时序图参考兜底三个出口，MUST NOT 另读原始 graph_ids 自算、为诊断执行整份 Markdown 渲染或建立平行选择算法/渲染计划。视图结构图 SHALL 遵循原 source_view_id、视图存在性、applicability、evolution_impact 与选择条件；not_applicable 或 verified_unchanged 提前返回时 MUST NOT 仅凭 relation_refs 非空认定已展示，影响待确认 MUST NOT 一概视为不展示。已在任一出口展示 SHALL 不报遗漏，多处引用仍首次绘制、后续回链。
+
+过期/无效说明中的原始 graph_ids MUST NOT 算生效引用，SHALL 继续判断其它参考出口；无 guide MUST NOT 推定所有图遗漏。坏图、按既有规则过期或缺派生依据的图 SHALL 保留原诊断/说明，MUST NOT 重复报成遗漏或改变原 WARN/BLOCKER，MUST NOT 为 flowchart 新增 derived_results 要求。遗漏提醒 MUST NOT 自动放图、补 graph_ids、改 canonical、猜章节、改变参考兜底或新增状态/准入/readiness 门，MUST NOT 检查根本未画的图或用图数衡量充分性。参考已展示 MUST NOT 要求复制进正文消 WARN，位置及图文语义仍由既有阅读复核。
+
+#### Scenario: A valid author graph has no display outlet
+
+- **WHEN** canonical 中的合法旅程流程图未被生效说明引用，也不满足视图结构参考或时序参考兜底的原选择条件
+- **THEN** 真实 checker 文本/JSON 与评审参考 SHALL 同源各显示该图一次遗漏 WARN，含路径/id/可读名称，原 canonical、admission 和 readiness SHALL 不变
+
+#### Scenario: Effective guide and actual reference outlets determine display
+
+- **WHEN** guide 过期或小节无效使原 graph_ids 不生效，或者 source 视图不适用/核实未变而提前返回
+- **THEN** 合法图无其它实际出口 SHALL 提醒，仍经正文或其它参考出口展示 SHALL 不提醒；影响待确认的视图 SHALL 沿原选择条件判断实际展示，不一概略过
+
+#### Scenario: Existing graph errors do not become omission warnings
+
+- **WHEN** 图已有语法/端点/引用问题，或按原规则过期/缺派生依据，或蓝图根本未画图
+- **THEN** 系统 SHALL 保留原诊断与级别而不重复报遗漏，未画图不新增缺图门，flowchart MUST NOT 被新增 derived_results 要求；实际自动结构参考/时序参考已展示的合法图也 SHALL 不提醒
 
 #### Scenario: A malformed sequence diagram does not block valid design
 

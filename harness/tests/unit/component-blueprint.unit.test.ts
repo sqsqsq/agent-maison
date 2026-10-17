@@ -689,6 +689,44 @@ export function runAll(): UnitCaseResult[] {
     });
   }));
 
+  results.push(test('graph display: real checker CLI text/JSON and review reference share one omitted author graph WARN without changing canonical bytes', () => {
+    withTempProject((projectRoot, filePath) => {
+      const bp = readYaml(filePath);
+      const journey = { graph_id: 'graph:journey', label: '用户旅程总览', format: 'mermaid',
+        content: 'flowchart TD\n  journey["用户进入记账"]', node_refs: ['view:scenarios/node:add-entry-scenario'], relation_refs: [] };
+      const sequence = { graph_id: 'graph:save-sequence', label: '保存调用', format: 'mermaid', source_view_id: 'runtime',
+        content: 'sequenceDiagram\nparticipant Page\nparticipant Repo\nPage->>Repo: 保存\nRepo-->>Page: 结果',
+        node_refs: ['view:runtime/flow:ledger-refresh-flow'], relation_refs: [] };
+      bp.generated_graphs = [...asRecords(bp.generated_graphs), journey, sequence];
+      bp.derived_results = [...asRecords(bp.derived_results), { ...clone(asRecords(bp.derived_results)[0]!), result_id: sequence.graph_id }];
+      fs.writeFileSync(filePath, YAML.stringify(bp), 'utf8');
+      const original = fs.readFileSync(filePath);
+      const expectedPath = '$.generated_graphs[1]';
+      const expected = checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint').issues;
+      const omitted = expected.filter(item => item.id === 'blueprint_generated_graph_not_displayed');
+      assert(omitted.length === 1 && omitted[0]!.path === expectedPath && omitted[0]!.severity === 'WARN', JSON.stringify(omitted));
+      assert(omitted[0]!.message.includes(journey.graph_id) && omitted[0]!.message.includes(journey.label), '提醒缺图身份或中文名称');
+      assert(!expected.some(item => item.id.startsWith('blueprint_generated_graph') && item.id !== 'blueprint_generated_graph_not_displayed'), '反例中的作者图必须合法');
+      const harnessRoot = path.resolve(__dirname, '..', '..');
+      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
+        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+        '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
+      const jsonCli = invoke(['--write-review', '--json']);
+      assert(jsonCli.status === 0, jsonCli.stdout + jsonCli.stderr);
+      const report = JSON.parse(jsonCli.stdout);
+      assert(report.status === 'PASS' && JSON.stringify(report.issues) === JSON.stringify(expected), 'JSON checker 未保留同源诊断');
+      const textCli = invoke([]);
+      assert(textCli.status === 0 && textCli.stdout.split(`[WARN] ${expectedPath}:`).length === 2
+        && textCli.stdout.includes(omitted[0]!.message), textCli.stdout + textCli.stderr);
+      const markdown = fs.readFileSync(report.review_document.path, 'utf8');
+      const visible = markdown.replace(/\\([\\`*_[\]])/g, '$1');
+      assert(visible.split(`${expectedPath}：${omitted[0]!.message}`).length === 2, '评审参考未同源展示唯一遗漏诊断');
+      assert(!markdown.includes(journey.content), '提醒擅自为遗漏作者图选择了位置');
+      assert(markdown.includes(String(asRecords(bp.generated_graphs)[0]!.content).trimEnd()) && markdown.includes(sequence.content), '结构参考或时序参考未实际展示，零误报缺乏依据');
+      assert(fs.readFileSync(filePath).equals(original), '检查或渲染改写了canonical或自动补了graph_ids');
+    });
+  }));
+
   results.push(test('canonical path is workspace-owned and rejects arbitrary path identities', () => {
     assert(componentBlueprintPath('C:/project', 'ledger-app-blueprint').replace(/\\/g, '/')
       .endsWith('/doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml'), 'canonical path 错误');

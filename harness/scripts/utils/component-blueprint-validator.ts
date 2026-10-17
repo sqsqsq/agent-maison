@@ -17,13 +17,13 @@ import { validateRuntimeDataFlows } from './runtime-data-flow-check';
 import { validateCrossViewRelations } from './blueprint-cross-view';
 import { validateBlueprintQuestioning } from './blueprint-questioning';
 import { validateBlueprintAdmission } from './blueprint-admission';
-import { validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
+import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { validateBlueprintProviders } from './blueprint-provider-boundary';
 import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
 import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
-import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
+import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
 import { inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstructionContent, inspectUseCaseItem, inspectDesignContentCollections, type DesignContentIssue } from './design-content-checks';
 
 export interface ComponentBlueprintValidationContext {
@@ -72,6 +72,7 @@ export function validateComponentBlueprintUpstream(
       `来源指纹必须由 discovery facts 确定性计算：computed=${computedSourceFingerprint}, discovery=${String(discovery?.source_fingerprint)}, root=${String(blueprint.source_fingerprint)}。`,
     ));
   }
+  const generatedGraphs = inspectGeneratedBlueprintGraphs(blueprint);
   const upstream = [
     ...validateBlueprintProvenance(blueprint),
     ...validateRequirementTraceability(blueprint, context.projectRoot),
@@ -80,20 +81,20 @@ export function validateComponentBlueprintUpstream(
     ...validateRuntimeDataFlows(blueprint),
     ...validateCrossViewRelations(blueprint),
     ...validateBlueprintQuestioning(blueprint),
-    ...validateGeneratedBlueprintGraphs(blueprint),
+    ...generatedGraphs.issues,
     ...validateBlueprintReconciliation(blueprint),
     ...validateEvolutionDecisions(blueprint, context.projectRoot),
     ...validateTerminologyFacts(blueprint, context.projectRoot),
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);
-  out.push(...diagnoseBlueprintPresentationShape(blueprint));
+  out.push(...diagnoseBlueprintPresentationShape(blueprint, inspectBlueprintGraphDisplay(blueprint, generatedGraphs.graphIssues)));
   return out;
 }
 
 /** 可选设计表达的形状与承载位置诊断；缺失/空数组合法，坏形状也仅 WARN。 */
-export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): BlueprintIssue[] {
-  const out: BlueprintIssue[] = [...inspectBlueprintReaderGuide(blueprint).diagnostics, ...diagnoseBlueprintContent(blueprint)];
+export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord, graphDisplay: BlueprintGraphDisplayInspection = inspectBlueprintGraphDisplay(blueprint)): BlueprintIssue[] {
+  const out: BlueprintIssue[] = [...graphDisplay.diagnostics, ...diagnoseBlueprintContent(blueprint)];
   const visit = (value: unknown, at: string): void => {
     if (Array.isArray(value)) { value.forEach((item, i) => visit(item, `${at}[${i}]`)); return; }
     const record = asRecord(value);
