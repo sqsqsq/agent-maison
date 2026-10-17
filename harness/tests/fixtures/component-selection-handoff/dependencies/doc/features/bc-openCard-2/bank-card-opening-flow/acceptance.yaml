@@ -1,0 +1,441 @@
+schema_version: "1.0"
+criteria:
+  - id: AC-1
+    priority: P0
+    description: 两个既有银行列表入口点击任一银行都打开该银行的卡类型半模态。
+    testable: true
+    verification_steps:
+      - 从添加银行卡页点击银行
+      - 从全部银行页点击银行
+      - 比较两个入口的 modal 内容与会话参数
+    expected_result: 都显示所选银行及其支持的卡类型，不再提示暂不支持。
+    ut_layer: both
+    ut_focus: 两入口复用同一开卡 session 初始化。
+    device_focus: 两入口均可见半模态且背景页面保持。
+    prd_function: F1
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 1.用户进入已有的添加卡片页面，之前已经开发过了。之前点击任一银行点击后，提示暂不支持，本次需求改为拉起选择卡类型半模态页面。
+      snippet_sha256: 53fdad7b7dcb67490507efb70650a04f89e035024383216d870c51323e9dfad3
+    checkpoint:
+      pre_screen: add_bank_card
+      action:
+        target_element_id: col_row_cmb
+      post_screen: card_type_sheet
+      required_element_ids:
+        - ct_title
+        - ct_bank
+        - ct_debit
+        - ct_credit
+        - ct_continue
+  - id: AC-2
+    priority: P0
+    description: 卡类型按银行支持列表展示且只能单选，继续后只显示所选银行和类型的 1 至 2 张 mock 卡。
+    testable: true
+    verification_steps:
+      - 对双类型银行切换储蓄卡与信用卡
+      - 对单类型银行确认只显示一个选项
+      - 继续进入具体卡片页并核对过滤结果
+    expected_result: 只存在一个选中项，卡片集合与选择条件一致。
+    ut_layer: both
+    ut_focus: 过滤、单选和继续按钮状态。
+    device_focus: 半模态与全屏卡片页布局、选中反馈和按钮状态。
+    prd_function: F2
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 3.选择卡类型半模态页面，会展示本银行支持的储蓄卡+信用卡，如果只支持储蓄卡或者信用卡则只展示一个即可。最多只能选择一种卡类型添加，选择后，下方可点击同意并继续按钮进入对应银行的选择具体卡片页面。
+      snippet_sha256: 149bf86ddce0f42bf0767b536a85c764c7162319b2ed199e730c51d2477720c0
+    checkpoint:
+      pre_screen: card_type_sheet
+      action:
+        target_element_id: ct_continue
+      post_screen: card_selection
+      required_element_ids:
+        - cs_title
+        - cs_card_1
+        - cs_agree
+        - cs_next
+  - id: AC-3
+    priority: P0
+    description: 具体卡片页只显示卡号前四后四，业务与存储链保留完整卡号。
+    testable: true
+    verification_steps:
+      - 用固定 mock 卡渲染具体卡片页
+      - 断言 UI 只含前四后四
+      - 提交后断言 repository 收到完整卡号
+    expected_result: UI 不出现完整卡号，repository 接收完整卡号。
+    ut_layer: unit
+    ut_focus: 脱敏函数与完整领域字段不丢失。
+    device_focus: ""
+    prd_function: F3
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 4.银行的选择具体卡片页面，展示该银行支持的银行卡信息，卡号只显示前四后四，但实际后台数据要按完整卡号处理。用户选择一张银行卡后，同意协议，点击下一步，拉起输入验证码半模态页面。
+      snippet_sha256: e31cc091b540bca4c1526484938b135120bce7b780e9053302c974626820ba8d
+  - id: AC-4
+    priority: P0
+    description: 验证码半模态打开即模拟发送，60 秒倒计时期间不可重发，归零后可重新发送；仅六位数字允许下一步。
+    testable: true
+    verification_steps:
+      - 打开 modal 并确认自动发送
+      - 用可控时钟推进 60 秒
+      - 倒计时结束后点击重发
+      - 分别输入五位、六位和非数字内容
+    expected_result: 倒计时和按钮可用性与规则一致。
+    ut_layer: both
+    ut_focus: OTP 过滤、六位校验、倒计时状态机和销毁清理。
+    device_focus: 自动弹出数字键盘、倒计时文案和禁用按钮视觉。
+    prd_function: F4
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+    checkpoint:
+      pre_screen: card_selection
+      action:
+        target_element_id: cs_next
+      post_screen: otp_sheet
+      required_element_ids:
+        - otp_title
+        - otp_input
+        - otp_resend
+        - otp_next
+  - id: AC-5
+    priority: P0
+    description: 合法验证码提交后把完整卡片记录写入应用私有 RDB，字段覆盖需求指定的卡号、类别、银行、银行卡类型、时间、两种支付状态与交易记录。
+    testable: true
+    verification_steps:
+      - 提交一张 mock 卡
+      - 等待 repository 返回成功
+      - 按完整卡号重新查询并逐字段核对
+    expected_result: 写入成功返回 success=true，字段值完整且唯一。
+    ut_layer: both
+    ut_focus: schema、映射、幂等唯一键和失败返回。
+    device_focus: 真机 RDB 初始化、写入与重启后读取。
+    prd_function: F5
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        target_element_id: otp_next
+      post_screen: result_success
+      required_element_ids:
+        - result_title
+        - result_finish
+  - id: AC-6
+    priority: P0
+    description: 结果页无返回入口并拦截系统返回；只有完成按钮退出，成功回钱包首页，失败回最初添加银行卡页，并移除本轮所有开卡过程页面。
+    testable: true
+    verification_steps:
+      - 在结果页触发系统返回并确认无效
+      - 构造成功结果点击完成并检查首页栈
+      - 构造失败结果点击完成并检查添加银行卡页栈
+    expected_result: 返回动作无效；完成后目标页正确且过程页不可再返回。
+    ut_layer: both
+    ut_focus: 目标路由和 removeByIndexes 清栈计划。
+    device_focus: 左滑/系统返回屏蔽、完成后连续返回不出现过程页。
+    prd_function: F6
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 6.添加结果页是个全屏页面，没有左滑箭头，也禁止左滑事件。添加结果页根据带过来的添卡结果，展示成功或者失败状态。同时本页面只有点击完成按钮才能退出页面，并且在页面退出时，关闭当前栈中1-6的所有页面（都是本轮银行卡添卡页面）。如果本次添加是成功状态，则带着卡片卡号跳转到钱包首页（后续等银行卡详情页开发完，这里会引导跳到银行卡详情页，并携带当前卡片参数）。如果本次添加失败则仅将过程中的页面全部退出，回到最开始的添加卡片页面。
+      snippet_sha256: d60721333cd5ff1b0f11bba5d09b350f45411cf00774ff0e58b28542599490c2
+    checkpoint:
+      pre_screen: result_success
+      action:
+        type: swipe
+        target_element_id: result_root
+      post_screen: result_success
+      required_element_ids:
+        - result_title
+        - result_finish
+  - id: AC-7
+    priority: P1
+    description: 原有 CardPackPage、AddCardEntryPage、AddBankCardPage 和 AllBanksPage
+      路由仍可正常前进与返回。
+    testable: true
+    verification_steps:
+      - 从首页进入卡包和添卡入口
+      - 进入添加银行卡与全部银行后逐级返回
+      - 再从两个银行入口分别进入新开卡流程
+    expected_result: 无旧路由损坏或重复入栈。
+    ut_layer: device
+    ut_focus: ""
+    device_focus: 真实 Navigation 路由回归。
+    prd_function: F7
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 2.用户在全部银行页面，任一银行点击后，效果与添加银行卡页面效果一致。
+      snippet_sha256: 463b38d2568de42b3edb42d5a8bf47b5329734ac1d860a850502c01e339e9c3b
+    checkpoint:
+      pre_screen: add_bank_card
+      action:
+        target_element_id: exp_view_all_banks_btn
+      post_screen: all_banks
+      required_element_ids:
+        - ab_page_title
+        - ab_row_cmb
+  - id: AC-8
+    priority: P1
+    description: 验证码半模态从 AccountService 取得 mock 完整手机号后只显示前三后四掩码，日志不输出完整手机号。
+    testable: true
+    verification_steps:
+      - 为 UserProfile 注入固定手机号
+      - 打开验证码半模态
+      - 核对显示值和日志参数
+    expected_result: 页面显示 185****3841 形态，完整手机号仅保留在账号领域对象中。
+    ut_layer: both
+    ut_focus: MaskUtil.maskPhone 与账号 DTO 交接。
+    device_focus: 参考图对应的手机号掩码文案。
+    prd_function: F8
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+    checkpoint:
+      pre_screen: card_selection
+      action:
+        target_element_id: cs_next
+      post_screen: otp_sheet
+      required_element_ids:
+        - otp_phone
+  - id: AC-9
+    priority: P0
+    description: 验证码提交后立即进入 SAVING 并禁用提交、重发和关闭动作，单次 session 最多发起一个未完成保存调用。
+    testable: true
+    verification_steps:
+      - 输入六位验证码
+      - 连续点击下一步
+      - 在 repository promise 未完成时尝试重发与关闭
+    expected_result: BankCardRepository.save 只调用一次，所有会造成重入的控件保持禁用直到结果返回。
+    ut_layer: both
+    ut_focus: SAVING 状态防重入和一次性提交。
+    device_focus: 保存期间按钮禁用与无重复导航。
+    prd_function: F9
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        target_element_id: otp_next
+      post_screen: otp_sheet
+      required_element_ids:
+        - otp_next
+        - otp_resend
+        - otp_close
+  - id: AC-10
+    prd_function: F10
+    priority: P0
+    description: 卡类型半模态的银行信息、两种单选项、说明、文本协议与同意并继续和参考图对应；两入口背景保留。
+    testable: true
+    verification_steps:
+      - 从既有银行入口操作进入card_type_sheet，按ui-spec规定选择态/空输入态采集截图
+      - 对照ref_card_type及ref-elements逐项检查文本、布局、单选和按钮状态，记录major/minor残差
+      - 用当前native/delegated机器证据核验；资源占位和major残差须修复重验后才能发布
+    expected_result: 卡类型半模态的银行信息、两种单选项、说明、文本协议与同意并继续和参考图对应；两入口背景保留。
+      文字与测试锚点完整；已排除NFC不误报；major视觉债务不硬阻断best_effort阶段但阻止发布。
+    ut_layer: device
+    device_focus: 真实截图、布局树及可点击性；不得把unverified材料说成视觉已通过。
+    checkpoint:
+      pre_screen: card_type_sheet
+      action:
+        target_element_id: ct_debit
+      post_screen: card_type_sheet
+      required_element_ids:
+        - ct_title
+        - ct_bank
+        - ct_debit
+        - ct_credit
+        - ct_agreement
+        - ct_continue
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 页面布局完全参考'3-点击任意银行拉起添卡选卡半模态.jpg'。
+      snippet_sha256: 9acc67dd3e23ed9286b8885fa41c13fad53ee68b1b48a8070b5e3cb56942afac
+    visual_ref: ref_card_type
+  - id: AC-11
+    prd_function: F10
+    priority: P0
+    description: 选卡页面标题随银行、卡号前四后四、单选反馈、文本协议及下一步与参考图对应，无完整卡号暴露。
+    testable: true
+    verification_steps:
+      - 从既有银行入口操作进入card_selection，按ui-spec规定选择态/空输入态采集截图
+      - 对照ref_card_selection及ref-elements逐项检查文本、布局、单选和按钮状态，记录major/minor残差
+      - 用当前native/delegated机器证据核验；资源占位和major残差须修复重验后才能发布
+    expected_result: 选卡页面标题随银行、卡号前四后四、单选反馈、文本协议及下一步与参考图对应，无完整卡号暴露。
+      文字与测试锚点完整；已排除NFC不误报；major视觉债务不硬阻断best_effort阶段但阻止发布。
+    ut_layer: device
+    device_focus: 真实截图、布局树及可点击性；不得把unverified材料说成视觉已通过。
+    checkpoint:
+      pre_screen: card_selection
+      action:
+        target_element_id: cs_agree
+      post_screen: card_selection
+      required_element_ids:
+        - cs_title
+        - cs_hint
+        - cs_card_1_number
+        - cs_card_1_radio
+        - cs_agreement
+        - cs_next
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 页面布局完全参考'4-点击信用卡或储蓄卡后拉起选卡页面.jpg'。
+      snippet_sha256: ff84c896b10059b7c073bf36c79d22505f2b9db6bfb3ac54308c3e6576404f7d
+    visual_ref: ref_card_selection
+  - id: AC-12
+    prd_function: F10
+    priority: P0
+    description: 验证码半模态文案和同行输入/倒计时与参考图对应；键盘弹起时输入和下一步均可达。
+    testable: true
+    verification_steps:
+      - 从既有银行入口操作进入otp_sheet，按ui-spec规定选择态/空输入态采集截图
+      - 对照ref_otp及ref-elements逐项检查文本、布局、单选和按钮状态，记录major/minor残差
+      - 用当前native/delegated机器证据核验；资源占位和major残差须修复重验后才能发布
+    expected_result: 验证码半模态文案和同行输入/倒计时与参考图对应；键盘弹起时输入和下一步均可达。
+      文字与测试锚点完整；已排除NFC不误报；major视觉债务不硬阻断best_effort阶段但阻止发布。
+    ut_layer: device
+    device_focus: 真实截图、布局树及可点击性；不得把unverified材料说成视觉已通过。
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        target_element_id: otp_input
+      post_screen: otp_sheet
+      required_element_ids:
+        - otp_title
+        - otp_phone
+        - otp_input
+        - otp_resend
+        - otp_next
+        - otp_keyboard
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 页面布局完全参考'5-选中某张卡片后拉起短信验证.jpg'。
+      snippet_sha256: 468720e06ab3fa0c5965086266af5095ed80d83635c01ee3a4781a3b6ea659a8
+    visual_ref: ref_otp
+  - id: AC-13
+    prd_function: F10
+    priority: P0
+    description: 成功结果布局和完成按钮与参考图对应，不显示NFC区和返回入口；失败态显示失败文案并保留唯一完成动作。
+    testable: true
+    verification_steps:
+      - 从既有银行入口操作进入result_success，按ui-spec规定选择态/空输入态采集截图
+      - 对照ref_result及ref-elements逐项检查文本、布局、单选和按钮状态，记录major/minor残差
+      - 用当前native/delegated机器证据核验；资源占位和major残差须修复重验后才能发布
+    expected_result: 成功结果布局和完成按钮与参考图对应，不显示NFC区和返回入口；失败态显示失败文案并保留唯一完成动作。
+      文字与测试锚点完整；已排除NFC不误报；major视觉债务不硬阻断best_effort阶段但阻止发布。
+    ut_layer: device
+    device_focus: 真实截图、布局树及可点击性；不得把unverified材料说成视觉已通过。
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        target_element_id: otp_next
+      post_screen: result_success
+      required_element_ids:
+        - result_icon
+        - result_title
+        - result_message
+        - result_guide
+        - result_finish
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 页面布局完全参考'6-短信验证完成后结果页.jpg'。
+      snippet_sha256: 1324cdc8ba81c6c4f0e4b8b830a9a764e526041c62cf21cbe57fecfe7d6b5716
+    visual_ref: ref_result
+boundaries:
+  - id: BD-1
+    priority: P0
+    description: RDB 初始化或保存失败仍进入失败结果页，失败记录不写入数据库。
+    scenario: repository 抛出异常或返回失败。
+    handling: 捕获错误并构造 success=false 与完整卡号的结果对象。
+    expected_behavior: 用户看到失败状态，点击完成回最初添加银行卡页。
+    ut_layer: both
+    ut_focus: 异常映射与无脏记录。
+    device_focus: 失败结果页与返回目标。
+    prd_exception: E1
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        target_element_id: otp_next
+      post_screen: result_success
+      required_element_ids:
+        - result_title
+        - result_message
+        - result_finish
+  - id: BD-2
+    priority: P1
+    description: 用户关闭卡类型或验证码半模态时不保存卡片，返回当前承载页且释放计时器。
+    scenario: 点击关闭或系统取消半模态。
+    handling: 丢弃 session 中未提交的 OTP 与选择态，清理定时器。
+    expected_behavior: 无 RDB 写入，可重新发起流程。
+    ut_layer: both
+    ut_focus: session reset 与 timer cleanup。
+    device_focus: modal 关闭后背景页仍可操作。
+    prd_exception: E2
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        target_element_id: otp_close
+      post_screen: card_selection
+      required_element_ids:
+        - cs_title
+        - cs_next
+  - id: BD-3
+    priority: P1
+    description: 保存事务提交后但结果页显示前进程终止时，以 RDB commit 为权威保留记录，未完成 UI session 不恢复。
+    scenario: repository 已 commit，应用在 push 结果页之前被系统终止。
+    handling: 重启后从根首页开始；后续查询可读到已提交卡片，不重放验证码或重复写入。
+    expected_behavior: 数据最多保存一次，页面流程不伪造恢复中的结果状态。
+    ut_layer: both
+    ut_focus: commit 后幂等重查和 session 不持久化。
+    device_focus: 强制终止并重启后无过程页残留，数据库记录仍存在。
+    prd_exception: E3
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: 5.输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。当前6位验证码可随意输入。倒计时归零后，右侧按钮从倒计时变成重新发送。点击后再次变为倒计时。用户输入完成验证码后，后台将完整卡数据写入RDB（本需求开始要创建卡片数据库和对应卡片数据表，将添加的卡片存入数据库中，数据库中字段至少包含卡号、卡类型[比如银行卡、交通卡、门禁卡等]、银行名称、卡类型、添加时间、开通华为支付状态、开通银联手机闪付状态、交易记录等内容），无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。
+      snippet_sha256: b976a73cb55ecb1d144385597f63267b407b1b77ca5897c05a70d29e1e96fc94
+performance:
+  - id: NFR-1
+    metric: OTP resend duration
+    threshold: "60"
+    unit: seconds
+    description: 每次模拟发送后显示 60 秒倒计时，倒计时结束才允许重新发送。
+    ut_layer: unit
+    ut_focus: 使用 fake clock 精确验证 60 次 tick。
+    device_focus: ""
+  - id: NFR-2
+    metric: sensitive data exposure
+    threshold: "0"
+    unit: full PAN or full phone occurrences in UI/log/backup
+    description: 完整卡号和完整手机号不得出现在 UI、日志或系统备份；银行卡 RDB 使用加密 store 且 Phone 禁止应用备份恢复。
+    ut_layer: both
+    ut_focus: 脱敏输出、日志参数与 StoreConfig.encrypt。
+    device_focus: 检查界面、系统日志和 backup_config。
+feature: cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+source: derive.blueprint-acceptance:sha256:ecb2ecc236e12cc725bd8699c779749f66201f0754196947c611929c4befddf2:sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+coverage_summary:
+  P0:
+    total_functions: 8
+    covered_functions: 8
+    coverage: 100%
+  P1:
+    total_functions: 2
+    covered_functions: 2
+    coverage: 100%
+  P2:
+    total_functions: 0
+    covered_functions: 0
+    coverage: not_applicable
+  basis: F1-F10全部有AC；上游AC-1..AC-9/BD-1..BD-3/NFR-1..NFR-2保持原文与分层。

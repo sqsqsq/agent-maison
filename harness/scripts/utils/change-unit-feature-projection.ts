@@ -726,6 +726,9 @@ export function checkChangeUnitFeatureProjection(
       severity: 'BLOCKER' as const,
       status: 'FAIL' as const,
       details: item.message,
+      ...(item.id === 'component_asset_projection' ? {
+        affected_files: [path.relative(ctx.projectRoot, featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')).replace(/\\/g, '/')],
+      } : {}),
       ...(phase === 'ut' && item.id === 'change_unit_use_cases_required' ? {
         repair_owner: 'plan' as const,
         affected_files: [path.relative(ctx.projectRoot, featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')).replace(/\\/g, '/')],
@@ -736,7 +739,9 @@ export function checkChangeUnitFeatureProjection(
         ? '停止 Feature 补模，返回 P1 调和 canonical blueprint。'
         : item.route === 'repair_change_unit'
           ? '修正 canonical CU 定义并重新绑定 Feature。'
-          : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
+          : item.id === 'component_asset_projection'
+            ? '在 contracts.change_unit.design_ref_mappings 修正组件映射，并按已引用 decision 对齐 resolution/component_ref；保留上游施工契约的组件理由。若选型结论本身需要改变，回原设计 owner 裁定，不在 plan 自行换选。'
+            : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
     }))];
   }
   return [...componentChecks, ...dslWarnings, ...authority, {

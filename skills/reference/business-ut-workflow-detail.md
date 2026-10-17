@@ -99,7 +99,7 @@ export default function dashboardRepoTest() {
 }
 ```
 
-打桩形式与隔离复用「共享 UT 方法」；正式路径的边界来自 `data_boundaries[].type`，需要调用序列时由 Spy 暴露 `callLog[]` 和相应 preset。
+打桩形式与隔离复用「共享 UT 方法」；正式路径只对 `data_boundaries[].type` 命中 `contracts.interfaces[].class` 的数据边界要求替身，未登记类型由 `boundary_matches_contracts` WARN 披露；需要调用序列时由 Spy 暴露 `callLog[]` 和相应 preset。
 
 **每个 it() 必备断言**：路径 A——命名入口驱动 + 调用序列断言（`assertDeepEquals(spy.callLog,...)`）+ 状态多阶段断言（≥2 次 expect 覆盖中间态与终态）；路径 B——每个 it() ≥2 次 expect 覆盖数据契约与边界。
 
@@ -107,7 +107,7 @@ export default function dashboardRepoTest() {
 
 **import 白名单**（`ut_import_whitelist` BLOCKER）：允许测试框架、被测命名业务入口、data 层与被允 Spy/Fake、同目录替身；禁止符号清单由 profile 的 `ut-ui-import-ban` + addendum 声明。
 
-**生成流程**：为每个 data_boundary 生成 spy/ 替身（已存在则复用）→ 为每个 use_case（路径 A）或每组 AC（路径 B）生成测试文件，每 branch/AC 一个 it() → 展示确认 → 写入。
+**生成流程**：为 contracts 已登记的数据边界生成 spy/ 替身（已存在则复用；未登记类型保留 WARN，不伪造替身）→ 为每个 use_case（路径 A）或每组 AC（路径 B）生成测试文件，每 branch/AC 一个 it() → 展示确认 → 写入。
 
 ## Step 7.5 UT 编译闭环
 
@@ -306,7 +306,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 | dag_node_type_valid | 节点类型合法 | BLOCKER |
 | ut_import_whitelist | UT 未 import 禁止清单符号 | BLOCKER |
 | ut_tsc_compiles | UT 文件 tsc --noEmit 零 Error | BLOCKER |
-| boundaries_all_stubbed | 每个 data_boundary 有替身证据 | BLOCKER |
+| boundaries_all_stubbed | type 命中 contracts.interfaces[].class 的数据边界有替身；未登记类型交 boundary_matches_contracts WARN 披露 | BLOCKER |
 | it_name_has_ac_or_branch_tag | 用例名以 [AC-X]/[BD-X]/[BRANCH-X] 标签起始 | BLOCKER |
 | it_drives_flow | 路径 A 严格判；路径 B 退化为 ≥2 expect | MAJOR |
 | branch_coverage_full | 每个 branch 都有对应 it() | BLOCKER |

@@ -1641,7 +1641,11 @@ function checkUseCaseUiBindingsNonempty(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkBoundaryMatchesContracts(ctx: CheckContext): CheckResult[] {
+function contractDataBoundaryTypes(ctx: CheckContext): ReadonlySet<string> {
+  return new Set((ctx.featureSpec.contracts?.interfaces ?? []).map(item => item.class));
+}
+
+export function checkBoundaryMatchesContracts(ctx: CheckContext): CheckResult[] {
   const spec = loadUseCaseSpec(ctx);
   if (!spec) {
     return [{
@@ -1653,8 +1657,8 @@ function checkBoundaryMatchesContracts(ctx: CheckContext): CheckResult[] {
       details: 'use-cases.yaml 不存在，跳过。',
     }];
   }
-  const interfaces = ctx.featureSpec.contracts?.interfaces ?? [];
-  if (interfaces.length === 0) {
+  const interfaceClasses = contractDataBoundaryTypes(ctx);
+  if (interfaceClasses.size === 0) {
     return [{
       id: 'boundary_matches_contracts',
       category: 'structure',
@@ -1665,7 +1669,6 @@ function checkBoundaryMatchesContracts(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const interfaceClasses = new Set(interfaces.map(i => i.class));
   const mismatches: string[] = [];
   for (const uc of spec.use_cases ?? []) {
     for (const b of uc.data_boundaries ?? []) {
@@ -2008,7 +2011,7 @@ function checkUtImportWhitelist(
   }];
 }
 
-function checkBoundariesAllStubbed(
+export function checkBoundariesAllStubbed(
   ctx: CheckContext,
   utFiles: Array<{ path: string; content: string }>,
 ): CheckResult[] {
@@ -2035,8 +2038,12 @@ function checkBoundariesAllStubbed(
     }];
   }
 
+  const interfaceClasses = contractDataBoundaryTypes(ctx);
   const missing: string[] = [];
   for (const uc of spec.use_cases ?? []) {
+    // 未登记类型由 boundary_matches_contracts 披露，不要求 UT 为系统能力伪造类名。
+    const boundaries = (uc.data_boundaries ?? []).filter(boundary => interfaceClasses.has(boundary.type));
+    if (boundaries.length === 0) continue;
     const coord = (uc.coordinator ?? '').toLowerCase();
     const idLower = uc.id.toLowerCase().replace(/_/g, '');
     const relatedUts = utFiles.filter(f => {
@@ -2052,7 +2059,7 @@ function checkBoundariesAllStubbed(
       continue;
     }
 
-    for (const b of uc.data_boundaries ?? []) {
+    for (const b of boundaries) {
       const stubPatterns = [
         new RegExp(`new\\s+Spy${b.type}\\s*\\(`),
         new RegExp(`new\\s+Fake${b.type}\\s*\\(`),
@@ -2074,7 +2081,7 @@ function checkBoundariesAllStubbed(
       description: ruleDesc(ctx, 'structure_checks', 'boundaries_all_stubbed'),
       severity: 'BLOCKER',
       status: 'PASS',
-      details: '所有 UseCase 的 data_boundaries 都在 UT 中得到了替身（Spy/Fake/Stub）。',
+      details: 'contracts.interfaces 已登记的 UseCase 数据边界均有替身（Spy/Fake/Stub）；未登记类型由 boundary_matches_contracts 单独披露。',
     }];
   }
 
@@ -2085,7 +2092,7 @@ function checkBoundariesAllStubbed(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${missing.length} 个 data_boundary 未在 UT 中打桩：\n${truncateList(missing, 10)}`,
-    suggestion: '请在 UT 中为每个 data_boundary.type 提供替身（SpyXxx/FakeXxx/StubXxx 子类，或直接替换原型方法），避免 UT 触发真实云/本地/系统调用。',
+    suggestion: '请为 contracts.interfaces[].class 已登记的数据边界提供替身（SpyXxx/FakeXxx/StubXxx 子类，或直接替换原型方法），避免 UT 触发真实依赖；未登记类型按 boundary_matches_contracts 的 WARN 核对，不在 UT 改写上游用例。',
   }];
 }
 

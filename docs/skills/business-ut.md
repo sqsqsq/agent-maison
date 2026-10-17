@@ -510,7 +510,7 @@ agent / CI 优先读取 `summary.json` 里的 `verdict`、`blockers`、`next_act
 | `ut_framework_import` | BLOCKER | 未使用 profile 约定的测试入口（**hmos-app**：hypium `describe`/`it`） |
 | `ut_assertion_exists` | BLOCKER | 用例没有断言 |
 | `ut_import_whitelist` | BLOCKER | UT import UI、资源、导航等不可测对象 |
-| `boundaries_all_stubbed` | BLOCKER | 声明了 data boundary 但没有 Spy/Fake/Stub |
+| `boundaries_all_stubbed` | BLOCKER | type 命中 contracts.interfaces[].class 的数据边界缺 Spy/Fake/Stub；未登记类型由 boundary_matches_contracts WARN 披露 |
 | `it_drives_flow` | MAJOR | 测试退化成单接口浅断言 |
 
 ### 6.3 防“假 PASS”

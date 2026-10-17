@@ -34,7 +34,7 @@
 
 蓝图在 changed development 或涉 UI 的 logical/scenarios 视图读取资产；每个 development 页面/UI 目标一条扁平 decision：`kind: component_asset_selection`、`target_ref: view:development/node:<id>`、`asset_resolution`、`component_ref`、`rationale` 及既有 owner/provenance/verification_refs/status。非 custom 必须 component_ref，adapt/evolve/custom 必须 rationale。provenance.source_ref 只指配置的 index/catalog 证据。verified_unchanged development 禁止产出选型决策。
 
-CU 用既有 `design_refs` 引用 decision，Feature 用既有 `design_ref_mappings.implementation_refs` 关联 `file#组件name`（文件唯一组件可省略 #name），不得新增 decision_ref。Feature 单值 `asset_selection: {resolution, component_ref?, rationale?, bindings?}` 的前三项与 decision 严格相等；bindings 为本地参数绑定对象。多资产沿原 components/children 树拆条目。
+CU 用既有 `design_refs` 引用 decision，Feature 用既有 `design_ref_mappings.implementation_refs` 关联 `file#组件name`（文件唯一组件可省略 #name），不得新增 decision_ref。Feature 单值 `asset_selection: {resolution, component_ref?, rationale?, bindings?}` 的 resolution/component_ref 与 decision 严格相等；rationale 保留组件上游施工契约中的说明，无上游说明时解释本组件的实现理由，不与 decision 的总理由逐字比较；bindings 为本地参数绑定对象。多资产沿原 components/children 树拆条目。
 
 UI 强制谓词沿既有 kind：page/component/builder，以及既有 Component/ComponentV2/Builder decorator 或 navigation destination 信号；不为工具类新增枚举约束。有 index 时命中谓词的条目必须选型；在途旧 Feature 回 plan 补齐。
 

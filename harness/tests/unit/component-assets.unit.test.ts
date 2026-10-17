@@ -13,6 +13,7 @@ import { componentStaticChecks } from '../../../profiles/hmos-app/harness/compon
 import { checkComponentCatalog, componentResult } from '../../scripts/utils/component-catalog-check';
 import { checkComponentSelections, componentProjectionErrors } from '../../scripts/utils/component-selection-check';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
+import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { CheckContext, ContractsSpec } from '../../scripts/utils/types';
 import { DEFAULT_LAYOUT, ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
@@ -29,7 +30,7 @@ import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-rev
 import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
 import { reconcileChangeUnitBlueprintRefs, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
 import { validateChangeUnitCandidate } from '../../scripts/utils/change-unit-provider-boundary';
-import { diagnoseDesignAuthority } from '../../scripts/utils/blueprint-skill-projection';
+import { diagnoseDesignAuthority, selectBlueprintSkillContent, compareAuthoritativeContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
 import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
 import { designOwnerBlockers } from '../../scripts/goal-phase-runtime';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
@@ -372,7 +373,9 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
     assert(!checks.some(r => r.status === 'FAIL'), JSON.stringify(checks));
   }
   normalized.contracts!.components[0].asset_selection = { resolution: 'custom', rationale: '自行重选' };
-  assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
+  const mismatch = checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').find(r => r.id === 'component_asset_projection' && r.status === 'FAIL')!;
+  assert(mismatch && mismatch.affected_files?.some(file => file.endsWith('/contracts.yaml')));
+  assert(mismatch.details?.includes('期望 resolution=reuse') && mismatch.suggestion?.includes('resolution/component_ref'));
   normalized.contracts!.components[0].asset_selection = value.components[0].asset_selection;
   for (const mapping of normalized.contracts!.change_unit!.design_ref_mappings) (mapping as any).implementation_refs = [42];
   assert(checkChangeUnitFeatureProjection(context(root, normalized.contracts!), 'plan').some(r => r.id === 'component_asset_projection' && r.status === 'FAIL'));
@@ -385,6 +388,60 @@ test('mechanical index → blueprint decision → CU refs → loader → plan/re
   assert.equal(checkHostSeamMaterials(root, checked, { projection: output }).issues.length, 0);
   write(root, path.relative(root, output), review.replace('选型结果：直接复用已有组件', '选型结果：自定义实现'));
   assert(checkHostSeamMaterials(root, checked, { projection: output }).issues.some(i => i.id === 'publication_projection_content_mismatch'));
+}));
+
+test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已有资源键不扩大写集', () => setup(root => {
+  const fixture = path.join(__dirname, '../fixtures/component-selection-handoff');
+  fs.cpSync(path.join(fixture, 'dependencies'), root, { recursive: true });
+  clearFrameworkConfigCache();
+  const feature = deriveChangeUnitFeatureId('bc-openCard-2', 'bank-card-opening-flow');
+  const work = 'doc/features/bc-openCard-2';
+  for (const [from, to] of [
+    ['component-blueprint.yaml', `${work}/blueprint/component-blueprint.yaml`],
+    ['change-unit.yaml', `${work}/bank-card-opening-flow/change-unit.yaml`],
+    ['contracts.yaml', `${work}/bank-card-opening-flow/contracts.yaml`],
+  ]) write(root, to, fs.readFileSync(path.join(fixture, from), 'utf8'));
+  const blueprint = YAML.parse(fs.readFileSync(path.join(fixture, 'component-blueprint.yaml'), 'utf8'));
+  const cu = YAML.parse(fs.readFileSync(path.join(fixture, 'change-unit.yaml'), 'utf8'));
+  const projected = selectBlueprintSkillContent(blueprint, cu).contracts!;
+  const spec = new SpecLoader(root, undefined, undefined, FRAMEWORK).loadFeatureSpec(feature);
+  assert(!spec.shape_issues, JSON.stringify(spec.shape_issues));
+  const value = spec.contracts!;
+  const originalFiles = [...value.files];
+  assert.equal(value.components.filter(c => c.asset_selection?.resolution === 'custom').length, 4);
+  assert.deepEqual(componentProjectionErrors(root, value, cu), []);
+  assert.equal(compareAuthoritativeContent(projected, value).state, 'aligned');
+  const closure = (contracts: ContractsSpec) => checkContractFileReferenceClosure(context(root, contracts))[0];
+  const missingMedia = closure(value);
+  assert.equal(missingMedia.status, 'FAIL');
+  assert(missingMedia.details?.includes('20 个文件引用') && missingMedia.suggestion?.includes('resource_keys.value'));
+
+  const copiedReason = structuredClone(value);
+  const decision = blueprint.decisions_and_gaps.decisions.find((d: any) => d.decision_id === 'wallet-ui-custom');
+  for (const component of copiedReason.components) if (component.asset_selection?.resolution === 'custom') component.asset_selection.rationale = decision.rationale;
+  assert.equal(compareAuthoritativeContent(projected, copiedReason).state, 'drift', '不能反过来要求改写上游组件理由');
+
+  const repaired = structuredClone(value);
+  for (const media of repaired.resource_keys!.WalletMain.media) { media.value = `app.media.${media.key}`; delete media.path; }
+  assert.deepEqual(repaired.files, originalFiles);
+  assert.deepEqual(componentProjectionErrors(root, repaired, cu), []);
+  assert.equal(compareAuthoritativeContent(projected, repaired).state, 'aligned');
+  assert.equal(resolveVerdictFromChecks([closure(repaired)]), 'PASS');
+  const repairedContext = context(root, repaired);
+  repairedContext.featureSpec = { ...spec, contracts: repaired };
+  assert.equal(resolveVerdictFromChecks(checkAuthoritativeContentAligned(repairedContext, 'contracts')), 'PASS');
+  const projectionChecks = checkChangeUnitFeatureProjection(repairedContext, 'plan');
+  assert.equal(resolveVerdictFromChecks(projectionChecks), 'PASS', JSON.stringify(projectionChecks));
+  for (const mutate of [
+    (c: ContractsSpec) => { c.components[0].asset_selection!.resolution = 'reuse'; },
+    (c: ContractsSpec) => { c.components[0].asset_selection!.component_ref = 'OtherUi/Index.ets#Small'; },
+    (c: ContractsSpec) => { c.change_unit!.design_ref_mappings = []; },
+  ]) {
+    const invalid = structuredClone(repaired); mutate(invalid);
+    assert(componentProjectionErrors(root, invalid, cu).length > 0, '真实选型变化或缺映射仍拒绝');
+  }
+  const expanded = structuredClone(repaired); expanded.files.push(value.resource_keys!.WalletMain.media[0].path!);
+  assert.equal(compareAuthoritativeContent(projected, expanded).state, 'drift', '资源复用不能扩大写授权');
 }));
 
 test('R1 必阻断选型进入最终 verdict/summary，诊断 MAJOR 与 WARN 不升级', () => setup(root => {

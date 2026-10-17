@@ -1,0 +1,1574 @@
+artifact: component-blueprint@1
+component_id: wallet-bank-card-opening
+blueprint_id: bc-openCard-2
+revision: 1
+source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+decision_fingerprint: sha256:8b4045808ecfda40a681d93458b7a3af647b1ce769b9035317b406375185cd8d
+provenance: &req
+  source_kind: product_requirement
+  source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+  observed_at: "2026-10-16"
+  evidence_strength: authoritative
+  extraction_method: direct_local_source
+
+review_summary:
+  authored_by: codex-primary
+  title: 银行卡模拟开卡完整流程
+  summary: 在既有添加银行卡与全部银行入口上接通选卡类型、具体卡片、短信验证、RDB 持久化和不可返回的结果页，形成可完整演示和验证的模拟开卡闭环。
+  background: bc-openCard-1 已完成银行列表、全部银行页面与既有导航，但点击银行仍只提示暂不支持，尚无开卡流程和银行卡持久化。
+  problem: 用户无法从任一银行继续选择银行卡，钱包也没有本地银行卡数据库、验证码交互或清栈完成语义。
+  goals:
+    - goal_id: G1
+      statement: 从两个既有银行列表入口完成同一条模拟开卡旅程。
+      success_measures: [四个目标界面与参考图语义一致, 任意六位验证码可继续, 成功写入后可按完整卡号从 RDB 重新查询]
+    - goal_id: G2
+      statement: 完整卡号仅用于领域处理和应用私有数据库，所有用户可见位置只展示前四后四。
+      success_measures: [UI 与日志无完整卡号, RDB 保存完整卡号, 失败结果仍保持正确交接]
+  positioning: 本轮是 WalletMain 的 feature 内演进；Phone 只扩展路由装配，AccountManager 只补齐账号 mock 的可读手机号，不改变外层架构。
+  in_scope:
+    - 银行卡类型半模态、具体卡片页、验证码半模态、结果页
+    - 银行卡 mock 数据、完整卡号脱敏显示与 RDB 持久化
+    - 添加银行卡页和全部银行页到新流程的路由接线
+    - 成功与失败结果、禁止结果页返回、完成后清理整段开卡栈
+    - 相关业务 UT、路由回归与真机视觉/交互验收
+  non_goals:
+    - 不接真实银行、短信网关、支付清算或 NFC 激活
+    - 不实现银行卡详情页；成功完成暂回钱包首页
+    - 协议文本不做富文本点击
+    - 不设计独立密钥管理或字段级加密；仅使用 relationalStore 的加密 store，并关闭 Phone 应用备份恢复
+    - 首页与卡包的现有 mock 读模型不在本轮改造；成功完成仅回到首页，不承诺首页立即展示新增银行卡
+  must_review: []
+  reader_guide:
+    source_digest: sha256:54c44c79f4c44490fac6e4530063047adfa550521ae5a98a7f6cf853e229225f
+    sections:
+      - section: summary
+        title: 这次用户会得到什么
+        prose: |
+          现有两个银行列表不再停在“暂不支持”。用户从任一入口点击银行后，可以依次选择卡类型和具体卡片、输入六位验证码、看到保存结果，并用唯一的“完成”按钮退出。成功记录会进入应用私有银行卡数据库；失败不会留下脏记录。
+        source_refs: [/review_summary/summary, /design_views/0/nodes/0/journey_steps]
+      - section: terms
+        title: 关键业务词
+        prose: |
+          “添卡”是 WalletMain 内的完整业务旅程；“卡包”是保存后银行卡的业务列表与读模型。完整卡号属于领域与存储数据，不属于界面展示数据。
+        source_refs: [/discovery/facts/3, /discovery/facts/4, /decisions_and_gaps/decisions/1]
+      - section: journey
+        title: 选择银行与卡片
+        prose: |
+          用户从添加银行卡页或全部银行页点击银行，系统建立一次新的开卡会话并展示卡类型半模态。继续后进入具体卡片页，页面只展示前四后四，完整卡号继续留在会话中供保存使用。
+        source_refs: [/design_views/0/nodes/0/journey_steps/0, /design_views/0/nodes/0/journey_steps/1]
+        graph_ids: [sequence:start-and-select-type, sequence:select-type-and-card]
+      - section: flows
+        title: 验证码、保存与结果
+        prose: |
+          具体卡片页打开验证码半模态后，从 AccountService 取得 mock 手机号并开始 60 秒倒计时。六位数字提交后，协调器等待 BankCardRepository 的 RDB 事务结果；无论成功还是失败，都携带保存结果和完整卡号进入不可返回的结果页。
+        source_refs: [/design_views/2/runtime_data_flows/0/contracts/state_management/0/ordered_steps, /contracts/0]
+        graph_ids: [sequence:otp-and-save]
+      - section: data
+        title: 数据与隐私边界
+        prose: |
+          `wallet_cards.db` 以 `StoreConfig.encrypt=true`、S4、版本 1 打开。`bank_cards.id` 是自增整数主键，`account_scope + full_card_number` 是联合唯一约束；其余列均声明了 SQL 类型、nullable 与默认值。`save()` 在事务内查询后 update 或 insert，成功 commit，异常 rollback；未来升级在同一事务内增量迁移后才提升 `user_version`。UI 和日志只使用掩码，Phone 将 `allowToBackupRestore` 设为 false；已提交记录可跨进程恢复，未完成会话不恢复。
+        source_refs: [/contracts/0/table_schema, /decisions_and_gaps/decisions/1, /decisions_and_gaps/decisions/2]
+      - section: decisions
+        title: 关键设计取舍
+        prose: |
+          方案以单一 BankOpeningSession 避免页面间复制状态；以 relationalStore 而不是 AppStorage 承载结构化卡片；OTP 用绝对 deadline 且 SAVING 防重入；导航仍复用 Phone 的根 NavPathStack，成功 clear 回首页，失败只移除起点之后的页面。
+        source_refs: [/decisions_and_gaps/decisions/0, /decisions_and_gaps/decisions/2, /decisions_and_gaps/decisions/3]
+      - section: recovery
+        title: 失败与恢复速查
+        prose: |
+          | 情况 | 用户看到什么 | 数据是否保存 | 如何继续 |
+          |---|---|---|---|
+          | BD-1：RDB 初始化或写入失败 | 失败结果页 | 否 | 点击完成回到最初添加银行卡页后重试 |
+          | BD-2：关闭卡类型或验证码半模态 | 回到承载页 | 否 | 重新点击银行或再次进入验证码步骤 |
+        source_refs: [/design_views/0/nodes/0/acceptance/boundaries/0, /design_views/0/nodes/0/acceptance/boundaries/1]
+      - section: delivery
+        title: 施工边界
+        prose: |
+          WalletMain 负责页面、状态机、mock 卡数据和加密 RDB；AccountManager 只补 mock 手机号字段；Phone 注册两个新页面 builder 并关闭备份恢复。施工不新增模块、不改变架构依赖方向，也不接真实银行或短信服务；首页现有 mock 读模型保持不变。
+
+          | 文件或文件组 | 用途 |
+          |---|---|
+          | `presentation/components/CardTypeSheet.ets` | 卡类型单选、银行信息、协议和继续按钮半模态 |
+          | `presentation/components/OtpVerificationSheet.ets` | 掩码手机号、六位输入、绝对 deadline、重发与 SAVING 禁用 |
+          | `presentation/pages/BankCardSelectionPage.ets` | 具体 mock 卡选择和协议确认 |
+          | `presentation/pages/BankCardResultPage.ets` | 成功/失败结果、返回拦截和唯一完成动作 |
+          | `domain/model/BankOpeningSession.ets` | 单一流程状态、起始栈边界与敏感数据清理 |
+          | `domain/service/BankOpeningCoordinator.ets` | 选卡、OTP 与 repository 保存编排 |
+          | `domain/service/OtpCountdown.ets` | 绝对截止时间和 timer 生命周期 |
+          | `presentation/navigation/BankOpeningNavigator.ets` | 新页面入栈、成功 `clear`、失败 `removeByIndexes` |
+          | `data/model/BankCardRecord.ets`、`MockBankCard.ets` | 持久化实体与完整 mock 卡/掩码派生 |
+          | `data/repository/BankCardRepository.ets`、`BankRepository.ets` | 加密 RDB 事务与银行支持卡数据 |
+          | `AddBankCardPage.ets`、`AllBanksPage.ets` | 两个既有入口改接同一 coordinator |
+          | `WalletMain/index.ets`、`route_map.json`、`Phone/pages/Index.ets` | 跨模块导出与两个 NavDestination 注册 |
+          | `string.json`、`color.json`、`float.json` | 新页面资源化文案、颜色和尺寸 |
+          | `UserProfile.ets`、`AccountService.ets`、`AccountManager/index.ets` | 完整 mock 手机号字段、服务赋值与既有导出 |
+          | `Phone/backup_config.json` | 关闭系统备份恢复，避免完整卡号数据库被导出 |
+          | `bank_open_card_2_ut.test.ets` | 状态机、OTP、RDB、清栈计划和旧路由回归 |
+        source_refs: [/design_views/3/nodes/0/contracts/files, /design_views/3/nodes/1/contracts/files, /design_views/3/nodes/2/contracts/files, /design_views/3/nodes/3/contracts/files, /review_summary/non_goals]
+      - section: acceptance
+        title: 验收重点
+        prose: |
+          P0 重点是双入口一致、卡号脱敏但完整保存、60 秒验证码状态机、RDB 字段完整、成功/失败结果与不可返回清栈；原有页面路由矩阵作为回归验证。
+        source_refs: [/design_views/0/nodes/0/acceptance/criteria, /design_views/0/nodes/0/acceptance/boundaries]
+      - section: questions
+        title: 当前待补问题
+        prose: |
+          当前需求、参考图和代码事实足以施工，没有阻断性产品待决项。银行卡详情页、真实短信、真实银行协议和 NFC 激活均明确不在本轮范围。
+        source_refs: [/review_summary/non_goals, /decisions_and_gaps/gaps]
+  questioning:
+    status: complete
+    provider_id: independent-blueprint-questioner
+    isolated_context: true
+    frontier_budget: 2
+    repeated_frontier_count: 0
+    writes_ssot: false
+    items:
+      - question_id: Q-view-scenarios
+        scope_kind: view
+        scope_ref: view:scenarios
+        question: 用户旅程、成功失败分支与需求验收是否闭合？
+        answer: AC-1 至 AC-9、BD-1 至 BD-3、NFR-1 至 NFR-2 和逐需求映射覆盖双入口、选卡、验证码、保存、结果清栈与路由回归；首页读新增卡未被误纳入范围。
+        disposition: answered_with_evidence
+        evidence_refs: [view:scenarios/node:bank-opening-journey, doc/features/原始需求/1-2-银行卡/原始需求.md]
+        verification_refs: [AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-7, AC-8, AC-9, BD-1, BD-2, BD-3, NFR-1, NFR-2]
+        owner: WalletMain product/design owner
+        frontier_fingerprint: sha256:217af6c9dd97d16bb575a41caae4a624edc015c12e23e3bd38d81255db457e94
+        provenance: &questioning
+          source_kind: review
+          source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.review.md
+          observed_at: "2026-10-16"
+          evidence_strength: observed
+          extraction_method: independent_isolated_questioning
+      - question_id: Q-view-logical
+        scope_kind: view
+        scope_ref: view:logical
+        question: 领域对象、隐私、账号作用域和持久化模型是否完整？
+        answer: BankCardRecord、联合唯一键、加密 RDB、local_mock_wallet、logout、backup、事务 update-or-insert 与升级策略均已明确。
+        disposition: answered_with_evidence
+        evidence_refs: [view:logical/node:bank-card-record, contract:bank-card-persistence, decision:device-local-account-scope]
+        verification_refs: [AC-3, AC-5, AC-8, NFR-2]
+        owner: WalletMain data owner
+        frontier_fingerprint: sha256:77b970e4ae06c39a34fd5dc41acde6359e3d0fe821a64691be7b1da2a33b8042
+        provenance: *questioning
+      - question_id: Q-view-runtime
+        scope_kind: view
+        scope_ref: view:runtime
+        question: session、保存、结果和清栈运行闭环是否一致？
+        answer: Coordinator、Session、Repository 与 Navigator 的接口、ordered steps、use case 和四张时序图使用同一方法集；false saving lock 明确阻断保存。
+        disposition: answered_with_evidence
+        evidence_refs: [view:runtime/flow:bank-card-opening-flow, view:runtime/node:result-navigation]
+        verification_refs: [AC-4, AC-6, AC-9, BD-1, BD-2, BD-3]
+        owner: WalletMain runtime owner
+        frontier_fingerprint: sha256:5db9072672bae8340f54cc2913860f7e09d829bd5a14c78662a8bb73ef213cae
+        provenance: *questioning
+      - question_id: Q-view-development
+        scope_kind: view
+        scope_ref: view:development
+        question: 模块、接口和文件用途是否形成单一可施工声明？
+        answer: 三模块边界、接口签名、精确文件集和 reader guide 文件用途表形成单一施工输入。
+        disposition: answered_with_evidence
+        evidence_refs: [view:development/node:wallet-opening-ui, view:development/node:wallet-card-data, view:development/node:account-phone-source, view:development/node:phone-route-host]
+        verification_refs: [doc/architecture.md, doc/module-catalog.yaml]
+        owner: WalletMain/AccountManager/Phone owners
+        frontier_fingerprint: sha256:6c33fdc1d8b9752f3d82aed66c9589d37c07ac511ebd1d0cbaf3ee9b7691c2dd
+        provenance: *questioning
+      - question_id: Q-view-deployment
+        scope_kind: view
+        scope_ref: view:deployment
+        question: HAR、HAP、加密 RDB 与备份边界是否明确？
+        answer: 同一 HAP 部署、encrypt=true、S4、backup_config=false 和卸载/清数据语义已明确。
+        disposition: answered_with_evidence
+        evidence_refs: [view:deployment/node:phone-app-package, contract:bank-card-persistence]
+        verification_refs: [NFR-2]
+        owner: Phone product owner + WalletMain data owner
+        frontier_fingerprint: sha256:c087de3820ec882a124c50176b7fd9a183a26cf336c44066367e9dd006e396ac
+        provenance: *questioning
+      - question_id: Q-flow-opening
+        scope_kind: flow
+        scope_ref: flow:bank-card-opening-flow
+        question: 触发、状态、写入、发布、恢复与调用链是否一致？
+        answer: 双入口建立 session，OTP deadline 与 SAVING 锁、事务保存、一次性结果发布、commit/rollback 和精确完成导航闭合。
+        disposition: answered_with_evidence
+        evidence_refs: [view:runtime/flow:bank-card-opening-flow]
+        verification_refs: [AC-4, AC-5, AC-6, AC-9, BD-1, BD-2, BD-3]
+        owner: WalletMain
+        frontier_fingerprint: sha256:ede40520d1159329c9aced7dfbd31dd4ccc8b245b5a9f6960e31592a191bde08
+        provenance: *questioning
+      - question_id: Q-rel-scenario-logical
+        scope_kind: relation
+        scope_ref: relation:scenario-realized-by-logical
+        question: 场景是否由开卡逻辑能力实现？
+        answer: 用户旅程由 WalletMain 开卡能力实现，关系端点与责任一致。
+        disposition: answered_with_evidence
+        evidence_refs: [relation:scenario-realized-by-logical]
+        verification_refs: [view:scenarios/node:bank-opening-journey, view:logical/node:bank-card-opening-capability]
+        owner: WalletMain
+        frontier_fingerprint: sha256:11712acf7f8bf2c121a8144bb4eed137527d98861c9e3bcb83081393aa5e584c
+        provenance: *questioning
+      - question_id: Q-rel-logical-runtime
+        scope_kind: relation
+        scope_ref: relation:logical-executed-by-runtime
+        question: 开卡逻辑是否由运行时 session 执行？
+        answer: 单一 OpeningSession 执行领域状态并由 coordinator 编排。
+        disposition: answered_with_evidence
+        evidence_refs: [relation:logical-executed-by-runtime]
+        verification_refs: [view:runtime/flow:bank-card-opening-flow]
+        owner: WalletMain
+        frontier_fingerprint: sha256:3278f4a6a5cbdbbf53e8a0cdbecf50eb759c1e596765d593d19b0f58f7989dd9
+        provenance: *questioning
+      - question_id: Q-rel-runtime-development
+        scope_kind: relation
+        scope_ref: relation:runtime-owned-by-wallet-ui
+        question: runtime 状态与导航是否有明确开发所有权？
+        answer: BankOpeningSession 与 BankOpeningNavigator 分别落在 WalletMain domain/model 和 presentation/navigation，接口单一。
+        disposition: answered_with_evidence
+        evidence_refs: [relation:runtime-owned-by-wallet-ui, view:development/node:wallet-opening-ui]
+        verification_refs: [doc/module-catalog.yaml#WalletMain]
+        owner: WalletMain feature owner
+        frontier_fingerprint: sha256:3d25e0f63429d0bceae0cc8589c279d4e9b22bb345029839830ba00c39a1f5ef
+        provenance: *questioning
+      - question_id: Q-rel-record-data
+        scope_kind: relation
+        scope_ref: relation:record-owned-by-data
+        question: BankCardRecord 是否由 WalletMain 数据层拥有？
+        answer: 模型、repository、schema 与文件用途一致归 WalletMain data。
+        disposition: answered_with_evidence
+        evidence_refs: [relation:record-owned-by-data, view:development/node:wallet-card-data]
+        verification_refs: [contract:bank-card-persistence]
+        owner: WalletMain data owner
+        frontier_fingerprint: sha256:4579ca29782020dff7cb435f686440a5ad6bde246704601c1586d4a515daf4d4
+        provenance: *questioning
+      - question_id: Q-rel-deployment
+        scope_kind: relation
+        scope_ref: relation:app-deployed-in-phone
+        question: 路由和加密数据库是否部署于 Phone HAP？
+        answer: WalletMain HAR 与路由装配于 Phone HAP，应用私有 RDB 和 backup 策略由同包承载。
+        disposition: answered_with_evidence
+        evidence_refs: [relation:app-deployed-in-phone, view:deployment/node:phone-app-package]
+        verification_refs: [NFR-2]
+        owner: Phone
+        frontier_fingerprint: sha256:086eb456b5925744c03c6ee270b16ebb699b63464c6bccd3e845fc685124d4ca
+        provenance: *questioning
+      - question_id: Q-lens-module-boundaries
+        scope_kind: app_lens
+        scope_ref: app_lens:module_boundaries
+        question: 模块边界是否符合 catalog 与 architecture？
+        answer: WalletMain、AccountManager、Phone 的责任与依赖方向合法。
+        disposition: answered_with_evidence
+        evidence_refs: [doc/module-catalog.yaml, doc/architecture.md]
+        verification_refs: [view:development]
+        owner: architecture owner
+        frontier_fingerprint: sha256:055c1adb4753e8bb9de6bfce05d1ba2147c2fb34d2181444153c5248719b26fe
+        provenance: *questioning
+      - question_id: Q-lens-capability-seams
+        scope_kind: app_lens
+        scope_ref: app_lens:capability_seams
+        question: coordinator、session、repository、account 与 navigation 接缝是否精确一致？
+        answer: 所有 ordered steps、typed interface、use-case calls 与 Mermaid 使用已声明的同一方法集。
+        disposition: answered_with_evidence
+        evidence_refs: [view:development/node:wallet-opening-ui, view:runtime/flow:bank-card-opening-flow]
+        verification_refs: [contract:bank-card-persistence, AC-6, AC-9]
+        owner: WalletMain
+        frontier_fingerprint: sha256:e8beef13d0a0437bebb0b374ec4a509ce0455929ec648abe9c1cf44e878dcd0c
+        provenance: *questioning
+      - question_id: Q-lens-feature-flags
+        scope_kind: app_lens
+        scope_ref: app_lens:feature_flags
+        question: 是否需要功能开关？
+        answer: 本地模拟应用按整体版本升级，需求未要求远程开关。
+        disposition: not_applicable
+        evidence_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+        verification_refs: [/review_summary/non_goals]
+        owner: product owner
+        frontier_fingerprint: sha256:0fd9b21bc84332493bbb3d32824ebd8ca3a35be9301c670a92fb3de685fe28fa
+        provenance: *questioning
+      - question_id: Q-lens-producers-consumers
+        scope_kind: app_lens
+        scope_ref: app_lens:data_producers_consumers
+        question: mock 卡、session、RDB、结果页和首页的数据链是否准确？
+        answer: BankRepository 生产 mock 卡，session 消费，repository 保存，结果页消费 outcome；首页保持既有 mock 读模型且不在本轮承诺内。
+        disposition: answered_with_evidence
+        evidence_refs: [view:runtime/flow:bank-card-opening-flow, /review_summary/non_goals]
+        verification_refs: [AC-5, AC-6]
+        owner: WalletMain data owner
+        frontier_fingerprint: sha256:442ca4f532b64181617cf00de28a36c397ed77688a2e1c962153a0751c3a6e91
+        provenance: *questioning
+      - question_id: Q-lens-lifecycle
+        scope_kind: app_lens
+        scope_ref: app_lens:lifecycle_triggers
+        question: OTP 墙钟、SAVING 锁与完成触发是否明确？
+        answer: absolute deadline、恢复重算、detach dispose 与 SAVING 防重入均已验收化。
+        disposition: answered_with_evidence
+        evidence_refs: [decision:otp-wall-clock-and-saving-lock, view:runtime/flow:bank-card-opening-flow]
+        verification_refs: [AC-4, AC-9, NFR-1]
+        owner: WalletMain runtime owner
+        frontier_fingerprint: sha256:9cacb5ea861829922135586dcdcd866840b2921cebb939bdcd268e63ccd932fd
+        provenance: *questioning
+      - question_id: Q-lens-state-owners
+        scope_kind: app_lens
+        scope_ref: app_lens:state_owners
+        question: session、RDB、导航与账号作用域由谁拥有？
+        answer: session、local_mock_wallet RDB 与 Phone NavPathStack 所有权明确；logout 不删除本地钱包数据。
+        disposition: answered_with_evidence
+        evidence_refs: [decision:device-local-account-scope, view:runtime/node:opening-session, view:development/node:phone-route-host]
+        verification_refs: [AC-5]
+        owner: WalletMain + AccountManager owners
+        frontier_fingerprint: sha256:06d1adc77fc2c7702ad86a6e780e55e56deac8e93b0f0b91c88aa0a5208384aa
+        provenance: *questioning
+      - question_id: Q-lens-initialization
+        scope_kind: app_lens
+        scope_ref: app_lens:initialization
+        question: session 与 RDB 初始化是否可施工？
+        answer: StoreConfig、S4、encrypt、schema v1、create SQL、事务与升级策略完整。
+        disposition: answered_with_evidence
+        evidence_refs: [contract:bank-card-persistence, view:runtime/flow:bank-card-opening-flow]
+        verification_refs: [AC-5, NFR-2]
+        owner: WalletMain data owner
+        frontier_fingerprint: sha256:1447f95c4d12566a4fd7190c595cebb2f72fcf8bc2f2ec8959f7c5d9d89224d5
+        provenance: *questioning
+      - question_id: Q-lens-publication
+        scope_kind: app_lens
+        scope_ref: app_lens:publication_subscription
+        question: save outcome 如何发布与消费？
+        answer: save outcome 是一次性前台交接，仅结果页消费，无后台订阅。
+        disposition: answered_with_evidence
+        evidence_refs: [view:runtime/flow:bank-card-opening-flow]
+        verification_refs: [AC-6]
+        owner: WalletMain
+        frontier_fingerprint: sha256:34bfd2edac0ab17057dc353c2fa602f640f5444121492d8dfa87bead737402e4
+        provenance: *questioning
+      - question_id: Q-lens-ui-refresh
+        scope_kind: app_lens
+        scope_ref: app_lens:ui_refresh
+        question: OTP、SAVING 与结果如何驱动 UI？
+        answer: session 的可观察状态、墙钟剩余时间与 SAVING 禁用驱动当前流程 UI；首页 mock 读模型不变。
+        disposition: answered_with_evidence
+        evidence_refs: [view:runtime/node:opening-session, decision:otp-wall-clock-and-saving-lock]
+        verification_refs: [AC-4, AC-9]
+        owner: WalletMain presentation owner
+        frontier_fingerprint: sha256:94f01a0a4bcebefe1f11e1d1fa0f9bed5796bb23d184ef188186577ae10d90b9
+        provenance: *questioning
+      - question_id: Q-lens-process-recovery
+        scope_kind: app_lens
+        scope_ref: app_lens:process_recovery
+        question: commit、进程终止、rollback 与 backup 行为是否明确？
+        answer: commit 后记录保留、session 不恢复、失败 rollback、重启到根首页且系统备份关闭。
+        disposition: answered_with_evidence
+        evidence_refs: [view:runtime/flow:bank-card-opening-flow, view:deployment/node:phone-app-package]
+        verification_refs: [AC-5, BD-1, BD-3, NFR-2]
+        owner: WalletMain data owner + Phone owner
+        frontier_fingerprint: sha256:4981eb18b40553d218eb695d8a1d701aa390fd14055ffe547dc71252ce97b01d
+        provenance: *questioning
+      - question_id: Q-terminology
+        scope_kind: terminology
+        scope_ref: terminology:current_scope_items
+        question: 当前需求来源与关键术语是否可追溯？
+        answer: 来源文件和四张图哈希匹配；添卡与卡包归 WalletMain，walletCardCategory 与 bankCardType 在模型字段中显式区分。
+        disposition: answered_with_evidence
+        evidence_refs: [doc/glossary.yaml#卡包, doc/glossary.yaml#添卡, view:development/node:wallet-card-data]
+        verification_refs: [source_sha256:2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300]
+        owner: WalletMain product/design owner
+        frontier_fingerprint: sha256:6a97f971f4caee97cbb771b2d33acf1c60c6f03de0e55ab714c2bff7010e38a7
+        provenance: *questioning
+  admission:
+    status: pass
+    root_questions_complete: true
+    current_slice:
+      slice_id: bc-openCard-2
+      contracts_ready: true
+      design_refs_ready: true
+    blocker_refs: []
+
+discovery:
+  source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+  inputs:
+    current_scope_items:
+      - item_id: requirement-bc-openCard-2
+        kind: requirement
+        source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+        source_sha256: sha256:2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300
+        provenance: *req
+    knowledge_assets:
+      - source_ref: doc/module-catalog.yaml#WalletMain
+        role: module_scope
+      - source_ref: doc/glossary.yaml#添卡
+        role: terminology
+      - source_ref: doc/architecture.md#模块内分层
+        role: architecture
+      - source_ref: doc/component-index.yaml
+        role: component_inventory
+      - source_ref: doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg
+        source_sha256: sha256:66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73
+        role: ui_reference_card_type
+      - source_ref: doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg
+        source_sha256: sha256:7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc
+        role: ui_reference_card_selection
+      - source_ref: doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg
+        source_sha256: sha256:554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13
+        role: ui_reference_otp
+      - source_ref: doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg
+        source_sha256: sha256:f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c
+        role: ui_reference_result
+  facts:
+    - fact_id: F-current-entry
+      subject: current:bank-tap
+      value: AddBankCardPage 与 AllBanksPage 点击银行只提示暂不支持，不导航。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+        observed_at: "2026-10-16"
+        evidence_strength: observed
+        extraction_method: source_read
+    - fact_id: F-current-routing
+      subject: current:navigation
+      value: Phone 根 Navigation 统一注册 WalletMain builder，feature 子页经 NavPathContext.stack() 使用同一 NavPathStack。
+      provenance:
+        source_kind: code
+        source_ref: 01-Product/Phone/src/main/ets/pages/Index.ets
+        observed_at: "2026-10-16"
+        evidence_strength: observed
+        extraction_method: source_read
+    - fact_id: F-current-bank-data
+      subject: current:bank-data
+      value: BankRepository 提供 20 家 mock 银行及品牌 logo，但 BankInfo 尚无支持卡类型和具体卡片数据。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+        observed_at: "2026-10-16"
+        evidence_strength: observed
+        extraction_method: source_read
+    - fact_id: F-term-card-pack
+      subject: term:卡包
+      value:
+        canonical_module: WalletMain
+        confidence: high
+        easily_confused_with: [AccountManager, CommUI, Phone]
+        meaning: 钱包内银行卡等卡片的业务列表、读模型与入口编排，不是通用 UI 容器或账号会话。
+      provenance:
+        source_kind: glossary
+        source_ref: doc/glossary.yaml#卡包
+        observed_at: "2026-10-16"
+        evidence_strength: authoritative
+        extraction_method: exact_glossary_match
+    - fact_id: F-term-add-card
+      subject: term:添卡
+      value:
+        canonical_module: WalletMain
+        confidence: high
+        easily_confused_with: [AccountManager, CommUI, Phone]
+        meaning: 钱包 feature 内从卡种或银行入口开始，完成选卡、验证、保存与结果反馈的业务流程。
+      provenance:
+        source_kind: glossary
+        source_ref: doc/glossary.yaml#添卡
+        observed_at: "2026-10-16"
+        evidence_strength: authoritative
+        extraction_method: exact_glossary_match
+  conflicts: []
+  requirement_traceability:
+    - item_id: requirement-bc-openCard-2
+      blueprint_refs:
+        - view:scenarios/node:bank-opening-journey
+        - view:logical/node:bank-card-opening-capability
+        - view:runtime/flow:bank-card-opening-flow
+        - view:development/node:wallet-opening-ui
+        - view:development/node:wallet-card-data
+        - view:development/node:account-phone-source
+        - view:development/node:phone-route-host
+        - contract:bank-card-persistence
+  requirement_acceptance_mapping:
+    - { source: 需求规格-1, acceptance: [AC-1, AC-2] }
+    - { source: 需求规格-2, acceptance: [AC-1, AC-7] }
+    - { source: 需求规格-3, acceptance: [AC-2] }
+    - { source: 需求规格-4, acceptance: [AC-2, AC-3] }
+    - { source: 需求规格-5, acceptance: [AC-4, AC-5, AC-8, AC-9, BD-1, BD-3, NFR-1, NFR-2] }
+    - { source: 需求规格-6, acceptance: [AC-6, AC-7] }
+    - { source: 路由规格-1, acceptance: [AC-6, AC-7] }
+    - { source: 路由规格-2, acceptance: [AC-7] }
+
+design_views:
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [钱包用户, 产品验收, 测试]
+    purpose: 描述用户从选择银行到完成或失败退出的端到端旅程，并绑定参考图和验收。
+    current_state: 点击银行后仅提示暂不支持，旅程中止。
+    target_state: 两个银行入口均进入同一开卡旅程，完成卡类型、具体卡、验证码、保存、结果和清栈。
+    delta: 新增完整模拟银行卡开卡旅程与失败分支。
+    decisions_and_gaps: [decision:single-opening-session, decision:masked-display-full-storage]
+    verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+    nodes:
+      - node_id: bank-opening-journey
+        label: 银行卡开卡用户旅程
+        owner: WalletMain
+        current_state: 银行行点击后显示不支持提示。
+        target_state: 用户完成选类型、选卡、六位验证码和结果确认；只有完成按钮可退出结果页。
+        journey_steps:
+          - step_id: J1
+            stage: 选择卡类型
+            user_action: 在添加银行卡页或全部银行页点击任一银行。
+            system_behavior: 展示银行信息、支持卡类型、提示、协议文本和同意并继续按钮的半模态。
+            preconditions: [银行数据加载成功]
+            ui_reference: doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg
+          - step_id: J2
+            stage: 选择具体卡片
+            user_action: 选择一种卡类型并继续，然后选择该银行的一张 mock 卡并同意协议。
+            system_behavior: 全屏页面只显示掩码卡号；领域对象继续持有完整卡号。
+            preconditions: [已选择银行与支持的卡类型]
+            ui_reference: doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg
+          - step_id: J3
+            stage: 短信验证
+            user_action: 点击下一步并输入任意六位数字验证码。
+            system_behavior: 半模态打开即模拟发送短信，60 秒倒计时内禁用重发；六位数字后才可继续。
+            preconditions: [已选择具体卡片并同意协议]
+            ui_reference: doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg
+          - step_id: J4
+            stage: 保存与结果
+            user_action: 点击验证码半模态的下一步，再在结果页点击完成。
+            system_behavior: 保存成功或失败都进入对应结果页；结果页屏蔽返回。成功完成清理开卡栈并回钱包首页，失败完成清理过程页并回最初添加银行卡页。
+            preconditions: [验证码为六位数字]
+            ui_reference: doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg
+        path_variants:
+          - user_type: 成功保存
+            difference: 结果页显示成功，完成后回钱包首页并携带完整卡号作为后续详情页预留参数。
+          - user_type: 保存失败
+            difference: 结果页显示失败，完成后回最初添加银行卡页，不产生数据库记录。
+        logical_refs: [view:logical/node:bank-card-opening-capability]
+        runtime_refs: [view:runtime/flow:bank-card-opening-flow]
+        development_owner_ref: view:development/node:wallet-opening-ui
+        deployment_refs: [view:deployment/node:phone-app-package]
+        provenance: *req
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+        acceptance:
+          schema_version: "1.0"
+          criteria:
+            - id: AC-1
+              priority: P0
+              description: 两个既有银行列表入口点击任一银行都打开该银行的卡类型半模态。
+              testable: true
+              verification_steps: [从添加银行卡页点击银行, 从全部银行页点击银行, 比较两个入口的 modal 内容与会话参数]
+              expected_result: 都显示所选银行及其支持的卡类型，不再提示暂不支持。
+              ut_layer: both
+              ut_focus: 两入口复用同一开卡 session 初始化。
+              device_focus: 两入口均可见半模态且背景页面保持。
+            - id: AC-2
+              priority: P0
+              description: 卡类型按银行支持列表展示且只能单选，继续后只显示所选银行和类型的 1 至 2 张 mock 卡。
+              testable: true
+              verification_steps: [对双类型银行切换储蓄卡与信用卡, 对单类型银行确认只显示一个选项, 继续进入具体卡片页并核对过滤结果]
+              expected_result: 只存在一个选中项，卡片集合与选择条件一致。
+              ut_layer: both
+              ut_focus: 过滤、单选和继续按钮状态。
+              device_focus: 半模态与全屏卡片页布局、选中反馈和按钮状态。
+            - id: AC-3
+              priority: P0
+              description: 具体卡片页只显示卡号前四后四，业务与存储链保留完整卡号。
+              testable: true
+              verification_steps: [用固定 mock 卡渲染具体卡片页, 断言 UI 只含前四后四, 提交后断言 repository 收到完整卡号]
+              expected_result: UI 不出现完整卡号，repository 接收完整卡号。
+              ut_layer: unit
+              ut_focus: 脱敏函数与完整领域字段不丢失。
+              device_focus: ""
+            - id: AC-4
+              priority: P0
+              description: 验证码半模态打开即模拟发送，60 秒倒计时期间不可重发，归零后可重新发送；仅六位数字允许下一步。
+              testable: true
+              verification_steps: [打开 modal 并确认自动发送, 用可控时钟推进 60 秒, 倒计时结束后点击重发, 分别输入五位、六位和非数字内容]
+              expected_result: 倒计时和按钮可用性与规则一致。
+              ut_layer: both
+              ut_focus: OTP 过滤、六位校验、倒计时状态机和销毁清理。
+              device_focus: 自动弹出数字键盘、倒计时文案和禁用按钮视觉。
+            - id: AC-5
+              priority: P0
+              description: 合法验证码提交后把完整卡片记录写入应用私有 RDB，字段覆盖需求指定的卡号、类别、银行、银行卡类型、时间、两种支付状态与交易记录。
+              testable: true
+              verification_steps: [提交一张 mock 卡, 等待 repository 返回成功, 按完整卡号重新查询并逐字段核对]
+              expected_result: 写入成功返回 success=true，字段值完整且唯一。
+              ut_layer: both
+              ut_focus: schema、映射、幂等唯一键和失败返回。
+              device_focus: 真机 RDB 初始化、写入与重启后读取。
+            - id: AC-6
+              priority: P0
+              description: 结果页无返回入口并拦截系统返回；只有完成按钮退出，成功回钱包首页，失败回最初添加银行卡页，并移除本轮所有开卡过程页面。
+              testable: true
+              verification_steps: [在结果页触发系统返回并确认无效, 构造成功结果点击完成并检查首页栈, 构造失败结果点击完成并检查添加银行卡页栈]
+              expected_result: 返回动作无效；完成后目标页正确且过程页不可再返回。
+              ut_layer: both
+              ut_focus: 目标路由和 removeByIndexes 清栈计划。
+              device_focus: 左滑/系统返回屏蔽、完成后连续返回不出现过程页。
+            - id: AC-7
+              priority: P1
+              description: 原有 CardPackPage、AddCardEntryPage、AddBankCardPage 和 AllBanksPage 路由仍可正常前进与返回。
+              testable: true
+              verification_steps: [从首页进入卡包和添卡入口, 进入添加银行卡与全部银行后逐级返回, 再从两个银行入口分别进入新开卡流程]
+              expected_result: 无旧路由损坏或重复入栈。
+              ut_layer: device
+              ut_focus: ""
+              device_focus: 真实 Navigation 路由回归。
+            - id: AC-8
+              priority: P1
+              description: 验证码半模态从 AccountService 取得 mock 完整手机号后只显示前三后四掩码，日志不输出完整手机号。
+              testable: true
+              verification_steps: [为 UserProfile 注入固定手机号, 打开验证码半模态, 核对显示值和日志参数]
+              expected_result: 页面显示 185****3841 形态，完整手机号仅保留在账号领域对象中。
+              ut_layer: both
+              ut_focus: MaskUtil.maskPhone 与账号 DTO 交接。
+              device_focus: 参考图对应的手机号掩码文案。
+            - id: AC-9
+              priority: P0
+              description: 验证码提交后立即进入 SAVING 并禁用提交、重发和关闭动作，单次 session 最多发起一个未完成保存调用。
+              testable: true
+              verification_steps: [输入六位验证码, 连续点击下一步, 在 repository promise 未完成时尝试重发与关闭]
+              expected_result: BankCardRepository.save 只调用一次，所有会造成重入的控件保持禁用直到结果返回。
+              ut_layer: both
+              ut_focus: SAVING 状态防重入和一次性提交。
+              device_focus: 保存期间按钮禁用与无重复导航。
+          boundaries:
+            - id: BD-1
+              priority: P0
+              description: RDB 初始化或保存失败仍进入失败结果页，失败记录不写入数据库。
+              scenario: repository 抛出异常或返回失败。
+              handling: 捕获错误并构造 success=false 与完整卡号的结果对象。
+              expected_behavior: 用户看到失败状态，点击完成回最初添加银行卡页。
+              ut_layer: both
+              ut_focus: 异常映射与无脏记录。
+              device_focus: 失败结果页与返回目标。
+            - id: BD-2
+              priority: P1
+              description: 用户关闭卡类型或验证码半模态时不保存卡片，返回当前承载页且释放计时器。
+              scenario: 点击关闭或系统取消半模态。
+              handling: 丢弃 session 中未提交的 OTP 与选择态，清理定时器。
+              expected_behavior: 无 RDB 写入，可重新发起流程。
+              ut_layer: both
+              ut_focus: session reset 与 timer cleanup。
+              device_focus: modal 关闭后背景页仍可操作。
+            - id: BD-3
+              priority: P1
+              description: 保存事务提交后但结果页显示前进程终止时，以 RDB commit 为权威保留记录，未完成 UI session 不恢复。
+              scenario: repository 已 commit，应用在 push 结果页之前被系统终止。
+              handling: 重启后从根首页开始；后续查询可读到已提交卡片，不重放验证码或重复写入。
+              expected_behavior: 数据最多保存一次，页面流程不伪造恢复中的结果状态。
+              ut_layer: both
+              ut_focus: commit 后幂等重查和 session 不持久化。
+              device_focus: 强制终止并重启后无过程页残留，数据库记录仍存在。
+          performance:
+            - id: NFR-1
+              metric: OTP resend duration
+              threshold: "60"
+              unit: seconds
+              description: 每次模拟发送后显示 60 秒倒计时，倒计时结束才允许重新发送。
+              ut_layer: unit
+              ut_focus: 使用 fake clock 精确验证 60 次 tick。
+              device_focus: ""
+            - id: NFR-2
+              metric: sensitive data exposure
+              threshold: "0"
+              unit: full PAN or full phone occurrences in UI/log/backup
+              description: 完整卡号和完整手机号不得出现在 UI、日志或系统备份；银行卡 RDB 使用加密 store 且 Phone 禁止应用备份恢复。
+              ut_layer: both
+              ut_focus: 脱敏输出、日志参数与 StoreConfig.encrypt。
+              device_focus: 检查界面、系统日志和 backup_config。
+
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [WalletMain 开发, 数据维护, 安全评审]
+    purpose: 定义开卡能力边界、领域对象、数据隐私和持久化契约。
+    current_state: 仅有 BankInfo 与银行列表 repository，无银行卡记录模型和数据库。
+    target_state: 建立 OpeningSession、BankCardRecord、BankCardRepository 与 mock 银行卡数据边界。
+    delta: 增加银行卡选择、验证、持久化和结果领域能力。
+    decisions_and_gaps: [decision:masked-display-full-storage, decision:rdb-private-storage, decision:device-local-account-scope]
+    verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md, doc/module-catalog.yaml#WalletMain]
+    nodes:
+      - node_id: bank-card-opening-capability
+        label: 银行卡开卡能力
+        owner: WalletMain
+        current_state: 银行选择到此中止。
+        target_state: 领域服务维护单个开卡 session，校验选择与 OTP 并调用 repository 保存。
+        provenance: *req
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+      - node_id: bank-card-record
+        label: 银行卡持久化记录
+        owner: WalletMain
+        current_state: 不存在。
+        target_state: 完整卡号作为唯一业务键，记录需求字段并提供查询能力。
+        provenance: *req
+        verification_refs: [contract:bank-card-persistence]
+
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [WalletMain 开发, Phone 导航维护, 测试]
+    purpose: 定义页面、session、账号手机号、repository 和结果导航的调用顺序与失败恢复。
+    current_state: 点击银行后只 toast，不产生跨页面状态。
+    target_state: OpeningSession 跨四个 UI 节点传递，保存结果闭环到结果页和最终导航。
+    delta: 新增前台开卡状态机、RDB 写入和结果清栈。
+    decisions_and_gaps: [decision:single-opening-session, decision:result-page-stack-ownership, decision:otp-wall-clock-and-saving-lock]
+    verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md, 01-Product/Phone/src/main/ets/pages/Index.ets]
+    nodes:
+      - node_id: opening-session
+        label: 前台开卡会话
+        owner: WalletMain
+        current_state: 不存在。
+        target_state: 持有所选银行、卡类型、完整卡记录、OTP 绝对截止时间、SAVING 防重入状态和保存结果；结果完成后清理。
+        design_basis_refs: [view:logical/node:bank-card-opening-capability, decision:single-opening-session]
+        provenance: *req
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+      - node_id: result-navigation
+        label: 结果导航与清栈
+        owner: WalletMain
+        current_state: 无结果页。
+        target_state: start() 捕获 AddBankCardPage 在 getAllPathName() 中的最后索引；结果页拦截返回。成功完成调用 clear() 回根首页，失败完成用 removeByIndexes() 删除该索引之后的全部页面并保留初始 AddBankCardPage。
+        design_basis_refs: [view:scenarios/node:bank-opening-journey, decision:result-page-stack-ownership]
+        provenance: *req
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+    runtime_data_flows:
+      - flow_id: bank-card-opening-flow
+        data_domain_refs: [view:logical/node:bank-card-record]
+        external_contract_refs: [contract:bank-card-persistence]
+        source_of_truth:
+          authority: view:development/node:wallet-card-data
+          persistence: wallet-bank-card-rdb
+          projections_and_caches: [view:runtime/node:opening-session]
+          reconciliation: 页面只消费当前 session；保存成功后 repository 的 RDB 记录成为银行卡真源，结果页不自行改写。
+        triggers:
+          - kind: user_submit_otp
+            timing: foreground
+            idempotency: fullCardNumber 唯一键保证重复提交不产生副本。
+        initial_load:
+          initial_load_id: session
+          strategy: 用户点击银行时由所选 BankInfo 和 BankRepository mock 卡数据建立 OpeningSession。
+          owner: view:runtime/node:opening-session
+          data_scope: 单次开卡流程
+          freshness: 每次点击银行均建立新 session，不复用上次未完成选择。
+        state_owner:
+          ref: view:runtime/node:opening-session
+          states: [TYPE_SELECTING, CARD_SELECTING, OTP_VERIFYING, SAVING, RESULT]
+        mutations:
+          - mutation_id: persist-card
+            kind: foreground
+            persistence_ref: wallet-bank-card-rdb
+            publication_ref: publication:save-outcome
+            recovery_ref: recovery:save-card
+        publications:
+          - publication_id: save-outcome
+            payload: BankCardSaveOutcome(success, fullCardNumber)
+        subscriptions: []
+        consumers:
+          - consumer_id: result-page
+            initial_load_ref: initial-load:session
+            update_ref: publication:save-outcome
+        failure_recovery:
+          recovery_id: save-card
+          handling: RDB 初始化或事务写入异常先 rollback，再转换为 success=false，关闭 OTP modal 后进入失败结果页；commit 后进程终止则以 RDB 为权威保留记录，不恢复 UI session。
+          retry: 结果页不自动重试；失败完成后回添加银行卡页重新发起。重复提交由 SAVING 状态拦截，跨会话重复卡由 account_scope+full_card_number 唯一键执行事务内 update-or-insert。
+        decisions_and_gaps: [decision:rdb-private-storage, decision:result-page-stack-ownership, decision:device-local-account-scope, decision:otp-wall-clock-and-saving-lock]
+        evidence_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+        verification_refs: [AC-4, AC-5, AC-6, BD-1]
+        logical_contract_refs: [contract:bank-card-persistence]
+        development_owner_ref: view:development/node:wallet-opening-ui
+        lifecycle_coverage:
+          cold_start: { status: covered, evidence_refs: [AC-5], behavior: RDB 首次初始化建表，未完成 session 不恢复。 }
+          warm_resume: { status: covered, evidence_refs: [AC-4, BD-2], behavior: OTP 使用 otpDeadlineMs 绝对墙钟；恢复前台后按 max(0, ceil((deadline-now)/1000)) 重算，不补发后台 tick。modal 关闭即释放 timer。 }
+          page_attach: { status: covered, evidence_refs: [AC-1], behavior: 页面 attach 后才展示 modal 并启动 OTP 计时。 }
+          page_detach: { status: covered, evidence_refs: [BD-2], behavior: OTP modal 销毁时清理 timer。 }
+          account_switch: { status: not_applicable, evidence_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md], behavior: 本轮无账号切换入口。 }
+          process_recreation: { status: covered, evidence_refs: [AC-5, BD-3], behavior: 已 commit 记录从 RDB 恢复，未完成 session 与验证码不恢复；重启从根首页开始。 }
+          background_write: { status: not_applicable, evidence_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md], behavior: 仅用户前台提交时写入。 }
+        contracts:
+          schema_version: "1.0"
+          state_management:
+            - id: opening-state-machine
+              owner: BankOpeningSession
+              owner_ref: view:runtime/node:opening-session
+              contract_refs: [contract:bank-card-persistence]
+              states: [TYPE_SELECTING, CARD_SELECTING, OTP_VERIFYING, SAVING, RESULT]
+              mutations:
+                - { mutation_id: persist-card, publication_ref: "publication:save-outcome", recovery_ref: "recovery:save-card", operation: BankCardRepository.save }
+              publications:
+                - { publication_id: save-outcome, payload: BankCardSaveOutcome }
+              subscriptions: []
+              consumers:
+                - { consumer_id: result-page, initial_load_ref: "initial-load:session", update_ref: "publication:save-outcome", component: BankCardResultPage }
+              ordered_steps:
+                - AddBankCardPage 或 AllBanksPage 调用 BankOpeningCoordinator.start(bank, stack)，记录 stack.getAllPathName().lastIndexOf('AddBankCardPage') 为 originAddBankCardIndex，得到新的 OpeningSession 并展示 CardTypeSheet。
+                - CardTypeSheet 调用 session.selectType(type)，校验银行支持后调用 BankOpeningNavigator.openCardSelection(session)，由 navigator 使用 NavPathContext.stack().pushPath 进入 BankCardSelectionPage。
+                - BankCardSelectionPage 调用 BankRepository.getCards(bank.code, type)，只渲染 maskedNumber；用户选择后调用 session.selectCard(card)，点击下一步调用 BankOpeningCoordinator.openOtp(session) 展示 OtpVerificationSheet。
+                - OtpVerificationSheet attach 时调用 AccountService.getUserProfile() 取得 mock 手机号，只渲染 MaskUtil.maskPhone(phoneNumber)；OtpCountdown.start(60) 写入 otpDeadlineMs=Date.now()+60000，页面每秒从绝对截止时间派生剩余秒数，detach 清理 timer。
+                - 用户提交时 session.tryBeginSaving(code) 原子校验六位数字并从 OTP_VERIFYING 进入 SAVING；SAVING 期间禁用提交、重发和关闭。成功取得锁后 coordinator 仅调用一次 BankCardRepository.save(session.selectedCard.toRecord()) 并等待 RDB transaction 返回。
+                - repository 返回 BankCardSaveOutcome 后 coordinator 关闭 modal 并调用 BankOpeningNavigator.openResult(outcome, originAddBankCardIndex) push BankCardResultPage；结果页拦截返回。
+                - 完成按钮调用 BankOpeningNavigator.finish(outcome, originAddBankCardIndex)：成功执行 stack.clear(false) 回根首页；失败重新读取 names，构造 originAddBankCardIndex+1..names.length-1 的索引数组并调用 removeByIndexes，保留初始 AddBankCardPage；最后清空 session 中的完整卡号与 OTP。
+          files:
+            - 02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+        use_cases:
+          schema_version: "1.0"
+          use_cases:
+            - id: UC-OPEN-BANK-CARD
+              name: 模拟银行卡开卡
+              coordinator: BankOpeningCoordinator
+              ui_bindings:
+                - ui: CardTypeSheet
+                  role: dialog
+                  user_actions:
+                    - { trigger: selectType, calls: BankOpeningSession.selectType }
+                    - { trigger: continue, calls: BankOpeningNavigator.openCardSelection }
+                - ui: BankCardSelectionPage
+                  role: progress
+                  user_actions:
+                    - { trigger: selectCard, calls: BankOpeningSession.selectCard }
+                    - { trigger: agree, calls: BankOpeningSession.setAgreementAccepted }
+                    - { trigger: next, calls: BankOpeningCoordinator.openOtp }
+                - ui: OtpVerificationSheet
+                  role: dialog
+                  user_actions:
+                    - { trigger: inputOtp, calls: BankOpeningSession.setOtp }
+                    - { trigger: resend, calls: OtpCountdown.restart }
+                    - { trigger: submit, calls: BankOpeningCoordinator.submitOtp }
+                - ui: BankCardResultPage
+                  role: result
+                  user_actions:
+                    - { trigger: finish, calls: BankOpeningNavigator.finish }
+              state_model:
+                phases: [TYPE_SELECTING, CARD_SELECTING, OTP_VERIFYING, SAVING, RESULT]
+              data_boundaries:
+                - name: wallet_cards.db
+                  type: relationalStore.RdbStore
+                  kind: storage
+                  methods: [BankCardRepository.save, BankCardRepository.findByCardNumber]
+                - name: NavPathStack
+                  type: system navigation stack
+                  kind: system
+                  methods: [getAllPathName, removeByIndexes, clear]
+              branches:
+                - id: success
+                  scenario: 保存成功
+                  linked_acceptance: [AC-1, AC-2, AC-3, AC-4, AC-5, AC-6]
+                  expected_phase_seq: [TYPE_SELECTING, CARD_SELECTING, OTP_VERIFYING, SAVING, RESULT]
+                  expected_port_calls: [BankRepository.getCards, AccountService.getUserProfile, BankCardRepository.save, BankOpeningNavigator.openResult, BankOpeningNavigator.finish]
+                  action_sequence: [start, selectType, selectCard, openOtp, inputSixDigits, submitOnce, awaitCommit, showSuccess, finish]
+                  expected_states: [OTP_VERIFYING, SAVING, RESULT]
+                  not_called: [second BankCardRepository.save while SAVING]
+                  expected_result: 回钱包首页且 RDB 存在卡片记录。
+                - id: persistence-failure
+                  scenario: RDB 保存失败
+                  linked_acceptance: [BD-1, AC-6]
+                  expected_phase_seq: [TYPE_SELECTING, CARD_SELECTING, OTP_VERIFYING, SAVING, RESULT]
+                  expected_port_calls: [BankCardRepository.save, BankOpeningNavigator.openResult, BankOpeningNavigator.finish]
+                  action_sequence: [start, selectType, selectCard, openOtp, inputSixDigits, submitOnce, rollback, showFailure, finish]
+                  expected_states: [OTP_VERIFYING, SAVING, RESULT]
+                  not_called: [BankCardRepository.publishPersistedCard]
+                  expected_result: 失败结果页完成后回最初添加银行卡页且无脏记录。
+                - id: otp-cancel
+                  scenario: 用户关闭验证码半模态
+                  linked_acceptance: [BD-2]
+                  expected_phase_seq: [TYPE_SELECTING, CARD_SELECTING, OTP_VERIFYING]
+                  expected_port_calls: [OtpCountdown.dispose, BankOpeningSession.cancelOtp]
+                  action_sequence: [openOtp, closeOtp]
+                  expected_states: [CARD_SELECTING]
+                  not_called: [BankCardRepository.save, BankOpeningNavigator.openResult]
+                  expected_result: 不保存，释放 timer 并回具体卡片页。
+        provenance: *req
+
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [WalletMain 维护者, AccountManager 维护者, Phone 维护者]
+    purpose: 把页面、领域、数据、账号与路由修改落到既有模块边界和精确文件集合。
+    current_state: WalletMain 只有银行列表页面，Phone 只注册旧页面，AccountManager 只暴露脱敏展示账号。
+    target_state: WalletMain 内完成绝大部分开卡能力；AccountManager 提供 mock 完整手机号；Phone 注册新 builder。
+    delta: 在三个既有模块内新增或扩展文件，不新增模块或架构依赖边。
+    decisions_and_gaps: [decision:wallet-ui-custom, decision:phone-route-custom]
+    verification_refs: [doc/architecture.md, doc/module-catalog.yaml]
+    nodes:
+      - node_id: wallet-opening-ui
+        label: WalletMain 开卡页面与协调器
+        kind: page
+        owner: WalletMain feature owner
+        module: WalletMain
+        current_state: 银行点击只 toast。
+        target_state: 四个目标界面、单一 OpeningSession、导航与清栈 helper 全部位于 WalletMain。
+        design_basis_refs: [view:scenarios/node:bank-opening-journey, view:logical/node:bank-card-opening-capability]
+        provenance: *req
+        verification_refs: [doc/module-catalog.yaml#WalletMain]
+        contracts:
+          schema_version: "1.0"
+          module_dependencies:
+            WalletMain: [AccountManager, CommUI, CommFunc]
+          modules:
+            - name: WalletMain
+              layer: 02-Feature
+              package_path: 02-Feature/WalletMain
+              change_type: modify
+              har_index: 02-Feature/WalletMain/src/main/ets/index.ets
+          components:
+            - name: CardTypeSheet
+              file: 02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets
+              kind: component
+              asset_selection: { resolution: custom, rationale: 现有组件库存无业务半模态，保留 WalletMain 领域语义。 }
+            - name: OtpVerificationSheet
+              file: 02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets
+              kind: component
+              asset_selection: { resolution: custom, rationale: 验证码计时与输入规则是本 feature 专用。 }
+            - name: BankCardSelectionPage
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+              kind: builder
+              asset_selection: { resolution: custom, rationale: 现有页面只覆盖银行列表，具体卡片页为新业务页面。 }
+            - name: BankCardResultPage
+              file: 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets
+              kind: builder
+              asset_selection: { resolution: custom, rationale: 结果页承担不可返回与清栈语义。 }
+            - name: BankOpeningSession
+              file: 02-Feature/WalletMain/src/main/ets/domain/model/BankOpeningSession.ets
+              kind: domain_state
+              responsibility: 单一持有银行、类型、完整卡、OTP deadline、SAVING 状态、结果与起始栈边界；完成后清除敏感字段。
+            - name: BankOpeningNavigator
+              file: 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigator.ets
+              kind: navigation_helper
+              responsibility: 使用既有 NavPathStack API 执行新页面入栈、结果页拦截与成功/失败精确清栈。
+          interfaces:
+            - class: BankOpeningCoordinator
+              file: 02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets
+              methods:
+                - { name: start, params: [{ name: bank, type: BankInfo }, { name: stack, type: NavPathStack }], return: BankOpeningSession }
+                - { name: openOtp, params: [{ name: session, type: BankOpeningSession }], return: void }
+                - { name: submitOtp, params: [{ name: code, type: string }], return: Promise<BankCardSaveOutcome> }
+            - class: BankOpeningSession
+              file: 02-Feature/WalletMain/src/main/ets/domain/model/BankOpeningSession.ets
+              methods:
+                - { name: selectType, params: [{ name: type, type: BankCardType }], return: void }
+                - { name: selectCard, params: [{ name: card, type: MockBankCard }], return: void }
+                - { name: setAgreementAccepted, params: [{ name: accepted, type: boolean }], return: void }
+                - { name: setOtp, params: [{ name: code, type: string }], return: void }
+                - { name: tryBeginSaving, params: [{ name: code, type: string }], return: boolean }
+                - { name: cancelOtp, params: [], return: void }
+                - { name: clearSensitiveData, params: [], return: void }
+            - class: BankOpeningNavigator
+              file: 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigator.ets
+              methods:
+                - { name: openCardSelection, params: [{ name: session, type: BankOpeningSession }], return: void }
+                - { name: openResult, params: [{ name: outcome, type: BankCardSaveOutcome }, { name: originAddBankCardIndex, type: number }], return: void }
+                - { name: finish, params: [{ name: outcome, type: BankCardSaveOutcome }, { name: originAddBankCardIndex, type: number }], return: void }
+          navigation:
+            routes: [BankCardSelectionPage, BankCardResultPage]
+            config_files: [01-Product/Phone/src/main/ets/pages/Index.ets, 02-Feature/WalletMain/src/main/resources/base/profile/route_map.json]
+          files:
+            - 02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+            - 02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets
+            - 02-Feature/WalletMain/src/main/ets/domain/service/OtpCountdown.ets
+            - 02-Feature/WalletMain/src/main/ets/domain/model/BankOpeningSession.ets
+            - 02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigator.ets
+            - 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets
+            - 02-Feature/WalletMain/src/main/ets/index.ets
+            - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/color.json
+            - 02-Feature/WalletMain/src/main/resources/base/element/float.json
+            - 02-Feature/WalletMain/src/main/resources/base/profile/route_map.json
+            - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets
+      - node_id: wallet-card-data
+        label: WalletMain 银行卡数据与 RDB
+        owner: WalletMain data owner
+        module: WalletMain
+        current_state: BankRepository 仅提供银行，无具体银行卡和持久化。
+        target_state: BankRepository 提供每银行每类型 1 至 2 张 mock 卡，BankCardRepository 管理应用私有 RDB。
+        design_basis_refs: [view:logical/node:bank-card-record, contract:bank-card-persistence]
+        provenance: *req
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+        contracts:
+          schema_version: "1.0"
+          data_models:
+            - name: BankCardRecord
+              file: 02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets
+              kind: entity
+              fields:
+                - { name: id, type: number, required: false, description: RDB 自动生成主键；新记录入参不要求，查询结果回填。 }
+                - { name: accountScope, type: string, required: true, description: 设备本地钱包作用域；当前 mock 应用固定为 local_mock_wallet，与登录展示态解耦。 }
+                - { name: fullCardNumber, type: string, required: true, description: 完整卡号；UI 禁止直接展示。 }
+                - { name: walletCardCategory, type: WalletCardCategory, required: true, description: 钱包卡片大类，本轮 BANK_CARD。 }
+                - { name: bankName, type: string, required: true, description: 银行名称。 }
+                - { name: bankCardType, type: BankCardType, required: true, description: DEBIT 或 CREDIT。 }
+                - { name: addedAt, type: number, required: true, description: Unix 毫秒时间戳。 }
+                - { name: huaweiPayEnabled, type: boolean, required: true, description: 华为支付开通状态。 }
+                - { name: unionPayQuickPassEnabled, type: boolean, required: true, description: 银联手机闪付开通状态。 }
+                - { name: transactionsJson, type: string, required: true, description: 交易记录 JSON。 }
+          interfaces:
+            - class: BankCardRepository
+              file: 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+              methods:
+                - { name: save, params: [{ name: record, type: BankCardRecord }], return: Promise<BankCardSaveOutcome> }
+                - { name: findByCardNumber, params: [{ name: fullCardNumber, type: string }], return: "Promise<BankCardRecord | null>" }
+          files:
+            - 02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets
+            - 02-Feature/WalletMain/src/main/ets/data/model/MockBankCard.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+            - 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+      - node_id: account-phone-source
+        label: AccountManager mock 手机号来源
+        owner: AccountManager domain owner
+        module: AccountManager
+        current_state: UserProfile 只暴露 displayAccount 脱敏串，验证码页无法取得 mock 完整手机号再自行脱敏。
+        target_state: UserProfile 增加 phoneNumber 字段，AccountService 的现有 mock 登录与未登录档案均提供同一 mock 手机号。
+        design_basis_refs: [view:scenarios/node:bank-opening-journey]
+        provenance: *req
+        verification_refs: [04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets]
+        contracts:
+          schema_version: "1.0"
+          files:
+            - 04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+            - 04-BusinessBase/AccountManager/src/main/ets/index.ets
+      - node_id: phone-route-host
+        label: Phone 根路由装配
+        kind: builder
+        owner: Phone product owner
+        module: Phone
+        current_state: navDestinationMap 只注册到 AllBanksPage。
+        target_state: 注册 BankCardSelectionPage 与 BankCardResultPage builder，继续使用同一 NavPathStack。
+        design_basis_refs: [view:runtime/node:result-navigation]
+        provenance: *req
+        verification_refs: [01-Product/Phone/src/main/ets/pages/Index.ets]
+        contracts:
+          schema_version: "1.0"
+          files:
+            - 01-Product/Phone/src/main/ets/pages/Index.ets
+            - 01-Product/Phone/src/main/resources/base/profile/backup_config.json
+
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [应用集成, 真机验收]
+    purpose: 说明 HAR、HAP、RDB 与设备运行时的实际落点和兼容顺序。
+    current_state: Phone HAP 聚合 WalletMain/AccountManager，未创建银行卡数据库。
+    target_state: 同一 Phone HAP 打包更新后的 HAR，首次保存时由 WalletMain 初始化加密应用私有 RDB；Phone 关闭应用备份恢复，避免完整卡号离开应用私有目录。
+    delta: 不新增部署单元；增加 HAP 内路由、本地数据库文件，并收紧 backup_config。
+    decisions_and_gaps: [decision:rdb-private-storage, decision:device-local-account-scope]
+    verification_refs: [doc/architecture.md, 02-Feature/WalletMain/src/main/module.json5]
+    rollout:
+      - order: 1
+        unit: AccountManager HAR
+        depends_on: []
+        note: 先提供 UserProfile.phoneNumber 契约。
+      - order: 2
+        unit: WalletMain HAR
+        depends_on: [AccountManager HAR]
+        note: 页面、领域与 RDB 一次交付，旧银行页面继续兼容。
+      - order: 3
+        unit: Phone HAP
+        depends_on: [WalletMain HAR]
+        note: 注册新页面 builder 后整包安装验收。
+    coordination:
+      - counterpart: HarmonyOS relationalStore
+        relation: 应用私有本地数据库 API；无服务端依赖。
+    nodes:
+      - node_id: phone-app-package
+        label: Phone HAP 与应用私有数据目录
+        owner: Phone product owner
+        current_state: 现有 HAP 与 HAR，无 wallet_cards.db。
+        target_state: 同一 HAP 内包含新增路由和加密 WalletMain RDB；allowToBackupRestore=false；卸载或清除数据时由系统清理。
+        responsibilities: [装配 HAR, 注册根导航, 承载应用私有 RDB 文件, 禁止完整卡号数据库进入系统备份]
+        inputs: [WalletMain HAR, AccountManager HAR]
+        outputs: [可安装 Phone HAP, wallet_cards.db]
+        not_responsible_for: [真实银行网络, 短信网关, NFC 激活]
+        failure_impact: RDB 初始化失败只影响本次保存并进入失败结果页，不阻止应用其它页面启动。
+        provenance: *req
+        verification_refs: [01-Product/Phone/src/main/ets/pages/Index.ets]
+
+relations:
+  - relation_id: scenario-realized-by-logical
+    from: view:scenarios/node:bank-opening-journey
+    to: view:logical/node:bank-card-opening-capability
+    relation_type: realized_by
+    owner: WalletMain
+    provenance: *req
+    verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+  - relation_id: logical-executed-by-runtime
+    from: view:logical/node:bank-card-opening-capability
+    to: view:runtime/node:opening-session
+    relation_type: implemented_by
+    owner: WalletMain
+    provenance: *req
+    verification_refs: [view:runtime/flow:bank-card-opening-flow]
+  - relation_id: runtime-owned-by-wallet-ui
+    from: view:runtime/node:opening-session
+    to: view:development/node:wallet-opening-ui
+    relation_type: owned_by
+    owner: WalletMain
+    provenance: *req
+    verification_refs: [doc/module-catalog.yaml#WalletMain]
+  - relation_id: record-owned-by-data
+    from: view:logical/node:bank-card-record
+    to: view:development/node:wallet-card-data
+    relation_type: owned_by
+    owner: WalletMain
+    provenance: *req
+    verification_refs: [contract:bank-card-persistence]
+  - relation_id: app-deployed-in-phone
+    from: view:development/node:phone-route-host
+    to: view:deployment/node:phone-app-package
+    relation_type: deployed_in
+    owner: Phone
+    provenance: *req
+    verification_refs: [doc/architecture.md]
+
+decisions_and_gaps:
+  decisions:
+    - decision_id: single-opening-session
+      kind: state_ownership
+      conclusion: 使用单个 BankOpeningSession 贯穿四个 UI 节点，页面不复制完整卡对象。
+      rationale: 统一状态所有权可以避免半模态关闭、页面跳转和保存结果之间产生平行真源。
+      status: answered_with_evidence
+      owner: WalletMain
+      provenance: *req
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md]
+      alternatives:
+        - option: 每页独立传散字段
+          rejected_reason: 完整卡号、协议态和保存结果会在多个页面重复维护。
+          defect: 容易出现清栈或失败分支丢字段。
+    - decision_id: masked-display-full-storage
+      kind: privacy
+      conclusion: 完整卡号仅保存在领域记录、结果交接对象和应用私有 RDB；UI 与日志统一使用前四后四掩码。
+      rationale: 同时满足显示脱敏与后台按完整卡号处理的明确要求。
+      status: decided_with_authority
+      owner: WalletMain
+      provenance: *req
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-4]
+    - decision_id: rdb-private-storage
+      kind: persistence
+      conclusion: 在 WalletMain 内用 HarmonyOS relationalStore 建立 encrypt=true 的 wallet_cards.db，以 account_scope+full_card_number 唯一，版本 1 首次建表；事务内查询后 update 或 insert，异常 rollback。
+      rationale: 数据归银行卡 feature 所有，避免把卡片域扩散到账号或宿主壳；加密 store 与关闭备份降低完整卡号泄露面。
+      status: answered_with_evidence
+      owner: WalletMain
+      provenance: *req
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+      alternatives:
+        - option: AppStorage 保存卡片
+          rejected_reason: 不适合结构化记录、唯一约束与后续详情查询。
+          defect: 进程恢复和数据演进缺少可靠 schema。
+    - decision_id: device-local-account-scope
+      kind: account_isolation
+      conclusion: 银行卡属于设备本地钱包作用域 local_mock_wallet，与 AccountManager 的登录展示态解耦；logout 不删除卡片，当前无账号切换入口。
+      rationale: 当前工程只有模拟登录且需求未定义多账号钱包。显式固定作用域避免错误地用脱敏手机号作数据库账号键，并为未来真实账号迁移保留字段。
+      status: answered_with_evidence
+      owner: WalletMain
+      provenance: *req
+      verification_refs: [04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets, doc/features/原始需求/1-2-银行卡/原始需求.md]
+      alternatives:
+        - option: 以手机号作为 account_scope
+          rejected_reason: 当前手机号是 mock，且登录/未登录都需要完成本地演示。
+          defect: logout 或 mock 值变化会制造孤儿记录。
+    - decision_id: otp-wall-clock-and-saving-lock
+      kind: lifecycle
+      conclusion: OtpCountdown 保存绝对 otpDeadlineMs；前后台切换后按墙钟重算。提交成功进入 SAVING 后一次性锁住关闭、重发和再次提交，直到 repository 返回。
+      rationale: setInterval tick 不是时间真源，绝对 deadline 可避免后台暂停造成倒计时延长；SAVING 锁防止重复卡写入和重复结果页。
+      status: answered_with_evidence
+      owner: WalletMain
+      provenance: *req
+      verification_refs: [AC-4, AC-9, NFR-1]
+    - decision_id: result-page-stack-ownership
+      kind: navigation
+      conclusion: WalletMain 的 BankOpeningNavigator 记录流程出生时的栈边界，结果页完成按钮按结果清理；结果页拦截系统返回。
+      rationale: 根 Navigation 仍由 Phone 所有，但流程内页面集合和退出语义由 WalletMain 最清楚。
+      status: answered_with_evidence
+      owner: WalletMain
+      provenance: *req
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-6]
+    - decision_id: wallet-ui-custom
+      kind: component_asset_selection
+      target_ref: view:development/node:wallet-opening-ui
+      asset_resolution: custom
+      rationale: component-index 只有旧银行列表页面和通用 SectionCard/ActionListItem，不含开卡半模态、OTP 或结果清栈组件。
+      status: answered_with_evidence
+      owner: WalletMain
+      provenance:
+        source_kind: code
+        source_ref: doc/component-index.yaml
+        observed_at: "2026-10-16"
+        evidence_strength: observed
+        extraction_method: inventory_and_live_callsite_search
+      verification_refs: [doc/component-index.yaml]
+    - decision_id: phone-route-custom
+      kind: component_asset_selection
+      target_ref: view:development/node:phone-route-host
+      asset_resolution: evolve
+      component_ref: WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#buildAddBankCardPage
+      rationale: 延续现有 Phone navDestinationMap 加 WalletMain builder 的模式，只扩展两个路由，不另造导航系统。
+      status: answered_with_evidence
+      owner: Phone
+      provenance:
+        source_kind: code
+        source_ref: doc/component-index.yaml
+        observed_at: "2026-10-16"
+        evidence_strength: observed
+        extraction_method: inventory_and_live_callsite_search
+      verification_refs: [doc/component-index.yaml, 01-Product/Phone/src/main/ets/pages/Index.ets]
+  gaps: []
+
+contracts:
+  - contract_id: bank-card-persistence
+    operation:
+      operation_id: saveBankCard
+      direction: WalletMain-domain-to-RDB
+      version: "1"
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/operation
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+    request_dto:
+      dto_id: SaveBankCardRequest
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/request_dto
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+      fields:
+        - field_id: record
+          type: BankCardRecord
+          semantics: 包含完整卡号、钱包卡大类、银行、银行卡类型、添加时间、支付状态与交易记录的持久化对象。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/request_dto/fields/0
+          provenance: *req
+    response_dto:
+      dto_id: SaveBankCardResult
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/response_dto
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+      fields:
+        - field_id: success
+          type: boolean
+          semantics: RDB 写入是否成功。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/response_dto/fields/0
+          provenance: *req
+        - field_id: fullCardNumber
+          type: string
+          semantics: 无论成功或失败都向结果页交接本次完整卡号，但结果页不得展示明文。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/response_dto/fields/1
+          provenance: *req
+    mappings:
+      - mapping_id: map-record
+        kind: direct
+        source_fields: [record]
+        target_field: BankCardRepository.save.record
+        rule: 将领域记录交给 RDB repository；完整卡号只进入应用私有数据库，UI 使用派生掩码。
+        source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/mappings/0
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+        provenance: *req
+      - mapping_id: map-success
+        kind: direct
+        source_fields: [success]
+        target_field: BankCardSaveOutcome.success
+        rule: 原样交给结果页决定成功或失败状态。
+        source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/mappings/1
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+        provenance: *req
+      - mapping_id: map-full-card-number
+        kind: direct
+        source_fields: [fullCardNumber]
+        target_field: BankCardSaveOutcome.fullCardNumber
+        rule: 原样交接但不显示，用于成功完成后的目标页参数。
+        source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/mappings/2
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+        provenance: *req
+    errors:
+      behavior: RDB 初始化或写入失败时返回 success=false，不把失败记录视为已持久化，并继续进入失败结果页。
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/errors
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+    idempotency:
+      key: accountScope+fullCardNumber
+      scope: wallet_bank_card_table
+      behavior: 以设备本地钱包作用域与完整卡号的联合唯一索引避免重复卡；事务内先查后 update-or-insert，重复添加更新同一记录而不新增副本。
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/idempotency
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+    nfr:
+      privacy: 日志和界面不得输出完整卡号；数据库为 encrypt=true 的应用私有 RDB，Phone 关闭系统备份恢复。
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/nfr
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-4]
+    owner: WalletMain
+    needed_by: bc-openCard-2
+    table_schema:
+      database: wallet_cards.db
+      version: 1
+      security_level: S4
+      encrypted: true
+      account_scope: local_mock_wallet
+      initialization: "BankCardRepository 首次 open 时以 StoreConfig { name: wallet_cards.db, securityLevel: S4, encrypt: true } 获取 RdbStore，并按 user_version=0 创建版本 1 表。"
+      transaction: save() 调用 beginTransaction；按 account_scope 与 full_card_number 查询，存在则 update 可变字段，不存在则 insert；成功 commit，任一异常 rollback 并返回 success=false。
+      upgrade: user_version=1 为当前唯一版本；未来版本必须在同一 transaction 内执行增量 migration，成功后再提升 user_version，不删除已有记录。
+      tables:
+        - name: bank_cards
+          primary_key: id
+          unique_constraints: [account_scope+full_card_number]
+          columns:
+            - { name: id, type: INTEGER, nullable: false, primary_key: true, auto_increment: true }
+            - { name: account_scope, type: TEXT, nullable: false, default: local_mock_wallet }
+            - { name: full_card_number, type: TEXT, nullable: false }
+            - { name: wallet_card_category, type: TEXT, nullable: false, default: BANK_CARD }
+            - { name: bank_name, type: TEXT, nullable: false }
+            - { name: bank_card_type, type: TEXT, nullable: false }
+            - { name: added_at, type: INTEGER, nullable: false }
+            - { name: huawei_pay_enabled, type: INTEGER, nullable: false, default: 0 }
+            - { name: unionpay_quick_pass_enabled, type: INTEGER, nullable: false, default: 0 }
+            - { name: transactions_json, type: TEXT, nullable: false, default: "[]" }
+          create_sql: CREATE TABLE IF NOT EXISTS bank_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, account_scope TEXT NOT NULL DEFAULT 'local_mock_wallet', full_card_number TEXT NOT NULL, wallet_card_category TEXT NOT NULL DEFAULT 'BANK_CARD', bank_name TEXT NOT NULL, bank_card_type TEXT NOT NULL, added_at INTEGER NOT NULL, huawei_pay_enabled INTEGER NOT NULL DEFAULT 0, unionpay_quick_pass_enabled INTEGER NOT NULL DEFAULT 0, transactions_json TEXT NOT NULL DEFAULT '[]', UNIQUE(account_scope, full_card_number))
+          cleanup: 应用清除数据或卸载时由系统删除；AccountService.logout 不删除设备本地钱包数据。
+    provenance: *req
+
+quality_attributes:
+  - qa_id: QA-privacy
+    category: security_privacy
+    requirement: 完整卡号和手机号不得出现在界面、日志或系统备份；数据库使用加密 store。
+    landing: MaskUtil、BankCardRepository StoreConfig.encrypt、Phone backup_config 与 NFR-2。
+    source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+    verification_refs: [AC-3, AC-8, NFR-2]
+  - qa_id: QA-ux
+    category: usability_accessibility
+    requirement: 按参考图保持大触控目标、明确选中态、禁用态和结果状态；系统字体缩放下文本可读。
+    landing: 四个目标 UI 与资源化尺寸/颜色/文案。
+    source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+    verification_refs: [AC-1, AC-2, AC-4, AC-6]
+  - qa_id: QA-idempotency
+    category: reliability
+    requirement: 保存中禁止重入，重复卡在同一设备本地钱包作用域内只保留一条记录。
+    landing: BankOpeningSession.SAVING 与 BankCardRepository 事务 update-or-insert。
+    source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+    verification_refs: [AC-5, AC-9, BD-3]
+  - qa_id: QA-observability
+    category: observability
+    requirement: 错误日志只记录阶段、银行 code 和错误类别，不记录完整卡号、OTP 或完整手机号。
+    landing: CommFunc.Logger 调用约束。
+    source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+    verification_refs: [NFR-2]
+
+data_domains:
+  - data_domain_id: opening-session
+    usage: 单次前台开卡选择、OTP deadline、保存状态和结果交接。
+    retention: 仅当前进程内存；完成、取消或进程终止即清理。
+    isolation: 每次银行点击创建新 session；SAVING 后拒绝重入。
+    cleanup: 完成后 clearSensitiveData，modal detach 释放 timer。
+    security: 完整卡号与 OTP 不写日志；UI 只用掩码字段。
+  - data_domain_id: persisted-bank-card
+    usage: 设备本地钱包内的银行卡记录，供后续卡详情需求读取。
+    retention: 直到应用清除数据或卸载；当前不提供单卡删除。
+    isolation: 固定 account_scope=local_mock_wallet，与登录展示态解耦。
+    cleanup: Phone 禁止系统备份恢复；卸载/清数据由系统删除加密 RDB。
+    security: relationalStore encrypt=true，S4；界面和日志不得输出完整卡号。
+
+providers:
+  - provider_id: current-facts-discovery
+    definition: 读取需求、代码、配置、测试和架构资产形成当前事实。
+    consumer: component-design
+    provider: static current-facts reader
+    requirement: required
+    authority_rule: Code, schema, interface, config, and tests are current-state authority.
+    source_rule: Every assertion carries source_ref and source revision when available.
+    missing_behavior: 缺当前事实时保持 unknown 并阻断当前切片。
+    replacement_behavior: 同源重扫并使相关派生结论过期。
+    exit_behavior: 丢弃临时发现，保留 canonical provenance。
+    conflict_behavior: 保留全部来源并交 owner 裁决。
+    available: true
+    writes: [canonical_blueprint_input]
+  - provider_id: se-manual-contracts
+    definition: 消费需求内明确的数据与操作约束并转写内部持久化契约。
+    consumer: app-design-lens
+    provider: static contract reader
+    requirement: required
+    authority_rule: Authorized SE or contract owner is external-contract authority.
+    source_rule: Every contract segment carries source_ref, verification ref, and provenance.
+    missing_behavior: 无外部银行协议时不编造真实 wire contract，只保留本地 mock/RDB 内部契约。
+    replacement_behavior: 新权威协议到达后逐段调和并升 blueprint revision。
+    exit_behavior: 丢弃临时转写，保留 canonical contract provenance。
+    conflict_behavior: 保留差异并阻断冲突字段。
+    available: true
+    writes: [canonical_blueprint_input]
+  - provider_id: app-design-lens
+    definition: 将事实投影为 App 4+1、十个根问题与运行闭环。
+    consumer: component-design
+    provider: static hmos-app lens
+    requirement: required
+    authority_rule: Lens is not fact authority and cannot override inputs.
+    source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+    missing_behavior: 缺 lens 时不支持该 component 类型。
+    replacement_behavior: lens 版本变化时重算 P1 派生结论。
+    exit_behavior: 丢弃临时推导，保留来源与决定。
+    conflict_behavior: 事实源优先，lens 不覆盖冲突。
+    available: true
+    writes: [canonical_blueprint_input]
+  - provider_id: independent-design-questioning
+    definition: 隔离上下文审查 4+1、契约、来源和完整调用链。
+    consumer: blueprint admission
+    provider: independent questioning agent
+    requirement: required
+    authority_rule: Questioning is not fact or decision authority.
+    source_rule: Answers cite isolated blueprint, evidence package, and registered external inputs.
+    missing_behavior: 未完成质询时 blueprint 不准入。
+    replacement_behavior: 事实变化后重新覆盖受影响 scope。
+    exit_behavior: 保留质询记录但不写平行 SSOT。
+    conflict_behavior: 问题交设计 owner 定向修订，质询不自改事实。
+    available: true
+    writes: [canonical_blueprint_input]
+  - provider_id: conventions-knowledge
+    definition: 可选工程惯例知识输入。
+    consumer: current-facts-discovery
+    provider: static conventions reader
+    requirement: optional
+    authority_rule: Project conventions are stable knowledge input, not current-code authority.
+    source_rule: Applicable facts cite the configured conventions file and exact heading id.
+    missing_behavior: 默认路径无文件且未启用时记 not_applicable。
+    replacement_behavior: 文件启用后重新发现适用条目。
+    exit_behavior: 不产生惯例事实。
+    conflict_behavior: 当前代码事实优先并披露差异。
+    available: false
+    missing_disposition: not_applicable
+    writes: [canonical_blueprint_input]
+  - provider_id: component-assets
+    definition: 共享 UI 组件索引与选型输入。
+    consumer: app-design-lens
+    provider: static component index reader
+    requirement: optional
+    authority_rule: Source is component fact authority; curation is human selection guidance.
+    source_rule: Selection evidence cites the configured component index or catalog; component_ref identifies the asset.
+    missing_behavior: UI 任务缺索引时保持 unknown/degraded。
+    replacement_behavior: 同源重扫并使相关 P1 结果过期。
+    exit_behavior: 丢弃临时检索，保留 provenance。
+    conflict_behavior: 源码优先并保留策展冲突。
+    available: true
+    writes: [canonical_blueprint_input]
+
+app_lens:
+  module_boundaries: { disposition: answered_with_evidence, answer: WalletMain 主责页面、领域与 RDB；AccountManager 只提供手机号；Phone 只装配路由。, evidence_refs: [doc/module-catalog.yaml, doc/architecture.md] }
+  capability_seams: { disposition: answered_with_evidence, answer: UI 经 BankOpeningCoordinator 调 BankCardRepository；BankOpeningSession 在 domain/model 单一持有状态；BankOpeningNavigator 在 presentation/navigation 用 getAllPathName、removeByIndexes 与 clear 精确清栈；验证码手机号经 AccountService 读取。, evidence_refs: [contract:bank-card-persistence, view:development/node:wallet-opening-ui, 01-Product/Phone/src/main/ets/pages/Index.ets] }
+  feature_flags: { disposition: not_applicable, answer: 本地模拟应用无远程开关；旧页面行为由同一版本整体升级。, evidence_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md] }
+  data_producers_consumers: { disposition: answered_with_evidence, answer: BankRepository 生产 mock 银行卡，OpeningSession 消费选择，BankCardRepository 写加密 RDB，结果页消费一次性保存结果；首页仍保持既有 mock 读模型，本轮不宣称读取新增卡。, evidence_refs: [view:runtime/flow:bank-card-opening-flow, /review_summary/non_goals] }
+  lifecycle_triggers: { disposition: answered_with_evidence, answer: 用户点击银行建立 session，OTP 以绝对 deadline 计时；提交先原子进入 SAVING 并拦截重入，完成按钮终止 session。, evidence_refs: [view:scenarios/node:bank-opening-journey, decision:otp-wall-clock-and-saving-lock] }
+  state_owners: { disposition: answered_with_evidence, answer: 未完成流程由 OpeningSession 所有，已保存卡片由 local_mock_wallet 作用域的 wallet_cards.db 所有，导航栈由 Phone 根 Navigation 所有；logout 不删除设备本地钱包数据。, evidence_refs: [view:runtime/node:opening-session, view:development/node:wallet-card-data, view:development/node:phone-route-host, decision:device-local-account-scope] }
+  initialization: { disposition: answered_with_evidence, answer: 每次银行点击初始化 session；首次 repository 使用时以 encrypt=true/S4 初始化 schema v1，事务内 create/query/update-or-insert，异常 rollback。, evidence_refs: [view:runtime/flow:bank-card-opening-flow, contract:bank-card-persistence] }
+  publication_subscription: { disposition: answered_with_evidence, answer: save outcome 是一次前台 publication，由结果页消费；无后台订阅。, evidence_refs: [view:runtime/flow:bank-card-opening-flow] }
+  ui_refresh: { disposition: answered_with_evidence, answer: 卡类型、卡片选择、OTP 墙钟倒计时、SAVING 禁用与保存结果由当前 session 的 ArkUI 可观察字段驱动；成功完成回首页但不改变首页 mock 读模型。, evidence_refs: [view:runtime/node:opening-session, AC-4, AC-9] }
+  process_recovery: { disposition: answered_with_evidence, answer: 未完成流程不跨进程恢复；事务 commit 是数据完成边界，commit 后被杀则记录保留且重启到根首页；Phone 禁止系统备份恢复，失败 rollback 不留脏记录。, evidence_refs: [AC-5, BD-1, BD-3, 01-Product/Phone/src/main/resources/base/profile/backup_config.json] }
+  runtime_flow_trigger_assessment:
+    persistent_or_remote_ui: { applies: true, evidence_refs: [AC-5] }
+    multiple_consumers: { applies: false, evidence_refs: [view:runtime/flow:bank-card-opening-flow] }
+    background_system_external_scheduled_write: { applies: false, evidence_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md] }
+    cold_start_resume_mount_account_switch: { applies: true, evidence_refs: [AC-5, BD-2] }
+    user_mutation_refreshes_other_consumers: { applies: true, evidence_refs: [AC-6] }
+    cache_sync_freshness_consistency_process_recreation: { applies: true, evidence_refs: [AC-5] }
+
+generated_graphs:
+  - graph_id: sequence:start-and-select-type
+    format: mermaid
+    source_view_id: runtime
+    content: |
+      sequenceDiagram
+      actor User as 用户
+      participant Entry as 银行列表页
+      participant Coordinator as 开卡协调器
+      participant Sheet as 卡类型半模态
+      User->>Entry: 点击银行
+      Entry->>Coordinator: start(BankInfo, NavPathStack)
+      Coordinator-->>Sheet: 新会话与支持卡类型
+    node_refs: [view:runtime/node:opening-session, view:development/node:wallet-opening-ui]
+    relation_refs: []
+  - graph_id: sequence:select-type-and-card
+    format: mermaid
+    source_view_id: runtime
+    content: |
+      sequenceDiagram
+      actor User as 用户
+      participant Sheet as 卡类型半模态
+      participant Session as 开卡会话
+      participant Repo as BankRepository
+      participant Navigator as 开卡导航
+      participant CardPage as 具体卡片页
+      User->>Sheet: 选择卡类型并继续
+      Sheet->>Session: selectType(type)
+      Sheet->>Navigator: openCardSelection(session)
+      Navigator-->>CardPage: pushPath 到具体卡片页
+      CardPage->>Repo: getCards(bankCode, type)
+      Repo-->>CardPage: 1 至 2 张含完整卡号的 mock 卡
+    node_refs: [view:runtime/node:opening-session, view:development/node:wallet-opening-ui]
+    relation_refs: []
+  - graph_id: sequence:otp-and-save
+    format: mermaid
+    source_view_id: runtime
+    content: |
+      sequenceDiagram
+      actor User as 用户
+      participant CardPage as 具体卡片页
+      participant Otp as 验证码半模态
+      participant Account as AccountService
+      participant Session as 开卡会话
+      participant Coordinator as 开卡协调器
+      participant Repo as BankCardRepository
+      participant Result as 结果页
+      User->>CardPage: 选择卡片并点击下一步
+      CardPage->>Coordinator: openOtp(session)
+      Coordinator-->>Otp: 打开验证码半模态
+      Otp->>Account: getUserProfile()
+      Account-->>Otp: mock 完整手机号
+      Otp->>Otp: 显示掩码并设置 otpDeadlineMs
+      User->>Otp: 输入六位数字并提交
+      Otp->>Session: tryBeginSaving(code)
+      alt 成功进入 SAVING
+        Session-->>Otp: true
+        Otp->>Coordinator: submitOtp(code)
+        Coordinator->>Repo: save(BankCardRecord)
+        alt 写入成功
+          Repo-->>Coordinator: success=true
+          Coordinator-->>Result: 显示成功并携带完整卡号
+        else 写入失败
+          Repo-->>Coordinator: success=false
+          Coordinator-->>Result: 显示失败并携带完整卡号
+        end
+      else 已在 SAVING 或验证码非法
+        Session-->>Otp: false 且不调用 save
+      end
+    node_refs: [view:runtime/node:opening-session, view:runtime/node:result-navigation, view:development/node:wallet-card-data]
+    relation_refs: []
+  - graph_id: sequence:finish-and-clear-stack
+    format: mermaid
+    source_view_id: runtime
+    content: |
+      sequenceDiagram
+      actor User as 用户
+      participant Result as 结果页
+      participant Navigator as BankOpeningNavigator
+      participant Stack as NavPathStack
+      User->>Result: 点击完成
+      Result->>Navigator: finish(outcome, originBoundary)
+      alt 成功
+        Navigator->>Stack: clear(false) 回钱包首页
+      else 失败
+        Navigator->>Stack: removeByIndexes(origin+1..last)
+      end
+    node_refs: [view:runtime/node:result-navigation, view:development/node:wallet-opening-ui, view:development/node:phone-route-host]
+    relation_refs: []
+
+derived_results:
+  - result_id: sequence:start-and-select-type
+    kind: generated_graph
+    input_revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    decision_fingerprint: sha256:8b4045808ecfda40a681d93458b7a3af647b1ce769b9035317b406375185cd8d
+    status: current
+  - result_id: sequence:select-type-and-card
+    kind: generated_graph
+    input_revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    decision_fingerprint: sha256:8b4045808ecfda40a681d93458b7a3af647b1ce769b9035317b406375185cd8d
+    status: current
+  - result_id: sequence:otp-and-save
+    kind: generated_graph
+    input_revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    decision_fingerprint: sha256:8b4045808ecfda40a681d93458b7a3af647b1ce769b9035317b406375185cd8d
+    status: current
+  - result_id: sequence:finish-and-clear-stack
+    kind: generated_graph
+    input_revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    decision_fingerprint: sha256:8b4045808ecfda40a681d93458b7a3af647b1ce769b9035317b406375185cd8d
+    status: current

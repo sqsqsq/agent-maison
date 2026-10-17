@@ -60,11 +60,15 @@ With an index present, page/component/builder entries (including existing naviga
 
 ### Requirement: Feature selection is a projection of blueprint authority
 
-When an index and a blueprint apply, selection MUST use canonical CU design_refs of kind decision and existing contracts.change_unit.design_ref_mappings. The mapped component's resolution/component_ref/rationale SHALL equal the referenced component_asset_selection decision; bindings alone are local. Feature plan MUST NOT independently choose assets or invent a decision_ref protocol. Review SHALL compare declaration with implementation and receive index/catalog plus live candidate call-site context. Semantic duplication and two or more wrappers of one component are review advisories, not text gates.
+When an index and a blueprint apply, selection MUST use canonical CU design_refs of kind decision and existing contracts.change_unit.design_ref_mappings. The mapped component's resolution/component_ref SHALL equal the referenced component_asset_selection decision. Rationale SHALL retain any authoritative component-level construction explanation; otherwise it MAY explain the local implementation. It SHALL NOT be required to repeat the decision's overall rationale verbatim. Bindings remain local. Feature plan MUST NOT independently choose assets or invent a decision_ref protocol. Review SHALL compare declaration with implementation and receive index/catalog plus live candidate call-site context. Semantic duplication and two or more wrappers of one component are review advisories, not text gates.
 
 #### Scenario: Complete mechanical chain
 - **WHEN** a scanned asset is chosen by a changed development view, the CU references that decision, and a Feature maps it to the matching selection
 - **THEN** blueprint validation, Feature projection and review SHALL accept it and review publication SHALL retain the selection fields
+
+#### Scenario: Component explanations differ from the decision summary
+- **WHEN** four components inherit distinct authoritative rationales while sharing the same closed custom decision
+- **THEN** selection projection SHALL accept their unchanged resolution/component_ref without requiring a rationale rewrite; authoritative construction alignment SHALL still reject changes to those inherited explanations
 
 #### Scenario: Projection changes or bypasses authority
 - **WHEN** blueprint reuse becomes Feature custom or an activated blueprint-bound Feature selects without a mapped decision ref

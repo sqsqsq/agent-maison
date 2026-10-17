@@ -347,9 +347,11 @@ structure_checks:
 
   boundaries_all_stubbed:
     description: >
-      当 feature 产出了 use-cases.yaml 时：use-cases.yaml 中声明的每个
-      data_boundary，对应 UT 文件必须 new 出一个 Spy/Fake/Stub 实现
-      并注入业务编排对象（class 命名格式：Spy{type} / Fake{type} / Stub{type}）。
+      当 feature 产出了 use-cases.yaml 时：仅对 type 已登记在
+      contracts.interfaces[].class 中的 data_boundary，要求对应 UT 文件
+      new 出一个 Spy/Fake/Stub 实现并注入业务编排对象
+      （class 命名格式：Spy{type} / Fake{type} / Stub{type}）；
+      未登记类型由 boundary_matches_contracts WARN 披露。
     severity: BLOCKER
     rule:
       only_if_exists: "<features_dir>/{feature}/use-cases.yaml"

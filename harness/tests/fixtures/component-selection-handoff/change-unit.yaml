@@ -1,0 +1,428 @@
+artifact: change-unit@1
+component_id: wallet-bank-card-opening
+blueprint_id: bc-openCard-2
+change_unit_id: bank-card-opening-flow
+revision: 4
+priority: 1
+component_blueprint_ref:
+  artifact: component-blueprint@1
+  component_id: wallet-bank-card-opening
+  blueprint_id: bc-openCard-2
+  revision: 1
+  source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+  artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+  target:
+    kind: blueprint
+    id: bc-openCard-2
+provenance:
+  source_kind: component_blueprint
+  source_ref: doc/features/bc-openCard-2/blueprint/component-blueprint.yaml#blueprint:bc-openCard-2
+  observed_at: 2026-10-16
+  evidence_strength: authoritative
+  extraction_method: builtin-vertical-slice-decomposition
+purpose: 在一个可独立验收的垂直切片内完成双银行入口、卡类型与具体卡片选择、手机号与六位验证码、加密 RDB 保存、成功/失败结果和精确清栈，同时保持既有路由兼容。
+preconditions:
+  - precondition_id: existing-bank-entry-pages
+    description: bc-openCard-1 已提供 AddBankCardPage、AllBanksPage、BankRepository 与
+      Phone 根 Navigation。
+    source_refs:
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+      - 01-Product/Phone/src/main/ets/pages/Index.ets
+requires: []
+provides:
+  - provide_id: bank-card-opening-complete
+    description: 两个银行入口均可完成模拟银行卡开卡；数据库、验证码、结果与清栈行为满足蓝图验收。
+design_refs:
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: scenarios
+      id: bank-opening-journey
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: logical
+      id: bank-card-opening-capability
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: logical
+      id: bank-card-record
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: runtime
+      id: opening-session
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: runtime
+      id: result-navigation
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: flow
+      view_id: runtime
+      id: bank-card-opening-flow
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: development
+      id: wallet-opening-ui
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: development
+      id: wallet-card-data
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: development
+      id: account-phone-source
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: development
+      id: phone-route-host
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: node
+      view_id: deployment
+      id: phone-app-package
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: relation
+      id: scenario-realized-by-logical
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: relation
+      id: logical-executed-by-runtime
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: relation
+      id: runtime-owned-by-wallet-ui
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: relation
+      id: record-owned-by-data
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: relation
+      id: app-deployed-in-phone
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: single-opening-session
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: masked-display-full-storage
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: rdb-private-storage
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: device-local-account-scope
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: otp-wall-clock-and-saving-lock
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: result-page-stack-ownership
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: wallet-ui-custom
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: decision
+      id: phone-route-custom
+  - artifact: component-blueprint@1
+    component_id: wallet-bank-card-opening
+    blueprint_id: bc-openCard-2
+    revision: 1
+    source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+    artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+    target:
+      kind: contract
+      id: bank-card-persistence
+touches:
+  - owner: WalletMain
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-bank-card-opening
+      blueprint_id: bc-openCard-2
+      revision: 1
+      source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+      artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+      target:
+        kind: node
+        view_id: development
+        id: wallet-opening-ui
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/presentation
+      - 02-Feature/WalletMain/src/main/ets/domain
+      - 02-Feature/WalletMain/src/main/ets/shared
+      - 02-Feature/WalletMain/src/main/resources/base
+      - 02-Feature/WalletMain/src/ohosTest
+  - owner: WalletMain
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-bank-card-opening
+      blueprint_id: bc-openCard-2
+      revision: 1
+      source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+      artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+      target:
+        kind: node
+        view_id: development
+        id: wallet-card-data
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data
+  - owner: AccountManager
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-bank-card-opening
+      blueprint_id: bc-openCard-2
+      revision: 1
+      source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+      artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+      target:
+        kind: node
+        view_id: development
+        id: account-phone-source
+    write_refs:
+      - 04-BusinessBase/AccountManager/src/main/ets
+  - owner: Phone
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-bank-card-opening
+      blueprint_id: bc-openCard-2
+      revision: 1
+      source_fingerprint: sha256:de3708c28bdc3fde2cfd27fa7109b58eac488c8acd638a0a9df8e73eeb0d0693
+      artifact_sha256: sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808
+      target:
+        kind: node
+        view_id: development
+        id: phone-route-host
+    write_refs:
+      - 01-Product/Phone/src/main/ets/pages/Index.ets
+      - 01-Product/Phone/src/main/resources/base/profile/backup_config.json
+preserved_invariants:
+  - invariant_id: existing-navigation-regression-free
+    description: 既有 CardPackPage、AddCardEntryPage、AddBankCardPage 与 AllBanksPage
+      的前进/返回语义不受损。
+    evidence_refs:
+      - AC-7
+  - invariant_id: sensitive-data-not-displayed
+    description: 完整卡号、完整手机号与 OTP 不进入 UI、日志或系统备份。
+    evidence_refs:
+      - AC-3
+      - AC-8
+      - NFR-2
+target_predicates:
+  - predicate_id: behavior-opening-journey
+    role: behavior
+    description: 两个银行入口可完成选择、OTP、保存和结果旅程，成功与失败目标正确。
+    provide_ids:
+      - bank-card-opening-complete
+    verification_refs:
+      - AC-1
+      - AC-2
+      - AC-4
+      - AC-6
+  - predicate_id: owner-single-session-and-rdb
+    role: owner
+    description: OpeningSession 单一拥有未完成流程，BankCardRepository 单一拥有加密 RDB 写入。
+    provide_ids:
+      - bank-card-opening-complete
+    verification_refs:
+      - decision:single-opening-session
+      - decision:rdb-private-storage
+      - AC-5
+  - predicate_id: consumer-result-page
+    role: consumer
+    description: 结果页消费唯一保存 outcome，完成按钮消费起始栈边界并清理流程。
+    provide_ids:
+      - bank-card-opening-complete
+    verification_refs:
+      - AC-6
+  - predicate_id: contract-persistence
+    role: contract
+    description: RDB schema、事务、幂等、加密与敏感字段映射按 bank-card-persistence 契约落地。
+    provide_ids:
+      - bank-card-opening-complete
+    verification_refs:
+      - contract:bank-card-persistence
+      - AC-5
+      - NFR-2
+  - predicate_id: provider-mock-bank-and-account
+    role: provider
+    description: BankRepository 提供按银行/类型的 mock 卡，AccountService 提供 mock 手机号。
+    provide_ids:
+      - bank-card-opening-complete
+    verification_refs:
+      - AC-2
+      - AC-8
+  - predicate_id: recovery-rollback-and-restart
+    role: recovery
+    description: 保存失败 rollback 并进入失败结果；commit 后进程终止保留记录但不恢复 UI session。
+    provide_ids:
+      - bank-card-opening-complete
+    verification_refs:
+      - BD-1
+      - BD-2
+      - BD-3
+verification_refs:
+  - AC-1
+  - AC-2
+  - AC-3
+  - AC-4
+  - AC-5
+  - AC-6
+  - AC-7
+  - AC-8
+  - AC-9
+  - BD-1
+  - BD-2
+  - BD-3
+  - NFR-1
+  - NFR-2
+safe_intermediate_state:
+  description: 单 CU 内按模型/RDB→session/coordinator→UI→Phone 路由顺序落地；每一步保持既有入口可编译，只有新
+    builder 全部导出后才注册 Phone 路由，完成时旧页面与新流程可共同运行。
+  build_validation_refs:
+    - compile
+    - targeted UT
+  compatibility_refs:
+    - AC-7
+    - existing BankConstants routes
+  recovery_refs:
+    - BD-1
+    - BD-2
+    - BD-3
+blockers: []

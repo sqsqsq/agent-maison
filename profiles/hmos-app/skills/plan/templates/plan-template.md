@@ -90,7 +90,7 @@ graph TD
 
 > 完整签名与类型细节落盘后以 `contracts.yaml` 为准；本节仅作人读草案。
 >
-> `contracts.files` 是唯一文件授权集合：data/interface/component、`resource_keys` 媒体、页面/路由注册、HAR build/export 与 traceability 文件引用都须逐项列入；闭包失败时回 plan 补 `files` 后重跑。
+> `contracts.files` 是唯一文件授权集合：仅复用已有资源时用 `resource_keys.value` 写资源键，不声明施工 `path/media`；确需新建或修改的 data/interface/component、媒体、页面/路由注册、HAR build/export 与 traceability 文件才申请列入。CU-bound 写集以蓝图为准，缺少授权交设计 owner 裁定，plan 不自行扩写集；修正后重跑闭包。
 
 ---
 

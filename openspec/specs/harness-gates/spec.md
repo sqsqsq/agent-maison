@@ -1149,6 +1149,12 @@ Enforcement: `harness/scripts/check-plan.ts`, `harness/scripts/utils/spec-loader
 - **WHEN** `resource_keys` references twenty logo media paths and none is present in top-level `contracts.files`
 - **THEN** plan closure MUST fail and list the undeclared media references before coding starts
 
+#### Scenario: Existing resource key use does not expand file authorization
+
+- **WHEN** a plan only consumes an existing resource through `resource_keys.value` and does not declare a construction `path` or `media`
+- **THEN** reference closure SHALL not request write authorization for that value; provenance and actual resource validation remain with the existing asset checks
+- **AND** repair guidance SHALL distinguish this case from new or modified files; a CU-authoritative file set SHALL not be expanded by plan itself
+
 #### Scenario: Adding every referenced path closes the contract
 
 - **WHEN** the same contract is regenerated with all twenty media paths in `contracts.files`

@@ -15,7 +15,10 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
 import {
+  checkBoundaryMatchesContracts,
+  checkBoundariesAllStubbed,
   checkDagBoundaryMatchesSpec,
   checkDagFilesParseable,
   checkDagSpyPresetResolvable,
@@ -79,6 +82,27 @@ function makeCtx(over: { useCases?: unknown; contracts?: unknown } = {}): CheckC
     },
   } as unknown as CheckContext;
 }
+
+function withHostBoundaryContext(run: (ctx: CheckContext) => void): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-host-boundaries-'));
+  try {
+    const fixture = path.join(__dirname, '../fixtures/component-selection-handoff');
+    const target = path.join(root, 'doc/features/demo');
+    fs.mkdirSync(target, { recursive: true });
+    fs.copyFileSync(path.join(fixture, 'contracts.yaml'), path.join(target, 'contracts.yaml'));
+    fs.copyFileSync(path.join(fixture, 'dependencies/doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml'), path.join(target, 'use-cases.yaml'));
+    const parsed = new SpecLoader(root, undefined, undefined, REPO_ROOT).loadFeatureSpec('demo');
+    assert(!parsed.shape_issues, JSON.stringify(parsed.shape_issues));
+    const ctx = makeCtx({ contracts: parsed.contracts, useCases: parsed.useCases });
+    ctx.projectRoot = root;
+    run(ctx);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+const HOST_BOUNDARY_UT = [{
+  path: 'src/ohosTest/ets/test/BankOpeningCoordinator.test.ets',
+  content: 'class FakeBankCardRepository { save(): void {} }\nconst repository = new FakeBankCardRepository();\n',
+}];
 
 const USE_CASES = {
   use_cases: [
@@ -415,6 +439,23 @@ function testNamedHandlerLoadFailureStaysUnmarked(): void {
 
 export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
+    { name: '20261016 真实用例：未登记的系统/存储类型只披露，不要求不可表达的替身', fn: () => withHostBoundaryContext(ctx => {
+      assert(ctx.featureSpec.contracts!.interfaces.some(item => item.class === 'BankCardRepository'), '真实契约必须含仓储类');
+      const result = checkBoundariesAllStubbed(ctx, HOST_BOUNDARY_UT)[0];
+      assert(result.status === 'PASS', JSON.stringify(result));
+      const mismatch = checkBoundaryMatchesContracts(ctx)[0];
+      assert(mismatch.status === 'WARN' && mismatch.severity === 'MAJOR', JSON.stringify(mismatch));
+      assert(mismatch.details.includes('relationalStore.RdbStore') && mismatch.details.includes('system navigation stack'), mismatch.details);
+      assert(checkBoundariesAllStubbed(ctx, [{ path: 'unrelated.test.ets', content: 'const value = 1;' }])[0].status === 'PASS', '没有已登记边界时，本检查不额外要求关联 UT');
+    }) },
+    { name: '20261016 真实用例反例：已登记 BankCardRepository 缺替身仍阻断，补替身才通过', fn: () => withHostBoundaryContext(ctx => {
+      ctx.featureSpec.useCases!.use_cases[0].data_boundaries![0].type = 'BankCardRepository';
+      const missing = checkBoundariesAllStubbed(ctx, [{ ...HOST_BOUNDARY_UT[0], content: 'const repository = {};\n' }])[0];
+      assert(missing.status === 'FAIL' && missing.severity === 'BLOCKER' && missing.details.includes('BankCardRepository'), JSON.stringify(missing));
+      assert(checkBoundariesAllStubbed(ctx, HOST_BOUNDARY_UT)[0].status === 'PASS', '已登记边界具备替身后应通过');
+      const mismatch = checkBoundaryMatchesContracts(ctx)[0];
+      assert(mismatch.status === 'WARN' && !mismatch.details.includes('BankCardRepository') && mismatch.details.includes('system navigation stack'), JSON.stringify(mismatch));
+    }) },
     { name: '4f L3 审计真实解析→机器检查→混合 coding/spec 候选，不凭 device_focus 降低 unit 义务', fn: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-handoff-'));
       try {

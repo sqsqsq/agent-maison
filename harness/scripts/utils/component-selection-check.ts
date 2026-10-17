@@ -39,7 +39,12 @@ export function componentProjectionErrors(root: string, contracts: ContractsSpec
         if (mapped.has(component)) errors.push(`${component.file}#${component.name}: 多个选型 decision 映射同一组件`);
         mapped.add(component);
         const selection = component.asset_selection;
-        if (!selection || selection.resolution !== decision.asset_resolution || selection.component_ref !== decision.component_ref || selection.rationale !== decision.rationale) errors.push(`${component.name}: asset_selection 与蓝图 ${ref.target.id} 不一致`);
+        // 选型结论来自 decision；组件说明由其上游施工契约负责，不能再要求与总理由逐字相同。
+        if (!selection || selection.resolution !== decision.asset_resolution || selection.component_ref !== decision.component_ref) {
+          errors.push(`${component.file}#${component.name}: asset_selection 与蓝图 ${ref.target.id} 的选型结论不一致；`
+            + `期望 resolution=${decision.asset_resolution}, component_ref=${decision.component_ref ?? '(无)'}；`
+            + `实际 resolution=${selection?.resolution ?? '(缺失)'}, component_ref=${selection?.component_ref ?? '(无)'}`);
+        }
       }
       if (!consumers) errors.push(`${ref.target.id}: 选型映射未命中 components.file#name`);
     } catch (error) { errors.push((error as Error).message); }

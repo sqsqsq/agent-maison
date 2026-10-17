@@ -1,0 +1,189 @@
+schema_version: "1.0"
+use_cases:
+  - id: UC-OPEN-BANK-CARD
+    name: 模拟银行卡开卡
+    coordinator: BankOpeningCoordinator
+    ui_bindings:
+      - ui: CardTypeSheet
+        role: dialog
+        user_actions:
+          - trigger: selectType
+            calls: BankOpeningSession.selectType
+          - trigger: continue
+            calls: BankOpeningNavigator.openCardSelection
+      - ui: BankCardSelectionPage
+        role: progress
+        user_actions:
+          - trigger: selectCard
+            calls: BankOpeningSession.selectCard
+          - trigger: agree
+            calls: BankOpeningSession.setAgreementAccepted
+          - trigger: next
+            calls: BankOpeningCoordinator.openOtp
+      - ui: OtpVerificationSheet
+        role: dialog
+        user_actions:
+          - trigger: inputOtp
+            calls: BankOpeningSession.setOtp
+          - trigger: resend
+            calls: OtpCountdown.restart
+          - trigger: submit
+            calls: BankOpeningCoordinator.submitOtp
+      - ui: BankCardResultPage
+        role: result
+        user_actions:
+          - trigger: finish
+            calls: BankOpeningNavigator.finish
+    state_model:
+      phases:
+        - TYPE_SELECTING
+        - CARD_SELECTING
+        - OTP_VERIFYING
+        - SAVING
+        - RESULT
+    data_boundaries:
+      - name: wallet_cards.db
+        type: relationalStore.RdbStore
+        kind: storage
+        methods:
+          - BankCardRepository.save
+          - BankCardRepository.findByCardNumber
+      - name: NavPathStack
+        type: system navigation stack
+        kind: system
+        methods:
+          - getAllPathName
+          - removeByIndexes
+          - clear
+    branches:
+      - id: success
+        scenario: 保存成功
+        linked_acceptance:
+          - AC-1
+          - AC-2
+          - AC-3
+          - AC-4
+          - AC-5
+          - AC-6
+        expected_phase_seq:
+          - TYPE_SELECTING
+          - CARD_SELECTING
+          - OTP_VERIFYING
+          - SAVING
+          - RESULT
+        expected_port_calls:
+          - BankRepository.getCards
+          - AccountService.getUserProfile
+          - BankCardRepository.save
+          - BankOpeningNavigator.openResult
+          - BankOpeningNavigator.finish
+        action_sequence:
+          - start
+          - selectType
+          - selectCard
+          - openOtp
+          - inputSixDigits
+          - submitOnce
+          - awaitCommit
+          - showSuccess
+          - finish
+        expected_states:
+          - OTP_VERIFYING
+          - SAVING
+          - RESULT
+        not_called:
+          - second BankCardRepository.save while SAVING
+        expected_result: 回钱包首页且 RDB 存在卡片记录。
+      - id: persistence-failure
+        scenario: RDB 保存失败
+        linked_acceptance:
+          - BD-1
+          - AC-6
+        expected_phase_seq:
+          - TYPE_SELECTING
+          - CARD_SELECTING
+          - OTP_VERIFYING
+          - SAVING
+          - RESULT
+        expected_port_calls:
+          - BankCardRepository.save
+          - BankOpeningNavigator.openResult
+          - BankOpeningNavigator.finish
+        action_sequence:
+          - start
+          - selectType
+          - selectCard
+          - openOtp
+          - inputSixDigits
+          - submitOnce
+          - rollback
+          - showFailure
+          - finish
+        expected_states:
+          - OTP_VERIFYING
+          - SAVING
+          - RESULT
+        not_called:
+          - BankCardRepository.publishPersistedCard
+        expected_result: 失败结果页完成后回最初添加银行卡页且无脏记录。
+      - id: otp-cancel
+        scenario: 用户关闭验证码半模态
+        linked_acceptance:
+          - BD-2
+        expected_phase_seq:
+          - TYPE_SELECTING
+          - CARD_SELECTING
+          - OTP_VERIFYING
+        expected_port_calls:
+          - OtpCountdown.dispose
+          - BankOpeningSession.cancelOtp
+        action_sequence:
+          - openOtp
+          - closeOtp
+        expected_states:
+          - CARD_SELECTING
+        not_called:
+          - BankCardRepository.save
+          - BankOpeningNavigator.openResult
+        expected_result: 不保存，释放 timer 并回具体卡片页。
+      - id: saving-reentry
+        scenario: SAVING阻止重复提交/关闭/重发
+        linked_acceptance:
+          - AC-9
+        expected_port_calls:
+          - BankCardRepository.save
+      - id: countdown-resend
+        scenario: 60秒到期重发及后台墙钟恢复
+        linked_acceptance:
+          - AC-4
+          - NFR-1
+        expected_port_calls:
+          - OtpCountdown.start
+          - OtpCountdown.remainingSeconds
+          - OtpCountdown.restart
+      - id: account-privacy
+        scenario: 登录/未登录mock手机号、UI脱敏及加密备份配置
+        linked_acceptance:
+          - AC-3
+          - AC-8
+          - NFR-2
+        expected_port_calls:
+          - AccountService.getUserProfile
+      - id: commit-restart
+        scenario: commit后进程终止，查询仍唯一、session不恢复
+        linked_acceptance:
+          - AC-5
+          - BD-3
+        expected_port_calls:
+          - BankCardRepository.save
+          - BankCardRepository.findByCardNumber
+      - id: type-cancel
+        scenario: 关闭类型半模态不写库且清选择
+        linked_acceptance:
+          - BD-2
+        expected_port_calls:
+          - BankOpeningSession.clearSensitiveData
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets
+    implementation_note: 上游data_boundaries包含NavPathStack且storage.type不是BankCardRepository，与profile边界规则冲突。本文件保留权威字段以供定位；该矛盾必须回设计owner修正，不能据此构造假的生产接口或宣称UT契约可用。
+feature: cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+source: derive.blueprint-contracts:sha256:ecb2ecc236e12cc725bd8699c779749f66201f0754196947c611929c4befddf2:sha256:c1a68d6dc8e37a7608b0d402da9ec7c50359de74a3e7403786986dc1f0a90808

@@ -1,0 +1,81 @@
+schema_version: "1.0"
+contracts:
+  - contract_id: bank-card-persistence
+    operation:
+      operation_id: saveBankCard
+      direction: WalletMain-domain-to-RDB
+      version: "1"
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/operation
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+    request_dto:
+      dto_id: SaveBankCardRequest
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/request_dto
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+      fields:
+        - field_id: record
+          type: BankCardRecord
+          semantics: 包含完整卡号、钱包卡大类、银行、银行卡类型、添加时间、支付状态与交易记录的持久化对象。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/request_dto/fields/0
+          provenance: &req
+            source_kind: product_requirement
+            source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+            observed_at: "2026-10-16"
+            evidence_strength: authoritative
+            extraction_method: direct_local_source
+    response_dto:
+      dto_id: SaveBankCardResult
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/response_dto
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+      fields:
+        - field_id: success
+          type: boolean
+          semantics: RDB 写入是否成功。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/response_dto/fields/0
+          provenance: *req
+        - field_id: fullCardNumber
+          type: string
+          semantics: 无论成功或失败都向结果页交接本次完整卡号，但结果页不得展示明文。
+          nullable: false
+          source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/response_dto/fields/1
+          provenance: *req
+    mappings:
+      - mapping_id: map-record
+        kind: direct
+        source_fields: [record]
+        target_field: BankCardRepository.save.record
+        rule: 将领域记录交给 RDB repository；完整卡号只进入应用私有数据库，UI 使用派生掩码。
+        source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/mappings/0
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+        provenance: *req
+      - mapping_id: map-success
+        kind: direct
+        source_fields: [success]
+        target_field: BankCardSaveOutcome.success
+        rule: 原样交给结果页决定成功或失败状态。
+        source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/mappings/1
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+        provenance: *req
+      - mapping_id: map-full-card-number
+        kind: direct
+        source_fields: [fullCardNumber]
+        target_field: BankCardSaveOutcome.fullCardNumber
+        rule: 原样交接但不显示，用于成功完成后的目标页参数。
+        source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/mappings/2
+        verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+        provenance: *req
+    errors:
+      behavior: RDB 初始化或写入失败时返回 success=false，不把失败记录视为已持久化，并继续进入失败结果页。
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/errors
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+    idempotency:
+      key: accountScope+fullCardNumber
+      scope: wallet_bank_card_table
+      behavior: 以设备本地钱包作用域与完整卡号的联合唯一索引避免重复卡；事务内先查后 update-or-insert，重复添加更新同一记录而不新增副本。
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/idempotency
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-5]
+    nfr:
+      privacy: 日志和界面不得输出完整卡号；数据库为 encrypt=true 的应用私有 RDB，Phone 关闭系统备份恢复。
+      source_ref: doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml#/contracts/0/nfr
+      verification_refs: [doc/features/原始需求/1-2-银行卡/原始需求.md#需求规格-4]

@@ -88,10 +88,10 @@ CU-bound 从已有 typed 设计开始，保留模型、接口、运行设计与 
 | `navigation` | 路由/导航设计 | 3.0 canonical **只有** `config_files[]`（导航注册/配置文件清单，如 `main_pages.json` / `route_map.json`），逐项列入 `files`；其它承载文件路径的 navigation 键（含嵌套 `pages[]`/`routes[]` 形态、`registration_points`）一律判 `unconsumed_file_field` BLOCKER |
 | `files` | 目录/文件结构规划 | **唯一文件授权集合**；下列一切文件引用都必须以规范化路径列入此处 |
 | `conventions_applied`（可选） | plan 条件节「遵循的既有惯例」 | `id` + 非空 `planned_locations[]`；location 仅允许项目相对 POSIX 文件/目录前缀，禁 glob/绝对路径/`..`/反斜杠；有所引蓝图时须覆盖其适用且命中本 CU scope 的惯例 |
-| `resource_keys` | 宿主资源引用 | **媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），且逐项列入 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
+| `resource_keys` | 宿主资源引用 | 仅使用已有资源时用 `value: app.media.<key>`，来源保留在 spec/asset-manifest，不声明待交付文件；新建或修改的**媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），且逐项列入 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
 | `prd_to_code_traceability` | spec 功能映射表 | `key_files[]` 逐项列入 `files` |
 
-**文件引用闭包（BLOCKER）**：模板见 [contracts-template.yaml](../feature/plan/contracts-template.yaml)。`data_models[].file`、`interfaces[].file`、`components[].file`、`prd_to_code_traceability[].key_files[]`、`resource_keys.*.*[].path/media`、`navigation.config_files[]`，以及 module 的 `har_index`/`builder`/export 文件，全部必须满足 `引用 ⊆ contracts.files`。现有物理文件、与 spec asset 字节相同或出现在其他字段都不能自动授权。门禁失败时只回 plan：把确需交付的路径加入 `contracts.files`，重新生成/关闭 contracts，再重跑 plan harness。闭包只裁决路径安全/规范化与授权——**允许**声明 coding 将新建的文件（已授权但未建 → plan PASS、coding `file_completeness` FAIL）。
+**文件引用闭包（BLOCKER）**：模板见 [contracts-template.yaml](../feature/plan/contracts-template.yaml)。`data_models[].file`、`interfaces[].file`、`components[].file`、`prd_to_code_traceability[].key_files[]`、`resource_keys.*.*[].path/media`、`navigation.config_files[]`，以及 module 的 `har_index`/`builder`/export 文件，全部必须满足 `引用 ⊆ contracts.files`。现有物理文件、与 spec asset 字节相同或出现在其他字段都不能自动授权。门禁失败时先由 plan 区分只读引用和施工落点：已有资源仅复用其资源键时用 `resource_keys.value`，不复制 asset-manifest 的来源路径为施工 `path/media`；确需交付的路径才申请 `contracts.files` 授权。CU 写集已有权威来源时，增加施工文件须回设计 owner 裁定，plan 不自行扩写集。随后重跑 plan harness。闭包只裁决路径安全/规范化与授权——**允许**声明 coding 将新建的文件（已授权但未建 → plan PASS、coding `file_completeness` FAIL）。
 
 **边界用例只读复核**：plan 可检查 `acceptance.yaml` 与 spec/plan 的边界场景是否一致，但不得创建或补写 spec-owned 文件。发现缺失、漏场景或矛盾时，让 `scope_consistency_with_spec` 以机器事实失败并生成 spec repair candidate；runner 回退 spec 修改后，再重走 plan 及下游。
 
@@ -138,6 +138,6 @@ architecture_impact:
 
 ## 组件选型施工投影（index 文件存在时）
 
-字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI components 的 asset_selection 为单值对象，严格展开蓝图 resolution/component_ref/rationale，bindings 才是本地施工信息；用既有 design_ref_mappings 的 implementation_refs 定位 file#name。多组件沿 children 拆条目，不再自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
+字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI components 的 asset_selection 为单值对象，严格展开蓝图 resolution/component_ref；rationale 保留上游施工契约的组件说明，无上游说明时补本组件理由，不照抄总理由覆盖组件说明；bindings 为本地施工信息；用既有 design_ref_mappings 的 implementation_refs 定位 file#name。多组件沿 children 拆条目，不再自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
 
 依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 须在 in_scope_modules；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 权责一致：goal 换选自动、下沉经 auto-replan、新边停放 await-confirm 等用户批后 resume，不能以自改 DSL 或重写需求绕过。
