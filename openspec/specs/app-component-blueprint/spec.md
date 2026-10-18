@@ -105,6 +105,8 @@ App 部件发现 MUST 为每个当前态断言、设计输入、冲突和 unknow
 
 既有 discovery/人工权威输入 MUST 在 `discovery.inputs.current_scope_items` 中提供当前范围 `requirement|goal|invariant|high_risk` 的闭集；每项 MUST 包含稳定 `item_id`、kind、project-safe 且可解析到精确来源/fragment 的 `source_ref`，并为项目内文件绑定实际原始字节的 `source_sha256`；`source_revision` MAY 作为额外来源版本，但不能替代内容 hash。`discovery.requirement_traceability` MUST 使用相同 `item_id` 与该输入清单双向一一覆盖，并为每项提供一个或多个指向同一 canonical blueprint 真实稳定地址的 mappings。traceability mappings MUST NOT 进入 `source_fingerprint`；mapping 变化 MUST 通过既有 blueprint `revision`、完整 artifact `artifact_sha256` 以及下游 P3 `input_fingerprint` 捕获，不得新增 `traceability_fingerprint`。重复 ID、来源缺失/越界/无法解析、hash 缺失或不符、任一输入无 traceability、额外 traceability、空 mappings、悬空地址或跨 component 地址 MUST 阻塞 P1 admission。该结构只登记已由现有输入识别的当前范围；非结构化材料若没有机器稳定 ID，既有人工权威输入 MUST 先提供稳定 item/source-fragment identity，不要求 P1/P3 建设通用 PRD 解析器、目录扫描器或来源注册表。
 
+需求指向已有页面或入口时，发现方 SHALL 在本次相关范围内将名称对应到实际页面、路由或入口调用位置，按需核标题字符串资源的真实使用位置、路由注册/调用与入口链，必要时读同系列前序需求，以触发路径及证据消歧，MUST NOT 仅靠类名或“否则无法满足”的循环理由。结论与依据 SHALL 沿既有 discovery.facts.value、provenance/source_ref 及现有视图/说明承载；term.canonical_module SHALL 仍表示获准模块，MUST NOT 填页面类名或新增页面/路由字段、注册表、schema 或机器检查。只查本次相关对象，MUST NOT 强制三类证据齐全、全仓盘点或为识别启动编译/设备。代码 SHALL 用于识别当前对象，MUST NOT 据此取消当前目标要求；前序需求只供相关上下文，不替代当前有效要求/裁决。证据足够 SHALL 自主据证确定，不足或冲突无法确定 SHALL 如实记假定/unknown 并沿已有 must_review/未决机制处理，不冒称已调和/已确认。新页面及授权内自主取舍 SHALL 如实称方案选择、不冒充已有事实，不一律新增用户确认；原术语映射确认规则不变。
+
 #### Scenario: Code fact conflicts with a document claim
 
 - **WHEN** 文档声称某状态由模块 A 持有，但代码、schema 或测试事实显示模块 B 是实际 owner
@@ -302,15 +304,15 @@ flow 的 data_domain_refs MUST 复用同一标识，精确质量阈值/预期 MU
 
 角色正文 SHALL 由设计 agent 从已有职责/状态/调用事实归纳，中文角色与消息意图在前，类名/方法必要时括注、完整方法目录留参考，目录 MUST NOT 冒充角色说明。接口映射 SHALL 与模型字段一致，不同图中的调用责任 SHALL 一致，由原作者与既有质询核源；本批 MUST NOT 新增机器语义检查。旅程总览和角色关系图 SHALL 默认绘制；只有一两步的简单旅程或一两个角色的简单协作 MAY 说明原因后省略对应总览，MUST NOT 实现机器计数门。两类图 SHALL 由作者按明确旅程顺序、原调用或责任关系写入既有 generated_graphs 并以 graph_ids 就近放置，MUST NOT 猜连线或混淆流转/调用/归属含义。组件职责 SHALL 在主责小节解释一次；界面有登记截图时 SHALL 各写 journey 小节，并以 source_refs 精确引用对应图片登记单项或只含该图路径的来源对象，图紧随说明、每图一次，MUST NOT 从名称猜图或新增图片字段。正文文件落点 SHALL 用单一目录树，CU 精确范围仍在参考可查；各节来源 SHALL 仅关联本节说法，正文设计依据聚合到该节完整来源参考入口，避免多个同名链接堆叠。
 
-source_digest SHALL 以当前解析蓝图 stableStringify 与 SHA256 计算，只删除根 revision、derived_results 和 review_summary 内 reader_guide/authored_by/questioning/admission/reconciliation；其余事实、generated_graphs 实际内容、数组顺序 MUST 保留，MUST NOT 递归按同名键删除。独立只读 --reader-guide-digest SHALL 返回当前值（JSON 为 reader_guide_source_digest/canonical_path/artifact_sha256），MUST NOT 写文件、运行完整 validator、盖摘要或声称作者已读。作者完成必要改写并确认说明仍适用后 SHALL 记录摘要，再 --write-review --json 并实际打开草稿；质询后 SHALL 一轮定向修订，按来源变化复核摘要并在交付前重渲读成品。renderer/校验/自动物化 MUST NOT 代作者更新摘要。
+source_digest SHALL 以当前解析蓝图 stableStringify 与 SHA256 计算，只删除根 revision、derived_results 和 review_summary 内 reader_guide/authored_by/questioning/admission/reconciliation；其余事实、generated_graphs 实际内容、数组顺序 MUST 保留，MUST NOT 递归按同名键删除。独立只读 --reader-guide-digest SHALL 返回当前值（JSON 为 reader_guide_source_digest/canonical_path/artifact_sha256），MUST NOT 写文件、运行完整 validator、盖摘要或声称作者已读。作者完成必要改写并确认说明仍适用后 SHALL 记录摘要，再 --write-review --json 并实际打开草稿；质询后 SHALL 在既有一轮定向修订中处理意见，每次修订后按来源变化复核并记录摘要、重渲，再按下述规则由该轮质询方复核当前正文后交付。renderer/校验/自动物化 MUST NOT 代作者更新摘要。
 
 无 guide SHALL 展示当前字段及完整参考、文首提示“尚未补写评审说明”；事实变化或摘要缺失/错误 SHALL 不展示旧解释、回退当前事实并提示“评审说明需更新”。个别坏小节/引用只诊断并跳过受影响部分，图仍沿自身 freshness。所有展示形状/引用诊断 SHALL 沿 WARN，MUST NOT 改 schema required/type、admission、readiness、run 或原操作结果。文档“当前”只证明忠实投影，MUST NOT 代替说明完整或阅读通过。
 
 guide MUST NOT 固化 CU 数量/ID/修订/依赖；正文施工 SHALL 按当前有效 CU 原 purpose/目标/touches/requires/安全中间态展示。目的、交付和安全中间态 SHALL 在原 purpose、provides/target_predicates 的 description、safe_intermediate_state.description 用完整句子说明；纯润色保持职责含义、提供承诺、依赖、写集与身份，并沿现有未完成资格和 consumer 内容修订 API，MUST NOT 直接改 canonical 或为润色修订已完成/退役 CU。新建/修订/替代 CU SHALL 自动刷新施工段和参考，MUST NOT 要求回改蓝图说明。真实新事实 SHALL 先写原承载，MUST NOT 仅写 guide 或由 renderer 补造未知。
 
-供人评审的蓝图交付（含仅定稿蓝图、尚无 CU）SHALL 将一次“先只读首屏复述现状/变化/结果/范围，再读正文答八问，最后按原 scope 定向核源”合并到已有独立质询，随后一轮定向修订并在交付前重渲，问题沿既有质询输出/报告记录；读者 MUST NOT 继承父上下文 YAML/设计摘要或在答完前读取 YAML，SHALL 以不了解项目代码的评审人视角阅读，不靠框架经验补全正文。读者 SHALL 具体指出缺图解释的关键链路、图错章、只有一段且未回答本章问题的位置，段落少本身 MUST NOT 自动失败。无渲染图像时 SHALL 仍从评审 Markdown 的 Mermaid 源核实现时序的界面步骤/一次跨层交互粒度，指出混讲的独立问题及应拆段落/衔接，MUST NOT 提前读 YAML 或跳过整项图审查；总览例外 SHALL 仅限用户旅程/角色关系图，不以参与者数量代替判断。仅字号/布局/是否需放大 SHALL 标未核验，MUST NOT 把图源或语法检查冒充视觉通过，不新增预览依赖/门禁。八问 SHALL 覆盖十分钟讲清方案、选择/被否方案、调用责任、存储安全/账号隔离、失败恢复、施工/安全中间态、文件用途、原验收编号；十分钟不是计时门禁。八问适用缺口 SHALL 由作者在既有一轮定向修订中处理：事实已有补说明/图、事实矛盾回原设计修正、材料不足明确未决及缺少依据；仍未解决 SHALL 明确披露且 MUST NOT 宣称阅读通过，MUST NOT 将未解释的取舍/调用/恢复归为非关键表达而略过。已能回答问题后的措辞偏好 MAY 如实报告后交接，MUST NOT 新增评分/次数状态、签章、用户签字或无限重试；事实/授权错误仍归原责任方。纯 guide 润色 MUST NOT 要求重做原设计质询。
+供人评审的蓝图交付（含仅定稿蓝图、尚无 CU）SHALL 将首次“先只读首屏复述现状/变化/结果/范围，再读正文答八问，最后按原 scope 定向核源”合并到已有独立质询，随后按修订、摘要复核、重渲、该轮当前正文复核的顺序收尾，问题沿既有质询输出/报告记录；读者 MUST NOT 继承父上下文 YAML/设计摘要或在答完前读取 YAML，SHALL 以不了解项目代码的评审人视角阅读，不靠框架经验补全正文。读者 SHALL 具体指出缺图解释的关键链路、图错章、只有一段且未回答本章问题的位置，段落少本身 MUST NOT 自动失败。无渲染图像时 SHALL 仍从评审 Markdown 的 Mermaid 源核实现时序的界面步骤/一次跨层交互粒度，指出混讲的独立问题及应拆段落/衔接，MUST NOT 提前读 YAML 或跳过整项图审查；总览例外 SHALL 仅限用户旅程/角色关系图，不以参与者数量代替判断。仅字号/布局/是否需放大 SHALL 标未核验，MUST NOT 把图源或语法检查冒充视觉通过，不新增预览依赖/门禁。八问 SHALL 覆盖十分钟讲清方案、选择/被否方案、调用责任、存储安全/账号隔离、失败恢复、施工/安全中间态、文件用途、原验收编号；十分钟不是计时门禁。八问适用缺口 SHALL 由作者在既有一轮定向修订中处理：事实已有补说明/图、事实矛盾回原设计修正、材料不足明确未决及缺少依据；仍未解决 SHALL 明确披露且 MUST NOT 宣称阅读通过，MUST NOT 将未解释的取舍/调用/恢复归为非关键表达而略过。已能回答问题后的措辞偏好 MAY 如实报告后交接，MUST NOT 新增评分/次数状态、签章、用户签字或无限重试；事实/授权错误仍归原责任方。纯 guide 润色 MUST NOT 要求重做原设计质询。
 
-主 agent SHALL 按 P1 workflow §4“派出独立质询”条目把通用规则及材料位置写入实际派发任务，MUST NOT 依赖质询者自行读取 P1，MUST NOT 附父会话设计结论、目标样稿或宿主答案。任务 SHALL 明确：先只读首屏/正文答八问，答完前不读参考区、YAML 或需求原文；之后首次核源逐条对照本次适用原需求、有效人类裁决、最终设计与验收，沿既有报告引原句/出处及设计/验收位置，MUST NOT 以来源路径、scope 齐全或检查 PASS 代替行为满足。质询者提出删除/收窄明示数据交接、跳转或清栈建议前 SHALL 引受影响原句及适用裁决、说明风险，并给出兼顾原行为与约束的替代；无法兼顾或缺依据 SHALL 沿已有未决决定/待确认说明，MUST NOT 直接删后闭项。返修任务 SHALL 只复核旧意见及修法直接影响的原要求和验收，MUST NOT 每轮重审全部需求。
+主 agent SHALL 按 P1 workflow §4“派出独立质询”条目把通用规则及材料位置写入实际派发任务，MUST NOT 依赖质询者自行读取 P1，MUST NOT 附父会话设计结论、目标样稿或宿主答案。任务 SHALL 明确：首次先只读首屏/正文答八问，答完前不读参考区、YAML 或需求原文；之后首次核源逐条对照本次适用原需求、有效人类裁决、最终设计与验收，并按发现证据复核本次已有页面/入口的同一对应，沿既有报告引原句/出处及设计/验收位置，MUST NOT 以来源路径、scope 齐全或检查 PASS 代替行为满足。质询者提出删除/收窄明示数据交接、跳转或清栈建议前 SHALL 引受影响原句及适用裁决、说明风险，并给出兼顾原行为与约束的替代；无法兼顾或缺依据 SHALL 沿已有未决决定/待确认说明，MUST NOT 直接删后闭项。派发任务还 SHALL 转达每次修订重渲后的正文通读规则：返修保留旧意见及修法直接影响的原要求/验收复核，每次作者修订并按摘要规则重渲后，该轮既有质询方 SHALL 从头读当前正文到“技术与追溯参考”之前，只核改过行为跨段一致、无事实/授权依据的推断或待确认处理不冒充已调和、已定或已确认，沿原答复报告通过或剩余矛盾。MUST NOT 预判最后一轮、只看 diff/旧意见定位或凭初稿记忆；需要依据 SHALL 仅定向查相关原文/事实/精确验收，不重做完整八问、全需求/全源码或架构评审。未改且该轮已读的当前正文无需重读；复核后又改稿（含根契约）并重渲 SHALL 按同一规则再复核，旧阅读 MUST NOT 代表新稿。该要求复用既有返修复核，MUST NOT 新增独立 reader、固定调用轮次、回执、状态或门禁。
 
 设计修订 SHALL 优先换实现以满足原需求。作者采纳建议前 SHALL 核需求与授权；涉及原文明示的携带数据、跳转目的地或页面清理时，SHALL 回原文复核，同步步骤、旅程、图、恢复及数据生命周期，核谁持有/谁接收/交接渠道/何时清理及失败无写入标识的情形，MUST NOT 强制明文路由参数交接或将具体样本实现固化成通用模板。必要偏离 SHALL 沿既有未决决定/待确认说明原要求、拟变更、理由和影响，无用户或既有明确授权 MUST NOT 删除或标已裁决；质询建议和作者核对本身 MUST NOT 构成人类变更授权，有效裁决仅在其真实范围生效。该责任 SHALL 复用原质询/报告，MUST NOT 新增文件、持久状态、强制调用轮次、评分、逐句机器比较或签字/准入门。
 
@@ -336,12 +338,17 @@ guide MUST NOT 固化 CU 数量/ID/修订/依赖；正文施工 SHALL 按当前�
 #### Scenario: Reading feedback cannot silently change an explicit requirement
 
 - **WHEN** 正文八问完成后，质询者因安全/导航等原因拟建议删除或收窄原文明示的数据交接、跳转或清栈行为
-- **THEN** 质询者 SHALL 先引原句及适用裁决、说明风险，给兼顾需求与约束的替代，无法兼顾沿原承载待确认；作者 SHALL 核授权并在一轮修订中处理或如实保留未解决，返修只复核旧意见及直接影响的原要求和验收，无授权 MUST NOT 删除、标已裁决或宣称阅读通过
+- **THEN** 质询者 SHALL 先引原句及适用裁决、说明风险，给兼顾需求与约束的替代，无法兼顾沿原承载待确认；作者 SHALL 核授权并在一轮修订中处理或如实保留未解决，返修保留旧意见及直接影响原要求/验收复核，并按每次修订后的规则通读当前正文核跨段一致和结论依据，无授权 MUST NOT 删除、标已裁决或宣称阅读通过
 
 #### Scenario: Independent questioning receives the source-check rules in its task
 
 - **WHEN** 主 agent 按 P1 §4 派出已有独立质询
-- **THEN** 实际任务 SHALL 带材料位置、先正文八问后读需求/YAML、首次逐条核适用原需求/裁决/设计/验收、删减建议先引原句并给保需求替代或待确认、返修核旧意见及受影响原要求的规则，MUST NOT 依赖质询者自行读 P1 或传入父设计结论
+- **THEN** 实际任务 SHALL 带材料位置、先正文八问后读需求/YAML、首次逐条核适用原需求/裁决/已有页面入口证据对应/设计/验收、删减建议先引原句并给保需求替代或待确认、返修核旧意见及受影响原要求且每次修订重渲后通读当前正文只核跨段一致和结论依据的规则，MUST NOT 依赖质询者自行读 P1 或传入父设计结论
+
+#### Scenario: Each revised rendering receives a bounded body reread
+
+- **WHEN** 作者完成一轮修订并复核摘要、重渲评审文档
+- **THEN** 该轮既有质询复核 SHALL 从头读当前正文到技术与追溯参考前，核修改行为跨段一致及无依据推断不冒充已定，MUST NOT 仅看 diff 或旧意见定位，也不重做完整八问/全需求/全源码；若复核后再改根契约并重渲 SHALL 按同一规则再复核，无修改且该轮已读的当前正文无需重复，不新增固定轮次或门禁
 
 #### Scenario: An encrypted task is assessed from observable questioning behavior
 
