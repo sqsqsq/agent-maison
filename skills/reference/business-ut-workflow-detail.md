@@ -117,7 +117,7 @@ export default function dashboardRepoTest() {
 
 探测设备：输出为空**不允许**继续跑或用"本地无设备"为由标绿；须先准备设备重新探测。装机执行：`harness-runner.ts --phase ut --feature <feature-name>` 同时触发 compile+run。**自闭环策略**：failed>0→读完整 `hdc-test.<module>.log` 找堆栈定位是 UT 逻辑错/Spy 预设错/还是业务真 bug（真 bug 仍走约束#12 HARD STOP）；total=0→测试入口未启动，核对 profile 测试配置；失败阶段 metadata/artifact_not_found/install→回 7.5 或查 toolchain 配置。
 
-**执行链无结果时停止盲跑**：先读本次 faultlog/hilog 诊断；同键、同因失败再次出现且输入/环境或诊断依据未变时，按 harness 指引停止并上报，不在本次调用内反复真跑。调用结束后交 runner 沿既有执行链诊断出口处理；没有执行结果不等于业务代码回归。
+**执行链无结果时停止盲跑**：先读本次 faultlog/hilog 诊断；同键、同因失败再次出现且输入/环境或诊断依据未变时，按 harness 指引停止并上报，不在本次调用内反复真跑。调用结束后交 runner 沿既有执行链诊断出口处理；没有执行结果不等于业务代码回归。原因未知时不自行断言资源路径或 TestRunner 配置有误。系统引导阻断按设备门提示交用户完成初始化，不代点引导；正式收口可采纳同次调用的冻结失败，不能要求为刷新回执再真跑。恢复或输入变化后重新执行。
 
 **`hap_not_found` / 签名缺口硬约束**：失败阶段为 `hap_not_found` 时，必须先全文引用 `hdc-test.<module>.log`（或 `ut_hvigor_test` details 头部）中的 harness 分层签名诊断与修复建议，再下结论。诊断已有明确原因层（例如“hvigor 明确报告 signingConfigs 未配置”）时，禁止另创 `.p12` 调试证书、默认密码、DevEco 会话兜底等环境故事。签名配置属于宿主资产：交互模式立即 HARD STOP，把诊断原文与“补 `signingConfigs` / 自定义签名任务覆盖 `ohosTest`”二选一动作交给用户，不代改宿主工程、不循环重跑；goal 模式的熔断由 runner 接管，agent 本轮只做诊断呈报，runner 仅允许一次有界确认性重跑，同 signature 重复即 halt。
 

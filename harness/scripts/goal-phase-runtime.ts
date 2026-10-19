@@ -684,6 +684,7 @@ export interface SummaryJson {
   report_validity?: 'PASS' | 'FAIL' | 'UNVERIFIED';
   verifier_report?: string;
   blockers?: Array<{
+    device_setup?: import('./utils/device-unlock-helper').DeviceSetupObservation;
     id?: string;
     blocking_class?: string;
     classification?: string;
@@ -7171,6 +7172,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       probeName: string,
       blockedBy: string,
       recheck: (remainingMs: number) => Promise<boolean>,
+      reason?: string,
     ): Promise<boolean> => {
       const runProbe = options.conditionWait?.runProbe
         ?? ((p: string, ph: string) => runConditionProbe(projectRoot, manifest.report_dir, p, ph));
@@ -7178,6 +7180,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         phase: phaseName,
         probe: probeName,
         blockedBy,
+        reason,
         availableMs: runtimeOwnerKind === 'session' ? 0 : wallDeadlineMs - Date.now() - FINALIZE_RESERVE_MS,
         ...(options.conditionWait?.maxWaitMs !== undefined ? { maxWaitMs: options.conditionWait.maxWaitMs } : {}),
         ...(options.conditionWait?.pollMs !== undefined ? { pollMs: options.conditionWait.pollMs } : {}),
@@ -7193,7 +7196,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
           return recheck(remainingMs);
         },
-        emit: (event) => goalEvents.emit(event as Parameters<typeof appendEvent>[2]),
+        emit: (event) => {
+          goalEvents.emit(event as Parameters<typeof appendEvent>[2]);
+          if (event.type === 'condition_wait_started' && reason) console.log('[goal-runner] 等待：' + reason);
+          flushProgress(true, true);
+        },
       });
     };
     /** 门禁经 emitEvent 发出的停机事件先暂存：等待恢复则丢弃，超时才按现状落盘。 */
@@ -8115,7 +8122,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               decision = await runDeviceGate(remainingMs);
               recordBlockedManaged(decision);
               return !decision.outcome;
-            });
+            }, decision.outcome.halt_guidance);
           }
           if (decision.outcome) {
             for (const ev of deferredDeviceHalts) goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
@@ -8203,6 +8210,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
           }
         }
+
 
         // d9e4b7c1 T1：attempt 级 device-test 构建配置冻结。
         // resolveDeviceTestProduct/BuildMode 读进程 env（HARNESS_DEVICE_TEST_PRODUCT/
@@ -10137,7 +10145,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             '===== await_operator_toolchain（环境/工具链阻塞，须 operator 修复）=====',
             `feature=${manifest.feature} run_id=${manifest.run_id} phase=${phase}`,
             `- 工具链 blocker：${agg.toolchainIds.join(', ')}`,
-            '- 这不是产物内容问题：重试 agent 修不了环境。修复对应工具链（详见 blocker details）后 --resume。',
+            '- 执行链尚未取得有效结果；原因以 blocker details 的已确认事实为准，未知时不排除代码或环境原因。取得新依据或修复后重新发起同一请求，勿无变化重跑。',
           ].join('\n');
           console.log(`\n${awaitConfirmGuidance}\n`);
         } else if (
@@ -10768,6 +10776,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
+        const stageSetupBlocked = verdict !== 'PASS' && !resolved.stale_summary &&
+          decisionSummary?.blockers?.some(b => b.device_setup) === true &&
+          decisionSummary.blockers.every(b => b.blocking_class === 'externalBlocked');
+        // 等待仍属于未完成的当前阶段；事件不能先宣布 defer 到下游。授权/预算 halt 优先。
+        if (stageSetupBlocked && driverGuardAction === 'none') driverGuardAction = 'retry';
         let action = goalEvents.decideAndEmit({
           assessment,
           observation: reconcileObservation,

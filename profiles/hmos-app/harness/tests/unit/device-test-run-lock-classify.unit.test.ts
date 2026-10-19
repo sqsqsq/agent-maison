@@ -45,7 +45,7 @@ export function runAll(): UnitCaseResult[] {
     const code = executableCode(RUN_PROVIDER);
     assert(/\| 'device_locked'/.test(code), 'RunFailureKind 须含 device_locked');
     assert(
-      /lockedAndUnrecovered\s*\n?\s*\?\s*'device_locked'\s*\n?\s*:\s*'aa_start_preflight_failed'/.test(code),
+      /lockedAndUnrecovered && !systemSetup\s*\n?\s*\?\s*'device_locked'\s*\n?\s*:\s*'aa_start_preflight_failed'/.test(code),
       '恢复失败须落 device_locked，恢复成功/非锁屏才是 aa_start_preflight_failed',
     );
     assert(
@@ -72,7 +72,7 @@ export function runAll(): UnitCaseResult[] {
   run(results, 'P1：check-testing 把 device_locked 归 externalBlocked/device_blocked', () => {
     const code = executableCode(CHECK_TESTING);
     assert(
-      /const deviceLocked = run\.trace\?\.run_failure_kind === 'device_locked';/.test(code),
+      /const deviceLocked = !!systemSetup \|\| run\.trace\?\.run_failure_kind === 'device_locked';/.test(code),
       'check-testing 须读 run_failure_kind',
     );
     assert(

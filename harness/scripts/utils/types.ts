@@ -572,6 +572,7 @@ export interface VisualHandoffResolutionRow {
 
 /** 单项检查结果 */
 export interface CheckResult {
+  device_setup?: import('./device-unlock-helper').DeviceSetupObservation;
   /** Owning checker may propose new sourced facts; only runtime may freeze a successor. */
   scope_revision_input?: import('./execution-scope').ExecutionScopeInput;
   id: string;
@@ -742,6 +743,7 @@ export interface HarnessRunSummary {
     source?: string;
   }>;
   blockers: Array<{
+    device_setup?: import('./device-unlock-helper').DeviceSetupObservation;
     id: string;
     severity: string;
     status: string;

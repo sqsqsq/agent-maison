@@ -1,3 +1,4 @@
+import { DEVICE_SETUP_GUIDANCE, type DeviceSetupObservation } from './utils/device-unlock-helper';
 // ============================================================================
 // Testing 阶段脚本 Harness — check-testing.ts
 // ============================================================================
@@ -2894,6 +2895,25 @@ export function __testing_checkReportReconcileOnlyPipeline(ctx: CheckContext): C
   return checkReportReconcileOnlyPipeline(ctx, holder, plan, report);
 }
 
+function deviceBlockedChecks(id: string, desc: string, details: string, systemSetup?: DeviceSetupObservation): CheckResult[] {
+    return [
+      {
+        id,
+        category: 'structure',
+        description: desc,
+        severity: 'BLOCKER',
+        status: 'FAIL',
+        details: systemSetup ? `${DEVICE_SETUP_GUIDANCE}\n${details}` : `${details}\n\n设备锁屏且未能自动解锁——这是外部阻断，不是代码或签名问题。`,
+        ...(systemSetup ? { device_setup: systemSetup } : {}),
+        suggestion: systemSetup ? DEVICE_SETUP_GUIDANCE :
+          '请人工解锁设备后重跑 testing harness；框架不会猜测或枚举未登记的口令。' +
+          '若希望框架自动解锁，先在**自己的终端**运行 device-policy --enroll 登记 PIN。',
+        failure_kind: 'device_blocked',
+        blocking_class: 'externalBlocked',
+      },
+    ];
+}
+
 function buildDeviceInstallFailResults(
   ctx: CheckContext,
   holder: DeviceTestPipelineHolder,
@@ -2909,24 +2929,11 @@ function buildDeviceInstallFailResults(
    * 全丢了，goal 也就归不到 external_block。
    */
   installDiagnosisKind?: string,
+  systemSetup?: DeviceSetupObservation,
 ): CheckResult[] {
-  if (installDiagnosisKind === 'device_locked') {
+  if (systemSetup || installDiagnosisKind === 'device_locked') {
     holder.installExternallyBlocked = true;
-    return [
-      {
-        id,
-        category: 'structure',
-        description: desc,
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: `${fallbackDetails}\n\n设备锁屏且未能自动解锁——这是外部阻断，不是代码或签名问题。`,
-        suggestion:
-          '请人工解锁设备后重跑 testing harness；框架不会猜测或枚举未登记的口令。' +
-          '若希望框架自动解锁，先在**自己的终端**运行 device-policy --enroll 登记 PIN。',
-        failure_kind: 'device_blocked',
-        blocking_class: 'externalBlocked',
-      },
-    ];
+    return deviceBlockedChecks(id, desc, fallbackDetails, systemSetup);
   }
   const diag = diagnoseInstallBlocking(ctx.projectRoot);
   if (diag.kind === 'externalBlocked') {
@@ -3234,6 +3241,7 @@ function checkDeviceTestInstallGate(
           .join('\n'),
         // provider 已经判出的失败原因优先——重新探测看不见"手机连着但锁屏"
         res.install?.diagnosis?.kind,
+        res.install?.diagnosis?.systemSetup,
       );
     }
 
@@ -4600,7 +4608,8 @@ function checkDeviceTestRunGate(
       appSnapshotCacheAbs,
     }) as HylyreRunResult;
 
-    if (!run.ok) {
+    const systemSetup = require('../../profiles/hmos-app/harness/providers/device-test-run').observeSetupForUnexecutedTrace(run.trace) as DeviceSetupObservation | undefined;
+    if (!run.ok || systemSetup) {
       // plan 07a41ec6 T6：失败轮同样落执行键记录——同键更晚失败不得复用更早成功
       try {
         writeExecutionKeyRecord(hylyreOutDir, {
@@ -4614,7 +4623,7 @@ function checkDeviceTestRunGate(
       // 二者的处置完全不同：前者「人解锁后重跑」，后者「查签名/环境」。此前一律标
       // device_toolchain，锁屏这个真因在结论层被抹掉，指引把人带向错误方向。
       // 与 UT 侧同一契约（externalBlocked/device_blocked → goal 归 external_block）。
-      const deviceLocked = run.trace?.run_failure_kind === 'device_locked';
+      const deviceLocked = !!systemSetup || run.trace?.run_failure_kind === 'device_locked';
       return [
         {
           id,
@@ -4624,10 +4633,11 @@ function checkDeviceTestRunGate(
           status: 'FAIL',
           // review#2：runner 崩溃（!run.ok）= 真机环境/工具链问题，非 UI/业务代码 → 标 device_toolchain，
           // 让 goal 失败分类归 toolchain（早 halt 修环境、勿误导改码）。下方"用例失败"路径不打此标 → code_regression。
+          ...(systemSetup ? { device_setup: systemSetup } : {}),
           blocking_class: deviceLocked ? 'externalBlocked' : 'device_toolchain',
           ...(deviceLocked ? { failure_kind: 'device_blocked' } : {}),
           details: [
-            deviceLocked
+            systemSetup ? DEVICE_SETUP_GUIDANCE : deviceLocked
               ? `设备锁屏且自动恢复未完成（exit=${run.exitCode}）——请查看随附错误，按提示稍后重试或重新登记；也可人工解锁后重跑。`
               : `真机自动化执行失败：exit=${run.exitCode}`,
             `命令：${run.command}`,
@@ -4952,6 +4962,12 @@ export function runDeviceVisualDiffCapture(
   devices: DeviceVisualDiffCaptureDevices,
 ): CheckResult[] {
   const id = 'visual_diff_capture';
+  const setupChecks = (): CheckResult[] | null => {
+    const setup = require('../../profiles/hmos-app/harness/device-recovery-bridge').observeDeviceSnapshot(devices.deviceSn)?.systemSetup as DeviceSetupObservation | undefined;
+    return setup ? deviceBlockedChecks(id, '视觉采集设备就绪', '', setup) : null;
+  };
+  const beforeSetup = setupChecks();
+  if (beforeSetup) return beforeSetup;
   // round5 P1-A：有固化 nav 配置则按屏导航到位再截（根除多屏截同一帧）。
   // S2 P0-C（visual-capability-truth）：升 2.0 归一读取——identity 锚点随屏配置；
   // pixel_1to1 下目标屏须有已确认 identity（proposed 候选不作数）。
@@ -5044,6 +5060,10 @@ export function runDeviceVisualDiffCapture(
     ...(goldenForbidden.length > 0 ? { goldenForbidden } : {}),
   });
   const p0Failed = cap.p0CaptureFailures ?? [];
+  if (cap.skippedReason === 'no_captures' || p0Failed.length) {
+    const afterSetup = setupChecks();
+    if (afterSetup) return afterSetup;
+  }
   // t4（plan f3a8c6d2）：把"哪些缺屏属内容可行动"注入 ctx，供随后的 visual diff
   // 熔断资格判定消费（同 run 内存传递，比照 refElementsManifest；不落盘、无新协议）。
   //
@@ -6091,6 +6111,8 @@ const checker: PhaseChecker = {
       results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
       results.push(...checkDeviceTestInstallGate(ctx, deviceTestHapHolder));
       results.push(...checkDeviceTestRunGate(ctx, deviceTestHapHolder));
+      // 没进入目标 UI 时保留原失败，避免旧视觉/报告材料再派生内容缺陷。
+      if (results.some(result => result.device_setup)) return results;
       // d9e4b7c1 T2：goal 正式 gate 的 evidence 统一写入（build→install→run 全部完成后，
       // 协调层单点写）。review P1：结果必须进 results——真实安装+run 已成功而 evidence
       // 写不出时是 BLOCKER（否则 collector 把缺文件当无信号，旧包结果可能假放行）。

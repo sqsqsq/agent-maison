@@ -106,6 +106,7 @@ export async function waitForConditionRecovery(opts: {
   phase: string;
   probe: string;
   blockedBy: string;
+  reason?: string;
   availableMs: number;
   runProbe: () => ConditionProbeResult;
   /**
@@ -123,7 +124,7 @@ export async function waitForConditionRecovery(opts: {
   if (!(limitMs > 0)) return false;
   const base = { phase: opts.phase, probe: opts.probe, blocked_by: opts.blockedBy };
   const startMs = Date.now();
-  opts.emit({ type: 'condition_wait_started', ...base, limit_ms: limitMs, poll_ms: pollMs });
+  opts.emit({ type: 'condition_wait_started', ...base, ...(opts.reason ? { reason: opts.reason } : {}), limit_ms: limitMs, poll_ms: pollMs });
   let probeReadyCount = 0;
   let lastReason: string | undefined;
   for (;;) {

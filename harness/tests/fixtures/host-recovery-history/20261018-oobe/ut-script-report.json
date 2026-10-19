@@ -1,0 +1,1785 @@
+{
+  "phase": "ut",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "timestamp": "2026-10-18T08:16:06.126Z",
+  "project_root": "D:\\1.code\\SimulatedWalletForHmos",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_ut_core_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "code",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "afc17fcc83e0a3e79445bd050d40571d94b79c1b8be9d3d33b15a3dff6a3fd38",
+          "binding": {
+            "input_id": "code",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                "exists": true,
+                "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\resources\\base\\profile\\backup_config.json",
+                "exists": true,
+                "sha256": "cbf358749c48aaa4afa6819e796e71ef5c0629cc3e651e2e09a91612f1041696",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankCardRecord.ets",
+                "exists": true,
+                "sha256": "6c1736b66c0c35a00fc8e84f8faa74d273adc038f8ae6d566afc4f7396b47109",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankInfo.ets",
+                "exists": true,
+                "sha256": "0415c01bfcae5b62cce9f754965729515a5d6ea9f675ff1730bdeddc45376222",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\MockBankCard.ets",
+                "exists": true,
+                "sha256": "325e698ee7e33785988ba94b42a17f9e597e7a27098fde796fb12ab0bffb181d",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankCardRepository.ets",
+                "exists": true,
+                "sha256": "1b96ea8c5222a39891c2957c2348fea5daa24883a14ced126caaa91b69f8c4dc",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                "exists": true,
+                "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\model\\BankOpeningSession.ets",
+                "exists": true,
+                "sha256": "73cdb6d9f6b36036cdfe014abf0d256f23d44c1c3dc2c32f1fa8a823caf37300",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\BankOpeningCoordinator.ets",
+                "exists": true,
+                "sha256": "a509a7727d2b7b70129f01de5beddfeba61c419cb713f58f7ad6a83aeb8e7e85",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\OtpCountdown.ets",
+                "exists": true,
+                "sha256": "02ce35bedf315f2a655133243161869b86ae4091d06e2fa14f5f76fee8672ece",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\index.ets",
+                "exists": true,
+                "sha256": "b441663374a38b97261e0f27a37659a9b27399ce6dabdf5bdb94b43be2ee6cdd",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\BankListRow.ets",
+                "exists": true,
+                "sha256": "1d0ef69162ef330ba04f6a8f329f537bfab9ac19aa5c673f8c9beb40693b8733",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\CardTypeSheet.ets",
+                "exists": true,
+                "sha256": "109e606877254648d37e3fcfe7d38e6b308a610ba4e3fc8c28f48ec6b761ba9a",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\OtpVerificationSheet.ets",
+                "exists": true,
+                "sha256": "3583b2ef528ebe8f65d88682175815adc4ae35ba123a5e1f63b049a07710797f",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\navigation\\BankOpeningNavigator.ets",
+                "exists": true,
+                "sha256": "a7bd17f1502052d18be5e399901dadcfa06b0bc4cdebc49c16dfca9621c2d21e",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                "exists": true,
+                "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "61e98a22ca25a1b52a1578dd815e4d39e683416b7a9f189d593307bd99d9a950",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardResultPage.ets",
+                "exists": true,
+                "sha256": "3fc81d6849777c5637cef77109fe405949025efe06cd25c12b8e7c65f566e66d",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardSelectionPage.ets",
+                "exists": true,
+                "sha256": "15f6a3299b220ed47b3d680e9631c698d6924321011827446962df409bb7f0b6",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\shared\\constant\\BankConstants.ets",
+                "exists": true,
+                "sha256": "69d9f04e284679c8efdbbd88b0b8e0bac1ba31e0142e5d8347ab986ebd7fbb9d",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\color.json",
+                "exists": true,
+                "sha256": "ca5b274242bb71429da5bb018e8e68cbb66aaa254e69d4023f1cb3ba690527d2",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\float.json",
+                "exists": true,
+                "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\string.json",
+                "exists": true,
+                "sha256": "313f57ab14145aa1fd1a4ac44698294ac13bfc4caeb5d1be47f7b6d17149aa2a",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\profile\\route_map.json",
+                "exists": true,
+                "sha256": "29f2c6fc828055250daf08943c91bffa0c09ca4bf84d6da5771572b19baa07c9",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\data\\model\\UserProfile.ets",
+                "exists": true,
+                "sha256": "93619aca33d572ad0456ff5b9d0288f19d84bc1c8a49f8a1e45e11b9146b4213",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\domain\\service\\AccountService.ets",
+                "exists": true,
+                "sha256": "c250e0977e878e23074cfec35349be7b6e4ea8541a2e8f8b7351e1a759026c85",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\index.ets",
+                "exists": true,
+                "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\05-SystemBase\\CommFunc\\src\\main\\ets\\shared\\navigation\\NavPathContext.ets",
+                "exists": true,
+                "sha256": "3e731b4d3835e22aaa076763b826eaf32fa732cac92a5894f36d8f659df80714",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\05-SystemBase\\CommUI\\src\\main\\ets\\presentation\\components\\ActionListItem.ets",
+                "exists": true,
+                "sha256": "4bc6399ca67f965d6736d38b63fdb6b077e572f3066b5ba2380a1c5c6245045f",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\05-SystemBase\\CommUI\\src\\main\\ets\\presentation\\components\\SectionCard.ets",
+                "exists": true,
+                "sha256": "5476b33b3e55ec1d5e9b39c7ab7e363ab3aa6b5635da6408d804b970638738a6",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "01-Product/Phone/src/main/ets/pages/index.ets",
+              "01-Product/Phone/src/main/resources/base/profile/backup_config.json",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/MockBankCard.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/model/BankOpeningSession.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/service/OtpCountdown.ets",
+              "02-Feature/WalletMain/src/main/ets/index.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/BankListRow.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/navigation/BankOpeningNavigator.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+              "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+              "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+              "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+              "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+              "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+              "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+              "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+              "04-BusinessBase/AccountManager/src/main/ets/index.ets",
+              "05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets",
+              "05-SystemBase/CommUI/src/main/ets/presentation/components/ActionListItem.ets",
+              "05-SystemBase/CommUI/src/main/ets/presentation/components/SectionCard.ets"
+            ],
+            "content_fingerprint": "afc17fcc83e0a3e79445bd050d40571d94b79c1b8be9d3d33b15a3dff6a3fd38"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                  "exists": true,
+                  "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\resources\\base\\profile\\backup_config.json",
+                  "exists": true,
+                  "sha256": "cbf358749c48aaa4afa6819e796e71ef5c0629cc3e651e2e09a91612f1041696",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankCardRecord.ets",
+                  "exists": true,
+                  "sha256": "6c1736b66c0c35a00fc8e84f8faa74d273adc038f8ae6d566afc4f7396b47109",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankInfo.ets",
+                  "exists": true,
+                  "sha256": "0415c01bfcae5b62cce9f754965729515a5d6ea9f675ff1730bdeddc45376222",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\MockBankCard.ets",
+                  "exists": true,
+                  "sha256": "325e698ee7e33785988ba94b42a17f9e597e7a27098fde796fb12ab0bffb181d",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankCardRepository.ets",
+                  "exists": true,
+                  "sha256": "1b96ea8c5222a39891c2957c2348fea5daa24883a14ced126caaa91b69f8c4dc",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\model\\BankOpeningSession.ets",
+                  "exists": true,
+                  "sha256": "73cdb6d9f6b36036cdfe014abf0d256f23d44c1c3dc2c32f1fa8a823caf37300",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\BankOpeningCoordinator.ets",
+                  "exists": true,
+                  "sha256": "a509a7727d2b7b70129f01de5beddfeba61c419cb713f58f7ad6a83aeb8e7e85",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\OtpCountdown.ets",
+                  "exists": true,
+                  "sha256": "02ce35bedf315f2a655133243161869b86ae4091d06e2fa14f5f76fee8672ece",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\index.ets",
+                  "exists": true,
+                  "sha256": "b441663374a38b97261e0f27a37659a9b27399ce6dabdf5bdb94b43be2ee6cdd",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\BankListRow.ets",
+                  "exists": true,
+                  "sha256": "1d0ef69162ef330ba04f6a8f329f537bfab9ac19aa5c673f8c9beb40693b8733",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\CardTypeSheet.ets",
+                  "exists": true,
+                  "sha256": "109e606877254648d37e3fcfe7d38e6b308a610ba4e3fc8c28f48ec6b761ba9a",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\OtpVerificationSheet.ets",
+                  "exists": true,
+                  "sha256": "3583b2ef528ebe8f65d88682175815adc4ae35ba123a5e1f63b049a07710797f",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\navigation\\BankOpeningNavigator.ets",
+                  "exists": true,
+                  "sha256": "a7bd17f1502052d18be5e399901dadcfa06b0bc4cdebc49c16dfca9621c2d21e",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                  "exists": true,
+                  "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "61e98a22ca25a1b52a1578dd815e4d39e683416b7a9f189d593307bd99d9a950",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardResultPage.ets",
+                  "exists": true,
+                  "sha256": "3fc81d6849777c5637cef77109fe405949025efe06cd25c12b8e7c65f566e66d",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardSelectionPage.ets",
+                  "exists": true,
+                  "sha256": "15f6a3299b220ed47b3d680e9631c698d6924321011827446962df409bb7f0b6",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\shared\\constant\\BankConstants.ets",
+                  "exists": true,
+                  "sha256": "69d9f04e284679c8efdbbd88b0b8e0bac1ba31e0142e5d8347ab986ebd7fbb9d",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\color.json",
+                  "exists": true,
+                  "sha256": "ca5b274242bb71429da5bb018e8e68cbb66aaa254e69d4023f1cb3ba690527d2",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\float.json",
+                  "exists": true,
+                  "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\string.json",
+                  "exists": true,
+                  "sha256": "313f57ab14145aa1fd1a4ac44698294ac13bfc4caeb5d1be47f7b6d17149aa2a",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\profile\\route_map.json",
+                  "exists": true,
+                  "sha256": "29f2c6fc828055250daf08943c91bffa0c09ca4bf84d6da5771572b19baa07c9",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\data\\model\\UserProfile.ets",
+                  "exists": true,
+                  "sha256": "93619aca33d572ad0456ff5b9d0288f19d84bc1c8a49f8a1e45e11b9146b4213",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\domain\\service\\AccountService.ets",
+                  "exists": true,
+                  "sha256": "c250e0977e878e23074cfec35349be7b6e4ea8541a2e8f8b7351e1a759026c85",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\index.ets",
+                  "exists": true,
+                  "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\05-SystemBase\\CommFunc\\src\\main\\ets\\shared\\navigation\\NavPathContext.ets",
+                  "exists": true,
+                  "sha256": "3e731b4d3835e22aaa076763b826eaf32fa732cac92a5894f36d8f659df80714",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\05-SystemBase\\CommUI\\src\\main\\ets\\presentation\\components\\ActionListItem.ets",
+                  "exists": true,
+                  "sha256": "4bc6399ca67f965d6736d38b63fdb6b077e572f3066b5ba2380a1c5c6245045f",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\05-SystemBase\\CommUI\\src\\main\\ets\\presentation\\components\\SectionCard.ets",
+                  "exists": true,
+                  "sha256": "5476b33b3e55ec1d5e9b39c7ab7e363ab3aa6b5635da6408d804b970638738a6",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "acceptance",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "2a03c05b80172d55bd21ccf7f2dc9a351b59a919e766813246938402f41c0540",
+          "binding": {
+            "input_id": "acceptance",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                "exists": true,
+                "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                "exists": true,
+                "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                "exists": true,
+                "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\architecture.md",
+                "exists": true,
+                "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\component-index.yaml",
+                "exists": true,
+                "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\3-点击任意银行拉起添卡选卡半模态.jpg",
+                "exists": true,
+                "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+                "exists": true,
+                "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\5-选中某张卡片后拉起短信验证.jpg",
+                "exists": true,
+                "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\6-短信验证完成后结果页.jpg",
+                "exists": true,
+                "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\原始需求.md",
+                "exists": true,
+                "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\acceptance.yaml",
+                "exists": true,
+                "sha256": "016c237e31273da3ed8d00b8002b7894210196591b7426b5d77d3d9117582f6c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                "exists": true,
+                "sha256": "50df0cf71a816b6490cfa05fd5607a2eb5338023c790f6b35eb55752ae8a7084",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.review.md",
+                "exists": true,
+                "sha256": "b46327b768afbff485a0c99bb9138828da6663a2b9a7c0978ac87fc63dda7c5c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "953832007ea97a4da0b43ce337b2ff5f2716336d1fb3f3fb803bff227d2eec32",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\contracts\\internal-contracts.yaml",
+                "exists": true,
+                "sha256": "90bb8afc3edd5e55487f733fd475e1d8b293fa9ff6a447afb086678a48329c92",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\glossary.yaml",
+                "exists": true,
+                "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\module-catalog.yaml",
+                "exists": true,
+                "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml",
+              "doc/features/bc-openCard-2/bank-card-opening-flow/change-unit.yaml",
+              "doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+              "doc/features/原始需求/1-2-银行卡/原始需求.md",
+              "doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+              "doc/module-catalog.yaml",
+              "doc/glossary.yaml",
+              "doc/architecture.md",
+              "doc/component-index.yaml",
+              "doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+              "doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+              "doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+              "doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+              "01-Product/Phone/src/main/ets/pages/index.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+              "doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml"
+            ],
+            "content_fingerprint": "2a03c05b80172d55bd21ccf7f2dc9a351b59a919e766813246938402f41c0540"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "016c237e31273da3ed8d00b8002b7894210196591b7426b5d77d3d9117582f6c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                  "exists": true,
+                  "sha256": "50df0cf71a816b6490cfa05fd5607a2eb5338023c790f6b35eb55752ae8a7084",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.yaml",
+                  "exists": true,
+                  "sha256": "953832007ea97a4da0b43ce337b2ff5f2716336d1fb3f3fb803bff227d2eec32",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\原始需求.md",
+                  "exists": true,
+                  "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.review.md",
+                  "exists": true,
+                  "sha256": "b46327b768afbff485a0c99bb9138828da6663a2b9a7c0978ac87fc63dda7c5c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\module-catalog.yaml",
+                  "exists": true,
+                  "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\glossary.yaml",
+                  "exists": true,
+                  "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\architecture.md",
+                  "exists": true,
+                  "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\component-index.yaml",
+                  "exists": true,
+                  "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\3-点击任意银行拉起添卡选卡半模态.jpg",
+                  "exists": true,
+                  "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+                  "exists": true,
+                  "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\5-选中某张卡片后拉起短信验证.jpg",
+                  "exists": true,
+                  "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\6-短信验证完成后结果页.jpg",
+                  "exists": true,
+                  "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                  "exists": true,
+                  "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                  "exists": true,
+                  "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\contracts\\internal-contracts.yaml",
+                  "exists": true,
+                  "sha256": "90bb8afc3edd5e55487f733fd475e1d8b293fa9ff6a447afb086678a48329c92",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_ut_design_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "82d2834ffb7b2d0701c2e9cdee5d4a0c206c487e3ff3d5667285c06cb346a238",
+          "binding": {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                "exists": true,
+                "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                "exists": true,
+                "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                "exists": true,
+                "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\architecture.md",
+                "exists": true,
+                "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\component-index.yaml",
+                "exists": true,
+                "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\3-点击任意银行拉起添卡选卡半模态.jpg",
+                "exists": true,
+                "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+                "exists": true,
+                "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\5-选中某张卡片后拉起短信验证.jpg",
+                "exists": true,
+                "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\6-短信验证完成后结果页.jpg",
+                "exists": true,
+                "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\原始需求.md",
+                "exists": true,
+                "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                "exists": true,
+                "sha256": "50df0cf71a816b6490cfa05fd5607a2eb5338023c790f6b35eb55752ae8a7084",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml",
+                "exists": true,
+                "sha256": "a82c2f3f04659fae391432708d3cac30bb7d0604a6d9294c264e35db0b9affdc",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.review.md",
+                "exists": true,
+                "sha256": "b46327b768afbff485a0c99bb9138828da6663a2b9a7c0978ac87fc63dda7c5c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "953832007ea97a4da0b43ce337b2ff5f2716336d1fb3f3fb803bff227d2eec32",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\contracts\\internal-contracts.yaml",
+                "exists": true,
+                "sha256": "90bb8afc3edd5e55487f733fd475e1d8b293fa9ff6a447afb086678a48329c92",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\glossary.yaml",
+                "exists": true,
+                "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\module-catalog.yaml",
+                "exists": true,
+                "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml",
+              "doc/features/bc-openCard-2/bank-card-opening-flow/change-unit.yaml",
+              "doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+              "doc/features/原始需求/1-2-银行卡/原始需求.md",
+              "doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+              "doc/module-catalog.yaml",
+              "doc/glossary.yaml",
+              "doc/architecture.md",
+              "doc/component-index.yaml",
+              "doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+              "doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+              "doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+              "doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+              "01-Product/Phone/src/main/ets/pages/index.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+              "doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml"
+            ],
+            "content_fingerprint": "82d2834ffb7b2d0701c2e9cdee5d4a0c206c487e3ff3d5667285c06cb346a238"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "a82c2f3f04659fae391432708d3cac30bb7d0604a6d9294c264e35db0b9affdc",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                  "exists": true,
+                  "sha256": "50df0cf71a816b6490cfa05fd5607a2eb5338023c790f6b35eb55752ae8a7084",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.yaml",
+                  "exists": true,
+                  "sha256": "953832007ea97a4da0b43ce337b2ff5f2716336d1fb3f3fb803bff227d2eec32",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\原始需求.md",
+                  "exists": true,
+                  "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.review.md",
+                  "exists": true,
+                  "sha256": "b46327b768afbff485a0c99bb9138828da6663a2b9a7c0978ac87fc63dda7c5c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\module-catalog.yaml",
+                  "exists": true,
+                  "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\glossary.yaml",
+                  "exists": true,
+                  "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\architecture.md",
+                  "exists": true,
+                  "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\component-index.yaml",
+                  "exists": true,
+                  "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\3-点击任意银行拉起添卡选卡半模态.jpg",
+                  "exists": true,
+                  "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+                  "exists": true,
+                  "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\5-选中某张卡片后拉起短信验证.jpg",
+                  "exists": true,
+                  "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\6-短信验证完成后结果页.jpg",
+                  "exists": true,
+                  "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                  "exists": true,
+                  "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                  "exists": true,
+                  "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\contracts\\internal-contracts.yaml",
+                  "exists": true,
+                  "sha256": "90bb8afc3edd5e55487f733fd475e1d8b293fa9ff6a447afb086678a48329c92",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_ut_use_case_context",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "use_cases",
+          "state": "resolved",
+          "selected_source": "use-cases@1",
+          "selected_source_fingerprint": "ac80168ac30916d16c6fd9ed1bb50943cab97c9b75699f24c1e1c6a449a77884",
+          "binding": {
+            "input_id": "use_cases",
+            "source": {
+              "kind": "artifact",
+              "artifact": "use-cases@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                "exists": true,
+                "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                "exists": true,
+                "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                "exists": true,
+                "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\architecture.md",
+                "exists": true,
+                "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\component-index.yaml",
+                "exists": true,
+                "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\3-点击任意银行拉起添卡选卡半模态.jpg",
+                "exists": true,
+                "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+                "exists": true,
+                "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\5-选中某张卡片后拉起短信验证.jpg",
+                "exists": true,
+                "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\6-短信验证完成后结果页.jpg",
+                "exists": true,
+                "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\原始需求.md",
+                "exists": true,
+                "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                "exists": true,
+                "sha256": "50df0cf71a816b6490cfa05fd5607a2eb5338023c790f6b35eb55752ae8a7084",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\use-cases.yaml",
+                "exists": true,
+                "sha256": "d30f31e018d484c0e5c0b52ce8d8a8c28ddaf356b15a6f7649bb8334e7384a07",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.review.md",
+                "exists": true,
+                "sha256": "b46327b768afbff485a0c99bb9138828da6663a2b9a7c0978ac87fc63dda7c5c",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.yaml",
+                "exists": true,
+                "sha256": "953832007ea97a4da0b43ce337b2ff5f2716336d1fb3f3fb803bff227d2eec32",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\contracts\\internal-contracts.yaml",
+                "exists": true,
+                "sha256": "90bb8afc3edd5e55487f733fd475e1d8b293fa9ff6a447afb086678a48329c92",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\glossary.yaml",
+                "exists": true,
+                "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\module-catalog.yaml",
+                "exists": true,
+                "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml",
+              "doc/features/bc-openCard-2/bank-card-opening-flow/change-unit.yaml",
+              "doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+              "doc/features/原始需求/1-2-银行卡/原始需求.md",
+              "doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+              "doc/module-catalog.yaml",
+              "doc/glossary.yaml",
+              "doc/architecture.md",
+              "doc/component-index.yaml",
+              "doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+              "doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+              "doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+              "doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+              "01-Product/Phone/src/main/ets/pages/index.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+              "doc/features/bc-openCard-2/blueprint/contracts/internal-contracts.yaml"
+            ],
+            "content_fingerprint": "ac80168ac30916d16c6fd9ed1bb50943cab97c9b75699f24c1e1c6a449a77884"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "use-cases@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\use-cases.yaml",
+                  "exists": true,
+                  "sha256": "d30f31e018d484c0e5c0b52ce8d8a8c28ddaf356b15a6f7649bb8334e7384a07",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                  "exists": true,
+                  "sha256": "50df0cf71a816b6490cfa05fd5607a2eb5338023c790f6b35eb55752ae8a7084",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.yaml",
+                  "exists": true,
+                  "sha256": "953832007ea97a4da0b43ce337b2ff5f2716336d1fb3f3fb803bff227d2eec32",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\原始需求.md",
+                  "exists": true,
+                  "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\component-blueprint.review.md",
+                  "exists": true,
+                  "sha256": "b46327b768afbff485a0c99bb9138828da6663a2b9a7c0978ac87fc63dda7c5c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\module-catalog.yaml",
+                  "exists": true,
+                  "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\glossary.yaml",
+                  "exists": true,
+                  "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\architecture.md",
+                  "exists": true,
+                  "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\component-index.yaml",
+                  "exists": true,
+                  "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\3-点击任意银行拉起添卡选卡半模态.jpg",
+                  "exists": true,
+                  "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+                  "exists": true,
+                  "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\5-选中某张卡片后拉起短信验证.jpg",
+                  "exists": true,
+                  "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\原始需求\\1-2-银行卡\\6-短信验证完成后结果页.jpg",
+                  "exists": true,
+                  "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                  "exists": true,
+                  "sha256": "41b407afb7ec5d35b2a5b1c9fe4fa98d1d039f46afbd02c5b7bb4c354537e09e",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                  "exists": true,
+                  "sha256": "0b116b165a41a1f5bc7bb84c202a1a3067205d96cf484d72401ea7613f12cd72",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "e623b81871f2629489ebaf50380e007f6858831af7542bda7a4721c2b3e8b9bb",
+                  "role": "artifact"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\blueprint\\contracts\\internal-contracts.yaml",
+                  "exists": true,
+                  "sha256": "90bb8afc3edd5e55487f733fd475e1d8b293fa9ff6a447afb086678a48329c92",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\use-cases.yaml"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "9c6d16fac9432e1ae83f6e9a510f14224c0806f83bd9ac29a7c8df44b153fad0",
+  "checks": [
+    {
+      "id": "node_options_injection",
+      "category": "structure",
+      "description": "进程预加载注入自检（P0-7：门禁产物防篡改）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "NODE_OPTIONS/execArgv/.node-options/.npmrc 未检出预加载注入。"
+    },
+    {
+      "id": "change_unit_feature_projection",
+      "category": "traceability",
+      "description": "Change Unit → Feature ID-only 施工投影",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "canonical CU 映射完整；use_cases_required=true，dag_required=true。",
+      "affected_files": [
+        "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml"
+      ],
+      "source": "change_unit_feature_projection"
+    },
+    {
+      "id": "dag_files_parseable",
+      "category": "structure",
+      "description": "archived/ephemeral DAG 候选必须能解析为 YAML mapping。harness 须报告 实际探测目录、候选路径、来源类型与解析错误；存在但损坏的 DAG 不得静默 跳过或误报为“未找到 DAG”。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "已解析 8/8 个 DAG：doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/account-privacy.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/commit-restart.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/countdown-resend.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/otp-cancel.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/persistence-failure.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/saving-reentry.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/success.dag.yaml (ephemeral), doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/type-cancel.dag.yaml (ephemeral)",
+      "source": "dag_files_parseable"
+    },
+    {
+      "id": "ut_testability_audit_parseable",
+      "category": "structure",
+      "description": "已存在的 <features_dir>/{feature}/ut/testability-audit.md 必须能完整解析； 任一 fenced YAML 块损坏、根节点非 mapping 或 records 非数组均 BLOCKER， 不得用另一个可解析块掩盖。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "testability-audit.md 已解析：doc/features/bc-openCard-2/bank-card-opening-flow/ut/testability-audit.md",
+      "source": "ut_testability_audit_parseable"
+    },
+    {
+      "id": "context_exploration_facts_phase_delta_present",
+      "category": "structure",
+      "description": "facts.md 本阶段 phase_delta 节已声明",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "\"## phase_delta: ut\" 节已声明（12608 字符）。",
+      "source": "context_exploration_gate"
+    },
+    {
+      "id": "upstream_verdict_gate",
+      "category": "structure",
+      "description": "跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "上游机器裁决全部可消费且无负面结论。\n已消费：plan, coding, review",
+      "source": "upstream_verdict_gate"
+    },
+    {
+      "id": "acceptance_yaml_present",
+      "category": "structure",
+      "description": "acceptance_yaml_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml 已存在。"
+    },
+    {
+      "id": "acceptance_content_complete",
+      "category": "structure",
+      "severity": "BLOCKER",
+      "description": "验收内容可执行且有精确预期",
+      "status": "PASS",
+      "details": "验收内容完整"
+    },
+    {
+      "id": "acceptance_ut_layer_complete",
+      "category": "structure",
+      "description": "acceptance_ut_layer_complete",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 16 条 AC/BD 均有合法 ut_layer。"
+    },
+    {
+      "id": "acceptance_device_focus_present",
+      "category": "structure",
+      "description": "acceptance_device_focus_present",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "device/both 共 16 条均已声明 device_focus（及 both 的 ut_focus）。"
+    },
+    {
+      "id": "legacy_device_testing_todo_deprecated",
+      "category": "structure",
+      "description": "legacy_device_testing_todo_deprecated",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "未检测到 legacy device-testing-todo.md。"
+    },
+    {
+      "id": "harness_host_artifact_pollution",
+      "category": "structure",
+      "description": "framework harness 目录（ctx.harnessRoot）下不得出现 contracts.modules[].package_path 对应的宿主 module 树；hmos-app 另扫 ohosTest / test/dag / *.test.ets。任一命中即 BLOCKER。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "framework harness 目录下未发现宿主 module 树或 profile 定义的污染路径。",
+      "source": "harness_host_artifact_pollution"
+    },
+    {
+      "id": "usecase_spec_recommended",
+      "category": "structure",
+      "description": "若 feature 满足以下任一复杂度条件，推荐产出 use-cases.yaml： (1) 多 UI 节点（页面+组件 ≥ 2）共享同一业务状态； (2) 多步云调用串行（≥ 2 次云端接口顺序依赖）； (3) 含回滚分支。 harness 无法精确判定复杂度，仅做弱提示：当 acceptance.yaml 中 ut_layer ∈ {unit, both} 的 AC ≥ 3 条 且 use-cases.yaml 缺失时 WARN。 单点加载类简单 feature（如 home-page）可只用 acceptance.yaml + dag.yaml。",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml 已存在。",
+      "source": "usecase_spec_recommended"
+    },
+    {
+      "id": "usecase_spec_schema",
+      "category": "structure",
+      "description": "use-cases.yaml 存在时必须符合 Schema v2：\n  schema_version / feature / use_cases[]；\n每个 use_case 含 id / description / coordinator / ui_bindings / data_boundaries / state_model / branches。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "use-cases.yaml 合规（1 个 UseCase）。",
+      "source": "usecase_spec_schema"
+    },
+    {
+      "id": "usecase_ui_bindings_nonempty",
+      "category": "structure",
+      "description": "use-cases.yaml 中每个 use_case 的 ui_bindings 至少有 1 条， 且全体 user_actions 合起来 ≥ 1 条（否则这条流不涉及 UI 触发， 应直接用 dag.yaml 测 Repository 级函数，不应产出 use-cases.yaml）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 UseCase 的 ui_bindings 与 user_actions 均非空。",
+      "source": "usecase_ui_bindings_nonempty"
+    },
+    {
+      "id": "boundary_matches_contracts",
+      "category": "structure",
+      "description": "use-cases.yaml > data_boundaries[].type 必须能在 contracts.yaml > interfaces[].class 中找到同名类（确保 UT 打桩的对象是 plan 阶段登记的真实 data 层类）。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "所有 data_boundaries.type 均能在 contracts.yaml 中找到对应类。",
+      "source": "boundary_matches_contracts"
+    },
+    {
+      "id": "named_business_handler",
+      "category": "structure",
+      "description": "named_business_handler",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "ui_bindings.user_actions.calls 引用的函数均为命名函数（不是 inline lambda）。",
+      "source": "named_business_handler"
+    },
+    {
+      "id": "ut_testability_audit_present",
+      "category": "structure",
+      "description": "<features_dir>/{feature}/ut/testability-audit.md 必须存在，且对 acceptance.yaml 中每条 ut_layer ∈ {unit, both} 的 AC/BD 各有一条审计记录（acceptance_id 对齐）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "testability-audit 已覆盖全部 13 条 unit/both AC/BD。",
+      "source": "ut_testability_audit_present"
+    },
+    {
+      "id": "ut_unsupported_targets_handled",
+      "category": "structure",
+      "description": "testability-audit.md 中 testability_level=L3 的每条记录必须 selected ∈ {option_a, option_b}： option_a → 定义未闭环或 unit 义务仍在时生成 spec 裁定候选，UT 不改 acceptance、不自批降级； option_b → 当前 UT 阶段 FAIL，并生成 coding repair candidate；coding 完成源码可测性改造 且重走 review 后，审计应降为 L1/L2 再继续 UT。",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "无 L3（不可测）记录，跳过 option_a/b 处置检查。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "ut_unsupported_targets_handled"
+    },
+    {
+      "id": "ut_mock_plan_parseable",
+      "category": "structure",
+      "description": "已存在的 <features_dir>/{feature}/ut/mock-plan.yaml 必须是可解析的纯 YAML mapping；存在但损坏时须报告 canonical 路径，不得按“文件缺失”继续判定。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "mock-plan.yaml 已解析：doc/features/bc-openCard-2/bank-card-opening-flow/ut/mock-plan.yaml",
+      "source": "ut_mock_plan_present"
+    },
+    {
+      "id": "ut_mock_plan_present",
+      "category": "structure",
+      "description": "当 testability-audit 存在任一 L0/L1/L2 记录时，<features_dir>/{feature}/ut/mock-plan.yaml 必须存在且含 spies[] 或 doubles[]；非 pure dependencies[] 须在 mock-plan 中有 target_class 条目。被测 entry_point（Flow/Coordinator 入口）不要求写入 mock-plan。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "mock-plan 满足 6 条 L0/L1/L2 记录的非 pure 依赖声明要求（被测 entry_point 不要求出现在 mock-plan）。",
+      "source": "ut_mock_plan_present"
+    },
+    {
+      "id": "ut_mock_plan_typed",
+      "category": "structure",
+      "description": "mock-plan.yaml 中每个 preset 必须声明 returns.ts_expr 或 throws.ts_expr； ts_expr 须含显式类型断言（as Type）或 new 构造调用（脚本粗校验正则， 防 ArkTS 无类型字面量）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "mock-plan 全部 preset ts_expr 通过粗校验。",
+      "source": "ut_mock_plan_present"
+    },
+    {
+      "id": "ut_mock_plan_contracts_consistent",
+      "category": "structure",
+      "description": "mock-plan spies[].target_class 与 methods[].name 必须与 contracts.yaml > interfaces[] 中对应类与方法表一致。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "mock-plan 的 target_class / methods 与 contracts.yaml 一致。",
+      "source": "ut_mock_plan_present"
+    },
+    {
+      "id": "dag_schema_compliance",
+      "category": "structure",
+      "description": "DAG 文件必须符合 DAG Schema：必填 flow_id / flow_name / module / entry_point / nodes；当 feature 产出了 use-cases.yaml 时， DAG 额外必填 use_case（指向 use_cases[].id）与 branches（分支 id 列表）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 8 个 DAG 文件的 Schema 合规。",
+      "source": "dag_schema_compliance"
+    },
+    {
+      "id": "dag_node_type_valid",
+      "category": "structure",
+      "description": "DAG 节点的 type 必须来自合法枚举集。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 DAG 节点类型合法。",
+      "source": "dag_node_type_valid"
+    },
+    {
+      "id": "dag_acyclic",
+      "category": "structure",
+      "description": "DAG 必须可拓扑排序",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 8 个 DAG 无环。",
+      "source": "dag_acyclic"
+    },
+    {
+      "id": "dag_source_file_exists",
+      "category": "structure",
+      "description": "DAG 节点的 source.file 引用的文件在工程中必须存在",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 DAG 节点引用的源码文件均存在。",
+      "source": "dag_source_file_exists"
+    },
+    {
+      "id": "dag_linked_usecase",
+      "category": "structure",
+      "description": "当 feature 产出了 use-cases.yaml 时：\n  DAG.use_case 必须在 use-cases.yaml > use_cases[].id 中存在；\n  DAG.branches[] 必须全部在该 UseCase 的 branches[].id 中存在。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 DAG 均正确指向 use-cases.yaml 中的 UseCase 与 branch。",
+      "source": "dag_linked_usecase"
+    },
+    {
+      "id": "dag_boundary_matches_spec",
+      "category": "structure",
+      "description": "DAG 中 port_call_cloud / port_call_local 节点的 boundary.name / boundary.type / boundary.method 必须在 use-cases.yaml > data_boundaries 中找到对应声明（仅当 use-cases.yaml 存在时适用）。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "DAG 中所有 port_call_* 节点的 boundary 均能映射到 use-cases.yaml 的 data_boundaries。",
+      "source": "dag_boundary_matches_spec"
+    },
+    {
+      "id": "dag_assertion_linked_branch",
+      "category": "structure",
+      "description": "type=assertion 的节点必须声明 linked_branch 或 linked_acceptance （以便 UT 生成时对应到具体分支/验收项）。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "DAG 中所有 assertion 节点均可追溯到某个 branch。",
+      "source": "dag_assertion_linked_branch"
+    },
+    {
+      "id": "dag_cohesion",
+      "category": "structure",
+      "description": "同 UseCase 的所有 DAG 的 branches[] 必须互不重叠、并集覆盖 use-cases.yaml 中除标注 device_only 外的全部分支。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "同一 UseCase 的 DAG 集合分支无重叠、且全覆盖。",
+      "source": "dag_cohesion"
+    },
+    {
+      "id": "dag_spy_preset_resolvable",
+      "category": "structure",
+      "description": "DAG 节点（port_call_cloud / port_call_local / async_call）若声明 spy_preset， 则该 id 必须在 mock-plan 对应类与方法下存在；未声明 spy_preset 的旧 DAG 可仅靠 mock_data（deprecated）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 5 处 spy_preset 可在 mock-plan 中解析。",
+      "source": "dag_spy_preset_resolvable"
+    },
+    {
+      "id": "ut_file_naming",
+      "category": "structure",
+      "description": "UT 文件名以 .test.ets 结尾，文件名反映业务流程",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "全部 6 个 UT 文件命名规范（*.test.ets）。",
+      "source": "ut_file_naming"
+    },
+    {
+      "id": "ut_framework_import",
+      "category": "structure",
+      "description": "UT 文件必须导入 @ohos/hypium 并使用 describe/it 结构",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 6 个 UT 文件正确导入测试框架。",
+      "source": "ut_framework_import"
+    },
+    {
+      "id": "ut_hypium_mockkit_policy",
+      "category": "structure",
+      "description": "UT 若从 @ohos/hypium 导入 MockKit 或 when（Hypium 全局 mock API），则 mock-plan.yaml 必须至少有一条 strategy=mockkit（doubles[] 须显式 strategy，禁止缺省视为 mockkit）， target_class 须在 contracts.yaml interfaces[] 中登记；UT 内 MockKit.mock / when(Class.method) 须与 plan 中 mockkit 边界及 methods 对齐，禁止 mock testability-audit entry_point 或 use-cases coordinator；使用 when(...) 时须在源码引用 plan presets[].id。 Spy 路线的 whenXxx 属性名不触发本规则；扫描全部 @ohos/hypium import 子句。",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "本 feature 责任域内的 UT 未从 @ohos/hypium 导入 MockKit/when（或存量文件无新增 mock 用法），跳过 mock 策略门禁。\n身份基线：基线=2c83c1824e38f67f7c1141a3be155360266bad30（锚=run_base_sha）",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "ut_hypium_mockkit_policy"
+    },
+    {
+      "id": "ut_assertion_exists",
+      "category": "structure",
+      "description": "每个 it() 至少一条 expect 断言",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 it() 用例均包含 expect 断言。",
+      "source": "ut_assertion_exists"
+    },
+    {
+      "id": "ut_tsc_compiles",
+      "category": "structure",
+      "description": "UT 文件（*.test.ets）必须能通过 TypeScript Compiler 静态编译（tsc --noEmit）： 零 Error 级诊断。该规则使用轻量化 CompilerHost，将 .ets 虚拟为 .ts，并关闭 import resolution，仅检查测试文件本体的语法和文件内类型错误。 目的：防止弱模型生成的 UT 明显编译不过却被 harness 标绿（假 PASS）。 跨文件类型错误由 ut_hvigor_build 兜底。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "6 个 UT 文件 tsc --noEmit 通过（耗时 66 ms）。",
+      "source": "ut_tsc_compiles"
+    },
+    {
+      "id": "ut_hvigor_build",
+      "category": "structure",
+      "description": "v2.2 新增（方案 B）：UT 所在 ohosTest 模块必须能通过 hvigor 真实编译。 这是 tsc --noEmit 规则的进阶护城河 —— tsc 只检查单个测试文件本身， hvigor 则跨文件、跨模块编译，能发现 UT 对被测函数签名的实际违约。 工具链缺失时 FAIL（不 SKIP）；HARNESS_SKIP_HVIGOR=1 显式跳过也 FAIL。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "全部 1 个 ohosTest 模块 hvigor 编译通过（累计耗时 2217 ms）。\n逐模块编译状态：\n编译形态：product=default（来源：sole_candidate）；工程可选：default（单次解析，贯穿本门禁）\n  - WalletMain: PASS（日志：../../doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/hvigor-ut-build.WalletMain.log）",
+      "source": "ut_hvigor_build"
+    },
+    {
+      "id": "ut_hvigor_test",
+      "category": "structure",
+      "description": "v2.2 新增（方案 C）：UT 必须在真机/模拟器上**实际运行**并全部通过， 作为 business-ut 的必要出口条件（而非 SKIP）。该规则：\n  (1) 先调用 hdc list targets 探测设备；\n  (2) 无设备 → **FAIL BLOCKER**（不 SKIP；内网无设备的\"软通过\"是已知假 PASS 根因）；\n  (3) 有设备 → hvigorw test 装机运行；\n  (4) 解析 hypium 输出：total / failed / failures；failed > 0 FAIL；\n  (5) HARNESS_SKIP_HVIGOR_TEST=1 逃生阀触发时仍然 FAIL（显式拒绝软通过）。",
+      "severity": "BLOCKER",
+      "status": "FAIL",
+      "details": "ohosTest 签名环境缺口：signed 缺失，原因未知，见下方诊断；ohosTest 仅产出 unsigned HAP\n\nohosTest 模块 \"WalletMain\" 装机执行失败：\n失败阶段：aa_test_no_result；aa test 未输出 OHOS_REPORT_RESULT（exit=-1），无法确认用例真实执行。\n未发现本应用新增 faultlog；不能据此判定设备或代码责任。\n10-18 16:06:04.206 50146 50146 I A00000/com.example.simulatedwallet/testTag: OpenHarmonyTestRunner OnPrepare\n10-18 16:06:04.211 50146 50146 I A00000/com.example.simulatedwallet/testTag: OpenHarmonyTestRunner onRun run\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag: ResourceManager:callback getRawFileContent failed, error code: 9001005, message: Invalid relative path. Please confirm:\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag:         1. Whether the file path is correct;\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag:         2. Whether there are any logs of resource loading failures;\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag:         3. Whether the context used matches the resource..\n10-18 16:06:04.214 50146 50146 I A00000/com.example.simulatedwallet/testTag: addAbilityMonitorCallback : null\n10-18 16:06:04.321 50146 50146 I A00000/com.example.simulatedwallet/testTag: OpenHarmonyTestRunner onRun end\n10-18 16:06:04.322  3410  3410 W A04223/com.ohos.sceneboard/SCBMain: [a92ab17dec4d9a8 307253d 19e7e7d]startSceneFromOther:{persistentId:35, screenId: 0, bundleInfo:TestAbility/com.example.simulatedwallet/walletmain_test/0, unclearableSession:undefined, callerPersistentId:0, callerAbilityName: , toPersistentId:0, launchType:0, isNewInstance:false, fullScreenStart:false, _windowMode:1, isAppUseControl:undefined, isUnclearableInRecent:undefined, focusedOnShow:true, isAtomicService:falseisStartupInstallFree:false, isNewAppInstance:false, appInstanceKey:}, startMode:1, forceStart:null, forceNewWant:null\n10-18 16:06:04.589  3410  3410 E A01B01/com.ohos.sceneboard/HOME: AppCategoryInfoManager: getValidAppCatInfo failed! bundleName: com.example.simulatedwallet,\n10-18 16:06:07.203 49693 49693 W A06666/AppGalleryService/AG/AppGallery: [UpdateBeanHelper]:com.example.simulatedwallet getModule bundleModuleMap not contains\n10-18 16:06:12.252 49693 49693 W A06666/AppGalleryService/AG/AppGallery: [UpdateBeanHelper]:com.example.simulatedwallet getModule bundleModuleMap not contains\n10-18 16:16:01.516  3410 53811 W C01321/com.ohos.sceneboard/JsRuntime: [CSM256]not Connected\n10-18 16:16:01.517  3410 53811 W C01321/com.ohos.sceneboard/JsRuntime: [CSM161]disCon\n10-18 16:16:01.693  3410 54140 W C01321/com.ohos.sceneboard/JsRuntime: [CSM256]not Connected\n10-18 16:16:01.693  3410 54140 W C01321/com.ohos.sceneboard/JsRuntime: [CSM161]disCon\n修复建议：查看本模块的 hdc-test.<module>.log（实际路径见 check 结果的日志落盘行），重点检查 testRunner 路径、ohosTest module name、测试 Ability 是否启动，以及设备是否弹出权限/锁屏/前台限制。\n链路异常退出 exit_code=-1。\n日志尾部：\nD:\\Program Files\\Huawei\\DevEco Studio\\tools\\hvigor\\bin\\hvigorw.js\" --mode module -p module=WalletMain@ohosTest -p isOhosTest=true -p product=default -p buildMode=test genOnDeviceTestHap --no-daemon --parallel --incremental --analyze=normal\n\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@PreBuild...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :AccountManager:default@PreBuild...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommFunc:default@PreBuild...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommUI:default@PreBuild...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@CreateHarModuleInfo... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@GenerateMetadata...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@PreCheckSyscap... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@GenerateOhosTestTemplate...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@GeneratePkgContextInfo...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@GeneratePkgSdkInfo... after 2 ms \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@ProcessIntegratedHsp... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommFunc:default@CreateHarBuildProfile...  \u001b[39m\n> hvigor \u001b[32mFinished :CommFunc:default@ConfigureCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommFunc:default@MergeProfile...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@SyscapTransform... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@ProcessRouterMap... after 2 ms \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@ProcessShareConfig... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@ProcessStartupConfig... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommUI:default@CreateHarBuildProfile...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :AccountManager:default@CreateHarBuildProfile...  \u001b[39m\n> hvigor \u001b[32mFinished :CommFunc:default@BuildNativeWithCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommUI:default@MergeProfile...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :AccountManager:default@MergeProfile...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@GenerateLoaderJson...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@CreateBuildProfile...  \u001b[39m\n> hvigor \u001b[32mFinished :CommFunc:default@BuildNativeWithNinja... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :CommUI:default@ConfigureCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :AccountManager:default@ConfigureCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@MergeProfile...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommFunc:default@ProcessLibs...  \u001b[39m\n> hvigor \u001b[32mFinished :CommUI:default@BuildNativeWithCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :AccountManager:default@BuildNativeWithCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@MakePackInfo...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@ProcessProfile...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommFunc:default@DoNativeStrip...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@ConfigureCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@ProcessResource...  \u001b[39m\n> hvigor \u001b[32mFinished :CommUI:default@BuildNativeWithNinja... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :AccountManager:default@BuildNativeWithNinja... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@BuildNativeWithCmake... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@CompileResource...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommUI:default@ProcessLibs...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :AccountManager:default@ProcessLibs...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@OhosTestCompileArkTS...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@OhosTestBuildJS... after 2 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :CommUI:default@DoNativeStrip...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :AccountManager:default@DoNativeStrip...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@OhosTestCopyMockConfigJson... after 1 ms \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@BuildNativeWithNinja... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@ProcessLibs...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@DoNativeStrip...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@CacheNativeLibs...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@GeneratePkgModuleJson...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:ohosTest@ProcessCompiledResources... after 1 ms \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@PackageHap...  \u001b[39m\n> hvigor \u001b[32mUP-TO-DATE :WalletMain:ohosTest@SignHap...  \u001b[39m\n> hvigor \u001b[32mFinished :WalletMain:genOnDeviceTestHap... after 1 ms \u001b[39m\n> hvigor \u001b[32mBUILD SUCCESSFUL in 1 s 346 ms \u001b[39m\n\n\n[stage 2: on-device]\n[meta] bundle=com.example.simulatedwallet module=walletmain_test runner=/ets/testrunner/OpenHarmonyTestRunner timeoutMs=60000\n[hap] D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\build\\default\\outputs\\ohosTest\\WalletMain-ohosTest-signed.hap\n[device] hdcPresent=true available=true targets=3UJ0225321000395\n[device-ready/ut-install] 已用登记凭据解锁并复验\n$ hdc install -r D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\build\\default\\outputs\\ohosTest\\WalletMain-ohosTest-signed.hap\n[Info]App install path:D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\build\\default\\outputs\\ohosTest\\WalletMain-ohosTest-signed.hap msg:install bundle successfully. \r\nAppMod finish\r\n\n\n$ hdc shell aa test -b com.example.simulatedwallet -m walletmain_test -s unittest /ets/testrunner/OpenHarmonyTestRunner -w 60000\nstart ability successfully.\r\n\n\n[aa-test diagnosis]\n未发现本应用新增 faultlog；不能据此判定设备或代码责任。\n[application hilog]\n10-18 16:06:04.206 50146 50146 I A00000/com.example.simulatedwallet/testTag: OpenHarmonyTestRunner OnPrepare\n10-18 16:06:04.211 50146 50146 I A00000/com.example.simulatedwallet/testTag: OpenHarmonyTestRunner onRun run\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag: ResourceManager:callback getRawFileContent failed, error code: 9001005, message: Invalid relative path. Please confirm:\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag:         1. Whether the file path is correct;\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag:         2. Whether there are any logs of resource loading failures;\n10-18 16:06:04.214 50146 50146 E A00000/com.example.simulatedwallet/testTag:         3. Whether the context used matches the resource..\n10-18 16:06:04.214 50146 50146 I A00000/com.example.simulatedwallet/testTag: addAbilityMonitorCallback : null\n10-18 16:06:04.321 50146 50146 I A00000/com.example.simulatedwallet/testTag: OpenHarmonyTestRunner onRun end\n10-18 16:06:04.322  3410  3410 W A04223/com.ohos.sceneboard/SCBMain: [a92ab17dec4d9a8 307253d 19e7e7d]startSceneFromOther:{persistentId:35, screenId: 0, bundleInfo:TestAbility/com.example.simulatedwallet/walletmain_test/0, unclearableSession:undefined, callerPersistentId:0, callerAbilityName: , toPersistentId:0, launchType:0, isNewInstance:false, fullScreenStart:false, _windowMode:1, isAppUseControl:undefined, isUnclearableInRecent:undefined, focusedOnShow:true, isAtomicService:falseisStartupInstallFree:false, isNewAppInstance:false, appInstanceKey:}, startMode:1, forceStart:null, forceNewWant:null\n10-18 16:06:04.589  3410  3410 E A01B01/com.ohos.sceneboard/HOME: AppCategoryInfoManager: getValidAppCatInfo failed! bundleName: com.example.simulatedwallet,\n10-18 16:06:07.203 49693 49693 W A06666/AppGalleryService/AG/AppGallery: [UpdateBeanHelper]:com.example.simulatedwallet getModule bundleModuleMap not contains\n10-18 16:06:12.252 49693 49693 W A06666/AppGalleryService/AG/AppGallery: [UpdateBeanHelper]:com.example.simulatedwallet getModule bundleModuleMap not contains\n10-18 16:16:01.516  3410 53811 W C01321/com.ohos.sceneboard/JsRuntime: [CSM256]not Connected\n10-18 16:16:01.517  3410 53811 W C01321/com.ohos.sceneboard/JsRuntime: [CSM161]disCon\n10-18 16:16:01.693  3410 54140 W C01321/com.ohos.sceneboard/JsRuntime: [CSM256]not Connected\n10-18 16:16:01.693  3410 54140 W C01321/com.ohos.sceneboard/JsRuntime: [CSM161]disCon\n\nsuite_health: UNKNOWN\nexecution_key: 85df4bf9b49bf5ea（本轮真跑：最新同键 run 20261018T075348Z-372 outcome=failed，重新真跑）\n同键同因执行链失败再次出现（20261018T075348Z-372 → 当前；WalletMain）。相同输入下继续真跑没有新信息，请停止并上报本次诊断；修复环境/输入或取得新依据后再执行。",
+      "affected_files": [
+        "02-Feature/WalletMain/src/ohosTest"
+      ],
+      "blocking_class": "device_toolchain",
+      "suggestion": "同键同因执行链失败再次出现（20261018T075348Z-372 → 当前；WalletMain）。相同输入下继续真跑没有新信息，请停止并上报本次诊断；修复环境/输入或取得新依据后再执行。",
+      "source": "ut_hvigor_test"
+    },
+    {
+      "id": "ut_no_src_mutation",
+      "category": "structure",
+      "description": "business-ut（UT）阶段**禁止修改业务源码**。 对 02-Feature/**/src/main/**、01-Business/**/src/main/**、00-Common/**/src/main/** 等非 ohosTest/test 目录下的任何变更，不接受用户署名、receipt 或 gap-notes 放行； 所需源码改造必须交回 coding owner，并完整重走 review→ut→testing。 harness 做法：\n  (1) 确定 baseRef：优先读 trace.json > start_commit；无则回退 HEAD~1；\n  (2) git diff --name-only <base>..HEAD + 未提交变更 + untracked；\n  (3) 按路径前缀筛出业务源码变更；\n  (4) 任一命中均 FAIL BLOCKER 并路由 coding repair；legacy 授权字段只读且 inert。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "goal 环境基线=review closure attestation：review 后源码零漂移（coding 阶段合法实现不在裁决域）。",
+      "source": "ut_no_src_mutation"
+    },
+    {
+      "id": "mock_stub_for_async",
+      "category": "structure",
+      "description": "mock_stub_for_async",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "无 async_call 节点需要打桩。",
+      "source": "mock_stub_for_async"
+    },
+    {
+      "id": "test_registration",
+      "category": "structure",
+      "description": "test_registration",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "所有 UT 文件已在 List.test.ets 中注册。",
+      "source": "test_registration"
+    },
+    {
+      "id": "ut_import_whitelist",
+      "category": "structure",
+      "description": "UT 文件的 import 必须落在白名单内：\n  - @ohos/hypium\n  - 被测模块的 data / domain / 业务编排类及其依赖的数据模型\n  - 同目录下的 spy/ 目录（Spy/Fake/Stub 实现）\n严禁 import 任何 UI 符号，反向兜底防止 AI 为了\"模拟用户动作\" new 出 @Component struct。禁单项与 no_ui_dep_in_ut 合并。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 UT 文件 import 均在白名单内，无 UI/Nav/Toast 依赖。",
+      "source": "ut_import_whitelist"
+    },
+    {
+      "id": "boundaries_all_stubbed",
+      "category": "structure",
+      "description": "当 feature 产出了 use-cases.yaml 时：仅对 type 已登记在 contracts.interfaces[].class 中的 data_boundary，要求对应 UT 文件 new 出一个 Spy/Fake/Stub 实现并注入业务编排对象 （class 命名格式：Spy{type} / Fake{type} / Stub{type}）； 未登记类型由 boundary_matches_contracts WARN 披露。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "contracts.interfaces 已登记的 UseCase 数据边界均有替身（Spy/Fake/Stub）；未登记类型由 boundary_matches_contracts 单独披露。",
+      "source": "boundaries_all_stubbed"
+    },
+    {
+      "id": "it_name_has_ac_or_branch_tag",
+      "category": "structure",
+      "description": "每条 it() 的用例名称以 [AC-X]、[BD-X] 或 [BRANCH-<id>] 标签起始（可组合）， 便于追溯验收标准、边界或分支。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 it() 用例均带有 [AC-X]、[BD-X]、[BRANCH-X]、[CHAR-X] 或 [REG-X] 起始标签。\n身份口径：只问责本 feature 责任域（新建 1 个文件 + 存量文件内新增 0 个用例；工作模式=cover_feature_change）。基线=2c83c1824e38f67f7c1141a3be155360266bad30（锚=run_base_sha）",
+      "source": "it_name_has_ac_or_branch_tag"
+    },
+    {
+      "id": "it_drives_flow",
+      "category": "structure",
+      "description": "每条 it() 用例应端到端驱动业务流，不是单接口断言。量化门槛：\n  - 若 feature 产出了 use-cases.yaml：≥2 次 boundary 调用断言 + ≥2 处\n    coordinator.state / flow.state 断言；\n  - 否则：≥1 次对被测函数的调用 + ≥1 条 expect 断言（弱门槛，\n    简单 feature 不强求端到端编排）。",
+      "severity": "MAJOR",
+      "status": "WARN",
+      "details": "8 个 it() 用例驱动力不足：\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-success][AC-1][AC-2][AC-3][AC-4][AC-5][AC-6] 成功流程保存完整卡号并发布结果\" — portRefs=1 stateRefs=0 expects=13\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-persistence-failure][BD-1][AC-6] 保存失败仍发布失败结果且不留脏记录\" — portRefs=1 stateRefs=0 expects=7\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-otp-cancel][BD-2] 关闭验证码清空未提交卡片协议与OTP且不保存\" — portRefs=1 stateRefs=0 expects=9\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-saving-reentry][AC-9] SAVING期间第二次提交被拒绝且只调用一次保存\" — portRefs=2 stateRefs=0 expects=9\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-countdown-resend][AC-4][NFR-1] 绝对墙钟60秒归零后允许重发且SAVING拒绝重发\" — portRefs=0 stateRefs=0 expects=9\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-account-privacy][AC-3][AC-8][NFR-2] 账号手机号和卡号只输出脱敏值\" — portRefs=0 stateRefs=0 expects=9\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-commit-restart][AC-5][BD-3] 保存后可按完整卡号唯一重查且新session不恢复敏感态\" — portRefs=1 stateRefs=0 expects=9\n  - 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets: \"[BRANCH-type-cancel][BD-2] 关闭类型选择清空会话且不调用存储\" — portRefs=1 stateRefs=0 expects=7",
+      "affected_files": [
+        "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets"
+      ],
+      "suggestion": "数量是本 WARN 的触发线索，不是判据；请确认该 it() 覆盖了命名入口驱动、调用序列与状态迁移（纯函数/单规则用例只需保证错误实现会让它失败并覆盖边界/异常）。",
+      "source": "it_drives_flow"
+    },
+    {
+      "id": "dag_to_acceptance",
+      "category": "traceability",
+      "description": "dag_to_acceptance",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "所有 DAG assertion 节点正确关联到 acceptance.yaml 中的 AC/BD 编号。",
+      "source": "dag_to_acceptance"
+    },
+    {
+      "id": "acceptance_coverage",
+      "category": "traceability",
+      "description": "P0/P1 验收标准的 DAG 追溯覆盖率：只读取已解析 DAG 顶层/nodes[] 的 linked_acceptance / linked_boundaries，不读取 it() 名。分母只计 ut_layer ∈ [unit, both] 的 AC；device AC 交 device-testing 负责。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "证据口径: DAG linked_acceptance / linked_boundaries only（不读取 it() 名）\n已解析 DAG: doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/account-privacy.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/commit-restart.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/countdown-resend.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/otp-cancel.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/persistence-failure.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/saving-reentry.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/success.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/type-cancel.dag.yaml\nDAG 已声明 scope id: AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-8, AC-9, BD-1, BD-2, BD-3, NFR-1, NFR-2\nP0 覆盖率(UT 分母): 7/7\nP1 覆盖率(UT 分母): 1/1\nBD 覆盖率(UT 分母): 3/3\n（5 条 ut_layer=device 的 AC 已从 UT 分母中排除，交 device-testing 负责）",
+      "source": "acceptance_coverage"
+    },
+    {
+      "id": "dag_to_source",
+      "category": "traceability",
+      "description": "DAG 中每个非 assertion 节点的 source.file + source.function 必须 能在实际代码中找到对应的文件和函数。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 DAG 节点的 source.function 均在对应文件中存在。",
+      "source": "dag_to_source"
+    },
+    {
+      "id": "ut_coverage_evidence_present",
+      "category": "traceability",
+      "description": "当 feature 存在 in-scope unit/both P0/P1 时，须产出 <features_dir>/{feature}/ut/reports/coverage-evidence.json（business-ut 写入，harness 不自造 mapping）。 缺失或 invalid 时 BLOCKER/FAIL；UT tag / DAG linkage 只能作为 mapping 的底层依据， 不能替代 required 文件本身。报告须给出 canonical relative + absolute path。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "已找到并验证 doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/coverage-evidence.json（schema_version=1.0）。\ncanonical_abs=D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\ut\\reports\\coverage-evidence.json",
+      "source": "ut_coverage_evidence_present"
+    },
+    {
+      "id": "ut_coverage_evidence_mappings_complete",
+      "category": "traceability",
+      "description": "当 coverage-evidence.json 存在且存在 unit/both P0/P1 范围时，mappings[] 须覆盖每条 P0/P1 scope_id，且每条 mapping 须有与 declared evidence_source 一致的可解析依据（非空壳行）；dag_archived 与 dag_ephemeral 不得互相冒充。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "coverage-evidence.json 含 13 条 P0/P1 unit/both 的完整 mapping 且均有依据。\nscoped_ut_files=02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets\nloaded_dags=doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/account-privacy.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/commit-restart.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/countdown-resend.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/otp-cancel.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/persistence-failure.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/saving-reentry.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/success.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/type-cancel.dag.yaml\ncoverage_evidence=loaded:doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/coverage-evidence.json",
+      "source": "ut_coverage_evidence_mappings_complete"
+    },
+    {
+      "id": "ut_coverage_evidence_resolves",
+      "category": "traceability",
+      "description": "in-scope unit/both P0/P1 的每条 AC/BD 须在 coverage-evidence 映射、 精确 UT 标签/linked branch、DAG linked（含 nodes[]）或 ac-coverage.json 中可解析； AC 与 BD 同数字后缀不得交叉覆盖。失败须列出实际 scoped UT / DAG / evidence 路径。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 in-scope unit/both P0/P1（13 条）均有可解析覆盖证据（UT tag/branch、DAG、ac-coverage 或受底层证据支撑的 mapping）。\nscoped_ut_files=02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets\nloaded_dags=doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/account-privacy.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/commit-restart.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/countdown-resend.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/otp-cancel.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/persistence-failure.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/saving-reentry.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/success.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/type-cancel.dag.yaml\ncoverage_evidence=loaded:doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/coverage-evidence.json",
+      "source": "ut_coverage_evidence_resolves"
+    },
+    {
+      "id": "origin_tag_required",
+      "category": "traceability",
+      "description": "flow_type=characterization 时，非 assertion 节点须带 origin 元数据。",
+      "severity": "BLOCKER",
+      "status": "SKIP",
+      "details": "无 flow_type=characterization 的 DAG，跳过。",
+      "structured": {
+        "applicability": "not_applicable"
+      },
+      "source": "origin_tag_required"
+    },
+    {
+      "id": "characterization_trace_matches",
+      "category": "traceability",
+      "description": "characterization 路径下 UT 须含 [CHAR-*] 标签；DAG trace 与 UT 序列由 verifier 复核。",
+      "severity": "MAJOR",
+      "status": "SKIP",
+      "details": "无 characterization flow，跳过。",
+      "source": "characterization_trace_matches"
+    },
+    {
+      "id": "branch_coverage_full",
+      "category": "traceability",
+      "description": "use-cases.yaml 中每个 UseCase 的所有 branches，UT 中必须至少有 一个 it() 对应（通过 [BRANCH-<id>] 标签或 body 里引用 branch id 识别）。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 UseCase 分支都有对应 UT 用例。",
+      "source": "branch_coverage_full"
+    },
+    {
+      "id": "ut_case_per_unit_ac",
+      "category": "traceability",
+      "description": "acceptance.yaml 中 ut_layer in [unit, both] 且 priority in [P0, P1] 的每条 AC/BD 必须有可解析 UT 覆盖证据。优先用精确 it() 标签/linked branch； 兼容 coverage-evidence 所声明并由底层事实支撑的 DAG / ac-coverage 来源。 至少须有一个 scoped UT 文件，且失败详情必须列出实际检查集合。",
+      "severity": "BLOCKER",
+      "status": "PASS",
+      "details": "所有 ut_layer∈{unit,both} 且 P0/P1 的 13 条 AC/BD 均有可解析 UT 覆盖证据。\nscoped_ut_files=02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets\nloaded_dags=doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/account-privacy.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/commit-restart.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/countdown-resend.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/otp-cancel.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/persistence-failure.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/saving-reentry.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/success.dag.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/type-cancel.dag.yaml\ncoverage_evidence=loaded:doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/coverage-evidence.json",
+      "source": "ut_case_per_unit_ac"
+    },
+    {
+      "id": "boundary_coverage",
+      "category": "traceability",
+      "description": "acceptance.yaml > boundaries 中 ut_layer in [unit, both] 的每条 边界都应有对应的 UT 用例或 use-cases.yaml > branches 条目。",
+      "severity": "MAJOR",
+      "status": "PASS",
+      "details": "所有 3 条单元层 boundary 均有对应 UT / DAG / branch 追溯。",
+      "source": "boundary_coverage"
+    },
+    {
+      "id": "ut_run_status",
+      "category": "structure",
+      "description": "UT 阶段真实执行状态摘要",
+      "severity": "MINOR",
+      "status": "WARN",
+      "details": "UT 阶段状态面板：\n- UT 文件范围：all=6, scoped=2\n- scope 来源：git:02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets, git:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets, context:02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets, context:02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets\n- scoped 文件：02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_2_ut.test.ets, 02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets\nwork_mode: cover_feature_change\n- 责任域：新建文件 1 个 + 存量文件内新增用例 0 个\n- 需求门禁（use-cases/audit/mock-plan/DAG/AC 覆盖族）：已执行\n- 静态/结构规则：PASS\n- tsc 静态编译：PASS [BLOCKER]\n- 宿主测试模块编译：PASS [BLOCKER]\n- 真机/模拟器执行：FAIL [BLOCKER]\n- 源码改动检查：PASS [BLOCKER]\nfeature_verdict: FAIL\nsuite_health: UNKNOWN\n- 当前是否可以宣称 UT 完成：否\ncan_claim_done: NO\n- 阻塞项：ut_hvigor_test",
+      "source": "check-ut.ts"
+    },
+    {
+      "id": "capability_ut_core_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_ut_core_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_ut_design_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_ut_design_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=functional; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    },
+    {
+      "id": "capability_ut_use_case_context",
+      "category": "structure",
+      "description": "capability input contract resolved (capability_ut_use_case_context)",
+      "severity": "MINOR",
+      "status": "PASS",
+      "details": "axis=evidence; all declared pre-check inputs resolved",
+      "source": "capability-resolution.ts"
+    }
+  ],
+  "summary": {
+    "total": 61,
+    "pass": 54,
+    "fail": 1,
+    "warn": 2,
+    "skip": 4,
+    "blockers": 1,
+    "verdict": "FAIL"
+  }
+}

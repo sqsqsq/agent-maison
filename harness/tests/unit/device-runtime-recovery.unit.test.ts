@@ -90,6 +90,15 @@ export function runAll(): UnitCaseResult[] {
     assert(r.note.includes('请人解锁'), `指引须指向人：${r.note}`);
   });
 
+  run(results, '395 解锁后保留成功说明，复验重新锁屏不冒充未授权', () => {
+    for (const relocked of [false, true]) {
+      const r = ensureDeviceReadyAtRuntime({ serial: SERIAL, credentialRef: REF,
+        deps: depsWith([true, true, false, relocked]), provider: readyProvider() });
+      if (!relocked) { assert(r.recovered, '已解锁应放行'); assertEq(r.note, '已用登记凭据解锁并复验', '保留时序说明'); }
+      else { assert(!r.recovered && r.authorized, '已登记凭据不应误称未授权'); assert(!r.recovered && r.reason === 'unlock_failed', '复验仍锁屏应如实阻断'); }
+    }
+  });
+
   run(results, '锁屏状态判不出 → 不猜，不恢复', () => {
     const r = ensureDeviceReadyAtRuntime({
       serial: SERIAL, credentialRef: REF, deps: depsWith([undefined]), provider: readyProvider(),

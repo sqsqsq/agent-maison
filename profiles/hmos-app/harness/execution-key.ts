@@ -37,6 +37,8 @@ export interface ExecutionKeyInputs {
 
 export interface ExecutionKeyRecord {
   schema_version: '1.0';
+  /** 原样携带受管调用身份；旧记录/普通请求无需登记。 */
+  goal_invocation?: { run_id: string; phase: string; attempt_id: string };
   execution_key: string;
   inputs: ExecutionKeyInputs;
   /** hylyre leg：Hylyre trace 绝对路径；UT leg 无 trace，恒空串（执行事实由冻结件组担保） */

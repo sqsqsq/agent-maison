@@ -14,6 +14,8 @@
 // ============================================================================
 
 import {
+  DEVICE_SETUP_GUIDANCE,
+  type DeviceSetupObservation,
   ensureUnlocked,
   type RevealOutcome,
   type UnlockDeps,
@@ -40,6 +42,7 @@ export type RuntimeRecoveryReason =
   | 'not_locked'
   /** 锁屏状态判不出——不猜，但也不据此阻断 */
   | 'unknown'
+  | 'system_setup'
   /** 确实锁屏且未登记凭据 → 外部阻断 */
   | 'unauthorized'
   /** 确实锁屏、尝试过解锁但没成 → 外部阻断 */
@@ -52,6 +55,7 @@ export type RuntimeRecoveryResult =
       note: string;
       authorized: boolean;
       reason: RuntimeRecoveryReason;
+      systemSetup?: DeviceSetupObservation;
       /**
        * e5d8a2c4 T3#2（codex 三轮 P1）：解锁失败的**结构化归因原样上浮**。
        *
@@ -81,8 +85,18 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
   // 场景下最常见的形态。wake 是非秘密操作，任何档位都可以做。
   input.deps.wake(input.serial);
 
-  const locked = input.deps.snapshot(input.serial).locked;
-  if (locked === false) return { recovered: true, note: '设备未锁屏', reason: 'not_locked' };
+  const inspect = (): RuntimeRecoveryResult => {
+    const snapshot = input.deps.snapshot(input.serial);
+    if (snapshot.locked === false && snapshot.systemSetup) return {
+      recovered: false, authorized: false, reason: 'system_setup',
+      systemSetup: snapshot.systemSetup, note: DEVICE_SETUP_GUIDANCE,
+    };
+    if (snapshot.locked === false) return { recovered: true, note: '设备未锁屏', reason: 'not_locked' };
+    return { recovered: false, authorized: false, reason: snapshot.locked === undefined ? 'unknown' : 'unauthorized', note: '设备尚未就绪' };
+  };
+  const observed = inspect();
+  if (observed.recovered || observed.reason === 'system_setup') return observed;
+  const locked = observed.reason === 'unknown' ? undefined : true;
   if (locked === undefined) {
     return {
       recovered: false,
@@ -112,16 +126,21 @@ export function ensureDeviceReadyAtRuntime(input: RuntimeRecoveryInput): Runtime
     deps: input.deps,
     provider: input.provider,
   });
-  return r.ok
-    ? { recovered: true, note: r.note, reason: 'not_locked' }
-    : {
-        recovered: false,
-        note: r.note,
-        authorized: true,
-        reason: 'unlock_failed',
-        ...(r.failureKind ? { failureKind: r.failureKind } : {}),
-        ...(r.revealFact ? { revealFact: r.revealFact } : {}),
-      };
+  if (r.ok) {
+    const verified = inspect();
+    if (verified.recovered) return { ...verified, note: r.note };
+    return { ...verified, authorized: true,
+      ...(verified.reason === 'unauthorized' ? { reason: 'unlock_failed' as const, note: '已使用登记凭据，但解锁后复验仍锁屏' } : {}),
+    };
+  }
+  return {
+    recovered: false,
+    note: r.note,
+    authorized: true,
+    reason: 'unlock_failed',
+    ...(r.failureKind ? { failureKind: r.failureKind } : {}),
+    ...(r.revealFact ? { revealFact: r.revealFact } : {}),
+  };
 }
 
 /**

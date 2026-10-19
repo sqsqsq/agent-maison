@@ -79,6 +79,17 @@ goal-runner MUST 在 capability preflight 之后、`agent_invoke_start` 之前�
 - **WHEN** phase 未声明 `requires_device`
 - **THEN** 就绪门不执行，不探测设备、不启动模拟器
 
+#### Scenario: System setup is covered by the lock screen
+- **WHEN** the registered unlock flow reveals a focused system boot/upgrade guide window
+- **THEN** the readiness gate and runtime bridge SHALL use the fresh unlocked sample and remain BLOCKED; a read-only probe SHALL NOT wake or unlock the device
+- **AND** the shared focused-window observation SHALL be consumed by readiness, UT/testing diagnosis and recovery; background packages, historical logs and page text SHALL NOT establish this blocker
+
+#### Scenario: System setup is discovered inside a phase
+- **WHEN** UT or testing has not entered its target UI because the current focused window is the system guide
+- **THEN** the runner SHALL reuse the phase-entry device gate and bounded condition wait before any defer-and-continue branch; the wait-start event and status views SHALL immediately show the user action
+- **AND** recovery SHALL rerun the unfinished phase before dependent phases; timeout SHALL retain WAITING and the existing device_readiness probe, without fabricated PASS or budget reset
+- **AND** existing assertion/crash evidence SHALL NOT be overwritten by a later guide observation
+
 ### Requirement: Device target immutability within an attempt
 
 `agent_invoke_start` 之后，本 attempt 的 `{serial, target_kind}` MUST 冻结。运行期锁屏 MUST 只允许在**同一 serial** 上恢复并重试原操作一次；恢复失败时当前 attempt MUST 判 INCOMPLETE/`external_block`。切换到模拟器 MUST 只发生在下一 attempt 或 `--resume`，并从阶段起点重跑。

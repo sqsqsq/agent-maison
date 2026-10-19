@@ -384,6 +384,7 @@
         "status": { "type": "string" },
         "classification": { "type": "string" },
         "blocking_class": { "type": "string" },
+        "device_setup": { "type": "object", "required": ["bundleName"], "additionalProperties": false, "properties": { "bundleName": { "type": "string" } } },
         "details_excerpt": { "type": "string" },
         "affected_files": {
           "type": "array",

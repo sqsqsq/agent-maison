@@ -1236,7 +1236,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         // Preserve raw records, including ancestors required by the production budget fold.
         fs.cpSync(history, path.dirname(path.join(root, manifest.report_dir)), { recursive: true });
         const snap = projectGoalProgress({ projectRoot: root, manifest, events, workflow,
-          nowMs: Date.parse(events.at(-1)!.ts) });
+          nowMs: Date.parse(events.at(-1)!.ts!) });
         assert(snap.status === 'HALTED' && snap.status_reason === 'budget_wall_clock', JSON.stringify(snap));
         for (const rendered of [formatGoalStatusText(snap, manifest.feature, runId), generateProgressMarkdown(snap)]) {
           assert(rendered.includes('Reason: budget_wall_clock'), rendered);
@@ -1966,6 +1966,29 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   },
 
 ];
+
+cases.push({ name: '395 等待一开始显示引导原因，ready/timeout 清除，不伪造 phase_halt', run: () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-setup-progress-'));
+  try {
+    const manifest = mkManifest();
+    const reason = '设备处于系统开机/升级引导，请在手机上完成引导';
+    const events: GoalRunEvent[] = [
+      { ts: manifest.created_at, type: 'run_start', chain: ['ut', 'testing'] },
+      { ts: manifest.created_at, type: 'phase_start', phase: 'ut', attempt: 1 },
+      { ts: manifest.created_at, type: 'condition_wait_started', phase: 'ut', reason, probe: 'device_readiness' } as GoalRunEvent,
+    ];
+    const project = () => projectGoalProgress({ projectRoot: root, manifest, events, workflow, nowMs: Date.parse(manifest.created_at) + 1000 });
+    const snapshot = project();
+    assert(formatGoalStatusText(snapshot, manifest.feature, manifest.run_id).includes(reason), 'text 在等待开始就显示动作');
+    assert(generateProgressMarkdown(snapshot).includes(reason), 'Markdown 同源');
+    for (const end of ['condition_wait_ready', 'condition_wait_timeout']) {
+      events.push({ ts: manifest.created_at, type: end, phase: 'ut' });
+      assert(!generateProgressMarkdown(project()).includes(reason), end + ' 必须清除旧等待说明');
+      events.pop();
+    }
+    assert(!events.some(e => e.type === 'phase_halt'), '无需虚假 halt');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+} });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];

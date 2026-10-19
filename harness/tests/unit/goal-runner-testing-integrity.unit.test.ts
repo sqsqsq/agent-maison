@@ -770,7 +770,8 @@ export async function runGoalRuntimeChain(
               warn: 0,
               skip: 0,
               blockers: rawChecks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER').length,
-              verdict: 'FAIL',
+              // 新设备场景保留生产 INCOMPLETE，不能由旧 fixture 的 FAIL 常量绕开 defer 路由。
+              verdict: rawChecks.some(c => c.device_setup) ? resolveVerdictFromChecks(rawChecks) : 'FAIL',
             },
           };
           // 生产 writer 落盘（真实 lattice/blockers/candidates 派生 + validateSummaryV11 +
@@ -2867,6 +2868,55 @@ test('t3 就绪门：只在需设备 phase 执行；BLOCKED 时不产生 agent_i
   const resumed = await runChain(root, { resume: path.basename(probe.reportDir), deviceGate, conditionWait,
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot) });
   assert(resumed.invokedPhases.join(',') === 'ut,testing', `device recovery must finish UT before testing: ${resumed.invokedPhases.join(',')}`);
+});
+
+test('395 阶段内 OOBE：真实检查归因和 summary 接回原门，等待解除先补 UT；超时不进 testing', async () => {
+  const { parseLockScreenTree } = require('../../scripts/utils/device-readiness-deps');
+  const { buildUtHvigorTestFailDetails } = require('../../../profiles/hmos-app/harness/ut-hvigor-test-failure');
+  const fixture = path.join(REPO_ROOT, 'harness/tests/fixtures/host-recovery-history/20261018-oobe');
+  const guideTree = JSON.parse(require('zlib').gunzipSync(fs.readFileSync(path.join(fixture, 'testing-oobe.json.gz'))).toString('utf8')).tree;
+  const clearTree = JSON.parse(JSON.stringify(guideTree)); clearTree.children[0].attributes.bundleName = 'normal.application';
+  for (const recover of [false, true]) {
+    const { root } = setupHost(); let guide = false, probes = 0;
+    const deviceGate = (opts: Parameters<typeof runDeviceReadinessGate>[0]) => runDeviceReadinessGate({ ...opts, input: { ...opts.input, configuredSerial: null, credentialRef: null, emulatorFallback: 'disabled', existingManaged: null, deps: {
+      listTargets: () => ['FIXTURE-DEVICE'], wake: () => {}, isLocked: () => false, attestPhysical: () => true,
+      snapshot: () => parseLockScreenTree(guide ? guideTree : clearTree),
+    } } });
+    const probe = await runChain(root, { deviceGate, conditionWait: { maxWaitMs: 100, pollMs: 1, runProbe: () => {
+      probes++;
+      const runs = featureFilePath(root, FEATURE, 'goal-runs');
+      const current = fs.readdirSync(runs).filter(n => fs.existsSync(path.join(runs, n, 'progress.json'))).sort().at(-1)!;
+      const progress = JSON.parse(fs.readFileSync(path.join(runs, current, 'progress.json'), 'utf8'));
+      assert(progress.phase.name === 'ut' && progress.phase.status !== 'DEFERRED', '等待状态仍须指向 UT，不能提前显示 testing/deferred');
+      if (recover) guide = false;
+      return evaluateDeviceReadinessProbe({ targets: ['FIXTURE-DEVICE'], snapshot: parseLockScreenTree(guide ? guideTree : clearTree) });
+    } }, onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
+      onHarnessSummary: ({ phase, attempt }) => {
+        if (phase !== 'ut' || attempt !== 1) return null;
+        guide = true;
+        const result = JSON.parse(fs.readFileSync(path.join(fixture, '20261018T080553Z-115/frozen.ut-result.WalletMain.json'), 'utf8'));
+        result.onDeviceFailureEvidence.runDiagnosis.systemSetup = parseLockScreenTree(guideTree).systemSetup;
+        const f = buildUtHvigorTestFailDetails([{ module: 'WalletMain', result }]);
+        return { checks: [
+          { id: 'ut_hvigor_build', category: 'structure', severity: 'BLOCKER', status: 'PASS', description: 'build', details: 'built' },
+          { id: 'ut_hvigor_test', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: 'UT', details: f.lines.join('\n'), suggestion: f.suggestion,
+            blocking_class: f.blockingClass, failure_kind: f.failureKind, device_setup: f.systemSetup },
+        ] };
+      },
+    });
+    assert(probes > 0, '阶段内引导必须进入原探针等待');
+    assert(probe.events.some(e => e.type === 'phase_verdict' && e.phase === 'ut' && (e as any).verdict === 'INCOMPLETE'), '必须覆盖真实 INCOMPLETE，不借 fixture 的 FAIL 绕过默认 defer');
+    const waiting = probe.events.find(e => e.type === 'condition_wait_started');
+    assert(String((waiting as any)?.reason).includes('引导'), '开始等待就显示具体原因');
+    if (recover) {
+      assert(probe.invokedPhases.filter(p => p === 'ut').length === 2, '恢复后须重新执行 UT');
+      assert(probe.invokedPhases.slice(-3).join(',') === 'ut,ut,testing', 'UT 真正完成后才能 testing');
+      assert(!probe.events.some(e => e.type === 'phase_halt' && e.phase === 'ut'), '窗口内恢复不得虚写停机');
+    } else {
+      assert(!probe.invokedPhases.includes('testing'), '等待超时不得跳过 UT');
+      assert(probe.events.some(e => e.type === 'phase_halt' && e.phase === 'ut' && (e as any).probe === 'device_readiness'), '超时保留既有恢复探针');
+    }
+  }
 });
 
 test('t5 outer_layers 前移：缺目录在**第一个 phase invoke 之前**即 HALTED；spec-only 链路不受影响', async () => {

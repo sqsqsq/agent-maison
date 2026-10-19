@@ -86,6 +86,16 @@ function select(
 
 interface TestCase { name: string; run: () => void }
 const cases: TestCase[] = [
+  { name: '395 explicit device wait keeps current phase; ordinary defer and hard stops stay unchanged', run: () => {
+    const recommendation: AssessRecommendation = { action: 'resolve_deferred', phase: 'ut', reason: 'device', requires_driver_authorization: true, runner_action: 'defer_external_and_continue_if_allowed' };
+    const device = observation({ phase_outcome: { phase: 'ut', verdict: 'INCOMPLETE', legacy_action: 'none', blocking_class: 'externalBlocked', failure_kind: 'device_blocked' } });
+    const base = { assessment: result(recommendation), observation: device, currentPhase: 'ut', chain };
+    assert(selectRunnerActionFromAssess({ ...base, driverGuardAction: 'retry' }) === 'retry', 'explicit current-phase device wait');
+    assert(selectRunnerActionFromAssess({ ...base, driverGuardAction: 'none' }) === 'defer_external_and_continue_if_allowed', 'ordinary defer unchanged');
+    assert(selectRunnerActionFromAssess({ ...base, driverGuardAction: 'halt' }) === 'halt', 'authorization/budget halt wins');
+    assert(selectRunnerActionFromAssess({ ...base, assessment: result(recommendation, true), driverGuardAction: 'retry' }) === 'halt', 'fused stop wins');
+    assert(selectRunnerActionFromAssess({ ...base, assessment: result({ ...recommendation, action: 'stop' }), driverGuardAction: 'retry' }) === 'halt', 'stop recommendation wins');
+  } },
   {
     name: '8d4e6a21 fresh facts-admission failure routes the earlier evidence gap before retry; product and stale-summary failures retain their path',
     run: () => {

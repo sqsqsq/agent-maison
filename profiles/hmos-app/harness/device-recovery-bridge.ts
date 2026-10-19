@@ -17,8 +17,10 @@
 // ============================================================================
 
 import type { RevealOutcome, UnlockFailureKind } from '../../../harness/scripts/utils/device-unlock-helper';
+import type { DeviceSetupObservation } from '../../../harness/scripts/utils/device-unlock-helper';
 
 export interface DeviceReadyOutcome {
+  systemSetup?: DeviceSetupObservation;
   ready: boolean;
   note: string;
   /** 是否登记了自动解锁凭据（false = 只能人工解锁） */
@@ -96,12 +98,13 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
       deps: deps.buildUnlockDeps(),
     });
     // 只有"确实锁着且没解开"才算外部阻断；"判不出"不阻断（见 blocked 字段说明）
-    const blocked = !r.recovered && (r.reason === 'unauthorized' || r.reason === 'unlock_failed');
+    const blocked = !r.recovered && (r.reason === 'unauthorized' || r.reason === 'unlock_failed' || r.reason === 'system_setup');
     return {
       ready: r.recovered,
       note: r.note,
       authorized: r.recovered ? true : r.authorized,
       blocked,
+      ...(!r.recovered && r.systemSetup ? { systemSetup: r.systemSetup } : {}),
       ...(!r.recovered && r.failureKind ? { failureKind: r.failureKind } : {}),
       ...(!r.recovered && r.revealFact ? { revealFact: r.revealFact } : {}),
     };
@@ -124,7 +127,7 @@ export function ensureReadyBefore(projectRoot: string, serial?: string | null): 
 export function recoverAfterLockFailure(
   projectRoot: string,
   serial?: string | null,
-): { recovered: boolean; note: string; failureKind?: UnlockFailureKind; revealFact?: RevealOutcome } {
+): { recovered: boolean; note: string; failureKind?: UnlockFailureKind; revealFact?: RevealOutcome; systemSetup?: DeviceSetupObservation } {
   const target = (serial ?? process.env.HARNESS_HDC_TARGET)?.trim();
   if (!target) return { recovered: false, note: '未显式指定 HARNESS_HDC_TARGET，不对未知目标做恢复' };
   const r = ensureReadyBefore(projectRoot, target);
@@ -135,10 +138,17 @@ export function recoverAfterLockFailure(
   // `{recovered, note}`，`ensureReadyBefore` 已经分好的 failureKind 在这一跳被整个丢掉
   // ——后置恢复路径的消费方于是又只剩解析文案一条路，正是本 change 要治的病。
   const structured = {
+    ...(r.systemSetup ? { systemSetup: r.systemSetup } : {}),
     ...(r.failureKind ? { failureKind: r.failureKind } : {}),
     ...(r.revealFact ? { revealFact: r.revealFact } : {}),
   };
   if (!r.ready || r.blocked) return { recovered: false, note: r.note, ...structured };
   if (/检查不可用/.test(r.note)) return { recovered: false, note: r.note, ...structured };
   return { recovered: true, note: r.note };
+}
+
+/** 与就绪门同源的只读观察；不唤醒、不解锁。 */
+export function observeDeviceSnapshot(serial = process.env.HARNESS_HDC_TARGET): import('../../../harness/scripts/utils/device-unlock-helper').LockScreenSnapshot | undefined {
+  if (!serial?.trim()) return undefined;
+  try { return loadDeps().deps.readLockScreenSnapshot(serial.trim()); } catch { return undefined; }
 }

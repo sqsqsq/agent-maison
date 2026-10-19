@@ -264,6 +264,7 @@ export interface HylyreTraceCase {
 export type HylyreNativeCase = CaseResultV1;
 
 export interface HylyreTrace {
+  device_setup?: import('../../../../harness/scripts/utils/device-unlock-helper').DeviceSetupObservation;
   schema_version: string;
   /**
    * v1 结果协议声明。与 `schema_version` 共同构成**唯一** dispatch 判别键
@@ -288,6 +289,16 @@ export interface HylyreTrace {
   error_kind?: string;
   runtime_step_telemetry?: RuntimeStepTelemetry;
   [key: string]: unknown;
+}
+
+/** 引导只能解释未进入目标 UI；已有断言失败或不透明的旧结果继续按原证据裁决。 */
+export function observeSetupForUnexecutedTrace(trace: HylyreTrace | null | undefined, serial?: string): HylyreTrace['device_setup'] {
+  if (trace?.outcome === 'passed' || trace?.outcome === 'success') return undefined;
+  for (const c of trace?.cases ?? []) {
+    if (c.status === '失败' && !c.steps?.some(step => { const native = step as Partial<import('../../../../harness/scripts/utils/hylyre-result-protocol').StepResultV1>; return native.role === 'action' && native.outcome?.status === 'failed'; })) return undefined;
+    if (c.steps?.some(step => { const native = step as Partial<import('../../../../harness/scripts/utils/hylyre-result-protocol').StepResultV1>; return native.role === 'assertion' && native.outcome?.status === 'failed'; })) return undefined;
+  }
+  return trace?.device_setup ?? require('../device-recovery-bridge').observeDeviceSnapshot(serial)?.systemSetup;
 }
 
 export type HylyreEvidenceMode = 'native' | 'legacy' | 'unsupported';
@@ -803,7 +814,7 @@ function runAaStartPreflight(
 function recoverDeviceLockForRun(
   projectRoot: string,
   deviceSn: string | undefined,
-): { recovered: boolean; note: string } {
+): ReturnType<typeof import('../device-recovery-bridge').recoverAfterLockFailure> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const bridge = require('../device-recovery-bridge') as typeof import('../device-recovery-bridge');
   return bridge.recoverAfterLockFailure(projectRoot, deviceSn);
@@ -1743,6 +1754,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
     const preReady = bridge.ensureReadyBefore(opts.projectRoot, opts.deviceSn);
     appendLogSync(logPath, `[device-ready/testing-run] ${preReady.note}\n`);
 
+    let systemSetup = preReady.systemSetup;
     let lockedAndUnrecovered = preReady.blocked;
     let pre = preReady.blocked
       ? {
@@ -1761,12 +1773,13 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
       // P1（三轮）：恢复失败必须**保留锁屏这个真因**，否则结论层只看到
       // aa_start_preflight_failed → 归 device_toolchain → 指引变成"查签名"。
       if (!pre.ok) lockedAndUnrecovered = true;
+      if (rec.systemSetup) { systemSetup = rec.systemSetup; pre.output += '\n' + rec.note; }
     }
     if (!pre.ok) {
       errors.push({
         message: `hdc aa start 预启动失败（ability=${pageName} bundle=${opts.bundleName} source=${abilityResolved.source}）。Hypium 在部分环境无法从 bm dump 推断 main ability，依赖此步后再跑 hylyre plan。输出节选：\n${pre.output.slice(0, 2000)}`,
       });
-      const preflightKind: RunFailureKind = lockedAndUnrecovered
+      const preflightKind: RunFailureKind = lockedAndUnrecovered && !systemSetup
         ? 'device_locked'
         : 'aa_start_preflight_failed';
       const rootPollutionEarly = finishHylyrePhasePollutionGuard(opts.projectRoot, pollutionBefore, {
@@ -1785,6 +1798,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             outcome: 'failed',
             error_kind: 'run_crashed',
             run_failure_kind: preflightKind,
+            ...(systemSetup ? { device_setup: systemSetup } : {}),
             error_message: errors.map(e => e.message).join(' | ').slice(0, 2000),
             cases: [],
           },
@@ -1816,6 +1830,7 @@ export function runHylyreDeviceTest(opts: HylyreRunOptions): HylyreRunResult {
             deviceSn: opts.deviceSn ?? null,
             ran_at: new Date().toISOString(),
             run_failure_kind: preflightKind,
+            ...(systemSetup ? { device_setup: systemSetup } : {}),
             trace_summary: null,
             hypium_workdir: hypiumWorkDir,
             ...(rootPollutionEarly ? { root_pollution: rootPollutionEarly } : {}),

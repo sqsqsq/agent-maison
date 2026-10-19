@@ -31,6 +31,7 @@ import {
 } from './device-install-diag';
 import { formatPollutionDisplayPath } from '../../../harness/scripts/utils/harness-path-guard';
 import {
+  type HvigorRunResult,
   hasDependencyResolutionFailure as hasDepResolutionFailureSignal,
   detectHvigorTaskNotFound,
   resolveUtBuildTask,
@@ -44,6 +45,7 @@ import { discoverOhosTestArtifacts, resolveExecutionDeviceIdentity } from './hdc
 import {
   computeExecutionKey,
   decideReuse,
+  listExecutionKeyRuns,
   freezeRunArtifacts,
   restoreFrozenRunArtifacts,
   sha256Text,
@@ -981,6 +983,31 @@ function buildUtExecutionKeyInputs(
   };
 }
 
+/** 同轮收口消费原失败；不进入 decideReuse 的成功候选，也不创建新执行记录。 */
+function sameInvocationUtFailure(
+  reportsBase: string, key: string, artifacts: ReturnType<typeof utFrozenRunArtifacts>,
+  invocation: NonNullable<import('./execution-key').ExecutionKeyRecord['goal_invocation']>, serial: string,
+): import('./execution-key').ExecutionKeyRunView | null {
+  const latest = listExecutionKeyRuns(reportsBase, 'ut')[0];
+  const r = latest?.record, identity = r?.goal_invocation;
+  if (!latest || r?.outcome !== 'failed' || r.execution_key !== key || !identity ||
+      identity.run_id !== invocation.run_id || identity.phase !== invocation.phase || identity.attempt_id !== invocation.attempt_id) return null;
+  if (!artifacts.every(f => r.frozen_files?.includes(f.frozen) && fs.existsSync(path.join(latest.runDir, f.frozen)))) return null;
+  try {
+    const results = artifacts.filter(f => f.top.startsWith('ut-result.')).map(f => JSON.parse(fs.readFileSync(path.join(latest.runDir, f.frozen), 'utf8')) as HvigorRunResult);
+    if (!results.length || results.every(utModuleRoundSucceeded)) return null;
+    // 当前观察先于旧 FAIL：已解除、锁屏遮挡或无法观测时，都不宣称原引导仍存在。
+    const setupBlocked = results.some(x => x.onDeviceFailureEvidence?.runDiagnosis?.systemSetup || x.onDeviceFailureEvidence?.installDiagnosis?.systemSetup);
+    const lockBlocked = results.some(x => [x.onDeviceFailureEvidence?.runDiagnosis?.kind, x.onDeviceFailureEvidence?.installDiagnosis?.kind].includes('device_locked'));
+    if (setupBlocked || lockBlocked) {
+      const snapshot = require('./device-recovery-bridge').observeDeviceSnapshot(serial);
+      if (setupBlocked && !snapshot?.systemSetup) return null;
+      if (lockBlocked && snapshot?.locked !== true) return null;
+    }
+    return latest;
+  } catch { return null; }
+}
+
 export function checkUtHvigorTest(
   ctx: CheckContext,
   scopedUtFiles: Array<{ path: string }> = [],
@@ -1116,17 +1143,28 @@ export function checkUtHvigorTest(
   const keyInputs = buildUtExecutionKeyInputs(ctx, mods, targetCases, selection.product ?? undefined, eligibility);
   const executionKey = computeExecutionKey(keyInputs);
 
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim();
+  const attemptPhase = process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim();
+  const goalInvocation = runId && attemptId && attemptPhase === ctx.phase
+    ? { run_id: runId, phase: attemptPhase, attempt_id: attemptId } : undefined;
+  const failedInvocation = !ctx.forceDevice && eligibility.eligible && keyInputs.device && goalInvocation
+    ? sameInvocationUtFailure(reportsBase, executionKey, utArtifacts, goalInvocation, keyInputs.device) : null;
+
   // 记录前置（codex round2）：dispatch **之前**先落一条非成功 attempt——decideReuse 只看
   // 最新一条**带键记录**，没有它时"跑挂/抛异常的那轮"会被上一轮的成功洗绿。
-  const runDir = path.join(reportsBase, utRunTimestamp(), 'ut');
+  const runDir = failedInvocation?.runDir ?? path.join(reportsBase, utRunTimestamp(), 'ut');
   let preRecordOk = true;
   try {
+    if (!failedInvocation) {
     fs.mkdirSync(runDir, { recursive: true });
     writeExecutionKeyRecord(runDir, {
       schema_version: '1.0', execution_key: executionKey, inputs: keyInputs,
       trace_path: '', run_started_at: new Date().toISOString(), outcome: 'started',
       trace_sha256: null, timing_complete: false, frozen_files: [],
+      ...(goalInvocation ? { goal_invocation: goalInvocation } : {}),
     });
+    }
   } catch {
     preRecordOk = false;
   }
@@ -1146,10 +1184,10 @@ export function checkUtHvigorTest(
   // 才短路（后续模块大概率同因失败，且修复靶点已明确）。
   const perModule: UtHvigorTestFailureModule[] = [];
   // UT leg 无派生统计可重建：evidenceRebuildRequired 一律 fail-closed 回落真跑。
-  const reusedRun = reuse.reusable && !reuse.evidenceRebuildRequired ? reuse.reusable : null;
+  const reusedRun = failedInvocation ?? (reuse.reusable && !reuse.evidenceRebuildRequired ? reuse.reusable : null);
   const reuseNote =
     `\nexecution_key: ${executionKey.slice(0, 16)}（` +
-    `${reusedRun ? `同键复用 ${reusedRun.dirStamp}` : '本轮真跑'}：${reuse.reason}）`;
+    `${failedInvocation ? `采纳同次调用失败 ${failedInvocation.dirStamp}（仍判失败，不重执行）` : reusedRun ? `同键复用 ${reusedRun.dirStamp}` : '本轮真跑'}：${failedInvocation ? '同轮身份和执行输入一致，保留原失败时间与日志' : reuse.reason}）`;
   if (reusedRun) {
     // 复用轮：回填逐模块冻结件后按盘重建结果，**不调 dispatchUtRun、不发一条装机/执行 hdc**。
     restoreFrozenRunArtifacts(reusedRun.runDir, reportsBase, utArtifacts);
@@ -1179,7 +1217,7 @@ export function checkUtHvigorTest(
   }
   // 记录覆盖：把前置的 'started' 覆盖成本轮真实结果。**部分模块失败也记整轮失败**；
   // 覆盖失败（异常/磁盘）时前置的非成功记录留在盘上，下轮拿不到"最新同键成功" → 真跑。
-  if (preRecordOk) {
+  if (preRecordOk && !failedInvocation) {
     try {
       for (const x of perModule) writeUtModuleResult(reportsBase, x.module, x.result);
       const frozenFiles = freezeRunArtifacts(reportsBase, runDir, utArtifacts);
@@ -1197,6 +1235,7 @@ export function checkUtHvigorTest(
         // UT leg 的「派生证据完整」= 全部选中模块的结果与 hdc 日志已逐模块冻结（见 execution-key.ts 注释）
         timing_complete: frozenComplete,
         frozen_files: frozenFiles,
+        ...(goalInvocation ? { goal_invocation: goalInvocation } : {}),
       });
     } catch { /* 记录失败不改变门禁；前置的非成功记录已挡住旧成功 */ }
   }
@@ -1332,6 +1371,7 @@ export function checkUtHvigorTest(
       // 全部选中模块真实跑完、且每个 bad 模块都是"跑起来了、跑出用例、有用例失败"。
       failure_kind: formatted.failureKind ?? (isRealAssertionFailure(bad, allModulesExecuted) ? 'code_regression' : undefined),
       blocking_class: formatted.blockingClass,
+      ...(formatted.systemSetup ? { device_setup: formatted.systemSetup } : {}),
       suggestion: repeatedFailure ?? formatted.suggestion,
     },
   ];

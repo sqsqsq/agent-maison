@@ -52,9 +52,10 @@ const EXITS: Array<{ rel: string; anchor: string; count?: number }> = [
   // ⑤ device-runtime-recovery L90
   { rel: 'harness/scripts/utils/device-runtime-recovery.ts', anchor: '框架不会猜测或枚举未登记的口令' },
   // ⑥⑦ hdc-runner L1333 / L1347（preReady.blocked：前面 note 已给具体原因，尾句用通用式）
-  { rel: 'profiles/hmos-app/harness/hdc-runner.ts', anchor: '按前述具体原因稍后重试或重新登记', count: 2 },
+  { rel: 'profiles/hmos-app/harness/hdc-runner.ts', anchor: '按前述具体原因稍后重试或重新登记', count: 1 },
+  { rel: 'profiles/hmos-app/harness/hdc-runner.ts', anchor: 'suggestion: preReady.note', count: 1 },
   // ⑧ device-test-install L366（同上）
-  { rel: 'profiles/hmos-app/harness/providers/device-test-install.ts', anchor: '按前述具体原因稍后重试或重新登记' },
+  { rel: 'profiles/hmos-app/harness/providers/device-test-install.ts', anchor: 'suggestion: preReady.note' },
 ];
 
 const ABSOLUTE_OLD_PHRASES = ['框架不会尝试任何口令', '框架不会替你解锁设备'];

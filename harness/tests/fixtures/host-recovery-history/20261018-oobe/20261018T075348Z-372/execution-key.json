@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "execution_key": "85df4bf9b49bf5ea7419e4c1b286d01e1300508cc6b476772c7c78642acc953b",
+  "inputs": {
+    "hap_sha256_full": "30c463acad16bb5fd8a09b24e61d774f1855b75dfb79dbc34a3bc48f810e78aa",
+    "derived_plan_sha256": "c9cfe2f40db42823267eccf83ee868bc61201f3d76473cc8748d2e5cacde5341",
+    "device": "3UJ0225321000395",
+    "display_env": "/bin/sh: wm: inaccessible or not found",
+    "reset_mode": "n/a",
+    "hylyre_version": null,
+    "manifest_version": null,
+    "profile": "hmos-app",
+    "tool_config_sha256": "23e468755fcdfa9568d9fbc7c0f17b5cb1d1298ba48c8b95e042cca18d4c118d",
+    "flags": []
+  },
+  "trace_path": "",
+  "run_started_at": "2026-10-18T08:03:52.230Z",
+  "outcome": "failed",
+  "trace_sha256": null,
+  "timing_complete": true,
+  "frozen_files": [
+    "frozen.ut-result.WalletMain.json",
+    "frozen.hdc-test.WalletMain.log"
+  ]
+}

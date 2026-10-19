@@ -1,3 +1,4 @@
+import { DEVICE_SETUP_GUIDANCE, type DeviceSetupObservation } from '../../../harness/scripts/utils/device-unlock-helper';
 import {
   buildUtInstallBlockingCheckDetails,
   mapInstallBlockingToUtCheckFields,
@@ -82,6 +83,7 @@ function failureStackFiles(item: UtHvigorTestFailureModule): string[] {
 }
 
 export interface UtHvigorTestFailDetails {
+  systemSetup?: DeviceSetupObservation;
   lines: string[];
   blockingClass?: string;
   failureKind?: string;
@@ -118,6 +120,8 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
   if (entry.result.toolMissing === true) {
     return { ...entry, toolchain: true, phase: 'tool_missing', failureKind: 'device_tool_missing' };
   }
+  const setup = evidence?.runDiagnosis?.systemSetup ?? evidence?.installDiagnosis?.systemSetup;
+  if (setup && !(entry.result.testResult?.failed)) return { ...entry, toolchain: false, phase: evidence?.failedAt ?? 'run', deviceBlocked: true, deviceSubkind: 'system_setup' };
   const installBlocking = entry.result.installBlocking;
   if (installBlocking?.kind && installBlocking.kind !== 'clear') {
     return {
@@ -222,7 +226,8 @@ function singleToolchainHeader(item: ClassifiedFailure): string {
       ? `安装阶段失败：${diagnosis.summary}`
       : `安装阶段失败：exit code ${item.result.exitCode ?? 'unknown'}`;
   }
-  return buildHapHeader(item.result);
+  if (item.phase === 'hap_not_found') return buildHapHeader(item.result);
+  return item.result.onDeviceFailureEvidence?.runDiagnosis?.summary ?? '测试执行未取得有效结果，原因尚未确认；不能据 unsigned 包存在推断签名缺失。';
 }
 
 function stageHintOf(result: HvigorRunResult): string | undefined {
@@ -302,6 +307,7 @@ function appendModuleDetails(
 }
 
 function actionFor(item: ClassifiedFailure): string {
+  if (item.deviceSubkind === 'system_setup') return DEVICE_SETUP_GUIDANCE;
   const installBlocking = item.result.installBlocking;
   if (installBlocking?.kind && installBlocking.kind !== 'clear') {
     return mapInstallBlockingToUtCheckFields(installBlocking).suggestion;
@@ -398,7 +404,8 @@ export function buildUtHvigorTestFailDetails(
     blockingClass = meta.blocking_class;
     failureKind = meta.failure_kind;
   }
-  const lines: string[] = [];
+  const systemSetup = allDeviceBlocked ? items.map(item => item.result.onDeviceFailureEvidence?.runDiagnosis?.systemSetup ?? item.result.onDeviceFailureEvidence?.installDiagnosis?.systemSetup).find(Boolean) : undefined;
+  const lines: string[] = systemSetup ? [DEVICE_SETUP_GUIDANCE] : [];
   if (items.length === 1 && items[0].toolchain) {
     lines.push(buildCompactDiagnosticHeader(singleToolchainHeader(items[0])));
   } else if (items.length > 1) {
@@ -424,5 +431,6 @@ export function buildUtHvigorTestFailDetails(
     failureKind,
     suggestion,
     affectedFiles: affected.files,
+    ...(systemSetup ? { systemSetup } : {}),
   };
 }

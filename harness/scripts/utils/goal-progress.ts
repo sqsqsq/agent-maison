@@ -959,6 +959,11 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     }
   }
   if (!statusReason && runState.recovery) statusReason = runState.recovery.reason;
+  const conditionWait = [...events].reverse().find(e => ['condition_wait_started', 'condition_wait_ready', 'condition_wait_timeout', 'phase_halt', 'run_start', 'run_end'].includes(e.type ?? ''));
+  if (liveness.state !== 'ORPHAN_SUSPECTED' && conditionWait?.type === 'condition_wait_started') {
+    const reason = (conditionWait as { reason?: unknown }).reason;
+    if (typeof reason === 'string') statusReason = reason;
+  }
 
   const { percent, kind } = computeEstimatedPercent(spans, currentSpan);
 

@@ -20,6 +20,7 @@
 // ============================================================================
 
 import type { LockScreenSnapshot, RevealOutcome, UnlockFailureKind } from './device-unlock-helper';
+import { DEVICE_SETUP_GUIDANCE } from './device-unlock-helper';
 
 import {
   capsTestingConclusion,
@@ -130,6 +131,7 @@ export function evaluateDeviceReadinessProbe(
     return fail('lock state is not observable');
   }
   if (!snapshot.locked) {
+    if (snapshot.systemSetup) return fail(DEVICE_SETUP_GUIDANCE);
     return { probe, ready: true, reason: 'device is unlocked', diagnostics };
   }
 
@@ -309,7 +311,8 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
     (unlockAttempt ? { ...r, unlockAttempt } : r);
 
   // ② 重新探测锁屏
-  let locked = deps.isLocked(serial);
+  let snapshot = deps.snapshot?.(serial);
+  let locked = snapshot ? snapshot.locked : deps.isLocked(serial);
   if (locked === undefined) {
     return withAttempt({ state: 'BLOCKED' as const, reason: `无法判定设备 ${serial} 的锁屏状态`, notes });
   }
@@ -330,7 +333,8 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
       };
       if (attempt.ok) {
         // 复验：不凭返回值宣称成功，必须重新探测
-        locked = deps.isLocked(serial);
+        snapshot = deps.snapshot?.(serial);
+        locked = snapshot ? snapshot.locked : deps.isLocked(serial);
         if (locked === undefined) {
           return withAttempt({ state: 'BLOCKED' as const, reason: `解锁后无法复验 ${serial} 锁屏状态`, notes });
         }
@@ -342,6 +346,7 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
   }
 
   if (!locked) {
+    if (snapshot?.systemSetup) return withAttempt({ state: 'BLOCKED' as const, reason: DEVICE_SETUP_GUIDANCE, notes });
     return withAttempt({
       state: 'READY' as const,
       target: { serial, targetKind: classifyKind(input, serial, null) },

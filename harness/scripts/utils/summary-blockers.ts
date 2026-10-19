@@ -11,6 +11,7 @@ import { resolveBlockerActionability } from './goal-failure-classifier';
 import { dropRedundantAggregates, isBlockingCheck } from './check-disposition';
 
 export interface SummaryBlockerEntry {
+  device_setup?: CheckResult['device_setup'];
   id: string;
   severity: string;
   status: string;
@@ -60,6 +61,7 @@ export function buildSummaryBlockers(
         status: c.status,
         classification,
         ...(c.blocking_class ? { blocking_class: c.blocking_class } : {}),
+        ...(c.device_setup ? { device_setup: c.device_setup } : {}),
         details_excerpt: excerpt(c.details, 800),
         affected_files: c.affected_files,
         suggestion: c.suggestion,

@@ -66,14 +66,14 @@ export interface OnDeviceFailureEvidence {
   unsignedPresent?: boolean;
   signSkipped?: boolean;
   signingConfigMissing?: boolean;
-  installDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
+  installDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion' | 'systemSetup'>;
   /**
    * t1（openspec device-readiness-and-completion）：aa test 阶段诊断的**结构化**透传。
    * 此前该诊断只进 `errors[].message` 的散文（`失败阶段：device_locked；…`），下游分类
    * 只能靠子串匹配判 device_locked——既脆弱又无法参与机器判定，导致锁屏最终兜底成
    * `code_regression`（须改码、可重试）。结构化后由 `kind` 直接驱动分类。
    */
-  runDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
+  runDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion' | 'systemSetup'>;
 }
 
 export interface HvigorRunResult {

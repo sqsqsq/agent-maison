@@ -1,3 +1,4 @@
+import { DEVICE_SETUP_GUIDANCE } from '../../../harness/scripts/utils/device-unlock-helper';
 // ============================================================================
 // hdc-runner.ts
 // ============================================================================
@@ -499,6 +500,7 @@ export type HdcFailureKind =
   | 'test_failed';
 
 export interface HdcFailureDiagnosis {
+  systemSetup?: import('../../../harness/scripts/utils/device-unlock-helper').DeviceSetupObservation;
   kind: HdcFailureKind;
   summary: string;
   suggestion: string;
@@ -1159,6 +1161,10 @@ export function runAaTest(meta: OhosTestMetadata, testClasses?: string[], execut
     else if (diagnosis) {
       const device = classifyAaTestFailure(hilog, ret.status ?? -1);
       if (device.kind === 'device_locked') diagnosis = device;
+      const setup = process.env.HARNESS_HDC_TARGET ? (require('../../../harness/scripts/utils/device-readiness-deps') as typeof import('../../../harness/scripts/utils/device-readiness-deps')).readLockScreenSnapshot(process.env.HARNESS_HDC_TARGET, args => {
+        const r = execute(args.slice(2), 8000); return { ok: r.status === 0 && !r.error, out: r.stdout ?? '' };
+      }).systemSetup : undefined;
+      if (setup) diagnosis = { kind: 'aa_test_no_result', systemSetup: setup, summary: DEVICE_SETUP_GUIDANCE, suggestion: DEVICE_SETUP_GUIDANCE };
       diagnosis = { ...diagnosis, summary: `${diagnosis.summary}\n${crashNote}\n${hilog}` };
     }
   }
@@ -1252,7 +1258,7 @@ export function classifyAaTestFailure(
     summary: `aa test 未输出 OHOS_REPORT_RESULT（exit=${exitCode}），无法确认用例真实执行。`,
     suggestion:
       // plan 5e1c7a93 D2：日志已按模块命名（hdc-test.<module>.log），实际路径见 check 的 logPath。
-      '查看本模块的 hdc-test.<module>.log（实际路径见 check 结果的日志落盘行），重点检查 testRunner 路径、ohosTest module name、测试 Ability 是否启动，以及设备是否弹出权限/锁屏/前台限制。',
+      '查看本模块的 hdc-test.<module>.log（实际路径见 check 结果的日志落盘行），原因尚未确认；依据本次设备观察、faultlog 和应用 hilog 定位，不凭单行错误推断 TestRunner 配置有误。输入或环境未变化时不要重复真跑。',
   };
 }
 
@@ -1303,7 +1309,7 @@ function ensureHdcLogReportDir(
  * 运行期锁屏恢复（t6）——统一走 device-recovery-bridge，与就绪门同一套授权语义。
  * projectRoot 缺失或未登记凭据 → 零输入，只回一句人读指引。
  */
-function recoverFromRuntimeLock(opts: OnDeviceUtOptions): { recovered: boolean; note: string } {
+function recoverFromRuntimeLock(opts: OnDeviceUtOptions): ReturnType<typeof import('./device-recovery-bridge').recoverAfterLockFailure> {
   const projectRoot = opts.projectRoot;
   if (!projectRoot) return { recovered: false, note: '无 projectRoot，跳过运行期恢复' };
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1403,7 +1409,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     append(`[device-ready/ut-install] ${preReady.note}`);
     if (preReady.blocked) {
       const msg =
-        `设备锁屏且未能自动解锁——已在 UT 装机前阻断（未执行 hdc install）。${preReady.note}\n` +
+        `设备未就绪——已在 UT 装机前阻断（未执行 hdc install）。${preReady.note}\n` +
         '修复建议：按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。';
       return finalize({
         executed: false,
@@ -1416,9 +1422,10 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
           durationMs: 0,
           output: msg,
           diagnosis: {
-            kind: 'device_locked',
-            summary: `设备锁屏且未能自动解锁——已在 UT 装机前阻断。${preReady.note}`,
-            suggestion: '按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。',
+            kind: preReady.systemSetup ? 'ability_start_failed' : 'device_locked',
+            ...(preReady.systemSetup ? { systemSetup: preReady.systemSetup } : {}),
+            summary: `设备未就绪——已在 UT 装机前阻断。${preReady.note}`,
+            suggestion: preReady.note,
           },
         },
         logExcerpt: `${logChunks.join('\n')}\n[device] BLOCKED: ${msg}`,
@@ -1435,6 +1442,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     const rec = recoverFromRuntimeLock(opts);
     append(`[device-recovery/install] ${rec.note}`);
     if (rec.recovered) install = installHap(hap);
+    else if (rec.systemSetup) install.diagnosis = { kind: 'ability_start_failed', systemSetup: rec.systemSetup, summary: rec.note, suggestion: rec.note };
   }
   append(install.output);
   if (!install.ok) {
@@ -1467,6 +1475,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   if (!aa.ok && aa.diagnosis?.kind === 'device_locked') {
     const rec = recoverFromRuntimeLock(opts);
     append(`[device-recovery] ${rec.note}`);
+    if (rec.systemSetup) aa.diagnosis = { kind: 'aa_test_no_result', systemSetup: rec.systemSetup, summary: rec.note, suggestion: rec.note };
     if (rec.recovered) aa = runAaTest(metadata, opts.testClasses); // 同 serial 重试原操作**一次**
   }
   append(aa.output);

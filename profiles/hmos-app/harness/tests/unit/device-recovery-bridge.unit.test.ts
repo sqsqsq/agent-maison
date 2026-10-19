@@ -261,13 +261,13 @@ export function runAll(): UnitCaseResult[] {
     const elseBranch = /\} else \{\n      if \(downgradeDetected && uninstallBefore\)[\s\S]*$/.exec(code);
     assert(elseBranch !== null, '设备可用分支应能定位');
     assert(
-      /if \(!install\.ok && uninstallBefore && !uninstallAttempted\n\s*&& install\.diagnosis\?\.kind !== 'device_locked'\) \{/.test(
+      /if \(!install\.ok && uninstallBefore && !uninstallAttempted\n\s*&& install\.diagnosis\?\.kind !== 'device_locked' && !install\.diagnosis\?\.systemSetup\) \{/.test(
         elseBranch![0],
       ),
       '公共重试须排除 device_locked——恢复失败后设备还锁着，不得卸载重装',
     );
     // 该重试块**不得**出现在 blocked 分支可达的位置
-    const retryIdx = code.indexOf("&& install.diagnosis?.kind !== 'device_locked') {");
+    const retryIdx = code.indexOf("&& install.diagnosis?.kind !== 'device_locked' && !install.diagnosis?.systemSetup) {");
     const elseIdx = code.indexOf('} else {\n      if (downgradeDetected && uninstallBefore)');
     assert(retryIdx > elseIdx && elseIdx > 0, '公共重试必须在"设备可用"分支之内');
   });
@@ -286,15 +286,16 @@ export function runAll(): UnitCaseResult[] {
       /res\.install\?\.diagnosis\?\.kind,/.test(checkTesting),
       '装机失败时须把 provider 诊断传进结论构造',
     );
-    const priority = /if \(installDiagnosisKind === 'device_locked'\) \{[\s\S]*?\n  \}/.exec(checkTesting);
+    const priority = /if \(systemSetup \|\| installDiagnosisKind === 'device_locked'\) \{[\s\S]*?\n  \}/.exec(checkTesting);
     assert(priority !== null, 'device_locked 须有独立分支');
     assert(
-      /failure_kind: 'device_blocked'/.test(priority![0]) &&
-        /blocking_class: 'externalBlocked'/.test(priority![0]),
+      /return deviceBlockedChecks\(id, desc, fallbackDetails, systemSetup\)/.test(priority![0]) &&
+        /failure_kind: 'device_blocked'/.test(checkTesting.slice(checkTesting.indexOf('function deviceBlockedChecks('), checkTesting.indexOf('function buildDeviceInstallFailResults('))) &&
+        /blocking_class: 'externalBlocked'/.test(checkTesting.slice(checkTesting.indexOf('function deviceBlockedChecks('), checkTesting.indexOf('function buildDeviceInstallFailResults('))),
       'device_locked 须产出 externalBlocked/device_blocked（goal 据此归 external_block）',
     );
     // 该分支必须在重新探测**之前**
-    const kindIdx = checkTesting.indexOf("if (installDiagnosisKind === 'device_locked')");
+    const kindIdx = checkTesting.indexOf("if (systemSetup || installDiagnosisKind === 'device_locked')");
     const rediagIdx = checkTesting.indexOf('const diag = diagnoseInstallBlocking(ctx.projectRoot);');
     assert(kindIdx > 0 && kindIdx < rediagIdx, 'provider 诊断须优先于重新探测');
   });

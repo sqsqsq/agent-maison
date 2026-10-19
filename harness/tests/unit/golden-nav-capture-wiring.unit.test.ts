@@ -271,8 +271,8 @@ function loadVisualDiffJson(root: string): Array<Record<string, unknown>> {
 // ① golden 点名 P1 屏 → nav 校验通过并进入 capture target
 // ---------------------------------------------------------------------------
 
-const cases: Array<{ name: string; run: () => void }> = [];
-function test(name: string, run: () => void): void { cases.push({ name, run }); }
+const cases: Array<{ name: string; run: () => void | Promise<void> }> = [];
+function test(name: string, run: () => void | Promise<void>): void { cases.push({ name, run }); }
 
 test('① golden P1 bank_card_list_sheet：nav 校验通过（不判多余键）且产出 __overlay__0 采集', () => {
   const c = setup();
@@ -729,11 +729,62 @@ test('B08-V1 接线：真跑轮 holder.deviceRunReused=false；同键复用轮 h
   }
 });
 
-export function runAll(): UnitCaseResult[] {
+
+test('395 testing 完整 checker：动作步骤被引导拦住，只报设备阻断并停止旧视觉/报告派生', async () => {
+  const c = setup();
+  const fixture = path.join(FRAMEWORK_ROOT, 'harness/tests/fixtures/host-recovery-history/20261018-oobe');
+  const tree = JSON.parse(require('zlib').gunzipSync(fs.readFileSync(path.join(fixture, 'testing-oobe.json.gz'))).toString('utf8')).tree;
+  const registry = require('../../capability-registry');
+  const hdc = require('../../../profiles/hmos-app/harness/hdc-runner');
+  const deps = require('../../scripts/utils/device-readiness-deps');
+  const registryKeys = ['dispatchDeviceTestBuild', 'dispatchDeviceTestInstall', 'dispatchDeviceTestEnsureReady', 'dispatchDeviceTestRun', 'dispatchDeviceVisualDiff'];
+  const saved = new Map(registryKeys.map(k => [k, registry[k]]));
+  const readSnapshot = deps.readLockScreenSnapshot, identity = hdc.resolveExecutionDeviceIdentity;
+  const oldTarget = process.env.HARNESS_HDC_TARGET;
+  let runs = 0, visualCalls = 0;
+  try {
+    c.ctx.featureSpec = { feature: FEATURE };
+    writeReuseGateFixture(c);
+    writeFile(c.projectRoot, 'doc/features/' + FEATURE + '/context/facts.md', '---\nschema_version: "1.0"\nfeature: ' + FEATURE + '\nestablished_by: spec\nready_to_produce: true\n---\n## phase_delta: testing\nnone\n');
+    writeFile(c.projectRoot, 'doc/features/' + FEATURE + '/testing/test-report.md', '# 旧报告\n**测试结论**: 达标\n通过率 100%\n');
+    // 仅替换构建/设备/Hylyre 传输；门禁、编排、观察解析和失败归因均为生产代码。
+    registry.dispatchDeviceTestBuild = () => ({ hapPath: c.holder.hapPath, reused: true, hvigor: { executed: true, exitCode: 0, errors: [], logExcerpt: 'BUILD SUCCESSFUL' } });
+    registry.dispatchDeviceTestInstall = () => ({ executed: true, ok: true, hapSha256Full: computeHapSha256Full(c.holder.hapPath!), errors: [] });
+    registry.dispatchDeviceTestEnsureReady = () => ({ ok: true, pythonPath: 'fixture-python', hylyreVersion: '0.5.1', manifestVersion: '0.5.1', errors: [] });
+    registry.dispatchDeviceTestRun = (_ctx: unknown, opts: { traceOutPath: string; reportOutPath: string }) => {
+      runs++;
+      const trace = JSON.parse(fs.readFileSync(path.join(path.dirname(TRACE_GOLDEN), 'device-death-midrun.json'), 'utf8'));
+      trace.feature = FEATURE; trace.cases[0].id = 'TC-001'; trace.cases[0].ac_ref = 'AC-001';
+      for (const call of trace.tool_calls) call.case = 'TC-001';
+      fs.writeFileSync(opts.traceOutPath, JSON.stringify(trace));
+      return { executed: true, ok: true, exitCode: 1, command: 'fixture hylyre', tracePath: opts.traceOutPath, reportPath: opts.reportOutPath, trace, logPath: '', errors: [] };
+    };
+    registry.dispatchDeviceVisualDiff = () => { visualCalls++; throw new Error('不应消费旧视觉材料'); };
+    hdc.resolveExecutionDeviceIdentity = () => ({ device: '395-testing', display_env: '' });
+    process.env.HARNESS_HDC_TARGET = '395-testing';
+    deps.readLockScreenSnapshot = (serial: string) => readSnapshot(serial, (args: string[]) => ({ ok: true, out: args.includes('dumpLayout') ? '/data/local/tmp/layout_1.json' : JSON.stringify(tree) }));
+    const all = await (await import('../../scripts/check-testing')).default.check(c.ctx);
+    const blocking = all.filter(r => require('../../scripts/utils/check-disposition').isBlockingCheck(r));
+    assert.strictEqual(runs, 1, JSON.stringify(all));
+    assert.deepStrictEqual(blocking.map(r => r.id), ['device_test_run'], JSON.stringify(blocking));
+    assert.strictEqual(blocking[0].blocking_class, 'externalBlocked');
+    assert.strictEqual(blocking[0].failure_kind, 'device_blocked');
+    assert.strictEqual(blocking[0].device_setup?.bundleName, 'com.huawei.hmos.hwstartupguide');
+    assert.strictEqual(visualCalls, 0);
+    assert.ok(!all.some(r => r.id.startsWith('visual_') || r.id === 'test_report_generated' || r.id === 'ui_entry_coverage'), '引导阻断后不能派生视觉/内容结论');
+  } finally {
+    for (const [k, value] of saved) registry[k] = value;
+    deps.readLockScreenSnapshot = readSnapshot; hdc.resolveExecutionDeviceIdentity = identity;
+    if (oldTarget === undefined) delete process.env.HARNESS_HDC_TARGET; else process.env.HARNESS_HDC_TARGET = oldTarget;
+    teardown(c);
+  }
+});
+
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
     try {
-      c.run();
+      await c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).stack ?? String(err) });

@@ -51,9 +51,12 @@ export function selectRunnerActionFromAssess(
   if (guard === 'retry' && (
     input.observation.phase_outcome?.verdict === 'PASS' ||
     input.observation.signals?.timed_out === true ||
-    input.observation.signals?.api_disconnected === true
+    input.observation.signals?.api_disconnected === true ||
+    (input.observation.phase_outcome?.blocking_class === 'externalBlocked' &&
+      input.observation.phase_outcome?.failure_kind === 'device_blocked' &&
+      !input.assessment.stop.fused && input.assessment.recommendation.action !== 'stop')
   )) {
-    // Closure and process-safety retries remain driver-owned. Content retries
+    // Closure, process-safety and explicit device-gate waits remain driver-owned. Content retries
     // are selected by assess through classifyPhaseVerdict.
     return 'retry';
   }

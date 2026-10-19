@@ -12,7 +12,9 @@
   "start_state_proof": {
     "note": "起始态必须被**证明**而非声明。旧记录的 precondition 只写「suspend immediately before」，但 2026-08-17 实测 suspend 后 3s 不触发自动锁定、45s 才锁——只声明做过 suspend 不足以保证真的进入锁屏，而首帧若已停在 PIN 页就会绕过 reveal（宿主首轮 succeeded 正是这么来的），等于没验到本次修复的那条路径。",
     "method": "power-shell suspend → 等待 → power-shell wakeup → uitest dumpLayout → 生产 parser 判定",
-    "waited_ms": [45000],
+    "waited_ms": [
+      45000
+    ],
     "screen_lock_root_present": true,
     "pin_container_present": false,
     "keypad_diag_reason": "pin_container_not_found",
@@ -27,7 +29,7 @@
   "source_sha256_note": "含 bounded-sync-wait.ts——它是解锁链的实际依赖（settle 原语），2026-07-30 验收时尚不存在，旧记录 new_dependencies_not_covered 明确列出并刻意未纳入；本次一并纳入。",
   "superseded_by_source_change": {
     "recorded_at": "2026-09-07",
-    "by": "2026-09-07 c7d2a9e4 D1/R1：device-readiness-gate.ts 新增 applyPhaseEntryDeviceGate（搬运 harness-runner 入口门接线：起门→notes→托管回收登记→原子注入 env，供 harness-runner / 即席 CLI / device-policy --ready 共用）并给 PhaseEntryDeviceGateDecision 补可选 code；device-readiness-deps.ts 的 runHdc 改为复用 hdc-runner.resolveHdcExecutableSync 解析可执行路径（懒 require，解析失败回落 'hdc'）。未改 ensureDeviceReady 核心解锁/降级逻辑、未改 device-unlock-helper.ts / bounded-sync-wait.ts（二者哈希与本记录一致）。待复验范围：入口门接线与 hdc 路径解析下的真机就绪判定与自动解锁；2026-09-07 宿主中期复验通过（见 interim_reverification），欠账未关闭。",
+    "by": "2026-09-07 c7d2a9e4 D1/R1：device-readiness-gate.ts 新增 applyPhaseEntryDeviceGate（搬运 harness-runner 入口门接线：起门→notes→托管回收登记→原子注入 env，供 harness-runner / 即席 CLI / device-policy --ready 共用）并给 PhaseEntryDeviceGateDecision 补可选 code；device-readiness-deps.ts 的 runHdc 改为复用 hdc-runner.resolveHdcExecutableSync 解析可执行路径（懒 require，解析失败回落 'hdc'）。未改 ensureDeviceReady 核心解锁/降级逻辑、未改 device-unlock-helper.ts / bounded-sync-wait.ts（二者哈希与本记录一致）。待复验范围：入口门接线与 hdc 路径解析下的真机就绪判定与自动解锁；2026-09-07 宿主中期复验通过（见 interim_reverification），欠账未关闭。；395ff0ab：焦点引导观察与解锁后复验，保留旧真机证据，等待同次联合验收",
     "status": "PENDING_REAL_DEVICE_REVERIFICATION",
     "note": "上面 source_sha256 是 2026-08-17 真机验收当时所验源码的哈希，**不得为迁就代码改动而重写**——那等于伪造真机证据。本次改动后需在真机上重跑同一验收流程并落新记录；在此之前本条证据只证明「旧代码曾在真机上通过」。",
     "new_dependencies_not_covered": [
@@ -38,12 +40,17 @@
       {
         "path": "harness/scripts/utils/device-readiness-gate.ts",
         "verified_sha256": "fd0e6deb64ecf16a01c853084fa5426dbaefdc0eccb82cce75a58e8eb24627a1",
-        "current_sha256": "505877f85366325444d74b36f9458e0a482fc0d09d932c1cfc574bfcc0ae580b"
+        "current_sha256": "1abf19c9ebc933f62348e8a63650e96445d5d7fe7714a69f6d6fc340510fe30e"
       },
       {
         "path": "harness/scripts/utils/device-readiness-deps.ts",
         "verified_sha256": "4a26d263fec16ac300349daed1de128bef3ed196636c6e1a11827b1387c69c82",
-        "current_sha256": "74b7fd95ef31d83a348fe86180ad9852545d69c62990e5089d8c0319402df5fe"
+        "current_sha256": "c424d514424f97e15693c2feb376afe70224b32ecfa54b51123250bb07876b3c"
+      },
+      {
+        "path": "harness/scripts/utils/device-unlock-helper.ts",
+        "verified_sha256": "9543fd5ca64212b4f57e052e7ab86c93e4ac17ced692dd39540ae05e01d8584c",
+        "current_sha256": "28aec9e0381d9ea8f5331ad8f6fff2df48b295378d5943aaf98b8135989421cc"
       }
     ],
     "interim_reverification": {

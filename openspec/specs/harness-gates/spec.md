@@ -2725,3 +2725,20 @@ When a CU-bound Feature (identity derived with the `cu-` prefix) runs the narrat
 - **WHEN** a current eligible review reply confirms one bound finding, refutes another, and lacks a third row binding
 - **THEN** one format correction MAY occur within the attempt; the valid confirmed finding SHALL remain an owner candidate, and legal refuted findings SHALL not be retried
 - **AND** re-entering the same attempt SHALL not grant another correction or reset consumed calls/time
+
+### Requirement: UT finalization consumes the same invocation failure without reexecution
+
+The existing UT execution-key record MAY carry the issued goal_invocation run_id/phase/attempt_id. The formal gate SHALL consume a complete failed result from the same invocation and execution key without repeating device execution, still evaluating all current checks and retaining FAIL and the original frozen time/log. This is finalization, not successful execution reuse. Missing identity, incomplete artifacts, changed inputs, a new invocation or an explicit force-device request SHALL use the existing execution path. Old records and ordinary requests SHALL NOT acquire a new mandatory field or gate.
+
+#### Scenario: Self-check already failed on the same inputs
+- **WHEN** self-check and formal gate share the issued identity and key, and the frozen failure is complete and still applicable
+- **THEN** the provider SHALL execute once; formal checks SHALL retain failure, without creating a second device attempt or rewriting the first result
+
+#### Scenario: Setup clears while the same key and attempt are retained
+- **WHEN** a read-only recheck no longer observes the original system setup blocker, including validation-only recovery retaining an attempt
+- **THEN** the provider SHALL execute again and evaluate the new actual result; the old FAIL SHALL NOT act as a negative cache
+
+#### Scenario: Unsigned package exists but execution produced no result
+- **WHEN** failedAt is run with unsignedPresent=true and aa_test_no_result
+- **THEN** the header SHALL describe confirmed device setup or unknown execution cause; it SHALL NOT claim signed HAP is missing
+- **AND** genuine missing-package, signing and installation failures SHALL retain their evidence-based diagnostics

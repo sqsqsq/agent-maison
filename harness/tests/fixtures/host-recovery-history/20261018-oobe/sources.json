@@ -1,0 +1,71 @@
+{
+  "note": "原字节；readiness 样本为锁屏，OOBE 样本为 10-16 Hypium 导出。未解除或解锁设备。",
+  "sources": [
+    {
+      "file": "testing-oobe.json.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/20261016T190710Z-573/hylyre/failures/TC-001-step-2.json",
+      "sha256": "efd958f2c4133c80d39927a8dbcdc8f001fe2e66cc57f94afa367fca3c8dbb8e",
+      "source_sha256": "9332166a657270e192b92162e63db6734a03b3317e60205862057e82c858c67c",
+      "encoding": "gzip"
+    },
+    {
+      "file": "testing-oobe.png",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/20261016T190710Z-573/hylyre/failures/TC-001-step-2.png",
+      "sha256": "eec01db25ba7934c97d70940eee864242980acc969e9193ab6bba09625f59f59"
+    },
+    {
+      "file": "events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261018T070241Z-d818e6/events.jsonl",
+      "sha256": "f1735426e553d03edb1d0e8ebd3f1490f2a439d4ea35999acb922cc78ce9f478"
+    },
+    {
+      "file": "20261018T075348Z-372/execution-key.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261018T075348Z-372/ut/execution-key.json",
+      "sha256": "e0bd94f9b7056a2033e3b3f5fe7c4bb9764756d4673e600b1d50375400865c49"
+    },
+    {
+      "file": "20261018T075348Z-372/frozen.ut-result.WalletMain.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261018T075348Z-372/ut/frozen.ut-result.WalletMain.json",
+      "sha256": "7c043b0f33d4fca9a22c0f3a33b1fad868e6070457ac5db6b3096d50e9a85b86"
+    },
+    {
+      "file": "20261018T075348Z-372/frozen.hdc-test.WalletMain.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261018T075348Z-372/ut/frozen.hdc-test.WalletMain.log",
+      "sha256": "d99d9ac91f7cd0eab6f3c43655df1d802552979f059c3301d48d6a1a51985bbd",
+      "source_sha256": "35b167b8c2381d67e5144fdb18ae510cd4a3d69ec28df646229fdae59210aa2f",
+      "encoding": "gzip"
+    },
+    {
+      "file": "20261018T080553Z-115/execution-key.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261018T080553Z-115/ut/execution-key.json",
+      "sha256": "09c203438fc5dafc31890eec91181c66c6d1c11af5942dcd11fabb61bb641328"
+    },
+    {
+      "file": "20261018T080553Z-115/frozen.ut-result.WalletMain.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261018T080553Z-115/ut/frozen.ut-result.WalletMain.json",
+      "sha256": "c7694665164d6164acc0a5f337bdb14d4cc57db959c027bb523feaa541820879"
+    },
+    {
+      "file": "20261018T080553Z-115/frozen.hdc-test.WalletMain.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261018T080553Z-115/ut/frozen.hdc-test.WalletMain.log",
+      "sha256": "d74e0b2ee4a1c34dede98b04ce1c29b0f9dea04999039f6898c991b507e73720",
+      "source_sha256": "c6796c41bf5e2a5cfc1a0f3c0b5a70541d687c32afd9d8926603be5c2d1c9cb0",
+      "encoding": "gzip"
+    },
+    {
+      "file": "readiness-layout.json",
+      "source": "read-only readiness gate sampling 2026-10-18",
+      "sha256": "21fdfd44d0a6c0892dc9b386e6fbafc0b15ed8b09187c9178f1ead68e38c8ad2"
+    },
+    {
+      "file": "readiness-evidence.json",
+      "source": "read-only readiness gate sampling 2026-10-18",
+      "sha256": "20cb5ade0839c8d7780e5b9fad101c663860aa08b62632104779f2a0fa86c8d2"
+    },
+    {
+      "file": "ut-script-report.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\ut\\reports\\script-report.json",
+      "sha256": "53f08237f5db231da812b253c715c6877396fc776f49709dd9bd6b33c0c75aa2"
+    }
+  ]
+}

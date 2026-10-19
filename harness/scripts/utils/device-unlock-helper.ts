@@ -48,7 +48,12 @@ export type LockCooldownState = 'cooldown' | 'not_cooldown' | 'ambiguous';
 
 export interface ScreenBounds { left: number; top: number; right: number; bottom: number }
 
+export interface DeviceSetupObservation { bundleName: string }
+export const DEVICE_SETUP_GUIDANCE = '设备处于系统开机/升级引导，请在手机上完成引导；框架不会代为确认系统设置。';
+
 export interface LockScreenSnapshot {
+  /** 未锁屏取样的焦点窗口；锁屏背后的应用不可据此推断。 */
+  systemSetup?: DeviceSetupObservation;
   /** 该快照是否显示锁屏；判不出 → undefined（不猜） */
   locked: boolean | undefined;
   /** **锁屏 PIN 容器内**的数字键位；非锁屏时应为空 */
