@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // verify-feature-completion.ts — feature 完成凭证：生成与唯一验证入口
 // （goal-fakepass-hardening t8；openspec goal-runner delta）
@@ -69,15 +70,15 @@ const LEGACY_COMPLETION_SCHEMA_VERSION = '1.1';
  * (plan b5c1e9d7 §3.2). Callers that are not "some owner is building right now" omit it and keep
  * today's behavior; terminal completion (:412 below) must never claim it.
  */
-export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string, frameworkRoot?: string, currentPhasePass?: string): string[] {
-  return executionScopeEvidenceFindings(projectRoot, feature, scope, obligationIds, currentRunId, pendingOwnerPhase, frameworkRoot, currentPhasePass).map(item => `${item.obligation_id}: ${item.detail}`);
+export function executionScopeEvidenceIssues(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string, frameworkRoot?: string, currentPhasePass?: string, authorityReaders?: IdentityNeutralDigestReaders): string[] {
+  return executionScopeEvidenceFindings(projectRoot, feature, scope, obligationIds, currentRunId, pendingOwnerPhase, frameworkRoot, currentPhasePass, authorityReaders).map(item => `${item.obligation_id}: ${item.detail}`);
 }
 
 /** plan b2d7f4e9 §3.1：同一判据的逐义务结构化出口（assessFeature 消费）；字符串出口是它的投影。 */
 export interface ScopeEvidenceFinding { obligation_id: string; detail: string; class: 'binding' | 'evidence' | 'unknown' }
 
-export function executionScopeEvidenceFindings(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string, frameworkRoot?: string, currentPhasePass?: string): ScopeEvidenceFinding[] {
-  const freshnessOpts = { ...(pendingOwnerPhase ? { pendingOwnerPhase } : {}), ...(frameworkRoot ? { frameworkRoot } : {}) };
+export function executionScopeEvidenceFindings(projectRoot: string, feature: string, scope: ExecutionScope, obligationIds?: ReadonlySet<string>, currentRunId?: string, pendingOwnerPhase?: string, frameworkRoot?: string, currentPhasePass?: string, authorityReaders?: IdentityNeutralDigestReaders): ScopeEvidenceFinding[] {
+  const freshnessOpts = { authorityReaders, ...(pendingOwnerPhase ? { pendingOwnerPhase } : {}), ...(frameworkRoot ? { frameworkRoot } : {}) };
   validateExecutionScope(scope);
   // plan b2d7f4e9 t4：记录的依赖是写入时工程根下的绝对路径；换根加载按记录内一致前缀重定位（只读侧）。
   const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
@@ -107,7 +108,7 @@ export function executionScopeEvidenceFindings(projectRoot: string, feature: str
             const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
             contentAligned = bindingHasParsedValue(ref) && (() => {
               try {
-                readBoundInput({ projectRoot, frameworkRoot: frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full' }, ref, legacyRoot);
+                readBoundInput({ projectRoot, frameworkRoot: frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, feature, phase: obligation.owner_phase, track: 'full', authorityReaders }, ref, legacyRoot);
                 return true;
               } catch { return false; }
             })();
@@ -302,6 +303,7 @@ function readSummaryLattice(
 }
 
 export interface CleanPassOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   executionScope?: ExecutionScope;
   projectRoot: string;
   feature: string;
@@ -326,7 +328,7 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   const { projectRoot, feature, chain } = opts;
   const issues: CleanPassIssue[] = [];
   if (opts.executionScope) {
-    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope, undefined, opts.runId, undefined, opts.frameworkRoot)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
+    for (const detail of executionScopeEvidenceIssues(projectRoot, feature, opts.executionScope, undefined, opts.runId, undefined, opts.frameworkRoot, undefined, opts.authorityReaders)) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail, kind: 'needs_fix' });
     if (opts.executionScope.completion_target !== 'feature') issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: 'request-only 不能签发 Feature completion', kind: 'needs_fix' });
     if (JSON.stringify(chain) !== JSON.stringify(executionCompletionPhases(opts.executionScope))) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: '完成链与冻结范围失配', kind: 'needs_fix' });
   }
@@ -503,6 +505,7 @@ export function collectPhaseCompletionIssues(opts: CleanPassOptions): CleanPassI
     currentRequirementSha: opts.currentRequirementSha,
     frameworkRoot: opts.frameworkRoot,
     runId: opts.runId,
+    authorityReaders: opts.authorityReaders,
     pendingOwnerPhase: opts.pendingOwnerPhase,
   })) {
     if (r.verdict !== 'fresh') {

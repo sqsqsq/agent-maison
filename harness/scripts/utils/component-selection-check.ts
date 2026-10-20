@@ -22,9 +22,9 @@ function selectionRefMatches(raw: string, component: ContractsSpec['components']
 }
 
 /** Only fill mechanically determined projections; never overwrite a conflicting authored value. */
-export function projectComponentSelections(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact): ContractsSpec {
+export function projectComponentSelections(root: string, contracts: ContractsSpec, cu: ChangeUnitArtifact, resolveRef = resolveComponentBlueprintRef): ContractsSpec {
   if (!fs.existsSync(componentIndexPath(root))) return contracts;
-  const blueprint = resolveComponentBlueprintRef(root, cu.component_blueprint_ref).blueprint;
+  const blueprint = resolveRef(root, cu.component_blueprint_ref).blueprint;
   return projectSelectionFacts(root, contracts, cu, blueprint);
 }
 

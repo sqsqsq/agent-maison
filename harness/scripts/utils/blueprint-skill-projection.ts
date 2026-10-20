@@ -28,7 +28,7 @@ import { checkUseCaseSpecSchema } from '../check-ut';
 import type { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
 import type { ResolutionDependency } from './capability-resolution';
 import { resolveCheckDisposition } from './check-disposition';
-import { identityNeutralDigest } from './identity-neutral-digest';
+import { identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 
@@ -307,7 +307,7 @@ export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown)
  * 投影只读取 canonical CU/design 来源；阶段产物由责任阶段的对齐门与 materialize writer 检查，
  * 不拿待比较的 use-cases.yaml 反向判定设计权威是否有效。
  */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind): BlueprintSkillProjection {
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, authorityReaders?: IdentityNeutralDigestReaders): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     const actual = existingProjectPathSpelling(projectRoot, file);
@@ -323,26 +323,26 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
   const fail: (failed: string | string[], message: string, at?: DesignAuthorityLocation[]) => never = (failed, message, at = []) => { codes = [failed].flat(); locations = at; throw new Error(message); };
   try {
     const identity = parseChangeUnitFeatureId(feature);
-    const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
+    const loaded = (authorityReaders?.loadChangeUnit ?? loadCanonicalChangeUnit)(projectRoot, identity.blueprintId, identity.changeUnitId);
     depend(loaded.canonicalPath);
     const cu = asChangeUnitArtifact(loaded.changeUnit);
-    const cuIssues = validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath }).filter(issue => issue.severity === 'BLOCKER');
+    const cuIssues = (authorityReaders?.changeUnitIssues ? authorityReaders.changeUnitIssues(projectRoot, loaded) : validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: authorityReaders?.blueprint })).filter(issue => issue.severity === 'BLOCKER');
     if (cuIssues.length) {
       if (cuIssues.every(issue => issue.id === BLUEPRINT_REF_STALE_ISSUE)) reason = 'blueprint_ref_stale';
       fail(cuIssues.map(issue => issue.id), 'component-design: ' + cuIssues.map(issue => issue.message).join('; '));
     }
-    const parent = resolveComponentBlueprintRef(projectRoot, cu.component_blueprint_ref);
+    const parent = (authorityReaders?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref);
     depend(parent.canonicalPath);
     for (const file of blueprintSourceRefFiles(projectRoot, parent.blueprint)) depend(file);
-    const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
+    const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit, { resolveBlueprintRef: authorityReaders?.blueprint });
     if (design.verdict !== 'constructable') fail(design.issues.map(i => i.id), `component-design: ${design.issues.map(i => i.message).join('; ')}`);
-    for (const ref of cu.design_refs) depend(resolveComponentBlueprintRef(projectRoot, ref).canonicalPath);
+    for (const ref of cu.design_refs) depend((authorityReaders?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, ref).canonicalPath);
     const bundle = selectBlueprintSkillContent(parent.blueprint, cu);
     const selected = bundle.selected;
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const acceptance = bundle.acceptance;
     const construction = kind === 'contracts' && bundle.contracts
-      ? projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu) as unknown as BlueprintRecord : undefined;
+      ? projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, authorityReaders?.blueprint) as unknown as BlueprintRecord : undefined;
     const useCases = bundle.useCases;
     const raw = kind === 'acceptance' ? acceptance : construction;
     const absent: BlueprintSkillProjection = { state: 'absent', dependencies, detail: `${kind === 'acceptance' ? 'spec' : 'plan'}: 缺精确 ${kind} 内容，design_refs/verification_refs 不等价于设计` };
@@ -383,7 +383,7 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       }
       const violations = findUnauthorizedContractFileReferences(closure);
       if (closure.invalid_paths.length || violations.length) fail('authority_contract_write_set_open', 'plan: contracts.files 写集未闭合：' + [...closure.invalid_paths.map(i => i.message), ...violations.map(i => i.path)].join('; '));
-      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true });
+      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: authorityReaders?.blueprint });
       if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
     const normalized = { ...(parsed.acceptance ? { 'acceptance@1': parsed.acceptance } : {}), ...(parsed.contracts ? { 'contracts@1': parsed.contracts } : {}), ...(parsed.useCases ? { 'use-cases@1': parsed.useCases } : {}) };

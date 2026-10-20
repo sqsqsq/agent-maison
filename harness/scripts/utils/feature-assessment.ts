@@ -1,3 +1,4 @@
+import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // feature-assessment.ts — Feature 完成的唯一评估入口（plan b2d7f4e9 §3.1）
 // ----------------------------------------------------------------------------
@@ -51,6 +52,7 @@ export interface FeatureAssessment {
 }
 
 export interface AssessFeatureOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   /** 消费方独立解析的 track / 链（legacy 1.1 记录据此对账；1.2 记录按自身出生范围对账）。 */
   expectedTrack: string;
   expectedChain: string[];
@@ -97,6 +99,7 @@ export function changeUnitBindingIssues(projectRoot: string, feature: string, ch
 }
 
 export function assessFeature(projectRoot: string, feature: string, opts: AssessFeatureOptions): FeatureAssessment {
+  opts = { ...opts, authorityReaders: opts.authorityReaders ?? createIdentityNeutralDigestReaders() };
   const inspected = fs.existsSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME))
     ? inspectCompletionRecord({ projectRoot, feature, expectedChain: opts.expectedChain, expectedTrack: opts.expectedTrack, frameworkRoot: opts.frameworkRoot })
     : undefined;
@@ -107,7 +110,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
     : { state: 'absent' };
 
   let scope = opts.scope ?? inspected?.scope;
-  if (!scope) { try { scope = loadEffectiveExecutionScope(projectRoot, feature, runId ?? undefined, opts.frameworkRoot); } catch { scope = undefined; } }
+  if (!scope) { try { scope = loadEffectiveExecutionScope(projectRoot, feature, runId ?? undefined, opts.frameworkRoot, undefined, opts.authorityReaders); } catch { scope = undefined; } }
 
   const rows = new Map<string, AssessedObligation>();
   for (const o of scope?.obligations ?? []) rows.set(o.id, { id: o.id, kind: o.kind, owner_phase: o.owner_phase, applicability: o.applicability, status: 'covered' });
@@ -125,7 +128,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
 
   const recordPhases = new Set(completion?.chain ?? []);
   if (scope) {
-    for (const f of executionScopeEvidenceFindings(projectRoot, feature, scope, undefined, runId ?? undefined, undefined, opts.frameworkRoot)) {
+    for (const f of executionScopeEvidenceFindings(projectRoot, feature, scope, undefined, runId ?? undefined, undefined, opts.frameworkRoot, undefined, opts.authorityReaders)) {
       const gap = scope.unresolved.find(item => item.obligation_id === f.obligation_id);
       add(f.obligation_id, f.class, f.detail, gap ? { kind: 'unresolved', owner_phase: gap.owner, applicability: 'unknown' } : undefined);
     }
@@ -138,7 +141,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
   if (completion && recordPhases.size) {
     try {
       const currentRequirementSha = opts.requirementSha ?? computeRunRequirementSha(projectRoot, feature, runId ?? undefined);
-      for (const issue of collectCleanPassIssues({
+      for (const issue of collectCleanPassIssues({ authorityReaders: opts.authorityReaders,
         projectRoot, feature, chain: completion.chain, executionScope: scope, frameworkRoot: opts.frameworkRoot,
         currentRequirementSha, runId: runId ?? undefined,
       })) {
@@ -146,7 +149,7 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
         if (issue.condition === 'execution_scope' || issue.condition === 'goal_run_identity_intact') continue;
         if (issue.propagated_from) {
           // 沿链传染不是本阶段结果失效：失效只沿真实消费关系传播——直查本阶段自身证据（其输入含上游产物时照样判出）。
-          const own = recomputePhaseEvidenceStaleness(projectRoot, feature, [issue.phase], { currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: runId ?? undefined })[0];
+          const own = recomputePhaseEvidenceStaleness(projectRoot, feature, [issue.phase], { currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: runId ?? undefined, authorityReaders: opts.authorityReaders })[0];
           if (own?.verdict === 'fresh') continue;
           addToPhase(issue.phase, 'evidence', `[lineage_fresh] ${own?.verdict}：${(own?.changed_paths ?? []).join(', ')}`);
           continue;

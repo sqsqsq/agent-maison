@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // phase-write-boundary.ts — invocation-scoped phase ownership and attribution
 // ============================================================================
@@ -69,6 +70,7 @@ export interface PhaseWriteBoundaryResolution {
 }
 
 export interface ResolvePhaseWriteBoundaryOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -140,10 +142,10 @@ function loadCodingScope(
   if (options.runId) {
     const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
     let contracts: ReturnType<typeof readRunBoundContracts>;
-    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId); }
+    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId, options.authorityReaders); }
     catch (error) {
       const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-      const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.pendingOwnerPhase);
+      const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.pendingOwnerPhase, options.authorityReaders);
       if (!scope || !phaseOwnsDesignOutput(planProduces, scope, 'plan', 'contracts@1')) throw error;
       // Keep valid authority when plan rejects a repair; unfinished output grants no new source domain.
       return { prefixes: [], modules: [], diagnostics: ['plan still owns construction output; source domains are not yet authorized'] };

@@ -77,6 +77,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'change-unit-content-revision', modulePath: './unit/change-unit-content-revision.unit.test' },
   { id: 'change-unit-revision-recovery', modulePath: './unit/change-unit-revision-recovery.unit.test', releaseOnly: true },
   { id: 'blueprint-review-design', modulePath: './unit/blueprint-review-design.unit.test' },
+  { id: 'evaluation-readers', modulePath: './unit/evaluation-readers.unit.test' },
   { id: 'execution-scope-prepare-early', modulePath: './unit/execution-scope-prepare-early.unit.test' },
   { id: 'execution-scope-prepare-late', modulePath: './unit/execution-scope-prepare-late.unit.test' },
   { id: 'execution-scope-runtime', modulePath: './unit/execution-scope-runtime.unit.test' },

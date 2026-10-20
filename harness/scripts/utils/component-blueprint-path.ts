@@ -162,13 +162,14 @@ export function resolveComponentBlueprintRefFromLoaded(loaded: ReturnType<typeof
   return { canonicalPath: loaded.canonicalPath, blueprint: loaded.blueprint, target: resolveBlueprintTarget(loaded.blueprint, ref.target), ref };
 }
 
-export function resolveComponentBlueprintRef(projectRoot: string, value: unknown): ResolvedBlueprintTarget {
+export function resolveComponentBlueprintRef(projectRoot: string, value: unknown, snapshot?: ReturnType<typeof loadCanonicalBlueprint>): ResolvedBlueprintTarget {
   const ref = validateComponentBlueprintRefShape(value);
-  const loaded = loadCanonicalBlueprint(projectRoot, ref.blueprint_id);
+  const loaded = snapshot ?? loadCanonicalBlueprint(projectRoot, ref.blueprint_id);
   assertLoadedBlueprintRefIdentity(loaded, ref);
   const validationIssues = blockerIssues(validateComponentBlueprint(loaded.blueprint, {
     projectRoot,
     canonicalPath: loaded.canonicalPath,
+    sourceCache: new Map([[path.resolve(loaded.canonicalPath), loaded.blueprint]]),
   }));
   if (validationIssues.length > 0) {
     throw new ComponentBlueprintResolutionError(

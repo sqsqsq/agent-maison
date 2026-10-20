@@ -297,6 +297,7 @@ function checkVerticalSlice(
   projectRoot: string,
   cu: ChangeUnitArtifact,
   contracts: ContractsSpec,
+  resolveRef = resolveComponentBlueprintRef,
 ): ChangeUnitProjectionIssue[] {
   const issues: ChangeUnitProjectionIssue[] = [];
   const flowRefs = cu.design_refs.filter(ref => ref.target.kind === 'flow');
@@ -308,7 +309,7 @@ function checkVerticalSlice(
         continue;
       }
       try {
-        const flow = resolveComponentBlueprintRef(projectRoot, ref).target as BlueprintRecord;
+        const flow = resolveRef(projectRoot, ref).target as BlueprintRecord;
         if (!nonEmptyString(mapped.owner_ref) || asStrings(mapped.contract_refs).length === 0) {
           issues.push(issue('change_unit_runtime_owner_contract_missing', `${blueprintRefAddress(ref)} 缺真实 owner_ref/contract_refs。`));
         }
@@ -407,7 +408,7 @@ function checkVerticalSlice(
   }
   for (const ref of cu.design_refs.filter(item => item.target.kind === 'decision')) {
     try {
-      const decision = resolveComponentBlueprintRef(projectRoot, ref).target as BlueprintRecord;
+      const decision = resolveRef(projectRoot, ref).target as BlueprintRecord;
       const providers = cu.requires.flatMap(requirement => {
         try {
           return [asChangeUnitArtifact(loadCanonicalChangeUnit(
@@ -604,7 +605,7 @@ export function validateChangeUnitFeatureProjection(
   useCasesPresent: boolean,
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
-  options: { changeUnitOverride?: ChangeUnitArtifact; designOnly?: boolean } = {},
+  options: { changeUnitOverride?: ChangeUnitArtifact; designOnly?: boolean; resolveBlueprintRef?: typeof resolveComponentBlueprintRef } = {},
 ): ChangeUnitProjectionResult {
   const section = asRecord(contracts?.change_unit);
   if (!section && !options.designOnly) {
@@ -644,7 +645,7 @@ export function validateChangeUnitFeatureProjection(
   if (feature !== expectedFeature) {
     issues.push(issue('change_unit_feature_identity_mismatch', `Feature=${feature}，canonical 派生 identity=${expectedFeature}。`));
   }
-  const design = validateChangeUnitDesign(projectRoot, cu as unknown as ChangeUnitRecord);
+  const design = validateChangeUnitDesign(projectRoot, cu as unknown as ChangeUnitRecord, { resolveBlueprintRef: options.resolveBlueprintRef });
   issues.push(...design.issues.map(item => issue(
     item.id,
     item.message,
@@ -663,13 +664,13 @@ export function validateChangeUnitFeatureProjection(
   }
   const warnings: string[] = [];
   try {
-    const modifiable = deriveModifiableModules(projectRoot, cu);
+    const modifiable = deriveModifiableModules(projectRoot, cu, options.resolveBlueprintRef);
     const outside = [...new Set((contracts!.modules ?? []).map(item => item.name))].filter(name => !modifiable.includes(name)).sort();
     if (outside.length > 0) {
       issues.push(issue('cu_scope_matches_blueprint', `contracts.modules 越出蓝图派生的可修改模块集合 [${modifiable.join(', ')}]（只来自 CU touches）：${outside.join(', ')}；回 /component-design 调和蓝图 touches / development 节点，plan 内无扩展出口。`, 'reconcile_blueprint'));
     }
     const designDecisionIds = cu.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id);
-    const architecture = architectureImpactIssues(projectRoot, resolveComponentBlueprintRef(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds);
+    const architecture = architectureImpactIssues(projectRoot, (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds);
     issues.push(...architecture.issues);
     warnings.push(...architecture.warnings);
   } catch (error) {
@@ -677,7 +678,7 @@ export function validateChangeUnitFeatureProjection(
   }
   const runtime = runtimeFacts(contracts!);
   issues.push(...runtime.issues);
-  issues.push(...checkVerticalSlice(projectRoot, cu, contracts!));
+  issues.push(...checkVerticalSlice(projectRoot, cu, contracts!, options.resolveBlueprintRef));
   const useCasesRequired = runtime.useCasesRequired || acceptanceNeedsUseCase(acceptance);
   const dagRequired = acceptanceNeedsDag(acceptance) || (hasUnitScope(acceptance) && runtime.dagComplexity);
   if (useCasesRequired && !useCasesPresent) {

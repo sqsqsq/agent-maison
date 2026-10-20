@@ -1,3 +1,4 @@
+import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { executionCompletionPhases, type ExecutionScope } from './execution-scope';
 import { loadEffectiveExecutionScope } from './goal-run-creation';
 // ============================================================================
@@ -228,6 +229,7 @@ export interface AssessResult {
 }
 
 export interface AssessFeatureOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   frameworkRoot?: string;
   feature: string;
@@ -446,11 +448,12 @@ function collectPrunedPropagations(
       .localeCompare([b.producer_phase, b.producer_capability, b.downstream_phase, b.downstream_capability, b.input_id].join('|')));
 }
 export function observeFeatureState(options: AssessFeatureOptions): AssessObservation {
+  options = { ...options, authorityReaders: options.authorityReaders ?? createIdentityNeutralDigestReaders() };
   let workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
   // D1 §6.4：删掉「有 runId 才读范围」的三元——统一入口在无 run 时读 feature 冻结记录。
-  const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.reconcile?.phase_outcome?.phase);
+  const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.reconcile?.phase_outcome?.phase, options.authorityReaders);
   const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
   if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'));
   const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));
@@ -464,6 +467,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, phases, {
       frameworkRoot,
       runId: options.runId,
+      authorityReaders: options.authorityReaders,
     }).map((entry) => [entry.phase, entry]),
   );
 
@@ -1019,6 +1023,7 @@ function featureCompletionAssessment(options: AssessFeatureOptions): ReturnType<
     return assessFeatureCompletion(options.projectRoot, options.feature, {
       ...resolveChangeUnitExpectedExecution(options.projectRoot, options.feature, false, options.frameworkRoot),
       frameworkRoot: options.frameworkRoot,
+      authorityReaders: options.authorityReaders,
     });
   } catch {
     return null;
@@ -1050,6 +1055,7 @@ function completionAssessmentRecommendation(
 }
 
 export function assessFeature(options: AssessFeatureOptions): AssessResult {
+  options = { ...options, authorityReaders: options.authorityReaders ?? createIdentityNeutralDigestReaders() };
   // 无 run 身份：完成记录带 run_id 时按该 run 的执行范围观察，不落到全工作流链（plan a2f7c9e4 §3.4）。
   const completion = options.runId ? null : featureCompletionAssessment(options);
   const recordRunId = completion && completion.record.state !== 'absent' ? completion.record.run_id : null;

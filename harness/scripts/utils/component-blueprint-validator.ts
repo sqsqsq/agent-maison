@@ -31,6 +31,8 @@ export interface ComponentBlueprintValidationContext {
   canonicalPath?: string;
   /** Candidate DSL for pre-publication checks; never a persisted authority. */
   architecture?: import('../../config').ArchitectureDsl;
+  /** Only a canonical reader may supply already-read authority sources. */
+  sourceCache?: Map<string, unknown>;
 }
 
 function loadBlueprintSchema(): Record<string, unknown> {
@@ -79,7 +81,7 @@ export function validateComponentBlueprintUpstream(
     ...validateBlueprintProvenance(blueprint),
     ...validateRequirementTraceability(blueprint, context.projectRoot),
     ...validateBlueprintViews(blueprint),
-    ...validateBlueprintContracts(blueprint, { projectRoot: context.projectRoot }),
+    ...validateBlueprintContracts(blueprint, { projectRoot: context.projectRoot, sourceCache: context.sourceCache }),
     ...validateRuntimeDataFlows(blueprint),
     ...validateCrossViewRelations(blueprint),
     ...validateBlueprintQuestioning(blueprint),

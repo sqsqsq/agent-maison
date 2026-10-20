@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
@@ -866,7 +867,7 @@ export function featureScopePhaseHealth(
  */
 export function resolveCurrentScopeView(input: {
   projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
-  currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string;
+  currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string; authorityReaders?: IdentityNeutralDigestReaders;
 }): ExecutionScope {
   const { projectRoot, frameworkRoot, feature } = input;
   const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
@@ -888,7 +889,7 @@ export function resolveCurrentScopeView(input: {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
     const { collectPhaseCompletionIssues } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
     const fresh = evidence?.integrityOk && collectPhaseCompletionIssues({ projectRoot, feature, chain: [phase],
-      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase }).length === 0;
+      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders }).length === 0;
     if (!fresh) { stale.add(phase); continue; }
     const after = history.invalidatedAt.get(phase);
     const eligible = input.currentRunId ? history.passed.has(phase) : !after || Date.parse(evidence!.manifest.generated_at) > Date.parse(after);

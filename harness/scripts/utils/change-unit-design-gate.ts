@@ -33,6 +33,7 @@ const DIRECT_REF_FIELDS = [
 export type ChangeUnitConstructabilityVerdict = 'constructable' | 'blocked' | 'reconcile_blueprint';
 
 export interface ChangeUnitDesignGateOptions {
+  resolveBlueprintRef?: typeof resolveComponentBlueprintRef;
   blueprintInvalidatingFacts?: string[];
 }
 
@@ -184,7 +185,7 @@ export function validateChangeUnitDesign(
   const explicitAddresses = explicitRefs.map(blueprintRefAddress);
   let ownerResolution: ReturnType<typeof resolveComponentBlueprintRef>;
   try {
-    ownerResolution = resolveComponentBlueprintRef(projectRoot, changeUnit.component_blueprint_ref);
+    ownerResolution = (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, changeUnit.component_blueprint_ref);
   } catch (error) {
     issues.push(changeUnitIssue(
       'change_unit_blueprint_unresolvable',
@@ -200,7 +201,7 @@ export function validateChangeUnitDesign(
     const ref = explicitRefs[index];
     if (!sameBlueprintIdentity(owner, ref)) continue;
     try {
-      resolveComponentBlueprintRef(projectRoot, ref);
+      (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, ref);
     } catch (error) {
       issues.push(changeUnitIssue(
         'change_unit_design_ref_unresolvable',

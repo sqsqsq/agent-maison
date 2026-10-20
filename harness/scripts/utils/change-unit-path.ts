@@ -201,11 +201,14 @@ export function resolveChangeUnitRefFromLoaded(loaded: LoadedChangeUnit, value: 
   return { ...loaded, ref };
 }
 
-export function resolveChangeUnitRef(projectRoot: string, value: unknown): LoadedChangeUnit & { ref: ChangeUnitRef } {
+export function resolveChangeUnitRef(projectRoot: string, value: unknown, readers?: {
+  loadChangeUnit?: typeof loadCanonicalChangeUnit;
+  changeUnitIssues?: (root: string, loaded: LoadedChangeUnit) => ChangeUnitIssue[];
+}): LoadedChangeUnit & { ref: ChangeUnitRef } {
   const ref = validateChangeUnitRefShape(value);
-  const loaded = loadCanonicalChangeUnit(projectRoot, ref.blueprint_id, ref.change_unit_id);
+  const loaded = (readers?.loadChangeUnit ?? loadCanonicalChangeUnit)(projectRoot, ref.blueprint_id, ref.change_unit_id);
   resolveChangeUnitRefFromLoaded(loaded, ref);
-  const issues = blockerChangeUnitIssues(validateChangeUnit(loaded.changeUnit, {
+  const issues = blockerChangeUnitIssues(readers?.changeUnitIssues ? readers.changeUnitIssues(projectRoot, loaded) : validateChangeUnit(loaded.changeUnit, {
     projectRoot,
     canonicalPath: loaded.canonicalPath,
   }));

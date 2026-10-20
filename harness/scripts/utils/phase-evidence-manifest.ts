@@ -1,3 +1,4 @@
+import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // phase-evidence-manifest.ts — 阶段 closure 证据快照（goal-fakepass-hardening t8）
 // ============================================================================
@@ -77,7 +78,7 @@ export const IDENTITY_NEUTRAL_EVIDENCE = 'ref-content@1';
  * null = 登记路径但算不出（不能证明等价）。登记：canonical CU、Feature 目录的三份派生投影文件、CU 所属蓝图——
  * 蓝图条目在本 Feature 里只代表「本 CU 消费的权威内容」，摘要取 CU 中立视图（已展开全部消费目标，所有权引用不展开）。
  */
-function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string): string | null | undefined {
+function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string, authorityReaders?: IdentityNeutralDigestReaders): string | null | undefined {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { tryParseCuFeatureId } = require('./feature-identity') as typeof import('./feature-identity');
   const identity = tryParseCuFeatureId(feature);
@@ -87,9 +88,12 @@ function identityNeutralEvidenceDigest(projectRoot: string, feature: string, abs
   const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
   const { BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
   /* eslint-enable @typescript-eslint/no-require-imports */
+  authorityReaders ??= createIdentityNeutralDigestReaders();
   const target = path.resolve(absPath);
   const digestOf = (artifact: string, file: string): string | null => {
-    try { return identityNeutralDigest(projectRoot, artifact, YAML.parse(fs.readFileSync(file, 'utf8'))); } catch { return null; }
+    try { return identityNeutralDigest(projectRoot, artifact, artifact === 'change-unit@1' && authorityReaders?.loadChangeUnit
+      ? authorityReaders.loadChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit
+      : authorityReaders?.readArtifact ? authorityReaders.readArtifact(file) : YAML.parse(fs.readFileSync(file, 'utf8')), authorityReaders); } catch { return null; }
   };
   const cuFile = changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId);
   if (target === path.resolve(cuFile) || target === path.resolve(componentBlueprintPath(projectRoot, identity.blueprintId))) return digestOf('change-unit@1', cuFile);
@@ -220,17 +224,19 @@ export function evidenceEntryMatchesCurrentFile(
   projectRoot: string,
   entry: EvidenceEntry,
   feature: string,
+  authorityReaders?: IdentityNeutralDigestReaders,
 ): boolean {
   const absPath = path.join(projectRoot, entry.path);
   if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase) === entry.sha256;
   if (entry.identity_neutral !== undefined) {
     return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE && entry.sha256 !== null
-      && identityNeutralEvidenceDigest(projectRoot, feature, absPath) === entry.sha256;
+      && identityNeutralEvidenceDigest(projectRoot, feature, absPath, authorityReaders) === entry.sha256;
   }
   return sha256File(absPath) === entry.sha256;
 }
 
 export interface EvidenceSemanticOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   runId?: string;
   currentRequirementSha?: string | null;
   frameworkRoot?: string;
@@ -870,6 +876,7 @@ export function recomputePhaseEvidenceStaleness(
   chain: string[],
   opts?: EvidenceSemanticOptions & { pendingOwnerPhase?: string; pendingOwnerPaths?: string[] },
 ): PhaseStalenessResult[] {
+  opts = { ...opts, authorityReaders: opts?.authorityReaders ?? createIdentityNeutralDigestReaders() };
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
   const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
@@ -890,7 +897,7 @@ export function recomputePhaseEvidenceStaleness(
       const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
       const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
       if (framework) {
-        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId);
+        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId, opts.authorityReaders);
         const sourceOwners = new Set([...phaseContractIndex(loadFeatureContracts(framework))]
           .filter(([, contract]) => contract.phase.produces.some(output => output.kind === 'source')).map(([phase]) => phase));
         const declared = new Set(contracts.files.filter(file => contracts.modules.some(module => {
@@ -926,7 +933,7 @@ export function recomputePhaseEvidenceStaleness(
     // observation when the declared output still has the exact bytes that owner recorded.
     return !!owner?.integrityOk && owner.manifest.outputs.some(output =>
       output.path === entry.path && output.owner_phase === entry.owner_phase
-      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature));
+      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature, opts?.authorityReaders));
   };
 
   for (const phase of chain) {
@@ -998,7 +1005,7 @@ export function recomputePhaseEvidenceStaleness(
     const { manifest } = loaded;
     const changed = new Set<string>();
     for (const entry of [...phaseEvidenceBusinessInputs(projectRoot, feature, manifest, opts), ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, opts?.authorityReaders) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
     if (changed.size > 0) {
       results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: false });

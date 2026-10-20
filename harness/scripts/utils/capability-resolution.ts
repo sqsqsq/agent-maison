@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // capability-resolution.ts — deterministic pre-check capability resolver
 // ============================================================================
@@ -123,6 +124,7 @@ export interface CapabilityResolutionReport {
 }
 
 export interface CapabilityResolutionOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   frameworkRoot: string;
   projectRoot: string;
   feature?: string;
@@ -198,6 +200,7 @@ function resolveArtifact(
   explicitPath?: string,
   subject?: PhaseInputContext['subject'],
   supplied?: { value: unknown; dependencies: ResolutionDependency[] },
+  authorityReaders?: IdentityNeutralDigestReaders,
 ): ProviderResult {
   const inventory = loadArtifactInventory(frameworkRoot);
   const registered = inventory.artifacts.find((artifact) => artifact.id === source.artifact);
@@ -229,7 +232,7 @@ function resolveArtifact(
         const sourceFeature = feature ?? (typeof value.feature === 'string' ? value.feature : undefined);
         if (sourceFeature === undefined) return { state: 'invalid', dependencies, detail: 'blueprint projection requires its explicit source subject' };
         const kind = value.source.startsWith('derive.blueprint-acceptance:') ? 'acceptance' : 'contracts';
-        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind);
+        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind, authorityReaders);
         dependencies.push(...projected.dependencies);
         projectedValue = projected.artifacts?.[source.artifact];
         if (projected.state === 'invalid') return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection invalid; return to design owner' };
@@ -289,7 +292,7 @@ function resolveDerive(
   }
   if (source.provider_id === 'derive.blueprint-acceptance' || source.provider_id === 'derive.blueprint-contracts') {
     if (feature === undefined) return { state: 'absent', dependencies: [], detail: 'request has no blueprint Feature' };
-    return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts');
+    return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts', options.authorityReaders);
   }
   if (options.inputContext) {
     if (source.provider_id === 'derive.requirement') {
@@ -599,13 +602,13 @@ export function projectSourceFileBinding(
  * plan c4e7a9b2 §3.4 B2：登记 artifact（derive.blueprint-* 与同名 artifact 同一 schema）的身份中立摘要；
  * 未登记或算不出（引用解析失败）为 null——调用方回落全值哈希。旧绑定存的是全值哈希，只能按全值命中。
  */
-function identityNeutralFingerprint(projectRoot: string, source: ContractInputSource, value: unknown): string | null {
+function identityNeutralFingerprint(projectRoot: string, source: ContractInputSource, value: unknown, authorityReaders?: IdentityNeutralDigestReaders): string | null {
   const artifact = source.kind === 'artifact' ? source.artifact
     : source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1' : source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
   if (!artifact) return null;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { identityNeutralDigest } = require('./change-unit-design-preparation') as typeof import('./change-unit-design-preparation');
-  return identityNeutralDigest(projectRoot, artifact, value);
+  return identityNeutralDigest(projectRoot, artifact, value, authorityReaders);
 }
 
 /**
@@ -615,10 +618,10 @@ function identityNeutralFingerprint(projectRoot: string, source: ContractInputSo
  */
 export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding, legacyRoot?: string): unknown {
   const supplied = binding.source.kind === 'artifact' && binding.source.artifact === 'use-cases@1' && options.feature && !options.request && !['ut', 'testing'].includes(options.phase)
-    ? deriveBlueprintSkillInput(options.projectRoot, options.feature, options.frameworkRoot, 'contracts') : undefined;
+    ? deriveBlueprintSkillInput(options.projectRoot, options.feature, options.frameworkRoot, 'contracts', options.authorityReaders) : undefined;
   const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
     : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true, options.request?.inputs[binding.input_id], options.inputContext?.subject,
-      supplied?.state === 'resolved' && supplied.artifacts?.['use-cases@1'] !== undefined ? { value: supplied.artifacts['use-cases@1'], dependencies: supplied.dependencies } : undefined);
+      supplied?.state === 'resolved' && supplied.artifacts?.['use-cases@1'] !== undefined ? { value: supplied.artifacts['use-cases@1'], dependencies: supplied.dependencies } : undefined, options.authorityReaders);
   // plan e7a2c4f1 §3.4（G02/G04）：「确定性对齐」的边界写死为**身份明确 + 内容指纹相等**。
   // 放开的只有**账本形状**：依赖项字节漂移、以及依赖聚合清单的增删——解析值逐字节相同时
   // 那是同一份内容（换了注释/空白、多走了一次 attempt），不是内容变化。
@@ -645,7 +648,7 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
     || binding.dependencies.some(existenceDrift)
     || result.dependencies.some(dep => !boundSame(dep))
     || (isSourceFileSet(binding.source) ? !sourceSetMatches : fullFingerprint(result.value) !== binding.content_fingerprint
-      && identityNeutralFingerprint(options.projectRoot, binding.source, result.value) !== binding.content_fingerprint)) {
+      && identityNeutralFingerprint(options.projectRoot, binding.source, result.value, options.authorityReaders) !== binding.content_fingerprint)) {
     throw new Error(`input binding stale; return to scope owner: ${result.detail ?? binding.input_id}`);
   }
   return result.value;
@@ -656,13 +659,13 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
  * a plan phase. D1：`runId` 可缺省——无 run 时统一入口读 feature 冻结记录的有效范围，
  * 其余判据（找 `contracts@1` / `derive.blueprint-contracts` 绑定后 `readBoundInput`）一行不改。
  */
-export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId?: string): import('./types').ContractsSpec {
+export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId?: string, authorityReaders?: IdentityNeutralDigestReaders): import('./types').ContractsSpec {
   const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const scope = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
   const binding = scope?.obligations.flatMap(obligation => [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)])
     .find(binding => binding.source.kind === 'artifact' ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts');
   if (!binding) throw new Error('frozen construction contract missing; return to design owner');
-  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full' }, binding, inferLegacyProjectRoot(projectRoot, scope)) as import('./types').ContractsSpec;
+  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full', authorityReaders }, binding, inferLegacyProjectRoot(projectRoot, scope)) as import('./types').ContractsSpec;
 }
 
 function resolveApplicability(
@@ -734,7 +737,7 @@ function resolveInput(
       : source.kind === 'artifact'
         ? !options.feature && resolved && !options.request?.inputs[input.id] ? { state: 'absent', dependencies: [], detail: 'request has no Feature artifact' }
           : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved, options.request?.inputs[input.id], options.inputContext?.subject,
-            suppliedValue !== undefined ? { value: suppliedValue, dependencies: suppliedInputs.flatMap(value => value.state === 'resolved' ? value.binding.dependencies : []) } : undefined)
+            suppliedValue !== undefined ? { value: suppliedValue, dependencies: suppliedInputs.flatMap(value => value.state === 'resolved' ? value.binding.dependencies : []) } : undefined, options.authorityReaders)
         : resolveDerive(options.projectRoot, options.feature, source, options);
     if (resolved && result.state === 'resolved' && result.value === undefined) {
       result = { ...result, state: 'invalid', detail: 'provider returned no consumable content' };
@@ -763,7 +766,7 @@ function resolveInput(
       }
       binding = { input_id: input.id, source, dependencies: dedupeDependencies(attempts.flatMap(attempt => attempt.dependencies)),
         source_refs: result.dependencies.filter(d => d.exists).map(d => path.relative(options.projectRoot, d.path).replace(/\\/g, '/')),
-        content_fingerprint: identityNeutralFingerprint(options.projectRoot, source, result.value) ?? full };
+        content_fingerprint: identityNeutralFingerprint(options.projectRoot, source, result.value, options.authorityReaders) ?? full };
       binding.dependencies = dedupeDependencies([...binding.dependencies, ...cuDependencies]);
       const legacyRequirementResupply = expected?.input_id === 'requirement'
         && expected.dependencies.length === 0 && expected.source_refs.length === 0

@@ -1,9 +1,12 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as path from 'path';
+import * as YAML from 'yaml';
 import { stableStringify } from './phase-evidence-manifest';
 import { asRecord } from './component-blueprint-model';
-import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, sha256Bytes } from './component-blueprint-path';
-import { loadCanonicalChangeUnit, parseChangeUnitFeatureId, resolveChangeUnitRef } from './change-unit-path';
+import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef, resolveComponentBlueprintRefFromLoaded, validateComponentBlueprintRefShape } from './component-blueprint-path';
+import { changeUnitPath, loadCanonicalChangeUnit, parseChangeUnitFeatureId, resolveChangeUnitRef } from './change-unit-path';
+import { validateChangeUnit } from './change-unit-validator';
 import { deriveModifiableModules, relevantArchitectureImpactDecisions } from './change-unit-feature-projection';
 import { ChangeUnitArtifact } from './change-unit-model';
 import { BLUEPRINT_PROJECTION_FILES } from './blueprint-skill-projection';
@@ -16,6 +19,57 @@ export interface IdentityNeutralDigestReaders {
   changeUnit: typeof resolveChangeUnitRef;
   architecture: typeof relevantArchitectureImpactDecisions;
   unavailable?: (error: unknown) => void;
+  loadBlueprint?: typeof loadCanonicalBlueprint;
+  loadChangeUnit?: typeof loadCanonicalChangeUnit;
+  changeUnitIssues?: (root: string, loaded: ReturnType<typeof loadCanonicalChangeUnit>) => ReturnType<typeof validateChangeUnit>;
+  readArtifact?: (file: string) => unknown;
+}
+
+/** One synchronous read action owns this object. Never retain it across writes or awaits. */
+export function createIdentityNeutralDigestReaders(): IdentityNeutralDigestReaders {
+  const blueprints = new Map<string, ReturnType<typeof loadCanonicalBlueprint>>();
+  const units = new Map<string, ReturnType<typeof loadCanonicalChangeUnit>>();
+  const validatedBlueprints = new Set<string>();
+  const unitIssues = new Map<string, ReturnType<typeof validateChangeUnit>>();
+  const artifacts = new Map<string, unknown>();
+  const readers: IdentityNeutralDigestReaders = {
+    loadBlueprint(root, id) {
+      const file = path.resolve(componentBlueprintPath(root, id));
+      if (!blueprints.has(file)) blueprints.set(file, loadCanonicalBlueprint(root, id));
+      return blueprints.get(file)!;
+    },
+    loadChangeUnit(root, blueprint, id) {
+      const file = path.resolve(changeUnitPath(root, blueprint, id));
+      if (!units.has(file)) units.set(file, loadCanonicalChangeUnit(root, blueprint, id));
+      return units.get(file)!;
+    },
+    blueprint(root, value) {
+      const ref = validateComponentBlueprintRefShape(value);
+      const loaded = readers.loadBlueprint!(root, ref.blueprint_id);
+      if (!validatedBlueprints.has(loaded.canonicalPath)) {
+        const resolved = resolveComponentBlueprintRef(root, ref, loaded);
+        validatedBlueprints.add(loaded.canonicalPath);
+        return resolved;
+      }
+      return resolveComponentBlueprintRefFromLoaded(loaded, ref);
+    },
+    changeUnitIssues(root, loaded) {
+      if (!unitIssues.has(loaded.canonicalPath)) {
+        unitIssues.set(loaded.canonicalPath, validateChangeUnit(loaded.changeUnit, {
+          projectRoot: root, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: readers.blueprint,
+        }));
+      }
+      return unitIssues.get(loaded.canonicalPath)!;
+    },
+    changeUnit(root, ref) { return resolveChangeUnitRef(root, ref, readers); },
+    architecture: relevantArchitectureImpactDecisions,
+    readArtifact(file) {
+      const absolute = path.resolve(file);
+      if (!artifacts.has(absolute)) artifacts.set(absolute, YAML.parse(fs.readFileSync(absolute, 'utf8')));
+      return artifacts.get(absolute);
+    },
+  };
+  return readers;
 }
 
 /**
@@ -32,6 +86,7 @@ export interface IdentityNeutralDigestReaders {
  *（不能证明等价，调用方回落全值 / 字节口径）。
  */
 export function identityNeutralDigest(projectRoot: string, artifactId: string, parsed: unknown, readers?: IdentityNeutralDigestReaders): string | null {
+  readers ??= createIdentityNeutralDigestReaders();
   try {
     const view = artifactId === 'change-unit@1' ? neutralChangeUnit(projectRoot, parsed, readers)
       : Object.prototype.hasOwnProperty.call(BLUEPRINT_PROJECTION_FILES, artifactId) ? neutralFeatureArtifact(projectRoot, parsed, readers) : undefined;
@@ -45,16 +100,8 @@ export function identityNeutralDigest(projectRoot: string, artifactId: string, p
 const withoutIdentity = (ref: unknown): Record<string, unknown> =>
   Object.fromEntries(Object.entries(asRecord(ref) ?? {}).filter(([key]) => !(IDENTITY_KEYS as readonly string[]).includes(key)));
 
-// ponytail: 进程内按「工程根 + 蓝图字节 + 引用」缓存精确解析结果（不落盘）；蓝图外文件变化不使缓存失效，上限=进程生命周期。
-const resolvedBlueprintRefs = new Map<string, ReturnType<typeof resolveComponentBlueprintRef>>();
-function resolveBlueprintRefCached(projectRoot: string, ref: unknown): ReturnType<typeof resolveComponentBlueprintRef> {
-  const bytes = fs.readFileSync(componentBlueprintPath(projectRoot, String(asRecord(ref)?.blueprint_id)));
-  const key = [projectRoot, sha256Bytes(bytes), stableStringify(ref)].join('\0');
-  if (!resolvedBlueprintRefs.has(key)) resolvedBlueprintRefs.set(key, resolveComponentBlueprintRef(projectRoot, ref));
-  return resolvedBlueprintRefs.get(key)!;
-}
 function expandBlueprintRef(projectRoot: string, ref: unknown, readers?: IdentityNeutralDigestReaders): unknown {
-  const target = (readers?.blueprint ?? resolveBlueprintRefCached)(projectRoot, ref).target;
+  const target = (readers?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, ref).target;
   const content = asRecord(asRecord(ref)?.target)?.kind === 'blueprint' && asRecord(target)
     ? blueprintWithoutReaderGuide(target as Record<string, unknown>) : target;
   return { ref: withoutIdentity(ref), content };
@@ -82,9 +129,9 @@ function neutralChangeUnit(projectRoot: string, parsed: unknown, readers?: Ident
   const artifact = cu as unknown as ChangeUnitArtifact;
   const designDecisionIds = (Array.isArray(cu.design_refs) ? cu.design_refs : []).map(ref => asRecord(asRecord(ref)?.target))
     .filter(target => target?.kind === 'decision').map(target => String(target!.id));
-  const resolveBlueprint = readers?.blueprint ?? resolveBlueprintRefCached;
+  const resolveBlueprint = readers?.blueprint ?? resolveComponentBlueprintRef;
   view.relevant_architecture_impact = (readers?.architecture ?? relevantArchitectureImpactDecisions)(projectRoot, resolveBlueprint(projectRoot, cu.component_blueprint_ref).blueprint,
-    deriveModifiableModules(projectRoot, artifact, readers?.blueprint), designDecisionIds).map(withoutIdentity);  return view;
+    deriveModifiableModules(projectRoot, artifact, resolveBlueprint), designDecisionIds).map(withoutIdentity);  return view;
 }
 
 const PROJECTION_STAMP = /^derive\.blueprint-(acceptance|contracts):(sha256:[0-9a-f]{64}):(sha256:[0-9a-f]{64})$/;
@@ -104,8 +151,8 @@ function neutralFeatureArtifact(projectRoot: string, parsed: unknown, readers?: 
     const stamp = PROJECTION_STAMP.exec(view.source);
     const identity = parseChangeUnitFeatureId(String(view.feature));
     if (!stamp
-      || loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).artifactSha256 !== stamp[2]
-      || loadCanonicalBlueprint(projectRoot, identity.blueprintId).artifactSha256 !== stamp[3]) {
+      || (readers?.loadChangeUnit ?? loadCanonicalChangeUnit)(projectRoot, identity.blueprintId, identity.changeUnitId).artifactSha256 !== stamp[2]
+      || (readers?.loadBlueprint ?? loadCanonicalBlueprint)(projectRoot, identity.blueprintId).artifactSha256 !== stamp[3]) {
       throw new Error('派生投影来源戳不指向当前 canonical CU / 蓝图');
     }
     view.source = `derive.blueprint-${stamp[1]}`;

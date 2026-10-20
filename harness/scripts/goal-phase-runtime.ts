@@ -1,4 +1,5 @@
 #!/usr/bin/env ts-node
+import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
 import { parseVerifierRequest } from './utils/verifier-request';
 import { findUnreadableDiagnosisChecks } from './utils/repair-candidates';
 import { validateProjectRelativePath } from './utils/project-relative-path';
@@ -7768,9 +7769,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // write attribution for this invocation, which is not evidence that anything is
         // wrong with the deliverable.  The phase still produces its ordinary verdict, and
         // the gates that actually judge scope and drift are untouched.
+        let promptAuthorityReaders: IdentityNeutralDigestReaders | undefined = createIdentityNeutralDigestReaders();
         let phaseWriteBoundary: PhaseWriteBoundaryResolution | null = null;
         try {
           phaseWriteBoundary = resolvePhaseWriteBoundary({
+            authorityReaders: promptAuthorityReaders,
             projectRoot,
             frameworkRoot,
             feature: manifest.feature,
@@ -7786,6 +7789,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const detail = `phase write boundary resolution failed: ${(error as Error).message}`;
           phaseWriteBoundary = null;
           goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, detail });
+          promptAuthorityReaders = createIdentityNeutralDigestReaders();
           console.warn(`[goal-runner] ⚠ 写归因不可用（${detail}）——本阶段不做写归因，质量门禁照常执行。`);
         }
         if (phaseWriteBoundary?.unresolvedSourcePhases.includes(String(phase))) {
@@ -7795,6 +7799,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const detail = phaseWriteBoundary.diagnostics.join('；');
           phaseWriteBoundary = null;
           goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, detail });
+          promptAuthorityReaders = createIdentityNeutralDigestReaders();
           console.warn(`[goal-runner] ⚠ 本阶段源码域无法解析（${detail}）——不做写归因；范围违规仍由 check-coding 判定。`);
         }
 
@@ -7815,7 +7820,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (!dryRun && manifest.execution_scope) {
           try {
             const entry = resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature: manifest.feature,
-              phase: String(phase), featuresDir, goalRunId: manifest.run_id, goalAttemptId: visualAttemptId });
+              authorityReaders: promptAuthorityReaders, phase: String(phase), featuresDir, goalRunId: manifest.run_id, goalAttemptId: visualAttemptId });
             phaseFactsContext = entry.factsContext;
             factsRebuildReason = entry.factsRebuildReason;
             if (phaseFactsContext) for (const [source, owner] of Object.entries(phaseFactsContext.source_owners ?? {})) {
@@ -7825,6 +7830,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
           } catch (error) { factsAdmissionError = (error as Error).message; }
         }
+        // The read action ends before invocation events, writers, waits or model execution.
+        promptAuthorityReaders = undefined;
         // An upstream facts gap goes directly to the ordinary harness/owner recovery, without granting a new executor window.
         const skipExecutor = resumePostAgent || !!factsAdmissionError;
         if (factsAdmissionError && !resumePostAgent) totalTurns--;

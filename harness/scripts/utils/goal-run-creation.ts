@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { validateExecutionScope, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView } from './execution-scope';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 /**
@@ -188,7 +189,7 @@ export function resolveEffectiveScopeSource(
   return { scope: featureEffectiveScope(record), source: 'feature', run_id: null };
 }
 
-export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string, providedFrameworkRoot?: string, pendingOwnerPhase?: string): ExecutionScope | undefined {
+export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string, providedFrameworkRoot?: string, pendingOwnerPhase?: string, authorityReaders?: IdentityNeutralDigestReaders): ExecutionScope | undefined {
   const recorded = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
   if (!recorded || !runId) return recorded;
   const { resolveWorkflowSpec, workflowForExistingRun } = require('../../workflow-loader') as typeof import('../../workflow-loader');
@@ -197,7 +198,7 @@ export function loadEffectiveExecutionScope(projectRoot: string, feature: string
   const frameworkRoot = providedFrameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
   const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
   return resolveCurrentScopeView({ projectRoot, frameworkRoot, feature,
-    workflow: workflowForExistingRun(resolveWorkflowSpec(projectRoot, { frameworkRoot }), manifest, frameworkRoot), previous: recorded, currentRunId: runId, currentPhase: pendingOwnerPhase });
+    workflow: workflowForExistingRun(resolveWorkflowSpec(projectRoot, { frameworkRoot }), manifest, frameworkRoot), previous: recorded, currentRunId: runId, currentPhase: pendingOwnerPhase, authorityReaders });
 }
 
 /**
