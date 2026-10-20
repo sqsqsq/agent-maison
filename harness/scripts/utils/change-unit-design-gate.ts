@@ -11,6 +11,7 @@ import {
 } from './component-blueprint-model';
 import { resolveComponentBlueprintRef } from './component-blueprint-path';
 import { stableAddressIndex } from './blueprint-addressing';
+import { blueprintComponentDecisions } from './component-assets';
 import {
   ChangeUnitIssue,
   ChangeUnitRecord,
@@ -111,6 +112,13 @@ export function deriveClosure(blueprint: BlueprintRecord, roots: string[], proje
     for (const address of [...required]) {
       const record = index.get(address);
       if (!record) continue;
+      for (const component of asRecords(asRecord(record.contracts)?.components)) {
+        for (const decision of blueprintComponentDecisions(blueprint, component)) {
+          for (const dependency of [String(decision.target_ref), `decision:${decision.decision_id}`]) {
+            if (index.has(dependency) && !required.has(dependency)) { required.add(dependency); changed = true; }
+          }
+        }
+      }
       for (const linked of linkedAddresses(record)) {
         if (index.has(linked) && !required.has(linked)) {
           required.add(linked);
@@ -147,6 +155,23 @@ export function deriveClosure(blueprint: BlueprintRecord, roots: string[], proje
     }
   }
   return required;
+}
+
+/** Provider-side projection, before the original CU consumer validates and publishes it. */
+export function completeChangeUnitDesignRefs(blueprint: BlueprintRecord, cu: import('./change-unit-model').ChangeUnitArtifact,
+  projectRoot: string): import('./change-unit-model').ChangeUnitArtifact {
+  const next = structuredClone(cu);
+  const refs = new Set(next.design_refs.map(blueprintRefAddress));
+  for (const address of deriveClosure(blueprint, [...refs], projectRoot)) {
+    if (refs.has(address)) continue;
+    const nested = /^view:([^/]+)\/(node|flow):(.+)$/.exec(address);
+    const flat = /^(blueprint|view|relation|decision|contract):(.+)$/.exec(address);
+    const target: ComponentBlueprintRef['target'] | undefined = nested
+      ? { kind: nested[2] as 'node' | 'flow', view_id: nested[1], id: nested[3] }
+      : flat ? { kind: flat[1] as ComponentBlueprintRef['target']['kind'], id: flat[2] } : undefined;
+    if (target) next.design_refs.push({ ...next.component_blueprint_ref, target });
+  }
+  return next;
 }
 
 export function validateChangeUnitDesign(

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { componentIndexPath, relComponentIndex } from '../config';
-import { mergeComponentCatalog, scanComponentIndex, serializeComponentIndex } from './utils/component-assets';
+import { mergeComponentCatalog, refreshComponentIndex, scanComponentIndex, serializeComponentIndex } from './utils/component-assets';
 
 if (require.main === module) {
   try {
@@ -16,12 +16,11 @@ if (require.main === module) {
       const merged = mergeComponentCatalog(root, YAML.parse(fs.readFileSync(path.resolve(args['merge-staging']), 'utf8')), ids);
       console.log(`已合并逐条确认的策展卡；现有 ${merged.components.length} 条。`);
     } else {
-      const result = scanComponentIndex(root);
+      const result = args['dry-run'] ? scanComponentIndex(root) : refreshComponentIndex(root);
       const text = serializeComponentIndex(result.index);
       if (args['dry-run']) console.log(text);
       else {
         const file = componentIndexPath(root);
-        fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text, 'utf8');
         console.log(`已写入 ${relComponentIndex(root)}：${result.index.components.length} 个组件。`);
       }
       for (const warning of result.warnings) console.warn(`WARN ${warning}`);

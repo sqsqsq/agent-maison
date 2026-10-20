@@ -81,7 +81,9 @@ function checkFileCompleteness(ctx: CheckContext): CheckResult[] {
   }
 
   const missing: string[] = [];
-  for (const relPath of contracts.files) {
+  const { partitionConstructionFiles } = require('./utils/phase-write-boundary') as typeof import('./utils/phase-write-boundary');
+  const due = partitionConstructionFiles(ctx.projectRoot, ctx.resolvedProfile?.profileDir ?? '', contracts).implementation;
+  for (const relPath of due) {
     if (!fs.existsSync(path.join(ctx.projectRoot, relPath))) missing.push(relPath);
   }
 
@@ -338,7 +340,9 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       if (!baseline.available) return result('FAIL', baseline.reason);
       const diff = diffChangedFilesWithStatus({ projectRoot: ctx.projectRoot, baseRef: baseline.baseSha });
       if (!diff.executed) return result('FAIL', diff.error ?? '无法读取 run baseline diff');
-      const files = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))];
+      const { isCurrentComponentInventory } = require('./utils/component-assets') as typeof import('./utils/component-assets');
+      const files = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))]
+        .filter(file => !isCurrentComponentInventory(ctx.projectRoot, file));
       const modules = resolveModulePathPrefixes(ctx.projectRoot, contracts.modules.map(module => module.name), contracts.modules);
       const classified = classifyChangedFiles(files, modules.allowedPrefixes, layerDirPrefixes(ctx.projectRoot));
       // plan f3b8d261 §3.2：模块内未授权的那一半里，UT 调用产出、此后无他阶段改写、字节未变的
@@ -843,10 +847,7 @@ export function checkHostEntryReachability(ctx: CheckContext): CheckResult[] {
   }
   const missing: string[] = [];
   for (const p of points) {
-    if (!p.entry_symbol) {
-      missing.push(`${p.consumer_module}→${p.provider_module}：缺 entry_symbol（无从验证）`);
-      continue;
-    }
+    if (!p.entry_symbol) continue;
     if (!probeConsumerBinding(ctx.projectRoot, contracts!, p.consumer_module, p.entry_symbol)) {
       missing.push(
         `${p.consumer_module}→${p.provider_module}：consumer 源码未发现「${p.entry_symbol}」消费——` +
@@ -854,15 +855,21 @@ export function checkHostEntryReachability(ctx: CheckContext): CheckResult[] {
       );
     }
   }
-  if (missing.length > 0) {
+  const undefinedEntries = points.filter(point => !point.entry_symbol);
+  if (undefinedEntries.length > 0 || missing.length > 0) {
     return [{
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'FAIL',
-      details: [
+      ...(undefinedEntries.length ? { repair_owner: 'plan' as const, affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'contracts.yaml')] } : {}),
+      details: undefinedEntries.length
+        ? `入口定义缺失，尚不能判定产品可达性：${undefinedEntries.map(p => `${p.consumer_module}→${p.provider_module}`).join('、')} 缺 entry_symbol。`
+        : [
         '【入口不可达】feature 页面存在但宿主入口链未接通（页面孤岛——真机测试必然全链失败）：',
         ...missing.map(m => `  - ${m}`),
       ].join('\n'),
-      suggestion: '在 consumer 模块补路由注册/入口消费（in_scope 内），或修正 integration_points 声明后重跑。',
+      suggestion: undefinedEntries.length
+        ? '交 plan 补齐 integration_points 的消费符号并核对零修改绑定，再返回 coding 验证实现；继承设计冲突由设计 owner 修订。'
+        : '在 consumer 模块补路由注册/入口消费（in_scope 内），或修正 integration_points 声明后重跑。',
     }];
   }
   return [{

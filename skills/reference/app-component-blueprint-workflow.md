@@ -176,7 +176,7 @@ canonical YAML 根对象含 `component_id`、`blueprint_id`、`revision`、`sour
   | `dependency_edge` | `from`、`to`（模块名或外层 id）、`direction: add\|remove` | 施工前 DSL 须已达目标许可（add 已允许、remove 已不允许）且决策 `decided_with_authority`，否则相关 CU 不得施工 |
   | `dsl_other` | `affected_items[]` | 只登记不机检，施工前须经权威批准落盘 |
 
-  `verified_unchanged` 的 development 不得有该类决策（`blueprint_view_unchanged_masks_change`）。蓝图期不改 catalog 与 DSL；DSL 只经 framework-init 既有获准路径（预设 / 手工编辑 config 后重跑 UPDATE）改写。
+  `verified_unchanged` 的 development 不得有该类决策（`blueprint_view_unchanged_masks_change`）。DSL 经 framework-init 既有配置 writer 改写；无人值守原需求内由设计责任方提供已裁决候选，施工前落到目标许可，有人在场仍沿原确认流程。
 
 ### 3. 运行时流与跨视图检查
 
@@ -338,4 +338,6 @@ checker 无 BLOCKER，独立质询完成，当前切片可施工，P1 派生结�
 
 同一 providers[] 必有静态 optional component-assets 卡。冻结 authority_rule = `Source is component fact authority; curation is human selection guidance.`，source_rule = `Selection evidence cites the configured component index or catalog; component_ref identifies the asset.`。definition=共享 UI 资产输入，consumer=builder/lens/questioning，provider=静态 index/catalog reader；missing_behavior=诚实 unknown/degraded/not_applicable，replacement_behavior=同源重扫并使相关 P1 结果过期，exit_behavior=丢临时检索保留 provenance，conflict_behavior=源码优先且保留策展冲突，writes=[canonical_blueprint_input]。
 
-无 UI 维度可 not_applicable；有 UI 缺索引必须 unknown|degraded + unknown gap（verification_refs 含 provider:component-assets），owner/needed_by/unlock_condition 齐全。远期 open_decision 可继续，当前切片依赖则 blocker，不伪造选型。依赖预检复用 componentDependencyAllowed；顺序换选>plan 声明下沉>用户批新边。DSL 未获批准不能自改；未决新边保留 open_decision/blocker 和引用该 decision 的 gap，获批后更新正确 DSL 与决定。Story publication 由同一 renderer 输出四个选型字段并跑 --projection。
+无 UI 维度可 not_applicable；有 UI 缺索引必须 unknown|degraded + unknown gap（verification_refs 含 provider:component-assets），owner/needed_by/unlock_condition 齐全。远期 open_decision 可继续，当前切片依赖则 blocker，不伪造选型。依赖预检复用 componentDependencyAllowed；顺序换选>plan 声明下沉>用户批新边。无人值守原需求内由设计方静默裁决新边并经原配置 writer 重签；有人在场保持原确认。真实授权未成立时保留 open_decision/blocker 及原因。Story publication 由同一 renderer 输出四个选型字段并跑 --projection。
+
+无人值守时 evolution_candidate.human_decision 仍用原字段和值域，由设计责任方依据原请求和事实填写，provenance 不伪称用户逐项确认。typed UI 与独立节点消费同一选型事实；带 asset_resolution 的类型错写在设计期指出，普通业务 kind 不封闭成枚举。

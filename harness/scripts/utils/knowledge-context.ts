@@ -217,7 +217,7 @@ export function assembleKnowledge(context: KnowledgeContext): KnowledgeAssembly 
     add('code-graph', path.resolve(root, context.paths?.module_graphs_dir ?? '<module>/code-graph.yaml'), '按相关模块替换 <module>；无图回源码，不自动建图');
     return out;
   }
-  if (context.phase === 'review' || design) {
+  if (context.phase === 'review' || context.phase === 'testing' || design) {
     const conventions = read(conventionsPath(root)) ?? '';
     for (const line of conventions.split(/\r?\n/).filter(line => /^\s*(?:-\s*)?范例[：:]/.test(line))) {
       const ref = line.match(/范例[：:]\s*`?([^`\s#]+\.[a-zA-Z0-9]+)(?:#[^`\s]+)?/);

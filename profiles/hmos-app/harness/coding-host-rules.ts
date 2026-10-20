@@ -804,7 +804,8 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const etsFiles = contracts.files.filter(f => f.endsWith('.ets'));
+  const { partitionConstructionFiles } = require('../../../harness/scripts/utils/phase-write-boundary') as typeof import('../../../harness/scripts/utils/phase-write-boundary');
+  const etsFiles = partitionConstructionFiles(ctx.projectRoot, ctx.resolvedProfile?.profileDir ?? '', contracts).implementation.filter(f => f.endsWith('.ets'));
   const missing: string[] = [];
   for (const f of etsFiles) {
     if (!fs.existsSync(path.join(ctx.projectRoot, f))) missing.push(f);

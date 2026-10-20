@@ -1,0 +1,273 @@
+criteria:
+  - id: AC-1
+    priority: P0
+    description: 添加银行卡页和全部银行页点击任一银行都打开同一张卡类型半模态。
+    testable: true
+    verification_steps:
+      - 分别从 AddBankCardPage 与 AllBanksPage 点击任意银行行。
+      - 核对半模态银行名称/logo 与被点击项一致，展示该银行支持的卡类型。
+    expected_result: 两个入口不再 Toast 暂不支持，均进入卡类型选择且一次点击只出现一个半模态。
+    ut_layer: both
+    ut_focus: BankRepository 的银行到卡类型映射与 OpenCardFlow 单次打开状态。
+    device_focus: 两个真实入口、半模态样式及重复点击防重入。
+    prd_function: F1
+    checkpoint:
+      pre_screen: add_bank_card
+      action:
+        type: tap
+        target_element_id: col_row_cmb
+      post_screen: card_type_sheet
+      required_element_ids:
+        - ct_bank
+        - ct_debit
+        - ct_credit
+        - ct_continue
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      locator: 需求规格 / 页面说明
+      snippet: 在添加银行卡或全部银行页面，点击某个银行后，拉起选择卡类型半模态
+  - id: AC-2
+    priority: P0
+    description: 卡类型只允许单选，未选择时继续按钮不可用，选择后进入对应银行候选卡页。
+    testable: true
+    verification_steps:
+      - 依次选择储蓄卡和信用卡，核对选中态互斥。
+      - 选择一种类型后点击同意并继续。
+    expected_result: 只保留一个选中类型，目标全屏页标题为银行名称且候选卡匹配所选类型。
+    ut_layer: both
+    ut_focus: 卡类型互斥状态与候选卡过滤。
+    device_focus: 半模态按钮禁用/启用和到候选卡页的导航。
+    prd_function: F2
+    checkpoint:
+      pre_screen: card_type_sheet
+      action:
+        type: tap
+        target_element_id: ct_continue
+      post_screen: card_selection
+      required_element_ids:
+        - cs_bank_title
+        - cs_card_1
+        - cs_agreement
+        - cs_next
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      locator: 需求规格 / 页面说明
+      snippet: 最多只能选择一种卡类型添加
+  - id: AC-3
+    priority: P0
+    description: 候选卡界面仅展示卡号前四后四，但选择和后续写库保留完整卡号。
+    testable: true
+    verification_steps:
+      - 选择一张 mock 卡并核对屏幕掩码。
+      - 通过 Repository spy 核对保存入参。
+    expected_result: UI 不出现中间位，Repository 收到完整卡号。
+    ut_layer: both
+    ut_focus: maskCardNumber 与选择载荷完整性。
+    device_focus: 具体卡片页面视觉、单选和协议勾选。
+    prd_function: F3
+    checkpoint:
+      pre_screen: card_selection
+      action:
+        type: tap
+        target_element_id: cs_card_1
+      post_screen: card_selection
+      required_element_ids:
+        - cs_card_1
+        - cs_agreement
+        - cs_next
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      locator: 需求规格 / 页面说明
+      snippet: 卡号只显示前四后四，但实际后台数据要按完整卡号处理
+  - id: AC-4
+    priority: P0
+    description: 验证码半模态自动发送一次并倒计时 60 秒，只允许 6 位数字提交，归零可重发。
+    testable: true
+    verification_steps:
+      - 打开验证码半模态并观察自动倒计时。
+      - 输入少于 6 位、非数字和 6 位数字。
+      - 等待或注入计时归零后点击重新发送。
+    expected_result: AccountService.getUserProfile 提供完整 mock 手机号并在 UI 脱敏；仅恰好 6
+      位数字启用下一步；计时期间不能重发，归零后重发重新从 60 秒开始。
+    ut_layer: both
+    ut_focus: OTP 输入归一化、可提交谓词和计时状态转换。
+    device_focus: 手机号脱敏提示、数字键盘、倒计时与按钮状态。
+    prd_function: F4
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        type: input
+        target_element_id: otp_input
+        value_class: six_digits
+      post_screen: otp_sheet
+      required_element_ids:
+        - otp_phone_hint
+        - otp_input
+        - otp_resend
+        - otp_next
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      locator: 需求规格 / 页面说明
+      snippet: 用户在短信输入框中，只能输入6位数字（需要校验）
+  - id: AC-5
+    priority: P0
+    description: 点击验证码下一步先 await RDB 保存，再把完整卡号和真实保存结果带到结果页。
+    testable: true
+    verification_steps:
+      - 分别令 BankCardRepository.saveCard 成功与抛出异常。
+      - 核对结果页状态和收到的完整卡号。
+    expected_result: 成功与失败都进入结果页；只有成功分支产生字段齐全的一条 RDB
+      记录，失败不冒充成功，OpenCardResult.fullCardNumber 与所选完整卡号一致。
+    ut_layer: both
+    ut_focus: save 成功/异常分支、唯一约束与调用顺序。
+    device_focus: 成功/失败结果文案及从 Saving 到结果页的顺序。
+    prd_function: F5
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        type: tap
+        target_element_id: otp_next
+      post_screen: result_success
+      required_element_ids:
+        - rs_status
+        - rs_complete
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      locator: 需求规格 / 页面说明
+      snippet: 无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页
+  - id: AC-6
+    priority: P0
+    description: 结果页禁用系统返回和左滑，仅完成按钮可退出并清除整个开卡过程页面。
+    testable: true
+    verification_steps:
+      - 分别从 AddBankCardPage 和 AllBanksPage 发起成功与失败四条路径。
+      - 在每条路径的结果页触发系统返回和左滑，再点击完成并反复返回检查历史栈。
+      - 成功路径核对已注册 HomeTabPage 回调在 clear 前收到同一完整卡号并能从 RDB 按号读到记录。
+    expected_result: 返回/左滑无效；成功 publish 同步触发首页回调后 clear 全部二级路径并刷新钱包首页，失败
+      popToName(AddBankCardPage) 且移除 AllBanks/选卡/结果页。
+    ut_layer: device
+    device_focus: Navigation 栈清理、手势屏蔽及成功/失败最终去向。
+    prd_function: F6
+    checkpoint:
+      pre_screen: result_success
+      action:
+        type: tap
+        target_element_id: rs_complete
+      post_screen: home_with_card
+      required_element_ids:
+        - home_root
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      locator: 需求规格 / 页面说明
+      snippet: 如果本次添加是成功状态，则带着卡片卡号跳转到钱包首页
+  - id: AC-7
+    priority: P1
+    description: 首页→卡包→添加卡片→添加银行卡及既有全部银行返回链不受损。
+    testable: true
+    verification_steps:
+      - 执行既有两条添卡入口链和全部银行往返。
+    expected_result: 所有既有页面仍可达且返回层级正确。
+    ut_layer: device
+    device_focus: 老页面与新页面互相跳转回归。
+    prd_function: F7
+  - id: AC-8
+    priority: P1
+    description: 四个新增界面按同目录参考图保持关键层级、间距、形态和状态表达。
+    testable: true
+    verification_steps:
+      - 采集卡类型、具体卡片、验证码和成功结果四屏截图。
+      - 与指定参考图逐屏对照关键元素。
+    expected_result: 页面结构与参考图一致；结果页省略需求明确不做的 NFC 区域并保留底部完成按钮。
+    ut_layer: device
+    device_focus: 四屏真机截图、关键元素身份和视觉差异。
+    prd_function: F8
+boundaries:
+  - id: BD-1
+    priority: P1
+    description: 只支持一种卡类型的银行只展示该类型且仍可继续。
+    scenario: 银行支持类型数组只有 debit 或 credit。
+    handling: UI 直接渲染实际数组，选择状态初始化为空。
+    expected_behavior: 不渲染不存在的类型，不造第二个选项。
+    ut_layer: unit
+    ut_focus: 单元素类型列表和选择谓词。
+    prd_exception: E1
+  - id: BD-2
+    priority: P0
+    description: RDB 打开或写入失败必须进入失败结果页。
+    scenario: getRdbStore 或 insert 抛出异常。
+    handling: 捕获异常、记录日志并返回 OpenCardResult(false, fullCardNumber, reason)。
+    expected_behavior: 不崩溃、不丢卡号、不写成功标志。
+    ut_layer: both
+    ut_focus: Repository 异常映射。
+    device_focus: 失败结果展示与完成后返回添加银行卡页。
+    prd_exception: E2
+    checkpoint:
+      pre_screen: otp_sheet
+      action:
+        type: tap
+        target_element_id: otp_next
+      post_screen: result_failure
+      required_element_ids:
+        - rf_icon
+        - rf_status
+        - rf_hint
+        - rf_complete
+  - id: BD-3
+    priority: P1
+    description: 关闭卡类型或验证码半模态时清理当前半模态状态和计时器。
+    scenario: 用户点击关闭或页面离开。
+    handling: 卡类型 sheet 关闭时丢弃类型选择；OTP sheet 关闭时取消 timer 并把 flow 从 OtpWaiting 退回
+      CardSelected，选中卡仍保留。
+    expected_behavior: 卡类型取消停留银行列表；OTP 取消停留选卡页且不写库，再次打开 OTP 从新的 60 秒开始。
+    ut_layer: both
+    ut_focus: dispose 幂等和会话重置。
+    device_focus: 关闭后无残留倒计时或遮罩。
+    prd_exception: E3
+  - id: BD-4
+    priority: P1
+    description: 进程重建不得产生半条卡记录或自动跳过验证。
+    scenario: OTP 前、Saving 前或结果页发生进程重建。
+    handling: 未成功保存的内存会话丢弃；已成功 RDB 记录保留，页面按导航宿主重建策略回安全入口。
+    expected_behavior: 数据库只含完整成功记录，用户可重新开始流程。
+    ut_layer: unit
+    ut_focus: Repository 事务边界和无自动恢复会话策略。
+    prd_exception: E4
+  - id: BD-5
+    priority: P1
+    description: Saving 阶段快速重复提交不得产生第二次写入或第二个结果页。
+    scenario: 用户在第一次 submitOtp 未返回前再次点击下一步。
+    handling: phase=Saving 时 submitOtp 直接复用或拒绝后续调用，按钮保持禁用。
+    expected_behavior: BankCardRepository.saveCard 只调用一次，只发布一个 OpenCardResult。
+    ut_layer: both
+    ut_focus: submit single-flight 与调用计数。
+    device_focus: Saving 按钮禁用和结果页单实例。
+    prd_exception: E5
+performance:
+  - id: PERF-1
+    metric: OTP 倒计时刷新间隔
+    threshold: "1"
+    unit: second
+    description: 倒计时按秒更新，不用高频轮询。
+feature: cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw
+source: derive.blueprint-acceptance:sha256:c255aea87a0a174ac2352c827d618a4421fd22c294ba30bdaa5b2a926c21eba7:sha256:d27ce2d578f76a0cf3ff59896fe9738b26219ef2a750170ff55a85fbcc2ebdf6
+coverage_summary:
+  p0_total: 6
+  p0_covered: 6
+  p1_total: 2
+  p1_covered: 2
+  coverage_rate: 100%
+visual_acceptance:
+  fidelity_target: pixel_1to1
+  acceptance_strictness: best_effort
+  asset_acquisition_mode: approximate
+  screens:
+    - card_type_sheet
+    - card_selection
+    - otp_sheet
+    - result_success
+  excluded_elements:
+    - result_nfc
+  verification: 真机逐屏截图与当前参考图绑定的 native/delegated
+    机器视觉证据；验证文案、层级、间距、颜色、按钮状态和素材。major 样式/布局残差记视觉债务，不能发布；minor 披露；确定性
+    FAIL、blocker 与缺测试锚点必须修复。
+  failure_variant: result_failure 另作行为与状态验收，无独立失败参考图；不得凭空声称像素一致。

@@ -167,10 +167,10 @@ export function terminologyFacts(blueprint: BlueprintRecord): TermFact[] {
  * medium|low 未确认 → BLOCKER（admission 派生 blocker），受控远期 open_decision gap 停放的除外（WARN）；
  * high 只能由 glossary 精确命中直确认。
  */
-export function validateTerminologyFacts(blueprint: BlueprintRecord, projectRoot?: string): BlueprintIssue[] {
+export function validateTerminologyFacts(blueprint: BlueprintRecord, projectRoot?: string, architecture?: import('../../config').ArchitectureDsl): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   const facts = asRecords(asRecord(blueprint.discovery)?.facts);
-  const admitted = projectRoot ? resolveAdmittedModules(projectRoot, blueprint) : undefined;
+  const admitted = projectRoot ? resolveAdmittedModules(projectRoot, blueprint, architecture) : undefined;
   const glossary = projectRoot ? loadGlossary(projectRoot) : undefined;
   const gaps = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps);
   const currentSliceId = asRecord(asRecord(asRecord(blueprint.review_summary)?.admission)?.current_slice)?.slice_id;

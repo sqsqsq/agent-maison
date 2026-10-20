@@ -35,10 +35,12 @@ test('20260718 矛盾形态：WalletMain requires_modification=true 且 ∉ in_s
 
 test('requires_modification=true 且 in_scope → 通过（改它是计划内）', () => {
   const points: IntegrationPoint[] = [
-    { consumer_module: 'WalletMain', provider_module: 'FinancialCard', requires_modification: true },
+    { consumer_module: 'WalletMain', provider_module: 'FinancialCard', requires_modification: true, entry_symbol: 'CardCategoryList' },
   ];
   const v = evaluateIntegrationScopeConsistency({ points, inScopeModules: ['FinancialCard', 'WalletMain'], bindingProbe: () => false });
   assert(v.length === 0, JSON.stringify(v));
+  const missing = evaluateIntegrationScopeConsistency({ points: [{ ...points[0], entry_symbol: undefined }], inScopeModules: ['FinancialCard', 'WalletMain'], bindingProbe: () => false });
+  assert(missing.length === 1 && missing[0].reason.includes('entry_symbol'), 'planned integration still needs its definition');
 });
 
 test('零修改接入点：binding 实存 → 通过；不实存/缺 entry_symbol → 违例', () => {

@@ -1,0 +1,218 @@
+schema_version: "1.0"
+feature: cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw
+fidelity_target: pixel_1to1
+asset_acquisition_mode: approximate
+acceptance_strictness: best_effort
+verified: unverified
+mappings:
+  assets:
+    - ui_spec_key: bank_logo_cmb
+      contract_resource_key: app.media.bank_logo_cmb
+    - ui_spec_key: bank_logo_icbc
+      contract_resource_key: app.media.bank_logo_icbc
+    - ui_spec_key: bank_logo_citic
+      contract_resource_key: app.media.bank_logo_citic
+    - ui_spec_key: bank_logo_hxb
+      contract_resource_key: app.media.bank_logo_hxb
+    - ui_spec_key: bank_logo_ccb
+      contract_resource_key: app.media.bank_logo_ccb
+    - ui_spec_key: bank_logo_abc
+      contract_resource_key: app.media.bank_logo_abc
+    - ui_spec_key: bank_logo_bocom
+      contract_resource_key: app.media.bank_logo_bocom
+    - ui_spec_key: bank_logo_psbc
+      contract_resource_key: app.media.bank_logo_psbc
+    - ui_spec_key: bank_logo_spdb
+      contract_resource_key: app.media.bank_logo_spdb
+    - ui_spec_key: bank_logo_cmbc
+      contract_resource_key: app.media.bank_logo_cmbc
+    - ui_spec_key: bank_logo_pab
+      contract_resource_key: app.media.bank_logo_pab
+    - ui_spec_key: bank_logo_cgb
+      contract_resource_key: app.media.bank_logo_cgb
+    - ui_spec_key: bank_logo_cib
+      contract_resource_key: app.media.bank_logo_cib
+    - ui_spec_key: bank_logo_bosh
+      contract_resource_key: app.media.bank_logo_bosh
+    - ui_spec_key: bank_logo_bobj
+      contract_resource_key: app.media.bank_logo_bobj
+    - ui_spec_key: bank_logo_bonj
+      contract_resource_key: app.media.bank_logo_bonj
+    - ui_spec_key: bank_logo_bonb
+      contract_resource_key: app.media.bank_logo_bonb
+    - ui_spec_key: bank_logo_bogz
+      contract_resource_key: app.media.bank_logo_bogz
+    - ui_spec_key: bank_logo_ceb
+      contract_resource_key: app.media.bank_logo_ceb
+    - ui_spec_key: bank_logo_boc
+      contract_resource_key: app.media.bank_logo_boc
+    - ui_spec_key: open_card_result_guide
+      contract_resource_key: app.media.card_open_result_guide
+  tokens:
+    - ui_spec_key: color_text_primary
+      contract_resource_key: app.color.color_text_primary
+    - ui_spec_key: color_text_secondary
+      contract_resource_key: app.color.color_text_secondary
+    - ui_spec_key: color_card_bg
+      contract_resource_key: app.color.color_card_bg
+    - ui_spec_key: color_page_bg
+      contract_resource_key: app.color.color_page_bg
+    - ui_spec_key: brand_primary
+      contract_resource_key: app.color.brand_primary
+    - ui_spec_key: color_link_blue
+      contract_resource_key: app.color.color_link_blue
+    - ui_spec_key: color_nav_btn_bg
+      contract_resource_key: app.color.color_nav_btn_bg
+    - ui_spec_key: open_card_bank_accent
+      contract_resource_key: app.color.open_card_bank_accent
+    - ui_spec_key: open_card_success
+      contract_resource_key: app.color.open_card_success
+  components:
+    - ui_spec_node_id: ct_root
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_title
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_close
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bank_surface
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bank
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_types
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_debit
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_credit
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_hint
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_agreement
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_continue
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: cs_root
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_nav
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_bank_title
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_hint
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_cards
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_card_1
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_card_2
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_agreement
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: cs_next
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: otp_root
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_title
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_close
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_phone_hint
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_field
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_input
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_resend
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_next
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: rs_root
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rs_icon
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rs_status
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rs_hint
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rs_guide
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rs_complete
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rf_root
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rf_status
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rf_hint
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rf_complete
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: col_root
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: col_row_cmb
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: ab_root
+      contract_component: AllBanksPage
+    - ui_spec_node_id: ab_row_cmb
+      contract_component: AllBanksPage
+    - ui_spec_node_id: home_root
+      contract_component: HomeTabPage
+    - ui_spec_node_id: card_type_sheet
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: card_selection
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: otp_sheet
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: result_success
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: result_failure
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: add_bank_card
+      contract_component: AddBankCardPage
+    - ui_spec_node_id: all_banks
+      contract_component: AllBanksPage
+    - ui_spec_node_id: home_with_card
+      contract_component: HomeTabPage
+    - ui_spec_node_id: ct_background
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bg_title
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bg_hint
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bg_count
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bg_search
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bg_search_action
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: ct_bg_bank
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: cs_back
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: otp_phone_suffix
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_system_keyboard
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: rf_icon
+      contract_component: AddCardResultPage
+    - ui_spec_node_id: rf_guide
+      contract_component: AddCardResultPage
+blind_review_pending:
+  - id: visual-layout
+    screens:
+      - card_type_sheet
+      - card_selection
+      - otp_sheet
+      - result_success
+    status: unverified
+    reason: 沿 spec/asset-manifest.yaml blind-layout；无视觉，不臆测 bbox/字号/颜色。
+  - id: visual-guide
+    screens:
+      - result_success
+    status: unverified
+    reason: spec 已声明占位插画；按授权资源路径物化，真机视觉债务未清偿。
+  - id: visual-current-ocr
+    screens:
+      - card_selection
+      - otp_sheet
+      - result_success
+    status: unverified
+    reason: 沿当前 spec 的协议/placeholder 歧义、品牌红/成功绿无采样、非文本几何与系统键盘状态；只消费 OCR 与独立观察，不声称视觉验真。otp_system_keyboard
+      映射为页面宿主状态，不生成假应用节点。

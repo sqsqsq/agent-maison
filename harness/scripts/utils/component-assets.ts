@@ -6,9 +6,31 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadProfileHarnessModule } from '../../profile-host-loader';
 import { ModuleCard, loadCatalog } from './catalog-parser';
 import { validateProjectRelativePath } from './project-relative-path';
+import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
 
 export const ASSET_RESOLUTIONS = ['reuse', 'configure', 'adapt', 'evolve', 'custom'] as const;
 export const STATIC_CHECKS = ['scalable_font_unit', 'no_hardcoded_hex_color', 'declared_touch_target'] as const;
+
+/** Rebuild only the source-derived inventory; never curate or choose an asset. */
+export function refreshComponentIndex(root: string): ReturnType<typeof scanComponentIndex> {
+  const result = scanComponentIndex(root);
+  const file = componentIndexPath(root);
+  const text = serializeComponentIndex(result.index);
+  if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== text) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text, 'utf8');
+  }
+  return result;
+}
+
+/** A configured, current inventory is derived bookkeeping regardless of its directory. */
+export function isCurrentComponentInventory(root: string, file: string): boolean {
+  if (path.resolve(root, file) !== path.resolve(componentIndexPath(root))) return false;
+  try {
+    const index = readComponentIndex(root);
+    return !!index && serializeComponentIndex(index) === serializeComponentIndex(scanComponentIndex(root).index);
+  } catch { return false; }
+}
 export type StaticCheck = 'pass' | 'fail' | 'unknown' | 'not_applicable';
 export interface AssetSelection {
   resolution: typeof ASSET_RESOLUTIONS[number];
@@ -57,6 +79,28 @@ export function isUiComponent(value: { kind?: unknown; decorator?: unknown; nav_
   return ['page', 'component', 'builder'].includes(String(value.kind).toLowerCase())
     || /^@?(Component(?:V2)?|Builder)$/.test(String(value.decorator))
     || nonempty(value.nav_destination) || (Array.isArray(value.nav_destinations) && value.nav_destinations.length > 0);
+}
+
+/** UI facts can be declared on a development node or in its typed construction contract. */
+export function isBlueprintUiTarget(node: BlueprintRecord): boolean {
+  return isUiComponent(node) || asRecords(asRecord(node.contracts)?.components).some(isUiComponent);
+}
+
+export function blueprintUiComponents(blueprint: BlueprintRecord): BlueprintRecord[] {
+  const development = asRecords(blueprint.design_views).find(view => view.view_id === 'development');
+  const components = asRecords(development?.nodes).flatMap(node => asRecords(asRecord(node.contracts)?.components)).filter(isUiComponent);
+  return [...new Map(components.map(component => [`${component.file}#${component.name}`, component])).values()];
+}
+
+/** Select by the declared target relationship, never by a guessed name or the local selection value. */
+export function blueprintComponentDecisions(blueprint: BlueprintRecord, component: BlueprintRecord): BlueprintRecord[] {
+  const nodes = asRecords(asRecords(blueprint.design_views).find(view => view.view_id === 'development')?.nodes);
+  const exact = nodes.filter(node => node.file === component.file && node.name === component.name && isUiComponent(node));
+  const owners = exact.length ? exact : nodes.filter(node => asRecords(asRecord(node.contracts)?.components)
+    .some(item => item.file === component.file && item.name === component.name));
+  const targets = new Set(owners.map(node => `view:development/node:${node.node_id}`));
+  return asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)
+    .filter(decision => decision.kind === 'component_asset_selection' && targets.has(String(decision.target_ref)));
 }
 export function selectionShapeIssues(value: unknown): string[] {
   if (!isRecord(value)) return ['asset_selection 必须是单值对象'];
@@ -161,8 +205,8 @@ export interface AdmittedModules {
  * plan a3c7e9d1 t2：获准模块唯一解析（P1 节点 module、术语 canonical_module、componentDependencyAllowed
  * 三处同源）。catalog 保持当前态语义（蓝图期不改），声明的新模块只作施工期获准目标。
  */
-export function resolveAdmittedModules(root: string, blueprint: Record<string, unknown>): AdmittedModules {
-  const layers = new Set(loadArchitectureDsl(root).outer_layers.map(l => l.id));
+export function resolveAdmittedModules(root: string, blueprint: Record<string, unknown>, architecture?: ArchitectureDsl): AdmittedModules {
+  const layers = new Set((architecture ?? loadArchitectureDsl(root)).outer_layers.map(l => l.id));
   const gaps = isRecord(blueprint.decisions_and_gaps) ? blueprint.decisions_and_gaps : {};
   const declared = new Map<string, string>();
   const retired: string[] = [];
@@ -183,9 +227,9 @@ export function resolveAdmittedModules(root: string, blueprint: Record<string, u
  * 依赖许可按当前 DSL 判定。端点为模块名（catalog 或 declared 覆盖）或外层 id；`declared` 由调用方传入
  * （蓝图侧=architecture_impact 声明，plan 侧=contracts.modules name→layer），新模块作 consumer 时按声明 layer 判定。
  */
-export function componentDependencyAllowed(root: string, consumer: string, provider: string, declared?: Map<string, string>): boolean {
+export function componentDependencyAllowed(root: string, consumer: string, provider: string, declared?: Map<string, string>, architecture?: ArchitectureDsl): boolean {
   const catalog = loadCatalog(root);
-  const arch = loadArchitectureDsl(root);
+  const arch = architecture ?? loadArchitectureDsl(root);
   const layerOf = (name: string): string | undefined => declared?.get(name)
     ?? (catalog.ok ? catalog.catalog.modules.find(m => m.name === name)?.layer : undefined)
     ?? (arch.outer_layers.some(l => l.id === name) ? name : undefined);

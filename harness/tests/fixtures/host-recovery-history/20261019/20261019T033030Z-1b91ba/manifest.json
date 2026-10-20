@@ -1,0 +1,225 @@
+{
+  "schema_version": "1.0",
+  "start_phase": "spec",
+  "end_phase": "plan",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "requirement": "按 doc/features/原始需求/1-2-银行卡/原始需求.md 及同目录参考图，从干净基线完整交付 bc-openCard-2，包含开发、业务级 UT、真机交互与视觉验收，并保持既有路由兼容。",
+  "adapter": "codex",
+  "adapter_provenance": "local_config",
+  "chain_override": [
+    "spec",
+    "plan"
+  ],
+  "budget": {
+    "max_retries_per_phase": 2,
+    "max_total_turns": 30,
+    "wall_clock_minutes": 480,
+    "max_transient_api_retries": 3
+  },
+  "dependency_policy": {
+    "deferrable_blocking_classes": [
+      "externalBlocked"
+    ],
+    "deferrable_failure_kinds": [
+      "device_blocked"
+    ],
+    "propagate_to_downstream": true
+  },
+  "unattended": {
+    "write_mode": "full-access",
+    "approval_mode": "never",
+    "max_turns": 20
+  },
+  "run_id": "20261019T033030Z-1b91ba",
+  "report_dir": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba",
+  "created_at": "2026-10-19T03:32:41.813Z",
+  "visual_provider_pin": {
+    "adapter": "codex",
+    "model": "gpt-6.1-sol"
+  },
+  "execution_scope": {
+    "schema_version": "1.0",
+    "completion_target": "feature",
+    "requested_results": [
+      "完成 bc-openCard-2 的实现、测试、真机与视觉验收并形成正式闭环"
+    ],
+    "obligations": [
+      {
+        "id": "acceptance-context:pending",
+        "kind": "acceptance-context",
+        "applicability": "unknown",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "basis": [
+          {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "db42d120a0445415efe7d50ed6c7bd77e0b7fc283c0806ad7e231cd59f6762f5"
+          }
+        ],
+        "owner_phase": "spec"
+      },
+      {
+        "id": "acceptance-context:request:spec",
+        "kind": "acceptance-context",
+        "owner_phase": "spec",
+        "applicability": "required",
+        "reason": "用户明确请求 spec",
+        "basis": []
+      },
+      {
+        "id": "design-context:pending",
+        "kind": "design-context",
+        "applicability": "unknown",
+        "reason": "本 feature 尚无可解析的设计来源（仅有需求）",
+        "basis": [
+          {
+            "input_id": "requirement",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.requirement"
+            },
+            "dependencies": [],
+            "source_refs": [],
+            "content_fingerprint": "db42d120a0445415efe7d50ed6c7bd77e0b7fc283c0806ad7e231cd59f6762f5"
+          }
+        ],
+        "owner_phase": "plan"
+      },
+      {
+        "id": "design-context:request:plan",
+        "kind": "design-context",
+        "owner_phase": "plan",
+        "applicability": "required",
+        "reason": "用户明确请求 plan",
+        "basis": []
+      },
+      {
+        "id": "implementation:request:coding",
+        "kind": "implementation",
+        "owner_phase": "coding",
+        "applicability": "required",
+        "reason": "用户明确请求 coding",
+        "basis": []
+      },
+      {
+        "id": "code-review:request:review",
+        "kind": "code-review",
+        "owner_phase": "review",
+        "applicability": "required",
+        "reason": "用户明确请求 review",
+        "basis": []
+      },
+      {
+        "id": "unit-evidence:request:ut",
+        "kind": "unit-evidence",
+        "owner_phase": "ut",
+        "applicability": "required",
+        "reason": "用户明确请求 ut",
+        "basis": []
+      },
+      {
+        "id": "visual-evidence:fidelity",
+        "kind": "visual-evidence",
+        "applicability": "required",
+        "reason": "fidelity ssot: pixel_1to1",
+        "basis": [],
+        "owner_phase": "testing"
+      }
+    ],
+    "phase_chain": [
+      "spec",
+      "plan"
+    ],
+    "reused_phases": [],
+    "unresolved": [
+      {
+        "obligation_id": "acceptance-context:pending",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "coding",
+          "review",
+          "ut",
+          "testing"
+        ]
+      },
+      {
+        "obligation_id": "design-context:pending",
+        "owner": "plan",
+        "reason": "本 feature 尚无可解析的设计来源（仅有需求）",
+        "needed_by": []
+      },
+      {
+        "obligation_id": "implementation:request:coding",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "coding"
+        ]
+      },
+      {
+        "obligation_id": "code-review:request:review",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "review"
+        ]
+      },
+      {
+        "obligation_id": "unit-evidence:request:ut",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "ut"
+        ]
+      },
+      {
+        "obligation_id": "visual-evidence:fidelity",
+        "owner": "spec",
+        "reason": "本 feature 尚无可解析的验收来源",
+        "needed_by": [
+          "testing"
+        ]
+      }
+    ],
+    "policy_fingerprint": "e4b8b3b4f42f824faeebc561d2a99c74e9bccf59ae5e5f941b156673b76047d8",
+    "request_impact": {
+      "user_visible_behavior_change": true,
+      "reason": "银行行点击由 Toast 变为开卡流程，并新增结果清栈与首页刷新，属于用户可见行为变化",
+      "basis": [
+        {
+          "input_id": "codebase",
+          "source": {
+            "kind": "derive",
+            "provider_id": "derive.codebase"
+          },
+          "dependencies": [
+            {
+              "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+              "exists": true,
+              "sha256": "5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754",
+              "role": "derive"
+            }
+          ],
+          "source_refs": [
+            "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets"
+          ],
+          "content_fingerprint": "03a06d238362c7f5379d21c47b1d1e038aecb4d644131e703a512a95303b75f6"
+        }
+      ]
+    }
+  },
+  "phase_chain": [
+    "spec",
+    "plan"
+  ],
+  "run_base_sha": "d3f48b2c38521d049b1ec7fb670cc0c9cf6e8416",
+  "successor_of": "20261019T024808Z-4131b6",
+  "inherited_round_fingerprints": [],
+  "inherited_drift_fingerprints": []
+}

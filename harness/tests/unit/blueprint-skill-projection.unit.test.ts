@@ -109,7 +109,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const blockers = designOwnerBlockers(buildSummaryBlockers([expanded], (value, max) => value.slice(0, max), () => undefined));
     assert.equal(blockers.length, 1, 'the production summary must enter the existing first-occurrence owner branch');
     const guidance = buildDesignOwnerGuidance({ feature: f.feature, runId: 'r', phase: 'plan', blockers });
-    assert(guidance.includes('须先取得用户确认') && guidance.includes('design_repair.unattended_b1'));
+      assert(guidance.includes('有人在场沿原确认流程') && guidance.includes('静默完成并重签'));
     actual.files.push('src/ledger/ExtraService.ets');
     assert(checkAuthoritativeContentAligned(context(actual), 'contracts').some(check => check.repair_owner === 'external' && check.details?.includes('ExtraService.ets')));
   } },

@@ -1,0 +1,293 @@
+schema_version: "2.0"
+use_cases:
+  - id: bank_card_opening
+    description: 从银行选择到 RDB 保存、结果展示和完成清栈的开卡流程。
+    coordinator: OpenCardFlow
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/domain/service/OpenCardFlow.ets
+    ui_bindings:
+      - ui: AddBankCardPage|AllBanksPage
+        role: entry
+        subscribes:
+          - CardTypeSheet.visible
+        user_actions:
+          - trigger: 点击银行
+            calls: handleBankTap
+      - ui: CardTypeSheet
+        role: dialog
+        subscribes:
+          - selectedType
+        user_actions:
+          - trigger: 选择卡类型
+            calls: selectType
+          - trigger: 同意并继续
+            calls: handleContinue
+      - ui: BankCardSelectionPage
+        role: progress
+        subscribes:
+          - OpenCardFlow.selectedCard
+        user_actions:
+          - trigger: 选择银行卡
+            calls: flow.selectCard
+          - trigger: 下一步
+            calls: flow.openOtp
+      - ui: OtpVerificationSheet
+        role: dialog
+        subscribes:
+          - OpenCardFlow.otpState
+        user_actions:
+          - trigger: 重新发送
+            calls: flow.resendOtp
+          - trigger: 输入并提交验证码
+            calls: flow.submitOtp
+          - trigger: 关闭验证码
+            calls: flow.closeOtp
+      - ui: AddCardResultPage
+        role: result
+        subscribes:
+          - OpenCardFlow.result
+        user_actions:
+          - trigger: 点击完成
+            calls: handleComplete
+    data_boundaries:
+      - name: bankSource
+        type: BankRepository
+        kind: storage
+        methods:
+          - name: getCards
+            params:
+              - string
+              - BankCardType
+            returns: Promise<BankCardInfo[]>
+            async: true
+      - name: cardStore
+        type: BankCardRepository
+        kind: storage
+        methods:
+          - name: saveCard
+            params:
+              - Context
+              - BankCardInfo
+            returns: Promise<OpenCardResult>
+            async: true
+          - name: findByFullCardNumber
+            params:
+              - Context
+              - string
+            returns: Promise<CardRecord|null>
+            async: true
+      - name: accountSource
+        type: AccountService
+        kind: storage
+        methods:
+          - name: getUserProfile
+            params: []
+            returns: Promise<UserProfile>
+            async: true
+    state_model:
+      phases:
+        - Idle
+        - CardSelected
+        - OtpWaiting
+        - Saving
+        - Result
+      fields:
+        - name: selectedType
+          type: BankCardType|null
+        - name: selectedCard
+          type: BankCardInfo|null
+        - name: otpSeconds
+          type: number
+        - name: result
+          type: OpenCardResult|null
+    branches:
+      - id: happy_path
+        scenario: 保存成功并回钱包首页。
+        user_sequence:
+          - handleBankTap
+          - selectType
+          - handleContinue
+          - selectCard
+          - openOtp
+          - submitOtp
+          - handleComplete
+        cloud_stubs: {}
+        local_stubs:
+          cardStore.saveCard: ok
+          cardStore.findByFullCardNumber: ok
+          accountSource.getUserProfile: ok
+        expected_phase_seq:
+          - Idle
+          - CardSelected
+          - OtpWaiting
+          - Saving
+          - Result
+        expected_port_calls:
+          - bankSource.getCards
+          - accountSource.getUserProfile
+          - cardStore.saveCard
+          - cardStore.findByFullCardNumber
+        expected_state:
+          result.success: true
+        not_called: []
+        local_expect:
+          - accountSource.getUserProfile
+          - cardStore.saveCard
+          - cardStore.findByFullCardNumber
+        linked_acceptance:
+          - AC-1
+          - AC-2
+          - AC-3
+          - AC-4
+          - AC-5
+          - AC-6
+      - id: save_failed
+        scenario: RDB 写入失败仍进入失败结果页并回添加银行卡页。
+        user_sequence:
+          - handleBankTap
+          - selectType
+          - handleContinue
+          - selectCard
+          - openOtp
+          - submitOtp
+          - handleComplete
+        cloud_stubs: {}
+        local_stubs:
+          cardStore.saveCard: throw:RdbError
+          accountSource.getUserProfile: ok
+        expected_phase_seq:
+          - Idle
+          - CardSelected
+          - OtpWaiting
+          - Saving
+          - Result
+        expected_port_calls:
+          - bankSource.getCards
+          - accountSource.getUserProfile
+          - cardStore.saveCard
+        expected_state:
+          result.success: false
+        not_called: []
+        local_expect:
+          - accountSource.getUserProfile
+          - cardStore.saveCard
+        linked_acceptance:
+          - AC-5
+          - AC-6
+          - BD-2
+      - id: cancel_otp
+        scenario: 用户关闭验证码半模态，不保存卡片并可重新开始。
+        user_sequence:
+          - handleBankTap
+          - selectType
+          - handleContinue
+          - selectCard
+          - openOtp
+          - closeOtp
+        cloud_stubs: {}
+        local_stubs:
+          accountSource.getUserProfile: ok
+        expected_phase_seq:
+          - Idle
+          - CardSelected
+          - OtpWaiting
+          - CardSelected
+        expected_port_calls:
+          - bankSource.getCards
+          - accountSource.getUserProfile
+        expected_state:
+          selectedCard: retained
+        not_called:
+          - cardStore.saveCard
+        local_expect:
+          - accountSource.getUserProfile
+        linked_acceptance:
+          - BD-3
+          - BD-4
+      - id: double_submit_while_saving
+        scenario: Saving 未完成时快速再次提交验证码。
+        user_sequence:
+          - handleBankTap
+          - selectType
+          - handleContinue
+          - selectCard
+          - openOtp
+          - submitOtp
+          - submitOtp
+        cloud_stubs: {}
+        local_stubs:
+          cardStore.saveCard: ok
+          accountSource.getUserProfile: ok
+        expected_phase_seq:
+          - Idle
+          - CardSelected
+          - OtpWaiting
+          - Saving
+          - Result
+        expected_port_calls:
+          - bankSource.getCards
+          - accountSource.getUserProfile
+          - cardStore.saveCard
+        expected_state:
+          saveCallCount: 1
+        not_called: []
+        local_expect:
+          - accountSource.getUserProfile
+          - cardStore.saveCard
+        linked_acceptance:
+          - BD-5
+      - id: single_supported_type
+        scenario: 仅支持一种卡类型，初始未选，选择后只加载对应候选。
+        user_sequence:
+          - handleBankTap
+          - selectType
+          - handleContinue
+          - selectCard
+        cloud_stubs: {}
+        local_stubs:
+          bankSource.getCards: ok
+        expected_phase_seq:
+          - Idle
+          - CardSelected
+        expected_port_calls:
+          - bankSource.getCards
+        expected_state:
+          selectedType: only_supported_type
+        not_called:
+          - cardStore.saveCard
+        local_expect:
+          - bankSource.getCards
+        linked_acceptance:
+          - AC-2
+          - BD-1
+      - id: otp_validation_and_resend
+        scenario: 打开从60秒开始，少于6位/非数字不提交，归零后重发，关闭清理计时器。
+        user_sequence:
+          - handleBankTap
+          - selectType
+          - handleContinue
+          - selectCard
+          - openOtp
+          - resendOtp
+          - closeOtp
+        cloud_stubs: {}
+        local_stubs:
+          accountSource.getUserProfile: ok
+        expected_phase_seq:
+          - Idle
+          - CardSelected
+          - OtpWaiting
+          - CardSelected
+        expected_port_calls:
+          - bankSource.getCards
+          - accountSource.getUserProfile
+        expected_state:
+          selectedCard: retained
+        not_called:
+          - cardStore.saveCard
+        local_expect:
+          - accountSource.getUserProfile
+        linked_acceptance:
+          - AC-4
+          - BD-3
+feature: cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw
+source: derive.blueprint-contracts:sha256:c255aea87a0a174ac2352c827d618a4421fd22c294ba30bdaa5b2a926c21eba7:sha256:d27ce2d578f76a0cf3ff59896fe9738b26219ef2a750170ff55a85fbcc2ebdf6

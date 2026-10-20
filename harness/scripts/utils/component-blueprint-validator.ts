@@ -29,6 +29,8 @@ import { inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstruction
 export interface ComponentBlueprintValidationContext {
   projectRoot?: string;
   canonicalPath?: string;
+  /** Candidate DSL for pre-publication checks; never a persisted authority. */
+  architecture?: import('../../config').ArchitectureDsl;
 }
 
 function loadBlueprintSchema(): Record<string, unknown> {
@@ -83,8 +85,8 @@ export function validateComponentBlueprintUpstream(
     ...validateBlueprintQuestioning(blueprint),
     ...generatedGraphs.issues,
     ...validateBlueprintReconciliation(blueprint),
-    ...validateEvolutionDecisions(blueprint, context.projectRoot),
-    ...validateTerminologyFacts(blueprint, context.projectRoot),
+    ...validateEvolutionDecisions(blueprint, context.projectRoot, context.architecture),
+    ...validateTerminologyFacts(blueprint, context.projectRoot, context.architecture),
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);

@@ -563,7 +563,7 @@ export function resolveApprovedModels(
   return { models: [...new Set((raw as string[]).map((v) => v.trim()))] };
 }
 
-/** plan 9c3d7e1a §5.5：`design_repair.unattended_b1` 只有布尔 true 才算授权；缺失、其它值、读不出个人配置一律未授权。 */
+/** Legacy value reader only. Unattended design authority now comes from the original task, not this retired opt-in. */
 export function resolveUnattendedB1Repair(local: FrameworkLocalConfig | null | undefined): boolean {
   return local?.design_repair?.unattended_b1 === true;
 }

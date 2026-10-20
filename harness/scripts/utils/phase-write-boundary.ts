@@ -25,6 +25,22 @@ import {
   phaseOwnsDesignOutput,
 } from './skill-contract';
 import { SpecLoader } from './spec-loader';
+import { tryLoadDiffExcludeTestPathRegexes, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
+import type { ContractsSpec } from './types';
+
+/** The profile's existing UT ownership also determines when planned files are due. */
+export function partitionConstructionFiles(projectRoot: string, profileDir: string,
+  contracts: Pick<ContractsSpec, 'files' | 'modules'>): { implementation: string[]; tests: string[] } {
+  if (!profileDir) return { implementation: [...contracts.files], tests: [] };
+  const roots = (tryLoadUtSourceRootResolver(profileDir)?.(projectRoot, contracts.modules ?? []) ?? [])
+    .map(root => path.resolve(root));
+  const patterns = tryLoadDiffExcludeTestPathRegexes(profileDir) ?? [];
+  const isTest = (file: string): boolean => roots.some(root => {
+    const rel = path.relative(root, path.resolve(projectRoot, file));
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  }) || patterns.some(pattern => pattern.test(`/${toPosix(file)}`));
+  return { implementation: contracts.files.filter(file => !isTest(file)), tests: contracts.files.filter(isTest) };
+}
 
 export type PhaseWriteDomainKind = 'artifact' | 'source' | 'phase_workspace';
 export type PhaseWriteMatchKind = 'exact' | 'prefix';
@@ -62,6 +78,8 @@ export interface ResolvePhaseWriteBoundaryOptions {
   track: FeatureTrack;
   profileDir: string;
   productLayerDirs: readonly string[];
+  /** Already-resolved construction authority for research attribution, not a write grant. */
+  constructionModules?: ReadonlyArray<{ name: string; package_path: string }>;
   /** Test seam and profile-neutral custom-phase support. */
   resolveUtSourceRoots?: (
     projectRoot: string,
@@ -114,6 +132,11 @@ function loadCodingScope(
   modules: Array<{ name: string; package_path: string }>;
   diagnostics: string[];
 } {
+  if (options.constructionModules) {
+    const modules = [...options.constructionModules];
+    const resolved = resolveModulePathPrefixes(options.projectRoot, modules.map(module => module.name), modules);
+    return { prefixes: resolved.allowedPrefixes, modules, diagnostics: resolved.unmapped.map(name => `construction module has no path: ${name}`) };
+  }
   if (options.runId) {
     const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
     let contracts: ReturnType<typeof readRunBoundContracts>;

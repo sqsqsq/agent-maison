@@ -9,8 +9,8 @@ import {
   issue,
   nonEmptyString,
 } from './component-blueprint-model';
-import { isUiComponent, selectionShapeIssues, readComponentIndex, componentDependencyAllowed, resolveAdmittedModules, AdmittedModules } from './component-assets';
-import { relComponentIndex, relComponentCatalog, loadArchitectureDsl } from '../../config';
+import { isUiComponent, isBlueprintUiTarget, blueprintUiComponents, blueprintComponentDecisions, selectionShapeIssues, readComponentIndex, componentDependencyAllowed, resolveAdmittedModules, AdmittedModules } from './component-assets';
+import { relComponentIndex, relComponentCatalog, loadArchitectureDsl, type ArchitectureDsl } from '../../config';
 import { isChangedView } from './blueprint-views';
 
 /** plan a3c7e9d1 t3：architecture_impact 一条决策一个变化项；change → 条件字段。 */
@@ -28,10 +28,11 @@ function validateArchitectureImpacts(
   development: BlueprintRecord | undefined,
   projectRoot: string | undefined,
   admitted: AdmittedModules | undefined,
+  architecture?: ArchitectureDsl,
 ): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   const decisions = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions);
-  const layers = projectRoot ? new Set(loadArchitectureDsl(projectRoot).outer_layers.map(l => l.id)) : undefined;
+  const layers = projectRoot ? new Set((architecture ?? loadArchitectureDsl(projectRoot)).outer_layers.map(l => l.id)) : undefined;
   decisions.forEach((decision, index) => {
     if (decision.kind !== 'architecture_impact') return;
     const base = `$.decisions_and_gaps.decisions[${index}]`;
@@ -65,13 +66,17 @@ function validateArchitectureImpacts(
   return out;
 }
 
-export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRoot?: string): BlueprintIssue[] {
+export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRoot?: string, architecture?: ArchitectureDsl): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   const decisions = asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions);
   const development = asRecords(blueprint.design_views).find(v => v.view_id === 'development');
   const selections = decisions.filter(d => d.kind === 'component_asset_selection');
-  const admitted = projectRoot ? resolveAdmittedModules(projectRoot, blueprint) : undefined;
-  out.push(...validateArchitectureImpacts(blueprint, development, projectRoot, admitted));
+  for (const decision of decisions) if (decision.asset_resolution !== undefined && decision.kind !== 'component_asset_selection') {
+    out.push(issue('blueprint_asset_selection_invalid', `$.decisions_and_gaps.decisions[${decisions.indexOf(decision)}].kind`,
+      `${decision.decision_id}: asset_resolution 属于组件选型；kind 应为 component_asset_selection，由设计作者修正后重验。`));
+  }
+  const admitted = projectRoot ? resolveAdmittedModules(projectRoot, blueprint, architecture) : undefined;
+  out.push(...validateArchitectureImpacts(blueprint, development, projectRoot, admitted, architecture));
   let index;
   if (projectRoot) {
     try { index = readComponentIndex(projectRoot); }
@@ -85,7 +90,7 @@ export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRo
     for (const message of shape) out.push(issue('blueprint_asset_selection_invalid', base, message));
     const nodeId = /^view:development\/node:(.+)$/.exec(String(decision.target_ref))?.[1];
     const node = asRecords(development?.nodes).find(n => n.node_id === nodeId);
-    if (!nodeId || !node || !isUiComponent(node)) out.push(issue('blueprint_asset_target_invalid', `${base}.target_ref`, '选型必须指向既有 development 页面/UI 组件节点。'));
+    if (!nodeId || !node || !isBlueprintUiTarget(node)) out.push(issue('blueprint_asset_target_invalid', `${base}.target_ref`, '选型必须指向既有 development UI 节点或承载 UI 施工契约的节点。'));
     if (development?.evolution_impact === 'verified_unchanged') out.push(issue('blueprint_view_unchanged_masks_change', base, 'verified_unchanged development 不得产生选型决策。'));
     if (asStrings(decision.verification_refs).length === 0 || !nonEmptyString(decision.owner)) out.push(issue('blueprint_asset_selection_invalid', base, '选型必须有 owner 与 verification_refs。'));
     if (projectRoot) {
@@ -99,14 +104,26 @@ export function validateEvolutionDecisions(blueprint: BlueprintRecord, projectRo
       }
       const asset = index?.components.find(c => c.id === decision.component_ref);
       if (decision.component_ref !== undefined && !asset) out.push(issue('blueprint_asset_ref_missing', `${base}.component_ref`, 'component_ref 不在索引内。'));
-      if (asset && node && !componentDependencyAllowed(projectRoot, String(node.module ?? ''), asset.module, admitted?.declared)) {
-        if (!['open_decision', 'blocker'].includes(String(decision.status))) out.push(issue('blueprint_asset_dependency_illegal', base, '依赖不合法：换选 > plan 声明下沉 > 请求用户批准新边；未批准不得施工。'));
+      if (asset && node && !componentDependencyAllowed(projectRoot, String(node.module ?? ''), asset.module, admitted?.declared, architecture)) {
+        if (!['open_decision', 'blocker'].includes(String(decision.status))) out.push(issue('blueprint_asset_dependency_illegal', base, '依赖不合法：换选 > plan 声明下沉 > 交设计 owner 依当前请求授权裁决新边；未批准不得施工。'));
         const gap = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps).find(g => asStrings(g.verification_refs).includes(`decision:${decision.decision_id}`));
         if (!gap) out.push(issue('blueprint_asset_dependency_gap_missing', base, '非法依赖必须有带 owner/needed_by 的 gap，verification_refs 引用该 decision。'));
       }
     }
   }
   if (index && development?.evolution_impact === 'changed') {
+    for (const component of blueprintUiComponents(blueprint)) {
+      const candidates = blueprintComponentDecisions(blueprint, component);
+      if (candidates.length !== 1) out.push(issue('blueprint_asset_selection_missing', '$.decisions_and_gaps.decisions',
+        `${component.file}#${component.name} 必须对应一个明确的选型决定（当前 ${candidates.length}）；可由所属节点的一条决定覆盖多个组件。`));
+      else {
+        const selection = asRecord(component.asset_selection);
+        if (selection && (selection.resolution !== candidates[0].asset_resolution || selection.component_ref !== candidates[0].component_ref)) {
+          out.push(issue('blueprint_asset_selection_invalid', '$.design_views[development]',
+            `${component.file}#${component.name} 的施工选型与 decision:${candidates[0].decision_id} 冲突，回设计方统一结论。`));
+        }
+      }
+    }
     for (const node of asRecords(development.nodes).filter(isUiComponent)) {
       const target = `view:development/node:${node.node_id}`;
       if (selections.filter(d => d.target_ref === target).length !== 1) out.push(issue('blueprint_asset_selection_missing', '$.decisions_and_gaps.decisions', `${target} 必须有且仅有一个组件选型决策。`));

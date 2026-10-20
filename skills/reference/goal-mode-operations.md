@@ -215,7 +215,7 @@ facts 的施工入口先严格验证来源、范围与环境；同阶段后继�
 
 配套纪律：
 
-- **恢复归属与复用**：重新发起同一请求，由框架的接续决策选择重新接入原 run、起关联 successor 或保持停止，不替用户选 `--resume` / `--supersede`。下游缺口携带 `upstream_producer` 时回该 owner，未知 owner 时停止猜测并报告缺失来源；不得把普通 absent 叫 framework bug。testing 候选的 round 指纹相同只说明缺陷相同；重复回退还须原事件 `related_input_snapshot` 与当前完整相关输入集合可比且内容未变。配置/解析确定的实际过程位置中的 phase notes、日志、trace/截图/报告和无关源码不算修复进展；产品范围里的 reports/summary.json/notes.md 等同名文件仍按内容计进展，不能仅凭名字排除。证据引用不参与候选身份。集合变化、读失败或旧窗口基线不足仍属未知，只沿原剩余预算恢复；真实相关改动只证明尝试，成功须新验证，不能用 fresh run 重置额度。其它熔断语义保留。UT 自身返修保留 fresh 的 plan/coding/review；源码、契约变化或用户明确要求重跑时不得复用遮盖。
+- **恢复归属与复用**：无人值守完整交付时，原需求内的蓝图/CU与必要架构变更由 runner 交设计 owner 静默修订、隔离质询、检查、发布和重绑后继续；不需要个人 B1 开关，不由 plan/coding 或外层主 Agent 就地自授。有人在场沿原确认流程。改变原需求或实质验收、真实秘密/不可逆外部动作、突破用户总预算或明确禁止仍须用户决定。 重新发起同一请求，由框架的接续决策选择重新接入原 run、起关联 successor 或保持停止，不替用户选 `--resume` / `--supersede`。下游缺口携带 `upstream_producer` 时回该 owner，未知 owner 时停止猜测并报告缺失来源；不得把普通 absent 叫 framework bug。testing 候选的 round 指纹相同只说明缺陷相同；重复回退还须原事件 `related_input_snapshot` 与当前完整相关输入集合可比且内容未变。配置/解析确定的实际过程位置中的 phase notes、日志、trace/截图/报告和无关源码不算修复进展；产品范围里的 reports/summary.json/notes.md 等同名文件仍按内容计进展，不能仅凭名字排除。证据引用不参与候选身份。集合变化、读失败或旧窗口基线不足仍属未知，只沿原剩余预算恢复；真实相关改动只证明尝试，成功须新验证，不能用 fresh run 重置额度。其它熔断语义保留。UT 自身返修保留 fresh 的 plan/coding/review；源码、契约变化或用户明确要求重跑时不得复用遮盖。
 
 - **phase executor**：Claude 原生 `/goal` 路径下主会话是薄 driver，每个阶段最多派发一个 `subagent_type: phase-executor`（模板 `agents/claude/templates/agents/phase-executor.md`），只投递最小输入、收回 summary 路径与终态块；与本 Skill 的 GoalPhaseRuntime 互斥，不同时推进同一任务。
 - **子代理等待**：同步等待或先做无关工作；禁止 sleep / 轮询 / 后台等待器；verifier 未返回前不改其输入材料。

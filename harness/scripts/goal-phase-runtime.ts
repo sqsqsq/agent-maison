@@ -86,6 +86,7 @@ import {
   designRepairAttempted,
   designRepairInvokeLabel,
   designRepairSignature,
+  designRepairInputFingerprint,
   runUnattendedDesignRepair,
   type DesignRepairInvokeOutcome,
   type DesignRepairPurpose,
@@ -170,6 +171,7 @@ import {
   buildSupersedeAuditEvent,
   createGoalRun,
   decideRunContinuation,
+  resolveEffectiveScopeSource,
   successorCatchUpTargets,
   successorBoundsConflicts,
   successorBoundsRefusal,
@@ -1564,7 +1566,7 @@ async function runHarnessPhase(
  * 单点生成，phase_halt 事件 / outcome / console 三处消费同一文案（b3f7d9a2 硬学习：
  * 同一文案契约须枚举全部承载处含测试断言）。检测器只保证文案要素在场。
  */
-const DESIGN_MODIFICATION_CONFIRMATION = '修改已交接的蓝图或 CU 须先取得用户确认，无人值守也一样。只有预授权 design_repair.unattended_b1 才允许框架沿原通道做一次有界自动修复；主 Agent 不自行修改设计、摘要或指纹。';
+const DESIGN_MODIFICATION_CONFIRMATION = '无人值守完整交付中，原需求内的蓝图、CU和必要架构修订由框架交设计 owner 静默完成并重签；plan/coding及外层主 Agent 不原地自授。改变需求或实质验收、真实秘密/不可逆外部动作、突破用户总上限或明确禁止时仍须用户决定；有人在场沿原确认流程。';
 
 export function buildBacktrackTargetAbsentGuidance(targetPhase: string | null): string {
   return (
@@ -1615,6 +1617,7 @@ export function designOwnerBlockers(blockers: readonly DesignOwnerBlocker[] | un
 /** 复用既有停机原因 execution_scope_unresolved（外部类、首次即停）；说明写清原因、责任方与下一步。 */
 export function buildDesignOwnerGuidance(opts: {
   feature: string; runId: string; phase: string; blockers: readonly DesignOwnerBlocker[];
+  unattended?: boolean;
   /** plan 9c3d7e1a §4.1：run 内指针调和没有修好本 CU 时的原因（调和器自带的跳过原因 / 竞争退出说明）。 */
   reconcileNote?: string;
   /** plan 9c3d7e1a §5.0：B1 / B2 分类与修复简报（哪条检查、哪个产物、依据、缺什么）。 */
@@ -1628,18 +1631,21 @@ export function buildDesignOwnerGuidance(opts: {
     '原因：',
     ...opts.blockers.map((b) => `  - ${b.id ?? '?'}：${truncateOneLine(b.details_excerpt ?? '', 400)}`),
     ...(opts.reconcileNote ? [`框架已尝试在本 run 内原位升版 CU 指针，未完成：${opts.reconcileNote}`] : []),
-    ...(opts.contentRepairNote ? [`无人值守设计修复（预授权 design_repair.unattended_b1）：${opts.contentRepairNote}`] : []),
+    ...(opts.contentRepairNote ? [`无人值守设计修复（按本次有效请求授权）：${opts.contentRepairNote}`] : []),
     ...(opts.brief ? [
       b1
         ? '分类：B1——既有范围内的确定修法；仍遵守下方设计修改确认边界。'
-        : '分类：B2——需要有权者先做决定、扩大范围或补事实，设计 owner 不能自行修；缺什么见下。',
+        : opts.unattended
+          ? '分类：B2——需要设计责任方裁定或补事实；原需求内按本次无人值守授权处理，未恢复的具体原因见上方。'
+          : '分类：B2——需要有权者先做决定、扩大范围或补事实，设计 owner 不能自行修；缺什么见下。',
       '修复简报：',
       ...opts.brief.items.map((item) => `  - 检查 ${item.check}${item.codes.length ? `［${item.codes.join(', ')}］` : ''}（${item.class}）→ 产物 ${item.artifacts.join('、') || '蓝图 / CU'}；${item.class === 'B1' ? '修法' : '缺'}：${item.needs.join('；')}`),
     ] : []),
     '责任方：设计 owner（/component-design：canonical 蓝图与 Change Unit），不在 feature 阶段链内。',
     DESIGN_MODIFICATION_CONFIRMATION,
-    '下一步：取得用户确认后，在 /component-design 修复蓝图 / CU 中的上述问题，经 design-handoff readiness 原位升版 CU 指针并刷新派生投影，'
-      + '然后重新发起同一请求（框架按接续决策选择续跑或起后继）。',
+    opts.unattended
+      ? '下一步：框架沿设计责任链修订、验证并接续；本次未恢复的具体原因见上方。仅在需求/实质验收变更、真实授权缺失、外部条件或有效预算受限时按对应原因处理，不要求外层 Agent 手改文件。'
+      : '下一步：取得用户确认后，在 /component-design 修复蓝图 / CU 中的上述问题，经 design-handoff readiness 重签并刷新派生投影，然后重新发起同一请求。',
     ...(opts.brief ? ['本 run 已停放并释放 feature 锁（readiness 调和要取这把锁）。修好后重新发起同一请求即自动续跑，冷却期内也可以、不需要任何旗标：'
       + '冻结的输入绑定仍有效就重新接入本 run，已失效就自动起后继并承接本 run。已安装 supervisor 时探针就绪会自动拉起（同一任务最多 3 次，不重置，用完需人工重发）。'] : []),
   ].join('\n');
@@ -4814,16 +4820,27 @@ function resolveRuntimeLayout(options: GoalPhaseRuntimeLaunchOptions, argv: mini
   };
 }
 
+/** Only the halt immediately caused by this session's successful design publication may relaunch. */
+export function designRepairNeedsContinuation(events: readonly GoalRunEvent[], chain: readonly string[]): boolean {
+  const records = events as ReadonlyArray<GoalRunEvent & { stage?: string; outcome?: string }>;
+  const end = [...records].reverse().find(event => event.type === 'run_end');
+  if (end?.status !== 'HALTED' || end.halt_reason !== 'execution_scope_unresolved') return false;
+  const startAt = records.map(event => event.type).lastIndexOf('run_start');
+  const repair = [...records].reverse().find(event => event.type === 'design_authority_repair' && event.stage === 'published');
+  const halt = [...records].reverse().find(event => event.type === 'phase_halt');
+  if (!repair || repair.outcome !== 'recovered' || !halt || halt.phase !== repair.phase
+    || halt.halt_reason !== 'execution_scope_unresolved') return false;
+  const repairAt = records.lastIndexOf(repair), haltAt = records.lastIndexOf(halt);
+  return repairAt > startAt && haltAt > repairAt
+    && !records.slice(repairAt + 1, haltAt).some(event => event.type === 'agent_invoke_start' && chain.includes(String(event.phase)));
+}
+
 export class GoalPhaseRuntime {
   constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}) {}
 
   lastRunId?: string;
 
-  /**
-   * D2: there is no successor path any more. A legal revision is appended inside the SAME run,
-   * so the runtime never re-enters itself under a new run id — the old `for(;;)` relaunch loop
-   * (and the `nextArgs` relaunch argv it built) is gone with it.
-   */
+  /** In-run revisions stay in the run; only a completed design repair may enter existing continuation. */
   async run(): Promise<number> {
     const options = this.options;
     {
@@ -4848,6 +4865,19 @@ export class GoalPhaseRuntime {
       const finished = terminalEventCtx;
       if (!finished) return code;
       this.lastRunId = finished.runId;
+      // A published owner repair can invalidate birth bindings. Reuse the existing resume
+      // decision after main has released its locks; never ask the outer Agent to relaunch it.
+      const terminal = loadAuthoritativeEvents(path.resolve(finished.projectRoot, finished.reportDir, 'events.jsonl')) as Array<GoalRunEvent & { stage?: string; outcome?: string }>;
+      if (designRepairNeedsContinuation(terminal, finished.workflowChain) && typeof argv.feature === 'string') {
+        const { projectRoot, frameworkRoot } = resolveRuntimeLayout(options, argv);
+        const next = new GoalPhaseRuntime({ ...options, args: ['--feature', argv.feature, '--resume', finished.runId,
+          '--project-root', projectRoot, '--framework-root', frameworkRoot,
+          '--runtime-executor', String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached')),
+          '--runtime-owner', String(argv['runtime-owner'] ?? options.ownerKind ?? (options.executor ? 'session' : 'process'))] });
+        const continued = await next.run();
+        this.lastRunId = next.lastRunId;
+        return continued;
+      }
       // D2: the run projects its own completion and there is no ancestor chain to clean up, so the
       // post-run verification that used to gate that cleanup is gone rather than left as a no-op.
       return code;
@@ -9852,6 +9882,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }).join('\n');
             console.log(`\n===== ${haltReason} =====\n${awaitConfirmGuidance}\n`);
           }
+          awaitConfirmGuidance ??= [
+            `当前阶段 ${phase} 同输入修复未取得进展，未完成。`,
+            ...(decisionSummary?.blockers ?? []).map(blocker => `- ${blocker.id}：${blocker.details_excerpt ?? ''}；责任方=${(blocker as { repair_owner?: string }).repair_owner ?? phase}`),
+            '下一步：按上述具体原因取得新事实或修复后，重新发起同一请求；已授权上游缺口须交责任阶段，不能无变化重跑或手改证据/需求。',
+          ].join('\n');
           // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
           // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
           // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
@@ -9885,14 +9920,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }));
         let contentRepair: UnattendedDesignRepairResult | undefined;
         let contentRepairStale: string[] = [];
-        /** 四个前提：无人值守（process owner）；分类 B1；个人配置预授权；本停机签名在本 run 与祖先回放里都没有 attempted。 */
+        const unattendedFullDelivery = runtimeOwnerKind === 'process' && executorMode === 'detached' && !!manifest.unattended
+          && !!manifest.requirement?.trim() && resolveEffectiveScopeSource(projectRoot, manifest.feature, manifest.run_id)?.scope.completion_target === 'feature';
+        /** 原需求的无人值守完整交付授权；同一有效输入的问题沿原预算只尝试一次。 */
         const contentRepairEligible = (): boolean => {
-          if (runtimeOwnerKind !== 'process' || designBriefNow().class !== 'B1') return false;
-          let authorized = false;
-          try { authorized = resolveUnattendedB1Repair(loadFrameworkLocalConfig(projectRoot)); } catch { authorized = false; }
-          if (!authorized) return false;
-          const signature = designRepairSignature(manifest.feature, String(phase), designBriefNow().items);
+          if (!unattendedFullDelivery) return false;
+          const signature = currentDesignRepairSignature();
           return !designRepairAttempted([...ancestorBudgetEvents, ...loadAuthoritativeEvents(eventsPath)], signature);
+        };
+        const currentDesignRepairSignature = (): string => {
+          const fingerprint = designRepairInputFingerprint(projectRoot, manifest.feature);
+          return designRepairSignature(manifest.feature, String(phase), designBriefNow().items, fingerprint);
         };
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
@@ -10172,8 +10210,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           contentRepairEligible() &&
           (contentRepair = await runUnattendedDesignRepair({
             projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase), runId: manifest.run_id,
+            requirement: manifest.requirement,
             reportDir: manifest.report_dir, brief: designBriefNow(),
-            signature: designRepairSignature(manifest.feature, String(phase), designBriefNow().items),
+            signature: currentDesignRepairSignature(),
             heldFeatureLock: featureLock,
             runtimeWrites: featureLock ? [path.relative(projectRoot, featureLock.path)] : [],
             emit: (event) => goalEvents.emit(event),
@@ -10267,6 +10306,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   : contentRepair.reason;
           awaitConfirmGuidance = buildDesignOwnerGuidance({
             feature: manifest.feature, runId: manifest.run_id, phase: String(phase), blockers: ownerBlockers,
+            unattended: unattendedFullDelivery,
             ...(pointerReconcile ? { reconcileNote: pointerReconcile.reason } : {}),
             brief: repairBrief,
             ...(contentRepairNote ? { contentRepairNote } : {}),
@@ -10649,6 +10689,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // Kept alongside the resolved scope so the appended event records what triggered it.
         let pendingScopeRevisionInput: ExecutionScopeInput | undefined;
         let pendingScopeRevisionCheckId: string | undefined;
+        let appliedScopeRevision = false;
         if (manifest.execution_scope && !invoke.timed_out && freshSummary && summaryAbsPath) {
           const reportFile = path.join(path.dirname(summaryAbsPath), 'script-report.json');
           const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, 'utf8')) as { checks?: Array<{ id?: string; scope_revision_input?: ExecutionScopeInput }> } : {};
@@ -10995,7 +11036,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               allowed_fields: [...SCOPE_REVISION_FIELDS],
               ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}),
             });
-            options.onScopeRevision?.('applied');
+            appliedScopeRevision = true;
             // Re-read the effective scope and re-target the execution chain / cursor from it.
             const recorded = applyScopeRevisions(birth, loadAuthoritativeEvents(eventsPath));
             const revised = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow, previous: recorded, currentRunId: manifest.run_id });
@@ -11009,10 +11050,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
             wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
             // The effective view already removed valid proofs; dispatch its first remaining owner.
             phaseIdx = -1;
+            if (eligibleForBacktrack.length) {
+              // The revision adds duties; the existing repair transaction still owns candidate delivery and adjudication.
+              // The boundary already permitted this revision; this refresh only resolves its owner route, not a second quality verdict.
+              delete reconcileObservation.scope_revision;
+              const repairAssessment = runAssess();
+              if (repairAssessment.recommendation.runner_action === 'backtrack_to_phase') {
+                assessment = repairAssessment;
+                action = 'backtrack_to_phase';
+              }
+            }
           }
-          phaseDone = true;
-          if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
-          continue;
+          if (action === 'advance') {
+            if (appliedScopeRevision) options.onScopeRevision?.('applied');
+            phaseDone = true;
+            if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
+            continue;
+          }
         }
 
         if (
@@ -11214,12 +11268,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   : null,
             };
             phaseIdx = targetIdxBt - 1; // for 循环 ++ 后落回目标阶段
+            if (appliedScopeRevision) options.onScopeRevision?.('applied');
             phaseDone = true;
             if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
             continue;
           }
         }
 
+        if (appliedScopeRevision) options.onScopeRevision?.('applied');
         if (action === 'retry') {
           priorBlockerSignature = currentBlockerSignature || priorBlockerSignature;
           priorArtifactSnapshot =

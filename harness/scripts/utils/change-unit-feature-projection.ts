@@ -33,7 +33,7 @@ import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './type
 import { validateChangeUnitEvolutionSeam } from './change-unit-evolution-seam';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateProjectRelativePath } from './project-relative-path';
-import { checkComponentSelections, componentProjectionErrors } from './component-selection-check';
+import { checkComponentSelections, componentProjectionFindings, projectComponentSelections } from './component-selection-check';
 
 /**
  * M7：`change` 是 lite 轨的首个 phase，扮演 full 轨 `plan` 在"冻结施工契约"上的角色。
@@ -656,8 +656,10 @@ export function validateChangeUnitFeatureProjection(
     }
   }
   if (!options.designOnly) {
-    issues.push(...changeUnitMappingIssues(projectRoot, section!, cu, phase));
-    issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+    try { contracts = projectComponentSelections(projectRoot, contracts!, cu); }
+    catch (error) { issues.push(issue('component_asset_projection', `蓝图选型权威不可解析：${(error as Error).message}`, 'reconcile_blueprint')); }
+    issues.push(...changeUnitMappingIssues(projectRoot, asRecord(contracts!.change_unit)!, cu, phase));
+    issues.push(...componentProjectionFindings(projectRoot, contracts!, cu).map(finding => issue('component_asset_projection', finding.message, finding.route)));
   }
   const warnings: string[] = [];
   try {

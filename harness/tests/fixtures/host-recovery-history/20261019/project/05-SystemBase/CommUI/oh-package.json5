@@ -1,0 +1,11 @@
+{
+  "name": "@aspect/CommUI",
+  "version": "1.0.0",
+  "description": "公共 UI 组件",
+  "main": "src/main/ets/index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@aspect/CommFunc": "file:../CommFunc"
+  }
+}

@@ -293,13 +293,24 @@ function evidenceSemanticContext(projectRoot: string, feature: string, phase: st
 /** Old entries lack collection provenance: retire only the former collector's bounded control surface. */
 export function phaseEvidenceBusinessInputs(projectRoot: string, feature: string, manifest: PhaseEvidenceManifest,
   opts: EvidenceSemanticOptions = {}): EvidenceEntry[] {
-  if (!manifest.inputs.some(entry => /\/goal-runs\/[^/]+\/manifest\.json$/.test(entry.path))) return manifest.inputs;
+  const inputs = manifest.inputs.filter(entry => {
+    if (entry.role !== 'input' || sha256File(path.join(projectRoot, entry.path)) === entry.sha256) return true;
+    const { componentIndexPath } = require('../../config') as typeof import('../../config');
+    if (path.resolve(projectRoot, entry.path) !== path.resolve(componentIndexPath(projectRoot))) return true;
+    try {
+      const { isCurrentComponentInventory } = require('./component-assets') as typeof import('./component-assets');
+      // A rebuilt inventory is a projection of the source, not a new design decision.
+      // Missing/corrupt/stale inventory and human curation still retain their checks.
+      return !isCurrentComponentInventory(projectRoot, entry.path);
+    } catch { return true; }
+  });
+  if (!inputs.some(entry => /\/goal-runs\/[^/]+\/manifest\.json$/.test(entry.path))) return inputs;
   const context = evidenceSemanticContext(projectRoot, feature, manifest.phase, opts);
   const now = resolveEnvironment(projectRoot, manifest.phase, opts.frameworkRoot);
   if (!context?.requirementSha || context.requirementSha !== manifest.environment.requirement_sha256
     || ['framework_version', 'gate_fingerprint', 'framework_config_sha256', 'workflow_sha256'].some(key =>
-      now[key as keyof EvidenceEnvironment] !== manifest.environment[key as keyof EvidenceEnvironment])) return manifest.inputs;
-  return manifest.inputs.filter(entry => entry.role !== 'input' || entry.facts_phase !== undefined || entry.identity_neutral !== undefined
+      now[key as keyof EvidenceEnvironment] !== manifest.environment[key as keyof EvidenceEnvironment])) return inputs;
+  return inputs.filter(entry => entry.role !== 'input' || entry.facts_phase !== undefined || entry.identity_neutral !== undefined
     || entry.owner_phase !== undefined || !entry.exists || entry.sha256 === null
     || !context.controlPaths.has(path.resolve(projectRoot, entry.path)) || context.businessPaths.has(path.resolve(projectRoot, entry.path)));
 }
@@ -862,10 +873,54 @@ export function recomputePhaseEvidenceStaleness(
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
   const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
+  // A live checker may use its admitted owner; read-only consumers require an observed write.
+  const pendingOwners = new Set<string>(opts?.pendingOwnerPhase ? [opts.pendingOwnerPhase] : []);
+  const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
+  let evidenceRunId = opts?.runId;
+  if (!evidenceRunId && chain.length) {
+    try { evidenceRunId = evidenceRequirementContext(projectRoot, feature, chain[0], opts ?? {}).runId; } catch { /* Independent evidence has no run authority. */ }
+  }
+  if (evidenceRunId) {
+    try {
+      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
+      const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+      const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
+      const events = loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
+      const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
+      const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+      const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
+      if (framework) {
+        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId);
+        const sourceOwners = new Set([...phaseContractIndex(loadFeatureContracts(framework))]
+          .filter(([, contract]) => contract.phase.produces.some(output => output.kind === 'source')).map(([phase]) => phase));
+        const declared = new Set(contracts.files.filter(file => contracts.modules.some(module => {
+          const rel = path.relative(path.resolve(projectRoot, module.package_path), path.resolve(projectRoot, file));
+          return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+        })));
+        for (const event of events) {
+          if (event.type !== 'phase_write_observed' || !event.phase || !sourceOwners.has(event.phase)) continue;
+          const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
+          for (const write of owned) if (declared.has(write.path)) {
+            const transitions = sourceTransitions.get(write.path) ?? [];
+            transitions.push({ phase: event.phase, before: write.pre_sha256, after: write.post_sha256 });
+            sourceTransitions.set(write.path, transitions);
+          }
+        }
+      }
+    } catch { /* Unavailable run identity grants no additional source ownership. */ }
+  }
   const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
+    // Old manifests may lack a resource owner. Existing authorized write events supply
+    // the same fact without rewriting the historical manifest or trusting a new file hash.
+    let expected = entry.sha256;
+    let advanced = false;
+    for (const change of sourceTransitions.get(entry.path) ?? []) {
+      if (change.phase !== manifestPhase && change.before === expected) { expected = change.after; advanced = true; }
+    }
+    if (advanced && expected === sha256File(path.join(projectRoot, entry.path))) return true;
     if (pendingOwnerPaths.has(entry.path)) return true;
     if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
-    if (entry.owner_phase === opts?.pendingOwnerPhase) return true;
+    if (pendingOwners.has(entry.owner_phase)) return true;
     const owner = loadPhaseEvidenceManifest(projectRoot, feature, entry.owner_phase);
     // The owner validates its own result. A later failure there must not reopen an upstream
     // observation when the declared output still has the exact bytes that owner recorded.
@@ -903,8 +958,8 @@ export function recomputePhaseEvidenceStaleness(
       upstreamBad = phase;
       continue;
     }
-    if (opts?.pendingOwnerPhase) for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
-      if (entry.owner_phase === opts.pendingOwnerPhase) pendingOwnerPaths.add(entry.path);
+    for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
+      if (entry.owner_phase && pendingOwners.has(entry.owner_phase)) pendingOwnerPaths.add(entry.path);
     }
     // ② plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 的 schema/aggregate/条目哈希已自证完整性，
     //    回执是闭环后的人读投影（可被 harness 随时重生成），不再作为 freshness 锚。

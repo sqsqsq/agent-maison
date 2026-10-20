@@ -190,7 +190,7 @@ test('curation rejects unconfirmed, copied and absent IDs; dangling never mutate
   assert(checkComponentCatalog(root).some(r => r.id === 'component_catalog_dangling' && r.status === 'WARN'));
   assert.equal(fs.readFileSync(componentCatalogPath(root), 'utf8'), before);
 }));
-test('new shared unknown blocks, private custom skips registration, legacy unknown passes', () => setup(root => {
+test('new shared unknown is disclosed for review, private custom skips registration, legacy unknown passes', () => setup(root => {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
   git('init'); git('add', '04-BusinessBase', '02-Feature'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'baseline');
   write(root, '04-BusinessBase/SharedUi/src/SettingRow.ets', SOURCE.replace("'16fp'", 'size'));
@@ -204,7 +204,8 @@ test('new shared unknown blocks, private custom skips registration, legacy unkno
   assert(checks.some(r => r.id === 'component_export_registered' && r.status === 'FAIL'));
   assert(checks.some(r => r.id === 'component_new_static_checks' && r.details?.includes('declared_touch_target=unknown')));
   generate(root); checks = checkComponentSelections(context(root, value, 'review'));
-  assert(checks.some(r => r.id === 'component_new_static_checks' && r.status === 'FAIL'));
+  assert(checks.some(r => r.id === 'component_new_static_checks' && r.status === 'WARN'));
+  assert(!checks.some(r => r.id === 'component_new_static_checks' && r.status === 'FAIL'));
   const privateValue = contracts(); privateValue.components[0].asset_selection = { resolution: 'custom', rationale: '私有用途' };
   assert(!checkComponentSelections(context(root, privateValue, 'review')).some(r => r.status === 'FAIL'));
 }));
@@ -524,7 +525,8 @@ test('R3 只修改出口也问责新增共享资产，定义未改/存量/私有
   assert(checks.some(c => c.id === 'component_new_static_checks' && c.details?.includes('#Private')));
   assert(!checks.some(c => c.id === 'component_new_static_checks' && c.details?.includes('#SettingRow')));
   const report = generateScriptReport(path.join(FRAMEWORK, 'harness'), 'review', value.feature, root, checks, FRAMEWORK);
-  assert.equal(report.summary.verdict, 'FAIL'); assert(report.summary.blockers > 0);
+  assert.equal(report.summary.verdict, 'PASS'); assert.equal(report.summary.blockers, 0);
+  assert(checks.some(c => c.id === 'component_new_static_checks' && c.status === 'WARN'));
   assert.equal(fs.readFileSync(path.join(root, '04-BusinessBase/SharedUi/src/Private.ets'), 'utf8'), privateSource);
 }));
 
@@ -548,7 +550,7 @@ test('R4 同名组件按 file#name 分别覆盖，缺映射和不一致均失败
   assert(componentProjectionErrors(root, value, cu).some(e => e.includes('OtherPage.ets#Page')));
 }));
 
-test('R5 小写全局 Builder 保留 unknown 并阻断新增共享包装，真实无表面保持 NA', () => setup(root => {
+test('R5 小写全局 Builder 保留 unknown 交真实验证，真实无表面保持 NA', () => setup(root => {
   commitSourceBaseline(root);
   write(root, '04-BusinessBase/SharedUi/Index.ets', "export { Wrapped } from './src/Wrapped';");
   write(root, '04-BusinessBase/SharedUi/src/Wrapped.ets', "@Builder\nfunction drawButton() { Button('bad').fontSize('16vp').width(20).height(20) }\n@Component\nexport struct Wrapped { build() { drawButton() } }");
@@ -556,7 +558,9 @@ test('R5 小写全局 Builder 保留 unknown 并阻断新增共享包装，真�
   assert.equal(asset.static_checks.scalable_font_unit, 'unknown');
   assert.equal(asset.static_checks.declared_touch_target, 'unknown');
   const value = contracts(); value.components[0].asset_selection = { resolution: 'custom', rationale: '私有' }; value.files = ['04-BusinessBase/SharedUi/src/Wrapped.ets'];
-  assert.equal(resolveVerdictFromChecks(checkComponentSelections(context(root, value, 'review'))), 'FAIL');
+  const checks = checkComponentSelections(context(root, value, 'review'));
+  assert(checks.some(c => c.id === 'component_new_static_checks' && c.status === 'WARN' && c.details?.includes('unknown')));
+  assert.equal(resolveVerdictFromChecks(checks), 'PASS');
   assert.equal(componentStaticChecks('build() { Divider() }').declared_touch_target, 'not_applicable');
   assert.equal(componentStaticChecks('build() { Image($r("app.media.icon")) }').scalable_font_unit, 'not_applicable');
 }));

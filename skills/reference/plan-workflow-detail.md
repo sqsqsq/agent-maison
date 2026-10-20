@@ -138,6 +138,8 @@ architecture_impact:
 
 ## 组件选型施工投影（index 文件存在时）
 
-字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI components 的 asset_selection 为单值对象，严格展开蓝图 resolution/component_ref；rationale 保留上游施工契约的组件说明，无上游说明时补本组件理由，不照抄总理由覆盖组件说明；bindings 为本地施工信息；用既有 design_ref_mappings 的 implementation_refs 定位 file#name。多组件沿 children 拆条目，不再自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
+字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI 的 asset_selection 和 design_ref_mappings 由同一权威投影：目标明确且决定唯一时缺失项自动派生，plan 不必重复手填；实质冲突仍须责任方修正。rationale 保留上游施工契约的组件说明，缺失时沿决定理由；bindings 为本地施工信息，implementation_refs 定位 file#name。多组件沿 children 拆条目，不自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
 
-依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 须在 in_scope_modules；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 权责一致：goal 换选自动、下沉经 auto-replan、新边停放 await-confirm 等用户批后 resume，不能以自改 DSL 或重写需求绕过。
+依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 须在 in_scope_modules；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 均回设计方重签：无人值守原需求内的新边由设计 owner 自动裁决、经配置 writer 落盘后继续；有人在场保留确认，plan 不自改 DSL 或重写需求。
+
+无人值守完整交付时，原需求内的蓝图/CU与必要架构变更由 runner 交设计 owner 静默修订、隔离质询、检查、发布和重绑后继续；不需要个人 B1 开关，不由 plan/coding 或外层主 Agent 就地自授。有人在场沿原确认流程。改变原需求或实质验收、真实秘密/不可逆外部动作、突破用户总预算或明确禁止仍须用户决定。

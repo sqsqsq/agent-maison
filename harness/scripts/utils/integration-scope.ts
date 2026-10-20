@@ -33,6 +33,7 @@ export function evaluateIntegrationScopeConsistency(args: {
   for (const p of args.points) {
     const label = `${p.consumer_module}→${p.provider_module}`;
     if (p.requires_modification) {
+      if (!p.entry_symbol) violations.push({ point: label, reason: '缺 entry_symbol：先声明 coding 应接通的消费符号，不要求未来代码已经存在。' });
       if (!inScope.has(p.consumer_module)) {
         violations.push({
           point: label,

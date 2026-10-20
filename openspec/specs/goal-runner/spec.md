@@ -2250,3 +2250,41 @@ The runner SHALL use the existing closure-only attempt for missing verification 
 - **WHEN** the user requests unattended completion and a terminal report
 - **THEN** the driver follows bounded monitor events while the runner handles supported recovery
 - **AND** unsupported recovery or real authorization, budget, or external blockers are reported accurately without blind resume or manual product edits
+
+### Requirement: Unattended original-scope design and architecture repair uses the existing owner chain
+
+For an unattended original-scope task the runtime SHALL dispatch the design owner before retrying an incapable downstream stage. B1/B2 labels and the legacy personal opt-in SHALL NOT replace task authorization. Design/CU changes and all existing architecture_impact variants SHALL use drafts, isolated questioning, existing validation and writers, and re-evaluation. The current caller MAY lend its existing locks to the CU content consumer; unrelated live runs SHALL remain busy. Runtime publication SHALL preserve identity and unrelated configuration, and source/verification changes SHALL NOT reset accumulated budget.
+
+If bindings remain valid, the same run SHALL continue; otherwise the existing continuation decision SHALL automatically select the successor, without an outer Agent or a human re-issuing the request. New effective input SHALL be distinguished from unchanged repeated failure using existing events and bounded recovery. Missing facts SHALL NOT be fabricated. Changes to original requirements or substantive acceptance, explicit prohibitions, secrets, irreversible external actions and user budget limits retain their real authority boundaries. Attended behavior remains unchanged.
+
+#### Scenario: A CU lacks a required selection reference
+- **WHEN** a design-owned failure occurs during an authorized unattended task
+- **THEN** the runner SHALL obtain a revised design/CU through the original consumer, validate and rebind it, and continue construction without asking the outer Agent to edit files
+
+#### Scenario: A genuine authority boundary remains
+- **WHEN** the repair would change the original product requirement or violate an explicit restriction
+- **THEN** the request SHALL remain incomplete and report the concrete decision needed, without publishing a fabricated authorization
+
+#### Scenario: A repair changes architecture permission
+- **WHEN** a necessary original-scope dependency or module decision requires a new DSL value
+- **THEN** the design owner SHALL provide the decision and candidate DSL, the existing init writer SHALL publish the validated configuration before construction, and questioning SHALL inspect the original request and both candidates
+
+Enforcement: `harness/scripts/utils/design-repair-unattended.ts`, `harness/scripts/utils/change-unit-design-preparation.ts`, `harness/scripts/utils/init-task-executor.ts`, `harness/scripts/goal-phase-runtime.ts`
+
+### Requirement: Evidence freshness and repair ownership share effective facts
+
+Stage gates, assess, resume and completion SHALL consume the same existing source ownership and authorized write observations. An owner advancing a declared source/resource/test output SHALL NOT invalidate upstream research merely because bytes changed; the owner still requires its own valid result. Definition gaps SHALL route to their producer. No-progress guidance SHALL retain actual causes, owners and recovery actions in the existing event/status/report fields.
+
+#### Scenario: Coding updates declared resources
+- **WHEN** coding modifies a resource in its authorized source set
+- **THEN** gate and assess SHALL agree without rerunning spec/plan; unobserved or unauthorized changes and real definition changes SHALL retain invalidation
+
+#### Scenario: The same trusted defect reopens an owner after its PASS
+- **WHEN** a current repair candidate withdraws satisfaction after the owner has produced a PASS since the last recorded scope revision
+- **THEN** revision merging SHALL preserve the new unmet duty rather than refill it from that earlier PASS
+- **AND** after committing the scope, dispatch SHALL use the existing repair transaction to deliver the candidate identity and permit goal-based rejection or repair, retaining authorization, repetition and budget limits
+
+#### Scenario: Supplementing an unkeyed construction declaration
+- **WHEN** plan adds a needed entry symbol to an existing integration declaration with no stable row ID
+- **THEN** comparison SHALL check the authority's declared fields and retain ordered-array semantics, allowing the non-conflicting supplement
+- **AND** changed declared values or an expanded authorized file set SHALL still fail

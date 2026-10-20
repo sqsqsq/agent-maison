@@ -218,11 +218,13 @@ export function loadFactsInvocationContext(options: {
 
 /** The runtime write boundary for facts ownership; throws without a construction binding. */
 function resolveFactsWriteBoundary(options: { projectRoot: string; frameworkRoot: string; feature: string; runId?: string; phase?: string },
-  scope: import('./execution-scope').ExecutionScope) {
+  scope: import('./execution-scope').ExecutionScope, constructionModules?: Array<{ name: string; package_path: string }>) {
   const config = loadFrameworkConfig(options.projectRoot);
   const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
   return resolvePhaseWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, feature: options.feature, runId: options.runId,
-    pendingOwnerPhase: options.phase, phaseOrder: executionCompletionPhases(scope), track: 'full',
+    pendingOwnerPhase: options.phase, phaseOrder: [...new Set([...executionCompletionPhases(scope),
+      ...(constructionModules ? scope.obligations.filter(obligation => obligation.applicability === 'required').map(obligation => obligation.owner_phase) : [])])], track: 'full',
+    ...(constructionModules ? { constructionModules } : {}),
     profileDir: profile.profileDir, productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
 }
@@ -506,6 +508,11 @@ export function resolveCapabilityResolutionEntryInput(
               factsContext.baseline.dependencies.push({ path: configPath, exists: evidence.manifest.environment.framework_config_sha256 !== null,
                 sha256: evidence.manifest.environment.framework_config_sha256, role: 'derive' });
             }
+            // An upstream observation can remain valid after its downstream owner writes.
+            // Carrying that invocation's original baseline still requires the admission above.
+            const changedDependencies = factsContext.baseline.dependencies.filter(dep =>
+              fs.existsSync(dep.path) !== dep.exists || sha256File(dep.path) !== dep.sha256);
+            if (goalRunId && changedDependencies.length) throw new Error(`facts baseline stale: invocation admission required for changed sources: ${changedDependencies.map(dep => path.relative(options.projectRoot, dep.path)).join(', ')}`);
             for (const source of paths) {
               const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
               researchPaths.add(safe);
@@ -541,6 +548,7 @@ export function resolveCapabilityResolutionEntryInput(
       }
       let contractFiles: string[] = [];
       let contractModules: Array<{ name: string; package_path: string }> = [];
+      let observedConstruction = false;
       const producesContracts = indexed.phase.produces.some(output => output.artifact === 'contracts@1');
       const currentContracts = new SpecLoader(options.projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(options.feature).contracts;
       try {
@@ -548,14 +556,26 @@ export function resolveCapabilityResolutionEntryInput(
         try {
           contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
         } catch (error) {
+          if (options.feature.startsWith('cu-')) throw error;
           if (!producesContracts) throw error;
           if (!currentContracts) throw error;
           contracts = currentContracts;
         }
         contractFiles = (contracts.files ?? []).map(file => validateProjectRelativePath(options.projectRoot, file, 'contracts.files'));
         contractModules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+        observedConstruction = ['spec', 'plan'].includes(options.phase);
       } catch {
-        // A missing construction binding is the plan-owned definition gap already carried by scope.
+        // Research may observe admitted construction targets before plan signs the binding.
+        // This assigns evidence responsibility, not coding write permission.
+        if (['spec', 'plan'].includes(options.phase)) {
+          const projected = deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts');
+          if (projected.state === 'resolved' && projected.value) {
+            const contracts = projected.value as unknown as import('./types').ContractsSpec;
+            contractFiles = (contracts.files ?? []).map(file => validateProjectRelativePath(options.projectRoot, file, 'contracts.files'));
+            contractModules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+            observedConstruction = true;
+          }
+        }
       }
       if (contractModules.length === 0 && currentContracts) {
         contractModules = (currentContracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
@@ -676,7 +696,8 @@ export function resolveCapabilityResolutionEntryInput(
       const inCodeWriteBoundary = (file: string): boolean => {
         try {
           if (codeBoundary === undefined) {
-            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId, phase: options.phase }, scope);
+            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId, phase: options.phase }, scope,
+              observedConstruction ? contractModules : undefined);
             codeBoundary = boundary.unresolvedSourcePhases.includes(codeOwner!) ? null : boundary;
           }
           const granted = codeBoundary && resolvePhasePathOwnership(codeBoundary, file);

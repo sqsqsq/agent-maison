@@ -265,7 +265,7 @@ function checkIntegrationScopeConsistency(ctx: CheckContext, design: string): Ch
     }];
   }
   const { scope } = parseScope(design);
-  const inScope = scope?.in_scope_modules ?? [];
+  const inScope = scope?.in_scope_modules ?? (ctx.featureSpec.contracts?.modules ?? []).map(module => module.name);
   const contracts = ctx.featureSpec.contracts;
   const violations = evaluateIntegrationScopeConsistency({
     points,
@@ -1199,7 +1199,7 @@ export function checkContractFileReferenceClosure(ctx: CheckContext): CheckResul
     ...(expansion.length ? { repair_owner: 'external' as const, structured: { kind: 'design_authority', reason: 'other', codes: ['authority_contract_write_set_open'] } } : {}),
     details: [
       `${violations.length} 个文件引用未列入 contracts.files（唯一授权集合）：`,
-      ...(expansion.length ? [`需扩大蓝图/CU 写集：${expansion.join(', ')}；须先取得用户确认，由设计 owner 裁定。`] : []),
+      ...(expansion.length ? [`需扩大蓝图/CU 写集：${expansion.join(', ')}；交设计 owner 重签，无人值守原需求内自动处理，有人在场沿原确认流程。`] : []),
       ...shown.map(violation => {
         const sources = violation.sources
           .slice(0, 3)
@@ -1219,7 +1219,7 @@ const checker: PhaseChecker = {
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'plan.md')) {
-      const results = [...checkTypedConstructionContent(ctx), ...checkContractFileReferenceClosure(ctx), ...checkChangeUnitFeatureProjection(ctx, 'plan'), ...checkSpecConstraintTraceability(ctx, ''),
+      const results = [...checkTypedConstructionContent(ctx), ...checkContractFileReferenceClosure(ctx), ...checkChangeUnitFeatureProjection(ctx, 'plan'), ...checkSpecConstraintTraceability(ctx, ''), ...checkIntegrationScopeConsistency(ctx, ''),
         ...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
         ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
       if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'visual-parity.yaml')) results.push(...dispatchPlanVisualParity(ctx));

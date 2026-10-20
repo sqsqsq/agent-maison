@@ -1176,11 +1176,12 @@ const runS6: ScenarioRunner = async (_entry, done) => {
     let introduced = false;
     let reviewSawExclusion = false;
     let reviewFlagged = 0;
+    let repairingExclusion = false;
     const hooks = realChainHooks(project, {
       coding: () => {
         writeCodingMaterials(project);
         // 回退之后的 coding 按候选移除（writeCodingMaterials 即不含排除元素的实现）。
-        if (codingBacktrackRequested(project)) return;
+        if (repairingExclusion || codingBacktrackRequested(project)) return;
         // 执行者多写一个需求排除的元素（ae92d8 之后的宿主形态）。
         const abs = path.join(project.root, REAL_CHAIN_SOURCE);
         const src = fs.readFileSync(abs, 'utf-8');
@@ -1190,6 +1191,11 @@ const runS6: ScenarioRunner = async (_entry, done) => {
         introduced = true;
       },
     })!;
+    const originalCoding = hooks.onCoding!;
+    hooks.onCoding = ctx => {
+      repairingExclusion = ctx.prompt.includes('item_fingerprint:') && ctx.prompt.includes('nfc_activation_card');
+      originalCoding(ctx);
+    };
     // review 裁判替身：只有提示词里送到了需求的排除句，且产品里有该元素，才按"多做核对"记问题。
     hooks.onReview = ctx => {
       project.runId = ctx.runId;
@@ -1787,7 +1793,7 @@ function runS14(key: S14Key): ScenarioRunner {
       const feature = SNAPSHOT_CU_FEATURE;
       const run = await s14Run(s, key);
       const events = eventsOf(s.root, feature, run.successor);
-      const repairIdx = indexOf(events, e => e.type === 'design_authority_repair');
+      const repairIdx = indexOf(events, e => e.type === 'design_authority_repair' && e.action === 'pointer_reconcile');
       const repair = events[repairIdx] as { outcome?: string; bumped?: Array<{ change_unit_id: string }>; skipped?: Array<{ change_unit_id: string }> } | undefined;
       const halt = events.find(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved');
       const stopped = key === 'counter-own-skipped';
@@ -1877,14 +1883,14 @@ function runS16(key: S16Key): ScenarioRunner {
         // 预授权与蓝图写坏是前提；未来 plan 可重签的修复不产生停机或人工救援。
         interventions: flow.interventions.map(iv => ({ ...iv, actor: DESIGN_ACTOR })),
         acceptance: key === 'counter-no-preauth'
-          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：没有预授权，B1 停等设计 owner' }
+          ? { result: 'fail', actor: 'reliability-scenarios', basis: '未交付：局部请求未授权完整交付，不自动扩大到设计修订' }
           : authorityAcceptance(s, flow.feature, final),
         after: { run_id: observationRun, event_index: observationIndex },
         hit: { ok: observationIndex >= 0 && flow.haltClass === 'B1', evidence: flow.evidence },
         expectation: key === 'counter-no-preauth'
           ? (t) => ({
               met: !t.facts.claimed_complete && t.stop_state?.run_disposition === 'WAITING' && t.stop_state.run_wait_kind === 'external' && t.stop_state.has_probe === true,
-              detail: `无预授权：宣称完成=${t.facts.claimed_complete}，停止=${t.stop_state?.run_disposition}/${t.stop_state?.run_wait_kind}，带探针=${t.stop_state?.has_probe}`,
+              detail: `局部请求：宣称完成=${t.facts.claimed_complete}，停止=${t.stop_state?.run_disposition}/${t.stop_state?.run_wait_kind}，带探针=${t.stop_state?.has_probe}`,
             })
           : (t) => ({
               met: t.conclusion === 'correct_completion' && flow.runs.length === expectedRuns && t.operator.rescue_count === expectedRescues && t.operator.unnecessary_count === 0,

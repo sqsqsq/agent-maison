@@ -681,6 +681,10 @@ cases.push({ name: 'P3 最终评审返修 R1：spec 由真实 runtime 写 accept
   assert(owned.includes(path.relative(s.root, r.acceptanceFile).replace(/\\/g, '/')), `runtime 须把 spec 写自己正式产物的写后哈希记进 owned：${JSON.stringify(owned)}`);
   // no_progress_guard 不是结构终局：有变化 → 重新接入（恢复）；无人值守、刚停下（冷却期内）且没有变化 → 保持停止。相关修复成立正是让它越过冷却。
   assert.strictEqual(runEnd(s, r.feature, r.runId), 'HALTED/no_progress_guard', '夹具：真实 runtime 以无进展守卫停下');
+  const halt = goalRunEvents(s.root, r.runId, r.feature).find(event => event.type === 'phase_halt' && event.halt_reason === 'no_progress_guard');
+  const guidance = String(halt?.halt_guidance ?? '');
+  assert(guidance.includes('authoritative_content_aligned') && guidance.includes('责任方=spec') && guidance.includes('下一步'),
+    `无进展停机必须携带真实检查、责任方和下一步，不能只剩停机类型：${guidance}`);
   const decide = () => decideRunContinuation({ projectRoot: s.root, feature: r.feature, call: { requirement: r.increment } });
   const before = decide();
   assert(before.kind === 'hold' && !/related_repair_changed/.test(before.reason), `文件未改不得算修复（冷却期内保持停止）：${JSON.stringify(before)}`);

@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261019T024808Z-4131b6",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "status": "HALTED",
+  "phases": [
+    {
+      "phase": "spec",
+      "verdict": "PASS",
+      "summary_path": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness",
+      "retries": 0,
+      "agent_exit_code": 1,
+      "snapshot_files": {
+        "summary.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness/summary.json",
+        "script-report.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness/script-report.json",
+        "merged-report.md": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness/merged-report.md",
+        "trace.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness/trace.json",
+        "review-report.md": null,
+        "verifier.report.md": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "e491565e86aa51cefa10c884ea1b8df3d6d13ff44745256651da2ae647ec0ce8",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "plan",
+      "verdict": "FAIL",
+      "halted": true,
+      "summary_path": "doc/features/bc-openCard-2/open-card-flow/plan/reports/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/open-card-flow/plan/reports",
+      "retries": 1,
+      "agent_exit_code": 1,
+      "halt_reason": "no_progress_guard",
+      "failure_kind_classified": "code_regression",
+      "agent_duration_ms": 200308,
+      "agent_stderr_excerpt": "Reading prompt from stdin... 2026-10-19T03:17:37.783074Z WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/ 2026-10-19T03:17:37.783117Z WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/ 2026-10-19T03:17:37.795525Z WARN codex_core::shell_snapshot: Failed to create shell s…",
+      "harness_error_excerpt": "设计 owner 裁定，不在 plan 自行换选。）；…另 1 条见 doc/features/bc-openCard-2/open-card-flow/plan/reports/script-report.json；然后重跑：npx ts-node harness-runner.ts --phase plan --feature cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw ## 目标简报（goal brief） ### 明确不做 需求原文里明确写了不要或本次不做的内容同样是排除项，即使尚未登记。 - 参考图元素 result_nfc：「再往下的激活nfc部分本次先不需要」 - spec 出范围模块：CommUI、CommFunc ============================================================",
+      "run_disposition": "WAITING",
+      "run_wait_kind": "human"
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-10-19T03:21:28.769Z",
+  "fidelity_routing": {
+    "inferred": "pixel_1to1",
+    "selected": "pixel_1to1",
+    "effective": "pixel_1to1",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "source": "requirement_self_declared",
+    "decision_id": "53c27955e8e23dc1"
+  }
+}

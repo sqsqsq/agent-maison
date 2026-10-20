@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "WalletMain",
+    "type": "har",
+    "description": "$string:module_desc",
+    "deviceTypes": [
+      "phone"
+    ]
+  }
+}

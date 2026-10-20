@@ -1,0 +1,15 @@
+{
+  "phase": "plan",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "started_at": "2026-10-19T03:13:31.673Z",
+  "start_commit": "d3f48b2c38521d049b1ec7fb670cc0c9cf6e8416",
+  "usage": {
+    "input_tokens": 5643703,
+    "output_tokens": 18284,
+    "tool_tokens": null,
+    "requests": null,
+    "cost_estimate": null,
+    "capture_method": "stdout_json",
+    "confidence": "measured"
+  }
+}

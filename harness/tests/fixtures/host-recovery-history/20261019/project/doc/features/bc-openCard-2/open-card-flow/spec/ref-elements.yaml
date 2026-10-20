@@ -1,0 +1,192 @@
+schema_version: "1.0"
+elements:
+  - element_id: ct_bank
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: ct_debit
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: ct_credit
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: ct_hint
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: ct_agreement
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: ct_continue
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: ct_close
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: cs_bank_title
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: cs_hint
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: cs_card_1
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: cs_card_2
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: cs_agreement
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: cs_next
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: otp_phone_hint
+    screen: ref_otp
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: otp_input
+    screen: ref_otp
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: otp_resend
+    screen: ref_otp
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: otp_next
+    screen: ref_otp
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: otp_close
+    screen: ref_otp
+    zone: overlay
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: rs_icon
+    screen: ref_result
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: rs_status
+    screen: ref_result
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: rs_hint
+    screen: ref_result
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: rs_guide
+    screen: ref_result
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: rs_complete
+    screen: ref_result
+    zone: content
+    disposition: implement
+    source: requirement_text_and_blueprint; image enumeration unverified
+  - element_id: result_nfc
+    screen: ref_result
+    zone: content
+    disposition: excluded
+    requirement_quote: 再往下的激活nfc部分本次先不需要
+  - element_id: ct_title
+    screen: ref_type
+    zone: overlay
+    disposition: implement
+    source: harness OCR candidate_text; unverified
+  - element_id: otp_title
+    screen: ref_otp
+    zone: overlay
+    disposition: implement
+    source: harness OCR candidate_text; unverified
+  - element_id: cs_back
+    screen: ref_cards
+    zone: content
+    disposition: implement
+    source: requirement + machine observation sidecar; unverified
+  - element_id: otp_phone_suffix
+    screen: ref_otp
+    zone: content
+    disposition: implement
+    source: requirement + machine observation sidecar; unverified
+  - element_id: otp_system_keyboard
+    screen: ref_otp
+    zone: content
+    disposition: implement
+    source: requirement + machine observation sidecar; unverified
+  - element_id: rf_icon
+    screen: result_failure
+    zone: content
+    disposition: implement
+    source: requirement + machine observation sidecar; unverified
+  - element_id: rf_guide
+    screen: result_failure
+    zone: content
+    disposition: implement
+    source: requirement + machine observation sidecar; unverified
+  - element_id: ct_background
+    screen: ref_type
+    zone: content
+    disposition: implement
+    source: requirement + machine observation sidecar; unverified
+  - element_id: ct_bg_title
+    screen: ref_type
+    zone: background
+    disposition: implement
+    source: OCR + observation 3; existing underlying page
+  - element_id: ct_bg_hint
+    screen: ref_type
+    zone: background
+    disposition: implement
+    source: OCR + observation 3; existing underlying page
+  - element_id: ct_bg_count
+    screen: ref_type
+    zone: background
+    disposition: implement
+    source: OCR + observation 3; existing underlying page
+  - element_id: ct_bg_search
+    screen: ref_type
+    zone: background
+    disposition: implement
+    source: OCR + observation 3; existing underlying page
+  - element_id: ct_bg_search_action
+    screen: ref_type
+    zone: background
+    disposition: implement
+    source: OCR + observation 3; existing underlying page
+  - element_id: ct_bg_bank
+    screen: ref_type
+    zone: background
+    disposition: implement
+    source: OCR + observation 3; existing underlying page

@@ -1,0 +1,147 @@
+schema_version: "1.0"
+fidelity_target: pixel_1to1
+asset_acquisition_mode: approximate
+verified: unverified
+assets:
+  - key: bank_logo_cmb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_icbc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_icbc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_citic
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_citic.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_hxb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_hxb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_ccb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ccb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_abc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_abc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bocom
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bocom.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_psbc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_psbc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_spdb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_spdb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_cmbc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmbc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_pab
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_pab.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_cgb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cgb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_cib
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cib.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bosh
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bosh.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bobj
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bobj.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bonj
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonj.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bonb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bogz
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bogz.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_ceb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ceb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_boc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_boc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: open_card_result_guide
+    acquisition: placeholder
+    placeholder: true
+    role: illustration
+    placeholder_kind: illustration_frame
+    rationale: 已读 OCR 与 observation 6（手持手机/二维码插画），仓内无用途证明匹配素材；盲档禁止裁剪，显式占位并计视觉债务。
+blind_review_pending:
+  - id: blind-copy-cs
+    screens:
+      - card_selection
+    aspect: 完整协议文案
+    status: unverified
+    reason: OCR 为“侨同意并阅读《云内付App一键绑卡用户授权协议)》、《招商银行信 / 用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信 /
+      息。”；observation
+      候选为“同意并阅读《云闪付App一键绑卡用户授权协议》、《招商银行信用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信息。”；冲突保留，不伪造已核文案。
+    next_action: 可靠机器文本证据补齐后修订 spec 文案
+  - id: blind-input-placeholder
+    screens:
+      - otp_sheet
+    aspect: 输入提示首字
+    status: unverified
+    reason: OCR 首字“情” conf=0，observation 候选为“请”；可靠部分“输入短信验证码”已读取。
+    next_action: 当前机器视觉文本复核
+  - id: blind-layout
+    screens:
+      - card_type_sheet
+      - card_selection
+      - otp_sheet
+      - result_success
+    aspect: 非文本 bbox、字号、间距、精确颜色和圆角
+    status: unverified
+    reason: 文本框由 OCR 并集；结构和按钮变体来自 observation；当前无精确像素采样。中性 bank accent/success token
+      必须清偿。
+    next_action: 真机机器证据复核；major 记债务且阻止发布直至修复复验
+  - id: blind-guide
+    screens:
+      - result_success
+      - result_failure
+    aspect: 结果引导插画
+    status: unverified
+    reason: 有语义观察，无可信原子素材；显式可见占位
+    next_action: 下游物化/替换，source binding render 机器复核

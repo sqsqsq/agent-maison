@@ -681,7 +681,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       // R4：整句含「既有确认点」五项枚举——删掉枚举或反转前半句都会失配。
       // **只锁「授权延续到终点」这一句**；「建 run 具体怎么做」由模板 §4.0 的上下文说明承载。
       const AUTHORITY_CONTINUATION_SENTENCE =
-        '**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。';
+        '**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、有人在场时的设计缺口澄清）。';
       const template = read('templates/AGENTS.md.template');
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.includes(AUTHORITY_CONTINUATION_SENTENCE), `AGENTS 模板 §4.0 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);

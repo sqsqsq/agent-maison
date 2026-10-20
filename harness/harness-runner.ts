@@ -973,6 +973,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Refresh derived inventory before this invocation captures its immutable input hashes.
+  // Refreshing inside the coding checker would invalidate the inputs just captured by this same call.
+  if (phase === 'coding' && !reportReconcileOnly && process.env.MAISON_GOAL_RUN_ID?.trim()) {
+    const { componentIndexPath } = require('./config') as typeof import('./config');
+    if (fs.existsSync(componentIndexPath(projectRoot))) {
+      try {
+        const inventory = (require('yaml') as typeof import('yaml')).parse(fs.readFileSync(componentIndexPath(projectRoot), 'utf8'));
+        if (inventory?.schema_version === '1.0' && Array.isArray(inventory.components)) {
+          const { refreshComponentIndex } = require('./scripts/utils/component-assets') as typeof import('./scripts/utils/component-assets');
+          refreshComponentIndex(projectRoot);
+        }
+      } catch (error) { console.warn(`组件索引未刷新，由原检查报告具体缺口：${(error as Error).message}`); }
+    }
+  }
+
   // Contract capability resolution is the one immutable pre-check report. It is
   // intentionally computed before checker execution and never receives runtime
   // build/install/run outcomes.

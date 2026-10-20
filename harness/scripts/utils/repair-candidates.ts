@@ -615,6 +615,14 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       if (c) out.push(c);
     }
   }
+  if (input.phase === 'coding' || input.phase === 'review') {
+    for (const check of input.checks.filter(c => c.status === 'FAIL' && (c.repair_owner === 'plan' || c.repair_owner === 'spec'))) {
+      const files = normalizeFiles(check.affected_files ?? []);
+      const summary = normalizeSummary(check.details ?? check.id);
+      out.push({ id: check.id, category: check.repair_owner as 'plan' | 'spec', files, summary,
+        item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: input.phase });
+    }
+  }
   if (input.phase === 'ut') {
     for (const check of input.checks.filter(c => c.id === 'ut_unsupported_targets_handled' && c.status === 'FAIL')) {
       const repairs = (check.structured as { repair_candidates?: unknown } | undefined)?.repair_candidates;

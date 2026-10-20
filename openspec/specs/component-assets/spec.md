@@ -46,14 +46,14 @@ With an index present, page/component/builder entries (including existing naviga
 
 #### Scenario: Illegal dependency
 - **WHEN** the consumer/provider layers or same-layer policy prohibit the dependency
-- **THEN** preflight SHALL fail without changing DSL; goal uses existing await-confirm for a new edge and resumes only after human authority
+- **THEN** preflight SHALL fail without changing DSL; an unattended original-scope request uses the design owner and existing configuration writer for the new edge before construction; attended requests retain confirmation
 
 #### Scenario: Existing consumer regression
 - **WHEN** a valid asset_selection is added to a component
 - **THEN** SpecLoader normalization, navigation registration, visual-parity name mapping and exit defaults SHALL retain their original results
 
 #### Scenario: Mandatory failures affect the final phase verdict
-- **WHEN** selection is invalid, the dependency is illegal, a shared export is unregistered, or a new shared asset has an applicable fail/unknown static check
+- **WHEN** selection is invalid, the dependency is illegal, a shared export is unregistered, or a new shared asset has an applicable fail static check
 - **THEN** the corresponding Feature checks SHALL emit BLOCKER/FAIL and the existing report SHALL derive final verdict FAIL with nonzero blockers; index drift remains a MAJOR diagnostic and uncurated/dangling WARN remain non-blocking without changing global severity rules
 
 > **Enforced by:** `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/types.ts`, `harness/scripts/utils/component-selection-check.ts`, `harness/scripts/check-plan.ts`, `harness/scripts/check-coding.ts`, `harness/scripts/check-review.ts`, `specs/artifact-schemas/contracts.schema.yaml`
@@ -82,7 +82,7 @@ When an index and a blueprint apply, selection MUST use canonical CU design_refs
 
 ### Requirement: Static checks report limited facts and reject new unknown debt
 
-Index static_checks SHALL contain scalable_font_unit, no_hardcoded_hex_color and declared_touch_target, each pass|fail|unknown|not_applicable. These report fontSize fp syntax, absence of literal hex colors, and declared interactive dimensions at least 44vp. They MUST NOT claim rendering, truncation, token usage, contrast or device accessibility proof. not_applicable MUST mean no such surface; unresolved applicable surfaces MUST be unknown. Newly registered shared exports introduced by this Feature MUST have no applicable fail/unknown; existing unknown debt does not block. Custom library exports MUST appear in the refreshed index; custom private components require no registration. Newness uses existing source baseline/git history, never a new persistent state store.
+Index static_checks SHALL contain scalable_font_unit, no_hardcoded_hex_color and declared_touch_target, each pass|fail|unknown|not_applicable. These report fontSize fp syntax, absence of literal hex colors, and declared interactive dimensions at least 44vp. They MUST NOT claim rendering, truncation, token usage, contrast or device accessibility proof. not_applicable MUST mean no such surface; unresolved applicable surfaces MUST be unknown. Applicable fail results SHALL require repair. Unknown results SHALL remain unknown and be supplied to existing review and applicable device/visual verification; they SHALL NOT alone block new exports or be relabeled pass/not_applicable. Custom library exports MUST appear in the refreshed index; custom private components require no registration. Newness uses existing source baseline/git history, never a new persistent state store.
 
 #### Scenario: Negative probes
 - **WHEN** source changes from fp to vp, gains a hardcoded hex color, or shrinks an interactive dimension below 44vp
@@ -90,7 +90,7 @@ Index static_checks SHALL contain scalable_font_unit, no_hardcoded_hex_color and
 
 #### Scenario: Unknown touch dimensions on a new component
 - **WHEN** a new shared interactive export has dynamic or missing dimensions
-- **THEN** declared_touch_target SHALL be unknown and the new-code check SHALL fail rather than using not_applicable
+- **THEN** declared_touch_target SHALL remain unknown, be disclosed to review and applicable runtime verification, and SHALL NOT be relabeled not_applicable
 
 #### Scenario: Private and legacy components
 - **WHEN** custom remains private or a pre-existing shared export has unknown checks
@@ -102,10 +102,18 @@ Index static_checks SHALL contain scalable_font_unit, no_hardcoded_hex_color and
 
 #### Scenario: An unexpanded global Builder hides the UI surface
 - **WHEN** a shared component calls a lower-case global Builder that the syntax probe cannot expand
-- **THEN** relevant static checks SHALL be unknown rather than not_applicable and SHALL block new shared registration; a genuinely absent surface may remain not_applicable
+- **THEN** relevant static checks SHALL be unknown rather than not_applicable and SHALL be supplied to review and applicable runtime verification without an automatic registration failure; a genuinely absent surface may remain not_applicable
 
 #### Scenario: Windows fallback spelling differs from the Git tree
 - **WHEN** Windows resolves an unchanged Index.ets through fallback spelling index.ets
 - **THEN** historical reading SHALL use the existing Git file list to read the matching actual path, preserving legacy identity while still detecting genuinely new exports, without a new baseline store
 
 > **Enforced by:** `profiles/hmos-app/harness/component-extractor.ts`, `harness/scripts/utils/component-selection-check.ts`, `harness/scripts/utils/component-catalog-check.ts`, `harness/tests/unit/component-assets.unit.test.ts`
+
+### Requirement: Selection facts are shared across design and construction
+
+Development nodes and their typed UI contracts SHALL use the same selection targets. An asset_resolution field with a non-selection kind SHALL be diagnosed in design, never silently aliased at runtime. Unique closed decisions MAY produce CU references, Feature mappings and selection copies through the existing producer/consumer chain; conflicting authored values SHALL remain errors owned by their real producer.
+
+#### Scenario: A module node contains UI contracts
+- **WHEN** a module node declares UI construction components without standalone UI nodes
+- **THEN** design SHALL verify their selection basis and construction SHALL consume that same basis without demanding new node granularity

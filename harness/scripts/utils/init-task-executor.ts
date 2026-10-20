@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
-import { clearFrameworkConfigCache, loadFrameworkConfigWithSources } from '../../config';
+import { clearFrameworkConfigCache, loadFrameworkConfigWithSources, validateArchitectureDsl } from '../../config';
 import { __testing as checkInitTesting } from '../check-init';
 import { detectScan } from '../detect-deveco';
 import { ensurePersonalSetup } from './personal-setup-gate';
@@ -89,6 +89,20 @@ export interface InitExecutionContext {
 
 function configPath(projectRoot: string): string {
   return path.join(projectRoot, 'framework.config.json');
+}
+
+/** Design publication uses the same validated config payload, backup and write path as init. */
+export function publishArchitectureRevision(projectRoot: string, architecture: Record<string, unknown>): void {
+  const prepared = prepareConfigWriteForTask({ projectRoot, configWritePayload: { architecture } }, 'overwrite');
+  validateArchitectureDsl(prepared.architecture as Parameters<typeof validateArchitectureDsl>[0]);
+  writePreparedConfig(projectRoot, prepared);
+}
+
+function writePreparedConfig(projectRoot: string, prepared: Record<string, unknown>): void {
+  const cfgP = configPath(projectRoot);
+  if (fs.existsSync(cfgP)) backupConfig(projectRoot);
+  fs.writeFileSync(cfgP, `${JSON.stringify(prepared, null, 2)}\n`, 'utf-8');
+  clearFrameworkConfigCache();
 }
 
 function backupConfig(projectRoot: string): string {
@@ -478,9 +492,7 @@ export function executeInitTask(
       } catch (e) {
         throw new Error(`ensure-config：config 校验失败：${(e as Error).message}`);
       }
-      if (fs.existsSync(cfgP)) backupConfig(ctx.projectRoot);
-      fs.writeFileSync(cfgP, `${JSON.stringify(toWrite, null, 2)}\n`, 'utf-8');
-      clearFrameworkConfigCache();
+      writePreparedConfig(ctx.projectRoot, toWrite);
       return { message: '已写入 framework.config.json' };
     }
     case 'backfill-config': {

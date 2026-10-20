@@ -22,7 +22,7 @@
 // 全链未驱动"）。RC-7 未做——四态各自给真实原因要真 goal-runner 子进程，成因依赖本机是否装了
 // adapter CLI，按 §8「不许 SKIP 出包」这类环境依赖不得进发布门套件。理由与偏差全文见 plan §10.9。
 // RC-9（plan 14771034 路径 1）2026-09-24 在 plan f3b8d261 生产修复上七条全过后登记；RC-9b（UT→coding）
-// 2026-09-24 在 plan d7e3b9a4 生产修复上登记，共八条。
+// 2026-09-24 在 plan d7e3b9a4 生产修复上登记；之后追加 RC-8c/8d 和 5bddfc4a 的真实记录组合 RC-10。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -30,6 +30,8 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, type SelectedUnitCases } from '../utils/unit-case-selection';
+import { rc10HostRuleCombination } from '../utils/host-rule-combination';
 import {
   provisionRealChainProject,
   scaffoldRealChainHost,
@@ -1150,9 +1152,9 @@ const RC9B_SERVICE_DEFECT = 'Promise.resolve(true)';
 function writeRc9bService(p: RealChainProject, fixed: boolean): void {
   const abs = path.join(p.root, REAL_CHAIN_SERVICE);
   const src = fs.readFileSync(abs, 'utf-8');
-  const [from, to] = fixed ? [RC9B_SERVICE_DEFECT, RC9B_SERVICE_OK] : [RC9B_SERVICE_OK, RC9B_SERVICE_DEFECT];
-  assert(src.includes(from) || src.includes(to), `BankService 形状已变，RC-9b 的缺陷注入点失效：${src}`);
-  fs.writeFileSync(abs, src.replace(from, to), 'utf-8');
+  const current = [RC9B_SERVICE_OK, RC9B_SERVICE_DEFECT, 'Promise.resolve(id.length >= 0)'].find(value => src.includes(value));
+  assert(current, `BankService 形状已变，RC-9b 的缺陷注入点失效：${src}`);
+  fs.writeFileSync(abs, src.replace(current!, fixed ? RC9B_SERVICE_OK : RC9B_SERVICE_DEFECT), 'utf-8');
   const factsPath = featureFilePath(p.root, p.feature, 'context/facts.md');
   const facts = fs.readFileSync(factsPath, 'utf-8');
   fs.writeFileSync(factsPath, `${facts.trimEnd()}\n| ${REAL_CHAIN_SERVICE} | openCard 当前返回 ${fixed ? '!!id' : 'true'} | 用真实产品断言复验服务行为 |\n`, 'utf-8');
@@ -1287,13 +1289,23 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
       },
       onCoding: ctx => {
         project.runId = ctx.runId;
-        const backtracked = codingBacktrackRequested(project);
+        const utSummary = readSummary(project, 'ut') as ReturnType<typeof readSummary> & { repair_candidates?: Array<{ id?: string }> };
+        const backtracked = ctx.prompt.includes('ut_product_assertion_failure')
+          && !!utSummary?.repair_candidates?.some(candidate => candidate.id === 'ut_product_assertion_failure');
         if (backtracked && !utAtBacktrack) {
           utAtBacktrack = readSummary(project, 'ut');
           skipsAtBacktrack = unmarkedUtBlockerSkips(project);
         }
         writeCodingMaterials(project);
-        writeRc9bService(project, backtracked);
+        const observed = loadAuthoritativeEvents(path.join(featureFilePath(project.root, project.feature, 'goal-runs'), project.runId!, 'events.jsonl'));
+        const failures = observed.filter(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL').length;
+        // Keep the first repair ineffective to exercise reopening the same trusted defect twice.
+        writeRc9bService(project, backtracked && failures >= 2);
+        if (backtracked && failures === 1) {
+          const file = path.join(project.root, REAL_CHAIN_SERVICE);
+          // A real but incorrect first repair; unchanged-input retries remain subject to the existing fuse.
+          fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(RC9B_SERVICE_DEFECT, 'Promise.resolve(id.length >= 0)'));
+        }
         if (ctx.attempt > 1) publishVerifier(project, 'coding');
       },
       onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
@@ -1312,12 +1324,22 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
     const dump = (): string => `${dumpChain(project, chain)}\nunmarked BLOCKER SKIP=${JSON.stringify(skipsAtBacktrack.length ? skipsAtBacktrack : unmarkedUtBlockerSkips(project), null, 1)}`
       + `\nevents=${events.map(e => `${String(e.type)}${e.phase ? '@' + String(e.phase) : ''}`).join(',')}`;
 
-    const btIdx = events.findIndex(e => e.type === 'phase_backtrack_requested');
-    assert(btIdx >= 0, `没有发生回退：\n${dump()}`);
+    const btIdx = events.findIndex(e => e.type === 'scope_revised' && (e as { trigger?: { check_id?: string } }).trigger?.check_id === 'ut_product_assertion_failure');
+    assert(btIdx >= 0, `没有重开 coding 义务：\n${dump()}`);
     const bt = events[btIdx] as Record<string, unknown>;
     if (DEBUG) console.log('RC-9b backtrack', JSON.stringify(bt).slice(0, 1500), '\nskips', JSON.stringify(skipsAtBacktrack));
-    assert(bt.from_phase === 'ut' && bt.to_phase === 'coding' && bt.reason === 'repair_candidates',
-      `回退事件形态不对：${JSON.stringify(bt).slice(0, 800)}`);
+    const revisions = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'scope_revised'
+      && (event as { trigger?: { check_id?: string } }).trigger?.check_id === 'ut_product_assertion_failure');
+    const utFailures = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL');
+    assert(utFailures.length >= 2, '必须实际重复暴露同一产品缺陷，不能只测首次重开');
+    for (const { index } of utFailures) {
+      const next = events.slice(index + 1).find(event => event.type === 'agent_invoke_start');
+      assert(next?.phase === 'coding', `每次可信缺陷重复出现后都应先交 coding，不能空跑 UT：${JSON.stringify(next)}`);
+    }
+    for (const { event } of revisions) {
+      const input = (event as { revision_input?: { facts?: Array<{ id: string; satisfied_by?: unknown[] }> } }).revision_input;
+      assert(input?.facts?.some(fact => fact.id === 'implementation:ut_product_assertion_failure' && !fact.satisfied_by?.length), '修复提案不得用问题出现前的 PASS 冒领');
+    }
     for (const ph of ['coding', 'review', 'ut'] as const) {
       assert(events.slice(btIdx).some(e => e.type === 'phase_start' && e.phase === ph), `${ph} 回退后没有重新开始：\n${dump()}`);
     }
@@ -1332,19 +1354,15 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
       `回退时 ut summary 无诊断 verifier subject：${JSON.stringify({ verdict: utBt?.verdict, subject: utBt?.verifier_subject_id })}`);
     assert((utBt?.repair_candidates ?? []).some(isUtProductCandidate),
       `回退时 ut summary 无 ut_product_assertion_failure 候选：${JSON.stringify(utBt?.repair_candidates)}`);
-    assert(((bt.candidates as Array<Record<string, unknown>> | undefined) ?? []).some(isUtProductCandidate),
-      `回退事件未携带 ut_product_assertion_failure 候选：${JSON.stringify(bt.candidates)}`);
-    // 同一候选身份：summary 与回退事件里的 item_fingerprint 必须相等（不是只看固定 id/类别/文件）。
-    const fpOf = (list: Array<Record<string, unknown>> | undefined): unknown => list?.find(isUtProductCandidate)?.item_fingerprint;
-    const summaryFp = fpOf(utBt?.repair_candidates);
-    const eventFp = fpOf(bt.candidates as Array<Record<string, unknown>> | undefined);
-    assert(typeof summaryFp === 'string' && summaryFp.length > 0 && summaryFp === eventFp,
-      `回退事件携带的候选与 ut summary 不是同一身份：summary=${String(summaryFp)} event=${String(eventFp)}`);
+    const revision = bt as { revision_input?: { facts?: Array<{ id: string; satisfied_by?: unknown[] }> } };
+    assert(revision.revision_input?.facts?.some(fact => fact.id === 'implementation:ut_product_assertion_failure' && !fact.satisfied_by?.length),
+      '实际范围修订必须保留当前候选的未满足义务');
     assert(skipsAtBacktrack.length === 0, `回退时 ut 报告仍有未标注的 BLOCKER SKIP：${JSON.stringify(skipsAtBacktrack)}`);
 
     // ③ 回退注入到达 coding，coding 次轮 PASS；UT 在其后重验 PASS，终局 coding/review/ut PASS+closed。
     const codingAfterBt = probe.codingPrompts[probe.invokedPhases.slice(0, probe.invokedPhases.indexOf('ut')).filter(x => x === 'coding').length];
     assert(codingAfterBt?.includes('ut_product_assertion_failure'), `回退后 coding 指令不含候选 id：${probe.invokedPhases.join(',')}`);
+    assert(codingAfterBt?.includes('item_fingerprint:'), '返修候选的原身份必须到达责任阶段，不能只留下范围事实的摘要');
     const firstVerdictAfter = (ph: string, from: number): number =>
       events.findIndex((e, i) => i > from && e.type === 'phase_verdict' && e.phase === ph);
     const codingIdx = firstVerdictAfter('coding', btIdx);
@@ -1359,10 +1377,12 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
 }
 
 test('RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验', rc9bUtBacktrackThroughCoding);
+test('RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接', rc10HostRuleCombination);
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const out: UnitCaseResult[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
     // 每条各造一次工程、各跑一段真 harness 链，单条数十秒级；逐条报时是 plan §6.3
     // 的预算记账口径（套件合计由 run-unit 给，单条只能在这里量）。
     const started = Date.now();
@@ -1370,5 +1390,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     catch (e) { out.push({ name: c.name, ok: false, error: (e as Error).message }); }
     console.log(`[real-chain-seams] ${c.name} — ${Date.now() - started} ms`);
   }
-  return out;
+  return selectedUnitCases(out, selector, []);
 }
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

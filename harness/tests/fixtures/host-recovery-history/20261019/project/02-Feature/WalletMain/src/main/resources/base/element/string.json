@@ -1,0 +1,436 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "WalletMain"
+    },
+    {
+      "name": "tab_home",
+      "value": "首页"
+    },
+    {
+      "name": "tab_mine",
+      "value": "我的"
+    },
+    {
+      "name": "home_title",
+      "value": "钱包"
+    },
+    {
+      "name": "mine_title",
+      "value": "我的"
+    },
+    {
+      "name": "card_pack_title",
+      "value": "卡包"
+    },
+    {
+      "name": "card_pack_section_title",
+      "value": "卡包"
+    },
+    {
+      "name": "add_card_title",
+      "value": "添加卡片"
+    },
+    {
+      "name": "card_guide_subtitle",
+      "value": "集中管理您的卡证票券钥匙"
+    },
+    {
+      "name": "add_manage_cards",
+      "value": "添加管理卡片"
+    },
+    {
+      "name": "more_services",
+      "value": "更多服务"
+    },
+    {
+      "name": "not_supported",
+      "value": "暂不支持"
+    },
+    {
+      "name": "not_logged_in",
+      "value": "未登录"
+    },
+    {
+      "name": "add_card_desc",
+      "value": "银行卡/交通卡/门禁卡等"
+    },
+    {
+      "name": "manage_non_local",
+      "value": "管理非本机卡片"
+    },
+    {
+      "name": "non_local_cards",
+      "value": "非本机卡片"
+    },
+    {
+      "name": "manage_sheet_empty_text",
+      "value": "暂无非本机卡片"
+    },
+    {
+      "name": "msg_center_welcome",
+      "value": "欢迎使用钱包消息中心!"
+    },
+    {
+      "name": "msg_center_charge_success",
+      "value": "畅行无忧卡·金陵通刷卡扣费成功"
+    },
+    {
+      "name": "msg_center_timestamp",
+      "value": "2 小时前"
+    },
+    {
+      "name": "card_stack_mock_bank_cmb",
+      "value": "招商银行"
+    },
+    {
+      "name": "card_stack_mock_label_cmb",
+      "value": "信用卡"
+    },
+    {
+      "name": "card_stack_mock_bank_fund",
+      "value": "北京住房公积金"
+    },
+    {
+      "name": "card_stack_mock_label_fund",
+      "value": "管理中心"
+    },
+    {
+      "name": "card_stack_mock_bank_transit",
+      "value": "江苏交通一卡通"
+    },
+    {
+      "name": "card_stack_mock_label_transit",
+      "value": "畅行无忧卡"
+    },
+    {
+      "name": "card_stack_mock_bank_access",
+      "value": "华为智能门禁"
+    },
+    {
+      "name": "card_stack_mock_label_access",
+      "value": "门禁卡"
+    },
+    {
+      "name": "home_title_add_action",
+      "value": "+"
+    },
+    {
+      "name": "home_promo_no_detail",
+      "value": "暂无详情"
+    },
+    {
+      "name": "home_data_unavailable",
+      "value": "数据暂不可用，请稍后再试"
+    },
+    {
+      "name": "home_mock_service_s1_name",
+      "value": "Huawei Card"
+    },
+    {
+      "name": "home_mock_service_s2_name",
+      "value": "信用卡还款"
+    },
+    {
+      "name": "home_mock_service_s3_name",
+      "value": "优惠加油"
+    },
+    {
+      "name": "home_mock_promo_p1_title",
+      "value": "数字金融生活新方式"
+    },
+    {
+      "name": "home_mock_promo_p1_desc",
+      "value": "这些金融元服务，承包你的全场景金融需求"
+    },
+    {
+      "name": "home_mock_promo_p2_title",
+      "value": "春日出行"
+    },
+    {
+      "name": "home_mock_promo_p2_desc",
+      "value": "交通卡充值满减"
+    },
+    {
+      "name": "home_mock_promo_p3_title",
+      "value": "安全用卡"
+    },
+    {
+      "name": "home_mock_promo_p3_desc",
+      "value": "守护您的资金安全"
+    },
+    {
+      "name": "home_mock_promo_wc_p1_title",
+      "value": "会员卡（酒店、航司）、校园卡上线"
+    },
+    {
+      "name": "home_mock_promo_wc_p1_desc",
+      "value": "钱包全管理，出行更从容"
+    },
+    {
+      "name": "home_mock_promo_wc_p2_title",
+      "value": "数字金融生活新方式"
+    },
+    {
+      "name": "home_mock_promo_wc_p2_desc",
+      "value": "这些金融元服务，承包你的全场景金融需求"
+    },
+    {
+      "name": "home_mock_promo_wc_p3_title",
+      "value": "安全用卡"
+    },
+    {
+      "name": "home_mock_promo_wc_p3_desc",
+      "value": "守护您的资金安全"
+    },
+    {
+      "name": "finance_section_title",
+      "value": "金融信息"
+    },
+    {
+      "name": "settings_section_title",
+      "value": "设置与帮助"
+    },
+    {
+      "name": "local_cards_section",
+      "value": "本设备卡片"
+    },
+    {
+      "name": "local_cards_empty",
+      "value": "暂无本机卡片"
+    },
+    {
+      "name": "wallet_login_hint",
+      "value": "点击登录华为账号"
+    },
+    {
+      "name": "login_confirm_title",
+      "value": "登录"
+    },
+    {
+      "name": "login_confirm_message",
+      "value": "确认登录华为账号？"
+    },
+    {
+      "name": "logout_confirm_title",
+      "value": "登出"
+    },
+    {
+      "name": "logout_confirm_message",
+      "value": "确认退出当前账号？"
+    },
+    {
+      "name": "dialog_confirm",
+      "value": "确认"
+    },
+    {
+      "name": "dialog_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "bottom_tab",
+      "value": "bottom tab"
+    },
+    {
+      "name": "bottom_tab_wc",
+      "value": "bottom tab wc"
+    },
+    {
+      "name": "bottom_tab_mine",
+      "value": "bottom tab mine"
+    },
+    {
+      "name": "add_card_type_bank_subtitle",
+      "value": "双击电源键便捷支付"
+    },
+    {
+      "name": "add_card_type_transit_subtitle",
+      "value": "一张卡可刷全国"
+    },
+    {
+      "name": "add_card_type_access_subtitle",
+      "value": "手机就是门禁卡"
+    },
+    {
+      "name": "add_card_type_car_key_subtitle",
+      "value": "手机秒变车钥匙"
+    },
+    {
+      "name": "add_card_type_id_subtitle",
+      "value": "随时随地查看证件"
+    },
+    {
+      "name": "card_cat_bank",
+      "value": "银行卡"
+    },
+    {
+      "name": "card_cat_transit",
+      "value": "交通卡"
+    },
+    {
+      "name": "card_cat_access",
+      "value": "门禁卡"
+    },
+    {
+      "name": "card_cat_car_key",
+      "value": "车钥匙"
+    },
+    {
+      "name": "card_cat_id",
+      "value": "证件"
+    },
+    {
+      "name": "mine_finance_huawei_pay",
+      "value": "华为支付"
+    },
+    {
+      "name": "mine_finance_bank_account",
+      "value": "银行电子账户"
+    },
+    {
+      "name": "mine_finance_transaction",
+      "value": "银行卡交易记录"
+    },
+    {
+      "name": "mine_finance_transit_refund",
+      "value": "交通卡退款记录"
+    },
+    {
+      "name": "mine_setting_settings",
+      "value": "设置"
+    },
+    {
+      "name": "mine_setting_help",
+      "value": "帮助和反馈"
+    },
+    {
+      "name": "add_bank_card_title",
+      "value": "添加银行卡"
+    },
+    {
+      "name": "add_bank_card_no_input",
+      "value": "免输卡号添卡"
+    },
+    {
+      "name": "add_bank_card_support_count",
+      "value": "支持 20 家银行"
+    },
+    {
+      "name": "bank_more",
+      "value": "更多"
+    },
+    {
+      "name": "bank_view_all_banks",
+      "value": "查看全部银行"
+    },
+    {
+      "name": "all_banks_title",
+      "value": "全部银行"
+    },
+    {
+      "name": "bank_badge_first_bind",
+      "value": "首绑送12元券包"
+    },
+    {
+      "name": "bank_list_empty",
+      "value": "暂无可添加的银行"
+    },
+    {
+      "name": "bank_list_load_failed",
+      "value": "银行列表加载失败，请稍后重试"
+    },
+    {
+      "name": "bank_nav_failed",
+      "value": "页面跳转失败，请重试"
+    },
+    {
+      "name": "card_type_title",
+      "value": "选择卡类型"
+    },
+    {
+      "name": "card_type_debit",
+      "value": "储蓄卡"
+    },
+    {
+      "name": "card_type_credit",
+      "value": "信用卡"
+    },
+    {
+      "name": "card_type_hint",
+      "value": "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给%s。"
+    },
+    {
+      "name": "card_type_agreement",
+      "value": "我已阅读快捷支付服务协议、银联无卡自助消费授权协议"
+    },
+    {
+      "name": "card_type_continue",
+      "value": "同意并继续"
+    },
+    {
+      "name": "card_select_hint",
+      "value": "请选择您要绑定的银行卡"
+    },
+    {
+      "name": "card_select_agreement",
+      "value": "同意并阅读《云闪付App一键绑卡用户授权协议》、《%s快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信息。"
+    },
+    {
+      "name": "open_card_next",
+      "value": "下一步"
+    },
+    {
+      "name": "otp_title",
+      "value": "输入验证码"
+    },
+    {
+      "name": "otp_phone_hint",
+      "value": "为确认是您本人操作，请输入发送至手机"
+    },
+    {
+      "name": "otp_phone_suffix",
+      "value": "的验证码。"
+    },
+    {
+      "name": "otp_placeholder",
+      "value": "请输入短信验证码"
+    },
+    {
+      "name": "otp_countdown",
+      "value": "%d 秒后重试"
+    },
+    {
+      "name": "otp_resend",
+      "value": "重新发送"
+    },
+    {
+      "name": "card_add_success",
+      "value": "添卡成功"
+    },
+    {
+      "name": "card_add_failed",
+      "value": "添卡失败"
+    },
+    {
+      "name": "card_add_success_hint",
+      "value": "可用于实体店二维码支付和网上商城支付"
+    },
+    {
+      "name": "card_add_failure_hint",
+      "value": "银行卡添加失败，请返回后重试"
+    },
+    {
+      "name": "open_card_complete",
+      "value": "完成"
+    },
+    {
+      "name": "open_card_close",
+      "value": "关闭"
+    },
+    {
+      "name": "open_card_phone_unavailable",
+      "value": "手机号暂不可用，请稍后重试"
+    }
+  ]
+}

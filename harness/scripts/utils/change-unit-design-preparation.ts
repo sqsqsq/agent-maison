@@ -174,15 +174,18 @@ export interface RevisedChangeUnitContent {
 }
 
 /** 同一未完成交付的显式 consumer 接点；不刷新 Feature 业务产物或启动 run。 */
-export function reviseChangeUnitContent(projectRoot: string, blueprintId: string, revisions: readonly ChangeUnitContentRevision[]): RevisedChangeUnitContent {
+export function reviseChangeUnitContent(projectRoot: string, blueprintId: string, revisions: readonly ChangeUnitContentRevision[],
+  options: { heldFeatureLocks?: readonly HeldFeatureLock[]; heldBlueprintLocks?: BlueprintWriteLocks;
+    activeRun?: { feature: string; runId: string } } = {}): RevisedChangeUnitContent {
   if (!revisions.length) throw new ChangeUnitCandidateRejected('change_unit_decomposition_empty', '内容修订至少需要一个候选。');
   const ids = revisions.map(row => row.expectedRef.change_unit_id);
   if (new Set(ids).size !== ids.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_duplicate_in_batch', '同一内容修订批次 CU 重复。');
   if (revisions.some(row => row.expectedRef.blueprint_id !== blueprintId || row.candidate.artifact.blueprint_id !== blueprintId)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订必须属于同一蓝图工作区。');
   const priorUnits = enumerateCanonicalChangeUnits(projectRoot, blueprintId).map(row => asChangeUnitArtifact(row.changeUnit));
   const affected = [...new Set([...ids, ...priorUnits.filter(unit => unit.requires.some(row => ids.includes(row.from_change_unit_id))).map(unit => unit.change_unit_id)])].sort();
-  const locks = acquireBlueprintWriteLocks(projectRoot, blueprintId, affected);
+  const locks = options.heldBlueprintLocks ?? acquireBlueprintWriteLocks(projectRoot, blueprintId, affected, options.heldFeatureLocks);
   if ('busy' in locks) return { revised: [], unchanged: [], busy: locks.busy };
+  if (affected.some(id => !locks.lockedChangeUnitIds.has(id))) return { revised: [], unchanged: [], busy: RECONCILE_BUSY_HINT };
   try {
     const all = enumerateCanonicalChangeUnits(projectRoot, blueprintId);
     const retired = retiredChangeUnitIds(projectRoot, blueprintId);
@@ -208,7 +211,9 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
         const events = filterAuthoritativeEvents(loadedEvents.events);
         const started = events.map(event => event.type).lastIndexOf('run_start');
         const ended = events.map(event => event.type).lastIndexOf('run_end');
-        if (started > ended) return { revised: [], unchanged: [], busy: `${RECONCILE_BUSY_HINT}（${feature}/${runId} 的运行仍在执行）` };
+        const callerOwnsRun = options.activeRun?.runId === runId && options.activeRun.feature === feature
+          && !!options.heldFeatureLocks?.length && locks.lockedChangeUnitIds.has(current.change_unit_id);
+        if (started > ended && !callerOwnsRun) return { revised: [], unchanged: [], busy: `${RECONCILE_BUSY_HINT}（${feature}/${runId} 的运行仍在执行）` };
         if (events.some(event => event.type === 'run_end' && (event.status === 'COMPLETED' || event.status === 'CHAIN_SLICE_COMPLETED'))) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 已有成功终局；补原义务走 successor，新增工作使用新 CU identity。`);
       }
       const completionDir = featureFilePath(projectRoot, feature, 'completion');
@@ -247,7 +252,7 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
     }
     return { revised: pending.map(row => loadCanonicalChangeUnit(projectRoot, blueprintId, row.candidate.artifact.change_unit_id)), unchanged,
       ...(pending.length ? { reviewDocument: materializeBlueprintReview(projectRoot, blueprintId) } : {}) };
-  } finally { locks.release(); }
+  } finally { if (!options.heldBlueprintLocks) locks.release(); }
 }
 
 export interface BlueprintRefReconciliation {

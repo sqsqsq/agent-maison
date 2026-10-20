@@ -193,10 +193,10 @@ export async function withFreshCuHost(run: (s: Snapshot) => Promise<void>): Prom
 }
 
 /** Prepare/freeze after the scenario's design input, then use the selected birth span. */
-export function prepareFreshCuRequest(s: Snapshot): { requirement: string; chain: string[] } {
+export function prepareFreshCuRequest(s: Snapshot, completionTarget: 'feature' | 'request' = 'feature'): { requirement: string; chain: string[] } {
   clearFrameworkConfigCache();
   const prepared = prepareFeatureScopeCandidate({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: SNAPSHOT_CU_FEATURE,
-    completionTarget: 'feature', requestedResults: ['账目刷新与恢复'], requestedPhases: ['spec', 'plan', 'coding', 'review', 'ut'],
+    completionTarget, requestedResults: ['账目刷新与恢复'], requestedPhases: completionTarget === 'request' ? ['spec', 'plan'] : ['spec', 'plan', 'coding', 'review', 'ut'],
     requirement: CU_REQUIREMENT, overwrite: true,
     impact: { userVisibleBehaviorChange: false, reason: '只改账本领域服务，不改任何界面', basisPaths: [CU_SOURCE] } });
   freezeFeatureExecutionScope({ projectRoot: s.root, feature: SNAPSHOT_CU_FEATURE, scope: prepared.scope,

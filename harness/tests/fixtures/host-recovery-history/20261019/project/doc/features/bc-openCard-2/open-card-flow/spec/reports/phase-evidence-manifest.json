@@ -1,0 +1,325 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-19T03:53:19.998Z",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "phase": "spec",
+  "inputs": [
+    {
+      "path": "01-Product/Phone/oh-package.json5",
+      "role": "input",
+      "sha256": "61cc9d91c11cb0fd990c581e7e0a6ad718bd1ce4e6de034dc92bed811f97f610",
+      "exists": true
+    },
+    {
+      "path": "01-Product/Phone/src/main/ets/pages/index.ets",
+      "role": "input",
+      "sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "role": "input",
+      "sha256": "0415c01bfcae5b62cce9f754965729515a5d6ea9f675ff1730bdeddc45376222",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "role": "input",
+      "sha256": "b5e92f1a6f3b4256747f9ae6d38face63a1420bf64616f14d3751c473f5f6ade",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets",
+      "role": "input",
+      "sha256": "d08fb4becfca94e7dd68523c31d6a5801edc8259340ee76eeb1f4d80ed9ab417",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/index.ets",
+      "role": "input",
+      "sha256": "8091328f669e0b71340b6b141a47ded704f62a31647ad7bab0ea60752f9338c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "role": "input",
+      "sha256": "5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "role": "input",
+      "sha256": "0c7ee06f6bf8e8a23fc0de0b566a4014b36f3816ab97cbeee2eb10031b7411c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "role": "input",
+      "sha256": "492ba2d6abcdfb25a43b032c3113b2a21ecbd25649a6e8cb3c295b8c1a82b6b8",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "role": "input",
+      "sha256": "f250072a31b64dcdb787da259c07651ba53b0067badf7031b1d650d370d81084",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "role": "input",
+      "sha256": "bc4e0d84fc66221345980f0e8f8fe8c7de42c21274e5a8431582e8b13a613164",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "role": "input",
+      "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "role": "input",
+      "sha256": "c3214a4e51402470f60adee645398dfc203926e0d042ec2d79d697175328c422",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "role": "input",
+      "sha256": "ca935a9057ceaa18f11d2e23f7505ca1c670cdbd4697538a4b270bb8899e8955",
+      "exists": true
+    },
+    {
+      "path": "02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets",
+      "role": "input",
+      "sha256": "488be81966d4b1be6d82888e5ac4a4e1059fe7208ce3173b0e2f25522f06cc68",
+      "exists": true,
+      "owner_phase": "ut"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "role": "input",
+      "sha256": "1c81bfc6faa5cb81bc7bce2155e81db84be7bacae59dabcbda81e4aadb7ca366",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "role": "input",
+      "sha256": "3af42a0b6baa6895bb91a6d66817c9546db2ef605d1b7e96a861d9c349c3be2b",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "role": "input",
+      "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets",
+      "role": "input",
+      "sha256": "3e731b4d3835e22aaa076763b826eaf32fa732cac92a5894f36d8f659df80714",
+      "exists": true
+    },
+    {
+      "path": "doc/component-index.yaml",
+      "role": "input",
+      "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "role": "input",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "role": "input",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "role": "input",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "role": "input",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "role": "input",
+      "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+      "role": "input",
+      "sha256": "0b2490932f7db2fbd94013323fdb7b24f545ac1c355e9f9915162b5a7a394f76",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "role": "input",
+      "sha256": "70651faa85c4ce22d39e69ca67f86fedfd612bc5d5ada31a2c1790c5cc7968ed",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/acceptance.yaml",
+      "role": "both",
+      "sha256": "6035904b8d53567913e9f76f409ed6a8edfc001c406aca99a3d7c69884db6e60",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/change-unit.yaml",
+      "role": "input",
+      "sha256": "70651faa85c4ce22d39e69ca67f86fedfd612bc5d5ada31a2c1790c5cc7968ed",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/ref-elements.yaml",
+      "role": "both",
+      "sha256": "c50e186702e293153019d6b3c33ec8267528c8c33c19f039d3f5978c668dda6c",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/reports/fidelity-intent.json",
+      "role": "input",
+      "sha256": "58542aa053aab400eb2b87db9846830eaa4577544abb5426d24baf2a007a5fef",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/spec.md",
+      "role": "both",
+      "sha256": "c5d00781b00467c84a57e6a07012fc073945ba083a1b45dc867b275da2e555f6",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/ui-spec.yaml",
+      "role": "both",
+      "sha256": "211535597cf19317b842d987a4d5432d8cc0a330ddcd0a2039fdc3ab7f32c4f9",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/ux-reference/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "role": "input",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/ux-reference/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "role": "input",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/ux-reference/5-选中某张卡片后拉起短信验证.jpg",
+      "role": "input",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/ux-reference/6-短信验证完成后结果页.jpg",
+      "role": "input",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+      "exists": true
+    },
+    {
+      "path": "doc/glossary.yaml",
+      "role": "input",
+      "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+      "exists": true
+    },
+    {
+      "path": "doc/module-catalog.yaml",
+      "role": "input",
+      "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+      "exists": true
+    }
+  ],
+  "outputs": [
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/acceptance.yaml",
+      "role": "both",
+      "sha256": "6035904b8d53567913e9f76f409ed6a8edfc001c406aca99a3d7c69884db6e60",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/context/facts.md",
+      "role": "output",
+      "sha256": "038156b0abc22c446131e74daa097f45ab2f8cf69fa4fc0fa70abb9d20f9d784",
+      "exists": true,
+      "facts_phase": "spec"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/asset-manifest.yaml",
+      "role": "output",
+      "sha256": "a4d8f4a278af0613d5db0ee51a13d69edd63936db70dc794100b1aec86b5a322",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/ref-elements.yaml",
+      "role": "both",
+      "sha256": "c50e186702e293153019d6b3c33ec8267528c8c33c19f039d3f5978c668dda6c",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/reports/script-report.json",
+      "role": "output",
+      "sha256": "59cdc369c43a9525d53341dc837517254b71557933419432e612da7a6cb21f16",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/reports/summary.json",
+      "role": "output",
+      "sha256": "ef4583f6c2aeed4735ce0685e42b228a8fe6b6864eadb7477691ff8a3212f853",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/reports/trace.json",
+      "role": "output",
+      "sha256": "45ede3f9130b42001cd285edff9ef5b4b2ca67ddb52ab16efb288f43e5af8fa6",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/spec.md",
+      "role": "both",
+      "sha256": "c5d00781b00467c84a57e6a07012fc073945ba083a1b45dc867b275da2e555f6",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/open-card-flow/spec/ui-spec.yaml",
+      "role": "both",
+      "sha256": "211535597cf19317b842d987a4d5432d8cc0a330ddcd0a2039fdc3ab7f32c4f9",
+      "exists": true
+    }
+  ],
+  "environment": {
+    "framework_version": "3.1.0",
+    "profile": "hmos-app",
+    "gate_fingerprint": "3.1.0:c7aae462a07e",
+    "framework_config_sha256": "0af1767358ce189d1e8410638423fb32d3ae4e51d8aba9f89c539db8fcb5022d",
+    "workflow_sha256": "1d65c4f3273b799cc5352c84839ca8b6333c26745d7b934e79841407c13c14e0",
+    "requirement_sha256": "75ed6a82f08ecbfd44a3957b386cdc7fdda176e916149e9c6a33a00c3cd3724f"
+  },
+  "receipt_sha256": null,
+  "aggregate_sha256": "d9a3a77dbe561cbfa4bf53969dd841cde32c3d0a478534f75813b4db350bbdaf"
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "2.0",
+  "inferred_fidelity": "pixel_1to1",
+  "selected_fidelity": "pixel_1to1",
+  "effective_fidelity": "pixel_1to1",
+  "acceptance_strictness": "best_effort",
+  "asset_acquisition_mode": "approximate",
+  "clamped": false,
+  "decision": {
+    "source": "requirement_self_declared",
+    "rationale": "inferred=pixel_1to1(strong_wording) selected=pixel_1to1 effective=pixel_1to1 strictness=best_effort asset=approximate(default)",
+    "decision_id": "fdf2c1ce42859db7"
+  },
+  "execution_identity": "20261019T033030Z-1b91ba",
+  "requirement_sha256": "75ed6a82f08ecbfd44a3957b386cdc7fdda176e916149e9c6a33a00c3cd3724f",
+  "requirement_provenance": "goal_manifest"
+}

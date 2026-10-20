@@ -1,0 +1,815 @@
+# fidelity_target: pixel_1to1
+# asset_acquisition_mode: approximate
+# acceptance_strictness: best_effort
+# 三轴按 fidelity-intent SSOT 投影；根 schema 不支持三轴键。
+schema_version: "1.0"
+verified: unverified
+verified_method: none
+screens:
+  - id: card_type_sheet
+    priority: P0
+    ref_id: ref_type
+    root:
+      id: ct_root
+      type: sheet_scaffold
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      layout: column
+      children:
+        - id: ct_title
+          type: content_display
+          order: 0
+          text: 选择卡类型
+          semantic_role: neutral
+          color_ref: color_text_primary
+          fidelity_note: harness OCR candidate_text；标题文字从噪声边界提取，未视觉验真 文本 bbox 为对应 OCR
+            词框并集（非控件外框），不是视觉验真。
+          layout_group: ct_header
+          align: start
+          bbox:
+            - 0.037879
+            - 0.425943
+            - 0.223485
+            - 0.026415
+        - id: ct_close
+          type: action_button
+          order: 1
+          semantic_role: neutral
+          color_ref: color_text_primary
+          layout_group: ct_header
+          variant: text
+          icon:
+            kind: system_symbol
+            ref: sys.symbol.xmark
+          fidelity_note: 关闭行为来自蓝图 BD-3，图标/位置未验证
+          align: end
+        - id: ct_bank_surface
+          type: list_card_container
+          order: 2
+          semantic_role: neutral
+          color_ref: color_text_primary
+          bg_color: color_card_bg
+          layout: column
+          fidelity_note: 机器 observation 3：银行/储蓄卡/信用卡三行位于同一白色圆角卡，行间细分割线。不是执行者亲见。
+          children:
+            - id: ct_bank
+              type: list_row
+              order: 0
+              semantic_role: neutral
+              color_ref: color_text_primary
+              data_binding: selectedBank.name
+              asset_ref: bank_logo_cmb
+              icon:
+                kind: brand_logo
+                ref: bank_logo_cmb
+              fidelity_note: logo 按 selectedBank.code 动态选用已有 bank_logo_* 文本 bbox 为对应 OCR
+                词框并集（非控件外框），不是视觉验真。
+              bbox:
+                - 0.156061
+                - 0.520283
+                - 0.142424
+                - 0.020755
+            - id: ct_types
+              type: selector_group
+              order: 1
+              semantic_role: neutral
+              color_ref: color_text_primary
+              children:
+                - id: ct_debit
+                  type: list_row
+                  order: 0
+                  semantic_role: neutral
+                  color_ref: color_text_primary
+                  text: 储蓄卡
+                  layout_group: ct_types
+                  layout: row
+                  align: space_between
+                  fidelity_note: observation 3：右侧圆形单选标记；选中蓝底白勾，未选灰圈；随实际支持数组显示。 文本 bbox 为对应 OCR
+                    词框并集（非控件外框），不是视觉验真。
+                  bbox:
+                    - 0.065152
+                    - 0.598113
+                    - 0.105303
+                    - 0.020755
+                - id: ct_credit
+                  type: list_row
+                  order: 1
+                  semantic_role: neutral
+                  color_ref: color_text_primary
+                  text: 信用卡
+                  layout_group: ct_types
+                  layout: row
+                  align: space_between
+                  fidelity_note: observation 3：右侧圆形单选标记；选中蓝底白勾，未选灰圈；随实际支持数组显示。 文本 bbox 为对应 OCR
+                    词框并集（非控件外框），不是视觉验真。
+                  bbox:
+                    - 0.064394
+                    - 0.671698
+                    - 0.106818
+                    - 0.032075
+        - id: ct_hint
+          type: content_display
+          order: 3
+          semantic_role: neutral
+          color_ref: color_text_secondary
+          data_binding: card_type_hint_with_selected_bank
+          fidelity_note: OCR 两行拼接原文；招商银行为参考示例，实际替换 selectedBank.name。 文本 bbox 为对应 OCR
+            词框并集（非控件外框），不是视觉验真。
+          text: 为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。
+          bbox:
+            - 0.037121
+            - 0.738679
+            - 0.922727
+            - 0.044811
+        - id: ct_agreement
+          type: content_display
+          order: 4
+          semantic_role: neutral
+          color_ref: color_text_primary
+          data_binding: card_type_agreement_text
+          fidelity_note: OCR 逐字；observation 3 表示协议名蓝色、普通前缀深色，无独立复选框。仍为不可点击文本。 文本 bbox 为对应
+            OCR 词框并集（非控件外框），不是视觉验真。
+          text: 我已阅读快捷支付服务协议、银联无卡自助消费授权协议
+          bbox:
+            - 0.037879
+            - 0.81934
+            - 0.678788
+            - 0.025
+        - id: ct_continue
+          type: primary_button
+          order: 5
+          semantic_role: neutral
+          color_ref: color_card_bg
+          text: 同意并继续
+          layout_group: ct_continue_actions
+          fidelity_note: observation 3：蓝色胶囊按钮，约屏宽一半。颜色暂复用 repo token，精确像素未验证。初始禁用由 AC-2
+            决定，截图选中态不改变初值。 文本 bbox 为对应 OCR 词框并集（非控件外框），不是视觉验真。
+          variant: filled
+          align: center
+          width_ratio: 0.5
+          bg_color: brand_primary
+          bbox:
+            - 0.412121
+            - 0.896226
+            - 0.177273
+            - 0.032075
+        - id: ct_background
+          type: navigation_frame
+          order: 6
+          semantic_role: neutral
+          color_ref: color_text_primary
+          fidelity_note: observation 3：原 AddBankCardPage 位于遮罩下；复用旧页，不在 sheet 中复制一套。
+            仅为后景引用，不参与前景 Column 的垂直排版；保留其原页面节点身份，测试复用现有 col_* 锚点。
+          children:
+            - id: ct_bg_title
+              type: content_display
+              order: 0
+              text: 添加银行卡
+            - id: ct_bg_hint
+              type: content_display
+              order: 1
+              text: 免输卡号添卡
+              layout_group: ct_bg_subtitle
+            - id: ct_bg_count
+              type: content_display
+              order: 2
+              text: 支持100家银行
+              layout_group: ct_bg_subtitle
+            - id: ct_bg_search
+              type: content_display
+              order: 3
+              text: 搜索银行
+            - id: ct_bg_search_action
+              type: content_display
+              order: 4
+              text: 搜索
+            - id: ct_bg_bank
+              type: content_display
+              order: 5
+              text: 招商银行
+              asset_ref: bank_logo_cmb
+      bg_color: color_page_bg
+      fidelity_note: 结构来源
+        reports/visual-observations/3-点击任意银行拉起添卡选卡半模态.visual.json；面板约自屏高 2/5
+        起，圆弧顶角，原银行页保留并加暗色遮罩。精确几何待复核。
+    forbidden_overlap:
+      - - ct_close
+        - ct_bank_surface
+    must_have_elements:
+      - ct_close
+      - ct_bank
+      - ct_debit
+      - ct_credit
+      - ct_hint
+      - ct_agreement
+      - ct_continue
+      - ct_title
+      - ct_background
+  - id: card_selection
+    priority: P0
+    ref_id: ref_cards
+    root:
+      id: cs_root
+      type: navigation_frame
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      layout: column
+      children:
+        - id: cs_nav
+          type: nav_bar
+          order: 0
+          semantic_role: neutral
+          color_ref: color_text_primary
+          children:
+            - id: cs_back
+              type: action_button
+              order: 0
+              semantic_role: neutral
+              color_ref: color_text_primary
+              variant: tonal
+              bg_color: color_nav_btn_bg
+              icon:
+                kind: system_symbol
+                ref: sys.symbol.chevron_left
+              fidelity_note: observation 4 返回箭头；消费现有栈 pop。
+            - id: cs_bank_title
+              type: content_display
+              order: 1
+              semantic_role: neutral
+              color_ref: color_text_primary
+              data_binding: selectedBank.name
+              layout_group: cs_header
+              bbox:
+                - 0.152273
+                - 0.08066
+                - 0.173485
+                - 0.026415
+              fidelity_note: " 文本 bbox 为对应 OCR 词框并集（非控件外框），不是视觉验真。"
+          layout: row
+          layout_group: cs_header
+        - id: cs_hint
+          type: content_display
+          order: 1
+          semantic_role: neutral
+          color_ref: color_text_primary
+          fidelity_note: harness blind-review-pending.yaml OCR 原文逐字引用；未进行视觉验真 文本 bbox 为对应
+            OCR 词框并集（非控件外框），不是视觉验真。
+          text: 请选择您要绑定的银行卡
+          bbox:
+            - 0.048485
+            - 0.190566
+            - 0.29697
+            - 0.016038
+        - id: cs_cards
+          type: list_card_container
+          order: 2
+          semantic_role: neutral
+          color_ref: color_text_primary
+          bg_color: color_card_bg
+          children:
+            - id: cs_card_1
+              type: list_row
+              order: 0
+              semantic_role: neutral
+              color_ref: color_text_primary
+              data_binding: candidates[0].maskedNumber
+              layout_group: cs_cards
+              asset_ref: bank_logo_cmb
+              icon:
+                kind: brand_logo
+                ref: bank_logo_cmb
+              layout: row
+              align: space_between
+              fidelity_note: observation 4：左银行 logo、中掩码卡号、右单选标记；logo
+                按所选银行动态绑定。选中标记及按钮参考为红色；精确品牌色缺采样，保留待复核，不猜测 hex。
+            - id: cs_card_2
+              type: list_row
+              order: 1
+              semantic_role: neutral
+              color_ref: color_text_primary
+              data_binding: candidates[1]?.maskedNumber
+              layout_group: cs_cards
+              fidelity_note: observation 4：左银行 logo、中掩码卡号、右单选标记；logo
+                按所选银行动态绑定。选中标记及按钮参考为红色；精确品牌色缺采样，保留待复核，不猜测 hex。
+              asset_ref: bank_logo_cmb
+              icon:
+                kind: brand_logo
+                ref: bank_logo_cmb
+              layout: row
+              align: space_between
+          fidelity_note: observation 4：白色圆角候选卡容器；参考仅一张，第二张只在 mock 数据存在时渲染。
+        - id: cs_agreement
+          type: logic_condition
+          order: 3
+          semantic_role: neutral
+          color_ref: color_text_primary
+          data_binding: cardAgreementAccepted
+          fidelity_note: 可靠 OCR candidate 片段；完整 OCR 含“云内付”等冲突，见 blind-copy-cs。observation
+            4 提供候选全文但不覆盖 OCR 真源；coding 文案必须保留协议完整语义并如实披露待复核。带复选框，协议文本不可点击。
+          text: 一键绑卡用户授权协议
+        - id: cs_next
+          type: primary_button
+          order: 4
+          semantic_role: neutral
+          color_ref: color_card_bg
+          text: 下一步
+          layout_group: cs_next_actions
+          fidelity_note: observation 4：窄红色圆角按钮，位于协议下方。open_card_bank_accent 是中性临时
+            token，不声称原图品牌色，需下游采样/机器复核后替换。
+          variant: filled
+          align: center
+          width_ratio: 0.5
+          bg_color: open_card_bank_accent
+      bg_color: color_page_bg
+      fidelity_note: observation 4：内容集中上半屏，按钮紧接协议，下面大块留白，不吸附底部。
+    must_have_elements:
+      - cs_bank_title
+      - cs_hint
+      - cs_card_1
+      - cs_agreement
+      - cs_next
+      - cs_back
+  - id: otp_sheet
+    priority: P0
+    ref_id: ref_otp
+    root:
+      id: otp_root
+      type: sheet_scaffold
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      layout: column
+      children:
+        - id: otp_title
+          type: content_display
+          order: 0
+          text: 输入验证码
+          semantic_role: neutral
+          color_ref: color_text_primary
+          fidelity_note: harness OCR candidate_text；标题文字从噪声边界提取，未视觉验真 文本 bbox 为对应 OCR
+            词框并集（非控件外框），不是视觉验真。
+          layout_group: otp_header
+          align: start
+          bbox:
+            - 0.037879
+            - 0.192453
+            - 0.223485
+            - 0.053774
+        - id: otp_close
+          type: action_button
+          order: 1
+          semantic_role: neutral
+          color_ref: color_text_primary
+          variant: text
+          layout_group: otp_header
+          icon:
+            kind: system_symbol
+            ref: sys.symbol.xmark
+          fidelity_note: 关闭行为来自 BD-3；图标位置待核对
+          align: end
+        - id: otp_phone_hint
+          type: content_display
+          order: 2
+          semantic_role: neutral
+          color_ref: color_text_primary
+          data_binding: otp_hint_with_masked_profile_phone
+          fidelity_note: OCR 该行逐字引用；后接来自 AccountService 的动态脱敏手机号和验证码提示，数字不得照抄示例图 文本 bbox
+            为对应 OCR 词框并集（非控件外框），不是视觉验真。
+          text: 为确认是您本人操作，请输入发送至手机
+          bbox:
+            - 0.075
+            - 0.284906
+            - 0.650758
+            - 0.030189
+        - id: otp_phone_suffix
+          type: content_display
+          order: 3
+          semantic_role: neutral
+          color_ref: color_text_primary
+          text: 的验证码。
+          data_binding: maskedProfilePhone + suffix
+          fidelity_note: OCR 后半行；手机号来自 AccountService.phoneNumber 并脱敏，绝不把参考图号码作为账号数据。 文本
+            bbox 为对应 OCR 词框并集（非控件外框），不是视觉验真。
+          bbox:
+            - 0.308333
+            - 0.311321
+            - 0.148485
+            - 0.028302
+        - id: otp_field
+          type: sms_code_field
+          order: 4
+          semantic_role: neutral
+          color_ref: color_text_primary
+          layout: row
+          children:
+            - id: otp_input
+              type: input
+              order: 0
+              semantic_role: neutral
+              color_ref: color_text_primary
+              data_binding: otpDigits
+              layout_group: otp_field
+              align: start
+              fidelity_note: placeholder 在 OCR 中为“情输入短信验证码”（首字 conf=0），observation 5
+                候选为“请输入短信验证码”；候选记盲复核，不冒充 OCR 逐字真值。数字输入，最多 6 位。 文本 bbox 为对应 OCR
+                词框并集（非控件外框），不是视觉验真。
+              bbox:
+                - 0.075
+                - 0.382547
+                - 0.288636
+                - 0.026415
+            - id: otp_resend
+              type: action_button
+              order: 1
+              semantic_role: neutral
+              color_ref: color_link_blue
+              data_binding: "remainingSeconds > 0 ? countdown : resend_label"
+              variant: text
+              layout_group: otp_field
+              align: end
+              fidelity_note: OCR “55秒后重试”；实际为 remainingSeconds + 秒后重试，初值 60。归零为重新发送；计时中禁用。 文本
+                bbox 为对应 OCR 词框并集（非控件外框），不是视觉验真。
+              bbox:
+                - 0.755303
+                - 0.372642
+                - 0.170455
+                - 0.041981
+          bg_color: color_card_bg
+          width_ratio: 0.85
+        - id: otp_next
+          type: primary_button
+          order: 5
+          semantic_role: neutral
+          color_ref: color_card_bg
+          text: 下一步
+          layout_group: otp_next_actions
+          fidelity_note: observation 5：与输入白框等宽，空输入时浅蓝禁用，启用态使用 repo 蓝色近似；不得把文本 bbox 当按钮框。
+          variant: filled
+          align: center
+          width_ratio: 0.85
+          bg_color: brand_primary
+        - id: otp_system_keyboard
+          type: content_display
+          order: 6
+          semantic_role: neutral
+          color_ref: color_text_primary
+          data_binding: platform numeric keyboard (not application-drawn)
+          fidelity_note: observation 5 包含数字键盘与工具栏。由系统输入法提供，截图须保留此状态；键盘皮肤/状态栏非应用资源，不伪造。
+      bg_color: color_page_bg
+      fidelity_note: observation 5：键盘显示时面板处于中部，标题/说明/输入行/按钮依次排列；不能让键盘遮挡按钮。
+    must_have_elements:
+      - otp_close
+      - otp_phone_hint
+      - otp_input
+      - otp_resend
+      - otp_next
+      - otp_title
+      - otp_phone_suffix
+      - otp_system_keyboard
+  - id: result_success
+    priority: P0
+    ref_id: ref_result
+    root:
+      id: rs_root
+      type: result_state
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      layout: column
+      children:
+        - id: rs_icon
+          type: content_display
+          order: 0
+          semantic_role: success
+          color_ref: open_card_success
+          icon:
+            kind: system_symbol
+            ref: sys.symbol.checkmark_circle
+          fidelity_note: observation 6：绿色实心圆白勾。当前中性 token 仅占位，精确绿色无可信采样，待复核。
+        - id: rs_status
+          type: content_display
+          order: 1
+          semantic_role: success
+          color_ref: color_text_primary
+          fidelity_note: harness blind-review-pending.yaml OCR 原文逐字引用；未进行视觉验真 文本 bbox 为对应
+            OCR 词框并集（非控件外框），不是视觉验真。
+          text: 添卡成功
+          bbox:
+            - 0.411364
+            - 0.247698
+            - 0.177273
+            - 0.026243
+        - id: rs_hint
+          type: content_display
+          order: 2
+          semantic_role: neutral
+          color_ref: color_text_primary
+          fidelity_note: harness blind-review-pending.yaml OCR 原文逐字引用；未进行视觉验真 文本 bbox 为对应
+            OCR 词框并集（非控件外框），不是视觉验真。
+          text: 可用于实体店二维码支付和网上商城支付
+          bbox:
+            - 0.215909
+            - 0.293738
+            - 0.568939
+            - 0.027624
+        - id: rs_guide
+          type: content_display
+          order: 3
+          semantic_role: neutral
+          color_ref: color_text_primary
+          asset_ref: open_card_result_guide
+          icon:
+            kind: illustration
+            ref: open_card_result_guide
+          fidelity_note: 需求允许引导图近似；当前缺用途匹配素材，显式占位
+        - id: rs_complete
+          type: primary_button
+          order: 4
+          semantic_role: neutral
+          color_ref: color_link_blue
+          text: 完成
+          layout_group: rs_complete_actions
+          fidelity_note: observation 6：底部宽灰色胶囊、蓝字，NFC 区域排除后仍在底部。精确色/尺寸未验证。 文本 bbox 为对应 OCR
+            词框并集（非控件外框），不是视觉验真。
+          variant: tonal
+          align: center
+          width_ratio: 0.92
+          bg_color: color_nav_btn_bg
+          bbox:
+            - 0.465909
+            - 0.900552
+            - 0.068939
+            - 0.020718
+      bg_color: color_page_bg
+    must_have_elements:
+      - rs_icon
+      - rs_status
+      - rs_hint
+      - rs_guide
+      - rs_complete
+  - id: result_failure
+    priority: P1
+    root:
+      id: rf_root
+      type: result_state
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      layout: column
+      children:
+        - id: rf_icon
+          type: content_display
+          order: 0
+          semantic_role: danger
+          color_ref: color_text_primary
+          icon:
+            kind: system_symbol
+            ref: sys.symbol.xmark_circle
+          fidelity_note: 失败图标由需求结果态语义定义，无独立图。
+        - id: rf_status
+          type: content_display
+          order: 1
+          semantic_role: danger
+          color_ref: color_text_primary
+          data_binding: failure_result_title
+        - id: rf_hint
+          type: content_display
+          order: 2
+          semantic_role: neutral
+          color_ref: color_text_primary
+          data_binding: failure_result_description
+        - id: rf_guide
+          type: content_display
+          order: 3
+          semantic_role: neutral
+          color_ref: color_text_primary
+          asset_ref: open_card_result_guide
+          icon:
+            kind: illustration
+            ref: open_card_result_guide
+          fidelity_note: 结果页引导图复用；无失败态独立参考。
+        - id: rf_complete
+          type: primary_button
+          order: 4
+          semantic_role: neutral
+          color_ref: color_link_blue
+          text: 完成
+          layout_group: rf_complete_actions
+          fidelity_note: 失败态沿结果页同一完成区；无独立失败参考图，不声明像素事实。
+          variant: tonal
+          align: center
+          width_ratio: 0.92
+          bg_color: color_nav_btn_bg
+    must_have_elements:
+      - rf_status
+      - rf_hint
+      - rf_complete
+      - rf_icon
+      - rf_guide
+  - id: add_bank_card
+    priority: P1
+    root:
+      id: col_root
+      type: navigation_frame
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      children:
+        - id: col_row_cmb
+          type: list_row
+          order: 0
+          semantic_role: neutral
+          color_ref: color_text_primary
+          text: 招商银行
+          asset_ref: bank_logo_cmb
+          fidelity_note: 既有银行入口，复用代码实际行 id；完整页面不在本轮重设计
+    must_have_elements:
+      - col_row_cmb
+  - id: all_banks
+    priority: P1
+    root:
+      id: ab_root
+      type: navigation_frame
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      children:
+        - id: ab_row_cmb
+          type: list_row
+          order: 0
+          semantic_role: neutral
+          color_ref: color_text_primary
+          text: 招商银行
+          asset_ref: bank_logo_cmb
+          fidelity_note: 既有全部银行入口，完整布局沿原实现
+    must_have_elements:
+      - ab_row_cmb
+  - id: home_with_card
+    priority: P1
+    root:
+      id: home_root
+      type: navigation_frame
+      order: 0
+      semantic_role: neutral
+      color_ref: color_text_primary
+      data_binding: persistedCardByFullNumber
+      fidelity_note: 成功后首页存在性与数据刷新检查锚点；不新增首页视觉方案
+    must_have_elements:
+      - home_root
+tokens:
+  color_text_primary:
+    kind: color
+    value: "#1A1A1A"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_text_primary
+  color_text_secondary:
+    kind: color
+    value: "#606163"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_text_secondary
+  color_card_bg:
+    kind: color
+    value: "#FFFFFF"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_card_bg
+  color_page_bg:
+    kind: color
+    value: "#F2F3F5"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_page_bg
+  brand_primary:
+    kind: color
+    value: "#007DFF"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_primary
+  color_link_blue:
+    kind: color
+    value: "#1F57C8"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_link_blue
+  color_nav_btn_bg:
+    kind: color
+    value: "#E7E8EA"
+    sampled: false
+    value_source: repo_design_token:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_nav_btn_bg
+  open_card_bank_accent:
+    kind: color
+    value: "#606163"
+    sampled: false
+    value_source: "temporary_neutral: existing color_text_secondary; NOT reference
+      brand color"
+  open_card_success:
+    kind: color
+    value: "#606163"
+    sampled: false
+    value_source: "temporary_neutral: existing color_text_secondary; NOT reference
+      brand color"
+assets:
+  - key: bank_logo_cmb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_icbc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_icbc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_citic
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_citic.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_hxb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_hxb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_ccb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ccb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_abc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_abc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bocom
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bocom.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_psbc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_psbc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_spdb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_spdb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_cmbc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmbc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_pab
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_pab.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_cgb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cgb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_cib
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cib.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bosh
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bosh.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bobj
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bobj.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bonj
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonj.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bonb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_bogz
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bogz.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_ceb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ceb.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: bank_logo_boc
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_boc.png
+    rationale: BankRepository 对银行身份的既有资源绑定；未核对与参考图外观一致性
+  - key: open_card_result_guide
+    acquisition: placeholder
+    placeholder: true
+    role: illustration
+    placeholder_kind: illustration_frame
+    rationale: 已读 OCR 与 observation 6（手持手机/二维码插画），仓内无用途证明匹配素材；盲档禁止裁剪，显式占位并计视觉债务。

@@ -376,3 +376,5 @@ verifier 格式缺口须保留原回复和精确诊断；Goal 内返回 runtime�
 ## 收尾
 
 阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
+
+contracts.files 中属于 UT 的文件由 UT 交付，coding 不提前创建空测试；定义缺口回 spec/plan，不能靠改验收消掉覆盖义务。

@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "CommUI",
+    "type": "har",
+    "description": "$string:module_desc",
+    "deviceTypes": [
+      "phone"
+    ]
+  }
+}

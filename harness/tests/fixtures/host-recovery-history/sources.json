@@ -1,7 +1,8 @@
 {
   "description": "Read-only original host records; historical defects remain defects. No events were synthesized.",
   "missing": [
-    "2026-10-14 wallet-bank-card original manifest/events not found"
+    "2026-10-14 wallet-bank-card original manifest/events not found",
+    "4131b6 original canonical CU/phase reports overwritten; frozen invocation logs retained. Current project snapshot is explicitly later."
   ],
   "files": [
     {
@@ -223,6 +224,1345 @@
       "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/20261016T225415Z-501/ut/frozen.ut-result.WalletMain.json",
       "sha256": "d506ce090950bd176557393eb53e396433b624575e91d24cd1db7f16713020d2",
       "bytes": 10564
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/manifest.json",
+      "sha256": "fbb2ae934588b84eea61e97d1ab54af1c1c28d4b0294e4b8c73cf4955b913ce8",
+      "bytes": 48199
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/events.jsonl",
+      "sha256": "c05d32cc962b5bf85ce99153e64eb671c22f434180383f58131364120385511d",
+      "bytes": 147705
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/goal-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/goal-report.json",
+      "sha256": "8bfe207ec585bc23dfbdb4cc091657113b4caa481cb9e835201c887a40a1f4bf",
+      "bytes": 3452
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/goal-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/goal-report.md",
+      "sha256": "bf39fe8b346ade865dc1c0962ef08c25c506b617935acf795926eac180e3d456",
+      "bytes": 4922
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/progress.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/progress.json",
+      "sha256": "365c4235d60dcdf9c1a82ffa759ead0183ac5dd8cfe983219dd5b8a314b298ac",
+      "bytes": 3286
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/spec-agent-output.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/spec/agent-output.log",
+      "sha256": "69400363e9d451baa7f7b4d9507d4fe0ab3364bcd75d91c7cfc4a40e56f6eab7",
+      "bytes": 251399,
+      "source_sha256": "d38b841ccfc9c52216a654735a85a073ca976ddd386a8c69e3172f91159867f8",
+      "encoding": "gzip",
+      "note": "Frozen invocation log; includes original checker output, not reconstructed events."
+    },
+    {
+      "file": "20261019/20261019T024808Z-4131b6/plan-agent-output.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T024808Z-4131b6/phases/plan/agent-output.log",
+      "sha256": "bf3407acea76f35f89b20e10f01f83a0c8649e4ae8cc34159472ea6a7f8a179a",
+      "bytes": 156675,
+      "source_sha256": "a47f03d4d78f25248fed77e7dddff79e050ebc3e4d5644264b5f18a70ab0b74f",
+      "encoding": "gzip",
+      "note": "Frozen invocation log; includes original checker output, not reconstructed events."
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/manifest.json",
+      "sha256": "d28173fb83d84e539fdc3606c2a29af70d193e86e50b52af7e2f0e18b6b91a1c",
+      "bytes": 6789
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/events.jsonl",
+      "sha256": "c5a43fdefa9f5660fc479a9b4201053b2e7a1ba5bcfd79d6b6d0f1fb45f311fa",
+      "bytes": 348218
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/goal-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/goal-report.json",
+      "sha256": "0f90a031b6f22a54c098cadb0c906f423c97f858931b68da8bb4c6d8799d5468",
+      "bytes": 4795
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/goal-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/goal-report.md",
+      "sha256": "63785d1a1249364669885a0ffae31e72985654ec76ae4ef10f375d57132f54fa",
+      "bytes": 7698
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/progress.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/progress.json",
+      "sha256": "c58459b31e32bb3ecc6d13c4616efb775aa72fd7d8056e5f6806047b556f554c",
+      "bytes": 3153
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/spec-agent-output.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/phases/spec/agent-output.log",
+      "sha256": "20789dd4b5ee342948ed3ad62e6b625c9ab9beea7bb9a858bb084f5b4ff011a3",
+      "bytes": 332852,
+      "source_sha256": "44731f46738dd85c3995b1de50ed6beee050da7adda1ee02b9accfded952d56e",
+      "encoding": "gzip",
+      "note": "Frozen invocation log; includes original checker output, not reconstructed events."
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/plan-agent-output.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/phases/plan/agent-output.log",
+      "sha256": "5e6a60ff055455546a261c96c5254756567da9061cc4e2b3a6464f93247c42a6",
+      "bytes": 217914,
+      "source_sha256": "78867bbd8dfd927554c63797196dab9d5cde183f1637e7415483a24ef4d504a2",
+      "encoding": "gzip",
+      "note": "Frozen invocation log; includes original checker output, not reconstructed events."
+    },
+    {
+      "file": "20261019/20261019T033030Z-1b91ba/coding-agent-output.log.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261019T033030Z-1b91ba/phases/coding/agent-output.log",
+      "sha256": "c4fe7530d64da98ad2b8acc672dc2eaf867225d5e714750f0e2577509426fea5",
+      "bytes": 95201,
+      "source_sha256": "a0adf41bbc52f8ae97fe2ff606b0f5ce5ca33e173dac90245773aafd067f6f8d",
+      "encoding": "gzip",
+      "note": "Frozen invocation log; includes original checker output, not reconstructed events."
+    },
+    {
+      "file": "20261019/project/framework.config.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/framework.config.json",
+      "sha256": "0af1767358ce189d1e8410638423fb32d3ae4e51d8aba9f89c539db8fcb5022d",
+      "bytes": 3389,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/architecture.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/architecture.md",
+      "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+      "bytes": 4951,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/module-catalog.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/module-catalog.yaml",
+      "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+      "bytes": 21957,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/component-index.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/component-index.yaml",
+      "sha256": "4fd792c5cd51b4c918474fd0e39d002f7c80b7f0e98576de48c3e8465403824d",
+      "bytes": 4128,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/glossary.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/glossary.yaml",
+      "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+      "bytes": 43978,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "sha256": "d27ce2d578f76a0cf3ff59896fe9738b26219ef2a750170ff55a85fbcc2ebdf6",
+      "bytes": 125273,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+      "bytes": 5549,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "sha256": "51f307cf5401926ad004b193f7c63568696df2d2028f087785ef0bc5ac8a71b1",
+      "bytes": 473,
+      "source_sha256": "090b335a72a26f1f50d2f459af565f3a73bb8e72ba966a975242262196ee3207",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "sha256": "3585dc2bf4f9baac6c46268613d60931129f7b1ec5851b4435c4f02ed48e2343",
+      "bytes": 680,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "090b335a72a26f1f50d2f459af565f3a73bb8e72ba966a975242262196ee3207",
+      "source_bytes": 698,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets",
+      "sha256": "c4581952a299d58de0cced8d7b69963fabe47d0367cf8214317379c700d30656",
+      "bytes": 85,
+      "source_sha256": "31f209f248f13f2c31bfd2551d0eee262fce39ecb6d8f64426ee882991dcef2c",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets",
+      "sha256": "6a560d2853513f066f5841f0bb66232f84357f1289f6de0cc648ae5bf390eb9c",
+      "bytes": 68,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "31f209f248f13f2c31bfd2551d0eee262fce39ecb6d8f64426ee882991dcef2c",
+      "source_bytes": 72,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets",
+      "sha256": "ccaae7dd0564adc3b06046422738482229d63f0c9859defdfed8601321c9514c",
+      "bytes": 173,
+      "source_sha256": "ff126733a733e7bd5ca6836e0f4ed35e21227c860785bf0bb4f81d3cc8cddd0f",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets",
+      "sha256": "f33f436246235103752a8c162d800ac5f8a1a643c85aa48a4d6b58b06a797053",
+      "bytes": 262,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardInfo.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "ff126733a733e7bd5ca6836e0f4ed35e21227c860785bf0bb4f81d3cc8cddd0f",
+      "source_bytes": 273,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets",
+      "sha256": "246e13b22a06af69a94d3b22c6bcc52010a54c582e64aba9d6fd66a21010fb1c",
+      "bytes": 199,
+      "source_sha256": "3480d409d218a2663178573fb1da178d061d4debdf2a87c94e88926ba69e59d3",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets",
+      "sha256": "6e34d3e50475d140499b1d5eea1fae7c7637880bd8e662435001d8f839bd8a2c",
+      "bytes": 339,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/CardRecord.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "3480d409d218a2663178573fb1da178d061d4debdf2a87c94e88926ba69e59d3",
+      "source_bytes": 351,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/OpenCardResult.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/OpenCardResult.ets",
+      "sha256": "1ff83b073e852a2d9e4a28769bb1d516099a1d21f4c570dfce533d30c4e1bf7b",
+      "bytes": 165,
+      "source_sha256": "cca689d36803800170023a32d2bc71692727cea0f63380effd3cc6fbb949ce4c",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/OpenCardResult.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/OpenCardResult.ets",
+      "sha256": "b0e6fe503bcdf0491a9f8a89b079486003da7460efd248d86e7d66be39fd4b9a",
+      "bytes": 301,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/OpenCardResult.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "cca689d36803800170023a32d2bc71692727cea0f63380effd3cc6fbb949ce4c",
+      "source_bytes": 312,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/OpenCardSessionParams.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/OpenCardSessionParams.ets",
+      "sha256": "dec35c787c286ed583e41d63138cd3771cd1436e7e43d1232e70129a94c0146d",
+      "bytes": 170,
+      "source_sha256": "6006e1a566c83cbc850c65d7cb1c423855e6cfa8623f0b19051390ea199a510c",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/OpenCardSessionParams.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/OpenCardSessionParams.ets",
+      "sha256": "8a94e67d5956c10b9437f64ce7f4b3d489413e05391bdac42e26443778252917",
+      "bytes": 339,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/model/OpenCardSessionParams.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "6006e1a566c83cbc850c65d7cb1c423855e6cfa8623f0b19051390ea199a510c",
+      "source_bytes": 353,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "sha256": "35cfbdc1b1393e175fd6860a33a5047b126af2974ef1da5480df563f9e5def19",
+      "bytes": 1405,
+      "source_sha256": "f59868dbe80ea56a60c0ba81f4d0f145b22840ea06c241490c22eae549048526",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "sha256": "d3eb6ee28c6648655eaef142d99dba7302f69c251042cf81fe5134f2bd1f35db",
+      "bytes": 6184,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "f59868dbe80ea56a60c0ba81f4d0f145b22840ea06c241490c22eae549048526",
+      "source_bytes": 6383,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+      "sha256": "2c006e2f62bb73583473ddd48285a1b2de473f4a157c73561ab6a7f100762089",
+      "bytes": 1493,
+      "source_sha256": "872129797294208719615379dff508f2e91a29e907696bb3b70fd6807ad1d1be",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+      "sha256": "ea922e7065f4b5cee147c528a39f8dc57fd23e014e049845261f19daf169374d",
+      "bytes": 5177,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "872129797294208719615379dff508f2e91a29e907696bb3b70fd6807ad1d1be",
+      "source_bytes": 5292,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/domain/service/BankCardMaskService.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/service/BankCardMaskService.ets",
+      "sha256": "c3c3cf3c505c577030205d2e2d9980f3a7eaaaa920d525b677fb8c52fcaa6a87",
+      "bytes": 174,
+      "source_sha256": "e900ec63b79a1bc4093dfc7794eb775e18553021e40dd21303fb298675c82f28",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/domain/service/BankCardMaskService.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/service/BankCardMaskService.ets",
+      "sha256": "4b946c8a1b8f6d97a5a4684c2950ba5a7ce26f0ba3ac60a17dc1e0256cea2df0",
+      "bytes": 246,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/domain/service/BankCardMaskService.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "e900ec63b79a1bc4093dfc7794eb775e18553021e40dd21303fb298675c82f28",
+      "source_bytes": 254,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/domain/service/OpenCardFlow.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/service/OpenCardFlow.ets",
+      "sha256": "c0018bd4723cf895cc68f7f504a4332927d47babf5c89c52458f70fdd9e4215f",
+      "bytes": 1058,
+      "source_sha256": "d8633a65af70aafbe46afdb3db4e6fe56c6b019edcba7dbe49082c3628d667d6",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/domain/service/OpenCardFlow.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/service/OpenCardFlow.ets",
+      "sha256": "19ce61d1ef98dfb3aebc5c37a507959aeb968407e7e2be23d3706d784123fdb3",
+      "bytes": 3461,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/domain/service/OpenCardFlow.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "d8633a65af70aafbe46afdb3db4e6fe56c6b019edcba7dbe49082c3628d667d6",
+      "source_bytes": 3582,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "sha256": "355c321506cba4d9dab80d767dbdc81f9a49f693ede42fcd1f3c382e0ae3181c",
+      "bytes": 1271,
+      "source_sha256": "be57e705c5abf5d4bf7ed4bc3a2a040c27f08ad7f25d0a918cfd73324e7a350f",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "sha256": "f2329869c7584c10266208d1107a32c127214b8bcb58406aa0e8ec8c6b6c37b2",
+      "bytes": 3948,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "be57e705c5abf5d4bf7ed4bc3a2a040c27f08ad7f25d0a918cfd73324e7a350f",
+      "source_bytes": 4027,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "sha256": "97623929148117b88d50a99299a49cdb5697a5cd03842c0ad832b5095252f79a",
+      "bytes": 1614,
+      "source_sha256": "3a3404f9c69d03cdc0941eecae0969784ec3ce6a5309d04cffd76ef45cae8a59",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "sha256": "49556178137fd312f40d823d35fcb314e7760b05773c94bb3d71d9179ea04e36",
+      "bytes": 4346,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "3a3404f9c69d03cdc0941eecae0969784ec3ce6a5309d04cffd76ef45cae8a59",
+      "source_bytes": 4450,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "sha256": "97dbaae702eb0cdbdb69c5d3a97c5aa3b1272022d85d8c6b5f1608de4881f424",
+      "bytes": 2670,
+      "source_sha256": "77dfec676bcd5d7a699d03477a463b201050a896eb6d3828b5f0b8fbc266cb97",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "sha256": "32a8207b8f1defded001e52eb4dc306d9b46089bf60dd923380e863fe890f518",
+      "bytes": 9030,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "77dfec676bcd5d7a699d03477a463b201050a896eb6d3828b5f0b8fbc266cb97",
+      "source_bytes": 9226,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets",
+      "sha256": "0f87e60e5d3ccd7d3ca6ced4d60e5168e18992cd592a11d74f38ab8efc3f4514",
+      "bytes": 1594,
+      "source_sha256": "0b65168053635278cfad414d9145f39528545c6310e1b2d753ebcb5e8538a47f",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets",
+      "sha256": "30f509b542b2bda7e68c9ff0ec6d91b6e02562bf9011094b7393d17e3958d696",
+      "bytes": 4317,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardResultPage.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "0b65168053635278cfad414d9145f39528545c6310e1b2d753ebcb5e8538a47f",
+      "source_bytes": 4402,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "sha256": "a65c1ef0215257e7209e6d7f581b438b78249f04027597cd5f37f58597eaae63",
+      "bytes": 3705,
+      "source_sha256": "9e5924eb75af9230a025e86851cf074a52aaefda198b3b7be044425577ca24f1",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "sha256": "f682ab4db86d9b77e15880090ceb759a2f9e503281beb8c0e083868d8c564f57",
+      "bytes": 12063,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "9e5924eb75af9230a025e86851cf074a52aaefda198b3b7be044425577ca24f1",
+      "source_bytes": 12442,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "sha256": "188b040c3678e671e171d172f4293dc8b20d43f09e68dbd149421663ab94dacf",
+      "bytes": 2762,
+      "source_sha256": "a29b995ac3fa2cb297151a1ab7f43c669b09471f70e93a351b1f860940ffc358",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "sha256": "1a20ac1c30c86ec4aa6bf460a1182ef777065f6a4b97120bea95df1d57f0f2d6",
+      "bytes": 8325,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "a29b995ac3fa2cb297151a1ab7f43c669b09471f70e93a351b1f860940ffc358",
+      "source_bytes": 8580,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "sha256": "902f40fab2163bc3fb9db1cfb1c25a0674810584936de545b5def3e8aa0d9fc6",
+      "bytes": 1076,
+      "source_sha256": "6eb7cf78069c8189a8a11b025774b8125b670bb1bf9a751004ae0259b85826b6",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "sha256": "56272d493691f628ecd70546dc3d9abe8511835ca94424d591e3db209209cf42",
+      "bytes": 1914,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "6eb7cf78069c8189a8a11b025774b8125b670bb1bf9a751004ae0259b85826b6",
+      "source_bytes": 1957,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/OpenCardCompletionBridge.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/OpenCardCompletionBridge.ets",
+      "sha256": "7e02375a2267ce16ef54b94f1e5b5db8f955686b7243711c9aaa58a71544bc6a",
+      "bytes": 302,
+      "source_sha256": "a7c9762aec2adeec693c4fc603f2ffc6c6ede5d92f139552966dfe08679fddf2",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/OpenCardCompletionBridge.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/OpenCardCompletionBridge.ets",
+      "sha256": "d847e5dabef7f38cba3261f3311ae71d65cb4cb96d4993020a371bce911bde4e",
+      "bytes": 956,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/OpenCardCompletionBridge.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "a7c9762aec2adeec693c4fc603f2ffc6c6ede5d92f139552966dfe08679fddf2",
+      "source_bytes": 986,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "sha256": "79be973b67a18e6d6ff6320bf7260093e469de16d1ba29fc552a33bb60bf9346",
+      "bytes": 1861,
+      "source_sha256": "be661b33be918c728ea8b4b977cb9b998efff2e3f9d534f631efd464a015f5cb",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "sha256": "ecb834b66ce08893d96b0e542d5ba2492bfdac6df8af49b9ce15dc042a2db4bc",
+      "bytes": 5648,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "be661b33be918c728ea8b4b977cb9b998efff2e3f9d534f631efd464a015f5cb",
+      "source_bytes": 5796,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/index.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/index.ets",
+      "sha256": "d36ba278c734169307b5f30c743a69381ba89af5d557dee265c4a43d5670e97c",
+      "bytes": 207,
+      "source_sha256": "d5729ffb01282b2404fab7d31d3db61b71eba37b3a1140920986d0a5280243b9",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/index.ets",
+      "sha256": "f99f1a7511f9be544ce75c35a0059f3bc071dd6f34ab4b166dc912e983b9a152",
+      "bytes": 673,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/index.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "d5729ffb01282b2404fab7d31d3db61b71eba37b3a1140920986d0a5280243b9",
+      "source_bytes": 690,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/profile/route_map.json.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "sha256": "14f2e311a8d42e16fc020c0434122c5df36d633a151446b91032fededcffa46f",
+      "bytes": 261,
+      "source_sha256": "f0ce6024a11890070e8d31b57b691a0dac66b5f5c4297052f4f01d2947dd2409",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "sha256": "2d902c56ce8ca52f9ea5ec574b24ee184f3bf4fee373005131026bcb8fe2aebe",
+      "bytes": 1365,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/profile/route_map.json.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "f0ce6024a11890070e8d31b57b691a0dac66b5f5c4297052f4f01d2947dd2409",
+      "source_bytes": 1417,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/string.json.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "sha256": "c71da68ab6478a3bb0709e9e038a09bd34ec5469b56e1ddb82cdaa30e0ede1ea",
+      "bytes": 2319,
+      "source_sha256": "44424d51941979183eab45d86d6a5f0186d9ab38448d7dff0a63c01aa4d17110",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "sha256": "608618fd567dfc925cd0679130564cbfdc70019808558d234100adbe7ce11ea0",
+      "bytes": 9674,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/string.json.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "44424d51941979183eab45d86d6a5f0186d9ab38448d7dff0a63c01aa4d17110",
+      "source_bytes": 10110,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/color.json.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "sha256": "702e0f420783c0ac5cd7cf318fe35375df33117e40c6e12296c5ead859d4f614",
+      "bytes": 528,
+      "source_sha256": "ab4715275bcb745d9514409ae7b18e3fc0295667c415bfcb4f899e5443969f8e",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "sha256": "f5373bf862b852ab7fd00138a1f00b441dec232170dc17d508e58af4c94e3262",
+      "bytes": 2739,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/color.json.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "ab4715275bcb745d9514409ae7b18e3fc0295667c415bfcb4f899e5443969f8e",
+      "source_bytes": 2895,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+      "bytes": 1440,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/resources/base/media/card_open_result_guide.png",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/media/card_open_result_guide.png",
+      "sha256": "62f8575aa9bf7d4fe0b15a1ae719354e9d856b6e375fcaf400b022a23410f139",
+      "bytes": 2223,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/src/main/ets/pages/index.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/src/main/ets/pages/index.ets",
+      "sha256": "af439ef7415144b50bb2b2ebeeef5d7a593781398f0889689bc021791391041f",
+      "bytes": 915,
+      "source_sha256": "8b9b75a87b2e28c2e80e5af60dbae4e0276d2813c714bd55d9cb31c485aa1827",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/src/main/ets/pages/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/src/main/ets/pages/index.ets",
+      "sha256": "3e8c0004c4bc58484da6b40d2246584ad43e3e3ff412da64151c72ead31d3280",
+      "bytes": 2871,
+      "raw_file": "20261019/project/01-Product/Phone/src/main/ets/pages/index.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "8b9b75a87b2e28c2e80e5af60dbae4e0276d2813c714bd55d9cb31c485aa1827",
+      "source_bytes": 2972,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "sha256": "2567888692acc30e0eea231c1a511ca07bd68cf6a8bd61fff6c36c4940f2dd7d",
+      "bytes": 334,
+      "source_sha256": "5935ef4b21679fa9200de532bb5fecd43fbe51ac37f9e8d20edf29e52398cb71",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "sha256": "c26f7f5da7d9a5bec52cac918df9de917e0ce1a112ebd53ed8a0b39a982244da",
+      "bytes": 863,
+      "raw_file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "5935ef4b21679fa9200de532bb5fecd43fbe51ac37f9e8d20edf29e52398cb71",
+      "source_bytes": 897,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "sha256": "66ea28d124b628f7a7f2e9804d729aba120c53a953362961015b40d1d2c78185",
+      "bytes": 1180,
+      "source_sha256": "2305b4634ab504c9ac2871e634810de503a43776101837773bb27421093dcb81",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "sha256": "2210e51c5f770f7450520ea9986ecd95a4068e90144a7b64a5db5b82b6f56f12",
+      "bytes": 3564,
+      "raw_file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "2305b4634ab504c9ac2871e634810de503a43776101837773bb27421093dcb81",
+      "source_bytes": 3650,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+      "bytes": 250,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets",
+      "sha256": "488be81966d4b1be6d82888e5ac4a4e1059fe7208ce3173b0e2f25522f06cc68",
+      "bytes": 194,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/contracts.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/contracts.yaml",
+      "sha256": "cf0da56b0d2b14229204769fe48aaf668c98eeea6830dcb568536f774cbc65c2",
+      "bytes": 52759,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/change-unit.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/change-unit.yaml",
+      "sha256": "c255aea87a0a174ac2352c827d618a4421fd22c294ba30bdaa5b2a926c21eba7",
+      "bytes": 17621,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/acceptance.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/acceptance.yaml",
+      "sha256": "bd882d76558386d3902dd4bb343540a718ac60d316f5d0ea7c12bfe028d57cdb",
+      "bytes": 12192,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/use-cases.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/use-cases.yaml",
+      "sha256": "c23c085788f97a6dfe5e08c5ae9583504d4890f8f7b0f7e3699bb2c01a4752a9",
+      "bytes": 8426,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/context/facts.md.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/context/facts.md",
+      "sha256": "6b4e780dab349363800ac30b3c15627670e087b1ddc1b87ecdbc348e5837d582",
+      "bytes": 10324,
+      "source_sha256": "388d7521833696f4c30f2c94bdf643817c572a148318f7e4f08c55ddae635ff1",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/context/facts.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/context/facts.md",
+      "sha256": "01d14af24e966ee95283aa25314c5bcb817f5d175057f6afc941cb7a50c9eca6",
+      "bytes": 28500,
+      "raw_file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/context/facts.md.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "388d7521833696f4c30f2c94bdf643817c572a148318f7e4f08c55ddae635ff1",
+      "source_bytes": 28523,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/spec.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/spec.md",
+      "sha256": "c5d00781b00467c84a57e6a07012fc073945ba083a1b45dc867b275da2e555f6",
+      "bytes": 12729,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/plan/plan.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/plan.md",
+      "sha256": "3d5b27450b6a7864e295fe2a4c03a58ffdb08494e493352f70225956a736d807",
+      "bytes": 21257,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/phase-evidence-manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/phase-evidence-manifest.json",
+      "sha256": "7d9523a1aac658378203bfd7cede3af996cbe8c95553ac79a1b4cc2608efeb43",
+      "bytes": 12034,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/summary.json",
+      "sha256": "ef4583f6c2aeed4735ce0685e42b228a8fe6b6864eadb7477691ff8a3212f853",
+      "bytes": 25805,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/script-report.json",
+      "sha256": "59cdc369c43a9525d53341dc837517254b71557933419432e612da7a6cb21f16",
+      "bytes": 86598,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/phase-evidence-manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/phase-evidence-manifest.json",
+      "sha256": "525dd2c77a9e4e9bfc36caf8cf2e24198abf8395c79020361b4ddcabbb7e3a2c",
+      "bytes": 13069,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/summary.json",
+      "sha256": "8f7204cf653028eff1e39a350b1fe2d715951eae252cf5ee21a5b9014c246315",
+      "bytes": 49720,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/script-report.json",
+      "sha256": "9b0e9f3e3294ec2de58807cc1a7d9b84b7fa0f9e392ba552171b6d60d66a9cd8",
+      "bytes": 134707,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/summary.json",
+      "sha256": "0fd5e520b7e25bde962d5a9efe2ad10474ac29eea7e24ecece38c7182080c070",
+      "bytes": 87568,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/script-report.json",
+      "sha256": "94a19c5c894e2d38d11894a518b45d2462723088936149010cb9dd95f7b0c546",
+      "bytes": 113290,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/oh-package.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/oh-package.json5",
+      "sha256": "4ffdf6613d327f2ed960439f5236c194f7a6ed024167d7394f9e21e28b32fc1a",
+      "bytes": 233,
+      "source_sha256": "61cc9d91c11cb0fd990c581e7e0a6ad718bd1ce4e6de034dc92bed811f97f610",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/oh-package.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/oh-package.json5",
+      "sha256": "d21620f7ab37b76e6dbf71718334dbb9544f34dfa8124187ab822ca74ed5d776",
+      "bytes": 429,
+      "raw_file": "20261019/project/01-Product/Phone/oh-package.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "61cc9d91c11cb0fd990c581e7e0a6ad718bd1ce4e6de034dc92bed811f97f610",
+      "source_bytes": 443,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets",
+      "sha256": "d08fb4becfca94e7dd68523c31d6a5801edc8259340ee76eeb1f4d80ed9ab417",
+      "bytes": 1477,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets",
+      "sha256": "3e731b4d3835e22aaa076763b826eaf32fa732cac92a5894f36d8f659df80714",
+      "bytes": 744,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+      "bytes": 296103,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+      "bytes": 199326,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+      "bytes": 560756,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+      "bytes": 189945,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+      "sha256": "0b2490932f7db2fbd94013323fdb7b24f545ac1c355e9f9915162b5a7a394f76",
+      "bytes": 142562,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/ref-elements.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/ref-elements.yaml",
+      "sha256": "c50e186702e293153019d6b3c33ec8267528c8c33c19f039d3f5978c668dda6c",
+      "bytes": 6201,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/fidelity-intent.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/fidelity-intent.json",
+      "sha256": "58542aa053aab400eb2b87db9846830eaa4577544abb5426d24baf2a007a5fef",
+      "bytes": 684,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/ui-spec.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/ui-spec.yaml",
+      "sha256": "211535597cf19317b842d987a4d5432d8cc0a330ddcd0a2039fdc3ab7f32c4f9",
+      "bytes": 31733,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/ux-reference/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/ux-reference/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+      "bytes": 296103,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/ux-reference/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/ux-reference/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+      "bytes": 199326,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/ux-reference/5-选中某张卡片后拉起短信验证.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/ux-reference/5-选中某张卡片后拉起短信验证.jpg",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+      "bytes": 560756,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/ux-reference/6-短信验证完成后结果页.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/ux-reference/6-短信验证完成后结果页.jpg",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+      "bytes": 189945,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/asset-manifest.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/asset-manifest.yaml",
+      "sha256": "a4d8f4a278af0613d5db0ee51a13d69edd63936db70dc794100b1aec86b5a322",
+      "bytes": 7479,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/trace.json",
+      "sha256": "45ede3f9130b42001cd285edff9ef5b4b2ca67ddb52ab16efb288f43e5af8fa6",
+      "bytes": 401,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/plan/visual-parity.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/visual-parity.yaml",
+      "sha256": "db1aee7fdee9889e84f654c1aa1778334352c158ca0ee181816b214efcaa4c14",
+      "bytes": 8643,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/trace.json",
+      "sha256": "30ca37276c07bed2c23f6fc47defd1af0ee9c34476d9015b455ee7a94e5c66be",
+      "bytes": 401,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/module.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/module.json5",
+      "sha256": "be6d1bcd0a0a5f1e04e4792c7342115350c3a2364cfe2d829c285ca87201bfba",
+      "bytes": 132,
+      "source_sha256": "e53bd64e9ac975940e6ba578379d296c4e7188aa4393e6ccd38e4fe708e3acf1",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/module.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/module.json5",
+      "sha256": "2c6ef520936e4295902004a602219b9c63e8b62effa1979902eae42a42cb13c2",
+      "bytes": 150,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/module.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "e53bd64e9ac975940e6ba578379d296c4e7188aa4393e6ccd38e4fe708e3acf1",
+      "source_bytes": 160,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/oh-package.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/oh-package.json5",
+      "sha256": "b573292df0b4fb668eac1ae68abb0b4fe1cf7809086500e50e36c6a32e655491",
+      "bytes": 253,
+      "source_sha256": "9d9e5b8c353a12c0b531a1b8665feb9630d1ddd3387dbe5fb3a89bb2f1122295",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/oh-package.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/oh-package.json5",
+      "sha256": "41e2a1e86f02c41e33d9871125840d36d4dc4ef75660209e07278c438e475099",
+      "bytes": 389,
+      "raw_file": "20261019/project/02-Feature/WalletMain/oh-package.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "9d9e5b8c353a12c0b531a1b8665feb9630d1ddd3387dbe5fb3a89bb2f1122295",
+      "source_bytes": 402,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/build-profile.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/build-profile.json5",
+      "sha256": "7aa1bd078a8874af87e3d88ede98249e88d927e4ca7b205af83314dc616f930a",
+      "bytes": 124,
+      "source_sha256": "3abc910a7ad190110bd63c175e61f61f7731fe46cda0fb10f37386f701d1f19c",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/build-profile.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/build-profile.json5",
+      "sha256": "a06f7e430293c22c626ed34c0f7c5d7baf0a9446cf5b1b70fec9333622c37842",
+      "bytes": 144,
+      "raw_file": "20261019/project/02-Feature/WalletMain/build-profile.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "3abc910a7ad190110bd63c175e61f61f7731fe46cda0fb10f37386f701d1f19c",
+      "source_bytes": 156,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/src/main/module.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/src/main/module.json5",
+      "sha256": "5b1b4cf3986d12786fb160986d6650713a3981e31eac4aa3c62d3a4e4832c2ed",
+      "bytes": 445,
+      "source_sha256": "cdd69fb607b6abceae142a25343b23f5a83b087a1d218c2d41424f1ae10a3f20",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/src/main/module.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/src/main/module.json5",
+      "sha256": "105a4a8bf227d24b66e0ad71cf35f786454e2e21691542430f29e16c7d3165a4",
+      "bytes": 1262,
+      "raw_file": "20261019/project/01-Product/Phone/src/main/module.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "cdd69fb607b6abceae142a25343b23f5a83b087a1d218c2d41424f1ae10a3f20",
+      "source_bytes": 1311,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/build-profile.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/build-profile.json5",
+      "sha256": "1f9619a71511e03a8c80e463511dd3f15a2f941dbf2f6205382e90185c26fa17",
+      "bytes": 235,
+      "source_sha256": "165c5e02e368cfae38401dbfc371a106ab3f5a8a1ed05078625c0f1c573476dc",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/01-Product/Phone/build-profile.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/build-profile.json5",
+      "sha256": "7727b3a9bf7e522930cb1ec259c0bd26c948d09d37d0d724aab23f5f499a4004",
+      "bytes": 508,
+      "raw_file": "20261019/project/01-Product/Phone/build-profile.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "165c5e02e368cfae38401dbfc371a106ab3f5a8a1ed05078625c0f1c573476dc",
+      "source_bytes": 540,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/module.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/module.json5",
+      "sha256": "4a0b33e3046598a05dda19cedd4b4a92535aa82f7c64bba434fbed6a73bc3d03",
+      "bytes": 135,
+      "source_sha256": "db1476a429e00690c2f64d8790d829bc223448f26562405ba469ae25cdb992d7",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/module.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/module.json5",
+      "sha256": "923c754caa6f337ae566734af8e1a0f3272893cd66a5371cabdf48096d7b78cb",
+      "bytes": 154,
+      "raw_file": "20261019/project/04-BusinessBase/AccountManager/src/main/module.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "db1476a429e00690c2f64d8790d829bc223448f26562405ba469ae25cdb992d7",
+      "source_bytes": 164,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/oh-package.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/oh-package.json5",
+      "sha256": "05b61dbbc5243c9d236e815d774e111dd2b7fe8c62777b6787d91faf7cada808",
+      "bytes": 212,
+      "source_sha256": "3a5b28fc46f096f9f61d9d1a58581f50ea51a9c9269407471e0be28d3f990642",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/oh-package.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/oh-package.json5",
+      "sha256": "675fccb48129e7082c0ced0925ac747c7dd8bdabbed8cc725a7eee4fb9b2ab59",
+      "bytes": 258,
+      "raw_file": "20261019/project/04-BusinessBase/AccountManager/oh-package.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "3a5b28fc46f096f9f61d9d1a58581f50ea51a9c9269407471e0be28d3f990642",
+      "source_bytes": 269,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/build-profile.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/build-profile.json5",
+      "sha256": "3a13029da0a7a1087b047cbc5dce6578413092b2880400220686101385e93db5",
+      "bytes": 111,
+      "source_sha256": "ac634bb741b80be16f82ae73a89e9cf89ae78911c24d04bcf4c51f535d7746be",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/build-profile.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/build-profile.json5",
+      "sha256": "46d1b87a9913197745942b7aad13d81bf029e71fd07436ed5cf5bfbbb15d01eb",
+      "bytes": 106,
+      "raw_file": "20261019/project/04-BusinessBase/AccountManager/build-profile.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "ac634bb741b80be16f82ae73a89e9cf89ae78911c24d04bcf4c51f535d7746be",
+      "source_bytes": 115,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/oh-package.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/oh-package.json5",
+      "sha256": "2f71a4413c61cd59d8d3e5d69f54fafd70dcfaed08ca37f531e6b0f29ad96a52",
+      "bytes": 176,
+      "source_sha256": "67783ebafcf0d7df83031802c3bdbf32cf7e0e955108fd0a651b617e3aa13606",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/oh-package.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/oh-package.json5",
+      "sha256": "8e0036bb993671939a09f0586033068aee3a4d3b81d5e14fec08742ba97286fa",
+      "bytes": 195,
+      "raw_file": "20261019/project/05-SystemBase/CommFunc/oh-package.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "67783ebafcf0d7df83031802c3bdbf32cf7e0e955108fd0a651b617e3aa13606",
+      "source_bytes": 204,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/src/main/module.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/src/main/module.json5",
+      "sha256": "ab0b14e7c396f02e3a7dcf1fd2b02b5fdbe1866c735c450391d2acc47dad21da",
+      "bytes": 130,
+      "source_sha256": "2360c6585506fcafe4212438741d801ae7fd1fa1af5c76ff8c8232ea5b8483eb",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/src/main/module.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/src/main/module.json5",
+      "sha256": "6e45b8ea212d02d6df64557f4d31f936a50eba8c0291d5a4df6d84484cae6b0a",
+      "bytes": 148,
+      "raw_file": "20261019/project/05-SystemBase/CommFunc/src/main/module.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "2360c6585506fcafe4212438741d801ae7fd1fa1af5c76ff8c8232ea5b8483eb",
+      "source_bytes": 158,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/src/main/ets/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/src/main/ets/index.ets",
+      "sha256": "6b30cf2f7b003b169cce8c71e4935d2c584d79bb7e8aca7dd4b03e310b854df6",
+      "bytes": 169,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/src/main/ets/shared/log/Logger.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/src/main/ets/shared/log/Logger.ets",
+      "sha256": "0ccf2b7b029f7e3fb1f3ec5e638162ace2b5a6d48c08c2ccc36891287f45698d",
+      "bytes": 348,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommFunc/src/main/ets/shared/utils/MaskUtil.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommFunc/src/main/ets/shared/utils/MaskUtil.ets",
+      "sha256": "558cc9e5fd0a3cbf3afb5818447d6e9e22192dfe1bcdde0acbdd74e179d997d9",
+      "bytes": 484,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/oh-package.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/oh-package.json5",
+      "sha256": "beca7a459b803aaf1a6811002e2886d308a4c7e6c728da8df6dd4f0f023b85de",
+      "bytes": 189,
+      "source_sha256": "b1822d58170d24be4f0d85ca0a19c1e5171330b39c4431305847a80ae0883dba",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/oh-package.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/oh-package.json5",
+      "sha256": "c0233d5bfaa983143b1b80cd513d8c8633efe912461ecc72911da171f7be1c2e",
+      "bytes": 237,
+      "raw_file": "20261019/project/05-SystemBase/CommUI/oh-package.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "b1822d58170d24be4f0d85ca0a19c1e5171330b39c4431305847a80ae0883dba",
+      "source_bytes": 248,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/module.json5.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/module.json5",
+      "sha256": "758a29d300cfb63f91c0b99a38086557dd889012412c7e0ff1673d4b188af439",
+      "bytes": 128,
+      "source_sha256": "ed44eb341256cb80cda9b59ccd94751c79573856ffea673134ffe5373df24823",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/module.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/module.json5",
+      "sha256": "951ded3dc048d0f32134355023962958f2cee82390a7be789fa7de326186835d",
+      "bytes": 146,
+      "raw_file": "20261019/project/05-SystemBase/CommUI/src/main/module.json5.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "ed44eb341256cb80cda9b59ccd94751c79573856ffea673134ffe5373df24823",
+      "source_bytes": 156,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/ets/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/ets/index.ets",
+      "sha256": "cb8a257e0a2639f163053a62357ffb89a4c18fe90187d0e33a15ebfbde7bf84f",
+      "bytes": 268,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/ets/shared/theme/CommColors.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/ets/shared/theme/CommColors.ets",
+      "sha256": "330f1fc4ae946535b0b9ccbeaaf18f235981c889aa2d40540c6c05973ad3e5da",
+      "bytes": 200,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/ets/presentation/components/ToastUtil.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/ets/presentation/components/ToastUtil.ets",
+      "sha256": "11478f7ab773531a9432bbecccede4851dc488ce93e8ba432bdcc3c5a022dc6e",
+      "bytes": 241,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/ets/presentation/components/ActionListItem.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/ets/presentation/components/ActionListItem.ets",
+      "sha256": "4bc6399ca67f965d6736d38b63fdb6b077e572f3066b5ba2380a1c5c6245045f",
+      "bytes": 777,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/05-SystemBase/CommUI/src/main/ets/presentation/components/SectionCard.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/ets/presentation/components/SectionCard.ets",
+      "sha256": "5476b33b3e55ec1d5e9b39c7ab7e363ab3aa6b5635da6408d804b970638738a6",
+      "bytes": 312,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/shared/constant/AccountConstants.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/shared/constant/AccountConstants.ets",
+      "sha256": "be8186356421e4c6b586fbe2536bb20b6c05065adbe0688f495b4de571e67284",
+      "bytes": 254,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/04-BusinessBase/AccountManager/src/main/ets/data/model/LoginState.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/data/model/LoginState.ets",
+      "sha256": "4fc10adb0c4388a5bc92bea4f3a5670a0e07ff1bb04a5a58a09a46689fbf2060",
+      "bytes": 151,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets.source.gz",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets",
+      "sha256": "6a16c51b307fdafeede3455625fd033f494b5ea88180c9bcc4ebe78bbe71ed41",
+      "bytes": 338,
+      "source_sha256": "70b7ee3c50d2ea7f5bbdf737c1d2915ccf7ead24256fbcde72c4aa476abc6e44",
+      "encoding": "gzip",
+      "note": "Original bytes for exact replay of mixed line endings."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets",
+      "sha256": "ff8ebf75b06ee1b753eb134b74962ab9436bd8a18408252b627d460237b9af5e",
+      "bytes": 672,
+      "raw_file": "20261019/project/02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets.source.gz",
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6.",
+      "source_sha256": "70b7ee3c50d2ea7f5bbdf737c1d2915ccf7ead24256fbcde72c4aa476abc6e44",
+      "source_bytes": 687,
+      "transformation": "CRLF to LF"
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets",
+      "sha256": "a2c83893ce0dde879bbe55e7209022edadb1e42e99c251eaaf3079bd48d5843e",
+      "bytes": 6593,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets",
+      "sha256": "3326dedfc930f8aba0d2874d7c5ac305994e23f1420f1a4ab537a83cddb31c68",
+      "bytes": 4634,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets",
+      "sha256": "b06696e280d9aac073ab7fc546bc7eb4d6cfa324119aed3cfa19792923598e9a",
+      "bytes": 3407,
+      "note": "Read-only collected current project snapshot after 1b91ba; not asserted to be the original bytes of 4131b6."
+    },
+    {
+      "file": "20261019/4131b6-blueprint-rev4.yaml",
+      "source": "C:/Users/shengqsq/.codex/sessions/2026/10/18/rollout-2026-10-18T22-04-31-01a151e7-3e07-7083-a448-96dd2a7f563a.jsonl",
+      "sha256": "9302934ce9d80d3290b45ec683fbdc9c85244b54e594ce5eae335734b1612d9f",
+      "bytes": 113546,
+      "reconstruction": "Reversed recorded 03:26–03:28Z blueprint-only patches in reverse order against collected rev5; did not execute session commands.",
+      "expected_run_sha256": "9302934ce9d80d3290b45ec683fbdc9c85244b54e594ce5eae335734b1612d9f",
+      "exact_restoration": true,
+      "patch_timestamps": [
+        "2026-10-19T03:26:34.833Z",
+        "2026-10-19T03:26:58.522Z",
+        "2026-10-19T03:27:24.717Z",
+        "2026-10-19T03:27:48.740Z",
+        "2026-10-19T03:28:03.144Z"
+      ]
+    },
+    {
+      "file": "20261019/restoration-patches.json",
+      "source": "Recorded blueprint-only patches extracted from the main session; see 4131b6-blueprint-rev4.yaml reconstruction entry",
+      "sha256": "8f2cbeefe9aa8e47e6673b6654d6ec9992172a7d54485ae8331ce21f3b865afe",
+      "bytes": 15731
     }
   ]
 }
