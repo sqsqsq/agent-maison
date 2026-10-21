@@ -44,7 +44,7 @@ export interface InvokeTemplateVars {
  */
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
-const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codeagent', 'codex', 'cursor', 'chrys', 'opencode']);
+const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codeagent', 'codex', 'cursor', 'chrys', 'opencode', 'deepseek-harness']);
 
 /** Cursor headless CLI candidates (official name first). */
 export const CURSOR_HEADLESS_BINARY_CANDIDATES = ['cursor-agent', 'agent'] as const;
@@ -54,6 +54,7 @@ export const CODEAGENT_HEADLESS_BINARY_CANDIDATES = ['codeagentcli'] as const;
 export const CODEX_HEADLESS_BINARY_CANDIDATES = ['codex'] as const;
 export const CHRYS_HEADLESS_BINARY_CANDIDATES = ['chrys'] as const;
 export const OPENCODE_HEADLESS_BINARY_CANDIDATES = ['opencode'] as const;
+export const DEEPSEEK_HARNESS_BINARY_CANDIDATES = ['dsh'] as const;
 
 export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   cursor: CURSOR_HEADLESS_BINARY_CANDIDATES,
@@ -62,6 +63,7 @@ export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   codex: CODEX_HEADLESS_BINARY_CANDIDATES,
   chrys: CHRYS_HEADLESS_BINARY_CANDIDATES,
   opencode: OPENCODE_HEADLESS_BINARY_CANDIDATES,
+  'deepseek-harness': DEEPSEEK_HARNESS_BINARY_CANDIDATES,
 };
 
 // 【静默看门狗生产链已删除 · plan e6b3f8d2 t1】
@@ -550,6 +552,15 @@ export function defaultHeadlessInvokePlan(
   // plan c4e8a1f7 T1a：session 级 resolved binary 注入（probe/canary/formal invoke 同身份）
   resolvedBinary?: ResolvedHeadlessBinary | null,
 ): HeadlessInvokePlan {
+  if (adapterName === 'deepseek-harness') {
+    const plan = attachResolvedBinary(
+      ['dsh', '--profile', 'headless', '--patch',
+        path.resolve(__dirname, '../../../agents/deepseek-harness/headless-patch.yaml')],
+      DEEPSEEK_HARNESS_BINARY_CANDIDATES,
+      'dsh --profile headless --patch … (stdin)', resolvedBinary,
+    );
+    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
+  }
   if (adapterName === 'claude') {
     const argv = claudeArgv(toolEventProvenance, 'claude', modelPin);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …', resolvedBinary);
@@ -993,6 +1004,7 @@ export interface AgentInvokeOptions {
 export function buildAgentSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   extraEnv?: Record<string, string>,
+  adapterName?: string,
 ): NodeJS.ProcessEnv {
   const merged: NodeJS.ProcessEnv = { ...baseEnv };
   // d9e4b7c1 T1（v12 P2 泛化）：extraEnv 每个键先清大小写变体再写唯一键——父环境存在
@@ -1001,6 +1013,11 @@ export function buildAgentSpawnEnv(
   for (const [k, v] of Object.entries(extraEnv ?? {})) {
     deleteEnvKeyCaseInsensitive(merged, k);
     merged[k] = v;
+  }
+  if (adapterName === 'deepseek-harness') {
+    // Headless 的执行权限不能被父 shell 或调用方残留的限制值降档。
+    deleteEnvKeyCaseInsensitive(merged, 'DSH_PERMISSION_MODE');
+    merged.DSH_PERMISSION_MODE = 'danger-full-access';
   }
   // plan d7f3a9c4 t3：model pin 只随 extraEnv 显式带入——无 pin（extraEnv 缺键/空值）时显式
   // 清理父环境残留（含大小写变体），不得让陈旧 pin 漏入 agent 子进程冒充"已钉"。走共享
@@ -1072,7 +1089,8 @@ export function spawnHeadlessChild(
     }
     return spawn(invocation.file, invocation.args, {
       cwd,
-      env: buildAgentSpawnEnv(process.env, opts.extraEnv),
+      // shim 字面设置同样经过清洗；runner 显式上下文优先，不能在清洗后回带信任锚。
+      env: buildAgentSpawnEnv(process.env, { ...resolved.env, ...opts.extraEnv }, plan.adapterName),
       stdio,
       shell: false as const,
       windowsHide: true,
@@ -1084,7 +1102,7 @@ export function spawnHeadlessChild(
     // P0-7①：agent 子进程剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
     // t10（codex 六轮 P0-2）：信任锚材料不进 agent env。
     // b7e4d2a9 Todo3：合并后统一 strip + HEADLESS 最后定档（见 buildAgentSpawnEnv）。
-    env: buildAgentSpawnEnv(process.env, opts.extraEnv),
+    env: buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName),
     stdio,
     detached: !isWin,
     shell: false as const,

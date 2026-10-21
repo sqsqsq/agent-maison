@@ -18,6 +18,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import nodeAssert from 'assert';
+import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import {
   buildGuardianInvocation,
   decodeAgentJson,
@@ -122,6 +124,94 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node
 `;
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: '桌面 Electron shim 经 invokeAgentHeadless+guardian 保留固定参数、环境、stdin 和 cwd',
+    run: async () => {
+      if (process.platform !== 'win32') return;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-electron-$` space-'));
+      const bin = path.join(root, 'bin');
+      const cwd = path.join(root, 'work 中文');
+      fs.mkdirSync(bin);
+      fs.mkdirSync(cwd);
+      const exe = path.join(root, 'Fake Harness.exe');
+      const script = path.join(root, 'cli.js');
+      const shim = path.join(bin, 'harness.cmd');
+      const parentElectron = process.env.ELECTRON_RUN_AS_NODE;
+      try {
+        process.env.ELECTRON_RUN_AS_NODE = '0';
+        fs.copyFileSync(process.execPath, exe);
+        fs.writeFileSync(script, `
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', data => { input += data; });
+process.stdin.on('end', () => process.stdout.write(JSON.stringify({
+  execArgv: process.execArgv, argv: process.argv.slice(1), cwd: process.cwd(), input,
+  electron: process.env.ELECTRON_RUN_AS_NODE,
+  nodeOptions: process.env.NODE_OPTIONS ?? null,
+  trust: process.env.MAISON_HMAC_SHIM ?? null,
+  headless: process.env.MAISON_GOAL_HEADLESS
+})));
+`, 'utf8');
+        fs.writeFileSync(shim, [
+          '@echo off', 'setlocal DisableDelayedExpansion',
+          'set "ELECTRON_RUN_AS_NODE=1"',
+          'set "node_options=--require must-not-load.cjs"',
+          'set "MAISON_HMAC_SHIM=must-not-leak"',
+          'set "MAISON_GOAL_HEADLESS=0"',
+          '"%~dp0..\\Fake Harness.exe" --expose-internals "%~dp0..\\cli.js" %*',
+          'exit /b %errorlevel%',
+        ].join('\n'), 'utf8');
+        const parsed = unpackCmdShim(shim);
+        nodeAssert(parsed);
+        nodeAssert.strictEqual(parsed.file, exe);
+        nodeAssert.strictEqual(parsed.entryArgs[0], '--expose-internals');
+        nodeAssert.strictEqual(path.resolve(parsed.entryArgs[1]!), script);
+        nodeAssert.strictEqual(parsed.env?.ELECTRON_RUN_AS_NODE, '1');
+        const args = ['--profile', 'headless', 'literal %PATH%', 'quoted"value', ''];
+        const prompt = 'stdin 中文\n$` 和 %PATH% 都应原样传递';
+        const result = await invokeAgentHeadless({
+          argv: [shim, ...args], adapterName: 'deepseek-harness', label: 'electron-shim-fixture',
+          resolvedBinary: { path: shim, kind: 'cmd' }, useCrossSpawn: true,
+          useStdin: true, stdin: prompt,
+        }, cwd, { containment: { runId: 'desktop-shim', invokeId: 'fixed-args' }, timeoutMs: 15000 });
+        nodeAssert.strictEqual(result.exitCode, 0, result.stderr || result.spawn_error?.message);
+        const actual = JSON.parse(result.stdout);
+        nodeAssert.deepStrictEqual(actual.execArgv, ['--expose-internals']);
+        nodeAssert.strictEqual(actual.argv[0], script);
+        nodeAssert.deepStrictEqual(actual.argv.slice(1), args);
+        nodeAssert.strictEqual(actual.electron, '1');
+        nodeAssert.strictEqual(actual.cwd, cwd);
+        nodeAssert.strictEqual(actual.input, prompt);
+        nodeAssert.strictEqual(actual.nodeOptions, null, 'shim 环境必须先经过 NODE_OPTIONS 清洗');
+        nodeAssert.strictEqual(actual.trust, null, 'shim 环境不能回带信任锚');
+        nodeAssert.strictEqual(actual.headless, '1', 'shim 不能覆盖强制 HEADLESS');
+      } finally {
+        if (parentElectron === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+        else process.env.ELECTRON_RUN_AS_NODE = parentElectron;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'shim 未知环境展开或固定参数展开继续 fail-closed',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-shim-unsupported-'));
+      try {
+        fs.writeFileSync(path.join(root, 'tool.exe'), 'MZ');
+        const shim = path.join(root, 'tool.cmd');
+        for (const body of [
+          'set "MODE=%UNKNOWN%"\n"%~dp0tool.exe" %*',
+          '"%~dp0tool.exe" "%UNKNOWN%\\cli.js" %*',
+          '"%UNKNOWN%\\tool.exe" %*',
+        ]) {
+          fs.writeFileSync(shim, body, 'utf8');
+          nodeAssert.strictEqual(unpackCmdShim(shim), null, body);
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 't2: guardian 装帧——token 明文进 argv、AgentJson 往返无损、cwd 携带',
     run: () => {

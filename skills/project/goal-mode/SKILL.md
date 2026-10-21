@@ -23,7 +23,7 @@
 | `requirement` | 否 | 需求描述 |
 | `start_phase` / `end_phase` | 否 | 默认由 workflow 决定 |
 | `adapter` | 否 | 按 personal setup 的已物化 adapter 解析 |
-| `adapter_model` | 否 | **仅 headless/unattended（含 `--detach`）**：并发多窗口跑不同模型或要钉住本 run 模型时，启动 goal run 传 `--adapter-model <id>`——权威模型输入，随 headless argv 回放（`chrys`/`generic` 不支持，传即 BLOCKER）。**有人在场（in-session attended）不适用**——由宿主会话自跑，本 Skill 不消费该字段，不得静默未钉 |
+| `adapter_model` | 否 | **仅 headless/unattended（含 `--detach`）**：并发多窗口跑不同模型或要钉住本 run 模型时，启动 goal run 传 `--adapter-model <id>`——权威模型输入，随 headless argv 回放（`chrys`/`generic`/`deepseek-harness` 不支持，传即 BLOCKER）。**有人在场（in-session attended）不适用**——由宿主会话自跑，本 Skill 不消费该字段，不得静默未钉 |
 | `run_mode` | 条件 | 明确意图直接映射；歧义时走 `goal.run_mode` |
 
 ## 唯一 runtime 循环
@@ -35,7 +35,7 @@
 3. **Execute one phase**：runtime 冻结 phase-scoped context，再调用薄 executor。attended 请求中的 `run_id/phase/attempt_id/owner_id/owner_epoch` 必须原样传给 initializer、harness 与 `--sync-closure`，不得靠兄弟 shell 继承 env；**无人值守（`--detach`）相反**——上下文由 runner 注入的 env 继承，harness 与闭环命令不带这组 `--goal-*` 参数，传了会被判「模式不匹配」当场拒绝（入口拒绝 ≠ 执行了测试，也不是租约过期）。attended 自检与 `--sync-closure` 检查 exit 0、summary 为 `PASS/open` 即可回传 `passed`；正式 `closed` 由 runtime 在随后 gate/finalizer 中提交。
 4. **Gate / verdict / reassess**：runtime 独占 gate、verdict、重试/回退、closure 与下一轮；不得根据上一轮宿主内存直接决定下一 phase。
 
-若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守需要 adapter 的 resume/handoff 能力，缺失时停止并明确说明能力缺口。
+若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守执行要求 external runner preflight 通过；跨载体 handoff 另要求 adapter 的 resume/handoff 能力，缺失时明确说明该交接能力缺口。
 
 **两入口互斥与 phase executor（plan 07a41ec6 T9）**：本 Skill（GoalPhaseRuntime）与 Claude 原生 `/goal` 路径是两个入口，不得同时推进同一任务。原生 `/goal` 路径下主会话是薄 driver：每个阶段最多派发一个 `subagent_type: phase-executor` 子代理负责该阶段的产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入并收回 summary 路径与终态块；同一会话上下文不连续执行两个阶段；`--revalidate` 只是检查命令，不推进阶段。
 

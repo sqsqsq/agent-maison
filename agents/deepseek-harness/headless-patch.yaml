@@ -1,0 +1,11 @@
+# 仅覆盖本次调用；已保存的 permission.defaultPreset 会优先于环境变量推断值。
+- id: permission
+  config:
+    defaultPreset: danger-full-access
+# 由 DSH 自身解析保存凭据，Maison 不读取或复制秘密。
+- id: credentials
+  disabled: false
+- id: authorization
+  disabled: false
+- id: deepseek-account
+  disabled: false

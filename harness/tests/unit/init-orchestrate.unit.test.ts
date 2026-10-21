@@ -2192,7 +2192,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'CLI --execute --materialized-adapters 无 --smart-auto 自动改道进入执行路径',
+    name: 'CLI --execute --materialized-adapters 自动改道并以新清单完成 UPDATE 物化',
     run: () => {
       const root = mkTmp();
       fs.writeFileSync(
@@ -2226,7 +2226,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         root,
         '--execute',
         '--materialized-adapters',
-        'claude,generic',
+        'claude,generic,deepseek-harness',
       ]);
       assert.notStrictEqual(r.status, null, r.stderr || r.stdout);
       assert(
@@ -2247,6 +2247,12 @@ const cases: Array<{ name: string; run: () => void }> = [
         r.stdout.includes('external_staging: 未创建'),
         'smart-auto 摘要应说明未创建外部 staging',
       );
+      assert(!r.stdout.includes('materialized_adapters 不一致'), r.stdout);
+      assert.deepStrictEqual(
+        JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf8')).materialized_adapters,
+        ['claude', 'generic', 'deepseek-harness'],
+      );
+      assert(fs.existsSync(path.join(root, '.dsh/skills/goal-mode/SKILL.md')), '新增 adapter 必须真正物化');
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },

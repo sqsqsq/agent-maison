@@ -357,6 +357,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-runner-detach', modulePath: './unit/goal-runner-detach.unit.test' },
   { id: 'chrys-opencode-adapter', modulePath: './unit/chrys-opencode-adapter.unit.test' },
   { id: 'codeagent-adapter', modulePath: './unit/codeagent-adapter.unit.test' },
+  { id: 'deepseek-harness-adapter', modulePath: './unit/deepseek-harness-adapter.unit.test' },
   { id: 'agent-invoke-settle', modulePath: './unit/agent-invoke-settle.unit.test' },
   { id: 'goal-runner-hardening', modulePath: './unit/goal-runner-hardening.unit.test' },
   // adjudicated-repair-loop M1：信号级身份 + 累计 one-shot 收敛 + no-op（plan e2b7c4a9 t1.8）

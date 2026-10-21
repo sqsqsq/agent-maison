@@ -579,6 +579,11 @@ export function resolveInvokeHardCliFailure(
   // ③ Codex 结构化模型兼容 400（先于②判——它是 CLI 兼容类硬错误，run 必停机）。
   // 解析后的 terminal 正文排最前：stdout 里的同一信封是转义形态，签名命不中。
   if (facts.exitCode !== 0) {
+    if (facts.stderr.split(/\r?\n/).some(line => /^dsh: MISSING_CREDENTIAL:/.test(line))) {
+      return 'DSH 缺少凭据（MISSING_CREDENTIAL）：请在同一 DSH_HOME 的桌面版/Web 模型设置中保存 headless 实际模型路由所需 key 后重跑；'
+        + '也可在启动 Goal 的那个环境或 DSH_HOME/.env 中配置 DEEPSEEK_API_KEY。保存凭据优先于环境；'
+        + 'DSH 工具 shell 会过滤 KEY 类变量，不能假设主会话环境凭据会继承。不要输出密钥；这是外部配置错误，不是内容失败。';
+    }
     const hit = codexModel400Hit(facts);
     if (hit) return hit.line ? `${hit.label}原文：${hit.line}` : hit.label;
     // plan 4e6fb3b6 §4：同一信封的 401/403（认证失败/无权限）同属外部硬失败——重试同一调用不会变；

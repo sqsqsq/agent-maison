@@ -27,7 +27,110 @@ const unattended = {
   timeout_seconds: 3600,
 };
 
+function withDshInstall(run: (root: string, record: string, shim: string) => void, prefix = 'dsh-install space-'): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const shim = path.join(root, 'resources/runtime/cli/bin/dsh.cmd');
+  fs.mkdirSync(path.dirname(shim), { recursive: true });
+  fs.writeFileSync(shim, '@echo off\n');
+  const record = JSON.stringify([{ DisplayName: 'DeepSeek Harness 0.2.1-rc.2', InstallLocation: root }]);
+  const saved = { PATH: process.env.PATH, LOCALAPPDATA: process.env.LOCALAPPDATA };
+  try {
+    process.env.PATH = path.join(root, 'empty');
+    process.env.LOCALAPPDATA = root;
+    run(root, record, shim);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'DSH 安装记录：中文 InstallLocation 指向存在的中文目录和 dsh.cmd',
+    run: () => {
+      if (process.platform !== 'win32') return;
+      withDshInstall((_root, record, shim) => {
+        assert(record.includes('中文用户'));
+        const found = resolveHeadlessBinary(['dsh'], { readUninstallRegistry: () => record });
+        assert.strictEqual(found?.path, shim);
+        assert.strictEqual(found?.kind, 'cmd');
+      }, 'dsh-中文用户 安装目录-');
+    },
+  },
+  {
+    name: 'DSH 安装记录：PATH 命中优先，不读取注册表',
+    run: () => {
+      if (process.platform !== 'win32') return;
+      withDshInstall((_root, _record, shim) => {
+        process.env.PATH = path.dirname(shim);
+        let reads = 0;
+        const found = resolveHeadlessBinary(['dsh'], { readUninstallRegistry: () => {
+          reads++; return null;
+        } });
+        assert.strictEqual(found?.path, shim);
+        assert.strictEqual(reads, 0);
+      });
+    },
+  },
+  {
+    name: 'DSH 安装记录：PATH 未命中，HKCU 优先；HKCU 失败可回落 HKLM',
+    run: () => {
+      if (process.platform !== 'win32') return;
+      withDshInstall((_root, record, shim) => {
+        const calls: string[] = [];
+        const found = resolveHeadlessBinary(['dsh'], { readUninstallRegistry: hive => {
+          calls.push(hive); return record;
+        } });
+        assert.strictEqual(found?.path, shim);
+        assert.strictEqual(found?.kind, 'cmd');
+        assert.deepStrictEqual(calls, ['HKCU']);
+        const machine = resolveHeadlessBinary(['dsh'], { readUninstallRegistry: hive => {
+          if (hive === 'HKCU') throw new Error('unavailable');
+          return record;
+        } });
+        assert.strictEqual(machine?.path, shim);
+        let reads = 0;
+        assert.strictEqual(resolveHeadlessBinary(['another-cli'], { readUninstallRegistry: () => {
+          reads++; return null;
+        } }), null);
+        assert.strictEqual(reads, 0);
+      });
+    },
+  },
+  {
+    name: 'DSH 安装记录：DisplayName 必须匹配同一记录，文件不存在回到菜单提示',
+    run: () => {
+      if (process.platform !== 'win32') return;
+      withDshInstall((_root, record, shim) => {
+        const unrelated = JSON.parse(record).map((row: Record<string, string>) => ({ ...row, DisplayName: 'Other App' }));
+        const split = JSON.stringify([{ DisplayName: 'DeepSeek Harness' }, ...unrelated]);
+        assert.strictEqual(resolveHeadlessBinary(['dsh'], { readUninstallRegistry: () => split }), null);
+        assert.strictEqual(resolveHeadlessBinary(['dsh'], { readUninstallRegistry: () => '{invalid-json' }), null);
+        fs.unlinkSync(shim);
+        const missing = resolveHeadlessBinary(['dsh'], { readUninstallRegistry: () => record });
+        assert.strictEqual(missing, null);
+        assert(formatHeadlessBinaryIssue('deepseek-harness', ['dsh'], missing).includes('管理 dsh 命令'));
+      });
+    },
+  },
+  {
+    name: 'DSH 安装记录：非 Windows 不查注册表',
+    run: () => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      try {
+        Object.defineProperty(process, 'platform', { value: 'linux' });
+        withDshInstall(() => {
+          let reads = 0;
+          assert.strictEqual(resolveHeadlessBinary(['dsh'], { readUninstallRegistry: () => {
+            reads++; return null;
+          } }), null);
+          assert.strictEqual(reads, 0);
+        });
+      } finally { Object.defineProperty(process, 'platform', descriptor); }
+    },
+  },
   {
     name: 'cursorHeadlessPlan: stdin prompt + --force --trust',
     run: () => {

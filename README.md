@@ -123,6 +123,9 @@
 
 协议结构见 [framework/agents/adapter-schema.yaml](agents/adapter-schema.yaml)。
 
+DeepSeek Harness 的物化入口与 Goal/headless 使用前提见
+[Goal runbook](docs/operations/goal-mode-runbook.md#deepseek-harnessdsh)。
+
 ---
 
 ## Harness 常用命令

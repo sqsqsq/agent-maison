@@ -110,10 +110,11 @@ export function buildDirectCommandLine(argv: string[]): string {
 /**
  * cmd shim **解包**（二轮 review P1）：不再经 `cmd.exe /S /C` 执行 shim——cmd 的
  * `%VAR%` 展开在引号内仍生效且无可靠转义（实测 `%%` 双写会被 cmd 折叠后展开，
- * 参数无法无损）。改为把 npm 生成的 .cmd/.bat 解包成**直接可 CreateProcess**
+ * 参数无法无损）。将已知 .cmd/.bat 形态解包成**直接可 CreateProcess**
  * 的目标，全链路走 direct（不经 cmd 解析器，argv 无损）：
  *   · exe 形态（npm v11+ / Claude 系）：`"%dp0%\node_modules\...\bin\<name>.exe" %*`
- *     → 提取 exe 绝对路径，args 原样透传；
+ *     → 提取 exe 绝对路径及固定参数，再追加调用参数；
+ *   · exe shim 的字面 `set "K=V"` → 环境补充（仍经 agent-invoke 的统一清洗）；
  *   · node 形态（传统 npm shim）：`"%_prog%"  "%dp0%\node_modules\...\cli.js" %*`
  *     → node.exe（dp0\node.exe 存在优先，否则 PATH）+ 入口 js，node direct 执行；
  *   · 其它形态 → null（调用方 fail-closed，不堆叠字符转义规则）。
@@ -121,12 +122,13 @@ export function buildDirectCommandLine(argv: string[]): string {
 export interface UnpackedCmdInvocation {
   /** CreateProcess 的直接目标（exe 或 node.exe，绝对路径）。 */
   file: string;
-  /** 目标自身的固定参数（node 形态时=[入口 js]；exe 形态=[]），原 argv 附加在后。 */
+  /** 目标自身的固定参数，原 argv 附加在后。 */
   entryArgs: string[];
+  env?: Record<string, string>;
 }
 
 function expandDp0(s: string, shimDir: string): string {
-  return s.replace(/%~?dp0%/gi, shimDir);
+  return s.replace(/%~dp0|%dp0%/gi, () => `${shimDir}${path.sep}`);
 }
 
 export interface ResolvedAgentCommand {
@@ -134,6 +136,7 @@ export interface ResolvedAgentCommand {
   appName: string;
   /** 最终命令行（本层已完成转义，全 direct 形态）。 */
   commandLine: string;
+  env?: Record<string, string>;
 }
 
 function resolveNodeExe(shimDir: string, progRaw: string): string | null {
@@ -167,9 +170,16 @@ export function unpackCmdShim(shimPath: string): UnpackedCmdInvocation | null {
   // 执行行：含 %* 的引号引用行（`&` 分段取最后一段——npm shim 的
   // `endLocal & ... || title %COMSPEC% & "<prog>" "<entry>" %*`）
   let execLine = '';
+  const env: Record<string, string> = {};
   for (const line of text.split(/\r?\n/)) {
+    const assignment = /^\s*@?set\s+"([A-Za-z_][A-Za-z0-9_]*)=(.*)"\s*$/i.exec(line);
+    if (assignment && !/^(?:dp0|_prog)$/i.test(assignment[1]!)) {
+      // 动态变量展开属于 batch 解释器；只接收可直接传给子进程的字面值。
+      if (assignment[2]!.includes('%')) return null;
+      env[assignment[1]!.toUpperCase()] = assignment[2]!;
+    }
     if (!/%\s*\*/.test(line)) continue;
-    if (!/"(?:%_prog%|%_prog%|%~?dp0%|%dp0%)/i.test(line)) continue;
+    if (!/"(?:%_prog%|%~dp0|%dp0%)/i.test(line)) continue;
     const tail = line.split('&').pop()!.trim();
     if (tail) {
       execLine = tail;
@@ -186,21 +196,25 @@ export function unpackCmdShim(shimPath: string): UnpackedCmdInvocation | null {
   }
   if (toks.length === 0) return null;
   const prog = toks[0]!;
-  // exe 形态：program 含 .exe/.com 且实际存在 → direct，无 entry
+  const envFields = Object.keys(env).length ? { env } : {};
+  const fixedArgs = toks.slice(1).map(arg => expandDp0(arg, shimDir));
+  if (fixedArgs.some(arg => arg.includes('%'))) return null;
+  // exe 形态还可携带 Electron 等启动器的固定参数；asar 内路径交给目标程序解释。
   if (/\.(exe|com)$/i.test(prog)) {
-    const file = path.resolve(shimDir, expandDp0(prog, shimDir));
+    const expanded = expandDp0(prog, shimDir);
+    if (expanded.includes('%')) return null;
+    const file = path.resolve(shimDir, expanded);
     if (!fs.existsSync(file)) return null;
-    return { file, entryArgs: [] };
+    return { file, entryArgs: fixedArgs, ...envFields };
   }
   // node 形态：program=_prog（node），entry=第二个 token（入口 js）
   if (/^%?_?prog%?$/i.test(prog) || /node(\.exe)?$/i.test(prog.split('\\').pop() ?? '')) {
     if (toks.length < 2) return null;
     const node = resolveNodeExe(shimDir, progRaw ?? 'node');
     if (!node) return null;
-    const entryRaw = toks[1]!;
-    const entry = path.resolve(shimDir, expandDp0(entryRaw, shimDir));
+    const entry = path.resolve(shimDir, fixedArgs[0]!);
     if (!fs.existsSync(entry)) return null;
-    return { file: node, entryArgs: [entry] };
+    return { file: node, entryArgs: [entry, ...fixedArgs.slice(1)], ...envFields };
   }
   return null;
 }
@@ -208,7 +222,7 @@ export function unpackCmdShim(shimPath: string): UnpackedCmdInvocation | null {
 /**
  * 解析 argv[0] 并产出可执行的 CreateProcess 形态：
  *   · 存在的 .exe/.com → direct；
- *   · 存在的 .cmd/.bat → 尝试**安全解包**（仅 npm 标准两形态），失败 fail-closed
+ *   · 存在的 .cmd/.bat → 尝试**安全解包**（已知 exe/node 形态），失败 fail-closed
  *     （绝不退化 cmd /C 字符转义堆叠）；
  *   · 裸命令名 → where.exe（只接受可执行扩展名——无扩展裸文件 CreateProcess
  *     会报 193 ERROR_BAD_EXE_FORMAT，实测）。
@@ -233,11 +247,11 @@ export function resolveAgentCommand(argv: string[]): ResolvedAgentCommand | { er
         return {
           error:
             `cmd shim 无法安全解包（不支持该形态，fail-closed）：${abs}——` +
-            '请给 adapter 配可执行 exe 的 headless_invoke，或升级 shim 到 npm 标准形态',
+            '请使用可直接执行或受支持的 exe/node shim 形态',
         };
       }
       const argv2 = [unpacked.file, ...unpacked.entryArgs, ...rest];
-      return { appName: unpacked.file, commandLine: buildDirectCommandLine(argv2) };
+      return { appName: unpacked.file, commandLine: buildDirectCommandLine(argv2), ...(unpacked.env ? { env: unpacked.env } : {}) };
     }
     return { appName: abs, commandLine: buildDirectCommandLine([abs, ...rest]) };
   }
@@ -261,11 +275,11 @@ export function resolveAgentCommand(argv: string[]): ResolvedAgentCommand | { er
       return {
         error:
           `cmd shim 无法安全解包（不支持该形态，fail-closed）：${shimHit}——` +
-          '请给 adapter 配可执行 exe 的 headless_invoke，或升级 shim 到 npm 标准形态',
+          '请使用可直接执行或受支持的 exe/node shim 形态',
       };
     }
     const argv2 = [unpacked.file, ...unpacked.entryArgs, ...rest];
-    return { appName: unpacked.file, commandLine: buildDirectCommandLine(argv2) };
+    return { appName: unpacked.file, commandLine: buildDirectCommandLine(argv2), ...(unpacked.env ? { env: unpacked.env } : {}) };
   }
   return { error: `agent binary 无法解析（文件不存在且 PATH 无 .exe/.cmd/.bat）：${binary0}` };
 }

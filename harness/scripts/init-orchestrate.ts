@@ -1471,7 +1471,7 @@ if (require.main === module) {
         ...staging.decision,
         materialized_adapters: adapters.length ? adapters : staging.decision.materialized_adapters,
       });
-      rawContext = staging.context;
+      rawContext = injectCliMaterializedAdaptersIntoContext(staging.context, adapters);
     } else {
       decision = assertDecisionStructure(readJsonFile<unknown>(opts.decisionFile!, '决策'));
       rawContext = readContextFileOptional(opts.contextFile, { allowMissing: false });

@@ -49,6 +49,9 @@ entries:
       - value: codeagent
         label: "codeagent — 物化 AGENTS.md + .cac/ 产物（Claude Code 内核；hooks 硬门禁；headless = codeagentcli -p）"
         portable: "codeagent"
+      - value: deepseek-harness
+        label: "deepseek-harness — 物化 AGENTS.md + .dsh/skills（headless = dsh --profile headless；默认模型）"
+        portable: "deepseek-harness"
 
   - id: init.task_plan
     skill: "framework-init"

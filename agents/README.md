@@ -32,9 +32,12 @@ framework/agents/
 ├── opencode/                    ← OpenCode CLI adapter（AGENTS.md 共享 + 自有 .opencode/ bundle + opencode run headless）
 │   ├── adapter.yaml
 │   └── templates/
-└── codeagent/                   ← CodeAgent adapter（Claude Code 内核 fork；AGENTS.md + .cac/ 产物 + codeagentcli headless）
+├── codeagent/                   ← CodeAgent adapter（Claude Code 内核 fork；AGENTS.md + .cac/ 产物 + codeagentcli headless）
+│   ├── adapter.yaml
+│   └── templates/               ← 仅 settings.json 与 commands/ 自有；agents/hooks/rules/goal-condition 跨目录引用 ../claude/templates/
+└── deepseek-harness/            ← DeepSeek Harness（AGENTS.md + .dsh/skills；dsh headless 默认模型）
     ├── adapter.yaml
-    └── templates/               ← 仅 settings.json 与 commands/ 自有；agents/hooks/rules/goal-condition 跨目录引用 ../claude/templates/
+    └── headless-patch.yaml ← 只读调用级权限/存储认证补丁；所有入口模板跨目录复用
 ```
 
 各 adapter 可选声明 `goal_capability`（goal-runner 全链路；check-init 仅 WARN，runner preflight BLOCKER）。见 `docs/operations/goal-mode-runbook.md`。
@@ -153,6 +156,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | 日常用 Chrys headless | personal `chrys` |
 | 日常用 OpenCode CLI | personal `opencode` |
 | 日常用 CodeAgent（.cac / codeagentcli） | personal `codeagent` |
+| 日常用 DeepSeek Harness（dsh） | personal `deepseek-harness` |
 | 使用 `.agents` / `.codex` bundle 加载（其它自定义 agent） | personal `generic` |
 
 ## Claude-kernel 确认 Widget（interaction-renderer）
@@ -172,6 +176,14 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 - 确认交互只展示 **portable 编号菜单**（见 `.agents/rules/interaction-renderer.md` 与 [user-confirmation-ux.md](../skills/reference/user-confirmation-ux.md)）
 - 禁止假设结构化 widget 可用
 - **opencode 额外说明**：maison opencode adapter 物化到其**原生主目录** `.opencode/skill/<id>/SKILL.md` + `.opencode/rules/`（`AGENTS.md` 共享，技能自动注册为 slash 命令）。选 `.opencode/skill` 而非 `.agents/skills` 的原因：`.opencode/skill` 是 opencode 长期稳定的主 skill 目录（兼容当前版本及传统原生目录）；`.agents` 外部 skill 发现是较新特性，旧版 `opencode-ai` 读不到。**`.opencode/rules/*` 不被 opencode 自动加载**（`*.mdc` 为 Cursor 格式，对 opencode 惰性），是「引用可达」被动文档（同 chrys `.agents/rules`），非有效规则入口；maison **不**为此创建/覆盖用户的 `.opencode/opencode.json`。与 claude/generic/chrys 同时物化时各写各目录（`.opencode/skill` vs `.claude/skills` vs `.agents/skills`），如扫到同名 skill 仅 logWarning（无害）。
+
+## DeepSeek Harness
+
+DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共享 `AGENTS.md`；
+`.dsh/rules` 是按需引用文档。实例扩展技能名须为小写 kebab-case
+（`^[a-z0-9]+(?:-[a-z0-9]+)*$`）；大写/下划线可能被 DSH 告警后忽略，Maison 不自动改名。
+默认模型、环境凭据、权限覆盖和实测范围见
+[Goal runbook · DeepSeek Harness](../docs/operations/goal-mode-runbook.md#deepseek-harnessdsh)。
 
 ## 工程指纹与 adapter 推测（承接 scan-project）
 
@@ -209,6 +221,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 | opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
 | codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
+| deepseek-harness | AGENTS.md | —（原生技能入口） | `.dsh/skills/<skill>/SKILL.md`（共享薄跳板） | `.dsh/rules/`（按需引用） | — | — |
 
 ### Layer 3 物理拦截能力（settings_file + hooks）
 
@@ -248,7 +261,7 @@ verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence p
 （goal 父进程为 danger-full-access），不构成隔离保证，不写盘靠正文硬性规则（plan 7b2e9d4c D1/D3）。
 
 **只登记宿主实跑观测过的 adapter**（入册纪律）：claude / codeagent / codex 已登记；
-cursor / opencode / chrys / generic 未登记。共享规则文件被物化 **不等于** 运行时会读取——opencode
+cursor / opencode / chrys / generic / deepseek-harness 未登记。共享规则文件被物化 **不等于** 运行时会读取——opencode
 明写 `.opencode/rules/*` 不被自动加载，chrys 的 rules 是「引用可达」，generic 是任意外部 CLI。
 虚标会让每个阶段走「report missing → 重跑 → 仍 missing」。
 

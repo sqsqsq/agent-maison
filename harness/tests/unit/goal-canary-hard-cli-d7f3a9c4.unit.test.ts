@@ -24,6 +24,7 @@ import * as path from 'path';
 import type { UnitCaseResult } from '../run-unit';
 import {
   resolveCanaryHardCliFailure,
+  resolveInvokeHardCliFailure,
   resolveCanaryCacheDecision,
   VISION_CANARY_PROBE_VERSION,
 } from '../../scripts/utils/vision-canary';
@@ -115,6 +116,8 @@ const FULL_ANSWER =
   'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q';
 
 const AUTH_QUOTA_STDOUT = 'ActionRequiredError: You have hit your usage limit. Get Pro for more.';
+// 2026-10-20 DSH 正式调用的诊断形状，不含凭据值。
+const DSH_MISSING_CREDENTIAL = 'dsh: MISSING_CREDENTIAL: llm-deepseek: no API key for provider route "deepseek-official"; ...';
 
 // 2026-09-26 宿主 run 0457a6：未钉 --adapter-model 时 codex 走 ~/.codex/config.toml 默认模型，
 // ChatGPT 账号下 400。invoke 边界产出 terminal_failure_observed + 解析后的 excerpt。
@@ -132,6 +135,25 @@ function codexTurnFailedInvoke(message: string, status: number, errType: string)
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'DSH MISSING_CREDENTIAL 仅非零退出且行首精确命中，先指引同 home 的模型设置',
+    run: () => {
+      const facts = { exitCode: 1, stdout: 'DSH banner', stderr: DSH_MISSING_CREDENTIAL };
+      const message = resolveInvokeHardCliFailure(facts, { formalInvoke: true });
+      assert.match(message ?? '', /同一 DSH_HOME.*模型设置.*实际模型路由/);
+      assert.match(message ?? '', /启动 Goal 的那个环境.*DEEPSEEK_API_KEY/);
+      assert.match(message ?? '', /过滤 KEY/);
+      assert.match(message ?? '', /不是内容失败/);
+      assert(resolveInvokeHardCliFailure({ ...facts, stderr: 'diagnostic\n' + DSH_MISSING_CREDENTIAL }, { formalInvoke: true }));
+      for (const override of [
+        { exitCode: 0 }, { timed_out: true }, { skipped: true },
+        { stderr: 'quoted: ' + DSH_MISSING_CREDENTIAL },
+        { stderr: 'dsh: OTHER_ERROR: no API key' },
+      ]) {
+        assert.strictEqual(resolveInvokeHardCliFailure({ ...facts, ...override }, { formalInvoke: true }), null);
+      }
+    },
+  },
   // ==========================================================================
   // A. 纯函数排序正反例
   // ==========================================================================
@@ -911,6 +933,34 @@ function backdateSession(reportDir: string, consumedMs: number): void {
 }
 
 cases.push(
+  {
+    name: 'DSH 缺凭据经正式 Goal 调用立即停为外部硬失败：内容重试 0、总调用仍计 1',
+    run: async () => {
+      const feature = 'dsh-missing-credential';
+      const root = modelHost(feature, undefined, false);
+      try {
+        // 复用生产 runner 的调用传输缝；硬失败分类本身不按 adapter 分叉。
+        const result = await runModelChain({
+          root, feature, ui: false, args: REQ_ARGS('更新纯文本说明，无 UI 改动'),
+          formal: () => ({
+            exitCode: 1, stdout: '', stderr: DSH_MISSING_CREDENTIAL, command: 'dsh --profile headless',
+          }),
+        });
+        assert.notStrictEqual(result.exitCode, 0);
+        assert.strictEqual(result.formalModels.length, 1);
+        const halt = result.events.find(e => e.type === 'phase_halt' && e.halt_reason === 'adapter_cli_hard_failure');
+        assert(halt, JSON.stringify(result.events.map(e => e.type)));
+        assert.match(String(halt.halt_guidance), /DEEPSEEK_API_KEY/);
+        assert(!result.events.some(e => e.type === 'harness_start'), '缺产物不应再触发 harness 内容判定');
+        assert(!result.events.some(e => e.type === 'phase_verdict'), '不得产生内容 retry 裁决');
+        const budget = resolveResumedBudget(loadAuthoritativeEvents(path.join(result.reportDir, 'events.jsonl')));
+        assert.strictEqual(budget.totalTurns, 1, '实际调用不能从总预算抹掉');
+        assert(budget.priorActiveMs > 0, '实际活跃时间仍须记账');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'P3 A8①：型号由用户显式钉死 → 不替换，交还并写明用户钉死；实际调用的型号只有钉值',
     run: async () => {

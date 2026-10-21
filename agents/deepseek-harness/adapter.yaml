@@ -1,0 +1,61 @@
+adapter_name: deepseek-harness
+description: |
+  DeepSeek Harness adapter——共享 AGENTS.md + 自有 .dsh/skills 薄跳板。
+  headless 使用 dsh --profile headless（stdin + 固定权限/认证 patch），默认模型由 DSH 配置；
+  有效权限与凭据须满足 docs/operations/goal-mode-runbook.md 中的运行前提。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
+
+commands: null
+
+skill_bridge:
+  target_dir: .dsh/skills
+  template_dir: ../shared/agent-bundle/templates/skills-bridge
+
+rules:
+  target_dir: .dsh/rules
+  template_dir: ../shared/agent-bundle/templates/rules
+
+user_confirmation:
+  structured_widget: unsupported
+  portable_required: true
+  interaction_renderer_rule: ../generic/templates/rules/interaction-renderer.md
+
+image_input: none
+
+goal_capability:
+  mode: external_runner
+  output_delivery: unknown
+  usage_capture: none
+  tool_event_provenance: none
+  external_runner:
+    # 环境变量提供兜底；固定 patch 覆盖已保存的 permission.defaultPreset，不写用户配置。
+    headless_invoke: 'dsh --profile headless --patch "{{FRAMEWORK_ROOT}}/agents/deepseek-harness/headless-patch.yaml"'
+    unattended:
+      write_mode: full-access
+      approval_mode: never
+
+post_install_hooks: []
+
+notes: |
+  - skill 正文仍在 framework/skills 或 doc/extensions；实例扩展沿 skill_bridge.target_dir 物化。
+  - DSH 技能名须匹配 ^[a-z0-9]+(?:-[a-z0-9]+)*$。实例扩展请使用小写 kebab-case；
+    共享 slug 允许的大写、下划线等在 DSH 中可能仅告警并被忽略，本 adapter 不自动改名。
+  - DSH 会发现 .dsh/skills 和 .agents/skills，并可能同时加载 AGENTS.md、CLAUDE.md。
+    .dsh/rules 是按需引用文档，不是自动加载规则入口。
+  - 默认文本模式：stdout 为终稿、stderr 为推理及诊断，完成与失败沿现有退出码判定。
+    output_delivery 保持 unknown，不能把 stdout 终稿或 stderr 推理等同于完整进度事件。
+  - 每次调用创建新 DSH 会话；Maison Goal 的恢复由既有 ledger/runner 处理，不传 --session-id。
+  - 不支持 --adapter-model 或自动替代模型；用户在 DSH 自身配置默认模型。
+    不声明原生 resume/handoff、verifier、视觉 provider、结构化 widget 或精确用量。
+  - Maison 不安装 DSH，不改用户 profile/home patch/.env，不复制 GUI 凭据。
+  - Windows / npm 版 dsh 0.2.1-rc.2 已通过隔离接口探针（stdin/cwd/环境凭据及权限覆盖）。
+    Windows 优先使用 PATH，未命中时通过官方安装记录发现桌面 CLI；均未找到时提示菜单注册。
+    Goal 运行期间不要更新或卸载桌面版。
+    桌面版 0.2.1-rc.2 已实测 PATH/官方安装记录解析及 guardian stdin/cwd/权限正常路径；
+    2026-10-20 review 已验证移除环境 key、使用真实 DSH_HOME 保存凭据的生产调用成功；见 runbook。
+    headless-patch.yaml 是发布件内只读配置，同时启用 DSH 自身存储认证，不生成临时 patch；
+    同一 DSH_HOME 内须有 headless 实际模型路由的凭据，保存值优先于环境和 .env。
+    新会话的 sandbox/approval 已由 DSH 会话记录确认。真实需求验收状态见 runbook。

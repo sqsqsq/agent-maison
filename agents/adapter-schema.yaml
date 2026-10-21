@@ -362,8 +362,10 @@ optional_fields:
               non-interactive full-permission 启动命令——无审批提示、完整文件系统/工具执行
               权限（用户主动启动 Goal/headless 即为该授权）。Maison 不猜第三方 CLI 旗标、
               不加命令白名单；无法满足者不得声明支持 Goal/headless。内建已知 CLI
-              （claude/codeagent/codex/cursor/opencode）运行时以 agent-invoke.ts 硬化 argv
+              （claude/codeagent/codex/cursor/opencode/deepseek-harness）运行时以 agent-invoke.ts 硬化 argv
               为 SSOT，本字段仅声明面（两者须一致，防双口径）。
+              deepseek-harness 还在统一 spawn 边界注入权限环境并传入发布件内固定 patch，
+              以覆盖已保存的默认权限；运行前提与验证版本见 goal-mode-runbook.md。
               注意：全权限=执行能力，不是业务裁决权——phase 权责、integrity、runner-owned
               gate、receipt/人签、设备与凭据规则不受影响。
           unattended:

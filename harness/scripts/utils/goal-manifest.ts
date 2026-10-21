@@ -485,7 +485,7 @@ function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
 
 /** 已知 adapter 集（model pin 形状校验的 adapter ∈ 已知集约束）。 */
 const KNOWN_MODEL_PIN_ADAPTERS = new Set([
-  'codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic',
+  'codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic', 'deepseek-harness',
 ]);
 
 /**
@@ -503,7 +503,7 @@ export function validateAdapterModelPinValue(adapter: unknown, value: unknown, s
   const a = adapter.trim();
   if (!KNOWN_MODEL_PIN_ADAPTERS.has(a)) {
     throw new Error(
-      `[goal-manifest] adapter_model_pin.adapter 不在已知集（${['codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic'].join('|')}）`,
+      `[goal-manifest] adapter_model_pin.adapter 不在已知集（${[...KNOWN_MODEL_PIN_ADAPTERS].join('|')}）`,
     );
   }
   if (typeof value !== 'string') {

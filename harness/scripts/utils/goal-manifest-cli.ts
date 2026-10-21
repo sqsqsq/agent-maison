@@ -131,6 +131,10 @@ export type ResolveFinalModelPinResult =
   | { ok: true; pin?: AdapterModelPin }
   | { ok: false; message: string };
 
+function modelPinUnsupported(adapter: string): boolean {
+  return adapter === 'chrys' || adapter === 'generic' || adapter === 'deepseek-harness';
+}
+
 /**
  * plan d7f3a9c4 t2：final pin **单点裁决**（唯一产生 final pin 的纯函数）。
  *
@@ -151,7 +155,7 @@ export type ResolveFinalModelPinResult =
  *    successor 换 adapter 须 --adapter <new> --override-adapter --adapter-model <new-model>，
  *    禁止把旧 adapter 的模型字符串回放到新 adapter。**后续 resume 不享受出生特权**——
  *    一律走 resume 授权规则。
- *  - chrys / generic 传 pin（CLI 或继承的 manifest pin）→ fail-fast（argv 无法回放，
+ *  - chrys / generic / deepseek-harness 传 pin（CLI 或继承的 manifest pin）→ fail-fast（无法回放，
  *    否则形成"manifest 声称已钉而实际未钉"）。
  */
 export function resolveFinalModelPin(
@@ -176,9 +180,9 @@ export function resolveFinalModelPin(
   // 未变（originalAdapter===effectiveAdapter），只要 manifestPin.adapter 不一致，也不得原样
   // 把另一个 adapter 的模型值回放给当前 adapter。
   const pinAdapterMismatch = Boolean(manifestPin && manifestPin.adapter !== effectiveAdapter);
-  const unsupported = effectiveAdapter === 'chrys' || effectiveAdapter === 'generic';
+  const unsupported = modelPinUnsupported(effectiveAdapter);
 
-  // chrys / generic 无回放缝：最终 pin 存在（CLI flag 或继承/加载的 manifest pin）
+  // 不支持模型回放的 adapter：最终 pin 存在（CLI flag 或继承/加载的 manifest pin）
   // 即 fail-fast——否则 manifest 声称已钉、argv 实际不回放。
   if (unsupported && (cliValue !== undefined || manifestPin !== undefined)) {
     return {
@@ -334,7 +338,7 @@ export function collectTriedModels(
 
 /**
  * 四行表（plan §6.2）：用户显式钉了型号 → 交还；没钉、清单里还有没试过的、预算未尽 → 换下一个；
- * 清单为空 / 全部试过 / 预算已尽 → 交还并列出试过的型号。chrys/generic 没有模型回放旗标，钉不了，也就换不了。
+ * 清单为空 / 全部试过 / 预算已尽 → 交还并列出试过的型号。不支持 pin 的 adapter 同样不能自动替代。
  */
 export function decideModelAlternative(input: {
   adapter: string;
@@ -347,7 +351,7 @@ export function decideModelAlternative(input: {
 }): ModelAlternativeDecision {
   const tried = [...input.tried];
   if (input.explicitModel !== undefined || isUserPinnedModel(input.pin)) return { kind: 'refuse', reason: 'user_pinned', tried };
-  if (input.adapter === 'chrys' || input.adapter === 'generic') {
+  if (modelPinUnsupported(input.adapter)) {
     return { kind: 'refuse', reason: 'adapter_unsupported', tried };
   }
   if (input.approvedModels.length === 0) return { kind: 'refuse', reason: 'not_configured', tried };

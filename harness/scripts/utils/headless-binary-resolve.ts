@@ -325,12 +325,59 @@ function resolveViaKnownDirs(name: string): { binary: ResolvedHeadlessBinary | n
   return { binary: null, shadowed };
 }
 
+type UninstallHive = 'HKCU' | 'HKLM';
+type UninstallRegistryReader = (hive: UninstallHive) => string | null;
+
+function readUninstallRegistry(hive: UninstallHive): string | null {
+  const powershell = process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe';
+  // Registry provider 直接读取 Unicode；不把 reg.exe 的 OEM 字节误当 UTF-8。
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+    `$items = @(Get-ItemProperty -Path '${hive}:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' |`,
+    "  Where-Object { $_.DisplayName -like 'DeepSeek Harness*' } |",
+    '  Select-Object DisplayName, InstallLocation)',
+    'ConvertTo-Json -InputObject $items -Compress',
+  ].join('\n');
+  const result = spawnSync(powershell, [
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], { encoding: 'utf8', shell: false, windowsHide: true, timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+  return result.status === 0 ? result.stdout : null;
+}
+
+export const __testing = { readUninstallRegistry };
+
+function resolveDshInstallRecord(readRegistry: UninstallRegistryReader): ResolvedHeadlessBinary | null {
+  for (const hive of ['HKCU', 'HKLM'] as const) {
+    try {
+      const output = readRegistry(hive);
+      if (!output) continue;
+      const records: unknown = JSON.parse(output);
+      if (!Array.isArray(records)) continue;
+      for (const record of records) {
+        const displayName = typeof record?.DisplayName === 'string' ? record.DisplayName.trim() : '';
+        if (!displayName?.startsWith('DeepSeek Harness')) continue;
+        const installLocation = typeof record?.InstallLocation === 'string' ? record.InstallLocation.trim() : '';
+        if (!installLocation || !path.isAbsolute(installLocation)) continue;
+        const shim = path.join(installLocation, 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd');
+        try {
+          if (fs.statSync(shim).isFile()) return { path: shim, kind: 'cmd' };
+        } catch { /* 过期安装记录不影响后续候选。 */ }
+      }
+    } catch { /* 注册表不可读时沿用原来的未发现出口。 */ }
+  }
+  return null;
+}
+
 /**
  * 解析结果（含诊断）：adapter candidate-name 顺序不变；每个 name 内取首个受支持且
  * 可 spawn 的 Windows 执行形态。win32 上不跨目录偏好 .exe；extensionless shim 不入选。
  */
 export function resolveHeadlessBinary(
   candidates: string[],
+  options: { readUninstallRegistry?: UninstallRegistryReader } = {},
 ): ResolvedHeadlessBinary | null {
   const allShadowed: string[] = [];
   const mergeShadowed = (extra: string[] | undefined): string[] => {
@@ -355,6 +402,10 @@ export function resolveHeadlessBinary(
     const { binary: viaKnown, shadowed: knownShadowed } = resolveViaKnownDirs(n);
     if (viaKnown) return { ...viaKnown, shadowed: mergeShadowed(knownShadowed) };
     allShadowed.push(...knownShadowed);
+    if (process.platform === 'win32' && n === 'dsh') {
+      const installed = resolveDshInstallRecord(options.readUninstallRegistry ?? readUninstallRegistry);
+      if (installed) return { ...installed, shadowed: mergeShadowed(undefined) };
+    }
   }
   return null;
 }
@@ -397,9 +448,12 @@ export function formatHeadlessBinaryIssue(
   binary: ResolvedHeadlessBinary | null,
 ): string {
   if (!binary) {
+    const setup = adapterLabel === 'deepseek-harness'
+      ? '请在 DeepSeek Harness 桌面版「管理 dsh 命令… → 安装」注册命令，并在新终端中重试。'
+      : '请安装对应 CLI 并确保在 PATH 中。';
     return (
       `[goal-runner] preflight BLOCKER: ${adapterLabel} 无头 CLI 未在 PATH 中找到` +
-      `（已尝试: ${candidates.join(', ')}）。请安装对应 CLI 并确保在 PATH 中。`
+      `（已尝试: ${candidates.join(', ')}）。${setup}`
     );
   }
   if (binary.inaccessible) {

@@ -61,6 +61,77 @@ in-session 自治必须同时声明 reconcile 与 phase context isolation；缺�
 | 自然语言 | 「目标模式 / 全自动 / 无人值守全自动」→ agent 读 goal-mode Skill |
 | Codex/Cursor/generic | skills-bridge 跳板（skill id `goal-mode`）→ 完整 Skill |
 
+### DeepSeek Harness（dsh）
+
+项目物化选择 `deepseek-harness`，个人设置选择同名 adapter。入口为共享 `AGENTS.md`、
+`.dsh/skills/<name>/SKILL.md`；`.dsh/rules` 仅供按需引用。实例扩展技能名须符合
+`^[a-z0-9]+(?:-[a-z0-9]+)*$`：使用小写 kebab-case；大写、下划线等可能被 DSH 告警后忽略，
+Maison 不自动改名。共享 `.agents/skills` 及 `CLAUDE.md` 仍可能被 DSH 发现。
+
+运行前提集中如下：
+
+- 使用支持 stdin 的 DSH CLI。Windows 优先使用 PATH，再查既有 known-dirs；仍未发现 dsh 时，
+  从官方 HKCU/HKLM 卸载记录的 InstallLocation 定位随包 CLI，无需手动注册或重启当前程序。
+  无有效安装记录时，使用 **「管理 dsh 命令… → 安装」**注册并新开终端后重试；
+  无人值守 Goal 运行期间不要更新或卸载桌面版（其 shim 引用随包 exe 和 app.asar）。
+  不由 framework-init 自动安装、注册或升级。
+- 使用 `dsh --profile headless`，默认模型在 DSH 的 headless profile 中配置。
+  首版不支持 `--adapter-model`、manifest pin 或自动替代模型；提供这些输入时沿现有不支持出口处理。
+- 固定 patch 已启用 DSH 自身存储认证。在同一个 DSH_HOME 的桌面版/Web 模型设置中，
+  保存 headless 实际使用的模型/provider 路由所需 key 即可；启用存储不会同步桌面默认模型。
+  优先级为保存凭据 → 启动环境（例如 `DEEPSEEK_API_KEY`）→ 工作目录 `.env` → `$DSH_HOME/.env`。
+  也可使用这些环境来源；不要将 key 写进发布件、adapter 或命令日志。
+  DSH 原生 subprocess 会过滤 KEY/PASSWORD/SECRET/TOKEN 环境变量；从 DSH 工具 shell
+  启动 Goal 时，不能假设主 DSH 的环境凭据会继续传递；已保存凭据由子 DSH 自行解析，
+  不依赖工具 shell 透传 key。仅使用环境凭据时须确保实际 Goal 启动环境或 DSH 原生 .env 来源可用，
+  不改变上游过滤策略，不自动从注册表提取秘密或复制凭据，不打印密钥。
+  非零退出并出现行首 `dsh: MISSING_CREDENTIAL:` 时按现有外部硬失败处理，
+  先指引在同一 DSH_HOME 的模型设置保存对应路由凭据后重跑，不占内容重试；
+  已发生的调用与活跃时间仍计入总预算。
+- Maison 在统一启动边界覆盖父环境及调用方残留的 `DSH_PERMISSION_MODE` 为
+  `danger-full-access`，并传入发布件内
+  `agents/deepseek-harness/headless-patch.yaml` 作为最后一层 `--patch`。
+  该固定补丁设置本次新会话的 `permission.defaultPreset`，覆盖已保存的受限默认值，
+  并启用官方 credentials/authorization/deepseek-account 三项；Maison 不读取或复制凭据。
+  不写用户 profile、home patch、Web 设置或 `.env`。有效权限须为 full-access + never，
+  且完整文件权限不改变 Maison 的业务范围、阶段和授权约束。
+
+默认文本输出沿现有退出码判定：stdout 是终稿，stderr 包含推理及 `dsh:` 诊断；
+stderr 非空不代表失败。输出节奏保持 `unknown`，不以暂时静默判死。
+`usage_capture: none`，用量为既有 proxy/null 口径。每次 phase/attempt 新开 DSH 会话，
+Maison Goal 的恢复沿既有 ledger，不传 DSH `--session-id`；不声明原生 handoff、verifier、
+视觉 provider、结构化 widget 或跨回合唤醒。
+
+验证载体分开记录：上一轮 P0–P3 和阶段实跑使用的是单独安装在开发仓忽略目录中的
+**npm 版 `@deepseek-ai/dsh@0.2.1-rc.2`**，不能作为桌面版验收。
+本机 **桌面版 `0.2.1-rc.2`** 随包提供
+`D:\Program Files\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`；
+2026-10-20 桌面实测：PATH 解析后经正式 invokeAgentHeadless + containment，stdin/cwd
+正确且 exit 0；移除探针进程中的 dsh PATH 目录后，经 HKCU 官方安装记录定位同一 shim，
+关闭该兜底时结果为 null。P1 新会话有效权限为 danger-full-access + never，实际模型为
+deepseek-official / deepseek-flash，凭据 source=env。
+
+保存凭据路径已验证（用户提供的 2026-10-20 review 实跑结果）：用户在 DSH 模型设置
+保存 DEEPSEEK_API_KEY 后，探针移除自身环境中的 DEEPSEEK_API_KEY、VOLC_API_KEY、
+DSH_HOME，PATH 中也没有 dsh；安装记录兜底找到桌面 shim，使用真实默认 DSH_HOME、
+隔离 cwd，经生产 resolveHeadlessInvokePlan + invokeAgentHeadless 且 containment 打开，
+结果 exit 0、stdout 为 OK、无 dsh: 诊断，凭据文件前后哈希一致。review 仅核凭据文件
+结构中存在对应引用，未查看值；本轮直接复用此证据，没有重跑模型。
+
+早期火山路由探针曾在移除环境凭据后失败、保留环境后以 source=env 成功；这是当时的
+路由来源差异，不能再概括为保存凭据路径未验证。启用存储仍不会同步桌面模型/provider
+配置，凭据必须对应 headless 实际使用的路由。已验证载体为 npm 版 + 桌面版，桌面覆盖
+启动、权限、正常工具写入和保存凭据认证。
+
+2026-10-20 npm 版隔离探针：版本/help、stdin/cwd、正常工具写入和环境凭据通过。按该版本
+Web 设置服务同源的 profile patch 格式保存 `workspace-write` 后，单独 Web profile
+不影响 headless；headless profile 自身保存值会使新会话变为 workspace-write + ask。
+最后一层权限补丁可将其恢复为 danger-full-access + never，已由新会话的
+`permission/preset`、`sandbox/mode`、`approval/policy` 持久事件确认。
+宿主实际完成了新 adapter 及内置/实例技能物化；真实 Goal 在修复启动环境凭据后，
+沿同一 run 执行 spec 并进入 plan。用户随后明确接入不需要整项业务交付，已停止该业务运行。
+以上证明接入与阶段调用，**不代表银行卡业务编码、测试或完整验收通过**。
+
 「全链路 / 从 spec 到真机」等属于 **batch_authorized**（对话内多 phase），不是 goal 模式触发词。
 
 用户**不**直接执行 `goal-runner`；主 agent 按 Skill 内「Agent 必须执行」自跑。
@@ -352,7 +423,7 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
   prompt；CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；无流式输出；退出码 0/1(stderr JSON)/124/130。）
 - OpenCode：`opencode run --dangerously-skip-permissions --dir <PROJECT_ROOT>` + **stdin 灌 prompt**（**勿用 `-p`**，其为 `--password`）。前置：`npm i -g opencode-ai`，bin 名 `opencode`；模型/凭据由 opencode config/auth 提供，先手跑 `opencode run "hi"` 验证。**skill 落 opencode 自有原生目录 `.opencode/skill/<id>/SKILL.md`**（opencode 长期稳定的主 skill 目录，兼容当前版本及传统原生目录；不依赖较新的 `.agents` 外部 skill 发现）。`AGENTS.md` 仍在项目根（opencode 原生读为 instructions）。opencode **自动加载的只有** `AGENTS.md` + `.opencode/{skill,skills}/**/SKILL.md`；`.opencode/rules/*` 不自动加载（引用可达，非有效规则入口），maison 不碰用户 `.opencode/opencode.json`。默认开关全开（勿设 `OPENCODE_DISABLE_PROJECT_CONFIG` 等禁用 bundle 的 env）。Windows `.cmd` 经 cross-spawn。
 
-**模型钉（`--adapter-model <id>`）**：并发多窗口跑不同模型、或要钉住本 run 模型时，启动 goal run 传 `--adapter-model`，该值是**权威输入**并随 headless argv 回放（codex/claude/codeagent/cursor 用 `--model <id>`，opencode 用 `-m <id>`），写入 manifest `adapter_model_pin`。`chrys`/`generic` **不支持**（传了即 BLOCKER fail-fast）。CLI、loaded manifest、successor 继承**均无 pin** 时 = 现状零变化；pinned run 的 resume 不传 flag 仍继承并回放冻结 pin。**仅 headless/unattended（含 `--detach`）；有人在场 in-session 不适用**。
+**模型钉（`--adapter-model <id>`）**：并发多窗口跑不同模型、或要钉住本 run 模型时，启动 goal run 传 `--adapter-model`，该值是**权威输入**并随 headless argv 回放（codex/claude/codeagent/cursor 用 `--model <id>`，opencode 用 `-m <id>`），写入 manifest `adapter_model_pin`。`chrys`/`generic`/`deepseek-harness` **不支持**（传了即 BLOCKER fail-fast）。CLI、loaded manifest、successor 继承**均无 pin** 时 = 现状零变化；pinned run 的 resume 不传 flag 仍继承并回放冻结 pin。**仅 headless/unattended（含 `--detach`）；有人在场 in-session 不适用**。
 
 ### 获准替代型号（`framework.local.json adapters.<adapter>.approved_models`，plan 4e6fb3b6 §6）
 
@@ -366,7 +437,7 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
 - **什么时候换**：金丝雀或正式调用判为"模型不受支持"时，取清单里下一个没试过的型号，写事件、重探金丝雀、继续。
   不占阶段的内容重试次数。目前只认 codex 400 信封的两种实采措辞；其它 CLI 硬失败（参数不识别、认证失败等）不换。
 - **不换的情况**：型号是你显式钉的（`--adapter-model`，包括本次调用显式给的、以及没有来源记录的旧钉值）；adapter 没有型号回放
-  （chrys / generic）；清单为空或都试过；预算已尽。这时照旧停机，说明写清原因并列出试过的型号。你显式钉的型号永远不会被换。
+  （chrys / generic / deepseek-harness）；清单为空或都试过；预算已尽。这时照旧停机，说明写清原因并列出试过的型号。你显式钉的型号永远不会被换。
 - **留痕**：每次换型号写 `adapter_model_substituted`（from / to / 已试列表），以及只授权 `adapter_model_pin` 这一个字段的
   `manifest_identity_rebase`（`authorized_by: approved_model_alternatives`）。manifest 钉值记 `source: approved_alternative`；
   后继继承钉值时连同来源一起继承，来源是替代的不算你钉死，再不受支持还能接着换。钉值变了，旧的金丝雀缓存不再采信，会重探。
