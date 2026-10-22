@@ -124,6 +124,8 @@ export interface CapabilityResolutionReport {
 }
 
 export interface CapabilityResolutionOptions {
+  /** Internal canonical design diagnostic, not a phase admission or configurable override. */
+  purpose?: 'design-authority-probe';
   authorityReaders?: IdentityNeutralDigestReaders;
   frameworkRoot: string;
   projectRoot: string;
@@ -305,7 +307,14 @@ function resolveDerive(
       const targets = source.provider_id === 'derive.codebase'
         ? options.codeTargets ?? options.testTargets
         : options.testTargets;
-      if (!targets?.length) return { state: 'absent', dependencies: [], detail: 'explicit source targets missing' };
+      if (!targets?.length) {
+        const hasBoundDesign = options.inputContext.expected_bindings?.some(binding => binding.input_id === 'contracts');
+        if (source.provider_id === 'derive.codebase' && options.phase === 'coding' && hasBoundDesign
+          && options.inputContext.obligations.implementation === 'required' && fs.existsSync(projectRoot)) {
+          return { ...resolvedSourceFileSet([], sourceTreeDependency(projectRoot)), detail: '已有绑定设计，尚无具体初始源码目标；在项目内调研或创建实现，空输入不证明实现完成。' };
+        }
+        return { state: 'absent', dependencies: [], detail: 'explicit source targets missing' };
+      }
       let safeTargets: string[];
       try { safeTargets = targets.map(target => path.posix.normalize(validateProjectRelativePath(projectRoot, target, 'source target'))); }
       catch (error) { return { state: 'invalid', dependencies: [], detail: String(error) }; }
@@ -728,7 +737,10 @@ function resolveInput(
   resolved?: ResolvedPhaseInputs,
 ): InputResolution {
   const attempts: SourceAttempt[] = [];
-  for (const source of input.sources) {
+  const currentAuthority = (source: ContractInputSource): boolean => source.kind === 'derive' && source.provider_id.startsWith('derive.blueprint-');
+  const sources = options.purpose === 'design-authority-probe'
+    ? [...input.sources.filter(currentAuthority), ...input.sources.filter(source => !currentAuthority(source))] : input.sources;
+  for (const source of sources) {
     const sourceId = source.kind === 'artifact' ? source.artifact : source.provider_id;
     const invalidation = options.inputContext?.invalidated_sources?.[sourceId];
     const suppliedValue = source.kind === 'artifact' && source.artifact === 'use-cases@1' && !options.request && !['ut', 'testing'].includes(options.phase) ? resolved?.artifacts[source.artifact] : undefined;

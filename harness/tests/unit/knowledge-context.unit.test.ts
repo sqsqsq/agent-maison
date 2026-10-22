@@ -53,7 +53,7 @@ function seed(root: string) {
 }
 
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
-  { name: 'typed scope rejects unbound graph writes and accepts authorized bootstrap while preserving curated nodes', run() {
+  { name: 'typed scope accepts deterministic graph bootstrap independently of file forecasts and preserves curated nodes', run() {
     for (const authorized of [false, true]) {
     const { root, frameworkRoot: fw, feature } = setupRunlessProject();
     const priorBase = process.env.HARNESS_DIFF_BASE_REF, priorRun = process.env.MAISON_GOAL_RUN_ID;
@@ -88,8 +88,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.deepEqual(refreshed.nodes, nodes, 'bootstrap 必须保留策展节点与原 anchor');
       assert.notDeepEqual(refreshed.derived, derived, '真实 bootstrap 必须刷新派生内容');
       const result = checkDiffWithinScope(ctx);
-      if (authorized) assert(result.length > 0 && result.every(check => check.status === 'PASS'), JSON.stringify(result));
-      else assert(result.some(check => check.status === 'FAIL' && check.details?.includes(graphFile)), JSON.stringify(result));
+      assert(result.length > 0 && result.every(check => check.status === 'PASS'), JSON.stringify(result));
       const guidance = renderKnowledge(assembleKnowledge({ projectRoot: root, frameworkRoot: fw, phase: 'coding' }));
       assert(guidance.includes('不在 run 内擅自刷新图谱'));
     } finally {

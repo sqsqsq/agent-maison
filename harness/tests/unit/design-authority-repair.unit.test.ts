@@ -1417,80 +1417,63 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     }),
   },
   {
-    name: 'B1-mixed 混合阻断逐条查 + B3 第七种变化只在探针就绪时成立（真 harness）：plan 的真实门同时报内容形状坏（B1）与施工范围越界（B2）→ 停机带两条简报、整体 B2；只修一条探针仍未就绪、不算外部条件就绪；两条都不再阻断才就绪并重新接入；显式换型号仍按原判据起后继',
+    name: 'B1-mixed 机器内容形状与真实DSL冲突：两条原因都解除才就绪，续跑或后继仍由既有绑定判断',
     run: () => withHost(async s => {
       const feature = SNAPSHOT_CU_FEATURE;
       const contractsFile = featureFilePath(s.root, feature, 'contracts.yaml');
-      const widen = (on: boolean): void => {
-        const doc = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-        doc.modules = doc.modules.filter((m: { name: string }) => m.name !== 'OutsideModule');
-        if (on) doc.modules.push({ name: 'OutsideModule', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: 'src/outside' });
-        fs.writeFileSync(contractsFile, YAML.stringify(doc));
-        clearFrameworkConfigCache();
-      };
+      const configFile = path.join(s.root, 'framework.config.json');
+      const configBytes = fs.readFileSync(configFile);
       let saved: Ev | undefined;
-      // 与 S14 同一驱动：run 真实出生、spec 真实过门；plan 首轮进行中设计 owner 把蓝图升版并把验收写成了文字（未调和），
-      // plan 的 agent 每一轮都把一个蓝图没授权的模块写进 contracts。框架先在 run 内调和指针，重评时 plan 的真实门报两条设计 owner 阻断。
       const run = await runWithStalePointerAtPlan(s, {
         atInjection: () => {
           const bp = YAML.parse(fs.readFileSync(blueprintFile(s), 'utf8'));
-          const node = ledgerDomain(bp);
-          saved = structuredClone(node);
-          node.acceptance = TEXT_ACCEPTANCE;
+          saved = structuredClone(ledgerDomain(bp));
+          ledgerDomain(bp).acceptance = TEXT_ACCEPTANCE;
+          bp.decisions_and_gaps.decisions.push({ decision_id: 'mixed-remove-edge', kind: 'architecture_impact', change: 'dependency_edge',
+            from: 'ledger', to: 'FinancialCard', direction: 'remove', status: 'decided_with_authority', owner: 'design-owner',
+            rationale: '领域不依赖页面', verification_refs: ['view:development'], provenance: structuredClone(bp.provenance) });
           fs.writeFileSync(blueprintFile(s), YAML.stringify(bp));
         },
-        afterPlanWrites: () => widen(true),
       });
       const runId = run.successor;
-      const events = run.events;
-      assert(repairs(run)[0]?.outcome === 'reconciled', `前提：指针过期先由 run 内调和修好：${describeRun(run)}`);
-      const halt = haltOf(events);
+      assert(repairs(run)[0]?.outcome === 'reconciled', describeRun(run));
+      const halt = haltOf(run.events);
       assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.phase === 'plan' && halt.probe === 'design_authority_projectable', JSON.stringify(halt));
-      const items = (halt!.design_authority as { class: string; items: Array<{ check: string; class: string; codes: string[] }> });
-      assert.deepStrictEqual(items.items.map(item => `${item.check}:${item.class}:${item.codes.join(',')}`).sort(),
-        ['authoritative_content_aligned:B1:authority_content_not_machine_structure', 'cu_scope_matches_blueprint:B2:cu_scope_matches_blueprint'], JSON.stringify(items));
-      assert.strictEqual(items.class, 'B2', '混合阻断整体按 B2（不得把需要决定的问题当成可直接修）');
-      assert(/分类：B2/.test(String(halt!.halt_guidance)) && /扩大范围需要设计 owner 决定/.test(String(halt!.halt_guidance)), String(halt!.halt_guidance));
+      const items = halt!.design_authority as { class: string; items: Array<{ check: string; class: string; codes: string[] }> };
+      assert.deepStrictEqual(items.items.map(item => item.check + ':' + item.class + ':' + item.codes.join(',')).sort(),
+        ['authoritative_content_aligned:B1:authority_content_not_machine_structure', 'cu_architecture_impact_not_effective:B2:cu_architecture_impact_not_effective'], JSON.stringify(items));
+      assert.equal(items.class, 'B2');
       const dir = reportDirOf(s, feature, runId);
       const requirement = readJson<{ requirement: string }>(runFile(s.root, feature, runId, 'manifest.json')).requirement;
-      const probe = (): { ready: boolean; reason?: string } => { clearFrameworkConfigCache(); return runConditionProbe(s.root, dir, 'design_authority_projectable', 'plan'); };
+      const probe = () => { clearFrameworkConfigCache(); return runConditionProbe(s.root, dir, 'design_authority_projectable', 'plan'); };
       const decide = (extra: Partial<Parameters<typeof decideRunContinuation>[0]> = {}, call: Record<string, unknown> = {}) => {
-        clearFrameworkConfigCache();
-        return decideRunContinuation({ projectRoot: s.root, feature, call: { requirement, ...call }, ...extra });
+        clearFrameworkConfigCache(); return decideRunContinuation({ projectRoot: s.root, feature, call: { requirement, ...call }, ...extra });
       };
       const both = probe();
-      assert(!both.ready && /authoritative_content_aligned/.test(both.reason!) && /cu_scope_matches_blueprint/.test(both.reason!), JSON.stringify(both));
-      const first = decide();
-      // 这个现场里框架的 run 内调和改过 contracts.yaml，既有的 related_repair_changed 已让重发重新接入（与本批无关）；
-      // 这里只核第七种变化：探针未就绪时不得出现。冷却期内保持停止的真实链路证据在 S15-rejoin 的未修重发一步。
-      assert(!/external_condition_ready/.test(JSON.stringify(first)), `探针未就绪时不得算外部条件已就绪：${JSON.stringify(first).slice(0, 600)}`);
-      // 只修 B1 那条（经 readiness 调和）→ 另一条仍阻断 → 未就绪。
-      repairViaReadiness(s, node => restoreNode(node, saved!), 'blueprint: acceptance back to machine structure');
-      // 无等价 proof 时调和只升 canonical；plan 持原锁重签当前引用，越界模块仍原样保留给真实 B2 门判断。
-      const rebind = tryAcquireLock(featureLockPath(s, CU), { run_id: 'plan-owner-rebind' });
-      assert(rebind, '停放后 plan 作者才能取得重签锁');
-      try {
-        const prior = readDoc(contractsFile);
-        writeDoc(contractsFile, authorCurrentCuPlan(s.root, prior));
-        assert(readDoc(contractsFile).modules.some((module: Ev) => module.name === 'OutsideModule'), '重签引用不得修掉所测 B2 范围越界');
-      } finally { releaseLock(featureLockPath(s, CU), rebind!.ownerId); }
+      assert(!both.ready && /authoritative_content_aligned/.test(both.reason!) && /cu_architecture_impact_not_effective/.test(both.reason!), JSON.stringify(both));
+      assert(!/external_condition_ready/.test(JSON.stringify(decide())), '原因未解除不能声称探针就绪');
+      repairViaReadiness(s, node => restoreNode(node, saved!), 'restore structured acceptance, keep the real DSL mismatch');
       const one = probe();
-      assert(!one.ready && !/authoritative_content_aligned/.test(one.reason!) && /cu_scope_matches_blueprint/.test(one.reason!), `只修一条不得就绪：${JSON.stringify(one)}`);
-      const held = decide();
-      assert(!/external_condition_ready/.test(JSON.stringify(held)), `只修一条时不得算外部条件已就绪：${JSON.stringify(held).slice(0, 600)}`);
-      // 其它变化事实的判定不变：显式换型号照旧起后继（与探针无关）。
+      assert(!one.ready && /cu_architecture_impact_not_effective/.test(one.reason!), JSON.stringify(one));
+      const projected = deriveBlueprintSkillInput(s.root, feature, s.frameworkRoot, 'contracts');
+      assert(!projected.codes?.includes('authority_content_not_machine_structure'), '第一条结构问题已经实际修复');
+      assert(!/external_condition_ready/.test(JSON.stringify(decide())), '只修一条不能放行');
       const model = decide({}, { model: 'another-model' });
       assert(model.kind === 'successor' && model.change === 'model_changed', JSON.stringify(model));
-      // 探针就绪只能来自真实恢复：另一条也不再阻断 → 就绪 → 冷却期内重新接入。
-      // plan 责任方把越界模块去掉：contracts.yaml 的写入边界是 feature 锁（与阶段写入、调和器同一把），先取锁再写。
-      const writer = tryAcquireLock(featureLockPath(s, CU), { run_id: 'plan-owner-session' });
-      assert(writer, '停放的 run 已释放 feature 锁，责任方才能取到写入锁');
-      try { widen(false); } finally { releaseLock(featureLockPath(s, CU), writer!.ownerId); }
-      const ready = probe();
-      assert(ready.ready, JSON.stringify(ready));
-      const rejoin = decide();
-      assert(rejoin.kind === 'rejoin' && rejoin.runId === runId && /external_condition_ready/.test(rejoin.reason), JSON.stringify(rejoin));
-      assert(!/external_condition_ready/.test(JSON.stringify(decide({ runProbe: () => ({ ready: false }) }))), '同一现场、探针未就绪时不算这种变化');
+      // 设计 owner 撤回原需求未要求的删边决定，保留原有效架构；不是 plan 自改许可。
+      bumpBlueprint(s, bp => { const decisions = bp.decisions_and_gaps as Ev; decisions.decisions = decisions.decisions.filter((decision: Ev) => decision.decision_id !== 'mixed-remove-edge'); });
+      const readiness = deriveDesignPreparationReadiness(s.root, BLUEPRINT_ID);
+      assert(!readiness.blueprintRefs.busy && readiness.blueprintRefs.bumped.some(row => row.change_unit_id === CU), JSON.stringify(readiness.blueprintRefs));
+      assert(fs.readFileSync(configFile).equals(configBytes), '没有修改DSL或伪造环境新鲜度');
+      clearFrameworkConfigCache();
+      const writer = tryAcquireLock(featureLockPath(s, CU), { run_id: 'plan-owner-rebind' });
+      assert(writer, '停放后才能由责任方重签');
+      try { writeDoc(contractsFile, authorCurrentCuPlan(s.root, readDoc(contractsFile))); }
+      finally { releaseLock(featureLockPath(s, CU), writer!.ownerId); }
+      const ready = probe(); assert(ready.ready, JSON.stringify(ready));
+      const resumed = decide();
+      assert(resumed.kind === 'rejoin' || resumed.kind === 'successor', JSON.stringify(resumed));
+      assert(!/external_condition_ready/.test(JSON.stringify(decide({ runProbe: () => ({ ready: false }) }))), '探针假值不能成为外部恢复事实');
     }),
   },
   // S15 四支、S16 主线与两个绑定失效支、S16-c1 无预授权：只在 reliability-scenarios 的 S15 / S16 里跑（plan b0e0621c §3.3，断言在共享流程函数里）。

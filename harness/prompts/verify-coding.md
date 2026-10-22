@@ -1,5 +1,7 @@
 # Coding 阶段语义验证 — {feature_name}
 
+实施边界：以原始需求及有效更正中的真实限制、公共接口/数据契约和阶段职责为准。files、预计模块、私有名字/位置不是逐项许可；合法重组不要求创建空壳或回签预测。必须看实际 diff（含新增、删除、重命名）及必要源码，核对自然语言中的明确禁止；预测外模块的必要性、影响与回归依据在报告中显著披露。真实越权、公共契约违约或漏实现仍 FAIL，不能靠披露或登记齐全放行。
+
 核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
 
 > 自动生成于 {timestamp}
@@ -270,7 +272,7 @@ verification_result:
 
 ## 八、注意事项
 
-1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 时不得给出整体 PASS
+1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 继续是产品 FAIL。`repair_diagnosis` 只核实当前提案与责任，终态块只数你自己的语义 BLOCKER，不得以诊断 PASS 覆盖脚本 FAIL。
 2. **不要重复脚本 Harness 已覆盖的检查**（文件存在性、分层合规、资源引用等）
 3. 若源代码文件缺失导致无法进行某项语义检查，将该检查标为 WARN 并说明原因
 4. 对于"暂不支持"类的占位功能，只要 Toast 正确弹出即视为 PASS
@@ -280,6 +282,8 @@ verification_result:
 ---
 
 ## 终态块（唯一版本化结论出口 · 必填）
+
+若材料含 coding 可选上游问题表，逐条读取其责任产物和当前证据（含编译日志），用原 `issue-verification` fenced 块输出 `- issue: <原ID>`、`verdict: confirmed|refuted|unclear`、`evidence: <责任文件名 + 材料给出的完整问题/依据＋修复建议原文 + 实际判断依据>`。缺证据、只是实现/资源漏写、错误甩锅须 refuted/unclear；不要求编造 review 结论。owner 的拒修理由须一起看；事实拒修按材料中的 `repair_candidate:<指纹>` 逐条核实，evidence 包含完整依据。蓝图/CU/DSL 归设计 owner，源码和日志只是证据。无提案不补空表。
 
 > **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
 > 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，

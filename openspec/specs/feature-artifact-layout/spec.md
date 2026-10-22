@@ -363,28 +363,23 @@ Enforcement: `harness/scripts/utils/device-test-evidence-shared.ts`, `profiles/h
 - **WHEN** a bound trace, HAP, product source aggregate, flow, or step observation changes after testing closure
 - **THEN** testing closure and feature completion SHALL become stale through the existing evidence-manifest verification
 
-### Requirement: contracts.files is the sole file authorization set
+### Requirement: Implementation forecasts do not grant or restrict file permission
 
-Within `contracts.yaml`, the top-level `files` collection SHALL be the only persistent authorization set for files that plan permits coding or later phases to materialize or modify. All other file-bearing contract fields are references and MUST be members of that set; they MUST NOT act as independent authorization channels. Reference closure SHALL be a deterministic in-memory projection of the current YAML and SHALL not create another feature artifact.
+contracts.files and predicted modules SHALL remain implementation hints, not exact write authorization. Other file-bearing fields SHALL be normalized as safe project-relative references without requiring membership in files. Original user restrictions, public contracts, phase ownership and protected framework artifacts remain authoritative. Real changes, including unpredicted source and registration files, SHALL enter the existing analysis and independent review.
 
-The `navigation` section SHALL carry exactly one file-bearing field in 3.0: `config_files: string[]`, the navigation registration/configuration file list. Its entries are references like any other and MUST be members of `contracts.files`; a consumer reading them MUST NOT treat the declaration itself as authorization.
+#### Scenario: Safe resource or navigation reference is not listed in files
+- **WHEN** a resource or navigation reference names a safe path absent from the prediction
+- **THEN** the plan SHALL NOT fail merely for missing membership; consumers SHALL check actual readability, routing and public contracts where applicable
 
-Enforcement: `harness/scripts/utils/spec-loader.ts`, `harness/scripts/utils/contract-reference-closure.ts`, `specs/artifact-schemas/contracts.schema.yaml`
+#### Scenario: Required resource was omitted by design
+- **WHEN** coding must add a resource within the original request to satisfy a real compilation failure
+- **THEN** it SHALL implement and recompile without expanding a file allowlist; actual defects and true authorization violations remain failures
 
-#### Scenario: Resource key is a reference, not an allowlist
+#### Scenario: New page has no predicted navigation declaration
+- **WHEN** an actual changed page uses a supported static routing form
+- **THEN** the profile SHALL inspect actual module metadata and registrations, reporting a missing target or builder rather than requiring a prior navigation.config_files declaration
 
-- **WHEN** `resource_keys[*].media` names a file absent from `contracts.files`
-- **THEN** the media field MUST NOT authorize that file and plan closure MUST remain open
-
-#### Scenario: Reclosed contracts replace the in-memory view
-
-- **WHEN** the plan owner adds a missing path to `contracts.files` and reruns closure
-- **THEN** the resolver SHALL derive a new view solely from the updated YAML without reading a previous graph or sidecar
-
-#### Scenario: Navigation config file is a reference, not an allowlist
-
-- **WHEN** `navigation.config_files` names a registration file absent from `contracts.files`
-- **THEN** plan closure MUST remain open and the navigation declaration MUST NOT authorize that file
+Enforcement: `harness/scripts/utils/contract-reference-closure.ts`, `harness/scripts/utils/diff-scope.ts`, `harness/scripts/check-coding.ts`, `profiles/hmos-app/harness/coding-host-rules.ts`
 
 ### Requirement: feature.yaml declares track
 

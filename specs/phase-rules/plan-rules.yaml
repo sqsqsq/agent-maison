@@ -65,8 +65,8 @@ traceability_checks:
     severity: MAJOR
   contract_file_reference_closure:
     description: >
-      contracts.yaml 中所有 schema 声明的文件引用必须属于规范化 contracts.files；
-      files 是唯一授权集合，现有文件或内容相同不能豁免
+      contracts.yaml 中的文件引用须能被统一解析为安全的工程内路径；
+      contracts.files 仅为实施预测，定位遗漏不单独阻断；引用不构成写授权，真实职责与授权边界仍按原检查核验
     severity: BLOCKER
   spec_constraint_traceability:
     description: >

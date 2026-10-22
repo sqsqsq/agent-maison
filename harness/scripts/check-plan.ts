@@ -1,3 +1,4 @@
+import { resolveImplementationScope } from './utils/diff-scope';
 // ============================================================================
 // Plan 阶段脚本 Harness — check-plan.ts
 // ============================================================================
@@ -27,7 +28,7 @@ import {
 } from './utils/types';
 import { SpecLoader } from './utils/spec-loader';
 import {
-  findUnauthorizedContractFileReferences,
+  findUnplannedContractFileReferences,
   resolveContractFileReferences,
 } from './utils/contract-reference-closure';
 import {
@@ -358,26 +359,26 @@ function checkScopeConsistencyWithPrd(
     }];
   }
 
-  const { unauthorizedExpansions, touchingForbidden } = findScopeViolations(
-    prdParse.scope!,
-    designParse.scope!,
-  );
+  const original = resolveImplementationScope(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts?.modules, process.env.MAISON_GOAL_RUN_ID?.trim()).explicit;
+  const { unauthorizedExpansions, touchingForbidden } = original
+    ? findScopeViolations(original, { ...designParse.scope!, expansions_with_user_approval: [] })
+    : { unauthorizedExpansions: [], touchingForbidden: [] };
 
   if (unauthorizedExpansions.length === 0 && touchingForbidden.length === 0) {
     return [{
       id: 'scope_consistency_with_spec', category: 'traceability',
       description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_spec'),
       severity: 'BLOCKER', status: 'PASS',
-      details: `plan.in_scope_modules ⊆ spec scope（含批准扩展），共 ${designParse.scope!.in_scope_modules.length} 个模块。`,
+      details: `已对照原请求明确范围（spec 模块预测不作许可），共 ${designParse.scope!.in_scope_modules.length} 个模块。`,
     }];
   }
 
   const messages: string[] = [];
   if (unauthorizedExpansions.length > 0) {
-    messages.push(`未经用户批准就扩大到 spec 之外的模块：${unauthorizedExpansions.join('、')}`);
+    messages.push(`超出原请求明确限定的模块：${unauthorizedExpansions.join('、')}`);
   }
   if (touchingForbidden.length > 0) {
-    messages.push(`触碰了 spec.out_of_scope_modules：${touchingForbidden.join('、')}`);
+    messages.push(`触碰了原请求明确排除模块：${touchingForbidden.join('、')}`);
   }
 
   return [{
@@ -386,7 +387,7 @@ function checkScopeConsistencyWithPrd(
     severity: 'BLOCKER', status: 'FAIL',
     details: messages.join('；'),
     suggestion:
-      '要么把相关模块从 plan.in_scope_modules 移除并改为就地实现，要么回到 plan 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 expansions_with_user_approval 中登记。',
+      '原请求明确边界不能由预测表或补签自授；先在原边界内解决，真实目标变化再按原确认流程处理。',
     affected_files: [
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md'),
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md'),
@@ -984,7 +985,7 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
     id, category, description: ruleDesc(ctx, category === 'traceability' ? 'traceability_checks' : 'structure_checks', id), severity: 'BLOCKER',
     status: failures.length ? 'FAIL' : 'PASS',
     details: `${failures.length ? failures.join('；') : pass}（来源=蓝图）`,
-    ...(failures.length ? { suggestion: 'CU-bound plan 不再判定范围与架构影响：回 /component-design 做蓝图 revision；DSL 改写走 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE），plan 不是 DSL writer。' } : {}),
+    ...(failures.length ? { suggestion: '真实设计/架构缺口交设计 owner 沿原正式修订通道处理；plan 不自行改 DSL。预测清单变化无需补许可。' } : {}),
   });
   let projection: NonNullable<ReturnType<typeof loadChangeUnitBlueprintScope>>;
   try {
@@ -996,13 +997,7 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
   const { scope, error } = parseScope(design);
   const scopeFailures: string[] = [];
   if (!scope) scopeFailures.push(error ? describeScopeError(error) : 'Scope 声明无法解析');
-  else {
-    const inScope = new Set(scope.in_scope_modules);
-    if (inScope.size !== projection.modifiable.length || projection.modifiable.some(name => !inScope.has(name))) {
-      scopeFailures.push(`in_scope_modules [${[...inScope].join(', ')}] 必须集合等于蓝图可修改模块 [${projection.modifiable.join(', ')}]`);
-    }
-    if ((scope.expansions_with_user_approval ?? []).length > 0) scopeFailures.push('CU-bound 不适用 plan.scope_expansion，expansions_with_user_approval 必须为空；范围扩大走蓝图 revision');
-  }
+  // 旧扩展登记仅作兼容读取，既不授予权限，也不因预测变化阻断。
   const decisions = asRecords(asRecord(projection.blueprint.decisions_and_gaps)?.decisions).filter(d => d.kind === 'architecture_impact');
   const expected = decisions.map(d => String(d.decision_id)).sort();
   const impactFailures: string[] = [];
@@ -1019,7 +1014,7 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
   const architecture = architectureImpactIssues(ctx.projectRoot, projection.blueprint, projection.modifiable,
     projection.changeUnit.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id));
   return [
-    result('scope_declaration', 'structure', scopeFailures, `in_scope_modules = 蓝图可修改模块 [${projection.modifiable.join(', ')}]`),
+    result('scope_declaration', 'structure', scopeFailures, `蓝图预测模块 [${projection.modifiable.join(', ')}]；计划模块不作许可`),
     result('architecture_impact_declared', 'structure', impactFailures, `架构影响段 = 蓝图决策投影 [${expected.join(', ') || 'none'}]`),
     result('plan_to_architecture', 'traceability', architecture.issues.map(item => item.message),
       `相关架构影响决策已裁决且与当前 DSL 一致${architecture.warnings.length ? `；待人工核对：${architecture.warnings.join('；')}` : ''}`),
@@ -1174,44 +1169,10 @@ export function checkContractFileReferenceClosure(ctx: CheckContext): CheckResul
     }];
   }
 
-  const violations = findUnauthorizedContractFileReferences(closure);
-  if (violations.length === 0) {
-    return [{
-      id: 'contract_file_reference_closure',
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: `contracts.yaml 的 ${closure.references.length} 个文件引用均已由 contracts.files 授权。`,
-    }];
-  }
-
-  const shown = violations.slice(0, CONTRACT_REFERENCE_DIAGNOSTIC_LIMIT);
-  const omitted = violations.length - shown.length;
-  const projected = ctx.feature.startsWith('cu-') ? deriveBlueprintSkillInput(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, 'contracts') : undefined;
-  const expansion = projected?.state === 'resolved' ? designWriteSetExpansion(ctx.projectRoot, projected.value as typeof contracts, contracts).filter(file => violations.some(v => v.path === file)) : [];
-  return [{
-    id: 'contract_file_reference_closure',
-    category: 'traceability',
-    description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    ...(expansion.length ? { repair_owner: 'external' as const, structured: { kind: 'design_authority', reason: 'other', codes: ['authority_contract_write_set_open'] } } : {}),
-    details: [
-      `${violations.length} 个文件引用未列入 contracts.files（唯一授权集合）：`,
-      ...(expansion.length ? [`需扩大蓝图/CU 写集：${expansion.join(', ')}；交设计 owner 重签，无人值守原需求内自动处理，有人在场沿原确认流程。`] : []),
-      ...shown.map(violation => {
-        const sources = violation.sources
-          .slice(0, 3)
-          .map(source => `${source.source} [${source.kind}]`)
-          .join('；');
-        return `- ${violation.path} ← ${sources}`;
-      }),
-      ...(omitted > 0 ? [`- …另有 ${omitted} 个路径未展示`] : []),
-    ].join('\n'),
-    affected_files: [contractsRel],
-    suggestion: '回到 plan 区分资源引用与施工文件：仅使用已有资源时，在 resource_keys.value 写资源键（如 app.media.bank_logo），来源沿 spec/asset-manifest 保留，不把只读引用写成待交付的 path/media。确需新建或修改的文件才声明 path/media 并由 contracts.files 授权；CU 已冻结写集时，缺少授权须回设计 owner 裁定，不能在 plan 自行扩写集。修正后重跑 plan closure；文件已存在不构成写授权。',
-  }];
+  const unplanned = findUnplannedContractFileReferences(closure);
+  return [{ id: 'contract_file_reference_closure', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'), severity: 'BLOCKER', status: 'PASS',
+    details: `已解析 ${closure.references.length} 个安全的工程内文件引用；${unplanned.length} 个未列入实施预测，引用不构成写授权。实际存在性/公共契约由相应阶段核验。` }];
 }
 
 const checker: PhaseChecker = {

@@ -182,13 +182,14 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }
   }, true) },
   { name: '执行结果按 owner_phase 摊回：CU 施工源码后改 → coding 义务 uncovered，记录仍可信', run: () => withSnapshot((root, fw) => {
+    assert(assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE).complete, '先取得当前有效完成，源码变化不能被旧gate指纹遮住');
     fs.appendFileSync(path.join(root, 'src', 'ledger', 'LedgerFeature.ets'), '\n// changed after completion\n');
     const a = assessOnSnapshot(root, fw, SNAPSHOT_CU_FEATURE);
     assert.strictEqual(a.record.state, 'ok', brief(a));
     const coding = obligation(a, 'implementation:request');
     assert(coding.status === 'uncovered' && (coding.reason ?? '').includes('LedgerFeature.ets'), brief(a));
     assert.strictEqual(a.complete, false);
-  }) },
+  }, true) },
   { name: '★2 只改 change-unit.yaml（contracts.yaml 字节不变）→ plan 义务 uncovered/binding，原因为 CU 绑定失配', run: () => withSnapshot((root, fw) => {
     const dir = featureFilePath(root, SNAPSHOT_CU_FEATURE, '');
     const contracts = fs.readFileSync(path.join(dir, 'contracts.yaml'));

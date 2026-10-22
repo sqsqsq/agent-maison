@@ -778,7 +778,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: '最终评审返修二（CU 同类）：contracts.modules 越出蓝图可修改模块 → 真实 cu_scope_matches_blueprint（route=reconcile_blueprint）标 repair_owner=external，经真实 summary 写入器进入设计 owner 出口判据；repair_change_unit 路线不标',
+    name: '8a6d3f21 CU modules 超出预测：披露而不产生设计扩权请求',
     run: () => withDesignOwnerHost(async (h) => {
       const { checkChangeUnitFeatureProjection } = require('../../scripts/utils/change-unit-feature-projection') as typeof import('../../scripts/utils/change-unit-feature-projection');
       const { SpecLoader } = require('../../scripts/utils/spec-loader') as typeof import('../../scripts/utils/spec-loader');
@@ -790,14 +790,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       clearFrameworkConfigCache();
       const ctx = { projectRoot: h.root, frameworkRoot: h.fw, feature: h.feature, phaseRule: {}, featureSpec: new SpecLoader(h.root, undefined, undefined, h.fw).loadFeatureSpec(h.feature) } as unknown as import('../../scripts/utils/types').CheckContext;
       const checks = checkChangeUnitFeatureProjection(ctx, 'plan');
-      const scope = checks.find(c => c.id === 'cu_scope_matches_blueprint');
-      assert(scope && scope.status === 'FAIL' && scope.repair_owner === 'external' && /OutsideModule/.test(scope.details), `前提：真实检查产出：${JSON.stringify(scope ?? checks.map(c => [c.id, c.status, c.details.slice(0, 160)]))}`);
-      assert(checks.filter(c => c.status === 'FAIL' && c.repair_owner === 'external').every(c => /P1 调和/.test(c.suggestion ?? '')), '只有 reconcile_blueprint 路线标 external');
-      const summary = writeRunSummaryBase(h.root, generateScriptReport('', 'plan', h.feature, h.root, [scope!], h.fw), h.fw);
-      const owners = designOwnerBlockers(summary.blockers as never);
-      assert.deepStrictEqual(owners.map(b => b.id), ['cu_scope_matches_blueprint'], JSON.stringify(summary.blockers));
-      const guidance = buildDesignOwnerGuidance({ feature: h.feature, runId: 'r', phase: 'plan', blockers: owners });
-      assert(/OutsideModule/.test(guidance) && /设计 owner/.test(guidance), guidance);
+      assert(!checks.some(check => check.id === 'cu_scope_matches_blueprint' && check.status === 'FAIL'), JSON.stringify(checks));
+      assert(checks.some(check => check.status === 'WARN' && check.details.includes('OutsideModule')), 'forecast divergence must be visible to review');
+      const summary = writeRunSummaryBase(h.root, generateScriptReport('', 'plan', h.feature, h.root, checks, h.fw), h.fw);
+      assert.equal(designOwnerBlockers(summary.blockers as never).length, 0, 'forecast difference must not request a design permission expansion');
     }),
   },
 ];

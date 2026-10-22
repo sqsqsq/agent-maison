@@ -1,3 +1,5 @@
+import * as YAML from 'yaml';
+import { loadFactsInvocationContext } from '../../../scripts/utils/capability-resolution-entry-input';
 import assert from 'assert';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -45,6 +47,33 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].filter(phase => owners.has(phase));
   ensureFakeDeveco(s);
   const p = { ...s, feature, module: feature === SNAPSHOT_CU_FEATURE ? 'ledger' : 'FinancialCard', modulePath: feature === SNAPSHOT_CU_FEATURE ? 'src/ledger' : '02-Feature/FinancialCard' };
+  const researchIfRequested = (ctx: { runId: string; phase: string; goalAttemptId?: string }): void => {
+    const admitted = loadFactsInvocationContext({ projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature, phase: ctx.phase, runId: ctx.runId, attemptId: ctx.goalAttemptId });
+    if (!admitted) return;
+    const file = featureFilePath(s.root, feature, 'context/facts.md');
+    const prior = fs.readFileSync(file, 'utf8'); const end = prior.indexOf('\n---', 4);
+    const header = YAML.parse(prior.slice(4, end));
+    if (admitted.baseline || admitted.first_phase !== ctx.phase) {
+      const additional = admitted.source_paths.filter(source => !prior.includes('| ' + source + ' |') && !(header.source_code_paths ?? []).includes(source));
+      const rows = additional.filter(source => fs.existsSync(path.join(s.root, source))).map(source => {
+        const bytes = fs.readFileSync(path.join(s.root, source));
+        const text = bytes.includes(0) ? '二进制资源' : bytes.toString('utf8').split(/\r?\n/).find(line => line.trim()) ?? '(empty)';
+        return '| ' + source + ' | 当前原文：' + text.replace(/\|/g, '/') + ' | 核对本阶段新增输入 |';
+      });
+      if (rows.length) fs.appendFileSync(file, '\n## phase_delta: ' + ctx.phase + '\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') + '\n');
+      return;
+    }
+    const sources = [...new Set<string>([...(header.source_code_paths ?? []), ...admitted.source_paths])]
+      .filter(source => { const abs = path.resolve(s.root, source); return abs.startsWith(s.root + path.sep) && fs.existsSync(abs) && fs.statSync(abs).isFile(); });
+    const rows = sources.map(source => {
+      const bytes = fs.readFileSync(path.join(s.root, source));
+      const text = bytes.includes(0) ? '二进制资源，按路径和内容哈希核对' : bytes.toString('utf8');
+      return '| ' + source + ' | 当前原文：' + (text.split(/\r?\n/).find(line => line.trim()) ?? '(empty)').replace(/\|/g, '/') + ' | 核对当前实现输入 |';
+    });
+    Object.assign(header, { schema_version: '1.1', feature, run_id: ctx.runId, established_by: ctx.phase, source_code_paths: sources });
+    delete header.frozen_scope_fingerprint; delete header.request_sha256;
+    fs.writeFileSync(file, '---\n' + YAML.stringify(header) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + rows.join('\n') + '\n');
+  };
   const probe = await runGoalRuntimeChain(s.root, {
     frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex', realHarness: true,
     supersede: [sourceRun], freshRequirement: manifest.requirement, rebaselineTo,
@@ -55,8 +84,8 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
       if (ctx.attempt > 1) publishVerifier(current, 'spec');
     },
     onPlan: ctx => { if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'plan'); },
-    onCoding: ctx => { if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'coding'); },
-    onUt: ctx => { if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'ut'); },
+    onCoding: ctx => { researchIfRequested(ctx); if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'coding'); },
+    onUt: ctx => { researchIfRequested(ctx); if (ctx.attempt > 1) publishVerifier({ ...p, runId: ctx.runId }, 'ut'); },
     onReview: ctx => { if (ctx.attempt > 1) publishVerifier(p, 'review'); },
   });
   clearFrameworkConfigCache();

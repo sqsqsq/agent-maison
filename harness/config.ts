@@ -1774,6 +1774,7 @@ export const PHASE_SCOPED_ARTIFACTS: Readonly<Record<string, string>> = {
   'spec.md': 'spec',
   'plan.md': 'plan',
   'review-report.md': 'review',
+  'upstream-issues.md': 'coding',
   'test-plan.md': 'testing',
   'test-report.md': 'testing',
   'testability-audit.md': 'ut',
@@ -1782,6 +1783,7 @@ export const PHASE_SCOPED_ARTIFACTS: Readonly<Record<string, string>> = {
 
 /** 从未有扁平 legacy 形态的阶段产物（canonical 即 ut/...） */
 export const ALREADY_PHASED_ARTIFACTS: ReadonlySet<string> = new Set([
+  'upstream-issues.md',
   'testability-audit.md',
   'mock-plan.yaml',
 ]);

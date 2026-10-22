@@ -1,3 +1,4 @@
+import { resolveImplementationScope } from './utils/diff-scope';
 // ============================================================================
 // exit 阶段（lite track）— 一次性出口门禁（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
@@ -22,7 +23,7 @@ import { tryLoadProfileCodingHost, tryLoadUtHostImpl } from '../profile-host-loa
 import { changeDocPath, parseChangeDoc, type ParsedChangeDoc } from './check-change';
 import { diffChangedFiles, analyzeDiffStaleness } from './utils/git-diff';
 import {
-  classifyChangedFiles,
+  classifyChangedFiles, implementationFiles, projectImplementationModules,
   layerDirPrefixes,
   resolveModulePathPrefixes,
   type ModulePrefixResolution,
@@ -65,20 +66,9 @@ function checkExitDiffWithinScope(ctx: CheckContext, doc: ParsedChangeDoc): Chec
     severity: 'BLOCKER' as const,
   };
 
-  if (!doc.scope) {
-    return {
-      ...base,
-      status: 'FAIL',
-      details: `change.md Scope 不可解析，红线无判据（fail-closed）：${doc.scopeError ?? '未知错误'}`,
-      suggestion: '先修复 change.md 的 Scope yaml 块（in_scope_modules 非空）并通过 change 门禁。',
-    };
-  }
 
-  const resolution = resolveModulePathPrefixes(
-    ctx.projectRoot,
-    doc.scope.in_scope_modules,
-    ctx.featureSpec.contracts?.modules,
-  );
+  const scope = resolveImplementationScope(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts?.modules);
+  const resolution = { allowedPrefixes: scope.allowedPrefixes, unmapped: [] as string[] };
 
   const envRef = resolveHarnessDiffBaseRef();
   const diff = diffChangedFiles({ projectRoot: ctx.projectRoot, baseRef: envRef });
@@ -95,7 +85,7 @@ function checkExitDiffWithinScope(ctx: CheckContext, doc: ParsedChangeDoc): Chec
   const cls = classifyChangedFiles(
     diff.changedFiles,
     resolution.allowedPrefixes,
-    layerDirPrefixes(ctx.projectRoot),
+    scope.sourcePrefixes,
   );
   const modeStr = `base=${diff.baseRef}, mode=${diff.workingOnly ? 'working-only' : 'committed+working'}`;
   const unmappedNote =
@@ -128,14 +118,14 @@ function checkExitDiffWithinScope(ctx: CheckContext, doc: ParsedChangeDoc): Chec
     status: 'FAIL',
     details:
       `${cls.violations.length} 个变更文件越界到 in_scope_modules 之外的模块：\n${truncateList(cls.violations, 15)}\n\n` +
-      `in_scope_modules: ${doc.scope.in_scope_modules.join('、')}\n` +
+      `in_scope_modules: ${scope.modules.map(module => module.name).join('、')}\n` +
       `base ref: ${diff.baseRef}（mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）\n` +
       `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}` +
       unmappedNote +
       staleHint,
     suggestion: staleness.stale
       ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再走 scope 扩展或撤销误改。'
-      : '若这些改动确属本需求必须：属跨模块信号，按中途升档机制确认（升 full 或经用户同意扩 in_scope_modules 后重过 change 门禁）。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+      : '撤回违反原请求明确边界的改动；确需更正原请求时沿原确认流程，不靠修改预测模块清单放行。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: cls.violations,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
     blocking_class: staleness.stale ? 'stale_diff_base' : 'diff_within_scope',
@@ -259,11 +249,10 @@ async function checkExitConditionalUt(
     }];
   }
 
-  const resolution = resolveModulePathPrefixes(
-    ctx.projectRoot,
-    doc.scope.in_scope_modules,
-    ctx.featureSpec.contracts?.modules,
-  );
+  const modules = projectImplementationModules(ctx.projectRoot, ctx.featureSpec.contracts?.modules);
+  const files = implementationFiles(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts);
+  const names = [...new Set([...doc.scope.in_scope_modules, ...modules.filter(module => files.some(file => file.startsWith(module.package_path + '/'))).map(module => module.name)])];
+  const resolution = resolveModulePathPrefixes(ctx.projectRoot, names, modules);
   if (resolution.allowedPrefixes.length === 0) {
     return [{
       id: 'exit_ut',
@@ -376,7 +365,7 @@ export const checker: PhaseChecker = {
     results.push({
       id: 'exit_scope_declared',
       category: 'traceability',
-      description: 'change.md Scope 的 in_scope_modules 须可解析（越界防护判据来源）',
+      description: 'change.md 预计实施模块须可解析（供目标定位，不作许可）',
       severity: 'BLOCKER',
       status: doc.scope ? 'PASS' : 'FAIL',
       details: doc.scope ? `in_scope=${doc.scope.in_scope_modules.join(', ')}` : doc.scopeError ?? '',

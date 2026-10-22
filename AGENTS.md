@@ -16,6 +16,10 @@
 
 **排除规则 SSOT**：[`scripts/release-excludes.json`](scripts/release-excludes.json)
 
+### `.cursor` 目录创建限制（用户裁决，2026-10-20）
+
+未经用户明确同意，不得在 `.cursor/` 下新建目录（含多级子目录）。调查、review 或起草计划的任务本身不构成创建新目录的授权；优先使用既有目录及用户指定的文件位置。
+
 ## 总设计原则（BLOCKER）
 
 AgentMaison 的“效率优先”“简单优先”“回退重签”“协作可恢复”四条总原则以 [`docs/overview.md §1.2.1`](docs/overview.md#121-四条总设计原则) 为 SSOT。框架设计、plan 与 review 必须同时遵守；不得为追求过程证据完美或理论最优牺牲交付效率，不得另建平行版本、用局部便利绕过权责阶段，或以防篡改之名把可恢复的协作失误升级为常态钥匙/人工门禁。

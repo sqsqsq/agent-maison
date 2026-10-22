@@ -36,6 +36,10 @@ import { validateProjectRelativePath } from './project-relative-path';
 import {
   buildSummaryRepairCandidates,
   reviewRepairVerificationContext,
+  readPhaseRepairIssues,
+  phaseIssuesForVerifierSubject,
+  readVerifiedPhaseDesignFindings,
+  projectDesignFindingsIntoSummary,
   extractFailureClassification,
   scopeRevisionInputFromRepairCandidates,
   writeScopeRevisionInputToScriptReport,
@@ -611,12 +615,9 @@ function recomputeClosureRepairCandidates(
     );
     // verifier 无证据（能力 disabled，或该阶段本就不产 verifier 候选）→ 维持 base。
     if (!verifierReportText) return base.repair_candidates;
-    const reviewDoc =
-      String(opts.phase) === 'review'
-        ? resolveFeatureArtifact(opts.projectRoot, opts.feature, 'review-report.md')
-        : null;
-    const reviewReportText =
-      reviewDoc && reviewDoc.exists ? fs.readFileSync(reviewDoc.actualPath, 'utf8') : null;
+    const phaseIssues = phaseIssuesForVerifierSubject(opts.projectRoot, opts.feature, String(opts.phase),
+      base.verifier_subject_id ?? null, opts.frameworkRoot, undefined, opts.goalRunId?.trim() || base.run_id?.trim());
+    const reviewReportText = opts.phase === 'review' ? phaseIssues?.reportText ?? null : null;
     // 字段名必须是 `failure_kind`——`buildSummaryRepairCandidates` 的输入契约收的是它，
     // 内部才投影成 `classification`。这里若直接写 `classification`，机器归因会被**静默丢弃**
     // （`ut_hvigor_test` 的 code_regression、`p0_coverage_integrity` 的同类合取都会失效），
@@ -645,9 +646,10 @@ function recomputeClosureRepairCandidates(
       checks: candidateChecks,
       parseClassificationFromDetails: extractFailureClassification,
       ...reviewRepairVerificationContext(opts.projectRoot, opts.feature,
-        opts.phase === 'review' ? opts.goalRunId?.trim() || base.run_id?.trim() : undefined, Boolean(base.verifier_request)),
+        opts.goalRunId?.trim() || base.run_id?.trim(), Boolean(base.verifier_request)),
       reportValidity: (base.report_validity ?? 'PASS') as 'PASS' | 'FAIL' | 'UNVERIFIED',
       reviewReportText,
+      phaseIssues,
       verifierReportText,
     });
     return candidates;
@@ -715,6 +717,14 @@ function finalizePhaseClosureUnlocked(
 
 
   const committedAt = (opts.now ? opts.now() : new Date()).toISOString();
+  const designFindings = readVerifiedPhaseDesignFindings(opts.projectRoot, opts.frameworkRoot, opts.feature, String(opts.phase), opts.goalRunId);
+  if (designFindings.length) {
+    projectDesignFindingsIntoSummary(current.parsed, designFindings);
+    const pending = `${summaryPath}.tmp-${process.pid}`;
+    fs.writeFileSync(pending, JSON.stringify(current.parsed, null, 2), 'utf8');
+    fs.renameSync(pending, summaryPath);
+    throw new Error(`已核实设计问题尚需责任方处理：${designFindings.map(finding => finding.check).join('、')}`);
+  }
   const manifestAbs = phaseEvidenceManifestPath(
     opts.projectRoot,
     opts.feature,

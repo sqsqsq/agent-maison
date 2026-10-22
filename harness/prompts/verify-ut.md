@@ -324,6 +324,8 @@ verification_result:
 
 ## 终态块（唯一版本化结论出口 · 必填）
 
+若 testability-audit 在既有 YAML 外附 `## 问题清单`，逐条读责任产物、实际源码/日志与双方依据。复用 `issue-verification` fenced 块：`- issue: <原ID>`、`verdict: confirmed|refuted|unclear`、`evidence: <责任文件名 + 材料给出的完整问题/依据＋修复建议原文 + 具体判断依据>`；无提案不补块。该诊断不抹掉真实编译/执行 FAIL 或未执行检查。可按现有契约合法测试的误判须 refuted，不借诊断擅改产品/验收。事实拒修以原 `repair_candidate:<指纹>` 为 issue、evidence 含完整拒修依据，目标冲突仍核原文引文。
+
 > **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
 > 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，
 > 那才是本轮要审的材料（可达上百 KB，刻意不走传输面）。

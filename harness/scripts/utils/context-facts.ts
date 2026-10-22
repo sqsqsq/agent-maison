@@ -255,7 +255,7 @@ function checkFactsFile(
     const ownedSources = 'feature' in invocation.subject ? resolveFactsPhaseOwnedSources({ projectRoot,
       frameworkRoot: options?.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: invocation.subject.feature, phase,
       ...('run_id' in invocation.subject ? { runId: invocation.subject.run_id } : {}) }, invocation) : new Set<string>();
-    const mayAdvanceSource = (source: string, hash: string | null): boolean => !!hash && ownedSources.has(source)
+    const mayAdvanceSource = (source: string, hash: string | null): boolean => ownedSources.has(source)
       && currentTargets.has(path.resolve(projectRoot, source)) && invocation.source_owners?.[source] === phase
       && ('run_id' in invocation.subject
         ? !!admission?.baseline && admission.baseline.fingerprint === invocation.baseline?.fingerprint && admission.source_owners?.[source] === phase
@@ -291,6 +291,7 @@ function checkFactsFile(
       }
     }
     for (const source of invocation.source_paths) {
+      if (!fs.existsSync(path.resolve(projectRoot, source)) && mayAdvanceSource(source, null)) continue;
       if (!declared.includes(source) && !deltaPaths.includes(source)) {
         const absolute = path.resolve(projectRoot, source);
         let hash: string | null = null;

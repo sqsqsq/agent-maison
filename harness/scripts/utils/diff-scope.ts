@@ -1,21 +1,12 @@
-// ============================================================================
-// diff 越界防护共享核心 — diff-scope.ts（C1 feature-track，plan d4a7c1e8）
-// ============================================================================
-// `diff_within_scope` 是红线（决策 4：任何档位不豁免）。分类核心在此单点维护，
-// 两个消费者：
-//   - check-coding.ts（full 轨）：scope 来自 plan.md，模块→路径映射来自 contracts.yaml
-//   - check-exit.ts（lite 轨）：scope 来自 change.md，映射按 contracts → catalog
-//     entry_file → <layer>/<name>/ 目录存在性 三级回退（resolveModulePathPrefixes）
-// 判定语义（与历史 check-coding 实现逐行等价）：
-//   - 不在任何 outer_layer 目录前缀下的变更 → neutral（框架性/文档，不计违规）
-//   - 在层目录下且命中 in_scope 模块前缀 → in_scope_hit
-//   - 在层目录下且未命中任何前缀 → violation
-// ============================================================================
-
+// 实际实现域与原需求范围共享判定。文件/模块预测只作线索；写入归属由阶段观察负责。
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadFrameworkConfig, getOuterLayerIds } from '../../config';
 import { loadCatalog, findModule } from './catalog-parser';
+import { diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef } from './git-diff';
+import { parseScope } from './scope-parser';
+import { validateProjectRelativePath } from './project-relative-path';
+import type { ContractsSpec } from './types';
 
 // --------------------------------------------------------------------------
 // 层级前缀与分类
@@ -144,4 +135,83 @@ export function resolveModulePathPrefixes(
   }
 
   return { allowedPrefixes, unmapped, prefixByModule, sources };
+}
+
+/** Project source domains are not the predicted set of modules for one implementation. */
+export function projectImplementationModules(projectRoot: string,
+  hints: Array<{ name?: string; package_path?: string }> = []): Array<{ name: string; package_path: string }> {
+  const modules = new Map<string, { name: string; package_path: string }>();
+  const add = (name: string, rel: string): void => {
+    const safe = validateProjectRelativePath(projectRoot, rel, 'implementation module');
+    const physical = fs.existsSync(path.join(projectRoot, safe)) ? fs.realpathSync(path.join(projectRoot, safe)) : path.resolve(projectRoot, safe);
+    const relative = path.relative(fs.realpathSync(projectRoot), physical).split(path.sep).join('/');
+    const identity = process.platform === 'win32' ? relative.toLowerCase() : relative;
+    if (identity === 'framework' || identity.startsWith('framework/')) return;
+    if (!modules.has(safe)) modules.set(safe, { name, package_path: safe });
+  };
+  for (const mod of hints) if (mod.name && mod.package_path) add(mod.name, mod.package_path);
+  for (const prefix of layerDirPrefixes(projectRoot)) {
+    const dir = path.join(projectRoot, prefix);
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) add(entry.name, prefix + entry.name);
+    }
+  }
+  return [...modules.values()].sort((a, b) => a.package_path.localeCompare(b.package_path));
+}
+
+/** Only a Scope in the original request is an explicit machine-readable restriction. */
+export function resolveImplementationScope(projectRoot: string, feature: string,
+  hints: Array<{ name?: string; package_path?: string }> = [], runId?: string) {
+  const modules = projectImplementationModules(projectRoot, hints);
+  const { collectCurrentRequirementText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  const requirement = collectCurrentRequirementText(projectRoot, feature,
+    loadFrameworkConfig(projectRoot).paths?.features_dir ?? 'doc/features', runId);
+  const explicit = parseScope(requirement).scope;
+  const selected = explicit ? modules.filter(module => explicit.in_scope_modules.includes(module.name)
+    && !explicit.out_of_scope_modules.includes(module.name)) : modules;
+  return { modules, sourcePrefixes: [...new Set([...layerDirPrefixes(projectRoot), ...modules.map(module => toDirPrefix(module.package_path))])], allowedPrefixes: selected.map(module => toDirPrefix(module.package_path)),
+    explicit, requirement };
+}
+
+/** Actual changed files plus existing planning references; never persisted as another inventory. */
+export function implementationFiles(projectRoot: string, feature: string, contracts?: Pick<ContractsSpec, 'files' | 'modules'>,
+  runId?: string): string[] {
+  let diff: ReturnType<typeof diffChangedFilesWithStatus> | null = null;
+  try {
+    const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
+    if (baseline.available) diff = diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha });
+  } catch { /* Input-only consumers keep their readable references; the diff gate diagnoses an unavailable baseline. */ }
+  const layerPrefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, contracts?.modules).map(module => toDirPrefix(module.package_path))];
+  const files = new Set(contracts?.files ?? []);
+  for (const entry of diff?.entries ?? []) {
+    if (isUnderLayerDir(entry.path, layerPrefixes)) files.add(entry.path);
+    if (entry.oldPath && isUnderLayerDir(entry.oldPath, layerPrefixes)) files.add(entry.oldPath);
+  }
+  return [...files].map(file => validateProjectRelativePath(projectRoot, file, 'implementation input'))
+    .filter(file => fs.existsSync(path.join(projectRoot, file)) && fs.statSync(path.join(projectRoot, file)).isFile()).sort();
+}
+
+/** Removed/renamed source stays available to semantic review without pretending it exists now. */
+export function implementationChangeContext(projectRoot: string, feature: string, runId?: string, modules: Array<{ name?: string; package_path?: string }> = []): import('./types').ContextFileEntry[] {
+  try {
+    const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
+    if (!baseline.available) return [];
+    const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha });
+    if (!diff.executed) return [];
+    const prefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, modules).map(module => toDirPrefix(module.package_path))];
+    const entries = diff.entries.filter(entry => isUnderLayerDir(entry.path, prefixes)
+      || !!entry.oldPath && isUnderLayerDir(entry.oldPath, prefixes));
+    if (!entries.length) return [];
+    const result: import('./types').ContextFileEntry[] = [{ label: '(actual implementation changes)', kind: 'text',
+      content: '基线 diff 供审查，不直接证明由本阶段写入；归属以现有调用观察为准，不接管其它任务的既有改动。\n' + entries.map(entry => entry.status + ': ' + (entry.oldPath ? entry.oldPath + ' -> ' : '') + entry.path).join('\n') }];
+    for (const entry of entries) {
+      const prior = entry.status === 'D' ? entry.path : entry.oldPath;
+      if (!prior) continue;
+      const bytes = readFileAtRef(projectRoot, baseline.baseSha, prior);
+      if (!bytes || bytes.includes(0)) continue;
+      result.push({ label: '(before ' + baseline.baseSha + ') ' + prior, kind: 'text', content: bytes.toString('utf8') });
+    }
+    return result;
+  } catch { return []; }
 }

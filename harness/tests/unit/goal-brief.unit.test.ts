@@ -122,7 +122,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(!text.includes('result_done'), 'implement 元素不是排除项');
       assert(text.includes('### 本次延后') && text.includes('本次保留20家，不扩至100家') && text.includes('spec/ref-elements.yaml'), '延后必须携带真实理由与来源');
       assert(!exclusionsSection(root, 'demo').includes('bank_count'), 'defer 不能冒充原文排除');
-      assert(text.includes('spec 出范围模块：payment'), `spec 出范围模块须进明确不做：${text}`);
+      assert(!text.includes('出范围模块：payment'), '模型预测不能在原需求缺席时冒充明确用户禁止');
       assert(text.includes('即使尚未登记'), '明确不做须提示需求原文里的排除同样有效');
       assert(text.includes('### 判定办法') && text.includes('权威判定'), '判定办法恒有');
       assert(!text.includes('### 已授予的权限'), '无 run 时省略权限栏');

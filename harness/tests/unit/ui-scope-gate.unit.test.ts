@@ -7,7 +7,7 @@
 //   ② CardPackPage 已声明修改 → PASS
 //   ③ 只改 live contracts（不重新闭环 plan）→ 仍 FAIL（hash 与 closure 冻结值失配）
 //   ④ expansion：更新 contracts.files + 重新闭环 plan → PASS
-//   ⑥ agent 改码并自行 commit → 仍检出越界（coding_base_sha 基线覆盖 committed）
+//   ⑥ 原请求明确排除的修改自行 commit 仍检出越界（coding_base_sha 基线覆盖 committed）
 // 附基础设施负例：缺 closure/篡改 manifest/缺 coding_base/非 goal run/无 ui-spec/
 // 删除文件 base 侧分类/untracked 新 UI 文件。
 // ============================================================================
@@ -134,7 +134,7 @@ function closePlan(root: string): void {
 }
 
 /** plan closure + run 出生基线（现代 createGoalRun 形态） */
-function anchor(root: string, opts: { closure?: boolean; base?: boolean } = {}): void {
+function anchor(root: string, opts: { closure?: boolean; base?: boolean; restricted?: boolean } = {}): void {
   if (opts.closure !== false) closePlan(root);
   if (opts.base !== false) {
     const manifestPath = path.join(root, `doc/features/${FEATURE}/goal-runs/${RUN_ID}/manifest.json`);
@@ -142,6 +142,7 @@ function anchor(root: string, opts: { closure?: boolean; base?: boolean } = {}):
       const manifest = buildGoalManifestFromInput({
         feature: FEATURE,
         run_id: RUN_ID,
+        requirement: opts.restricted ? '# Scope\n```yaml\nin_scope_modules: [FinancialCard]\nout_of_scope_modules: [WalletMain]\nrationale: explicit user boundary\n```' : 'Implement the requested feature; file locations are forecasts.',
         start_phase: 'plan',
         end_phase: 'coding',
         unattended: { write_mode: 'full-access', approval_mode: 'never' },
@@ -174,14 +175,14 @@ export function runAll(): UnitCaseResult[] {
     assert(!hasUiContentMarkers('export const a = 1;'), '普通代码不命中');
   });
 
-  run(results, '① HomeTab 未声明却修改 → FAIL ui_scope_violation（结构上无档位豁免）', () => {
+  run(results, '① 原请求明确排除 WalletMain，HomeTab 修改仍 FAIL', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root);
+      anchor(root, { restricted: true });
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("BANK CARDS INJECTED") } }');
       const r = gate(root);
       assert(r.status === 'FAIL', `未声明 UI 修改须 FAIL，got ${r.status}: ${r.details}`);
-      assert(r.failureKind === 'ui_scope_violation', `failureKind=${r.failureKind}`);
+      assert(r.failureKind === 'scope_violation', `failureKind=${r.failureKind}`);
       assert((r.affectedFiles ?? []).includes(UNDECLARED), `affected 须含 ${UNDECLARED}`);
     });
   });
@@ -227,7 +228,7 @@ export function runAll(): UnitCaseResult[] {
   run(results, '⑥ agent 改码并自行 commit → 仍检出越界（基线=coding_base_sha 覆盖 committed）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root);
+      anchor(root, { restricted: true });
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("committed sneak") } }');
       git(root, ['add', '-A']);
       git(root, ['commit', '-qm', 'agent self-commit']);
@@ -240,7 +241,7 @@ export function runAll(): UnitCaseResult[] {
   run(results, '删除未声明 UI 文件 → base 侧内容分类仍检出（改后内容已不在盘上）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root);
+      anchor(root, { restricted: true });
       // UNDECLARED_BY_CONTENT 路径不含 pages/——只能从 base 侧读内容才能判 UI
       fs.rmSync(path.join(root, UNDECLARED_BY_CONTENT));
       const r = gate(root);
@@ -252,7 +253,7 @@ export function runAll(): UnitCaseResult[] {
   run(results, 'untracked 新 UI 文件 → 检出（四态覆盖含 untracked）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root);
+      anchor(root, { restricted: true });
       w(root, '01-Product/WalletMain/src/main/ets/pages/NewSneakPage.ets',
         '@Entry\n@Component\nstruct NewSneakPage { build() {} }');
       const r = gate(root);
@@ -312,18 +313,18 @@ export function runAll(): UnitCaseResult[] {
   run(results, 'round19 P1：删除 live ui-spec 不能绕过——改未声明 UI 仍 FAIL（适用面只看 diff）', () => {
     const { root } = setupHost();
     withTrust(root, () => {
-      anchor(root);
+      anchor(root, { restricted: true });
       // 绕过尝试：agent 删掉 ui-spec 让"UI 面判定"落空，再改未声明 UI
       fs.rmSync(path.join(root, `doc/features/${FEATURE}/spec/ui-spec.yaml`));
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("bypass?") } }');
       const r = gate(root);
       assert(r.status === 'FAIL', `删 ui-spec 后仍须 FAIL，got ${r.status}: ${r.details}`);
-      assert(r.failureKind === 'ui_scope_violation', `failureKind=${r.failureKind}`);
+      assert(r.failureKind === 'scope_violation', `failureKind=${r.failureKind}`);
     });
     // 无 ui-spec 的 feature（从建库起就没有）：改未声明 UI 同样拦——UI 保护面不依赖 ui-spec 在场
     const { root: root2 } = setupHost({ uiSpec: false });
     withTrust(root2, () => {
-      anchor(root2);
+      anchor(root2, { restricted: true });
       w(root2, UNDECLARED, '@Component struct X { build() {} }');
       const r2 = gate(root2);
       assert(r2.status === 'FAIL', `无 ui-spec feature 改 UI 也须 FAIL，got ${r2.status}: ${r2.details}`);

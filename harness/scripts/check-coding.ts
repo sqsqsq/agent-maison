@@ -38,7 +38,7 @@ import { resolveEffectiveScopeSource, loadLineageRunEvents, currentFileHash } fr
 import { replayUtOwnedWrites } from './utils/phase-write-boundary';
 import { resolveContractFileReferences } from './utils/contract-reference-closure';
 import { runUiDiffWithinDeclaredFiles } from './utils/ui-scope-gate';
-import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes } from './utils/diff-scope';
+import { classifyChangedFiles, layerDirPrefixes, resolveModulePathPrefixes, resolveImplementationScope, implementationFiles } from './utils/diff-scope';
 import { relFeaturesDir } from '../config';
 import {
   loadFrameworkConfig,
@@ -77,7 +77,7 @@ function truncateList(items: string[], max: number): string {
 function checkFileCompleteness(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
   if (!contracts?.files?.length) {
-    return [{ id: 'file_completeness', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'file_completeness'), severity: 'BLOCKER', status: 'SKIP', details: 'contracts.yaml 无 files 列表，跳过。' }];
+    return [{ id: 'file_completeness', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'file_completeness'), severity: 'MINOR', status: 'SKIP', details: '无文件预测；仍检查实际改动与真实交付。', structured: { applicability: 'not_applicable' } }];
   }
 
   const missing: string[] = [];
@@ -88,7 +88,7 @@ function checkFileCompleteness(ctx: CheckContext): CheckResult[] {
   }
 
   if (missing.length === 0) {
-    return [{ id: 'file_completeness', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'file_completeness'), severity: 'BLOCKER', status: 'PASS', details: `全部 ${contracts.files.length} 个文件均存在。` }];
+    return [{ id: 'file_completeness', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'file_completeness'), severity: 'BLOCKER', status: 'PASS', details: `预测位置中 ${contracts.files.length} 个文件可读取；存在性不证明行为实现。` }];
   }
 
   // t1c（plan e6a3c9f4）：basename 候选检索（限 architecture 层目录、单次遍历、硬上限）——
@@ -110,14 +110,14 @@ function checkFileCompleteness(ctx: CheckContext): CheckResult[] {
   return [{
     id: 'file_completeness', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'file_completeness'),
-    severity: 'BLOCKER', status: 'FAIL',
+    severity: 'MAJOR', status: 'WARN',
     details:
       `${missing.length}/${contracts.files.length} 个文件缺失：\n${truncateList(missing, 15)}` +
       (prefixHint ? `\n${prefixHint}` : ''),
     affected_files: missing,
     suggestion: prefixHint
       ? '存在同名文件位于其他路径（见 details 诊断行）——优先核对 contracts.yaml files 的路径前缀是否与物理布局一致，修正 contracts 或移动文件，二选一后重跑。'
-      : '请按照 contracts.yaml files 清单补全缺失文件；若文件已存在，请核对 contracts.yaml 中的路径前缀与大小写。',
+      : '预测位置未命中：按实际源码更新定位或由 review 核验行为，不为凑清单创建空壳文件。',
   }];
 }
 
@@ -133,7 +133,7 @@ function checkLayerCompliance(ctx: CheckContext, analyses: FileAnalysis[]): Chec
   }
 
   if (violations.length === 0) {
-    return [{ id: 'layer_compliance', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'layer_compliance'), severity: 'BLOCKER', status: analyses.length > 0 ? 'PASS' : 'SKIP', details: analyses.length > 0 ? `${analyses.length} 个文件均符合模块内分层规则。` : '无可分析的宿主源码文件（由 project_profile 的 coding-host-rules.sourceFileSuffixes 与 contracts.files 决定）。' }];
+    return [{ id: 'layer_compliance', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'layer_compliance'), severity: 'BLOCKER', status: analyses.length > 0 ? 'PASS' : 'SKIP', details: analyses.length > 0 ? `${analyses.length} 个文件均符合模块内分层规则。` : '无可分析的宿主源码文件（按 profile 源码后缀、实际 diff 与可读定位线索选择）。' }];
   }
 
   // 按 DSL 顺序给出依赖方向提示：[shared → data → domain → presentation] 之类
@@ -164,7 +164,7 @@ function checkInterModuleDependency(ctx: CheckContext, analyses: FileAnalysis[])
   }
 
   if (violations.length === 0) {
-    return [{ id: 'inter_module_dependency', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'inter_module_dependency'), severity: 'BLOCKER', status: analyses.length > 0 ? 'PASS' : 'SKIP', details: analyses.length > 0 ? `${analyses.length} 个文件均符合分层依赖规则。` : '无可分析的宿主源码文件（由 project_profile 的 coding-host-rules.sourceFileSuffixes 与 contracts.files 决定）。' }];
+    return [{ id: 'inter_module_dependency', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'inter_module_dependency'), severity: 'BLOCKER', status: analyses.length > 0 ? 'PASS' : 'SKIP', details: analyses.length > 0 ? `${analyses.length} 个文件均符合分层依赖规则。` : '无可分析的宿主源码文件（按 profile 源码后缀、实际 diff 与可读定位线索选择）。' }];
   }
 
   const outerIds = getOuterLayerIds(cfg.architecture);
@@ -193,7 +193,7 @@ export function checkDesignToCode(ctx: CheckContext): CheckResult[] {
     id: 'plan_to_code', category: 'traceability', severity: 'MINOR', status: 'SKIP', description: '旧 PRD 文件映射不适用 CU 输入', details: 'CU 的 predicate/provide/design-ref 到真实实现由 change_unit_feature_projection 检查；不要求再复制一份 prd_to_code_traceability。', structured: { applicability: 'not_applicable' },
   }];
   if (!traceability?.length) {
-    return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'SKIP', details: 'contracts.yaml 无 prd_to_code_traceability 映射。' }];
+    return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'MINOR', status: 'SKIP', details: '无预测文件映射；语义覆盖由实际审查与测试核实。', structured: { applicability: 'not_applicable' } }];
   }
 
   const allKeyFiles = new Set<string>();
@@ -218,20 +218,7 @@ export function checkDesignToCode(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  // P0-2 第五/六轮复审（codex P1 两轮实测复现）：空 key_files 的判定必须**逐条目**——
-  // 只查聚合 allKeyFiles.size 会放过"一条空 + 一条合法"（合法条目的文件存在即整体 PASS，
-  // 空条目那个 PRD 的追溯链静默缺失）。07-13 案 contracts 15 条全缺 key_files 是全空
-  // 形态；部分空是同病灶的更隐蔽变体。追溯条目不映射任何文件=该 PRD 追溯无从谈起。
-  const emptyEntries = traceability.filter((item) => item.key_files.length === 0);
-  if (emptyEntries.length > 0) {
-    return [{
-      id: 'plan_to_code', category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `${emptyEntries.length}/${traceability.length} 条 prd_to_code_traceability 条目未映射任何 key_files（prd_id: ${emptyEntries.map((e) => JSON.stringify(e.prd_id)).join('、')}）——这些 PRD 的追溯链缺失，存在性检查对空集无意义。`,
-      suggestion: '为每条 traceability 条目补 key_files: ["<实现该 PRD 的关键文件路径>", ...]；不涉及代码的条目不应出现在 prd_to_code_traceability。',
-    }];
-  }
+  const emptyEntries = traceability.filter(item => item.key_files.length === 0);
 
   // P0-2 第七轮复审（codex P1 实测复现）：existsSync 会把 ""/"."/目录/越根路径全判"存在"
   // ——伪造追溯四件套。收紧为：trim 非空 + 安全相对路径（validateProjectRelativePath，
@@ -284,8 +271,15 @@ export function checkDesignToCode(ctx: CheckContext): CheckResult[] {
     }];
   }
 
+  if (emptyEntries.length) return [{
+    id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
+    severity: 'MAJOR', status: 'WARN',
+    details: emptyEntries.length + '/' + traceability.length + ' 条预测未映射 key_files：' + emptyEntries.map(item => item.prd_id).join('、'),
+    suggestion: '定位缺口不代表行为缺失；由实际源码、review 与测试核实覆盖，不为填预测清单补空壳。',
+  }];
+
   if (missing.length === 0) {
-    return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'PASS', details: `spec 映射的全部 ${allKeyFiles.size} 个关键文件均存在。` }];
+    return [{ id: 'plan_to_code', category: 'traceability', description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'), severity: 'BLOCKER', status: 'PASS', details: `映射位置中的 ${allKeyFiles.size} 个文件可读取；存在性不证明行为实现。` }];
   }
 
   const byPrd: Record<string, string[]> = {};
@@ -301,10 +295,10 @@ export function checkDesignToCode(ctx: CheckContext): CheckResult[] {
   return [{
     id: 'plan_to_code', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'plan_to_code'),
-    severity: 'BLOCKER', status: 'FAIL',
-    details: `${missing.length}/${allKeyFiles.size} 个 spec 映射关键文件缺失：\n${Object.entries(byPrd).map(([id, files]) => `  - ${id}: ${files.join(', ')}`).join('\n')}`,
+    severity: 'MAJOR', status: 'WARN',
+    details: `${missing.length}/${allKeyFiles.size} 个预测实现位置未命中当前文件：\n${Object.entries(byPrd).map(([id, files]) => `  - ${id}: ${files.join(', ')}`).join('\n')}`,
     affected_files: missing,
-    suggestion: '请补全缺失的关键文件以满足 spec → 代码的追溯链。',
+    suggestion: '按实际源码核对行为覆盖并更新定位，不为凑预测文件创建空壳；真实缺陷仍由 review/编译/测试拦截。',
   }];
 }
 
@@ -313,7 +307,7 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
   if (ctx.docsCommitted) {
     return (
       '\n\n（paths.docs_committed=true：工程约定将过程产物归档入仓时，请以团队规范为准；' +
-      '本项仍仅以「外层业务模块路径」判断是否越出 plan 声明的 in_scope_modules。）'
+      '本项仍仅以「外层业务模块路径」核对原请求明确限制。）'
     );
   }
   return (
@@ -324,7 +318,7 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
 
 export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   if (ctx.resolvedInputs) {
-    const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现须符合已绑定施工契约的模块与写集', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '回 plan/蓝图责任方补齐或重签设计；不要在 coding 扩大 contracts.files。' } : {}) }];
+    const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现遵守原请求真实边界及阶段职责，预测文件不作许可', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '核对原请求明确限制与实际改动；误改由本阶段恢复，真实需求或公共契约变化交责任方。' } : {}) }];
     const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
     // D1 §6.4 G1：判据从「有 run 身份」改为「有**有效范围权威**」——run 或 feature 冻结记录。
     // 两者都没有才是「说不清本次施工由哪份设计授权」，那时才 FAIL。
@@ -332,7 +326,6 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     if (!authority) return result('FAIL', '现代 Feature coding 缺少有效范围权威（既无 run 身份，也无 feature 冻结记录）');
     try {
       const contracts = readRunBoundContracts(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, runId);
-      if (!contracts.files?.length || !contracts.modules?.length) return result('FAIL', '施工契约缺少 files/modules');
       const closure = resolveContractFileReferences(ctx.projectRoot, contracts);
       if (closure.invalid_paths.length) return result('FAIL', '施工契约包含非法文件引用');
       // G5：基线走统一来源选择（有 run → run 基线；无 run → 既有 HARNESS_DIFF_BASE_REF 三态）
@@ -343,86 +336,48 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
       const { isCurrentComponentInventory } = require('./utils/component-assets') as typeof import('./utils/component-assets');
       const files = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))]
         .filter(file => !isCurrentComponentInventory(ctx.projectRoot, file));
-      const modules = resolveModulePathPrefixes(ctx.projectRoot, contracts.modules.map(module => module.name), contracts.modules);
-      const classified = classifyChangedFiles(files, modules.allowedPrefixes, layerDirPrefixes(ctx.projectRoot));
-      // plan f3b8d261 §3.2：模块内未授权的那一半里，UT 调用产出、此后无他阶段改写、字节未变的
-      // 具体文件归 UT，不算 coding 越界；模块外照拦。无 run 事件 → 空 Map → 行为不变。
-      // plan b2d7f4e9 t3c：successor 的基线继承自源 run，回放范围随之是 supersede 血缘。
-      const utOwned = runId && authority.source === 'run'
-        ? replayUtOwnedWrites(loadLineageRunEvents(ctx.projectRoot, ctx.feature, runId))
-        : new Map<string, { sha256: string | null; voidedBy?: string }>();
-      const utNotes: string[] = [];
-      const unauthorized = classified.inScopeHits.filter(file => {
-        if (closure.authorized_files.includes(file)) return false;
+      const scope = resolveImplementationScope(ctx.projectRoot, ctx.feature, contracts.modules, runId);
+      const classified = classifyChangedFiles(files, scope.allowedPrefixes, scope.sourcePrefixes);
+      const { partitionConstructionFiles } = require('./utils/phase-write-boundary') as typeof import('./utils/phase-write-boundary');
+      const testPaths = partitionConstructionFiles(ctx.projectRoot, ctx.resolvedProfile?.profileDir ?? '', { ...contracts, files }).tests;
+      const hasRunAuthority = !!runId && authority.source === 'run';
+      const events = hasRunAuthority ? loadLineageRunEvents(ctx.projectRoot, ctx.feature, runId!) : [];
+      const utOwned = hasRunAuthority ? replayUtOwnedWrites(events) : new Map<string, { sha256: string | null; voidedBy?: string }>();
+      const notes: string[] = [];
+      const codingWrites = new Set<string>();
+      for (const event of events) {
+        if (event.phase !== 'coding' || event.type !== 'phase_write_observed') continue;
+        for (const row of (event as { observations?: Array<{ path: string }> }).observations ?? []) codingWrites.add(row.path);
+      }
+      const { loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile } = require('./utils/phase-evidence-manifest') as typeof import('./utils/phase-evidence-manifest');
+      const priorUt = loadPhaseEvidenceManifest(ctx.projectRoot, ctx.feature, 'ut');
+      const testViolations = testPaths.filter(file => {
+        if (hasRunAuthority && !utOwned.has(file) && !codingWrites.has(file)) return false; // A pre-existing diff is not evidence that coding wrote this test.
         const fact = utOwned.get(file);
-        if (!fact) return true;
-        if (!fact.voidedBy && currentFileHash(ctx.projectRoot, file) === fact.sha256) return false;
-        utNotes.push(`${file}：${fact.voidedBy ? `UT 产出后被 ${fact.voidedBy} 改写` : 'UT 产出后字节已变'}，不再归 UT`);
+        if (!codingWrites.has(file) && !fact?.voidedBy && priorUt?.integrityOk && priorUt.manifest.outputs.some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return false;
+        if (fact && !fact.voidedBy && currentFileHash(ctx.projectRoot, file) === fact.sha256) return false;
+        notes.push(file + '：' + (fact?.voidedBy ? 'UT 产出后被 ' + fact.voidedBy + ' 改写' : fact ? 'UT 产出后字节已变' : '缺本周期 UT 产出事实'));
         return true;
       });
-      const violations = [...classified.violations, ...unauthorized];
-      return violations.length ? result('FAIL', '本次实现超出冻结模块或文件授权：\n' + violations.join('\n') + (utNotes.length ? '\n' + utNotes.join('\n') : ''), violations)
-        : result('PASS', `已核验 ${authority.source === 'run' ? 'run' : 'feature'} baseline、绑定契约与 ${files.length} 个变更路径。`);
+      // Use the existing invocation delta, not package-vs-host-Git differences from an earlier integration.
+      const frameworkBefore = new Map<string, string | null>();
+      for (const event of events) {
+        if (event.type !== 'phase_write_observed' || event.phase !== 'coding') continue;
+        for (const row of (event as { observations?: Array<{ path: string; pre_sha256: string | null }> }).observations ?? []) {
+          if (row.path.startsWith('framework/')) {
+            const safe = validateProjectRelativePath(ctx.projectRoot, row.path, 'observed framework write');
+            if (!frameworkBefore.has(safe)) frameworkBefore.set(safe, row.pre_sha256);
+          }
+        }
+      }
+      const frameworkViolations = [...frameworkBefore].filter(([file, before]) => currentFileHash(ctx.projectRoot, file) !== before).map(([file]) => file);
+      const violations = [...new Set([...classified.violations, ...testViolations, ...frameworkViolations])];
+      return violations.length ? result('FAIL', '实现违反原请求真实边界或阶段职责：\n' + violations.join('\n') + '\n' + notes.join('\n'), violations)
+        : result('PASS', '已核验绑定身份、工程源码域与实际 diff；文件/模块预测不作逐项许可，UT产出保持字节及归属承接。语义范围及公共契约由独立 review 核实。');
     } catch (error) { return result('FAIL', String(error)); }
   }
-  const designResolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
-  if (!designResolved.exists) {
-    return [{
-      id: 'diff_within_scope', category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
-      severity: 'BLOCKER', status: 'SKIP',
-      details: `plan.md 不存在（${designResolved.canonicalPath}），无法确定 in_scope_modules。`,
-    }];
-  }
-
-  const design = fs.readFileSync(designResolved.actualPath, 'utf-8');
-  const { scope, error } = parseScope(design);
-  if (error || !scope) {
-    return [{
-      id: 'diff_within_scope', category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `无法从 plan.md 解析 Scope 声明：${error ? describeScopeError(error) : '未知错误'}`,
-      suggestion: '请先通过 check-plan.ts 的 scope_declaration 检查。',
-      affected_files: [relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md')],
-    }];
-  }
-
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts?.modules?.length) {
-    return [{
-      id: 'diff_within_scope', category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
-      severity: 'BLOCKER', status: 'SKIP',
-      details: 'contracts.yaml 无 modules，无法解析 package_path。',
-    }];
-  }
-
-  // Shared source-owner resolver: coding gate and invocation write attribution
-  // consume the same contracts/catalog path normalization.  Full track remains
-  // strict: every mapping must come from contracts.yaml (catalog fallback is only
-  // a diagnostic here; it cannot silently replace the plan contract).
-  const moduleResolution = resolveModulePathPrefixes(
-    ctx.projectRoot,
-    scope.in_scope_modules,
-    contracts.modules,
-  );
-  const missingPaths = scope.in_scope_modules.filter(
-    (name) => !moduleResolution.sources.get(name)?.startsWith('contracts.yaml '),
-  );
-  const allowedPrefixes = moduleResolution.allowedPrefixes;
-
-  if (missingPaths.length > 0) {
-    return [{
-      id: 'diff_within_scope', category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'diff_within_scope'),
-      severity: 'BLOCKER', status: 'FAIL',
-      details: `plan.in_scope_modules 中以下模块在 contracts.yaml 中无 package_path：${missingPaths.join('、')}`,
-      suggestion: '请在 contracts.yaml 的 modules 列表中补充这些模块的 package_path。',
-      affected_files: [relFeatureFile(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
-    }];
-  }
-
+  const scope = resolveImplementationScope(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts?.modules);
+  const allowedPrefixes = scope.allowedPrefixes;
   const envRef = resolveHarnessDiffBaseRef();
   const diff = diffChangedFiles({
     projectRoot: ctx.projectRoot,
@@ -453,7 +408,7 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   const { violations, inScopeHits, neutralCount: neutral } = classifyChangedFiles(
     files,
     allowedPrefixes,
-    layerDirPrefixes(ctx.projectRoot),
+    scope.sourcePrefixes,
   );
   const neutralCount = { value: neutral };
 
@@ -480,13 +435,13 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER', status: 'FAIL',
     details:
       `${violations.length} 个变更文件越界到 in_scope_modules 之外的模块：\n${truncateList(violations, 15)}\n\n` +
-      `in_scope_modules: ${scope.in_scope_modules.join('、')}\n` +
+      `in_scope_modules: ${scope.modules.map(module => module.name).join('、')}\n` +
       `base ref: ${diff.baseRef}（mode=${diff.workingOnly ? 'working-only' : 'committed+working'}）\n` +
       `变更拆分：committed=${diff.committedFiles.length}, working=${diff.workingTreeFiles.length}, staged=${diff.stagedFiles.length}, untracked=${diff.untrackedFiles.length}${staleHint}`,
     suggestion:
       staleness.stale
-        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍越界再回到 plan 发起 scope 扩展或撤销误改。'
-        : '若这些改动确属本需求必须：回到 plan 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 plan.md 的 expansions_with_user_approval 中登记，并把涉及模块加入 in_scope_modules。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
+        ? '可先重跑不传 HARNESS_DIFF_BASE_REF（默认 working）；或显式设 HARNESS_DIFF_BASE_REF=working。若仍违反原请求真实边界，撤销误改或按原确认流程更正请求。'
+        : '撤回违反原请求真实边界的改动；确需更正原请求时沿原确认流程，修改预测模块清单不能放行。\n若属误改：用 `git checkout` / `git restore` 撤销越界文件。',
     affected_files: violations,
     failure_kind: staleness.stale ? 'stale_diff_base' : 'scope_violation',
     blocking_class: staleness.stale ? 'stale_diff_base' : 'diff_within_scope',
@@ -740,7 +695,7 @@ const checker: PhaseChecker = {
     const normalizeSuffix = (s: string) => (s.startsWith('.') ? s : `.${s}`);
     const normSuffixes = suffixes.map(normalizeSuffix);
     const sourceFiles =
-      contracts?.files?.filter(f => normSuffixes.some(suf => f.endsWith(suf))) ?? [];
+      implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim()).filter(f => normSuffixes.some(suf => f.endsWith(suf)));
 
     const analyzer = new AstAnalyzer(ctx.projectRoot);
     const analyses = sourceFiles.length > 0 ? analyzer.analyzeFiles(sourceFiles) : [];
@@ -805,7 +760,7 @@ const checker: PhaseChecker = {
       ...safeRun(() => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
     );
     results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
-    // c4e8b1d3 G1：UI 文件级 scope 门（冻结 contracts.files + coding_base_sha 基线）
+    // c4e8b1d3 G1：实际 UI 边界核对（正式契约身份 + 原需求 + diff 基线）
     results.push(...safeRun(() => checkUiDiffWithinDeclaredFiles(ctx), 'ui_diff_within_declared_files'));
     // （v23 D2）required_anchors 通道已删：spec 侧从无生产者（schema/模板都没有），该检查
     // 永久 SKIP 只制造"已覆盖"错觉。锚点缺失如今作为 testing 的 actionable 缺陷回 coding 修。

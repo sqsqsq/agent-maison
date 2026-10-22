@@ -84,7 +84,7 @@ export function probeDesignAuthorityRecovered(projectRoot: string, feature: stri
   const diagnosis = diagnoseDesignAuthority(projectRoot, resolveProbeFrameworkRoot(projectRoot), feature, phase, runId);
   // 门重评不了 ≠ 阻断已消除：不就绪（提前就绪会白白消耗 supervisor 不可重置的重启次数）。
   if (diagnosis.unevaluable) return { ready: false, reason: '设计权威门无法重评：' + diagnosis.unevaluable };
-  const open = diagnosis.findings.filter((finding) => checks.has(finding.check));
+  const open = diagnosis.findings;
   return open.length
     ? { ready: false, reason: '设计 owner 阻断仍在：' + open.map((finding) => finding.check + '[' + finding.codes.join(',') + ']').join('；') }
     : { ready: true, reason: '停机时记录的设计 owner 阻断（' + [...checks].join('、') + '）均已不再阻断' };

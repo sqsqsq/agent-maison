@@ -373,6 +373,7 @@ import {
   declineDisputeLines,
   isRebuttalAppearance,
   loadRepairDeclineState,
+  readPhaseRepairIssues,
   mergeRepairCandidatesIntoSummary,
   REPAIR_DECLINE_GATE_PREFIX,
   resolveInvalidatablePhases,
@@ -4836,6 +4837,11 @@ export function designRepairNeedsContinuation(events: readonly GoalRunEvent[], c
     && !records.slice(repairAt + 1, haltAt).some(event => event.type === 'agent_invoke_start' && chain.includes(String(event.phase)));
 }
 
+/** Preserve the current process's explicit launch posture; continuation grants none. */
+export function inheritRunProcessArgs(argv: Record<string, unknown>): string[] {
+  return [...(argv['foreground-ok'] ? ['--foreground-ok'] : []), ...(argv['detached-child'] ? ['--detached-child'] : [])];
+}
+
 export class GoalPhaseRuntime {
   constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}) {}
 
@@ -4866,17 +4872,18 @@ export class GoalPhaseRuntime {
       const finished = terminalEventCtx;
       if (!finished) return code;
       this.lastRunId = finished.runId;
-      // A published owner repair can invalidate birth bindings. Reuse the existing resume
+      // A published owner repair can invalidate birth bindings. Reuse the normal continuation
       // decision after main has released its locks; never ask the outer Agent to relaunch it.
       const terminal = loadAuthoritativeEvents(path.resolve(finished.projectRoot, finished.reportDir, 'events.jsonl')) as Array<GoalRunEvent & { stage?: string; outcome?: string }>;
       if (designRepairNeedsContinuation(terminal, finished.workflowChain) && typeof argv.feature === 'string') {
         const { projectRoot, frameworkRoot } = resolveRuntimeLayout(options, argv);
-        const next = new GoalPhaseRuntime({ ...options, args: ['--feature', argv.feature, '--resume', finished.runId,
+        const next = new GoalPhaseRuntime({ ...options, args: ['--feature', argv.feature,
           '--project-root', projectRoot, '--framework-root', frameworkRoot,
+          ...inheritRunProcessArgs(argv),
           '--runtime-executor', String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached')),
           '--runtime-owner', String(argv['runtime-owner'] ?? options.ownerKind ?? (options.executor ? 'session' : 'process'))] });
         const continued = await next.run();
-        this.lastRunId = next.lastRunId;
+        if (next.lastRunId) this.lastRunId = next.lastRunId;
         return continued;
       }
       // D2: the run projects its own completion and there is no ancestor chain to clean up, so the
@@ -7883,13 +7890,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const mine = backtrackRepairCandidates.filter(
               c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === String(phase),
             );
-            if (mine.length === 0) return '';
             // plan 33784ed1 §4.2/§4.5：拒修写法（有人在场与无人值守都注入）与反驳轮的逐条依据
             const declines = dryRun ? new Map() : loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id);
+            const returned = [...new Set(declines.values())].filter(state => state.source_phase === String(phase) && state.basis
+              && !state.basis.text.includes('「')).map(state => `- ${state.id}：${state.basis!.text}`);
+            const refusalBlock = returned.length ? ['\n## Owner refusal returned to the proposing phase',
+              'The existing independent verifier confirmed these current factual refusal reasons. Fix this phase\'s own artifact, or provide genuinely new facts; do not repeat the old request with a new ID.',
+              ...returned, ''].join('\n') : '';
+            if (mine.length === 0) return refusalBlock;
             const currentRoundTs = [...loadAuthoritativeEvents(eventsPath)].reverse()
               .find(e => e.type === 'phase_backtrack_requested')?.ts;
             const ledgerRel = relFeatureFile(projectRoot, manifest.feature, `${phase}/headless-assumptions.jsonl`);
-            return [
+            return refusalBlock + [
               '',
               '## Verified repair candidates for this phase (hypotheses to check against the goal first)',
               '',
@@ -7930,11 +7942,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   ]
                 : []),
               '',
-              '**Declining a candidate that conflicts with the goal (拒修记录)**: if the goal (requirement / goal brief) says a candidate must not be done,',
+              '**Declining a candidate (拒修记录)**: if it conflicts with the goal, or current concrete evidence disproves its premise,',
               `do not change code for it; append ONE JSON line per declined candidate to \`${ledgerRel}\`:`,
               `  \`{"decision_id":"<unique>","run_id":"${manifest.run_id}","phase":"${phase}","gate_id":"${REPAIR_DECLINE_GATE_PREFIX}<item_fingerprint>",`
-                + '"class":"goal_conflict","decision":"declined: <依据，用「」逐字引用目标里的一句话>","must_review":true,"source":"agent","ts":"<写这一行时的当前时间，ISO 8601，带时区>"}`',
-              '- The quote inside 「」 must appear verbatim in the goal, otherwise the line counts as no decline. Declining again in a later round needs a NEW line; earlier lines do not carry over.',
+                + '"class":"goal_conflict","decision":"declined: <目标冲突用「」逐字引目标；事实误判引用当前 `工程相对路径:行号` 和合法做法>","must_review":true,"source":"agent","ts":"<写这一行时的当前时间，ISO 8601，带时区>"}`',
+              '- Goal-conflict quotes must appear verbatim in the goal. For factual refusals, use class=factual_error; the existing independent verifier must confirm issue=<gate_id>, with the complete current refusal basis in evidence. An arbitrary declined: line is not an accepted refusal.',
+              '- Declining again in a later round needs a NEW line; earlier lines do not carry over. The original proposing phase receives the reason and must fix its own mistake or supply genuinely new facts.',
               '- A declined candidate the judge raises again gets exactly one rebuttal round; a second decline no longer passes and the run stops with both sides quoted for the user.',
               '',
             ].join('\n');
@@ -8802,7 +8815,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     how: write.how,
                     pre_sha256: write.preSha256,
                     post_sha256: write.postSha256,
-                    ...(phase === 'coding' && !write.roles.some(role => role.kind === 'artifact')
+                    ...(!write.roles.some(role => role.kind === 'artifact')
                       ? { roles: write.roles } : {}),
                   })),
                 } : {}),
@@ -9359,7 +9372,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const freshSummary = isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
 
         // One formatting recovery per original attempt; invoke_start consumes the opportunity even after a crash.
-        if (!dryRun && freshSummary && summary?.next_action === 'run_verifier_for_repair' && !invoke.timed_out && (phase === 'review' || phase === 'ut')) {
+        if (!dryRun && freshSummary && summary?.next_action === 'run_verifier_for_repair' && !invoke.timed_out && (phase === 'coding' || phase === 'review' || phase === 'ut')) {
           const repairInvokeId = `${phase}-verifier-format-repair-${visualAttemptId}`;
           const formatEvents = loadAuthoritativeEvents(eventsPath);
           const lastVerdict = formatEvents.map(event => event.type === 'phase_verdict' && event.phase === phase).lastIndexOf(true);
@@ -9374,10 +9387,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const requestText = requestAbs && fs.existsSync(requestAbs) ? fs.readFileSync(requestAbs, 'utf-8') : null;
           const request = parseVerifierRequest(requestText);
           const evidence = loadVerifierEvidence(projectRoot, manifest.feature, String(phase), { frameworkRoot });
-          const reviewArtifact = phase === 'review' ? resolveFeatureArtifact(projectRoot, manifest.feature, 'review-report.md') : null;
-          const reviewText = reviewArtifact?.exists ? fs.readFileSync(reviewArtifact.actualPath, 'utf-8') : null;
+          const phaseIssues = readPhaseRepairIssues(projectRoot, manifest.feature, String(phase));
           const diagnoses = evidence.ok ? findUnreadableDiagnosisChecks(String(phase), evidence.evidence.report_text,
-            reviewText === null ? undefined : { reportText: reviewText })
+            !phaseIssues ? undefined : { reportText: phaseIssues.reportText, rows: phaseIssues.rows })
             : evidence.code === 'block_unparseable' || evidence.code === 'verdict_inconsistent' ? [evidence.message] : [];
           if (!used && request && request.subject_id === summary.verifier_subject_id && request.phase === phase
             && request.feature === manifest.feature && summary.next_action === 'run_verifier_for_repair' && diagnoses.length && reportPath) {
@@ -10236,6 +10248,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         ) {
           driverGuardAction = 'retry';
           console.log(`\n[design-authority] 无人值守修复：${contentRepair.reason}——冻结绑定仍有效，当前阶段原地重评。\n`);
+        } else if (contentRepair?.outcome === 'failed' && contentRepair.step === 'declined') {
+          driverGuardAction = 'retry';
+          priorFailure = `设计 owner 经独立质询拒修，权威产物未发布：${contentRepair.reason}。原提案阶段须据理由修自身产物或补真实新事实；旧核实不得重派。`;
+          console.log(`\n[design-authority] ${priorFailure}\n`);
         } else if (contentRepair?.outcome === 'containment_unresolved') {
           // 修复调用的子进程收容失败且未证明消失：与阶段调用同一既有处置——停机阻断续跑，不挂设计探针（旧进程可能仍在写）。
           driverGuardAction = 'halt';

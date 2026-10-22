@@ -193,7 +193,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
           runId = ctx.runId; planCalls++;
           if (planCalls === 1) assert(!fs.existsSync(contractFile), 'birth must not pre-seed contracts');
           assert.equal(resolvePhasePathOwnership(boundary(), path.relative(root, contractFile)).owner, 'plan');
-          fs.writeFileSync(contractFile, planCalls === 1 ? YAML.stringify({ ...hostContracts, files: [] }) : contractsRaw);
+          fs.writeFileSync(contractFile, planCalls === 1 ? YAML.stringify({ ...hostContracts, interfaces: [{ class: 'BankCardRepository', file: inputSource, methods: [{ name: 'open', params: [], return: 'any' }] }] }) : contractsRaw);
           fs.writeFileSync(featureFilePath(root, feature, 'use-cases.yaml'), useCasesRaw);
           assert.equal(resolvePhasePathOwnership(boundary(), inputSource).status, 'none', 'unverified plan output cannot grant coding scope: ' + JSON.stringify({
             planCalls, recorded: resolveEffectiveScopeSource(root, feature, runId)?.scope.obligations.map(o => [o.id, o.owner_phase, o.applicability, o.satisfied_by?.map(p => 'input_id' in p ? p.input_id : p.phase)]),
@@ -1606,7 +1606,7 @@ cases.push({ name: 'D2 baseline is frozen once by the first coding-bearing revis
   assert.throws(() => resolveRunBaseline(manifest, [revision(implementing, 1, 'not-a-sha')] as never[]), /sha|SHA/);
 } });
 
-cases.push({ name: 'D0.2 a real CU candidate comes from the generator, and an undeclared write set is a plan gap', async run() {
+cases.push({ name: 'D0.2 a real CU design does not need a predicted file inventory to prepare coding', async run() {
   // §5.4「对 component-blueprint/valid 的 CU 生成候选 → prepare-run 直接可用」这一行，
   // 此前只有手工拼候选的用例，没有走过 `prepareFeatureScopeCandidate` 的真实 CU 路径。
   const repo = path.resolve(__dirname, '../../..');
@@ -1628,22 +1628,13 @@ cases.push({ name: 'D0.2 a real CU candidate comes from the generator, and an un
       requestedResults: ['ledger list refreshes'], requestedPhases: ['plan', 'coding', 'review', 'ut'],
       requirement, overwrite: true,
     });
-    // 这份共享 CU 夹具的 contracts.yaml 不声明 files（`contracts.yaml` 无 `files` 字段）：
-    // 写集授权只认受信设计来源，所以真实结果是**设计缺口**，不是「直接可用的完整链」。
+    // 文件预测缺席不等于设计缺失；验收仍须由 spec 补齐。
     const gapped = generate();
-    assert.equal(gapped.candidate.facts.find(fact => fact.kind === 'design-context')!.applicability, 'unknown', JSON.stringify(gapped.candidate.facts));
-    assert(!gapped.scope.phase_chain.includes('coding'), JSON.stringify(gapped.scope.phase_chain));
-    assert(gapped.scope.unresolved.some(gap => gap.needed_by.includes('coding')), JSON.stringify(gapped.scope.unresolved));
-    // 这份夹具同样没有可解析的验收来源，所以出生链此刻只有调查阶段。
-    assert.deepStrictEqual(gapped.scope.phase_chain, ['spec', 'plan']);
+    assert.equal(gapped.candidate.facts.find(fact => fact.kind === 'design-context')!.applicability, 'required');
     assert.equal(gapped.candidate.facts.find(fact => fact.kind === 'acceptance-context')!.applicability, 'unknown');
-    // 设计声明写集、验收落到临时 root 之后，同一条生成路径产出的候选可被真实 `--prepare-run` 冻结。
+    // 验收落盘后，不补文件预测也能冻结正常实施范围。
     fs.writeFileSync(featureFilePath(root, feature, 'acceptance.yaml'),
       'criteria: [{id: AC-REFRESH, priority: P1, ut_layer: unit, desc: refresh ledger list, expected_result: list refreshed}]' + String.fromCharCode(10));
-    const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
-    const declared = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-    declared.files = ['02-Feature/FinancialCard/src/main/ets/AllBanksPage.ets'];
-    fs.writeFileSync(contractsFile, YAML.stringify(declared));
     const usable = generate();
     assert.equal(usable.candidate.facts.find(fact => fact.kind === 'design-context')!.applicability, 'required');
     assert(usable.candidate.facts.some(fact => fact.kind === 'implementation'), JSON.stringify(usable.candidate.facts));
@@ -2303,11 +2294,11 @@ cases.push({ name: 'D1 runless ui scope gate passes for a declared ui file', run
     // 有 feature 冻结记录 → **不得**再走历史 SKIP
     assert.notEqual(gate.status, 'SKIP', JSON.stringify(gate));
     assert.equal(gate.status, 'PASS', JSON.stringify(gate));
-    assert(gate.details.includes('feature 冻结范围'), gate.details);
+    assert(gate.details.includes('预测文件表不作许可'), gate.details);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'D1 runless ui scope gate blocks an undeclared ui file', run() {
+cases.push({ name: 'D1 runless ui scope gate permits a new unpredicted UI file in the same implementation domain', run() {
   const { root, frameworkRoot, feature } = setupRunlessProject({ uiFile: true });
   try {
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
@@ -2320,10 +2311,8 @@ cases.push({ name: 'D1 runless ui scope gate blocks an undeclared ui file', run(
     const resolved = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'coding', track: 'full',
       inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } });
     const gate = runUiDiffWithinDeclaredFiles({ projectRoot: root, feature, runId: null, frameworkRoot, resolvedInputs: resolved.inputs });
-    // 必须是 FAIL——**不是** SKIP、**不是**只降 MINOR
-    assert.equal(gate.status, 'FAIL', JSON.stringify(gate));
-    assert.equal(gate.failureKind, 'ui_scope_violation', JSON.stringify(gate));
-    assert(gate.affectedFiles?.some(file => file.endsWith('Rogue.ets')), JSON.stringify(gate.affectedFiles));
+    assert.equal(gate.status, 'PASS', JSON.stringify(gate));
+    assert(gate.details.includes('实际 UI 变更 1 个'), gate.details);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 

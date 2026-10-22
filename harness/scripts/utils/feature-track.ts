@@ -508,9 +508,7 @@ export interface PrepareScopeCandidateResult {
  * 两个定义类 kind（`design-context` / `acceptance-context`）的**唯一**派生点：生成器与冻结
  * 读取层共用同一份判定，把 D0.1「不采信候选自报、按来源重算」从 unit/device/visual 扩到它们。
  *
- * 写集授权**只认 `contracts.files`** 这一条受信设计来源。候选自带的 `implementation` basis 是
- * **自报**：它能指向任意项目内文件，而 `verifyBasisBinding` 只验路径 / 存在性 / 摘要，同一条绑定
- * 随后又被算进 impact 的目标集合——用它当写集授权等于让候选自证相关性（第七轮阻断 1）。
+ * 定义从 contracts/acceptance 正式绑定派生；files 仅提供初始研究目标，不授予逐文件许可。
  */
 function deriveDefinitionContext(
   ctx: { projectRoot: string; frameworkRoot: string; feature: string },
@@ -537,7 +535,7 @@ function deriveDefinitionContext(
   const writeSetBinding = existingWriteSet.length ? candidateBinding(ctx, 'plan', 'codebase', existingWriteSet) : undefined;
   return {
     contracts, acceptance, writeSet, writeSetBinding, wantsImplementation,
-    designAvailable: !!contracts && (!wantsImplementation || writeSet.length > 0),
+    designAvailable: !!contracts,
     acceptanceAvailable: !!acceptance,
     acceptanceGap: authorityGapOf(ctx, 'acceptance', acceptanceInput),
     contractsGap: authorityGapOf(ctx, 'contracts', contractsInput),
@@ -615,14 +613,12 @@ export function recomputeDefinitionFacts(
       if (!onlyTighten) {
         fact.applicability = 'unknown';
         fact.reason = design
-          ? (derived.contracts ? '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）' : '本 feature 尚无可解析的设计来源')
+          ? (derived.contracts ? '设计来源不可核验' : '本 feature 尚无可解析的设计来源')
           : '本 feature 尚无可解析的验收来源';
       }
     }
   }
-  const implementationBasis = derived.writeSet.length > 0
-    ? derived.writeSetBinding ?? derived.contracts
-    : undefined;
+  const implementationBasis = derived.writeSetBinding ?? derived.contracts;
   if (derived.wantsImplementation && implementationBasis) {
     const implementation = input.facts.find(fact => fact.kind === 'implementation');
     const update = {
@@ -727,21 +723,14 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   const facts: ExecutionScopeInput['facts'] = [];
   // implementation **由请求动作决定**，不由 completion_target 决定：只有当请求里含实现
   // provider 的阶段时才产出，写集来源取契约声明的文件（D0.1 规则 (a) 要求可核验写集）。
-  // 「声明了文件却绑不出来」与「没声明」是同一种缺陷（都拿不出可核验写集），由
-  // `deriveDefinitionContext` 一并判掉，不能一个走缺口、另一个被静默省略。
+  // 初始源码可为空；实现义务仍由有效契约给出来源。
   const wantsImplementation = derived.wantsImplementation;
   const writeSet = derived.writeSet;
   const writeSetBinding = derived.writeSetBinding;
-  const implementationBasis = writeSet.length > 0 ? writeSetBinding ?? contracts : undefined;
-  // 契约在、却拿不出可核验写集（`contracts.files: []` 是 schema 允许的）＝**设计没给出写集**，
-  // 这正是 plan 的责任缺口。此时不能把 design-context 当「已有设计可用」记成 required——否则
-  // 既没有缺口挡住 coding，resolver 又会自动补一条 basis 为空的 implementation 请求标记，
-  // 等于放一条无来源的实现义务进链。降成 unknown 走既有 definition-gap 通路（与「压根没有
-  // 契约」同一条路），只在**请求跳过设计阶段**时才拒绝（见下方 fail-closed）。
+  const implementationBasis = writeSetBinding ?? contracts;
   // A1（plan c4e7a9b2 §3.1）：手写产物与当前设计权威不一致时责任仍 required、不写 satisfied_by——责任阶段入链对齐，
   // 下游按链序等待；出生不拒绝。
   if (derived.designAvailable) facts.push({ id: 'design-context:candidate', kind: 'design-context', applicability: 'required', reason: derived.contractsGap ?? '已有设计可用', basis: [contracts!], ...(derived.contractsGap ? {} : { satisfied_by: [contracts!] }) });
-  else if (contracts) facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）', basis: [contracts] });
   // 缺设计 ≠ 没有设计责任：落一条 unknown 的 design-context（owner=plan），由既有 definition-gap
   // 通路把下游（含 coding）挂进 needed_by，等设计阶段产出 contracts 后再由 D0.3/D2 同 run 补链。
   else facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '本 feature 尚无可解析的设计来源（仅有需求）', basis: gapBasis });
@@ -749,17 +738,14 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   // 缺验收 ≠ 没有验收责任：落一条 unknown 的 acceptance-context（resolver 会把它送进
   // unresolved、owner=spec），不静默省略、也不伪造蓝图（需求 D0.2 原文）。
   else facts.push({ id: 'acceptance-context:pending', kind: 'acceptance-context', applicability: 'unknown', reason: '本 feature 尚无可解析的验收来源', basis: gapBasis });
-  // 请求里是否**同时**含产出设计的阶段（spec / plan 家族）：含 → 写集本来就该由本次设计产出，
-  // 交给 definition-gap 通路挡住 coding；不含 → 这是「跳过设计直接改代码却没有写集」，当场拒。
+  // 跳过设计时仍需有效契约；没有文件预测不构成设计缺口。
   const designPhases = workflow.artifacts
     .filter(artifact => ['obligations.spec', 'obligations.plan'].includes(artifact.obligation_provider_id ?? ''))
     .map(artifact => artifact.id);
   const requestsDesign = input.requestedPhases.some(phase => designPhases.includes(phase));
   if (wantsImplementation && !requestsDesign) {
-    // 跳过设计阶段就必须拿得出**可核验的写集**：契约缺失 / files 为空 / 绑定解析不出来时
-    // 在这里 fail-closed，而不是让 resolver 事后补一条空 basis 的请求标记，把问题推到 coding。
-    if (!writeSet.length) throw new Error('[prepare-scope] 请求跳过设计阶段直接改代码，但契约没有声明可核验的写集（contracts.files 为空或不可解析）——责任方 plan');
-    if (!implementationBasis) throw new Error('[prepare-scope] 写集无法解析为项目内绑定：' + writeSet.join(', '));
+    if (!contracts) throw new Error('[prepare-scope] 请求跳过设计阶段直接改代码，但缺少有效设计来源——责任方 plan');
+    if (!implementationBasis) throw new Error('[prepare-scope] 设计或初始源码无法解析为项目内绑定：' + writeSet.join(', '));
     facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [implementationBasis] });
   } else if (wantsImplementation && implementationBasis) {
     facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [implementationBasis] });
@@ -782,7 +768,7 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   return candidate;
 }
 
-/** 写集来源：契约声明的文件（contracts@1 的 files）——不猜、不扫描。 */
+/** 初始研究线索；不是权限或完成依据。 */
 function readCandidateWriteSet(
   ctx: { projectRoot: string; frameworkRoot: string; feature: string },
   contracts: InputBinding | undefined,

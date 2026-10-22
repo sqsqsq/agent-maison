@@ -66,6 +66,7 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
  * 而它是唯一能抓"夹具手喂生产本不会给的东西"那类 bug 的测试，所以发布前必跑。
  */
 const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> = [
+  { id: 'implementation-authority', modulePath: './unit/implementation-authority.unit.test' },
   { id: 'request-entry', modulePath: './unit/request-entry.unit.test' },
   { id: 'compile-entry', modulePath: './unit/compile-entry.unit.test' },
   { id: 'standalone-coding-review', modulePath: './unit/standalone-coding-review.unit.test' },
@@ -141,6 +142,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'hooks-config-upsert', modulePath: './unit/hooks-config-upsert.unit.test' },
   // plan a9d4e7c2 T1 / d2f7a9c4：verifier 适用性解析矩阵（disabled/enabled 二态穷举）
   { id: 'verifier-plan', modulePath: './unit/verifier-plan.unit.test' },
+  { id: 'upstream-issues', modulePath: './unit/upstream-issues.unit.test' },
   // plan d2f7a9c4：报告即真源——subject 回显 / verdict 自洽 / 既往 PASS 沿用 / 改报告不 stale
   { id: 'verifier-evidence', modulePath: './unit/verifier-evidence.unit.test' },
   // plan a9d4e7c2 复评：verifier 生产端接线（模板解析/严格 request/二态分流/Stop hook 动作/候选锚定）

@@ -22,6 +22,7 @@ artifacts:
   - { id: visual-parity@1, schema: visual-parity.schema.yaml, paths: ["plan/visual-parity.yaml"] }
   - { id: change@1, schema: change.schema.yaml, paths: ["change.md"] }
   - { id: review-report@1, schema: review-report.schema.yaml, paths: ["review/review-report.md"] }
+  - { id: coding-upstream-issues@1, schema: coding-upstream-issues.schema.yaml, paths: ["coding/upstream-issues.md"] }
   - { id: testability-audit@1, schema: testability-audit.schema.yaml, paths: ["ut/testability-audit.md"] }
   - { id: mock-plan@1, schema: mock-plan.schema.yaml, paths: ["ut/mock-plan.yaml"] }
   - { id: coverage-evidence@1, schema: coverage-evidence.schema.yaml, paths: ["ut/reports/ac-coverage.json"] }

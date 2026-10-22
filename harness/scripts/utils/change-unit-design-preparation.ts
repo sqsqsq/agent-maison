@@ -51,6 +51,7 @@ import {
   ChangeUnitCandidate,
   ChangeUnitCandidateRejected,
   acceptChangeUnitCandidates,
+  prepareChangeUnitCandidate,
   writeCanonicalChangeUnit,
   validateChangeUnitCandidate,
 } from './change-unit-provider-boundary';
@@ -196,7 +197,7 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
       resolveChangeUnitRefFromLoaded(loaded, revision.expectedRef);
       const current = asChangeUnitArtifact(loaded.changeUnit);
       if (retired.has(current.change_unit_id)) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 已被精确替代；保留历史字节，修订活动后继。`);
-      const candidate: ChangeUnitCandidate = { providerId: revision.candidate.providerId, artifact: structuredClone(revision.candidate.artifact) };
+      const candidate = prepareChangeUnitCandidate(projectRoot, revision.candidate);
       if (candidate.artifact.component_id !== current.component_id || candidate.artifact.change_unit_id !== current.change_unit_id
         || stableStringify(candidate.artifact.supersedes) !== stableStringify(current.supersedes)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订不得改变 CU/Feature identity 或精确替代历史。');
       candidate.artifact.revision = current.revision;
@@ -221,7 +222,8 @@ export function reviseChangeUnitContent(projectRoot: string, blueprintId: string
       const completion = observeChangeUnitCompletion(projectRoot, current);
       if (completion.state !== 'ABSENT') throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected', `CU ${current.change_unit_id} 不能按未完成契约修订：${completion.state}；${completion.reasons.join('；')}`);
       validateChangeUnitCandidate(projectRoot, candidate, loaded);
-      if (stableStringify(current) === stableStringify(candidate.artifact)) { unchanged.push(current.change_unit_id); continue; }
+      const content = (unit: ChangeUnitArtifact) => stableStringify({ ...unit, design_refs: [...unit.design_refs].sort((a, b) => stableStringify(a.target).localeCompare(stableStringify(b.target))) });
+      if (content(current) === content(candidate.artifact)) { unchanged.push(current.change_unit_id); continue; }
       candidate.artifact.revision = current.revision + 1;
       pending.push({ loaded, candidate });
     }

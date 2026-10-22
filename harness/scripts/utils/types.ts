@@ -409,7 +409,7 @@ export interface ContractFileReferenceIssue {
 
 /** Ephemeral parser projection. It is never serialized beside contracts.yaml. */
 export interface ContractReferenceClosure {
-  authorized_files: string[];
+  planned_files: string[];
   references: ContractFileReference[];
   invalid_paths: ContractFileReferenceIssue[];
 }
@@ -544,7 +544,7 @@ export interface FeatureSpec {
   acceptance?: AcceptanceSpec;
   /** v2 新增：use-cases.yaml（若存在），供 UT 端到端分支覆盖使用 */
   useCases?: UseCasesSpec;
-  /** In-memory contracts.files authorization projection; never persisted as a graph/sidecar. */
+  /** In-memory planning references; never a file authorization set or a persisted sidecar. */
   referenceClosure?: ContractReferenceClosure;
   /**
    * P0-2（plan d9b4f7e2 复审）：spec-loader 加载期发现并归一化的形状偏差留痕
@@ -751,6 +751,7 @@ export interface HarnessRunSummary {
     /** check 层 blocking_class（如 device_toolchain）——须保真传到 goal-runner 的失败分类（T6/review#3） */
     blocking_class?: string;
     details_excerpt: string;
+    repair_owner?: string;
     affected_files?: string[];
     suggestion?: string;
     source?: string;

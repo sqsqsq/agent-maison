@@ -100,6 +100,7 @@ function withHostProject<T>(shape: HostShape, fn: (root: string, spec: FeatureSp
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'contracts-cross-consumer-'));
   try {
     clearFrameworkConfigCache();
+    writeFile(path.join(root, '02-Feature/CardFeature/src/main/module.json5'), JSON.stringify({ module: { type: 'har', pages: '$profile:main_pages' } }));
     writeFile(path.join(root, 'framework.config.json'), JSON.stringify({
       schema_version: '1.0.0',
       project_name: 'contracts-cross-consumer-unit',
@@ -128,7 +129,7 @@ function withHostProject<T>(shape: HostShape, fn: (root: string, spec: FeatureSp
     ensureConsumerFrameworkTree(root);
 
     // 背书文件树：组件文件 + 落盘的注册配置文件（内容含 NavDestination 名，供真实校验）
-    writeFile(path.join(root, COMPONENT_FILE), '@Component\nstruct CardPage {}\n');
+    writeFile(path.join(root, COMPONENT_FILE), shape.navDestination === false ? '@Component struct CardPage { build() { Text("card") } }' : '@Entry @Component\nstruct CardPage { build() { Navigation() {} } }\n');
     const configFiles = shape.configFiles ?? [MAIN_PAGES, ROUTE_MAP];
     for (const file of shape.materialize ?? configFiles) {
       const payload = file.endsWith('route_map.json')
@@ -232,15 +233,15 @@ const cases: Case[] = [
       const registration = pageRegistration(root, spec);
       // PASS（而非 SKIP）本身就是"走了真实校验路径"的判据：SKIP 会在此断言处红。
       assert(registration.status === 'PASS', `page_registration 应 PASS 且不得以 SKIP 冒充：${JSON.stringify(registration)}`);
-      assert(/1 个 NavDestination/.test(registration.details ?? ''), registration.details ?? '');
+      assert(/1 个实际页面/.test(registration.details ?? ''), registration.details ?? '');
     }),
   },
   {
-    name: 'c7e2a9d4 T4 负例①：config_files 路径不在 contracts.files → plan 闭环 FAIL',
+    name: '8a6d3f21: config_files 不在预测 files 不构成授权失败',
     run: () => withHostProject({ authorized: [COMPONENT_FILE] }, (root, spec) => {
       const closure = planClosure(root, spec);
-      assert(closure.status === 'FAIL' && closure.severity === 'BLOCKER', JSON.stringify(closure));
-      assert(/main_pages\.json/.test(closure.details ?? ''), closure.details ?? '');
+      assert(closure.status === 'PASS' && closure.severity === 'BLOCKER', JSON.stringify(closure));
+      assert(/不构成写授权/.test(closure.details), closure.details);
     }),
   },
   {
@@ -295,7 +296,7 @@ const cases: Case[] = [
 
       const registration = pageRegistration(root, spec);
       assert(registration.status === 'FAIL', `缺注册配置声明必须 FAIL：${JSON.stringify(registration)}`);
-      assert(/config_files/.test(registration.details ?? ''), registration.details ?? '');
+      assert(/路由配置/.test(registration.details ?? ''), registration.details ?? '');
     }),
   },
   {

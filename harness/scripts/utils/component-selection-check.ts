@@ -155,7 +155,7 @@ export function checkComponentSelections(ctx: CheckContext): CheckResult[] {
         const asset = index.components.find(c => c.id === selection.component_ref);
         if (!asset) { fail(`${component.name}: component_ref 不存在：${selection.component_ref}`); continue; }
         if (!componentDependencyAllowed(ctx.projectRoot, component.module, asset.module, layerDeclarations())) fail(`${component.name}: ${component.module} → ${asset.module} 依赖非法；换合法候选 > plan 声明组件下沉 > 交设计 owner 正式裁决新边（无人值守原需求内自动，有人在场保留确认）`);
-        if (selection.resolution === 'evolve' && !scope?.in_scope_modules.includes(asset.module)) fail(`${component.name}: evolve 共享模块 ${asset.module} 必须进入 plan in_scope_modules`);
+        // Provider changes are reviewed against the real API and DSL, not a predicted module list.
       }
     }
     if (['coding', 'review'].includes(ctx.phase)) {

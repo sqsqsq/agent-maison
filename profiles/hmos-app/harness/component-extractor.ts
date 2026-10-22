@@ -7,7 +7,7 @@ import { resolveHarExportEntryPath } from './har-export-resolve';
 
 // ponytail: 正则级 ArkTS 发现，不解析完整类型；复杂表达式保留 unknown，扩展语法时补探针。
 const lexical = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\/[^\r\n]*|\/\*[\s\S]*?\*\//g;
-function mask(source: string, strings: boolean): string {
+export function mask(source: string, strings: boolean): string {
   return source.replace(lexical, token => strings || token.startsWith('/') ? token.replace(/[^\r\n]/g, ' ') : token);
 }
 function closeGroup(masked: string, start: number, open: string, close: string): number {

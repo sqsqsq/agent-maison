@@ -12,6 +12,7 @@
 
 ## 条件加载索引
 
+- 有具体证据的上游缺口才写可选 `coding/upstream-issues.md`，无问题不生成；按[上游问题与拒修返回](../../reference/coding-workflow-detail.md#可选上游问题与拒修返回)走原核实/owner链，编译 FAIL 保留，必要资源由 coding 自修。
 - 存在 `framework/profiles/<project_profile.name>/skills/coding/profile-addendum.md` 时先读（宿主语言易错手册/资源规范/导出规则）。
 - **Step 2.5a（视觉真源 Read，pixel_1to1 相关）/ Step 3.5（业务编排命名入口）/ Step 6.5+7.1（编译闭环与修复策略）执行前**：完整读 [coding-workflow-detail.md](../../reference/coding-workflow-detail.md)——8 项 pixel_1to1 BLOCKER 门禁、三形态业务编排约束、编译自闭环修复策略全部细则在那里。
 - **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)（原则 3 Surgical·原则 4 Verify）。**Research Sub-Phase 完成前禁止写入第一个实现层源文件。**
@@ -31,7 +32,7 @@
 
 纯设计请求（"修正 plan"、"对齐 spec 改 plan"）不得入境：未激活本 Skill，不得新增/修改实现层产物。**plan 刚修订须先有 harness 顺位**：本会话若刚写入/更新过 plan.md，须已对该 feature 跑 `harness-runner.ts --phase plan` 零 BLOCKER，才可落笔任何实现层产物——禁止"实现先改、plan.harness 后补"。与人审闸门对齐时须取得用户明示可编码，不得把"设计文档已保存"默认等同批准实现；连续执行须用户在指令中同时表达设计定稿与编码开工。中途修正按 AGENTS §4.0 修正三问分层。
 
-**Scope 守门**：现代调用以 run 绑定的 typed contracts 模块、文件引用闭包及 run baseline 核验写集，不要求先执行 plan 或生成 plan.md；旧 run 保留原 scope 读取。发现新接口或越界模块，向已有修正流程提交具体发现，由 plan/蓝图责任方裁决并经 P2 重签后继范围，不能自行扩大授权。**逐文件 Lint 门禁**：单文件 Lint 不过不得进入下一文件，严禁批量生成后统一 lint。
+**Scope 守门**：普通源码、资源、路由接线按真实需求与阶段职责实现；预测 files/modules 不作许可。真实用户限制、公共契约、架构与其它阶段产物仍保护，原需求内必要设计修订交原 owner。实际 diff 全部进入既有 review/编译/测试；超预测模块须显著披露必要性与影响。
 
 **CU-bound Feature**：`contracts.change_unit` 全程只读。实现必须覆盖每个 canonical predicate/provide/design-ref mapping，并保持 Feature id 与 `change_unit_ref` 一致；运行时事实只实现 `contracts.state_management`，禁止复制 CU/蓝图或新增 `runtime_flow_slices`。若代码事实证明蓝图 owner、主链、contract 或当前决策失效，停止编码并路由 P1 调和，不在 Feature 内改写 CU 定义。
 
@@ -42,11 +43,7 @@
 ## 输入
 
 > **`contracts.yaml` 在本阶段只读（BLOCKER 纪律）。** 它是 plan 的产出、coding 的权威输入；
-> 现代 UI scope 白名单取自 **run 已绑定的施工契约**；旧 run 仍读 plan closure。
-> 改 live 文件不会放宽授权，只会使原输入绑定失效。
-> 撞 `ui_scope_violation` 时只有两条合法出路：**收回越界文件**，或**把控制权交还 driver**
-> 由它回到 plan/蓝图责任方重新裁决 scope，并经既有后继函数签发新范围。
-> **自行扩写 contracts.yaml、或自行重取 pass snapshot，都是自我授权，一律无效且会被拦。**
+> UI 与普通源码遵循同一真实边界；不得原地改验收、蓝图、DSL 或绑定自批。预测之外的实现不是越权，真实公共契约变化由责任方正式修订。
 
 | 输入项 | 必需 |
 |--------|------|
@@ -82,7 +79,7 @@
 | 模块导出 / 模块注册 / 页面注册 | 跨模块出口正确导出 / 构建清单注册 / 路由清单登记 | BLOCKER |
 | 硬编码字符串 | presentation 层 UI 文本走资源机制 | MAJOR |
 | 命名规范 / 禁止 any | 命名约定 / 无 any 类型 | MAJOR |
-| pixel_1to1 门禁组（8 项，详见 reference） | 视觉真源/资产物化/文案白名单/渲染几何/透明占位/结构声明台账 | BLOCKER |
+| pixel_1to1 检查组（详见 reference） | 视觉真源/资产物化/文案白名单/渲染几何/透明占位；结构台账缺项仅披露 | 真实缺陷 BLOCKER |
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接跑 `check-coding.ts` 不会触发任何检查，静默返回 0 造成假通过。
 
@@ -120,7 +117,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 ## 约束
 
-1. contracts.yaml 是强契约：文件路径/接口签名/数据模型/组件 Props 须一致；Spec 有问题先向用户指出确认修正方案。
+1. contracts.yaml 是强契约：文件路径/接口签名/数据模型/组件 Props 须一致；Spec 有实质问题交原责任方；已授权无人值守原需求内自动修订，改变目标或真实人类授权才确认。
 2. 逐模块逐层交付，每批 `coding.module_batch` 确认后继续。
 3. 无法接真实后端时在 client 层定义接口，repository 用本地替身实现。
 4. 非显而易见的业务逻辑用中文注释说明意图。

@@ -19,7 +19,7 @@ import planChecker from '../../scripts/check-plan';
 import { refreshComponentIndex } from '../../scripts/utils/component-assets';
 import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
 import { checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
-import { designRepairNeedsContinuation } from '../../scripts/goal-phase-runtime';
+import { designRepairNeedsContinuation, inheritRunProcessArgs } from '../../scripts/goal-phase-runtime';
 import { designRepairInputFingerprint } from '../../scripts/utils/design-repair-unattended';
 import { publishArchitectureRevision } from '../../scripts/utils/init-task-executor';
 import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
@@ -81,6 +81,11 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
     assert(!probe([{ type: 'run_start' }, halt, end, { type: 'run_start' }, repair, { type: 'run_end', status: 'COMPLETED' }]));
     assert(!probe([{ type: 'run_start' }, repair, { ...halt, phase: 'coding' }, end]));
     assert(!probe([{ type: 'run_start' }, repair, { type: 'agent_invoke_start', phase: 'plan' }, halt, end]));
+    assert.deepStrictEqual(inheritRunProcessArgs({}), []);
+    assert.deepStrictEqual(inheritRunProcessArgs({ unattended: true, detach: true }), [], 'an unattended request does not grant process posture');
+    assert.deepStrictEqual(inheritRunProcessArgs({ 'foreground-ok': false, 'detached-child': false }), []);
+    assert.deepStrictEqual(inheritRunProcessArgs({ 'foreground-ok': true }), ['--foreground-ok']);
+    assert.deepStrictEqual(inheritRunProcessArgs({ 'detached-child': true }), ['--detached-child']);
   } },
   { name: 'architecture publication writes its actual target and retains unrelated project configuration', run: () => withProject(({ root }) => {
     const file = path.join(root, 'framework.config.json');

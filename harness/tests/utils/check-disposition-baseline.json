@@ -340,6 +340,10 @@
       ],
       "dynamic_count": 7
     },
+    "harness/scripts/utils/repair-candidates.ts": {
+      "literal_ids": [],
+      "dynamic_count": 1
+    },
     "harness/scripts/utils/report-generator.ts": {
       "literal_ids": [],
       "dynamic_count": 1

@@ -1,0 +1,8 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "agentmaison://artifact/coding-upstream-issues@1"
+title: Optional coding upstream issues
+x-artifact-id: coding-upstream-issues@1
+x-version: 1
+x-authority: "Optional coding-authored proposals, using the review issue table. Absence is valid; only independently verified issues enter repair routing."
+type: string
+minLength: 1

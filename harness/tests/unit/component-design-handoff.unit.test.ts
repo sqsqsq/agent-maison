@@ -1,3 +1,4 @@
+import { acceptChangeUnitCandidates } from '../../scripts/utils/change-unit-provider-boundary';
 // ============================================================================
 // component-design-handoff.unit.test.ts — M7 t5：/component-design 设计交接的仓内验收
 // ============================================================================
@@ -216,6 +217,18 @@ export function runContentWarnCases(): UnitCaseResult[] {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  results.push(test('8a6d3f21 normal CU acceptance derives existing dependency references without mutating the proposal', () => {
+    withProject(projectRoot => {
+      const candidate = candidateFrom(projectRoot, 'ledger-refresh', 'derived-closure-cu');
+      const originalRefs = candidate.artifact.design_refs.length;
+      candidate.artifact.design_refs = candidate.artifact.design_refs.filter(ref => ref.target.kind !== 'relation');
+      const before = JSON.stringify(candidate);
+      const accepted = acceptChangeUnitDecomposition(projectRoot, BLUEPRINT_ID, [candidate]).accepted[0];
+      assert(JSON.stringify(candidate) === before, 'consumer mutated the author proposal');
+      assert((accepted.changeUnit.design_refs as unknown[]).length >= originalRefs, 'normal acceptance omitted the existing dependency closure');
+      assert(validateChangeUnitDesign(projectRoot, accepted.changeUnit).verdict === 'constructable', 'published artifact differs from the validated closure');
+    });
+  }));
 
   results.push(test('t9: real indexed UI design readiness skips future plan mappings; normal plan still requires exact component decisions', () => {
     withSnapshotProject(({ root, frameworkRoot }) => {

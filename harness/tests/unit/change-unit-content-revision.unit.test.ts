@@ -84,6 +84,15 @@ function addDependency(f: Fixture): void {
 }
 
 const cases: Array<{ name: string; run(f: Fixture): void }> = [
+  { name: '8a6d3f21 root-only revision derives relations and remains unchanged across two accepts', run(f) {
+    const row = revision(f.root, 'ledger-refresh', cu => { cu.design_refs = cu.design_refs.filter(ref => ref.target.kind !== 'relation'); });
+    const original = bytes(files(f));
+    for (let i = 0; i < 2; i++) {
+      const result = reviseChangeUnitContent(f.root, blueprintId, [row]);
+      assert.deepStrictEqual(result.unchanged, ['ledger-refresh']); assert.deepStrictEqual(result.revised, []);
+      unchanged(original);
+    }
+  } },
   { name: 'unfinished content keeps CU/Feature/directory, increments once, preserves stage bytes and rejects stale refs and ordinary reaccept', run(f) {
     const outputs = writeStageOutputs(f, 'ledger-refresh'); const stageBefore = bytes(outputs);
     const row = revision(f.root, 'ledger-refresh', cu => {

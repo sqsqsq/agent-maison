@@ -745,6 +745,11 @@ const cases: Case[] = [
       const feature = SNAPSHOT_CU_FEATURE;
       const freshness = (phase: string) => recomputePhaseEvidenceStaleness(s.root, feature, [phase], { frameworkRoot: s.frameworkRoot })[0];
       const files = b2Files(s);
+      // 仅在测试副本适配当前框架环境，保留旧格式的业务字节绑定；不冒充旧宿主完成。
+      const legacyManifest = loadPhaseEvidenceManifest(s.root, feature, 'coding')!.manifest;
+      legacyManifest.environment = resolvePhaseEvidenceManifest({ projectRoot: s.root, feature, phase: 'coding', frameworkRoot: s.frameworkRoot }).environment;
+      legacyManifest.aggregate_sha256 = recomputeManifestAggregate(legacyManifest);
+      writePhaseEvidenceManifest(s.root, legacyManifest);
       writePhaseEvidenceManifest(s.root, resolvePhaseEvidenceManifest({ projectRoot: s.root, feature, phase: 'plan', extraInputs: files, frameworkRoot: s.frameworkRoot }));
       assert.strictEqual(freshness('plan').verdict, 'fresh', '前提：新写证据当下 fresh');
       assert.strictEqual(freshness('coding').verdict, 'fresh', '前提：快照 coding 证据当下 fresh');

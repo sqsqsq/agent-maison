@@ -71,6 +71,7 @@ import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capab
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { readPhaseRepairIssues } from '../../scripts/utils/repair-candidates';
 import { sha256File } from '../../scripts/utils/effective-vision-context';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import {
@@ -187,7 +188,7 @@ function phaseAttemptIdFromReceipt(p: RealChainProject, phase: string): string {
  * `role='agent'`（RC-9b）：agent 会话内自跑的 harness——同一组轮次身份键，**不带** gate 标
  * （`phase-state.ts:184` `isAgentSideGoalHarness` 的判据），时钟不注入（沿用进程环境）。
  */
-function runGateHarness(
+export function runGateHarness(
   p: RealChainProject, phase: string, clock: string | undefined, attemptId: string,
   deviceEnv: Record<string, string>, role: 'gate' | 'agent' = 'gate',
 ): { status: number | null; output: string } {
@@ -253,7 +254,7 @@ function addNeverCreatedContractFile(p: RealChainProject): void {
   fs.writeFileSync(planAbs, plan.replace(row, `${row}| ${RC1_NEVER_CREATED} | 银行标识角标 | 新增 |\n`), 'utf-8');
 }
 
-test('RC-1 plan 起步：待创建文件不拖垮绑定，真缺失文件在 coding 仍判 absent', withProject(async (project, birthChain) => {
+test('RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位置只披露', withProject(async (project, birthChain) => {
   /** plan 跑的那一刻盘上既有源码的字节——coding 随后会改写它，事后再读取就对不上了。 */
   let planTimeSourceSha: string | null = null;
   const probe = await runGoalRuntimeChain(project.root, {
@@ -302,26 +303,15 @@ test('RC-1 plan 起步：待创建文件不拖垮绑定，真缺失文件在 cod
   }
   assert(planMaterial.every(f => !!f.sha256), `plan 读集里出现 absent 条目：${dump}`);
 
-  // ③ 真缺失文件在 coding 仍 absent：coding 不得 PASS，失败须落在**生产的缺失文件判据**
-  //    （`check-coding.ts:107` 的 `file_completeness`，`affected_files` 即缺失清单）上，
-  //    且清单**恰好**点名那一个文件——不得把已创建的 BankListItem.ets 一起拖下水。
-  //    按 check id + affected_files 断言，而不是对整条 blocker 做 `JSON.stringify().includes()`
-  //    ——后者被任意一处提到文件名的散文（suggestion / details 诊断行）满足（codex 阻断 1）。
+  // ③ 只有预测表提过、没有真实调用的文件不构成产品缺陷；仍在报告披露定位缺口。
   const coding = readSummary(project, 'coding');
-  assert(coding?.verdict !== 'PASS', `coding 不该 PASS（真缺失文件被放过）：${dumpPhase(project, 'coding')}`);
-  const blockers = coding?.blockers ?? [];
-  const completeness = blockers.find(b => (b.id ?? b.check_id) === 'file_completeness');
-  assert(completeness, `coding 没落在生产的 file_completeness 判据上：${JSON.stringify(blockers).slice(0, 800)}`);
-  const missing = completeness!.affected_files ?? [];
-  assert(
-    missing.includes(RC1_NEVER_CREATED),
-    `file_completeness 的缺失清单没点名真缺失文件：${JSON.stringify(completeness)}`,
-  );
-  assert(
-    !missing.includes(REAL_CHAIN_NEW_SOURCE),
-    `file_completeness 把已创建的待创建文件也判缺失：${JSON.stringify(completeness)}`,
-  );
-  assert(probe.exitCode !== 0, `coding 缺文件却整条 run 正常收尾：exit=${probe.exitCode}`);
+  assert(coding?.verdict === 'PASS', dumpPhase(project, 'coding'));
+  const report = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(project.root, project.feature, 'coding', project.frameworkRoot), 'script-report.json'), 'utf8'));
+  const completeness = report.checks.find((check: { id: string }) => check.id === 'file_completeness');
+  assert(completeness?.status === 'WARN', JSON.stringify(completeness));
+  assert(completeness.affected_files.includes(RC1_NEVER_CREATED), JSON.stringify(completeness));
+  assert(!completeness.affected_files.includes(REAL_CHAIN_NEW_SOURCE), JSON.stringify(completeness));
+
 }));
 
 // ===========================================================================
@@ -820,30 +810,25 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
 // 改法：把失败点显式落在 1.2 下**真会执行**的那格，并先证明它确实到达了失败结果（见
 // `assertPlanFailedOnRc8Target`），再做单变量对照。**不动生产熔断。**
 //
-// **失败点换载体（plan 3abca824 t4，2026-09-29）**：原载体 `context_exploration_facts_phase_delta_missing`
-// 登记为账本披露后不再阻断（正向证据见下方 RC-8c）。换成仍保持阻断的
-// `contract_file_reference_closure`（结果依据，P4 取证 #48）：plan 材料齐全，只在 contracts.yaml 追加一条
-// 未列入 `contracts.files` 的 `navigation.config_files` 引用；`affected_files` 恰为 contracts.yaml
-// （check-plan.ts `checkContractFileReferenceClosure`）。调度方建议的 `context_exploration_facts_baseline_stale`
-// 不可用：基线指纹在同一次调用入口按当前字节现算（capability-resolution-entry-input.ts:302），
-// 同一轮里不会失配；facts 真被改时入口直接抛 `facts baseline stale`，不产该检查。
+// 8a：引用不在预测文件表已不阻断。改用真实越根路径错误，同一检查、同一相关文件，
+// 不修改熔断规则，也不恢复已取消的逐文件许可。
 // ===========================================================================
 
 /** plan 期确定性失败点的 check id（BLOCKER，带 affected_files=contracts.yaml）。 */
 const RC8_CHECK_ID = 'contract_file_reference_closure';
-/** 未列入 contracts.files 的引用（不必存在于盘上：授权闭包按路径判）。 */
-const RC8_UNLISTED_REFERENCE = 'doc/rc8-unlisted-nav.json5';
+/** 真实越出工程根的非法引用（不读取工程外文件）。 */
+const RC8_INVALID_REFERENCE = '../outside-nav.json5';
 
 function rc8ContractsRel(p: RealChainProject): string {
   return `doc/features/${p.feature}/contracts.yaml`;
 }
 
-/** 写齐 plan 材料，再往 contracts.yaml 追加一条未授权引用；`marker` 非空时再追加一行注释（真换字节、不修问题）。 */
-function writePlanWithUnlistedReference(p: RealChainProject, marker?: string): void {
+/** 写齐 plan 材料，再往 contracts.yaml 追加一条非法越根引用；`marker` 非空时再追加一行注释（真换字节、不修问题）。 */
+function writePlanWithInvalidReference(p: RealChainProject, marker?: string): void {
   writePlanMaterials(p);
   const abs = path.join(p.root, rc8ContractsRel(p));
   const body = fs.readFileSync(abs, 'utf-8').replace(/\s*$/, '\n');
-  fs.writeFileSync(abs, `${body}navigation:\n  config_files:\n    - ${RC8_UNLISTED_REFERENCE}\n${marker ? `# ${marker}\n` : ''}`, 'utf-8');
+  fs.writeFileSync(abs, `${body}navigation:\n  config_files:\n    - ${RC8_INVALID_REFERENCE}\n${marker ? `# ${marker}\n` : ''}`, 'utf-8');
 }
 
 /** 两条共用：无关文件每轮都变（把"无关变化"这一项在 (a)/(b) 之间拉平）。 */
@@ -882,9 +867,9 @@ test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续�
     onPlan: ctx => {
       project.runId = ctx.runId;
       // 与 RC-8b 的**唯一**差别：相关文件（contracts.yaml）每轮真换一次字节，但那一格仍没修好
-      //——末尾多一行本轮注释，未授权引用原样保留 → 同一组 blocker。
+      //——末尾多一行本轮注释，非法越根引用原样保留 → 同一组 blocker。
       // 这正是"agent 动了被点名的文件、但没解决问题"那种真修复尝试的形态。
-      writePlanWithUnlistedReference(project, `plan attempt ${ctx.attempt}`);
+      writePlanWithInvalidReference(project, `plan attempt ${ctx.attempt}`);
       writeUnrelatedNote(project, ctx.attempt);
     },
   });
@@ -910,7 +895,7 @@ test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress �
     onPlan: ctx => {
       project.runId = ctx.runId;
       // 与 RC-8a 的唯一差别：相关文件（contracts.yaml）字节恒定（每轮写出同样字节）；无关的 notes 变化两边一模一样。
-      writePlanWithUnlistedReference(project);
+      writePlanWithInvalidReference(project);
       writeUnrelatedNote(project, ctx.attempt);
     },
   });
@@ -1267,8 +1252,10 @@ function unmarkedUtBlockerSkips(p: RealChainProject): string[] {
     .map(c => `${c.id}: ${String(c.details ?? '').slice(0, 160)}`);
 }
 
-export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
+export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promise<void> {
   await withProject(async (project, birthChain) => {
+    const repairId = upstreamAudit ? 'UP-UT-8A' : 'ut_product_assertion_failure';
+    const repairFix = '修复 BankService.openCard 对空 id 的实现缺口';
     /** 回退发生后 coding 首次被调用时盘上的 ut summary / 未标注 SKIP——驱动回退的那一轮。 */
     let utAtBacktrack: (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null = null;
     let skipsAtBacktrack: string[] = [];
@@ -1290,8 +1277,8 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
       onCoding: ctx => {
         project.runId = ctx.runId;
         const utSummary = readSummary(project, 'ut') as ReturnType<typeof readSummary> & { repair_candidates?: Array<{ id?: string }> };
-        const backtracked = ctx.prompt.includes('ut_product_assertion_failure')
-          && !!utSummary?.repair_candidates?.some(candidate => candidate.id === 'ut_product_assertion_failure');
+        const backtracked = ctx.prompt.includes(repairId)
+          && !!utSummary?.repair_candidates?.some(candidate => candidate.id === repairId);
         if (backtracked && !utAtBacktrack) {
           utAtBacktrack = readSummary(project, 'ut');
           skipsAtBacktrack = unmarkedUtBlockerSkips(project);
@@ -1300,8 +1287,8 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
         const observed = loadAuthoritativeEvents(path.join(featureFilePath(project.root, project.feature, 'goal-runs'), project.runId!, 'events.jsonl'));
         const failures = observed.filter(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL').length;
         // Keep the first repair ineffective to exercise reopening the same trusted defect twice.
-        writeRc9bService(project, backtracked && failures >= 2);
-        if (backtracked && failures === 1) {
+        writeRc9bService(project, backtracked && (upstreamAudit || failures >= 2));
+        if (!upstreamAudit && backtracked && failures === 1) {
           const file = path.join(project.root, REAL_CHAIN_SERVICE);
           // A real but incorrect first repair; unchanged-input retries remain subject to the existing fuse.
           fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(RC9B_SERVICE_DEFECT, 'Promise.resolve(id.length >= 0)'));
@@ -1313,16 +1300,38 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
         project.runId = ctx.runId;
         writeUtMaterials(project);
         writeRc9bDag(project);
+        const upstreamGap = upstreamAudit && !fs.readFileSync(path.join(project.root, REAL_CHAIN_SERVICE), 'utf8').includes('!!id');
+        if (upstreamGap) fs.appendFileSync(featureFilePath(project.root, project.feature, 'ut/testability-audit.md'), [
+          '', '## 问题清单', '', '| ID | 严重程度 | 分类 | 涉及文件 | 问题描述 | 修复建议 | 状态 |', '|---|---|---|---|---|---|---|',
+          `| ${repairId} | MAJOR | 实现缺口 | ${REAL_CHAIN_SERVICE} | 当前 \`${REAL_CHAIN_SERVICE}:1\` 的业务入口缺空 id 防护，UT实际驱动该入口失败 | ${repairFix} | 未关闭 |`, '',
+        ].join('\n'));
         // 本轮内按 harness NEXT 指引完成诊断：自跑 harness 拿到本轮 subject → 发布 verifier 报告，
         // 外层 gate 以同一 subject 读到它（见段首「放弃的准确性」：报告留到下一轮才发布的两轮形态不覆盖）。
         runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', RC4_DEVICE_ENV, 'agent');
-        publishRc9bUtVerifier(project);
+        if (upstreamGap) {
+          const summary = readSummary(project, 'ut');
+          publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
+            feature: project.feature, phase: 'ut', subjectId: summary?.verifier_subject_id, skipSummaryPatch: true,
+            reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${readPhaseRepairIssues(project.root, project.feature, 'ut')!.rows[0].summary}`, '```'].join('\n') });
+        } else publishRc9bUtVerifier(project);
       },
     });
     const events = probe.events;
     const chain = ['spec', 'plan', 'coding', 'review', 'ut'];
     const dump = (): string => `${dumpChain(project, chain)}\nunmarked BLOCKER SKIP=${JSON.stringify(skipsAtBacktrack.length ? skipsAtBacktrack : unmarkedUtBlockerSkips(project), null, 1)}`
       + `\nevents=${events.map(e => `${String(e.type)}${e.phase ? '@' + String(e.phase) : ''}`).join(',')}`;
+    if (upstreamAudit) {
+      const auditBacktrack = utAtBacktrack as { repair_candidates?: Array<Record<string, unknown>> } | null;
+      const backtrack = events.find(event => event.type === 'phase_backtrack_requested' && (event as { candidates?: Array<{ id?: string }> }).candidates?.some(candidate => candidate.id === repairId));
+      assert(backtrack, `audit提案未进入真实返修事务：${dump()}`);
+      assert(auditBacktrack?.repair_candidates?.some(candidate => candidate.id === repairId && candidate.source_phase === 'ut'), 'UT audit产物候选未到达coding');
+      assert(!auditBacktrack?.repair_candidates?.some(candidate => candidate.id === 'ut_product_assertion_failure'), '不得用旧机器候选冒充audit交接');
+      assert(probe.codingPrompts.some(prompt => prompt.includes(repairId) && prompt.includes(repairFix)), 'coding未收到具体audit问题');
+      const failed = events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL');
+      assert(failed >= 0 && events.slice(failed + 1).some(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS'), '原UT未在责任方修复后真实复验');
+      for (const phase of ['coding', 'review', 'ut']) assert(readSummary(project, phase)?.closure_status === 'closed', `${phase}未正式收口`);
+      return;
+    }
 
     const btIdx = events.findIndex(e => e.type === 'scope_revised' && (e as { trigger?: { check_id?: string } }).trigger?.check_id === 'ut_product_assertion_failure');
     assert(btIdx >= 0, `没有重开 coding 义务：\n${dump()}`);
@@ -1377,7 +1386,12 @@ export async function rc9bUtBacktrackThroughCoding(): Promise<void> {
 }
 
 test('RC-9b ut 产品断言失败回退 coding：诊断 verifier 签发、coding 次轮 PASS、ut 重验', rc9bUtBacktrackThroughCoding);
-test('RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接', rc10HostRuleCombination);
+test('RC-13 UT audit上游缺口：实际产物读取、逐条核实、责任coding修复与原UT正式复验', () => rc9bUtBacktrackThroughCoding(true));
+test('RC-10 20261019真实输入：设计修订、入口声明补齐、coding资源归属及UT交接', () => rc10HostRuleCombination());
+test('RC-11 1a0796真实输入：未预测资源直接实现、真实归属及review交接', () => rc10HostRuleCombination('20261020'));
+for (const mode of ['plan-repair', 'goal-decline', 'fact-decline', 'design-repair', 'design-decline'] as const) {
+  test(`RC-12 upstream ${mode}: current artifact → verifier → owner → original coding recheck`, () => rc10HostRuleCombination('20261020', mode));
+}
 
 export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const out: UnitCaseResult[] = [];

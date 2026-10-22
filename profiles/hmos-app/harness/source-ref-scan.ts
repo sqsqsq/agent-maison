@@ -3,6 +3,8 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { mask } from './component-extractor';
+import { implementationFiles, projectImplementationModules } from '../../../harness/scripts/utils/diff-scope';
 import * as path from 'path';
 import type { CheckContext } from '../../../harness/scripts/utils/types';
 import type { UiSpecComponentNode } from '../../../harness/scripts/utils/ui-spec-shared';
@@ -31,7 +33,10 @@ export function scanFeatureSourceTree(
   const structNamesOrdered: string[] = [];
   const etsFiles: string[] = [];
 
-  for (const mod of contracts.modules ?? []) {
+  const actualFiles = implementationFiles(projectRoot, contracts.feature ?? '', contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+  const modules = [...new Map([...(contracts.modules ?? []), ...projectImplementationModules(projectRoot, contracts.modules)
+    .filter(module => actualFiles.some(file => file.startsWith(module.package_path + '/')))].map(module => [module.package_path, module])).values()];
+  for (const mod of modules) {
     const etsRoot = path.join(projectRoot, mod.package_path, 'src', 'main', 'ets');
     const scanDirs = [
       path.join(etsRoot, 'presentation', 'pages'),
@@ -50,6 +55,10 @@ export function scanFeatureSourceTree(
     }
   }
 
+  for (const rel of actualFiles) {
+    const file = path.join(projectRoot, rel);
+    if (rel.endsWith('.ets') && !etsFiles.includes(file)) scanEtsFile(file, resourceRefs, structNames, structNamesOrdered, etsFiles);
+  }
   return { resourceRefs, structNames, structNamesOrdered, etsFiles };
 }
 
@@ -105,7 +114,7 @@ function scanEtsFile(
   for (const ref of collectResourceRefsInActiveCode(text)) {
     resourceRefs.add(ref);
   }
-  for (const m of text.matchAll(STRUCT_NAME_RE)) {
+  for (const m of mask(text, true).matchAll(STRUCT_NAME_RE)) {
     structNames.add(m[1]);
     structNamesOrdered.push(m[1]);
   }

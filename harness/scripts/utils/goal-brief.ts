@@ -10,7 +10,7 @@ import { loadRefElementsFile, refElementsAbsPath, resolveCurrentRequirementSourc
 import { resolveEffectiveScopeSource } from './goal-run-creation';
 import { effectiveHeadlessUnattended } from './goal-manifest';
 import { parseScope } from './scope-parser';
-import { loadRepairDeclineState } from './repair-candidates';
+import { loadRepairDeclineState, designRepairDeclines } from './repair-candidates';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -68,7 +68,7 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
   let outOfScope: string[] = [];
   try {
     const spec = resolveFeatureArtifact(projectRoot, feature, 'spec.md');
-    if (spec.exists) outOfScope = parseScope(fs.readFileSync(spec.actualPath, 'utf-8')).scope?.out_of_scope_modules ?? [];
+    outOfScope = parseScope(requirementText).scope?.out_of_scope_modules ?? [];
   } catch { /* spec 不可读 → 无出范围模块 */ }
   if (elements.length > 0 || outOfScope.length > 0) brief.exclusions = { elements, out_of_scope_modules: outOfScope };
 
@@ -78,9 +78,12 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
     // §4.6：本交付周期内来源核验通过的拒修——与四处运行时判定同一个状态函数，不另读账本
     try {
       brief.resolved_conflicts = [...new Set(loadRepairDeclineState(projectRoot, feature, source.runId).values())]
+        // Factual refusals travel as their original ledger evidence; keep the goal brief free of self-verification feedback.
+        .filter(s => s.basis?.text.includes('「'))
         .flatMap(s => (s.basis ? [{ s, b: s.basis }] : []))
         .sort((x, y) => Date.parse(x.b.round.ts) - Date.parse(y.b.round.ts) || x.s.id.localeCompare(y.s.id))
         .map(({ s, b }) => ({ candidate: `${s.id}（${s.summary}）`, basis: b.text, run_id: b.run_id }));
+      brief.resolved_conflicts.push(...designRepairDeclines(projectRoot, feature, source.runId));
     } catch { /* 事件或账本不可读 → 省略该栏 */ }
   }
   return brief;
@@ -137,7 +140,7 @@ function sectionBody(brief: GoalBrief, key: GoalBriefSection, requirementInConte
             '需求原文里明确写了不要或本次不做的内容同样是排除项，即使尚未登记。',
             ...brief.exclusions.elements.map(e => `- 参考图元素 ${e.element_id}${e.quote ? `：「${e.quote}」` : ''}`),
             ...(brief.exclusions.out_of_scope_modules.length
-              ? [`- spec 出范围模块：${brief.exclusions.out_of_scope_modules.join('、')}`]
+              ? [`- 原需求明确排除模块：${brief.exclusions.out_of_scope_modules.join('、')}`]
               : []),
           ].join('\n')
         : '';

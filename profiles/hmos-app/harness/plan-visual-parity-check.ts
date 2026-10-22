@@ -1,3 +1,6 @@
+import { scanFeatureSourceTree } from './source-ref-scan';
+import { mask } from './component-extractor';
+import { isUnderLayerDir, layerDirPrefixes } from '../../../harness/scripts/utils/diff-scope';
 // ============================================================================
 // plan · visual-parity.yaml 覆盖守门
 // ============================================================================
@@ -224,11 +227,12 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
   const contractComponentFile = new Map<string, string | undefined>(
     contractComponentEntries.map(c => [c.name, c.file] as [string, string | undefined]),
   );
-  const contractFiles = new Set(
-    (ctx.featureSpec.contracts?.files ?? [])
-      .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
-      .map(f => f.trim().replace(/\\/g, '/')),
-  );
+  const actualComponents = new Set<string>();
+  if (ctx.featureSpec.contracts) for (const file of scanFeatureSourceTree(ctx.projectRoot, ctx.featureSpec.contracts).etsFiles) {
+    if (!isUnderLayerDir(path.relative(ctx.projectRoot, file).replace(/\\/g, '/'), layerDirPrefixes(ctx.projectRoot))) continue;
+    const source = mask(fs.readFileSync(file, 'utf8'), true);
+    for (const match of source.matchAll(/\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)/g)) actualComponents.add(match[1]);
+  }
   for (const m of vpDoc.mappings?.assets ?? []) {
     if (m.contract_resource_key && contractKeys.size > 0 && !contractKeys.has(m.contract_resource_key)) {
       issues.push(`visual-parity asset 映射 ${m.contract_resource_key} 不在 contracts.resource_keys`);
@@ -240,7 +244,7 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     }
   }
   // ---- 所有权子集②③：**P0 节点引用的**组件必须真实存在于 contracts.components
-  //      （空数组也判失败），且其 `file` 必须存在于 contracts.files ----
+  //      （实际源码可提供定位），不要求文件出现在预测清单 ----
   // 旧实现用 `contractComponents.size > 0` 作前置：contracts.components 为空反而跳过
   // 存在性检查——「没声明任何组件」于是成了最省事的绕过路径。现在空数组即判失败。
   // plan e6b3f8d2 t3 review：硬地板范围严格止于 P0；P1/非 P0 mapping 的同类陈旧
@@ -251,6 +255,7 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     const targetIssues = p0NodeIdSet.has(m.ui_spec_node_id?.trim() ?? '')
       ? ownershipIssues
       : issues;
+    if (actualComponents.has(name)) continue;
     if (!contractComponents.has(name)) {
       targetIssues.push(
         contractComponentEntries.length === 0
@@ -262,8 +267,7 @@ export function checkVisualParityCoverage(ctx: CheckContext): CheckResult[] {
     const file = contractComponentFile.get(name)?.trim();
     if (!file) {
       targetIssues.push(`contracts.components 的 ${name} 缺 file（无法定位实现源文件）`);
-    } else if (!contractFiles.has(file.replace(/\\/g, '/'))) {
-      targetIssues.push(`contracts.components 的 ${name}.file（${file}）不在 contracts.files`);
+
     }
   }
 

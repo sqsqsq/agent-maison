@@ -150,7 +150,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     }),
   },
   {
-    name: 't5(classify 注入) 同一 selection 进分类；sole_candidate 时 explanation 首句声明形态未经确认',
+    name: 't5(classify 注入) 同一 selection 进分类；sole_candidate 不把真实编译错误误报为欠用户确认',
     run: () => withTmp(root => {
       writeBuildProfile(root, ['mirror']);
       const frozen = resolveProductSelection({ projectRoot: root, purpose: 'coding' });
@@ -165,9 +165,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const cls = classifyCodingCompileFailure(res, mkCtx(DEFAULT_LAYOUT.projectRoot), frozen);
       assert.strictEqual(cls.kind, 'project_build');
       const firstLine = cls.explanation.split('\n')[0] ?? '';
-      assert(firstLine.includes('编译形态未经确认'), `首句须声明形态未经确认：${firstLine}`);
-      assert(firstLine.includes('mirror'), firstLine);
-      assert(firstLine.includes('sole_candidate'), firstLine);
+      assert(!firstLine.includes('编译形态未经确认'), `唯一工程候选不是欠用户授权：${firstLine}`);
       // 可信来源（explicit_run）不产生首句声明
       const trusted = resolveProductSelection({ projectRoot: root, purpose: 'coding', explicitProduct: 'mirror' });
       const clsTrusted = classifyCodingCompileFailure(res, mkCtx(DEFAULT_LAYOUT.projectRoot), trusted);

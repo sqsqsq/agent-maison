@@ -165,22 +165,22 @@ const SPEC_YAML = [
   'assets: []',
 ].join('\n');
 
-test('gate_missing_ledger_blocker_with_copyable_keys', () => {
+test('gate_missing_ledger_disclosed_with_copyable_keys', () => {
   const { root, ctx } = mkFixture({ specYaml: SPEC_YAML });
   try {
     const [r] = checkStructureDeclarationLedger(ctx);
     assert.strictEqual(r.id, 'structure_declaration_ledger');
-    assert.strictEqual(r.status, 'FAIL');
-    assert.strictEqual(r.severity, 'BLOCKER'); // pixel_1to1 ratchet
+    assert.strictEqual(r.status, 'WARN');
+    assert.strictEqual(r.severity, 'MAJOR'); // pixel_1to1 ratchet
     assert.ok(/add_card_row/.test(r.details) && /subtitle_position=trailing/.test(r.details), '报错须含照抄即用的键');
-    assert.ok(/诚实边界/.test(r.details), '须写明自报不验真的诚实边界');
+    assert.ok(/台账仅用于定位/.test(r.details), '须写明自报不验真的诚实边界');
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('gate_incomplete_and_phantom_blocker', () => {
+test('gate_incomplete_and_stale_location_disclosed', () => {
   const badLedger = [
     'schema_version: "1.0"',
     'entries:',
@@ -192,8 +192,8 @@ test('gate_incomplete_and_phantom_blocker', () => {
   const { root, ctx } = mkFixture({ specYaml: SPEC_YAML, ledgerYaml: badLedger });
   try {
     const [r] = checkStructureDeclarationLedger(ctx);
-    assert.strictEqual(r.status, 'FAIL');
-    assert.ok(/糊名|不存在于源码/.test(r.details) && /NoSuchStruct/.test(r.details));
+    assert.strictEqual(r.status, 'WARN');
+    assert.ok(/定位未命中当前源码/.test(r.details) && /NoSuchStruct/.test(r.details));
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(root, { recursive: true, force: true });
@@ -265,7 +265,7 @@ test('gate_respects_custom_features_dir', () => {
     } as unknown as CheckContext;
     // 无台账 → BLOCKER 且路径指向自定义目录（非 doc/features）
     const [miss] = checkStructureDeclarationLedger(ctx);
-    assert.strictEqual(miss.status, 'FAIL', '自定义目录下须读到 ui-spec 声明（不得静默 PASS）');
+    assert.strictEqual(miss.status, 'WARN', '自定义目录下须读到 ui-spec 声明（不得静默 PASS）');
     assert.ok(
       miss.affected_files!.every(f => f.startsWith('requirements/features/')),
       `affected_files 须走自定义目录：${JSON.stringify(miss.affected_files)}`,
@@ -311,7 +311,7 @@ test('production_entry_check_visual_parity_reaches_ledger_in_custom_features_dir
     const results = checkVisualParity(ctx);
     const ledgerHit = results.find(r => r.id === 'structure_declaration_ledger');
     assert.ok(ledgerHit, `生产入口须触达台账门禁（自定义目录不得提前退出）：${JSON.stringify(results.map(r => r.id))}`);
-    assert.strictEqual(ledgerHit!.status, 'FAIL', '无台账应 FAIL');
+    assert.strictEqual(ledgerHit!.status, 'WARN', '无台账应披露 WARN');
     assert.ok(/add_card_row/.test(ledgerHit!.details), '报错须含待登记键');
   } finally {
     clearFrameworkConfigCache();

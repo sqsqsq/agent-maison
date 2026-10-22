@@ -8,6 +8,7 @@ import { isExecutionSourceBasis, executionCompletionPhases } from './execution-s
 import type { FactsInvocationContext } from './context-facts';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import * as fs from 'fs';
+import { isUnderLayerDir, layerDirPrefixes } from './diff-scope';
 import * as path from 'path';
 import { resolveEffectiveScopeSource, loadEffectiveExecutionScope, eventsWithScopeRevocations } from './goal-run-creation';
 import { loadAuthoritativeEvents } from './goal-runner-phase';
@@ -15,7 +16,7 @@ import { executionScopeFingerprint } from './execution-scope';
 import { loadFeatureContracts, phaseContractIndex, loadArtifactInventory, phaseOwnsDesignOutput } from './skill-contract';
 import { resolveFactsAbsPath, factsBaselineFingerprint } from './context-facts';
 import { assertFactsSourceReadable, parseContextExploration } from './context-exploration';
-import { evidenceEntryMatchesCurrentFile, factsBaselineBusinessDependencies, phaseEvidenceBusinessInputs, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
+import { evidenceEntryMatchesCurrentFile, factsBaselineBusinessDependencies, phaseEvidenceBusinessInputs, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File, createObservedSourceHashReader } from './phase-evidence-manifest';
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { featuresDirPath, enumerateFeatures, featureFilePath, receiptDirPath, featurePhaseReportsDir } from '../../config';
 import { validateProjectRelativePath, isInsideProjectRoot, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
@@ -182,6 +183,8 @@ export function prepareExplicitRequest(options: { projectRoot: string; framework
 }
 
 export interface CapabilityResolutionEntryInputOptions {
+  /** Current design projection probe; never grants reusable phase facts. */
+  purpose?: 'design-authority-probe';
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   feature: string;
@@ -215,7 +218,21 @@ export function loadFactsInvocationContext(options: {
   const context = events[index].facts_context;
   if (!context || !('run_id' in context.subject) || context.subject.feature !== options.feature || context.subject.run_id !== options.runId
     || context.first_phase !== resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
-  return structuredClone(context);
+  const admitted = structuredClone(context);
+  const writes = events.slice(index + 1).filter(event => event.type === 'phase_write_observed' && event.invoke_id === events[index].invoke_id && event.phase === options.phase);
+  if (!writes.length) return admitted;
+  for (const event of writes) {
+    if (event.type !== 'phase_write_observed' || event.invoke_id !== events[index].invoke_id || event.phase !== options.phase) continue;
+    for (const row of (event as { owned?: Array<{ path: string; post_sha256: string | null; roles?: Array<{ kind: string }> }> }).owned ?? []) {
+      // The runner already classified this exact invocation; do not resolve the authority a second time.
+      const source = row.roles?.some(role => role.kind === 'source') || options.phase === 'ut' && isUnderLayerDir(row.path, layerDirPrefixes(options.projectRoot));
+      if (!source) continue;
+      let safe: string; try { safe = validateProjectRelativePath(options.projectRoot, row.path, 'observed source'); } catch { continue; }
+      if (sha256File(path.resolve(options.projectRoot, safe)) !== row.post_sha256) continue;
+      (admitted.source_owners ??= {})[safe] = options.phase;
+    }
+  }
+  return admitted;
 }
 
 /** The runtime write boundary for facts ownership; throws without a construction binding. */
@@ -248,7 +265,7 @@ export function resolveFactsPhaseOwnedSources(options: {
 }
 
 /** Re-admit completed writes or an interrupted phase window, preserving the original admission hashes. */
-function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string): FactsInvocationContext | undefined {
+function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string, carryUnchangedBaseline = false): FactsInvocationContext | undefined {
   if (!/^i\d+$/.test(options.goalAttemptId ?? '')) return undefined;
   const manifest = loadGoalManifestFromRun(options.projectRoot, runId, { feature: options.feature, featuresDir: options.featuresDir });
   const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope;
@@ -263,7 +280,18 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
       || ((events[i] as { invalidated_phases?: string[] }).invalidated_phases ?? []).includes(options.phase)))) fence = i;
   const starts = events.map((e, i) => i > fence && e.type === 'agent_invoke_start' && e.phase === options.phase
     && typeof e.invoke_id === 'string' && new RegExp(`^${options.phase}-i\\d+$`).test(e.invoke_id) ? i : -1).filter(i => i >= 0);
-  if (!starts.length) return undefined;
+  if (!starts.length) {
+    const handoff = events[fence];
+    const owner = handoff?.type === 'phase_backtrack_requested' ? handoff.to_phase : undefined;
+    if (typeof owner === 'string' && owner !== options.phase && (handoff.from_phase ?? handoff.phase) === options.phase
+      && events.slice(fence + 1).some(event => event.type === 'phase_verdict' && event.phase === owner && event.verdict === 'PASS' && event.action === 'advance')
+      && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [owner], { frameworkRoot, runId, authorityReaders: options.authorityReaders })[0]?.verdict === 'fresh') {
+      // The same repair transaction has revalidated its original baseline at the responsible owner.
+      // Reuse that invocation's strict admission proof; labels and existing legacy starts cannot enter here.
+      return loadCompletedFactsBaseline({ ...options, phase: owner }, runId, frameworkRoot, true);
+    }
+    return undefined;
+  }
   const first = starts[0];
   const context = events[first].facts_context;
   if (!context?.baseline || !Array.isArray(context.baseline.dependencies) || !('run_id' in context.subject) || context.subject.run_id !== runId || context.subject.feature !== options.feature
@@ -330,13 +358,15 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
     changed.add(source);
   }
   for (const source of written) if (sha256File(path.join(options.projectRoot, source)) !== chain.get(source)) return undefined;
-  if (!changed.size && !interrupted) return undefined;
+  if (carryUnchangedBaseline && changed.size) return undefined;
+  if (!changed.size && !interrupted && !carryUnchangedBaseline) return undefined;
   const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
   const requirement = options.requirement ?? manifest.requirement;
   const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId, authorityReaders: options.authorityReaders,
     pendingOwnerPaths: [...changed],
     ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
   if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict)
+    || carryUnchangedBaseline && freshness.verdict !== 'fresh'
     || freshness.propagated_from || freshness.integrity_errors?.length
     || freshness.changed_paths.some(source => !changed.has(source))) return undefined;
   return structuredClone(context);
@@ -419,14 +449,21 @@ export function resolveCapabilityResolutionEntryInput(
         .flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies
           .filter(dep => dep.role === 'derive' && dep.exists)
           .map(dep => path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, dep.path, inferLegacyProjectRoot(options.projectRoot, scope))).replace(/\\/g, '/')))))];
-      if (options.phase === 'review' && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
-        const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId, options.authorityReaders);
+      if (['coding', 'review', 'ut', 'testing'].includes(options.phase) && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
         // G5：基线走统一来源选择（无 run 时是既有 HARNESS_DIFF_BASE_REF 三态，不是 FAIL）
         const baseline = resolveEffectiveDiffBaseline(options.projectRoot, options.feature, goalRunId);
-        if (!baseline.available) throw new Error(baseline.reason);
-        const diff = diffChangedFilesWithStatus({ projectRoot: options.projectRoot, baseRef: baseline.baseSha });
-        if (!diff.executed) throw new Error(diff.error ?? 'review diff unavailable');
-        for (const entry of diff.entries) if (entry.status !== 'D' && contracts.files?.includes(entry.path) && !sourcePaths.includes(entry.path)) sourcePaths.push(entry.path);
+        const diff = baseline.available ? diffChangedFilesWithStatus({ projectRoot: options.projectRoot, baseRef: baseline.baseSha }) : { entries: [] };
+        const { loadLineageRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+        const written = new Set<string>();
+        if (goalRunId) for (const event of loadLineageRunEvents(options.projectRoot, options.feature, goalRunId)) {
+          if (event.type !== 'phase_write_observed' || !['coding', 'ut'].includes(String(event.phase))) continue;
+          if (event.phase === 'ut' && !indexed.phase.inputs.some(input => input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.test-targets'))) continue;
+          for (const row of (event as { owned?: Array<{ path: string; roles?: Array<{ kind: string }> }> }).owned ?? []) {
+            if (row.roles?.some(role => role.kind === 'source') || event.phase === 'ut' && isUnderLayerDir(row.path, layerDirPrefixes(options.projectRoot))) written.add(row.path);
+          }
+        }
+        for (const entry of diff.entries) if (entry.status !== 'D' && (!goalRunId || written.has(entry.path))
+          && (goalRunId ? written.has(entry.path) : isUnderLayerDir(entry.path, layerDirPrefixes(options.projectRoot))) && !sourcePaths.includes(entry.path)) sourcePaths.push(entry.path);
       }
       const factsContext: FactsInvocationContext = {
         // G3：facts 身份位按载体二分——run 载体绑 run_id，feature 载体绑 feature（指纹在 facts 侧校验）。
@@ -435,7 +472,7 @@ export function resolveCapabilityResolutionEntryInput(
         first_phase: authority?.scope.phase_chain[0] ?? scope.phase_chain[0],
         source_paths: sourcePaths, required_input_snippets: [],
       };
-      const admitted = goalRunId ? loadFactsInvocationContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature,
+      const admitted = goalRunId && options.purpose !== 'design-authority-probe' ? loadFactsInvocationContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature,
         phase: options.phase, runId: goalRunId, attemptId: options.goalAttemptId, featuresDir: options.featuresDir })
         ?? loadCompletedFactsBaseline(options, goalRunId, frameworkRoot) : undefined;
       if (admitted) {
@@ -447,7 +484,7 @@ export function resolveCapabilityResolutionEntryInput(
       }
       const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
       let factsRebuildReason: string | undefined;
-      if (!admitted && fs.existsSync(factsPath)) {
+      if (options.purpose !== 'design-authority-probe' && !admitted && fs.existsSync(factsPath)) {
         try {
         const raw = fs.readFileSync(factsPath, 'utf8');
         const { fm, error } = parseContextExploration(raw);
@@ -491,6 +528,7 @@ export function resolveCapabilityResolutionEntryInput(
             }
           } else {
             const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
+            const observedSourceHash = createObservedSourceHashReader(options.projectRoot, options.feature, semanticOptions);
             factsContext.baseline = { established_by: establishing, fingerprint: factsBaselineFingerprint(raw), dependencies: [...phaseEvidenceBusinessInputs(options.projectRoot, options.feature, evidence.manifest, semanticOptions), ...evidence.manifest.outputs].filter(entry => entry.facts_phase === undefined
               && (paths.includes(entry.path) || (entry.role === 'input' && entry.owner_phase !== options.phase))).map(entry => {
               const ownerEvidence = entry.owner_phase && entry.owner_phase !== establishing
@@ -498,6 +536,8 @@ export function resolveCapabilityResolutionEntryInput(
               const owner = ownerEvidence?.integrityOk && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [entry.owner_phase!], semanticOptions)[0]?.verdict === 'fresh'
                 ? ownerEvidence.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase) : undefined;
               const abs = path.join(options.projectRoot, entry.path);
+              const observed = observedSourceHash(entry, establishing, options.phase);
+              if (observed) return { path: abs, ...observed, role: 'derive' };
               // plan c4e7a9b2 B2：身份中立条目存的是摘要；等价成立时基线依赖按当前字节登记（下游按字节核对）。
               const recorded = owner ?? entry;
               const neutralCurrent = recorded.identity_neutral !== undefined && evidenceEntryMatchesCurrentFile(options.projectRoot, recorded, options.feature, options.authorityReaders);
@@ -613,12 +653,12 @@ export function resolveCapabilityResolutionEntryInput(
       const usesConstructionTargets = indexed.phase.inputs.some(input => input.id === 'contracts') && !producesContracts;
       const consumes = (providerId: string): boolean => indexed.phase.inputs.some(input => input.sources.some(source => source.kind === 'derive' && source.provider_id === providerId));
       const codeTargets = [...new Set([
-        ...sourcePaths.filter(source => !isTestPath(source)),
-        ...(usesConstructionTargets ? contractFiles.filter(file => !isTestPath(file) && (fs.existsSync(path.resolve(options.projectRoot, file)) || !['spec', 'plan', 'coding'].includes(options.phase))) : []),
+        ...sourcePaths.filter(source => !isTestPath(source) && fs.existsSync(path.resolve(options.projectRoot, source))),
+        ...(usesConstructionTargets ? contractFiles.filter(file => !isTestPath(file) && fs.existsSync(path.resolve(options.projectRoot, file))) : []),
       ])];
       const partitionedTestTargets = [...new Set([
         ...sourcePaths.filter(isTestPath),
-        ...(usesConstructionTargets ? contractFiles.filter(file => isTestPath(file) && (fs.existsSync(path.resolve(options.projectRoot, file)) || !['spec', 'plan', 'coding', 'ut'].includes(options.phase))) : []),
+        ...(usesConstructionTargets ? contractFiles.filter(file => isTestPath(file) && fs.existsSync(path.resolve(options.projectRoot, file))) : []),
       ])];
       const testTargets = consumes('derive.test-targets') ? partitionedTestTargets : [];
       const ownerOf = (kind: string, sourceId: string): string | undefined => scope.obligations.find(obligation => obligation.kind === kind)?.owner_phase
@@ -649,6 +689,7 @@ export function resolveCapabilityResolutionEntryInput(
         : undefined;
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
         const base = path.basename(name);
+        if (options.phase === 'coding' && base === 'upstream-issues.md') return false;
         if (options.phase === 'ut' && base === 'mock-plan.yaml') return resolveFeatureArtifact(options.projectRoot, options.feature, name).exists;
         if (!['spec', 'plan'].includes(options.phase)) return true;
         if (base === 'spec.md' || base === 'plan.md') return scope.requested_results.includes(name) || scope.requested_results.includes(base);

@@ -455,7 +455,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert(check().issues.length === 0, 'planned 已落地引用应通过 UT');
       assert(JSON.stringify(fixture.contracts) === before, '不得改冻结契约');
       fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['planned:src/ledger/LedgerFeature.ets#NotRealSymbol'];
-      expectIssue(check().issues.map(item => item.id), 'change_unit_mapping_symbol_missing');
+      assert(!check().issues.some(item => item.id === 'change_unit_mapping_symbol_missing'), 'private symbol forecasts are not implementation verdicts');
+      const location = checkChangeUnitFeatureProjection({ projectRoot, feature: fixture.feature, phase: 'ut', featureSpec: { feature: fixture.feature, contracts: fixture.contracts, acceptance: fixture.acceptance, useCases: {} } } as unknown as CheckContext, 'ut', fixture.dags);
+      assert(location.some(item => item.status === 'WARN' && item.details?.includes('NotRealSymbol')), JSON.stringify(location));
       fixture.contracts.change_unit!.predicate_mappings[0].test_refs = ['planned:test/ledger/NotReal.test.ets'];
       expectIssue(check().issues.map(item => item.id), 'change_unit_mapping_file_missing');
       fixture.contracts.change_unit!.predicate_mappings[0].implementation_refs = ['planned:../outside.ets'];
@@ -531,7 +533,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const ids = result.issues.map(item => item.id);
       expectIssue(ids, 'change_unit_mapping_path_invalid');
       expectIssue(ids, 'change_unit_mapping_ref_unconsumable');
-      expectIssue(ids, 'change_unit_mapping_symbol_missing');
+      assert(!ids.includes('change_unit_mapping_symbol_missing'), 'private location uncertainty must not eclipse real invalid paths and verification refs');
     });
   }));
 
@@ -1302,7 +1304,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
             .filter(ref => !(ref.target.kind === 'node' && ref.target.view_id === 'scenarios'));
         }
         const result = validateChangeUnitDesign(VALID_PROJECT, cu);
-        expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
+        if (['missing-construction-symbol', 'planned-impl-ref-at-ut'].includes(fixtureCase.id)) assert(result.issues.length === 0, 'private locator is advisory: ' + JSON.stringify(result.issues));
+        else expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
         return;
       }
       withTempProject((projectRoot, cuPath) => {
@@ -1402,7 +1405,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         if (fixtureCase.mutator === 'dag-use-case-link-missing') dags = [{ dag: { branches: [] } }];
         bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts, useCasesPresent);
         const result = validateChangeUnitFeatureProjection(projectRoot, featureName, fixture.contracts, fixture.acceptance, useCasesPresent, phase, dags);
-        expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
+        if (['missing-construction-symbol', 'planned-impl-ref-at-ut'].includes(fixtureCase.id)) assert(result.issues.length === 0, 'private location is advisory: ' + JSON.stringify(result.issues));
+        else expectIssue(result.issues.map(item => item.id), fixtureCase.expected_issue);
       });
     }));
   }
@@ -1414,7 +1418,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   const moduleSpec = (name: string, layer: string) => ({ name, layer, format: 'HAR', change_type: 'modify', package_path: `${layer}/${name}` });
   const findResult = (checks: CheckResult[], id: string) => checks.find(item => item.id === id);
 
-  results.push(test('a3c7e9d1 可修改模块集合只来自 touches：design_refs 引用共享模块但不修改时 contracts.modules 不得带入', () => {
+  results.push(test('8a touches 只作模块预测；额外模块需披露必要性和公共契约影响', () => {
     withTempProject(projectRoot => {
       fs.writeFileSync(path.join(projectRoot, 'doc', 'module-catalog.yaml'), 'modules:\n  - { name: ledger, layer: 02-Feature }\n  - { name: SharedState, layer: 04-BusinessBase }\n', 'utf8');
       rewriteBlueprint(projectRoot, bp => {
@@ -1424,10 +1428,10 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       const fixture = projectionContracts(projectRoot);
       fixture.contracts.modules = [moduleSpec('SharedState', '04-BusinessBase')] as ContractsSpec['modules'];
       let result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
-      const scopeIssue = result.issues.find(item => item.id === 'cu_scope_matches_blueprint');
-      assert(scopeIssue?.message.includes('SharedState') && scopeIssue.message.includes('/component-design'), JSON.stringify(result.issues));
+      assert(!result.issues.some(item => item.id === 'cu_scope_matches_blueprint'), JSON.stringify(result.issues));
+      assert(result.warnings?.some(message => message.includes('SharedState') && message.includes('公共契约')), JSON.stringify(result));
       const checks = checkChangeUnitFeatureProjection({ projectRoot, feature: fixture.feature, phase: 'plan', featureSpec: { feature: fixture.feature, contracts: fixture.contracts, acceptance: fixture.acceptance, useCases: {} } } as unknown as CheckContext, 'plan');
-      assert(checks.some(item => item.id === 'cu_scope_matches_blueprint' && item.status === 'FAIL' && item.severity === 'BLOCKER'), 'typed plan 必须 BLOCKER');
+      assert(checks.some(item => item.status === 'WARN' && item.details?.includes('SharedState')), 'extra forecast module must be disclosed');
       fixture.contracts.modules = [moduleSpec('ledger', '02-Feature')] as ContractsSpec['modules'];
       result = validateChangeUnitFeatureProjection(projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan');
       assert(!result.issues.some(item => item.id === 'cu_scope_matches_blueprint'), JSON.stringify(result.issues));
@@ -1439,7 +1443,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  results.push(test('a3c7e9d1 dependency_edge 按操作核对当前 DSL；open_decision 挡施工；dsl_other 只 WARN；手工编辑 config 后通过', () => {
+  results.push(test('a3c7e9d1 dependency_edge 按操作核对当前 DSL；open_decision 挡施工；dsl_other 只 WARN；正式 DSL 修订后通过', () => {
     withTempProject(projectRoot => {
       const edge = (id: string, direction: string, to: string, status = 'decided_with_authority') => (bp: BlueprintRecord) => ({
         decision_id: id, kind: 'architecture_impact', change: 'dependency_edge', from: 'ledger', to, direction, rationale: 'fixture', status, owner: 'architecture-owner', provenance: bp.provenance, verification_refs: [`verify:${id}`],
@@ -1453,9 +1457,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       fs.writeFileSync(path.join(projectRoot, 'doc', 'module-catalog.yaml'), 'modules:\n  - { name: ledger, layer: 02-Feature }\n  - { name: OtherFeature, layer: 02-Feature }\n', 'utf8');
       let result = issuesWith(edge('edge-add', 'add', 'OtherFeature'));
       let issue = result.issues.find(item => item.id === 'cu_architecture_impact_not_effective');
-      assert(issue?.message.includes('framework-init'), JSON.stringify(result.issues));
+      assert(issue?.message.includes('设计 owner 的正式 DSL 修订通道'), JSON.stringify(result.issues));
       result = issuesWith(edge('edge-add', 'add', 'OtherFeature'), dsl => { dsl.outer_layers.find(layer => layer.id === '02-Feature')!.intra_layer_deps = 'dag'; });
-      assert(!result.issues.some(item => item.id === 'cu_architecture_impact_not_effective'), `手工编辑 config 后应通过：${JSON.stringify(result.issues)}`);
+      assert(!result.issues.some(item => item.id === 'cu_architecture_impact_not_effective'), `正式 DSL 修订后应通过：${JSON.stringify(result.issues)}`);
       result = issuesWith(edge('edge-remove', 'remove', '04-BusinessBase'));
       issue = result.issues.find(item => item.id === 'cu_architecture_impact_not_effective');
       assert(issue?.message.includes('删除未生效'), JSON.stringify(result.issues));
@@ -1520,9 +1524,9 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       let plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger'))!;
       assert(plan.every(item => item.status === 'PASS'), JSON.stringify(plan));
       plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger, SharedState'))!;
-      assert(findResult(plan, 'scope_declaration')?.status === 'FAIL', JSON.stringify(plan));
+      assert(findResult(plan, 'scope_declaration')?.status === 'PASS', JSON.stringify(plan));
       plan = checkChangeUnitBoundPlanScope(planCtx(projectRoot, feature, 'plan'), planDoc('ledger', 'expansions_with_user_approval:\n  - modules: [SharedState]\n    reason: x\n    approved_by: user\n'))!;
-      assert(findResult(plan, 'scope_declaration')?.details?.includes('expansions_with_user_approval'), JSON.stringify(plan));
+      assert(findResult(plan, 'scope_declaration')?.status === 'PASS', 'legacy approval ledger does not grant or limit implementation: ' + JSON.stringify(plan));
       rewriteBlueprint(projectRoot, bp => {
         bp.decisions_and_gaps.decisions.push({ decision_id: 'rewrite-ledger', kind: 'architecture_impact', change: 'responsibility_rewrite', module: 'ledger', rationale: 'fixture', status: 'decided_with_authority', owner: 'architecture-owner', provenance: bp.provenance, verification_refs: ['verify:rewrite'] });
       });

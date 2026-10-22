@@ -40,7 +40,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 
 做 Step 2 / Step 5 / Step 6 模块与依赖设计时读 [plan-workflow-detail.md「核心架构认知」](../../reference/plan-workflow-detail.md)（`doc/architecture.md` + [framework.config.json](../../../framework.config.json) `> architecture` 五条依赖规则与非 CU-bound 的功能拆分规则）。
 
-**功能拆分核心任务**：非 CU-bound 按上述规则把 spec 功能点分配到已声明模块；CU-bound 时模块归属来自蓝图 development 节点 `module`（CU `touches` 派生的可修改模块集合），plan 只做模块内落点（文件、符号、内层级），不重新分配模块，归属不对回 `/component-design`。
+**功能拆分核心任务**：非 CU-bound 按上述规则把 spec 功能点分配到已声明模块；CU-bound 时模块归属来自蓝图 development 节点 `module`（CU `touches` 派生的可修改模块集合），预计模块/文件可随实现调整；真实架构或公共职责变化仍回 `/component-design`。
 
 ## 输入
 
@@ -62,7 +62,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 1. **读取有效设计输入**：typed 验收/契约/用例，或旧调用的 spec；功能清单/页面列表/业务流程/数据实体/验收标准 → 功能点清单，已有权威设计只消费。
 2. **读架构文档 & 分析工程结构**：`doc/architecture.md` 已有模块/依赖/公共能力 → 交叉验证代码现状 → 确定新建/修改模块。
 3. **Research Sub-Phase**（Context Facts Gate·BLOCKER，功能拆分与 Scope 冻结前完成，C4）：必读 spec/acceptance/architecture/catalog/config + Step 2 规划的源码路径；`paths.conventions` 文件存在时必读全文并选择真正适用的 id。index 文件存在时须按 reference 的「组件选型施工投影」节读取资产并投影蓝图决定。追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: plan` 节（无新增事实写 "none"，不得留空）。**plan 是 delta 阶段**：`source_code_paths` 数量下限与 subagent 强制只在**建立阶段**（full=spec / lite=change）和旧 `context-exploration.md` 兼容路径生效（`harness/scripts/utils/context-facts.ts`），本阶段不重做全量探索、也不按数量硬判——但必要的实际阅读与复杂问题的子代理探索不因此免除。
-4. **Scope 继承与扩展提议**（详见 reference）：继承 spec Scope 并冻结 `in_scope_modules`；扩展须走提议流程经 `plan.scope_expansion` 用户确认。CU-bound：`in_scope_modules` = 蓝图可修改模块集合、`expansions_with_user_approval` 为空，不用 `plan.scope_expansion`，范围扩大走蓝图 revision。
+4. **Scope 与真实边界**：模块/文件清单是预测；核对原需求限制、公共契约和现行架构，必要实施调整进入 review，不逐项申请许可。真实设计变化交原 owner，已授权无人值守自动修订。
 5. **功能拆分到模块**：逐功能点分配模块（须落在 in_scope 内），输出拆分表（`plan.split_table`：`1=确认` `2=修改`）。
 6. **设计模块架构**：Mermaid 依赖图 + 目录/文件结构规划 + 模块配置变更清单。
 7. **设计数据层**：数据模型（interface/class+字段）、数据仓库（方法签名+来源+异步策略）、端云接口（如有远程数据）。
@@ -71,20 +71,20 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 10. **构建 spec 功能映射表**：spec 功能编号→优先级→层→模块→内层级→关键文件→说明，须与 Step 5 一致，P0/P1 全覆盖。
 11. **质量门禁自检**（14 项，含 Scope 守门/架构合规/模块最小化/功能拆分准确性/文件路径/数据类型/接口签名/无 TBD/组件树/状态管理/路由设计/UseCase 规约达阈值时）：不通过则自动补充重新自检直到全部通过。
 12. **输出与归档**：写盘 `plan.md` → 摘要供人审阅 → **立即进 Step 13**，不得先做编码。
-13. **提取 contracts.yaml**（详见 reference 字段表与 [contracts-template.yaml](contracts-template.yaml)）：modules/module_dependencies/data_models/interfaces/components/state_management/navigation/files/resource_keys/prd_to_code_traceability，以及惯例文件存在时的 `conventions_applied`。`contracts.files` 是唯一文件授权集合；所有 data/interface/component/traceability/resource/HAR build/export 文件引用以及 `navigation.config_files[]`（3.0 canonical 的唯一 navigation 文件字段，其它承载路径的 navigation 键一律判 `unconsumed_file_field` BLOCKER）必须逐项列入。仅复用已有资源时用 `resource_keys.value` 写资源键，不写施工 `path/media`；确需新建或修改的文件才申请 `files` 授权。CU-bound 写集以蓝图为准，缺少授权交设计 owner 裁定，不在 plan 自行扩写集；修正后重闭环，不凭文件已存在或内容相同放行。若发现 `acceptance.yaml` 缺失或边界场景与 spec 不一致，不得创建/修补该文件；如实让 `scope_consistency_with_spec` 失败并产出 spec-owned repair candidate，由 runner 回退 spec 重算。
-14. **架构影响判定**（详见 reference 五分支）：`none`/`dsl_change`/`module_set_change`/`responsibility_rewrite`，从严判 none；绝大多数 feature 应为 none 且不动 architecture.md。plan 不是 DSL writer：`dsl_change` 走 framework-init 获准路径（预设 / 手工编辑 config 后重跑 UPDATE）。CU-bound：架构影响段 = 蓝图 `architecture_impact` 决策 id 投影（`decisions: [...]`，无决策写 `impact: none`），不走 `plan.arch_impact`、DSL 不由 plan 改，架构变化回 /component-design 做蓝图 revision。
+13. **提取 contracts.yaml**：沿 reference 的契约字段表达行为、公共接口及实施预测；files 不作许可，只读引用不必列入 files。保持路径安全，实际源码/路由由下游核验；spec 产物缺口交 spec，不在 plan 自改验收。
+14. **架构影响判定**（详见 reference 五分支）：`none`/`dsl_change`/`module_set_change`/`responsibility_rewrite`，从严判 none；绝大多数 feature 应为 none 且不动 architecture.md。plan 不是 DSL writer：`dsl_change` 走 设计 owner 的正式 DSL 修订通道，无人值守原需求内沿既有自动修订。CU-bound：架构影响段 = 蓝图 `architecture_impact` 决策 id 投影（`decisions: [...]`，无决策写 `impact: none`），不走 `plan.arch_impact`、DSL 不由 plan 改，架构变化回 /component-design 做蓝图 revision。
 
 ## 门禁清单表
 
 | 检查 | 判据 | 失败处置 |
 |---|---|---|
-| Scope 守门 | in_scope_modules ⊆ spec.in_scope ∪ 已批准扩展；CU-bound 须集合等于蓝图可修改模块（同 id，来源=蓝图） | BLOCKER：回 Step 4 走扩展提议或收窄；CU-bound 回 /component-design |
+| Scope 守门 | 原始需求真实限制与公共契约；模块列表是预测 | 真实冲突交责任方，普通预测调整不阻断 |
 | 外层依赖矩阵 | `outer_layers[].can_depend_on` | verifier BLOCKER |
 | 模块内分层 | `module_inner_layers` 依赖方向 | verifier BLOCKER |
 | 数据类型合法性 | 契约字段类型符合 profile 类型系统 | verifier BLOCKER |
 | P0/P1 无未决项 | 无 TBD/TODO | verifier BLOCKER |
 | plan 章节完整/追溯 | `plan-rules.yaml` | 见 `check-plan.ts` 报告修正 |
-| contracts 文件引用闭包 | 所有文件引用 ⊆ `contracts.files` | BLOCKER：回 Step 13 区分资源键引用与施工文件；CU 写集不足交设计 owner，修正后重闭环 |
+| contracts 文件引用闭包 | 路径合法、引用可解析；不要求引用属于 files | 非法引用修正；实际存在性按责任阶段核验 |
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接跑 `check-plan.ts` 不会触发任何检查，静默返回 0 造成假通过。
 
@@ -130,7 +130,7 @@ CU 有所引蓝图时与其适用惯例一致，不适用项须在 review 台账
 4. 数据模型类型须符合宿主语言类型系统。
 5. 设计即契约：接口签名/文件路径/组件 Props 是 coding 阶段强契约，务必精确。
 6. contracts.yaml 必须同步产出（Step 13），精确度直接影响编码质量与自动化验证有效性。
-7. `contracts.files` 是唯一授权集合；任何文件引用都不得靠物理存在、内容相同或其他字段获得隐式授权。
+7. `contracts.files` 是实施预测，不是授权集合；只读引用不授予写权，普通实现不逐文件许可。
 8. 中文输出；模块最小化，只创建 spec 实际需要的模块。
 
 ## 关联文件

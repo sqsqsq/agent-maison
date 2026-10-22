@@ -363,6 +363,16 @@ function writeFacts(p: RealChainProject, phase: string): void {
         [REAL_CHAIN_PNG_NEW, 'coding 新建的开卡结果图（二进制，按路径引用）', '本阶段按它继续'],
       ]
     : [];
+  if (phase === 'ut') {
+    const testDir = path.join(p.root, p.modulePath, 'src/ohosTest/ets/test');
+    if (fs.existsSync(testDir)) for (const name of fs.readdirSync(testDir)) {
+      const file = path.join(testDir, name);
+      if (!fs.statSync(file).isFile()) continue;
+      const source = path.relative(p.root, file).split(path.sep).join('/');
+      const firstLine = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0].replace(/\|/g, '/');
+      deltaRows.push([source, '已读取当前测试：' + firstLine, '核对实际用例与验收']);
+    }
+  }
   const rows: Array<[string, string, string]> = [
     [REAL_CHAIN_SOURCE, 'AllBanksPage 目前只渲染标题文本', '列表需新增'],
     [REAL_CHAIN_SOURCE_2, 'BankRepository.list 返回空数组', '列表数据源需接入'],
@@ -768,7 +778,6 @@ export function writeReviewMaterials(p: RealChainProject): void {
  *   （:3694-3699 要求每个非 pure 依赖都有同名 `target_class`）。
  */
 export function writeUtMaterials(p: RealChainProject): void {
-  writeFacts(p, 'ut');
   // 每个 it() 至少两次 expect：无 use-cases.yaml 时 `checkItDrivesFlow`（check-ut.ts:2236-2243）
   // 退化为"≥2 expect"的基础健康度，一次 expect 会吃 MAJOR WARN（空壳用例）。
   writeHostFile(p.root, REAL_CHAIN_TEST, [
@@ -838,6 +847,7 @@ export function writeUtMaterials(p: RealChainProject): void {
       { scope_id: 'AC-2', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags' },
     ],
   }, null, 2));
+  writeFacts(p, 'ut');
 }
 
 /**
@@ -1165,11 +1175,11 @@ export async function cuBoundBlueprintScopeSeam(): Promise<void> {
     const overflow = validateChangeUnitFeatureProjection(project.root, f.feature,
       { ...authored, modules: [...authored.modules, { name: project.module, layer: '02-Feature', package_path: project.modulePath }] } as ContractsSpec,
       undefined, true, 'plan');
-    assert(overflow.issues.some(i => i.id === 'cu_scope_matches_blueprint' && i.route === 'reconcile_blueprint'), `共享校验应报 cu_scope_matches_blueprint：${JSON.stringify(overflow.issues)}`);
+    assert(!overflow.issues.some(i => i.id === 'cu_scope_matches_blueprint'), JSON.stringify(overflow.issues));
+    assert(overflow.warnings?.some(message => message.includes(project.module) && message.includes('公共契约')), 'extra module must be disclosed for review');
     setModules(['ledger', project.module]);
     const outside = plan();
-    assert(outside.state === 'invalid' && outside.detail!.includes('可修改模块集合') && outside.detail!.includes(project.module),
-      `越出 touches 派生集合应 invalid：${outside.state} ${outside.detail}`);
+    assert(outside.state === 'resolved', 'module forecasts can expand without changing real authority: ' + outside.detail);
     // 调和回集合内后投影恢复（链可继续）。
     setModules(['ledger']);
     assert(plan().state === 'resolved', '调和回可修改集合后投影应恢复 resolved');
@@ -1222,7 +1232,8 @@ export function writeCuFacts(p: RealChainProject, phase: string): void {
     'source_code_paths:', ...sourceReads.map(r => `  - ${r}`), '---', '', '## Code Facts', '',
     '| 路径 | 事实 | 对本阶段影响 |', '|------|------|--------------|',
     ...sourceReads.map(r => `| ${r} | ${path.basename(r)} 已读 | 账目刷新沿用 |`), '',
-    ...prior.map(section => section.replace(/\s*$/, '\n')), `## phase_delta: ${phase}`, '', '本阶段研究结论已确认。', '',
+    ...prior.map(section => section.replace(/\s*$/, '\n')), `## phase_delta: ${phase}`, '', '本阶段研究结论已确认。',
+    ...(phase === 'ut' && fs.existsSync(path.join(p.root, CU_TEST)) ? ['| 路径 | 事实 | 影响 |', '|---|---|---|', '| ' + CU_TEST + ' | 已读取本阶段测试：' + fs.readFileSync(path.join(p.root, CU_TEST), 'utf8').split(/\r?\n/)[0].replace(/\|/g, '/') + ' | 核对实际用例 |'] : []), '',
   ].join('\n'));
 }
 
@@ -1344,7 +1355,6 @@ export function writeCuReviewMaterials(p: RealChainProject, executionRunId = p.r
 
 /** use-cases 的 `ledger-refresh` 需 branch 用例（`[BRANCH-success]`）与链接 use_case/branches 的 ephemeral DAG。 */
 export function writeCuUtMaterials(p: RealChainProject): void {
-  writeCuFacts(p, 'ut');
   writeHostFile(p.root, CU_TEST, [
     "import { describe, it, expect } from '@ohos/hypium';",
     "import { LedgerFeature } from '../../../../LedgerFeature';",
@@ -1374,6 +1384,7 @@ export function writeCuUtMaterials(p: RealChainProject): void {
     schema_version: '1.0', feature: p.feature, primary_evidence_source: 'ut_tags', sources: { ut_tags: [CU_TEST] },
     mappings: [{ scope_id: 'AC-1', scope_kind: 'acceptance_criterion', evidence_source: 'ut_tags' }],
   }, null, 2));
+  writeCuFacts(p, 'ut');
 }
 
 /** 平铺 `demo-card` 六阶段链（正例用例与快照生成器共用）。 */
@@ -1483,7 +1494,7 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
   }
 });
 
-for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU→plan summary→design-owner halt→revision→probe ready' : 'selection rejection→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
+for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU→plan summary→design-owner halt→revision→probe ready' : 'selection closure derived→accept/readiness→in-memory fidelity→spec→plan PASS'}`, async () => {
   const project = provisionRealChainProject();
   try {
     scaffoldRealChainHost(project, 'claude'); writeHostFile(project.root, 'CLAUDE.md', '# CLAUDE\n');
@@ -1510,12 +1521,9 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU�
     for (const dir of fs.readdirSync(workspace, { withFileTypes: true }).filter(d => d.isDirectory() && d.name !== 'blueprint')) {
       fs.rmSync(path.join(workspace, dir.name), { recursive: true, force: true });
     }
-    let refusal = '';
-    try { acceptChangeUnitDecomposition(cu.root, 'ledger-app-blueprint', [candidate]); } catch (error) { refusal = (error as Error).message; }
-    assert(refusal.includes('decision:ledger-ui-selection'), refusal);
-    assert(!fs.existsSync(loaded.canonicalPath), 'rejected candidate must not create canonical CU');
-    candidate.artifact.design_refs.push({ ...candidate.artifact.component_blueprint_ref, target: { kind: 'decision', id: 'ledger-ui-selection' } });
     acceptChangeUnitDecomposition(cu.root, 'ledger-app-blueprint', [candidate]);
+    assert(!candidate.artifact.design_refs.some(ref => ref.target.id === 'ledger-ui-selection'), 'normalization must not mutate the submitted roots');
+    assert(asChangeUnitArtifact(loadCanonicalChangeUnit(cu.root, 'ledger-app-blueprint', 'ledger-refresh').changeUnit).design_refs.some(ref => ref.target.id === 'ledger-ui-selection'), 'normal accept must publish the derived selection closure');
     const readiness = deriveDesignPreparationReadiness(cu.root, 'ledger-app-blueprint');
     assert(readiness.ready, JSON.stringify(readiness));
     const ref = `${cuRel(cu)}/ux-reference/ledger.png`;

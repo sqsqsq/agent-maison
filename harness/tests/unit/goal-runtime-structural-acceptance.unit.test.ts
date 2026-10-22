@@ -7,7 +7,7 @@ import {
 } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import {
-  findUnauthorizedContractFileReferences,
+  findUnplannedContractFileReferences,
   resolveContractFileReferences,
 } from '../../scripts/utils/contract-reference-closure';
 import { checkGoalReconcileBoundarySource } from '../../scripts/utils/goal-reconcile-boundary';
@@ -266,11 +266,11 @@ const cases: Case[] = [
     run: () => {
       const mediaPath = 'resources/base/media/logo.png';
       const closure = resolveContractFileReferences(REPO_ROOT, minimalContracts([], mediaPath));
-      const missing = findUnauthorizedContractFileReferences(closure);
+      const missing = findUnplannedContractFileReferences(closure);
       assert(missing.length === 1 && missing[0]?.path === mediaPath,
         `undeclared asset was auto-authorized: ${JSON.stringify(missing)}`);
       const declared = resolveContractFileReferences(REPO_ROOT, minimalContracts([mediaPath], mediaPath));
-      assert(findUnauthorizedContractFileReferences(declared).length === 0,
+      assert(findUnplannedContractFileReferences(declared).length === 0,
         'contracts.files declaration did not close the reference');
     },
   },

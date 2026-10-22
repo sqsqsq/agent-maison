@@ -90,7 +90,7 @@ graph TD
 
 > 完整签名与类型细节落盘后以 `contracts.yaml` 为准；本节仅作人读草案。
 >
-> `contracts.files` 是唯一文件授权集合：仅复用已有资源时用 `resource_keys.value` 写资源键，不声明施工 `path/media`；确需新建或修改的 data/interface/component、媒体、页面/路由注册、HAR build/export 与 traceability 文件才申请列入。CU-bound 写集以蓝图为准，缺少授权交设计 owner 裁定，plan 不自行扩写集；修正后重跑闭包。
+> `contracts.files` 是实施预测，引用路径须合法但不必逐项登记为许可；真实边界取原请求、公共契约和阶段职责。实际源码、页面与路由由下游核验，必要的规格/架构变化交原 owner。
 
 ---
 

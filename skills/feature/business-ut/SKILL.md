@@ -27,6 +27,7 @@
 
 ### 落点、执行与恢复（实际写或跑测试时）
 
+正式 UT 有上游缺口时在既有 audit 的 YAML 之外写同款问题表，按[上游问题与拒修返回](../../reference/coding-workflow-detail.md#可选上游问题与拒修返回)引用当前证据、经原 verifier 核实后交 owner；保留真实 FAIL，收到拒修理由后修自身测试或补真实新事实。
 先读 `framework/profiles/<project_profile.name>/skills/business-ut/profile-addendum.md`。hmos 当前执行已配置模块 `src/ohosTest/` 下的 Hypium 用例；先 prepare 并直接消费返回的 `request_sha256`、`baseline`、`bindings`、`reportDir`、`factsPath`、`gaps`，不手算身份/哈希。
 测试载体或 `build-profile.json5` 配置缺失时先判断原授权：已覆盖所需工程改动就继续；未覆盖才先向用户说明具体改动与原因，得到认可后再做。能力未提供或缺口尚未解决时如实停在该处，不改投其它目录、不用其它模块的通过代替。
 载体处理后重新 prepare，再按返回落点写测试与套件注册；测试写入受 `allowed_test_writes` 限制。prepare 不执行测试，成功不能当作 UT PASS。

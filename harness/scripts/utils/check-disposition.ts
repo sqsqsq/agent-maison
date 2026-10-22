@@ -41,6 +41,9 @@ export interface DispositionEntry {
  * 38e5a7c2 再将必读登记与三条模式声明归入披露；`origin_tag_required`、`seed_no_technical_words` 仍暂缓。
  */
 export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
+  { match: { id: 'structure_declaration_ledger' }, protects: 'ledger_shape',
+    basis: '8a6d3f21：结构登记不构成产品结构缺失的证明',
+    consequence: '台账缺项或定位过时须修正/披露；实际结构、交互和视觉仍由原独立验证判定' },
   ...['context_exploration_inputs_coverage', 'context_exploration_mode_allowed',
     'context_exploration_mode_required', 'context_exploration_subagent_required'].map(id => ({
     match: { id }, protects: 'ledger_shape' as const,

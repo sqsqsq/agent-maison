@@ -388,7 +388,7 @@ const cases: Case[] = [
         const recordRun = JSON.parse(fs.readFileSync(path.join(s.root, JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, 'feature-completion.json'), 'utf8')).original_path), 'utf8')).run_id;
         const scope = resolveEffectiveScopeSource(s.root, feature, recordRun)!.scope;
         assert(loadEffectiveExecutionScope(s.root, feature, recordRun)!.phase_chain.length === 0, '已完成记录的当前执行队列必须为空');
-        assert(JSON.stringify(scope.phase_chain) === '["review"]' && JSON.stringify(scope.reused_phases.map(p => p.phase)) === '["coding","ut"]', '前提：正式迁移只执行 review、复用 coding/UT');
+        assert(JSON.stringify([...new Set([...scope.phase_chain, ...scope.reused_phases.map(p => p.phase)])].sort()) === '["coding","review","ut"]', '观察范围包括实际执行和可复用阶段，不假定本次gate改动只影响review');
         assert(JSON.stringify(chain) === '["coding","review","ut"]', `观察范围须按工作流顺序包含真实复用与本次执行：${JSON.stringify(chain)}`);
         const rendered = formatAssessNextStep(r, { phase: 'ut', mode: 'manual', status: 'PASS/closed' });
         assert(rendered.includes('recommendation=feature_completed') && rendered.includes('authorization=none'), rendered);

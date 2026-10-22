@@ -79,15 +79,9 @@ structure_checks:
 
   structure_declaration_ledger:
     description: >
-      P1-4（c9e2a7f4 子批B）：结构声明台账——spec 每条结构声明（subtitle_position/layout_group/
-      bg_color/global_element）须在 coding/structure-conformance.yaml 逐条登记
-      {node_id, declaration, implemented_by, how}；缺条目=声明被静默无视的显式证据（round6 实锤：
-      card_pack trailing/add_card 分组/tab 容器声明全被无视到真机才暴露）、implemented_by 的
-      struct 须真实存在于源码（防糊名）、how 非空。pixel_1to1 → BLOCKER。
-      诚实边界：台账自报不验真（ArkUI 结构静态判定不可行——组合爆炸必产 FP），只消灭静默；
-      内容真实性=独立 review 逐条核验 + device P1-C 文本类确定性信号 + 当前视觉 provider 证据；
-      非文本类结构静态验真列 round7。登记≠实现完成。
-    severity: BLOCKER
+      台账记录结构声明的实现定位；缺项、过时定位或说明不完整仅作披露，不证明产品缺陷。
+      真实结构、交互和视觉仍由独立 review 与适用设备验证；补登记不替代产品结果。
+    severity: MAJOR
 
 semantic_checks: {}
 
@@ -113,16 +107,8 @@ traceability_checks:
     severity: BLOCKER
   ui_diff_within_declared_files:
     description: >
-      UI 文件级 scope 门（plan c4e8b1d3 G1）：越界 UI 文件 = 本次 changed UI files −
-      冻结 contracts.files。白名单只来自**同 run plan PASS snapshot** 冻结的 contracts.yaml
-      files（缺失/失效/损坏 fail-closed BLOCKER，禁止退回 live contracts——coding 期 agent
-      可写）；goal diff 基线 = createGoalRun 出生时冻结的 manifest.run_base_sha
-      （chain 含 coding/ut 时必需；覆盖 committed/staged/unstaged/untracked 四态，agent 自行
-      commit 也检出；goal 内不读取 HARNESS_DIFF_BASE_REF，legacy reader 只认无 run_created 的旧 run）；
-      删除/重命名从 base 侧读旧内容做 UI 分类。UI 判据三类：pages/components/presentation
-      路径 .ets、ArkUI 结构标志（@Entry/@Component/build()/NavDestination/Tabs/bindSheet）、
-      resources media。未声明 UI 文件默认即受保护范围，任何 strictness 均 BLOCKER；
-      expansion 唯一路径 = 更新 contracts.files 并重新通过 plan（重取 PASS snapshot）。
+      对实际 UI diff 核验原请求真实边界和阶段职责；contracts.files 与预计模块不作许可。
+      保留出生基线、真实绑定和删除/重命名的基线侧识别，必要私有实现调整由 review/真机核验。
     severity: BLOCKER
 
 exploration_thresholds:

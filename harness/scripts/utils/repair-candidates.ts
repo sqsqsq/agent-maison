@@ -116,6 +116,7 @@ const PLAN_ARTIFACT_RE = /(^|\/)(plan\.md|contracts\.yaml|use-cases\.yaml)$|(^|\
 export function deriveCategoryFromFiles(files: readonly string[]): RepairOwnerCategory | null {
   const normalized = normalizeFiles(files);
   if (normalized.length === 0) return null;
+  if (normalized.some(isDesignAuthorityRepairFile)) return null;
   const categories = new Set<RepairOwnerCategory>(
     normalized.map((f): RepairOwnerCategory => {
       if (SPEC_ARTIFACT_RE.test(f)) return 'spec';
@@ -206,6 +207,8 @@ export function parseIssueVerificationBlock(text: string): {
 // review 侧生产点
 // ---------------------------------------------------------------------------
 
+type DeclinedRepairIssue = Pick<RepairDeclineState, 'id' | 'summary' | 'files' | 'source_phase'> & { item_fingerprint?: string };
+
 export interface ReviewCandidateInput {
   reviewFidelity?: ReviewFidelity | null;
   /** review-report.md 全文 */
@@ -222,7 +225,7 @@ export interface ReviewCandidateInput {
    */
   declinedFingerprints?: ReadonlySet<string>;
   /** 历史原料不全时只要求当前审查，不据此宣称指纹等价。来源仍是共享拒修回放。 */
-  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
   /** verifier 正文是否属于本轮签发的 subject（false = 沿用历史 subject）；缺省视为 true */
   verifierSubjectCurrent?: boolean;
 }
@@ -234,6 +237,8 @@ export interface ReviewIssueRow {
   state: string;
   files: string[];
   summary: string;
+  /** Concrete diagnosis locations, separate from the authority artifact to repair. */
+  evidence?: string;
 }
 
 export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
@@ -250,6 +255,7 @@ export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
   const iFiles = col(h => h.includes('涉及文件'));
   const iFix = col(h => h.includes('修复建议'));
   const iDesc = col(h => h.includes('问题描述') || h.includes('描述'));
+  const iEvidence = col(h => h.includes('依据') || h.includes('证据'));
   if (iId < 0 || iSev < 0 || iFiles < 0) return [];
   return table.rows.map(row => ({
     id: (row[iId] ?? '').trim(),
@@ -262,7 +268,123 @@ export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
     summary: normalizeSummary(
       (iFix >= 0 ? row[iFix] : undefined) || (iDesc >= 0 ? row[iDesc] : undefined) || '',
     ),
+    evidence: [iDesc >= 0 ? row[iDesc] : '', iEvidence >= 0 ? row[iEvidence] : ''].filter(Boolean).join('；'),
   })).filter(r => r.id.length > 0);
+}
+
+export interface PhaseRepairIssues {
+  phase: string;
+  reportText: string;
+  reportPath: string;
+  /** Only proposals with readable current line references qualify for failed-phase diagnosis. */
+  rows: ReviewIssueRow[];
+  evidenceFiles: Array<{ label: string; content: string }>;
+}
+
+/** Upstream diagnosis cannot hand the current producer's own artifacts back as someone else's implementation work. */
+function currentPhaseOwnsRepairTarget(projectRoot: string, feature: string, phase: string, files: string[]): boolean {
+  if (phase === 'coding') return deriveCategoryFromFiles(files) === 'coding';
+  if (phase !== 'ut') return false;
+  const frameworkRoot = path.resolve(__dirname, '../../..');
+  const { loadFrameworkConfig, artifactReadCandidatePaths } = require('../../config') as typeof import('../../config');
+  const { loadResolvedProfile } = require('../../profile-loader') as typeof import('../../profile-loader');
+  const { partitionConstructionFiles } = require('./phase-write-boundary') as typeof import('./phase-write-boundary');
+  const { SpecLoader } = require('./spec-loader') as typeof import('./spec-loader');
+  const { loadFeatureContracts, phaseContractIndex, loadArtifactInventory } = require('./skill-contract') as typeof import('./skill-contract');
+  const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
+  let modules: import('./types').ContractsSpec['modules'] = [];
+  try { modules = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature).contracts?.modules ?? []; }
+  catch { /* Broken upstream inputs do not prevent using the profile's existing test path rules. */ }
+  if (partitionConstructionFiles(projectRoot, profile.profileDir, { files, modules }).tests.length) return true;
+  const inventory = loadArtifactInventory(frameworkRoot);
+  const ownOutputs = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(phase)?.phase.produces ?? [];
+  const ownPaths = ownOutputs.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? [])
+    .flatMap(name => artifactReadCandidatePaths(projectRoot, feature, name));
+  return files.some(file => ownPaths.includes(path.resolve(projectRoot, file)));
+}
+
+/** Current project-local evidence; no new evidence protocol or caller-provided freshness flag. */
+export function readableIssueEvidence(projectRoot: string, text: string): Array<{ label: string; content: string }> {
+  const out = new Map<string, string>();
+  const refs = [...text.matchAll(/`([^`\r\n]+?):(\d+)(?:-(\d+))?`/g)];
+  if (!refs.length) return [];
+  for (const ref of refs) {
+    const rel = ref[1].replace(/\\/g, '/').replace(/^\.\//, '');
+    const abs = path.resolve(projectRoot, rel);
+    if (!isInsideProjectRoot(projectRoot, abs) || path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) return [];
+    try {
+      if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return [];
+      const content = fs.readFileSync(abs, 'utf8');
+      const lines = content.split(/\r?\n/);
+      const start = Number(ref[2]); const end = Number(ref[3] ?? ref[2]);
+      if (start < 1 || end < start || end > lines.length || !lines.slice(start - 1, end).join('').trim()) return [];
+      out.set(path.relative(projectRoot, abs).replace(/\\/g, '/'), content);
+    } catch { return []; }
+  }
+  return [...out].map(([label, content]) => ({ label, content }));
+}
+
+/** All production consumers resolve the same stage-owned artifact, including canonical/legacy rules. */
+export function readPhaseRepairIssues(projectRoot: string, feature: string, phase: string): PhaseRepairIssues | null {
+  const name = phase === 'review' ? 'review-report.md' : phase === 'coding' ? 'upstream-issues.md'
+    : phase === 'ut' ? 'testability-audit.md' : null;
+  if (!name) return null;
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  try {
+    const resolved = resolveFeatureArtifact(projectRoot, feature, name);
+    if (!resolved.exists) return null;
+    const reportText = fs.readFileSync(resolved.actualPath, 'utf8');
+    const evidenceFiles = new Map<string, string>();
+    const parsed = openReviewIssues(reportText);
+    const rows = parsed.filter(row => {
+      if (phase === 'review') return true;
+      if (parsed.filter(other => other.id === row.id).length !== 1) return false;
+      if (!row.files.length || row.files.some(file => !isInsideProjectRoot(projectRoot, path.resolve(projectRoot, file)))) return false;
+      for (const file of row.files) {
+        const abs = path.resolve(projectRoot, file);
+        if (fs.existsSync(abs) && !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return false;
+      }
+      row.files = normalizeFiles(row.files.map(file => path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/')));
+      if (currentPhaseOwnsRepairTarget(projectRoot, feature, phase, row.files)) return false;
+      const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '');
+      if (!evidence.length) return false;
+      row.summary = [row.evidence, row.summary].filter(Boolean).join('；').replace(/\s+/g, ' ').trim();
+      for (const file of evidence) evidenceFiles.set(file.label, file.content);
+      for (const file of row.files) {
+        try { evidenceFiles.set(file, fs.readFileSync(path.resolve(projectRoot, file), 'utf8')); }
+        catch { /* A missing authority may itself be the proposed gap; independent verification decides. */ }
+      }
+      return true;
+    });
+    return { phase, reportText, reportPath: path.relative(projectRoot, resolved.actualPath).replace(/\\/g, '/'), rows,
+      evidenceFiles: [...evidenceFiles].map(([label, content]) => ({ label, content })) };
+  } catch { return null; }
+}
+
+export function isDesignAuthorityRepairFile(file: string): boolean {
+  return /(?:^|\/)(?:component-blueprint|change-unit)\.yaml$/.test(file) || file === 'framework.config.json';
+}
+
+/** The current subject must have read these exact proposal/evidence bytes, including runtime logs. */
+export function phaseIssuesForVerifierSubject(projectRoot: string, feature: string, phase: string, subjectId: string | null,
+  frameworkRoot?: string, phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase), runId = process.env.MAISON_GOAL_RUN_ID?.trim()): PhaseRepairIssues | null {
+  if (!phaseIssues || phase === 'review') return phaseIssues;
+  if (!subjectId) return null;
+  const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+  const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
+  const material = readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), subjectId);
+  if (!material) return null;
+  if (runId && designRepairDeclines(projectRoot, feature, runId).length) {
+    const { assembleGoalBrief, renderGoalBrief } = require('./goal-brief') as typeof import('./goal-brief');
+    const brief = assembleGoalBrief(projectRoot, feature, { runId });
+    if (![true, false].some(requirementInContext => sha256Hex(renderGoalBrief(brief, { requirementInContext }).replace(/\r\n/g, '\n')) === material.goal_brief_sha256)) return null;
+  }
+  for (const file of [phaseIssues.reportPath, ...phaseIssues.evidenceFiles.map(entry => entry.label)]) {
+    try {
+      if (material.files.find(entry => entry.path === file)?.sha256 !== createHash('sha256').update(fs.readFileSync(path.resolve(projectRoot, file))).digest('hex')) return null;
+    } catch { return null; }
+  }
+  return phaseIssues;
 }
 
 /**
@@ -309,10 +431,19 @@ function openReviewIssues(reportText: string, fidelity?: ReviewFidelity | null):
   return parseReviewIssueRows(reportText).filter(row => reviewIssueRequiresRepair(row, fidelity));
 }
 
+function sameDeclinedIssue(issue: DeclinedRepairIssue, row: ReviewIssueRow, sourcePhase?: string): boolean {
+  if (!sourcePhase || sourcePhase === 'review') return issue.id === row.id && issue.summary.replace(/\s+/g, ' ').trim() === row.summary;
+  return issue.source_phase === sourcePhase && !issue.summary.endsWith('…')
+    && issue.summary.replace(/\s+/g, ' ').trim() === row.summary
+    && (issue.files ? JSON.stringify(normalizeReviewFiles(issue.files)) === JSON.stringify(row.files) : issue.id === row.id);
+}
+
 export interface ReviewDiagnosisContext {
   reportText: string;
+  rows?: ReviewIssueRow[];
+  sourcePhase?: string;
   declinedFingerprints?: ReadonlySet<string>;
-  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
   verifierSubjectCurrent?: boolean;
 }
 
@@ -320,7 +451,7 @@ export interface ReviewDiagnosisContext {
 function reviewIssueDiagnosis(
   row: ReviewIssueRow,
   entries: readonly IssueVerificationEntry[],
-  context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent'>,
+  context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent' | 'sourcePhase'>,
 ): string | null {
   const matches = entries.filter(entry => entry.issue === row.id);
   if (matches.length === 0) return `${row.id}：缺逐条验证条目`;
@@ -331,7 +462,7 @@ function reviewIssueDiagnosis(
   if (!isVerificationEvidenceCurrent(verified.evidence, row)) return `${row.id}：evidence 与当前文件/问题摘要不一致`;
   if (context.verifierSubjectCurrent === false
     && (context.declinedFingerprints?.has(itemFingerprintOf(row.id, row.files, row.summary))
-      || context.declinedIssues?.some(issue => issue.id === row.id && normalizeSummary(issue.summary) === row.summary))) {
+      || context.declinedIssues?.some(issue => sameDeclinedIssue(issue, row, context.sourcePhase)))) {
     return `${row.id}：拒修在案，沿用的旧 subject 无法作当前逐条确认`;
   }
   return null;
@@ -371,6 +502,63 @@ export function collectReviewRepairCandidates(input: ReviewCandidateInput): Repa
     });
   }
   return out;
+}
+
+/** Review keeps its verdict contract; coding/UT proposals use the same row-level verification. */
+export function verifiedPhaseRepairIssues(input: {
+  phaseIssues?: PhaseRepairIssues | null;
+  verifierReportText: string | null;
+  declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReviewCandidateInput['declinedIssues'];
+  verifierSubjectCurrent?: boolean;
+}): ReviewIssueRow[] {
+  const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
+  if (!verification.ok) return [];
+  return (input.phaseIssues?.rows ?? []).filter(row => !reviewIssueDiagnosis(row, verification.entries, { ...input, sourcePhase: input.phaseIssues?.phase })
+    && verification.entries.find(entry => entry.issue === row.id)?.verdict === 'confirmed');
+}
+
+/** Projection of the same verified rows into the existing external/design-authority finding contract. */
+export function verifiedPhaseDesignFindings(input: Parameters<typeof verifiedPhaseRepairIssues>[0]): import('./blueprint-skill-projection').DesignAuthorityFinding[] {
+  return verifiedPhaseRepairIssues(input).flatMap(row => {
+    const artifacts = row.files.filter(isDesignAuthorityRepairFile);
+    if (!artifacts.length || artifacts.length !== row.files.length) return [];
+    return [{ check: `${input.phaseIssues!.phase}:${row.id}`, codes: ['change_unit_blueprint_reconciliation_required'], class: 'B2' as const,
+      artifacts, basis: `${input.phaseIssues?.reportPath} → ${row.id}（${REPAIR_DECLINE_GATE_PREFIX}${itemFingerprintOf(row.id, row.files, row.summary)}）：${row.summary}；${row.evidence ?? ''}`,
+      needs: ['设计 owner 对照当前提案与所引事实修订权威产物，或给出有依据的拒修理由。'] }];
+  });
+}
+
+/** Verified findings are summary facts, never invented script execution results. */
+export function projectDesignFindingsIntoSummary(summary: import('./types').HarnessRunSummary,
+  findings: readonly import('./blueprint-skill-projection').DesignAuthorityFinding[]): void {
+  if (!findings.length) return;
+  for (const finding of findings) {
+    if (summary.blockers.some(blocker => blocker.id === finding.check)) continue;
+    summary.blockers.push({ id: finding.check, status: 'FAIL', severity: 'BLOCKER', repair_owner: 'external',
+      details_excerpt: finding.basis, affected_files: finding.artifacts,
+      suggestion: finding.needs.join('；'), source: 'issue-verification' });
+  }
+  summary.blocker_count = summary.blockers.length;
+  summary.verdict = 'FAIL'; summary.closure_status = 'open'; summary.release_readiness = 'BLOCKED';
+  summary.completion_status = 'INCOMPLETE'; summary.next_action = 'fix_blockers_then_rerun';
+  if (summary.quality_axes) summary.quality_axes.functional = { ...summary.quality_axes.functional, applicable: true, verdict: 'FAIL',
+    blocking_class: 'needs_fix', source_checks: [...new Set([...summary.quality_axes.functional.source_checks, ...findings.map(finding => finding.check)])],
+    resolution: { class: 'needs_fix', owner: 'external', retry_phase: String(summary.phase) } };
+}
+
+/** Diagnose/probe reads the same current proposal, verifier subject and refusal context as the writer. */
+export function readVerifiedPhaseDesignFindings(projectRoot: string, frameworkRoot: string, feature: string, phase: string, runId?: string): import('./blueprint-skill-projection').DesignAuthorityFinding[] {
+  const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+  const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+  try {
+    const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'), 'utf8'));
+    if (summary.report_validity === 'FAIL') return [];
+    const phaseIssues = phaseIssuesForVerifierSubject(projectRoot, feature, phase, summary.verifier_subject_id ?? null, frameworkRoot, undefined, runId ?? summary.run_id);
+    return verifiedPhaseDesignFindings({ phaseIssues,
+      verifierReportText: loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }),
+      ...reviewRepairVerificationContext(projectRoot, feature, runId ?? summary.run_id, Boolean(summary.verifier_request)) });
+  } catch { return []; }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +712,11 @@ export function findUnreadableDiagnosisChecks(
   review?: ReviewDiagnosisContext,
 ): string[] {
   if (!verifierReportText || !verifierReportText.trim()) return [];
+  if ((phase === 'coding' || phase === 'ut') && review?.rows?.length) {
+    const verification = parseIssueVerificationBlock(verifierReportText);
+    if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
+    return review.rows.flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, { ...review, sourcePhase: phase }); return reason ? [reason] : []; });
+  }
   if (phase === 'ut') {
     return ['end_to_end_driving', 'business_assertion_value'].filter(
       id => parseVerifierCheckStatus(verifierReportText, id) === null,
@@ -548,6 +741,7 @@ export interface PhaseCandidateInput {
   phase: string;
   /** review-report.md 全文（review 阶段；其余 null） */
   reviewReportText: string | null;
+  phaseIssues?: PhaseRepairIssues | null;
   /** reports/verifier.report.md 全文（agent 自跑轮可能尚无——零 candidate，gate 轮出现） */
   verifierReportText: string | null;
   /** summary.report_validity（harness 派生）——非 PASS 时**报告自由文本**派生候选抑制
@@ -557,7 +751,7 @@ export interface PhaseCandidateInput {
   conditionalReceiptValid?: boolean;
   /** §4.5：见 ReviewCandidateInput 同名字段 */
   declinedFingerprints?: ReadonlySet<string>;
-  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
   verifierSubjectCurrent?: boolean;
   /** 本轮 checks（机器 check id 归属的生产点消费） */
   checks: ReadonlyArray<{
@@ -589,6 +783,15 @@ export interface PhaseCandidateInput {
  */
 export function collectPhaseRepairCandidates(input: PhaseCandidateInput): RepairCandidate[] {
   const out: RepairCandidate[] = [];
+  if ((input.phase === 'coding' || input.phase === 'ut') && input.reportValidity !== 'FAIL') {
+    for (const row of verifiedPhaseRepairIssues(input)) {
+      const category = deriveCategoryFromFiles(row.files);
+      if (category === null) continue;
+      const prior = input.declinedIssues?.find(issue => sameDeclinedIssue(issue, row, input.phase));
+      out.push({ id: row.id, category, files: row.files, summary: row.summary,
+        item_fingerprint: prior?.item_fingerprint ?? itemFingerprintOf(row.id, row.files, row.summary), source_phase: input.phase });
+    }
+  }
   if (input.phase === 'review' && input.reviewReportText) {
     out.push(...collectReviewRepairCandidates({
       reportText: input.reviewReportText,
@@ -787,6 +990,7 @@ export interface SummaryRepairCandidatesInput {
   checks: readonly RepairCandidateCheckInput[];
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   reviewReportText: string | null;
+  phaseIssues?: PhaseRepairIssues | null;
   verifierReportText: string | null;
   /** @deprecated legacy receipt flag, ignored. */
   conditionalReceiptValid?: boolean;
@@ -794,7 +998,7 @@ export interface SummaryRepairCandidatesInput {
   parseClassificationFromDetails?: (details: string) => string | undefined;
   /** §4.5：见 ReviewCandidateInput 同名字段 */
   declinedFingerprints?: ReadonlySet<string>;
-  declinedIssues?: ReadonlyArray<Pick<RepairDeclineState, 'id' | 'summary'>>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
   verifierSubjectCurrent?: boolean;
 }
 
@@ -809,6 +1013,7 @@ export function buildSummaryRepairCandidates(
   return collectPhaseRepairCandidates({
     phase: input.phase,
     reviewReportText: input.reviewReportText,
+    phaseIssues: input.phaseIssues,
     reviewFidelity: input.reviewFidelity,
     verifierReportText: input.verifierReportText,
     reportValidity: input.reportValidity,
@@ -872,6 +1077,8 @@ export interface RepairDeclineRound { run_id: string; ts: string }
 export interface RepairDeclineState {
   id: string;
   summary: string;
+  files?: string[];
+  source_phase?: string;
   /** 有来源核验通过的拒修动作的回修轮数 */
   declined_rounds: number;
   /** 是否已在一次拒修之后再次出现在回修轮里（反驳轮已用） */
@@ -885,14 +1092,14 @@ export interface RepairDeclineState {
 export interface DeclineLedgerLine { run_id: string; gate_id: string; decision: string; ts: string }
 
 /** 来源核验：返回依据原文；不是拒修或引文不逐字 → null。 */
-function verifiedDeclineBasis(decision: string, requirementText: string): string | null {
+export function verifiedDeclineBasis(decision: string, requirementText: string, verifyFact?: (basis: string) => boolean): string | null {
   const m = /^\s*declined:\s*([\s\S]*\S)\s*$/.exec(decision);
   if (!m) return null;
   const quotes = [...m[1].matchAll(/「([^」]*)」/g)].map(q => q[1]);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { checkRequirementQuote } = require('./fidelity-shared') as typeof import('./fidelity-shared');
-  if (!quotes.length || quotes.some(q => checkRequirementQuote(q, requirementText) !== 'ok')) return null;
-  return m[1];
+  if (quotes.length) return quotes.every(q => checkRequirementQuote(q, requirementText) === 'ok') ? m[1] : null;
+  return verifyFact?.(m[1]) ? m[1] : null;
 }
 
 /**
@@ -910,10 +1117,11 @@ export function resolveRepairDeclineState(input: {
   /** 阶段 → 该阶段账本行（loadHeadlessLedger 的 entries）；每个候选只读它责任阶段的那份 */
   ledgers: Readonly<Record<string, ReadonlyArray<DeclineLedgerLine>>>;
   requirementText: string;
+  verifyFactDecline?: (input: { owner: string; fingerprint: string; basis: string; runId: string }) => boolean;
 }): Map<string, RepairDeclineState> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
-  const rounds: Array<RepairDeclineRound & { end: number; candidates: Array<{ fp: string; id: string; summary: string; owner: string }> }> = [];
+  const rounds: Array<RepairDeclineRound & { end: number; candidates: Array<{ fp: string; id: string; summary: string; owner: string; files?: string[]; source_phase?: string }> }> = [];
   const canonicalFingerprints = new Map<string, string>();
   for (const run of input.runs) {
     const bts = run.events.filter(e => e.type === 'phase_backtrack_requested' && typeof e.ts === 'string');
@@ -937,9 +1145,11 @@ export function resolveRepairDeclineState(input: {
             && itemFingerprintOf(c.id, c.files, c.summary) === fp) {
             canonicalFingerprints.set(fp, itemFingerprintOf(c.id, normalizeReviewFiles(c.files), c.summary));
           }
-          return { fp, id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, phases) };
+          return { fp, id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, phases),
+            ...(Array.isArray(c.files) && c.files.every(file => typeof file === 'string') ? { files: normalizeReviewFiles(c.files as string[]) } : {}),
+            ...(typeof c.source_phase === 'string' ? { source_phase: c.source_phase } : {}) };
         })
-        .filter((c): c is { fp: string; id: string; summary: string; owner: string } => c.owner !== null);
+        .filter((c): c is { fp: string; id: string; summary: string; owner: string; files?: string[]; source_phase?: string } => c.owner !== null);
       const next = bts[i + 1]?.ts;
       rounds.push({ run_id: run.run_id, ts: e.ts!, end: next ? Date.parse(next) : runEnded, candidates });
     });
@@ -967,13 +1177,16 @@ export function resolveRepairDeclineState(input: {
       if (st.declined_rounds > 0) st.rebuttal_used = true;
       st.id = c.id;
       st.summary = c.summary;
+      st.files = c.files; st.source_phase = c.source_phase;
       let latest: { text: string; at: number } | null = null;
       for (const line of lines) {
         if (!c.originalFps.has(line.gate_id.slice(REPAIR_DECLINE_GATE_PREFIX.length))
           || !line.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) || line.run_id !== round.run_id) continue;
         const at = Date.parse(line.ts);
         if (!(at >= start && at < round.end)) continue;
-        const text = verifiedDeclineBasis(line.decision, input.requirementText);
+        const text = verifiedDeclineBasis(line.decision, input.requirementText, basis => input.verifyFactDecline?.({
+          owner: c.owner, fingerprint: c.fp, basis, runId: round.run_id,
+        }) ?? false);
         if (text !== null && (!latest || at >= latest.at)) latest = { text, at };
       }
       if (!latest) continue;
@@ -1057,12 +1270,66 @@ export function loadRepairDeclineState(projectRoot: string, feature: string, run
     runs,
     ledgers,
     requirementText: collectCurrentRequirementText(projectRoot, feature, featuresDir, runId),
+    verifyFactDecline: ({ owner, fingerprint, basis }) => {
+      const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
+      const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+      const { headlessLedgerPath } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+      const evidence = readableIssueEvidence(projectRoot, basis);
+      if (!evidence.length) return false;
+      try {
+        const dir = featurePhaseReportsDir(projectRoot, feature, owner);
+        const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
+        if (!summary.verifier_request || !summary.verifier_subject_id) return false;
+        const material = readVerifierMaterialOrNull(dir, summary.verifier_subject_id);
+        const ledger = path.relative(projectRoot, headlessLedgerPath(projectRoot, feature, owner)).replace(/\\/g, '/');
+        for (const file of [ledger, ...evidence.map(entry => entry.label)]) {
+          if (material?.files.find(entry => entry.path === file)?.sha256 !== createHash('sha256').update(fs.readFileSync(path.resolve(projectRoot, file))).digest('hex')) return false;
+        }
+        const verification = parseIssueVerificationBlock(loadVerifierReportTextOrNull(projectRoot, feature, owner) ?? '');
+        const entries = verification.entries.filter(entry => entry.issue === `${REPAIR_DECLINE_GATE_PREFIX}${fingerprint}`);
+        return verification.ok && entries.length === 1 && entries[0].verdict === 'confirmed' && !entries[0].invalid_reason
+          && !!entries[0].evidence?.replace(/\s+/g, '').includes(basis.replace(/\s+/g, ''));
+      } catch { return false; }
+    },
   });
+}
+
+/** Pending and accepted refusals share their original ledger, so both parties and the verifier see the same reasons. */
+export function repairDeclineContextFiles(projectRoot: string, feature: string, runId: string | undefined): Array<{ label: string; content: string }> {
+  if (!runId) return [];
+  const { loadHeadlessLedger, headlessLedgerPath } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+  const out: Array<{ label: string; content: string }> = [];
+  for (const phase of ['spec', 'plan', 'change', 'coding', 'review', 'ut', 'testing']) {
+    const entries = loadHeadlessLedger(projectRoot, feature, phase)?.entries.filter(entry => entry.run_id === runId
+      && entry.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) && entry.decision.startsWith('declined:')
+      && readableIssueEvidence(projectRoot, entry.decision).length > 0) ?? [];
+    if (!entries.length) continue;
+    const file = headlessLedgerPath(projectRoot, feature, phase);
+    out.push({ label: path.relative(projectRoot, file).replace(/\\/g, '/'), content: fs.readFileSync(file, 'utf8') });
+    for (const entry of entries) out.push(...readableIssueEvidence(projectRoot, entry.decision));
+  }
+  if (out.length) out.push({ label: '(repair decline verification)', content:
+    '责任方拒修是待核实依据，不是修改需求或 PASS。读取原账本与当前证据；对没有目标引文的事实拒修，在原 issue-verification 块按 issue=<gate_id> 逐条给 confirmed/refuted/unclear，evidence 原样包含 declined: 后的完整依据并说明事实核对。目标冲突仍核「」内的目标原文。原提案阶段收到理由后修自身产物或补真实新事实；换ID、措辞和路径格式不算新事实。' });
+  return out;
 }
 
 // ---------------------------------------------------------------------------
 // 证据链验真器产出的候选合并（testing actionable defects——收编统一路由）
 // ---------------------------------------------------------------------------
+
+/** Existing failed design-repair results preserve independently checked refusal reasons without claiming publication. */
+export function designRepairDeclines(projectRoot: string, feature: string, runId: string): Array<{ candidate: string; basis: string; run_id: string }> {
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  try {
+    return loadAuthoritativeEvents(featureFilePath(projectRoot, feature, `goal-runs/${runId}/events.jsonl`)).flatMap(event => {
+      const e = event as unknown as Record<string, unknown>;
+      return e.type === 'design_authority_repair' && e.stage === 'failed' && e.failed_step === 'declined' && typeof e.reason === 'string'
+        ? [{ candidate: Array.isArray(e.checks) ? e.checks.map(check => String((check as { check?: unknown }).check)).join('、') : '设计提案', basis: e.reason, run_id: runId }] : [];
+    });
+  } catch { return []; }
+}
 
 /**
  * 把 testing 侧证据链验真器（collectActionableDefects：截图/build 身份/时间窗三重绑定）
@@ -1433,8 +1700,9 @@ export function extractFailureClassification(details: string): string | undefine
 
 /** Shared current/carried-subject input for writer and closure recomputation. */
 export function reviewRepairVerificationContext(projectRoot: string, feature: string, runId: string | undefined, verifierSubjectCurrent: boolean): Pick<ReviewCandidateInput, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent'> {
-  const declines = !verifierSubjectCurrent && runId ? loadRepairDeclineState(projectRoot, feature, runId) : undefined;
+  const declines = runId ? loadRepairDeclineState(projectRoot, feature, runId) : undefined;
   return { verifierSubjectCurrent,
     declinedFingerprints: declines ? new Set([...declines].filter(([, state]) => state.declined_rounds > 0).map(([fp]) => fp)) : undefined,
-    declinedIssues: declines ? [...new Set(declines.values())].filter(state => state.declined_rounds > 0).map(({ id, summary }) => ({ id, summary })) : undefined };
+    declinedIssues: declines ? [...declines].filter(([, state]) => state.declined_rounds > 0)
+      .map(([item_fingerprint, { id, summary, files, source_phase }]) => ({ id, summary, files, source_phase, item_fingerprint })) : undefined };
 }

@@ -1,5 +1,7 @@
 # 可测性预检（testability-audit）模板
 
+有具体上游缺口时，可在既有 fenced YAML records 之外追加 review 同款 `## 问题清单`（ID、严重程度、涉及文件、问题描述/依据、修复建议、状态）；无问题不补表。涉及文件写要修的权威产物，依据用当前 `工程相对路径:行号` 引源码/日志。原 verifier 逐条核实后才交 owner；拒修理由返回 UT，不改断言洗绿。详见 `skills/reference/coding-workflow-detail.md` 的“可选上游问题与拒修返回”。
+
 > **产出路径**：`<features_dir>/<feature>/ut/testability-audit.md`
 > **时机**：business-ut · Step 1.5，**早于** DAG / mock-plan / `*.test.ets`。  
 > Harness 会静态校验：每条 `acceptance.yaml` 中 `ut_layer ∈ {unit, both}` 的 **AC/BD** 均有一条对应记录；**L3** 必须 `selected` 二选一并完成登记。

@@ -1,3 +1,4 @@
+import { implementationChangeContext } from './scripts/utils/diff-scope';
 // ============================================================================
 // Harness 统一运行入口
 // ============================================================================
@@ -128,6 +129,12 @@ import {
   reviewIssueRequiresRepair,
   buildSummaryRepairCandidates,
   reviewRepairVerificationContext,
+  readPhaseRepairIssues,
+  phaseIssuesForVerifierSubject,
+  verifiedPhaseDesignFindings,
+  projectDesignFindingsIntoSummary,
+  repairDeclineContextFiles,
+  type PhaseRepairIssues,
   extractFailureClassification,
   findUnreadableDiagnosisChecks,
   scopeRevisionInputFromRepairCandidates,
@@ -1781,6 +1788,7 @@ function resolveVerifierRequestEligibility(
     checks: report.checks,
     reportValidity: lattice.report_validity,
     hasBlockedCapability: lattice.has_blocked,
+    upstreamDiagnosis: phaseVerdict.phaseIssues,
     parseClassificationFromDetails: extractFailureClassification,
   });
 }
@@ -1792,6 +1800,7 @@ function resolveVerifierRequestEligibility(
  * 脚本报告里的 legacy 结论字段保留，供旧产物读取与设备外部阻塞判据使用。
  */
 export interface PhaseVerdict {
+  phaseIssues?: PhaseRepairIssues | null;
   report: ScriptReport;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   legacy: 'PASS' | 'FAIL' | 'INCOMPLETE';
@@ -1814,7 +1823,7 @@ export function resolvePhaseVerdict(projectRoot: string, report: ScriptReport): 
     post: lattice.projected_verdict,
     legacy,
   });
-  return { report, verdict, legacy, mismatch, lattice };
+  return { report, verdict, legacy, mismatch, lattice, phaseIssues: readPhaseRepairIssues(projectRoot, report.feature, report.phase) };
 }
 
 /**
@@ -2235,18 +2244,19 @@ export function writeRunSummaryBase(
     report.phase,
     { frameworkRoot, subjectId: anchoredSubjectId },
   );
-  const reviewReportText = report.phase === 'review'
-    ? readFeatureDocOrNull(projectRoot, report.feature, 'review-report.md') : null;
+  const phaseIssues = phaseVerdict.phaseIssues;
+  const verifiedPhaseIssues = phaseIssuesForVerifierSubject(projectRoot, report.feature, report.phase, anchoredSubjectId, frameworkRoot, phaseIssues);
+  const reviewReportText = report.phase === 'review' ? phaseIssues?.reportText ?? null : null;
   const { declinedFingerprints, declinedIssues } = reviewRepairVerificationContext(projectRoot, report.feature,
-    report.phase === 'review' ? process.env.MAISON_GOAL_RUN_ID?.trim() : undefined, carriedVerifierSubjectId === null);
+    process.env.MAISON_GOAL_RUN_ID?.trim(), carriedVerifierSubjectId === null);
   // D3/D4（codex 一轮 medium）：终态自洽 ≠ 正文可采信。诊断轮的必需检查项读不出来
   // （表格/YAML 缺项、冲突、占位）时**不得**落回"先修原始 blocker"——那条路让重复
   // harness 反复复用同一份坏正文、恒零候选。仍走 run_verifier_for_repair（NEXT 在该
   // 分支里给出"先按原始回复重写报告"的出口），不新增动作字符串/状态机。
   const unreadableDiagnosisChecks =
     (eligibility.kind === 'repair_diagnosis' || carriedVerifierSubjectId !== null) && verifierReportText
-      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText, reviewReportText === null ? undefined : {
-        reportText: reviewReportText, declinedFingerprints, declinedIssues, verifierSubjectCurrent: carriedVerifierSubjectId === null,
+      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText, !phaseIssues ? undefined : {
+        reportText: phaseIssues.reportText, rows: phaseIssues.rows, declinedFingerprints, declinedIssues, verifierSubjectCurrent: carriedVerifierSubjectId === null,
       })
       : [];
   if (unreadableDiagnosisChecks.length > 0) {
@@ -2379,6 +2389,7 @@ export function writeRunSummaryBase(
       checks: report.checks,
       reportValidity: lattice.report_validity,
       reviewReportText,
+      phaseIssues: verifiedPhaseIssues,
       // 上面已按本轮 subject 读出（不传 subjectId 的话 loader 会读磁盘 summary 现值——
       // 而此刻它还是**上一轮**的）。本轮没签发凭证（disabled/脚本非 PASS/签发失败）
       // → null = 零候选。
@@ -2393,6 +2404,10 @@ export function writeRunSummaryBase(
     // best-effort 事实层：组装失败不阻断 summary（无 candidate=落回既有 retry/halt 行为）
     console.warn(`   ⚠ [repair-candidates] 组装失败（零候选继续）：${(e as Error).message}`);
   }
+  if (lattice.report_validity !== 'FAIL') projectDesignFindingsIntoSummary(summary, verifiedPhaseDesignFindings({
+    phaseIssues: verifiedPhaseIssues, verifierReportText, declinedFingerprints, declinedIssues,
+    verifierSubjectCurrent: carriedVerifierSubjectId === null,
+  }));
   // D0.3：设计归属与链外 coding 候选 → 同 run 范围修订输入，回写进**磁盘** script-report.json。
   // 位置不动（本轮 verifier subject 已锚定），因此 PASS / FAIL 两轮都到得了这里。
   // **刻意在上面的 best-effort catch 之外**：载体写不成 = runtime 看不到修订输入，
@@ -3466,11 +3481,18 @@ export function collectContextFiles(
   const knowledge = opts?.knowledge ?? assembleKnowledge({ projectRoot, frameworkRoot: layout.frameworkRoot, phase,
     subject: feature === GLOBAL_FEATURE_SENTINEL ? 'global' : 'feature', role: 'verifier', contracts: featureSpec.contracts });
   const files: import('./scripts/utils/types').ContextFileEntry[] = knowledgeContextFiles(knowledge);
+  const phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase);
+  if (phaseIssues) files.push({ label: phaseIssues.reportPath, content: phaseIssues.reportText }, ...phaseIssues.evidenceFiles);
+  if (phaseIssues && phase !== 'review' && phaseIssues.rows.length) files.push({ label: '(upstream issues to verify)', content:
+    '逐条读当前问题表与证据；issue-verification 的 evidence 包含责任文件名，并原样复制下列完整问题/依据＋修复建议，再给事实与责任判断。\n'
+      + phaseIssues.rows.map(row => `${row.id} → 责任产物 ${row.files.join('、')}\nevidence 原文：${row.summary}`).join('\n') });
+  files.push(...repairDeclineContextFiles(projectRoot, feature, process.env.MAISON_GOAL_RUN_ID?.trim()));
+  if (phase === 'review' || phase === 'coding') files.push(...implementationChangeContext(projectRoot, feature, process.env.MAISON_GOAL_RUN_ID?.trim(), featureSpec.contracts?.modules));
   if (knowledge.entries.length || knowledge.notices.length) files.push({ label: '(knowledge navigation)',
     content: renderKnowledge({ ...knowledge, extensionInstructions: '' }, false) });
   if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
     const fullSource = phase === 'review' && knowledge.entries.some(entry => entry.available && ['conventions', 'component-index'].includes(entry.kind));
-    // collectSourceFiles 只读 contracts.files 的明确目标，不扫全模块/全仓；不按数量截断这些已声明目标。
+    // collectSourceFiles 读取实际改动与既有定位线索，不扫全仓。
     for (const [filePath, content] of specLoader.collectSourceFiles(projectRoot, featureSpec.contracts, fullSource ? undefined : '.ets')) {
       const existing = files.find(file => file.label === filePath);
       if (existing && fullSource) { existing.kind = 'text'; existing.content = content; }

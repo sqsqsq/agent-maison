@@ -132,7 +132,7 @@ function checkConstructionRefs(
       continue;
     }
     // A frozen planned path becomes checkable through its real file/symbol, not a contract rewrite.
-    if (planned && plannedAllowed) continue;
+    if (role === 'implementation' || (planned && plannedAllowed)) continue;
     const absolute = path.resolve(projectRoot, normalized);
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
       out.push(issue('change_unit_mapping_file_missing', `${owner} 的 ${role} 文件不存在：${normalized}`));
@@ -548,7 +548,7 @@ export function architectureImpactIssues(
     const unresolved = endpoints.filter(name => !admitted.modules.has(name) && !layers.has(name));
     if (unresolved.length > 0) { fail(id, `端点无法解析为获准模块或外层 id：${unresolved.join('、')}。`); continue; }
     const allowed = componentDependencyAllowed(projectRoot, endpoints[0], endpoints[1], admitted.declared);
-    if (decision.direction === 'add' && !allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 当前 DSL 不允许；先经 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE）改 DSL，plan 不是 DSL writer。`);
+    if (decision.direction === 'add' && !allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 当前 DSL 不允许；先经 设计 owner 的正式 DSL 修订通道（无人值守原需求内自动修订）改 DSL，plan 不是 DSL writer。`);
     if (decision.direction === 'remove' && allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 已批准删除但当前 DSL 仍允许（删除未生效）；先经 framework-init 获准路径改 DSL。`);
   }
   return { issues, warnings };
@@ -667,7 +667,7 @@ export function validateChangeUnitFeatureProjection(
     const modifiable = deriveModifiableModules(projectRoot, cu, options.resolveBlueprintRef);
     const outside = [...new Set((contracts!.modules ?? []).map(item => item.name))].filter(name => !modifiable.includes(name)).sort();
     if (outside.length > 0) {
-      issues.push(issue('cu_scope_matches_blueprint', `contracts.modules 越出蓝图派生的可修改模块集合 [${modifiable.join(', ')}]（只来自 CU touches）：${outside.join(', ')}；回 /component-design 调和蓝图 touches / development 节点，plan 内无扩展出口。`, 'reconcile_blueprint'));
+      warnings.push(`实际计划涉及预测 touches 之外的模块：${outside.join(', ')}。review 须核实必要性、公共契约兼容与影响；真实架构变化仍回设计责任方。`);
     }
     const designDecisionIds = cu.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id);
     const architecture = architectureImpactIssues(projectRoot, (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds);
@@ -713,6 +713,22 @@ export function checkChangeUnitFeatureProjection(
     dags,
   );
   if (!result.applicable) return componentChecks;
+  const implementationNotes: string[] = [];
+  if (!CONTRACT_FREEZE_PHASES.has(phase)) {
+    const section = asRecord(ctx.featureSpec.contracts?.change_unit);
+    const refs = [...new Set(['predicate_mappings', 'provide_mappings', 'design_ref_mappings']
+      .flatMap(key => records(section?.[key]).flatMap(row => asStrings(row.implementation_refs))))];
+    for (const raw of refs) {
+      const ref = raw.startsWith('planned:') ? raw.slice(8) : raw;
+      const [file, symbol] = ref.split('#');
+      try {
+        const safe = validateProjectRelativePath(ctx.projectRoot, file, 'implementation hint');
+        const absolute = path.join(ctx.projectRoot, safe);
+        if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()
+          || symbol && !fs.readFileSync(absolute, 'utf8').includes(symbol)) implementationNotes.push(raw);
+      } catch { /* Invalid references already belong to the structural check above. */ }
+    }
+  }
   // plan c4e7a9b2 A1：plan 责任阶段门——手写 contracts 与当前设计权威对齐。不放进 validateChangeUnitFeatureProjection：
   // 投影自己（deriveBlueprintSkillInput）调用它，放进去会自递归。惰性 require 同理避开模块环。
   /* eslint-disable-next-line @typescript-eslint/no-require-imports */
@@ -751,9 +767,9 @@ export function checkChangeUnitFeatureProjection(
     id: 'change_unit_feature_projection',
     category: 'traceability',
     description: 'Change Unit → Feature ID-only 施工投影',
-    severity: 'BLOCKER',
-    status: 'PASS',
-    details: `canonical CU 映射完整；use_cases_required=${result.useCasesRequired}，dag_required=${result.dagRequired}。`,
+    severity: implementationNotes.length ? 'MAJOR' : 'BLOCKER',
+    status: implementationNotes.length ? 'WARN' : 'PASS',
+    details: `canonical CU 映射完整；use_cases_required=${result.useCasesRequired}，dag_required=${result.dagRequired}。实现引用仅作定位，不证明行为完成。` + (implementationNotes.length ? '\n以下私有实现定位未确认，review/UT须按实际源码核实，不要求凑预测名字：' + implementationNotes.join('、') : ''),
     affected_files: [featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
   }];
 }

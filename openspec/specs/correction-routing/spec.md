@@ -3,6 +3,22 @@
 ## Purpose
 TBD - created by archiving change correction-routing. Update Purpose after archive.
 ## Requirements
+
+### Requirement: Coding and UT upstream diagnoses reuse verified responsibility recovery
+
+coding MAY write optional `coding-upstream-issues@1` at `coding/upstream-issues.md` only when proposing upstream issues. Its absence SHALL NOT create a missing-output, missing-capability or completion obligation. UT SHALL reuse `ut/testability-audit.md`. Both SHALL use the existing review issue table with responsibility artifacts distinct from concrete current evidence locations. The runner writer and closure finalizer SHALL use the same artifact reader and row verification. Unverified proposals, missing/stale evidence and refuted/unclear judgments SHALL NOT dispatch repairs or erase existing machine candidates.
+
+When the verifier is already enabled, a failed coding/UT phase with readable current proposal evidence SHALL be eligible for the existing repair diagnosis, including compile failures or unexecuted dependent checks. This changes diagnosis eligibility only: actual FAIL, blocked and SKIP facts SHALL remain, and ordinary failures without proposals SHALL retain their existing path. Confirmed spec/plan/coding issues SHALL use existing candidates and scope revision; confirmed blueprint/CU/architecture DSL issues SHALL use existing external/design-authority recovery without a new phase.
+
+#### Scenario: Current compile evidence reaches its owner
+
+- **WHEN** coding writes a proposal with current readable compile/source references and the existing verifier confirms the specific issue against the current subject
+- **THEN** the actual responsibility owner receives the issue, repairs and re-signs its authority, and the original coding phase re-verifies; the original compile FAIL is not relabelled PASS by diagnosis
+
+#### Scenario: Refusal returns without a new repair budget
+
+- **WHEN** an owner rejects a proposal with a valid goal quote or independently verified current factual basis
+- **THEN** the original proposing phase receives the reason and repairs its own mistake or supplies new facts; a subject that never read the refusal cannot re-dispatch the proposal, and changing IDs/wording/path formatting does not reset retry, backtrack or total budgets
 ### Requirement: Attribution resolves before any edit
 
 对在途 Feature 的 NL 修正请求，agent MUST 在任何产物编辑发生前经 `resolveCorrectionTarget` 解析 feature 归属；无法确定时 MUST 先向用户确认或显式进入 no-feature correction 模式。"按 diff 经 catalog 反查"MUST 只作收尾对账手段，MUST NOT 作为首次归属来源。

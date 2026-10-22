@@ -151,6 +151,7 @@ export const PHASE_OUTPUT_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
 
 /** spec 阶段可选产出（存在才纳入；ui-spec/use-cases 等按需产出的 artifact） */
 export const PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
+  coding: ['upstream-issues.md'],
   plan: ['use-cases.yaml'],
 };
 
@@ -862,6 +863,51 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
     : { phase: input.phase, verdict: 'fresh', changed_paths: [], receipt_changed: false };
 }
 
+/** Same owned-write transition proof for freshness and facts re-admission, even while the owner still fails. */
+export function createObservedSourceHashReader(projectRoot: string, feature: string, opts: EvidenceSemanticOptions = {}):
+  (entry: EvidenceEntry, manifestPhase: string, excludedOwnerPhase?: string) => { exists: boolean; sha256: string | null } | null {
+  const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
+  const evidenceRunId = opts.runId;
+  if (evidenceRunId) {
+    try {
+      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
+      const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+      const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
+      const events = loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
+      const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
+      const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+      const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
+      if (framework) {
+        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId, opts.authorityReaders);
+        const sourceOwners = new Set([...phaseContractIndex(loadFeatureContracts(framework))]
+          .filter(([, contract]) => contract.phase.produces.some(output => output.kind === 'source')).map(([phase]) => phase));
+        const { projectImplementationModules } = require('./diff-scope') as typeof import('./diff-scope');
+        const sourcePrefixes = projectImplementationModules(projectRoot, contracts.modules).map(module => module.package_path + '/');
+        for (const event of events) {
+          if (event.type !== 'phase_write_observed' || !event.phase || !sourceOwners.has(event.phase)) continue;
+          const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
+          for (const write of owned) if (sourcePrefixes.some(prefix => write.path.startsWith(prefix))) {
+            const transitions = sourceTransitions.get(write.path) ?? [];
+            transitions.push({ phase: event.phase, before: write.pre_sha256, after: write.post_sha256 });
+            sourceTransitions.set(write.path, transitions);
+          }
+        }
+      }
+    } catch { /* Unavailable run identity grants no additional source ownership. */ }
+  }
+  return (entry, manifestPhase, excludedOwnerPhase) => {
+    // Old manifests may lack a resource owner. Existing authorized write events supply
+    // the same fact without rewriting the historical manifest or trusting a new file hash.
+    let expected = entry.sha256;
+    let advanced = false;
+    for (const change of sourceTransitions.get(entry.path) ?? []) {
+      if (change.phase !== manifestPhase && change.phase !== excludedOwnerPhase && change.before === expected) { expected = change.after; advanced = true; }
+    }
+    return advanced && expected === sha256File(path.join(projectRoot, entry.path))
+      ? { exists: expected !== null, sha256: expected } : null;
+  };
+}
+
 /**
  * 阶段输入、状态评估与完成核验共用的重算：逐阶段——
  *   ① manifest schema 完整性 + aggregate 重算（改条目留旧 aggregate → tampered，
@@ -882,49 +928,13 @@ export function recomputePhaseEvidenceStaleness(
   const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
   // A live checker may use its admitted owner; read-only consumers require an observed write.
   const pendingOwners = new Set<string>(opts?.pendingOwnerPhase ? [opts.pendingOwnerPhase] : []);
-  const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
   let evidenceRunId = opts?.runId;
   if (!evidenceRunId && chain.length) {
     try { evidenceRunId = evidenceRequirementContext(projectRoot, feature, chain[0], opts ?? {}).runId; } catch { /* Independent evidence has no run authority. */ }
   }
-  if (evidenceRunId) {
-    try {
-      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
-      const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
-      const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
-      const events = loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
-      const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
-      const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
-      const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
-      if (framework) {
-        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId, opts.authorityReaders);
-        const sourceOwners = new Set([...phaseContractIndex(loadFeatureContracts(framework))]
-          .filter(([, contract]) => contract.phase.produces.some(output => output.kind === 'source')).map(([phase]) => phase));
-        const declared = new Set(contracts.files.filter(file => contracts.modules.some(module => {
-          const rel = path.relative(path.resolve(projectRoot, module.package_path), path.resolve(projectRoot, file));
-          return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-        })));
-        for (const event of events) {
-          if (event.type !== 'phase_write_observed' || !event.phase || !sourceOwners.has(event.phase)) continue;
-          const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
-          for (const write of owned) if (declared.has(write.path)) {
-            const transitions = sourceTransitions.get(write.path) ?? [];
-            transitions.push({ phase: event.phase, before: write.pre_sha256, after: write.post_sha256 });
-            sourceTransitions.set(write.path, transitions);
-          }
-        }
-      }
-    } catch { /* Unavailable run identity grants no additional source ownership. */ }
-  }
+  const observedSourceHash = createObservedSourceHashReader(projectRoot, feature, { ...opts, runId: evidenceRunId });
   const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
-    // Old manifests may lack a resource owner. Existing authorized write events supply
-    // the same fact without rewriting the historical manifest or trusting a new file hash.
-    let expected = entry.sha256;
-    let advanced = false;
-    for (const change of sourceTransitions.get(entry.path) ?? []) {
-      if (change.phase !== manifestPhase && change.before === expected) { expected = change.after; advanced = true; }
-    }
-    if (advanced && expected === sha256File(path.join(projectRoot, entry.path))) return true;
+    if (observedSourceHash(entry, manifestPhase)) return true;
     if (pendingOwnerPaths.has(entry.path)) return true;
     if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
     if (pendingOwners.has(entry.owner_phase)) return true;

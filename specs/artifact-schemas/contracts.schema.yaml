@@ -47,6 +47,7 @@ properties:
     type: array
     description: Sole Feature runtime-construction authority, including CU-bound runtime details when applicable.
   files:
+    description: Predicted implementation paths, not a file authorization allowlist. Actual changes and public contracts are verified downstream.
     type: array
     items: { type: string, minLength: 1 }
   conventions_applied:

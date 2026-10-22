@@ -13,7 +13,7 @@ import {
 import {
   CONTRACT_FILE_REFERENCE_FIELDS,
   CONTRACT_FILE_REFERENCE_KINDS,
-  findUnauthorizedContractFileReferences,
+  findUnplannedContractFileReferences,
   selectContractReferencePaths,
 } from '../../scripts/utils/contract-reference-closure';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
@@ -291,17 +291,17 @@ const naCases: Case[] = [
 
 const cases: Case[] = [
   {
-    name: 'M3 bc-openCard: production YAML loader rejects twenty undeclared logo media paths',
+    name: 'M3 bc-openCard: production YAML loader reports twenty unplanned logo references without write authorization',
     run: () => withProject(incidentYaml('undeclared'), (root, spec) => {
       assert(spec.referenceClosure, 'production SpecLoader must return referenceClosure');
       assert(spec.referenceClosure.invalid_paths.length === 0, JSON.stringify(spec.referenceClosure.invalid_paths));
-      const missing = findUnauthorizedContractFileReferences(spec.referenceClosure);
+      const missing = findUnplannedContractFileReferences(spec.referenceClosure);
       assert(missing.length === 20, `expected 20 missing logo paths, got ${missing.length}`);
       assert(missing.every(item => item.sources.some(source => source.kind === 'resource_keys.path')), JSON.stringify(missing));
       const result = closureCheck(root, spec);
-      assert(result.status === 'FAIL' && result.severity === 'BLOCKER', JSON.stringify(result));
-      assert(/20 个文件引用/.test(result.details ?? ''), result.details ?? 'missing details');
-      assert(/resource_keys\.CardFeature\.media\[0\]\.path/.test(result.details ?? ''), result.details ?? 'missing source');
+      assert(result.status === 'PASS' && result.severity === 'BLOCKER', JSON.stringify(result));
+      assert(/20 个未列入实施预测/.test(result.details ?? ''), result.details ?? 'missing details');
+      assert(/引用不构成写授权/.test(result.details), result.details);
     }),
   },
   {
@@ -309,7 +309,7 @@ const cases: Case[] = [
     run: () => withProject(incidentYaml('declared'), (root, spec) => {
       const before = listFiles(root);
       assert(spec.referenceClosure, 'production SpecLoader must return referenceClosure');
-      assert(findUnauthorizedContractFileReferences(spec.referenceClosure).length === 0, 'green fixture must close');
+      assert(findUnplannedContractFileReferences(spec.referenceClosure).length === 0, 'green fixture must close');
       const result = closureCheck(root, spec);
       assert(result.status === 'PASS', JSON.stringify(result));
       const after = listFiles(root);
@@ -628,7 +628,7 @@ const cases: Case[] = [
     }),
   },
   {
-    name: 'c7e2a9d4 T1 unauthorized navigation.config_files fails plan closure (authorization, not existence)',
+    name: 'c7e2a9d4 T1 unplanned navigation.config_files does not become a write permission',
     run: () => withProject([
       'schema_version: "1.0"',
       'feature: bc-openCard',
@@ -636,11 +636,11 @@ const cases: Case[] = [
       '  config_files: [02-Feature/CardFeature/src/main/resources/base/profile/main_pages.json]',
       'files: []',
     ].join('\n'), (root, spec) => {
-      const missing = findUnauthorizedContractFileReferences(spec.referenceClosure!);
+      const missing = findUnplannedContractFileReferences(spec.referenceClosure!);
       assert(missing.length === 1 && missing[0].sources[0].kind === 'navigation.config_files',
         JSON.stringify(missing));
       const result = closureCheck(root, spec);
-      assert(result.status === 'FAIL' && result.severity === 'BLOCKER', JSON.stringify(result));
+      assert(result.status === 'PASS' && result.severity === 'BLOCKER', JSON.stringify(result));
     }),
   },
   ...naCases,

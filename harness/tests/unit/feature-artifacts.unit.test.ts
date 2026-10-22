@@ -417,12 +417,12 @@ const cases: Case[] = [
       const r = checkDesignToCode(ctx);
       const hit = r.find(x => x.id === 'plan_to_code');
       if (!hit) throw new Error(JSON.stringify(r));
-      assertEq(hit.status, 'FAIL', `07-13 形态（15 条全缺 key_files）不得再"全部 0 个关键文件均存在"假 PASS: ${JSON.stringify(hit)}`);
-      assertEq(/未映射任何 key_files/.test(hit.details ?? ''), true, '报错须可行动');
+      assertEq(hit.status, 'WARN', `07-13 形态（15 条全缺 key_files）不得再"全部 0 个关键文件均存在"假 PASS: ${JSON.stringify(hit)}`);
+      assertEq(/未映射 key_files/.test(hit.details ?? ''), true, '报错须可行动');
     }),
   },
   {
-    name: 'P0-2 第六轮复审: plan_to_code 逐条目校验——一条空 + 一条合法（文件存在）仍须 FAIL 并点名空条目',
+    name: 'plan_to_code 预测定位缺席需披露，不能冒充实现完成',
     run: () => withTmpProject(root => {
       const feature = 'bc-open';
       writeFile(path.join(root, 'src', 'ok.ets'), 'export {}');
@@ -449,7 +449,7 @@ const cases: Case[] = [
       const r = checkDesignToCode(ctx);
       const hit = r.find(x => x.id === 'plan_to_code');
       if (!hit) throw new Error(JSON.stringify(r));
-      assertEq(hit.status, 'FAIL', `部分条目空 key_files 不得被合法条目掩护 PASS: ${JSON.stringify(hit)}`);
+      assertEq(hit.status, 'WARN', `部分条目空 key_files 不得被合法条目掩护 PASS: ${JSON.stringify(hit)}`);
       assertEq(/AC-empty/.test(hit.details ?? ''), true, `须点名空条目 prd_id: ${hit.details}`);
       assertEq(/1\/2/.test(hit.details ?? ''), true, `须给出空/总计数: ${hit.details}`);
     }),

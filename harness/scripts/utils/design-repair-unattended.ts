@@ -45,6 +45,7 @@ import {
   diffPhaseInvocationSnapshots,
 } from './phase-write-boundary';
 import { stableStringify } from './phase-evidence-manifest';
+import { readableIssueEvidence, verifiedDeclineBasis } from './repair-candidates';
 
 export const DESIGN_REPAIR_PREAUTH_KEY = 'design_repair.unattended_b1';
 /** 子契约文档（发布件内，相对框架根）。 */
@@ -58,8 +59,9 @@ export const designRepairInvokeLabel = (purpose: DesignRepairPurpose): string =>
 export interface DesignRepairBriefLike { class: DesignRepairClass; items: DesignAuthorityFinding[] }
 
 /** 停机签名：feature + 责任阶段 + 设计 owner 阻断的检查 id 与原因码（不含 run_id、时间、草稿版本——后继借不了这些绕过判重）。 */
-export function designRepairSignature(feature: string, phase: string, items: ReadonlyArray<Pick<DesignAuthorityFinding, 'check' | 'codes'>>, inputFingerprint?: string): string {
-  const checks = items.map(item => `${item.check}[${[...item.codes].sort().join(',')}]`).sort();
+export function designRepairSignature(feature: string, phase: string, items: ReadonlyArray<Pick<DesignAuthorityFinding, 'check' | 'codes'> & Partial<Pick<DesignAuthorityFinding, 'artifacts'>>>, inputFingerprint?: string): string {
+  const checks = items.map(item => `${/^(coding|ut):/.test(item.check) && item.artifacts?.length
+    ? `${item.check.split(':')[0]}:${[...item.artifacts].sort().join(',')}` : item.check}[${[...item.codes].sort().join(',')}]`).sort();
   return crypto.createHash('sha256').update(stableStringify({ feature, phase, checks, ...(inputFingerprint ? { inputFingerprint } : {}) }), 'utf8').digest('hex');
 }
 
@@ -259,6 +261,7 @@ function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, can
     '',
     '## 修复简报',
     ...input.brief.items.map(item => `- 检查 ${item.check}［${item.codes.join(', ')}］→ 产物 ${item.artifacts.join('、') || '蓝图'}；${input.requirement ? '定位线索' : '只许改的位置'}：${(item.locations ?? []).map(at => `${at.target.kind}:${at.target.view_id ? `${at.target.view_id}/` : ''}${at.target.id}.${at.field}`).join('、') || (input.requirement ? '按原需求和本条证据定位，不扩大产品目标' : '（未定位：本次不能改蓝图）')}；修法：${item.needs.join('；')}；依据：${item.basis}`),
+    '提案与目标冲突或事实不成立时可拒修：仅在草稿既有 decisions_and_gaps.decisions 追加 decision_id=依据中的 repair_candidate:<指纹>、rationale="declined: <依据>"。目标冲突用「」引目标原文；事实误判引用当前 `工程相对路径:行号` 与合法做法。独立质询确认后丢弃草稿，将理由交回原阶段；不得伪造发布成功。',
     '',
     '## 子契约',
     contract.trim(),
@@ -396,6 +399,38 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     // ② 编写修复。
     const preAuthor = await guarded('author', authorPrompt(input, draftFile, canonicalRel), baselineRefs);
     const authored = readDraft('author');
+    for (const field of ['admission', 'questioning'] as const) {
+      if (canon(reviewOf(authored)[field]) !== canon(reviewOf(baseDoc)[field])) throw new AttemptFailure('self_reported', `编写调用改了 review_summary.${field}（自报，不予采信）`);
+    }
+    const declineGates = new Set(input.brief.items.flatMap(item => item.basis.match(/repair_candidate:[a-f0-9]{64}/g) ?? []));
+    const declined = asRecords(asRecord(authored.decisions_and_gaps)?.decisions).filter(decision =>
+      declineGates.has(String(decision.decision_id)) && typeof decision.rationale === 'string' && decision.rationale.startsWith('declined:'));
+    if (declined.length) {
+      const before = structuredClone(authored); delete asRecord(before.review_summary)?.questioning;
+      await guarded('questioning', questioningPrompt(input, draftFile, authored) + '\n本次作者拒修理由：\n'
+        + declined.map(decision => `${decision.decision_id}：${decision.rationale}`).join('\n')
+        + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。', blueprintSourceRefFiles(projectRoot, authored).map(relOf));
+      const questioned = readDraft('questioning');
+      const after = structuredClone(questioned); delete asRecord(after.review_summary)?.questioning;
+      if (canon(before) !== canon(after)) throw new AttemptFailure('questioning_scope', '拒修质询改了 questioning 之外的草稿内容');
+      const questioning = asRecord(asRecord(questioned.review_summary)?.questioning);
+      const declineProof = structuredClone(questioned);
+      const decisions = asRecord(declineProof.decisions_and_gaps);
+      if (decisions) decisions.decisions = asRecords(decisions.decisions).filter(decision => !declineGates.has(String(decision.decision_id)));
+      const invalidProof = blockerIssues(validateComponentBlueprint(declineProof, context));
+      const reasons = declined.map(decision => String(decision.rationale));
+      const confirmed = invalidProof.length === 0 && questioning?.status === 'complete' && reasons.every(reason => {
+        const basis = verifiedDeclineBasis(reason, input.requirement ?? '', text => readableIssueEvidence(projectRoot, text).length > 0);
+        return basis !== null && asRecords(questioning.items).some(item => item.disposition === 'answered_with_evidence'
+          && typeof item.answer === 'string' && item.answer.includes(reason)
+          && Array.isArray(item.evidence_refs) && item.evidence_refs.length > 0);
+      });
+      if (!confirmed) throw new AttemptFailure('questioning', '拒修理由未被独立质询依据当前产物确认');
+      release(); fs.rmSync(draftDir, { recursive: true, force: true });
+      const reason = reasons.join('；');
+      input.emit({ ...base, stage: 'failed', failed_step: 'declined', reason });
+      return { outcome: 'failed', step: 'declined', reason };
+    }
     // 编写调用新引用的输入文件：调用前没有进核对（位于通常排除的目录），它在调用期间是否被改无从核实——不当作干净继续。
     const draftRefs = blueprintSourceRefFiles(projectRoot, authored).map(relOf);
     const unverified = draftRefs.filter(ref => !baselineRefs.includes(ref) && !preAuthor.entries.some(entry => entry.path === ref));
@@ -404,9 +439,6 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         { changes: [], preSnapshot: preAuthor.sha256, postSnapshot: preAuthor.sha256 });
     }
     // 自报：编写调用不得写准入、不得写质询结果（与基线比对，字节语义不变）。
-    for (const field of ['admission', 'questioning'] as const) {
-      if (canon(reviewOf(authored)[field]) !== canon(reviewOf(baseDoc)[field])) throw new AttemptFailure('self_reported', `编写调用改了 review_summary.${field}（自报，不予采信）`);
-    }
     // 授权边界：只许改本次 B1 发现项定位到的字段；越权 = 尝试失败、丢弃草稿、不发布（canonical 未变，不走越界违规出口）。
     const outside = input.requirement
       ? ['artifact', 'component_id', 'blueprint_id'].filter(key => authored[key] !== baseDoc[key])

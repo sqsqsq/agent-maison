@@ -90,7 +90,7 @@ graph TD
 
 > 完整签名与类型细节落盘后以 `contracts.yaml` 为准；本节仅作人读草案。
 >
-> `contracts.files` 是唯一文件授权集合：data/interface/component、资源、页面/路由注册、module build/export 与 traceability 文件引用都须逐项列入；闭包失败时回 plan 补 `files` 后重跑。
+> `contracts.files` 是实施预测，引用路径须合法但不必逐项登记为许可；真实边界取原请求、公共契约和阶段职责。实际源码、页面与路由由下游核验，必要的规格/架构变化交原 owner。
 
 ---
 

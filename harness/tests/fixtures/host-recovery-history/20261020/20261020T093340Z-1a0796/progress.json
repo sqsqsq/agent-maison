@@ -1,0 +1,121 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261020T093340Z-1a0796",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBjb21wbGV0ZS1iYW5rLWNhcmQtb3BlbmluZw",
+  "status": "HALTED",
+  "status_reason": "no_progress_guard",
+  "run_disposition": "WAITING",
+  "run_wait_kind": "human",
+  "generated_at": "2026-10-20T10:32:30.232Z",
+  "source": {
+    "events_path": "doc/features/bc-openCard-2/complete-bank-card-opening/goal-runs/20261020T093340Z-1a0796/events.jsonl",
+    "events_count": 106,
+    "last_event_at": "2026-10-20T10:32:30.231Z",
+    "last_event_type": "run_end"
+  },
+  "chain": {
+    "phases": [
+      "coding",
+      "review",
+      "ut",
+      "testing"
+    ],
+    "current_phase": "coding",
+    "current_index": 0,
+    "total": 4,
+    "estimated_percent": 0,
+    "percent_kind": "estimated"
+  },
+  "phase": {
+    "name": "coding",
+    "status": "HALTED",
+    "attempt": 2,
+    "started_at": "2026-10-20T10:11:23.949Z",
+    "elapsed_ms": 1266283,
+    "substep": "verdict",
+    "recovered": false
+  },
+  "liveness": {
+    "state": "DONE",
+    "last_activity_at": "2026-10-20T10:32:30.231Z",
+    "seconds_since_activity": 0,
+    "agent_output_stalled_ms": null,
+    "signals": {
+      "feature_lock_heartbeat": "missing",
+      "runner_lock": "missing",
+      "agent_output_log": "missing",
+      "child_process": "unknown",
+      "lingering_pipe": false
+    }
+  },
+  "budget": {
+    "turns_used": 4,
+    "turns_limit": 30,
+    "wall_elapsed_ms": 3513515,
+    "wall_limit_ms": 28800000,
+    "phase_timeout_ms": 5400000
+  },
+  "artifacts": {
+    "agent_output_log": "doc/features/bc-openCard-2/complete-bank-card-opening/goal-runs/20261020T093340Z-1a0796/phases/coding/agent-output.log",
+    "summary_path": null,
+    "goal_report_path": "doc/features/bc-openCard-2/complete-bank-card-opening/goal-runs/20261020T093340Z-1a0796/goal-report.json",
+    "progress_path": "doc/features/bc-openCard-2/complete-bank-card-opening/goal-runs/20261020T093340Z-1a0796/progress.json"
+  },
+  "recent_events": [
+    {
+      "ts": "2026-10-20T10:32:27.168Z",
+      "type": "heartbeat",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-20T10:32:29.669Z",
+      "type": "harness_end",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-20T10:32:30.000Z",
+      "type": "phase_verdict",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-20T10:32:30.000Z",
+      "type": "phase_halt",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-20T10:32:30.231Z",
+      "type": "run_end"
+    }
+  ],
+  "next_action": "await_human_action",
+  "phases_summary": [
+    {
+      "phase": "coding",
+      "status": "HALTED",
+      "attempts": 2,
+      "duration_ms": 1266051,
+      "evidence": "doc/features/bc-openCard-2/complete-bank-card-opening/goal-runs/20261020T093340Z-1a0796/phases/coding/agent-output.log"
+    },
+    {
+      "phase": "review",
+      "status": "NOT_STARTED",
+      "attempts": 0,
+      "duration_ms": null,
+      "evidence": null
+    },
+    {
+      "phase": "ut",
+      "status": "NOT_STARTED",
+      "attempts": 0,
+      "duration_ms": null,
+      "evidence": null
+    },
+    {
+      "phase": "testing",
+      "status": "NOT_STARTED",
+      "attempts": 0,
+      "duration_ms": null,
+      "evidence": null
+    }
+  ]
+}

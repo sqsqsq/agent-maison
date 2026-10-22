@@ -623,7 +623,7 @@ export function runAll(): UnitCaseResult[] {
     });
   };
 
-  run('b9 asset_selection 保持 visual-parity PASS 与缺失映射 FAIL 判定', () => {
+  run('8a6d3f21 asset_selection 不改变定位，files 预测不作许可', () => {
     const root = mkProject();
     try {
       for (const files of [undefined, []] as Array<string[] | undefined>) {
@@ -632,7 +632,7 @@ export function runAll(): UnitCaseResult[] {
         for (const component of ctx.featureSpec.contracts!.components) component.asset_selection = { resolution: 'custom', rationale: '私有 UI' };
         const after = checkVisualParityCoverage(ctx)[0];
         if (before.status !== after.status || before.details !== after.details) throw new Error('asset_selection 改变了 visual-parity 判定');
-        if (after.status !== (files ? 'FAIL' : 'PASS')) throw new Error(`目标分支未命中：${after.status}`);
+        if (after.status !== 'PASS') throw new Error(`目标分支未命中：${after.status}`);
       }
     } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -689,7 +689,7 @@ export function runAll(): UnitCaseResult[] {
     }
   });
 
-  run('t3⑤ 所有权硬地板④：组件 file 未进 contracts.files 判失败', () => {
+  run('8a6d3f21 组件定位不需要进入预测 files 许可表', () => {
     const root = mkProject();
     try {
       const ctx = ownershipCtx(root, {
@@ -701,10 +701,7 @@ export function runAll(): UnitCaseResult[] {
         files: ['app/feature/HomePage.ets'],
       });
       const [r] = checkVisualParityCoverage(ctx);
-      if (r.status !== 'FAIL' || r.severity !== 'BLOCKER') {
-        throw new Error(`file 不在 contracts.files 须判失败：${r.severity}/${r.status} — ${r.details}`);
-      }
-      if (!r.details.includes('contracts.files')) throw new Error(`须点名 files 缺口：${r.details}`);
+      if (r.status === 'FAIL') throw new Error(`预测 files 不得作为组件许可：${r.details}`);
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
@@ -784,14 +781,7 @@ export function runAll(): UnitCaseResult[] {
         ],
         files: ['app/feature/HomePage.ets', 'app/feature/HintText.ets'],
       }))[0];
-      if (missingFile.status !== 'WARN' || missingFile.severity !== 'MAJOR') {
-        throw new Error(
-          `P1 file 缺口须遵守 warn、不得硬化：${missingFile.severity}/${missingFile.status} — ${missingFile.details}`,
-        );
-      }
-      if (!missingFile.details.includes('HelpText.file') || !missingFile.details.includes('contracts.files')) {
-        throw new Error(`须保留 P1 file 质量诊断：${missingFile.details}`);
-      }
+      if (missingFile.status === 'FAIL') throw new Error(`P1 的预测文件登记不构成产品失败：${missingFile.details}`);
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

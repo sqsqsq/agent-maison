@@ -11,6 +11,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { implementationFiles } from './diff-scope';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { TextDecoder } from 'util';
@@ -514,8 +515,9 @@ export class SpecLoader {
     const result = new Map<string, string>();
     if (!contracts?.files) return result;
 
-    for (let i = 0; i < contracts.files.length; i++) {
-      const raw = contracts.files[i];
+    const actualFiles = implementationFiles(projectRoot, contracts.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+    for (let i = 0; i < actualFiles.length; i++) {
+      const raw = actualFiles[i];
       const relativePath = coerceToPathString(raw);
       if (relativePath === null) {
         console.warn(

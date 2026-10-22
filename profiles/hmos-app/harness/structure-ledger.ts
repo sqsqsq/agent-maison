@@ -1,18 +1,5 @@
-// ============================================================================
-// structure-ledger.ts — P1-4①（plan c9e2a7f4 子批B）：结构声明台账门禁
-// ----------------------------------------------------------------------------
-// 病灶（round6 终局实锤）：spec 结构声明（card_pack subtitle_position=trailing、add_card
-// layout_group、tab 容器 bg_color）被 coding **静默无视**——没有任何产物记录"这条声明我怎么
-// 处理的"，直到真机 testing 才暴露。ArkUI 结构静态判定不可行（Row/Column/Builder 组合爆炸，
-// 硬做必产 FP 风暴），故本门禁不验真、只**消灭静默**：coding 必须对每条结构声明逐条登记
-// "由哪个 struct、如何实现"（doc/features/<f>/coding/structure-conformance.yaml），缺条目=
-// 声明被无视的显式证据 → BLOCKER；implemented_by 须真实存在于源码 struct 集（防糊名）。
-//
-// 诚实边界（P1-4③）：台账为 coding 自报——内容真实性由 review 逐条人审（P1-4②）＋
-// device 侧 P1-C 文本类确定性信号共同闭环；非文本类结构（tab 容器/分组视觉）当前
-// 无确定性静态验真（round7 候选：OmniParser/容器采色）。
-// ============================================================================
-
+// 结构台账是过程定位：缺项或位置失准只披露，不据自报台账判定真实结构失败。
+// 实际结构与交互由源码审查、设备和视觉证据验证。
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -29,7 +16,6 @@ import {
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
 const YAML = requireHarness('yaml') as { parse: (s: string) => unknown };
 import { scanFeatureSourceTree } from './source-ref-scan';
-import { isHardPixelContract, fidelityRatchetFailOrWarn } from '../../../harness/scripts/utils/fidelity-shared';
 
 /** 一条结构声明：node_key + declaration（如 subtitle_position=trailing）。 */
 export interface StructureDeclaration {
@@ -159,13 +145,11 @@ export function auditStructureLedger(
   return { missing, unattributed, phantomStructs, missingHow, orphanEntries };
 }
 
-const HONESTY_NOTE =
-  '（诚实边界：台账为 coding 自报、本门禁只消灭"声明被静默无视"并校验 struct 存在性防糊名；' +
-  '内容真实性由独立 review 逐条复核 + device 文本类确定性信号闭环，非文本类结构静态验真列 round7）';
+const HONESTY_NOTE = '（台账仅用于定位：缺项或位置过时不证明产品缺陷；实际结构由独立 review 与设备/视觉验证。）';
 
 /**
  * P1-4① 门禁 `structure_declaration_ledger`：ui-spec 全部结构声明 ⊆ 台账，且
- * implemented_by 真实存在。pixel_1to1 → BLOCKER FAIL；否则 MAJOR WARN。
+ * implemented_by 真实存在。所有档位的登记缺口均披露；真实结构要求由原 review/设备/视觉检查核实。
  */
 export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[] {
   // 路径走 featureDir（尊重 paths.features_dir）读 ui-spec。（子批B 起如此；round7 A① 已把
@@ -186,9 +170,8 @@ export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[
     return [{ ...base, severity: 'MINOR', status: 'PASS', details: 'ui-spec 无结构声明，无需台账。' }];
   }
 
-  const ratchet = isHardPixelContract(ctx)
-    ? fidelityRatchetFailOrWarn(ctx, true)
-    : { severity: 'MAJOR' as const, status: 'WARN' as const };
+  // A missing record is not evidence that the product omitted the structure.
+  const ratchet = { severity: 'MAJOR' as const, status: 'WARN' as const };
 
   const ledgerAbs = structureLedgerAbsPath(ctx.projectRoot, ctx.feature);
   const ledger = loadStructureLedger(ledgerAbs);
@@ -213,7 +196,7 @@ export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[
   const problems: string[] = [];
   if (audit.missing.length > 0) {
     problems.push(
-      `台账缺 ${audit.missing.length} 条声明（声明被无视的显式证据）：\n` +
+      `台账缺 ${audit.missing.length} 条声明（登记缺口，实际结构仍待 review/真机核验）：\n` +
       audit.missing.map(d => `- node_id: ${d.node_key}｜declaration: ${d.declaration}（屏 ${d.screen_id}）`).join('\n'),
     );
   }
@@ -221,7 +204,7 @@ export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[
     problems.push(`台账条目缺 implemented_by：${audit.unattributed.join('；')}`);
   }
   if (audit.phantomStructs.length > 0) {
-    problems.push(`implemented_by 的 struct 不存在于源码（糊名）：${audit.phantomStructs.join('；')}`);
+    problems.push(`implemented_by 定位未命中当前源码，需更新定位并核实实际结构：${audit.phantomStructs.join('；')}`);
   }
   if (audit.missingHow.length > 0) {
     problems.push(`台账条目缺 how（一句话实现说明）：${audit.missingHow.join('；')}`);
@@ -233,7 +216,7 @@ export function checkStructureDeclarationLedger(ctx: CheckContext): CheckResult[
       severity: ratchet.severity,
       status: ratchet.status,
       details: `${problems.join('\n')}\n${HONESTY_NOTE}`,
-      suggestion: `补齐 ${ledgerRel} 后重跑；implemented_by 须为真实 struct 名。`,
+      suggestion: `补齐 ${ledgerRel} 后重跑；按实际源码更新 implemented_by；不能用补登记代替实际结构核验。`,
     }];
   }
 

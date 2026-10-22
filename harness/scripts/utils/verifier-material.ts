@@ -158,6 +158,16 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
     if (sha !== null) files.set(rel, sha);
   }
 
+  // Diagnosis reads the proposal's concrete text, which may exceed the CU-neutral consumption view.
+  if (phase === 'coding' || phase === 'ut') {
+    const { readPhaseRepairIssues } = require('./repair-candidates') as typeof import('./repair-candidates');
+    const diagnosis = readPhaseRepairIssues(projectRoot, feature, phase);
+    if (diagnosis?.rows.length) for (const file of [diagnosis.reportPath, ...diagnosis.evidenceFiles.map(entry => entry.label)]) {
+      const sha = sha256FileOrNull(path.resolve(projectRoot, file));
+      if (sha !== null) files.set(file, sha);
+    }
+  }
+
   const base = {
     schema: VERIFIER_MATERIAL_SCHEMA,
     ...(input.resolvedInputs ? { input_bindings_sha256: sha256Text(stableStringify(Object.entries(input.resolvedInputs.values).map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]))) } : {}),

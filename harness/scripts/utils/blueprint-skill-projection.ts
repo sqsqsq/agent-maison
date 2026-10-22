@@ -8,7 +8,7 @@ import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal
 import { resolveExecutionScope, findSubtractedRequiredObligations, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
+import { asRecord, asRecords, asStrings, type BlueprintRecord } from './component-blueprint-model';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import type { ComponentBlueprintRef } from './component-blueprint-model';
 import type { ChangeUnitArtifact } from './change-unit-model';
@@ -18,7 +18,7 @@ import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
 import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { projectComponentSelections } from './component-selection-check';
-import { resolveContractFileReferences, findUnauthorizedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
+import { resolveContractFileReferences, findUnplannedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot, existingProjectPathSpelling } from './project-relative-path';
 import { evaluateAcceptanceFlowStructure } from './p0-semantic-gates';
@@ -131,7 +131,6 @@ const digest = (file: string): string => crypto.createHash('sha256').update(fs.r
 export function checkTypedConstructionContent(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
   const issues: string[] = [];
-  if (!contracts?.files?.length) issues.push('contracts.files 缺少明确授权文件');
   const content = inspectTypedConstructionContent(contracts);
   const consumerError = content.find(issue => issue.consumerError)?.consumerError;
   if (consumerError) throw new TypeError(consumerError); // 保留原消费异常与归因；蓝图只读诊断仍可 WARN。
@@ -372,17 +371,16 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       const contracts = parsed.contracts!;
       const contentIssues = checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL');
       if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));
-      if (!contracts.files?.length) fail('authority_contract_files_missing', 'plan: contracts.files 缺少明确授权文件；touches 不构成授权');
+
       const closure = resolveContractFileReferences(projectRoot, contracts);
-      for (const file of [...closure.authorized_files, ...closure.references.map(ref => ref.path)]) {
+      for (const file of [...closure.planned_files, ...closure.references.map(ref => ref.path)]) {
         const actual = existingProjectPathSpelling(projectRoot, file);
         if (actual && path.relative(projectRoot, actual).replace(/\\/g, '/') !== file) {
           fail('authority_projection_shape_invalid', `已有文件大小写不一致：${file}；实际路径：${path.relative(projectRoot, actual).replace(/\\/g, '/')}`,
             selected.map(item => ({ blueprint_id: item.ref.blueprint_id, target: item.ref.target, field: 'contracts.files' })));
         }
       }
-      const violations = findUnauthorizedContractFileReferences(closure);
-      if (closure.invalid_paths.length || violations.length) fail('authority_contract_write_set_open', 'plan: contracts.files 写集未闭合：' + [...closure.invalid_paths.map(i => i.message), ...violations.map(i => i.path)].join('; '));
+      if (closure.invalid_paths.length) fail('authority_contract_write_set_open', 'plan: 非法文件引用：' + closure.invalid_paths.map(issue => issue.message).join('; '));
       const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: authorityReaders?.blueprint });
       if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
@@ -472,7 +470,24 @@ export function compareAuthoritativeContent(projected: unknown, actual: unknown)
   if (!record) return { state: 'drift', items: [{ id: '$', field: '', expected: projected, actual }] };
   const items: AuthoritativeDriftItem[] = [];
   for (const [key, value] of Object.entries(asRecord(projected) ?? {})) {
-    if (!UNCOMPARED_TOP_LEVEL.has(key)) alignNode(value, record[key], key, '', key, items);
+    if (UNCOMPARED_TOP_LEVEL.has(key) || key === 'files' || key === 'planned_locations') continue;
+    if (key === 'components') {
+      const linked = (rows: unknown): string[] => [...new Set(asRecords(rows).flatMap(row => asStrings(row.linked_functions)))].sort();
+      alignNode(linked(value), linked(record[key]), key, 'linked_functions', 'tags', items);
+      continue;
+    }
+    if (key === 'state_management') {
+      const runtime = (rows: unknown) => asRecords(rows).map(({ holder: _holder, decorator: _decorator, ...facts }) => {
+        if (!facts.design_ref && !facts.owner_ref && !facts.contract_refs) delete facts.data;
+        return facts;
+      }).filter(row => Object.keys(row).length > 0);
+      alignNode(runtime(value), runtime(record[key]), key, '', key, items);
+      continue;
+    }
+    if (key === 'interfaces' || key === 'data_models') {
+      const withoutLocation = (rows: unknown) => asRecords(rows).map(({ file: _file, ...contract }) => contract);
+      alignNode(withoutLocation(value), withoutLocation(record[key]), key, '', key, items);
+    } else alignNode(value, record[key], key, '', key, items);
   }
   return items.length ? { state: 'drift', items } : { state: 'aligned' };
 }
@@ -513,9 +528,9 @@ export function describeAuthoritativeDrift(drift: AuthoritativeContentDrift, kin
 /** 责任阶段门（spec → acceptance / plan → contracts）：BLOCKER `authoritative_content_aligned`。不适用时不出行。 */
 /** Read-only resources and already-authorized omissions remain plan work, not design changes. */
 export function designWriteSetExpansion(projectRoot: string, expected: ContractsSpec, actual: ContractsSpec): string[] {
-  const allowed = new Set(resolveContractFileReferences(projectRoot, expected).authorized_files);
+  const allowed = new Set(resolveContractFileReferences(projectRoot, expected).planned_files);
   const closure = resolveContractFileReferences(projectRoot, actual);
-  return [...new Set([...closure.authorized_files, ...closure.references.map(ref => ref.path)])].filter(file => {
+  return [...new Set([...closure.planned_files, ...closure.references.map(ref => ref.path)])].filter(file => {
     if (allowed.has(file)) return false;
     const refs = closure.references.filter(ref => ref.path === file);
     return !(refs.length && refs.every(ref => ref.kind.startsWith('resource_keys.')) && fs.existsSync(path.resolve(projectRoot, file)));
@@ -532,13 +547,6 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
   // 无效分支责任在链外的设计 owner（plan f7045213 最终评审返修二）：既有字段 repair_owner='external' 让 goal 首次即停交设计 owner；漂移分支不标。
   if (drift.state === 'invalid') return [{ ...base, status: 'FAIL', repair_owner: 'external', structured: { kind: 'design_authority', reason: drift.reason, codes: drift.codes, ...(drift.locations ? { locations: drift.locations } : {}) }, details: describeAuthoritativeDrift(drift, kind)!, suggestion: '设计权威投影自身不可用：回设计 owner 修复蓝图 / CU 后重跑。' }];
   const details = drift.items.map(item => `${driftLabel(item)}: 期望=${JSON.stringify(item.expected)} 实际=${JSON.stringify(item.actual)}`).join('\n');
-  if (kind === 'contracts' && ctx.featureSpec.contracts) {
-    const projected = deriveBlueprintSkillInput(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, 'contracts');
-    const expansion = projected.state === 'resolved' ? designWriteSetExpansion(ctx.projectRoot, projected.value as ContractsSpec, ctx.featureSpec.contracts) : [];
-    if (expansion.length) return [{ ...base, status: 'FAIL', repair_owner: 'external',
-      structured: { kind: 'design_authority', reason: 'other', codes: ['authority_contract_write_set_open'] },
-      details: `${details}\n需扩大蓝图/CU 写集：${expansion.join(', ')}`, suggestion: '交设计 owner 正式修订蓝图/CU；无人值守原需求内由框架静默处理，有人在场沿原确认流程；plan 不自行扩大写集。' }];
-  }
   return [{ ...base, status: 'FAIL', details, suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
 }
 
@@ -639,7 +647,7 @@ const DESIGN_AUTHORITY_CLASS_ROWS: ReadonlyArray<readonly [DesignRepairClass, De
   ['B2', 'blueprint', 'design_ref 目标带验收 / 契约 / 用例却缺权威来源：需要取得权威来源', ['authority_target_provenance_missing']],
   ['B2', 'blueprint', '多个 design_ref 目标的同一内容互相冲突：需要有权者裁决保留哪一份', ['authority_content_conflict']],
   ['B2', 'blueprint', '蓝图验收内容未过内容门或 CU predicate 缺验收映射：需要补全验收定义', ['authority_acceptance_content_invalid', 'authority_predicate_acceptance_unmapped']],
-  ['B2', 'blueprint', '蓝图施工契约不完整（类型签名 / 授权写集 / 写集闭合）：需要设计 owner 补写集与契约', ['authority_construction_content_incomplete', 'authority_contract_files_missing', 'authority_contract_write_set_open']],
+  ['B2', 'blueprint', '蓝图施工契约不完整或路径引用无效：由设计 owner 修正实质契约，文件预测不作授权', ['authority_construction_content_incomplete', 'authority_contract_files_missing', 'authority_contract_write_set_open']],
   // ---- B2：canonical CU 的加载与解析（§1 #1–#2；change-unit-path）----
   ['B2', 'change_unit', 'canonical CU 缺失、无法解析或身份与路径不符：需要恢复或确认 CU 定义', [
     'change_unit_id_reserved', 'change_unit_missing', 'change_unit_yaml_invalid', 'change_unit_root_invalid', 'change_unit_identity_mismatch',
@@ -708,6 +716,8 @@ export interface DesignAuthorityDiagnosis { findings: DesignAuthorityFinding[]; 
  *——这里问的是"按当前输入这道门还拦不拦"，冻结绑定是否仍有效由 `staleFrozenBindings` 另判。
  */
 export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: string, feature: string, phase: string, runId?: string): DesignAuthorityDiagnosis {
+  const { readVerifiedPhaseDesignFindings } = require('./repair-candidates') as typeof import('./repair-candidates');
+  const verifiedFindings = readVerifiedPhaseDesignFindings(projectRoot, frameworkRoot, feature, phase, runId);
   const cuGate = ['plan', 'change', 'coding', 'review', 'ut'].includes(phase);
   if (phase !== 'spec' && !cuGate) return { findings: [] };
   let featureSpec: CheckContext['featureSpec'];
@@ -719,19 +729,19 @@ export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: stri
     const { loadFeatureTrackDecl } = require('./feature-track') as typeof import('./feature-track');
     const { relFeaturesDir } = require('../../config') as typeof import('../../config');
     /* eslint-enable @typescript-eslint/no-require-imports */
-    const entry = resolveCapabilityResolutionEntryInput({ frameworkRoot, projectRoot, feature, phase, featuresDir: relFeaturesDir(projectRoot), ...(runId ? { goalRunId: runId } : {}) });
+    const entry = resolveCapabilityResolutionEntryInput({ purpose: 'design-authority-probe', frameworkRoot, projectRoot, feature, phase, featuresDir: relFeaturesDir(projectRoot), ...(runId ? { goalRunId: runId } : {}) });
     const { expected_bindings: _frozen, ...inputContext } = entry.inputContext ?? ({} as NonNullable<typeof entry.inputContext>);
     const resolution = resolveCapabilityInputs({
-      frameworkRoot, projectRoot, feature, phase, track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
+      purpose: 'design-authority-probe', frameworkRoot, projectRoot, feature, phase, track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)),
       ...entry, ...(entry.inputContext ? { inputContext } : {}),
     });
     featureSpec = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, resolution.inputs);
   } catch (error) {
-    return { findings: [], unevaluable: `${phase} 的输入按生产路径解析失败：${(error as Error).message}` };
+    return verifiedFindings.length ? { findings: verifiedFindings } : { findings: [], unevaluable: `${phase} 的输入按生产路径解析失败：${(error as Error).message}` };
   }
   // 门的对象不在（解析不出 acceptance / contracts）时，门会按"不适用"空转——那不是阻断消除了，是重评不了。
   if (phase === 'spec' ? !featureSpec.acceptance : feature.startsWith('cu-') && !featureSpec.contracts) {
-    return { findings: [], unevaluable: `${phase} 的 ${phase === 'spec' ? 'acceptance' : 'contracts'} 按当前输入解析不出来，设计权威门无法重评` };
+    return verifiedFindings.length ? { findings: verifiedFindings } : { findings: [], unevaluable: `${phase} 的 ${phase === 'spec' ? 'acceptance' : 'contracts'} 按当前输入解析不出来，设计权威门无法重评` };
   }
   const ctx = { projectRoot, frameworkRoot, feature, phase, phaseRule: {}, featureSpec } as unknown as CheckContext;
   const checks = phase === 'spec' ? checkAuthoritativeContentAligned(ctx, 'acceptance') : checkChangeUnitFeatureProjection(ctx, phase as 'plan');
@@ -742,12 +752,12 @@ export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: stri
       return { blueprint: rel(componentBlueprintPath(projectRoot, identity.blueprintId)), change_unit: rel(changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId)) };
     } catch { return { blueprint: '(canonical 蓝图)', change_unit: '(canonical Change Unit)' }; }
   })();
-  return { findings: checks.flatMap(check => {
+  return { findings: [...verifiedFindings, ...checks.flatMap(check => {
     const structured = asRecord(check.structured);
     if (check.status !== 'FAIL' || check.repair_owner !== 'external' || structured?.kind !== 'design_authority') return [];
     const codes = Array.isArray(structured.codes) ? structured.codes.map(String) : [];
     const verdict = classifyDesignAuthorityCodes(codes);
     const locations = Array.isArray(structured.locations) ? structured.locations as DesignAuthorityLocation[] : undefined;
     return [{ check: check.id, codes, class: verdict.class, artifacts: verdict.artifacts.map(kind => paths[kind]), basis: check.details, needs: verdict.needs, ...(locations ? { locations } : {}) }];
-  }) };
+  })] };
 }

@@ -175,7 +175,7 @@ test('activation, utility exemption, dependency usage module and evolve scope', 
   assert(checkComponentSelections(context(root, value)).some(r => r.details?.includes('依赖非法')));
   value.components[0].module = 'Feature'; value.components[0].asset_selection = { resolution: 'evolve', component_ref: ID, rationale: '兼容增加' };
   write(root, 'doc/features/demo/plan/plan.md', '## Scope 声明\n```yaml\nin_scope_modules: [Feature]\nout_of_scope_modules: [SharedUi]\nrationale: 本轮仅消费\n```');
-  assert(checkComponentSelections(context(root, value)).some(r => r.details?.includes('in_scope_modules')));
+  assert(!checkComponentSelections(context(root, value)).some(r => r.status === 'FAIL'), 'plan module forecast is not authority for an existing compatible component');
 }));
 test('curation rejects unconfirmed, copied and absent IDs; dangling never mutates', () => setup(root => {
   generate(root);
@@ -442,13 +442,13 @@ test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已�
   assert.equal(compareAuthoritativeContent(projected, value).state, 'aligned');
   const closure = (contracts: ContractsSpec) => checkContractFileReferenceClosure(context(root, contracts))[0];
   const missingMedia = closure(value);
-  assert.equal(missingMedia.status, 'FAIL');
-  assert(missingMedia.details?.includes('20 个文件引用') && missingMedia.suggestion?.includes('resource_keys.value'));
+  assert.equal(missingMedia.status, 'PASS');
+  assert(missingMedia.details?.includes('20'), missingMedia.details);
 
   const copiedReason = structuredClone(value);
   const decision = blueprint.decisions_and_gaps.decisions.find((d: any) => d.decision_id === 'wallet-ui-custom');
   for (const component of copiedReason.components) if (component.asset_selection?.resolution === 'custom') component.asset_selection.rationale = decision.rationale;
-  assert.equal(compareAuthoritativeContent(projected, copiedReason).state, 'drift', '不能反过来要求改写上游组件理由');
+  assert.equal(compareAuthoritativeContent(projected, copiedReason).state, 'aligned', '实现说明不是公共契约，理由措辞不造成相反裁决');
 
   const repaired = structuredClone(value);
   for (const media of repaired.resource_keys!.WalletMain.media) { media.value = `app.media.${media.key}`; delete media.path; }
@@ -473,7 +473,7 @@ test('20261016 真实蓝图/CU/契约：组件理由与总理由不互锁，已�
     assert(componentProjectionErrors(root, invalid, cu).length > 0, '真实选型变化或缺映射仍拒绝');
   }
   const expanded = structuredClone(repaired); expanded.files.push(value.resource_keys!.WalletMain.media[0].path!);
-  assert.equal(compareAuthoritativeContent(projected, expanded).state, 'drift', '资源复用不能扩大写授权');
+  assert.equal(compareAuthoritativeContent(projected, expanded).state, 'aligned', '补充预测位置不改变真实授权或选型决定');
 }));
 
 test('R1 必阻断选型进入最终 verdict/summary，诊断 MAJOR 与 WARN 不升级', () => setup(root => {

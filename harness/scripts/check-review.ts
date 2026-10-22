@@ -1,3 +1,4 @@
+import { implementationFiles } from './utils/diff-scope';
 // ============================================================================
 // Review 阶段脚本 Harness — check-review.ts
 // ============================================================================
@@ -73,7 +74,7 @@ function loadDesign(ctx: CheckContext): string | null {
 
 function reviewTargetFiles(ctx: CheckContext<'feature' | 'request'>): string[] {
   if (ctx.subject === 'request') return ctx.request.targets.files;
-  if (!ctx.resolvedInputs) return ctx.featureSpec.contracts?.files ?? [];
+  if (!ctx.resolvedInputs) return implementationFiles(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
   const code = ctx.resolvedInputs.values.code;
   return code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : [];
 }
@@ -86,17 +87,21 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
     });
   }
   const files = reviewTargetFiles(ctx);
+  if (!files.length && (ctx.resolvedInputs?.context.obligations.implementation === 'required' || ctx.featureSpec.contracts?.files?.length)) {
+    results.push({ id: 'review_context_source_files', category: 'structure', description: '审查必须有可读取的实际源码输入', severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'missing_source_from_contracts', details: '缺少实际源码输入，不能以预测文件表或旧报告代替实现审查。', suggestion: '核对实际代码、diff 和输入解析；不要求为预测位置创建空壳。' });
+  }
   const missingSources = files.filter(f => (ctx.resolvedInputs || f.endsWith('.ets')) && !fs.existsSync(path.join(ctx.projectRoot, f)));
   if (missingSources.length > 0) {
     results.push({
       id: 'review_context_source_files',
       category: 'structure',
-      description: 'Review 阶段需要 contracts.files 声明的源码文件真实存在',
+      description: 'Review 阶段需要 实际审查输入源码文件真实存在',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `${missingSources.length}/${files.length} 个 contracts.files 源码文件不存在：\n${missingSources.slice(0, 20).map(f => `  - ${f}`).join('\n')}`,
+      details: `${missingSources.length}/${files.length} 个实际审查源码文件不存在：\n${missingSources.slice(0, 20).map(f => `  - ${f}`).join('\n')}`,
       affected_files: missingSources,
-      suggestion: '先确认 coding 阶段是否完成；若 contracts.files 过期，回到 design/coding 同步契约，不要让用户手工猜缺哪一层。',
+      suggestion: '核对实际 diff 与源码读取结果；私有定位变化更新派生材料，真实源码缺失交 coding 修复。',
       failure_kind: 'missing_source_from_contracts',
       blocking_class: 'review_context',
     });

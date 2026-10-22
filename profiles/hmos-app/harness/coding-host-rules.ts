@@ -1,3 +1,4 @@
+import { implementationFiles, projectImplementationModules } from '../../../harness/scripts/utils/diff-scope';
 // hmos-app / ArkTS 宿主：coding 阶段结构/追溯中与工具链绑定的规则（根 check-coding 仅编排）。
 
 import * as fs from 'fs';
@@ -5,7 +6,7 @@ import * as path from 'path';
 import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/scripts/utils/types';
 import { CHECK_NOT_APPLICABLE_MARKER } from '../../../harness/scripts/utils/types';
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
-import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
+import { diffChangedFiles, diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef } from '../../../harness/scripts/utils/git-diff';
 import type { ProfileCodingHost, ProjectCompileContext, ProjectCompileResult } from '../../../harness/profile-host-loader';
 import { loadFrameworkConfig } from '../../../harness/config';
 import {
@@ -27,6 +28,7 @@ import {
   type ProductSelection,
 } from './product-selection';
 import {
+  parseJson5,
   isCrossModuleExportFileStem,
   isLibraryFormat,
   readOhPackageField,
@@ -72,13 +74,6 @@ function readFileIfExists(filePath: string): string | null {
   return fs.readFileSync(filePath, 'utf-8');
 }
 
-function parseJson5(content: string): unknown {
-  let stripped = content.replace(/^\s*\/\/.*$/gm, '');
-  stripped = stripped.replace(/([^"':])\s*\/\/.*$/gm, '$1');
-  stripped = stripped.replace(/\/\*[\s\S]*?\*\//g, '');
-  stripped = stripped.replace(/,(\s*[}\]])/g, '$1');
-  return JSON.parse(stripped);
-}
 
 function structureRuleDefined(ctx: CheckContext, id: string): boolean {
   const sc = ctx.phaseRule.structure_checks as Record<string, unknown> | undefined;
@@ -478,129 +473,64 @@ export function isDependencyDeclared(
  * `contracts.navigation` 原始字段。装载期 SpecLoader 已算好 `referenceClosure`；缺失时
  * 按 check-plan.ts 同款 `??` 兜底现算，双相共享同一份解析结论、不重复计算。
  */
-function resolveNavigationConfigFiles(ctx: CheckContext): string[] {
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts) return [];
-  const closure = ctx.featureSpec.referenceClosure
-    ?? resolveContractFileReferences(ctx.projectRoot, contracts);
-  return selectContractReferencePaths(closure, 'navigation.config_files');
-}
-
-/**
- * 已声明的注册配置文件读取（review P1）：`existsSync` 对"路径其实是目录"返回 true，随后
- * `readFileSync` 抛 EISDIR——异常逃到 check-coding 的 safeRun 会被降级成 MINOR SKIP，
- * `coding_run_status` 不计入阻断，于是"不可读"反而能宣称完成。故本地判普通文件并吞掉
- * 读取异常，一律归入 unreadable → BLOCKER FAIL（fail-closed，不新增机制）。
- */
-function readRegularFileOrNull(absolutePath: string): string | null {
-  try {
-    if (!fs.statSync(absolutePath).isFile()) return null;
-    return fs.readFileSync(absolutePath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
 function checkPageRegistration(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const components = contracts?.components ?? [];
-
-  const navPages = components
-    .filter(c => c.nav_destination)
-    .map(c => ({
-      name: c.name,
-      dest: c.nav_destination!,
-      file: c.file,
-    }));
-
-  if (navPages.length === 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '无 NavDestination 页面需要检查。',
-        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
-      },
-    ];
+  const files = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+  const baseline = resolveEffectiveDiffBaseline(ctx.projectRoot, ctx.feature, process.env.MAISON_GOAL_RUN_ID?.trim());
+  const changes = baseline.available ? diffChangedFilesWithStatus({ projectRoot: ctx.projectRoot, baseRef: baseline.baseSha }).entries : [];
+  const pages = files.filter(file => file.endsWith('.ets'))
+    .filter(file => /\bNavDestination\s*\(|@Entry\b/.test(stripStringsAndComments(fs.readFileSync(path.join(ctx.projectRoot, file), 'utf8'))));
+  for (const entry of changes) {
+    const old = entry.status === 'D' ? entry.path : entry.oldPath;
+    if (!old?.endsWith('.ets') || !baseline.available) continue;
+    const content = readFileAtRef(ctx.projectRoot, baseline.baseSha, old)?.toString('utf8') ?? '';
+    if (/\bNavDestination\s*\(|@Entry\b/.test(stripStringsAndComments(content)) && !pages.includes(old)) pages.push(old);
   }
-
-  // 状态表（plan c7e2a9d4 T2）：走到这里必然「已有 NavDestination 页面」——
-  // 没有注册配置声明、或声明的文件读不到，都是真实缺口，一律 FAIL，不得以 SKIP 冒充成功。
-  const configFiles = resolveNavigationConfigFiles(ctx);
-  if (configFiles.length === 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details:
-          `${navPages.length} 个 NavDestination 页面待注册，但 contracts.yaml 的 ` +
-          '`navigation.config_files` 未声明任何导航注册配置文件。',
-        suggestion:
-          '回到 plan 在 contracts.yaml 的 `navigation.config_files` 声明 main_pages.json / ' +
-          'route_map.json 等注册配置文件，并同步列入 `contracts.files`。',
-      },
-    ];
+  const registrationChanged = changes.some(entry => /(?:module\.json5|resources\/base\/profile\/[^/]+\.json)$/.test(entry.path));
+  const base = { id: 'page_registration', category: 'structure' as const, severity: 'BLOCKER' as const,
+    description: ruleDesc(ctx, 'structure_checks', 'page_registration') };
+  if (!pages.length && !registrationChanged) return [{ ...base, status: 'SKIP', details: '当前实际源码中没有适用的新增/修改路由页面。', structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }];
+  const entryPages = new Set(pages.filter(file => fs.existsSync(path.join(ctx.projectRoot, file))
+    && /@Entry\b/.test(stripStringsAndComments(fs.readFileSync(path.join(ctx.projectRoot, file), 'utf8')))));
+  const registered = new Set<string>();
+  const failures: string[] = [];
+  const unresolved: string[] = [];
+  for (const module of projectImplementationModules(ctx.projectRoot, contracts?.modules)) {
+    const metaFile = path.join(ctx.projectRoot, module.package_path, 'src/main/module.json5');
+    if (!fs.existsSync(metaFile)) { if (pages.some(page => page.startsWith(module.package_path + '/'))) unresolved.push(...pages.filter(page => page.startsWith(module.package_path + '/'))); continue; }
+    let activeConfig = metaFile;
+    try {
+      const meta = (parseJson5(fs.readFileSync(metaFile, 'utf8')) as { module?: { routerMap?: string; pages?: string } }).module;
+      const refs = [meta?.routerMap, meta?.pages].filter((ref): ref is string => typeof ref === 'string' && ref.startsWith('$profile:'));
+      for (const page of pages.filter(page => page.startsWith(module.package_path + '/'))) {
+        if (!entryPages.has(page) && !meta?.routerMap?.startsWith('$profile:')) unresolved.push(page);
+        if (entryPages.has(page) && !meta?.pages?.startsWith('$profile:')) failures.push(page + ' 的模块未配置 main_pages');
+      }
+      for (const ref of refs) {
+        const rel = path.posix.join(module.package_path, 'src/main/resources/base/profile', ref.slice('$profile:'.length) + '.json');
+        activeConfig = path.join(ctx.projectRoot, rel);
+        const doc = JSON.parse(fs.readFileSync(activeConfig, 'utf8')) as { routerMap?: Array<{ name: string; pageSourceFile: string; buildFunction: string }>; src?: string[] };
+        for (const route of doc.routerMap ?? []) {
+          const page = path.posix.normalize(path.posix.join(module.package_path, route.pageSourceFile));
+          if (!pages.includes(page) && !changes.some(entry => entry.path.startsWith(module.package_path + '/'))) continue;
+          const source = stripStringsAndComments(fs.readFileSync(path.join(ctx.projectRoot, page), 'utf8'));
+          if (!route.buildFunction || !new RegExp('\\bfunction\\s+' + route.buildFunction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\(').test(source)) failures.push(page + ' 的注册 builder 不存在：' + route.buildFunction);
+          else registered.add(page);
+        }
+        for (const page of doc.src ?? []) {
+          const file = path.posix.join(module.package_path, 'src/main/ets', page.endsWith('.ets') ? page : page + '.ets');
+          if (entryPages.has(file)) registered.add(file);
+        }
+      }
+    } catch (error) {
+      if (pages.some(page => page.startsWith(module.package_path + '/')) || changes.some(entry => entry.path.startsWith(module.package_path + '/'))) failures.push(path.relative(ctx.projectRoot, activeConfig) + ' 路由配置不可读：' + String(error));
+    }
   }
-
-  let configContent = '';
-  const unreadable: string[] = [];
-  for (const cf of configFiles) {
-    const c = readRegularFileOrNull(path.join(ctx.projectRoot, cf));
-    if (c === null) unreadable.push(cf);
-    else configContent += c;
-  }
-
-  if (unreadable.length > 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: [
-          `${unreadable.length} 个已声明的导航注册配置文件不存在或不可读：`,
-          ...unreadable.map(f => `  - ${f}`),
-        ].join('\n'),
-        affected_files: unreadable,
-        suggestion: '在 coding 阶段实际创建这些注册配置文件（文件存在性的正式裁决在 coding file_completeness）。',
-      },
-    ];
-  }
-
-  const unregistered = navPages.filter(p => !configContent.includes(p.dest) && !configContent.includes(p.name));
-
-  if (unregistered.length === 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'PASS',
-        details: `全部 ${navPages.length} 个 NavDestination 页面已在配置文件中注册。`,
-      },
-    ];
-  }
-
-  return [
-    {
-      id: 'page_registration',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `${unregistered.length} 个页面未在配置文件中注册：\n${unregistered.map(u => `  - ${u.name} (nav_destination: ${u.dest})`).join('\n')}`,
-      affected_files: configFiles,
-      suggestion: '请在 main_pages.json 和/或 route_map.json 中注册页面。',
-    },
-  ];
+  for (const page of pages) if (fs.existsSync(path.join(ctx.projectRoot, page)) && !registered.has(page) && !unresolved.includes(page)) failures.push(page + ' 未在实际 module.json5 引用的路由配置中注册');
+  if (failures.length) return [{ ...base, status: 'FAIL', details: failures.join('\n'), affected_files: pages,
+    suggestion: '修复实际模块路由配置与页面入口；无需预先登记文件许可或导航预测清单。' }];
+  if (unresolved.length) return [{ ...base, severity: 'MAJOR', status: 'WARN', details: '以下实际页面所属模块未识别到静态路由形式，须由 review/真机核验可达性：' + unresolved.join('、'), affected_files: pages }];
+  return [{ ...base, status: 'PASS', details: `已核验 ${pages.length} 个实际页面的静态路由与入口，不以预测登记代替。` }];
 }
 
 function checkNamingConventions(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
@@ -668,7 +598,7 @@ function checkNamingConventions(ctx: CheckContext, analyses: FileAnalysis[]): Ch
 
 function checkNoAnyType(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const etsFiles = contracts?.files?.filter(f => f.endsWith('.ets')) ?? [];
+  const etsFiles = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim()).filter(f => f.endsWith('.ets'));
   if (etsFiles.length === 0) {
     return [
       {
@@ -729,7 +659,7 @@ function checkNoAnyType(ctx: CheckContext): CheckResult[] {
 
 function checkAsyncAwaitPattern(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const etsFiles = contracts?.files?.filter(f => f.endsWith('.ets')) ?? [];
+  const etsFiles = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim()).filter(f => f.endsWith('.ets'));
   if (etsFiles.length === 0) {
     return [
       {
@@ -797,9 +727,9 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
         id: 'plan_file_to_code',
         category: 'traceability',
         description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
-        severity: 'BLOCKER',
+        severity: 'MINOR',
         status: 'SKIP',
-        details: 'contracts.yaml 无 files 列表。',
+        details: '无预测文件列表；实际源码与语义仍须验证。', structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }
@@ -819,7 +749,7 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `设计规划的全部 ${etsFiles.length} 个 .ets 文件均已实现。`,
+        details: `设计规划的全部 ${etsFiles.length} 个 .ets 预测位置可读取（不代表行为已验证）。`,
       },
     ];
   }
@@ -830,10 +760,10 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
       category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
       severity: 'BLOCKER',
-      status: 'FAIL',
+      status: 'WARN',
       details: `${missing.length}/${etsFiles.length} 个规划 .ets 文件缺失：\n${truncateList(missing, 15)}`,
       affected_files: missing,
-      suggestion: '请按照 plan.md 目录/文件结构规划补全缺失的 .ets 文件。',
+      suggestion: '核对当前实现及行为覆盖，预测位置过时不要求创建空壳文件；实际缺陷交独立 review/测试确认。',
     },
   ];
 }
@@ -982,7 +912,7 @@ export function withUnconfirmedFormLead(
   outcome: CodingCompileFailureClassification,
   selection?: ProductSelection,
 ): CodingCompileFailureClassification {
-  if (!selection?.product || TRUSTED_PRODUCT_SOURCES.has(selection.source)) return outcome;
+  if (!selection?.product || TRUSTED_PRODUCT_SOURCES.has(selection.source) || selection.source === 'sole_candidate') return outcome;
   return {
     ...outcome,
     explanation:
@@ -1266,7 +1196,7 @@ function buildCompileFailDetails(
 /** profile 侧：真实编译闭环 + 失败归因 + 依赖自动安装（原根目录 checkCodingHvigorBuild）。 */
 function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const modules = contracts?.modules ?? [];
+  const modules = actualConstructionModules(ctx);
   if (modules.length === 0 && !isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
     const desc =
       ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
@@ -1464,7 +1394,26 @@ export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult
   }), execution: res };
 }
 
+function actualConstructionModules(ctx: CheckContext): ContractsSpec['modules'] {
+  const contracts = ctx.featureSpec.contracts;
+  const files = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+  return projectImplementationModules(ctx.projectRoot, contracts?.modules)
+    .filter(module => contracts?.modules?.some(hint => hint.package_path === module.package_path)
+      || files.some(file => file.startsWith(module.package_path + '/')))
+    .map(module => {
+      const declared = contracts?.modules?.find(hint => hint.package_path === module.package_path);
+      if (declared) return declared;
+      const meta = readFileIfExists(path.join(ctx.projectRoot, module.package_path, 'src/main/module.json5'));
+      let kind: string | undefined;
+      try { kind = meta ? (parseJson5(meta) as { module?: { type?: string } }).module?.type : undefined; } catch { /* original build/config checks retain the error */ }
+      return { ...module, layer: module.package_path.split('/')[0], change_type: 'modify',
+        format: kind === 'entry' || kind === 'feature' ? 'HAP' : kind === 'shared' ? 'HSP' : kind === 'har' ? 'HAR' : '' };
+    });
+}
+
 function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
+  if (ctx.featureSpec.contracts) ctx = { ...ctx, featureSpec: { ...ctx.featureSpec,
+    contracts: { ...ctx.featureSpec.contracts, modules: actualConstructionModules(ctx) } } };
   const out: CheckResult[] = [];
   out.push(...checkNoHardcodedStrings(ctx, analyses));
   // resource_integrity 已退役：资源合法性唯一真源=coding_compile 真实构建

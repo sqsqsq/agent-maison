@@ -551,23 +551,25 @@ P2 MUST NOT 创建跨单元 ledger、常驻 daemon、全局事件日志、第二
 
 > **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-progress-loop.ts`, `skills/project/change-unit-progression/SKILL.md`; P3 enforcement 由后续独立 change 承担
 
-### Requirement: CU modifiable module set derives from touches only
+### Requirement: CU roots and forecasts retain their distinct responsibilities
 
-The modifiable module set of a CU-bound Feature SHALL be derived only from the CU `touches[].design_ref`, resolved through the existing addressing resolver to development nodes and their `module`; `design_refs` remain design dependencies and MUST NOT widen the set. The derivation SHALL use the same resolver and stale semantics as acceptance/contracts projection. Check `cu_scope_matches_blueprint` SHALL live in the shared `validateChangeUnitFeatureProjection`, so direct blueprint projection, typed plan, completion, ready-set and closure inputs apply one judgement: every `contracts.modules[].name` MUST belong to the modifiable set, and a violation points back to `/component-design` without any plan-side expansion outlet. `contracts.files` remains the only exact write authorization.
+CU touches and development nodes SHALL identify the planned slice, not an exhaustive implementation permission list. The existing resolver SHALL retain blueprint identity checks and architecture obligations. Necessary changes outside predicted modules SHALL be disclosed to independent review with necessity, impact and regression evidence; real public-contract or architecture changes still return to their owner.
 
-#### Scenario: Shared module referenced but not touched
-- **WHEN** a CU's design_refs reference a shared development node that its touches do not include, and contracts.modules lists that shared module
-- **THEN** the projection SHALL report `cu_scope_matches_blueprint`
+Normal single/batch acceptance and content revision SHALL derive existing dependencies with the same closure function before validation and atomic publication. Authors supply root references and substantive decisions; derived dependencies need not be copied manually. Open decisions, conflicts, missing targets and wrong identities SHALL NOT be made constructable by completing references.
 
-#### Scenario: Direct projection without running plan
-- **WHEN** blueprint-carried contracts are projected directly and their modules exceed the modifiable set
-- **THEN** the projection SHALL be `invalid` through the same shared validation, without requiring plan to run
+#### Scenario: Implementation needs another predicted-outside module
+- **WHEN** actual implementation affects another module within the original request
+- **THEN** the module-list difference alone SHALL NOT invalidate projection; public contracts and architecture permission SHALL still be checked
 
-#### Scenario: Blueprint revision changes after binding
-- **WHEN** the bound blueprint bytes change
-- **THEN** the derived set SHALL be stale and the projection SHALL fail closed instead of reusing an earlier PASS
+#### Scenario: Only root references were supplied
+- **WHEN** all dependency decisions already exist and are effective
+- **THEN** normal acceptance SHALL complete the dependency closure and validate exactly the artifact it publishes
 
-> **Enforced by:** `harness/scripts/utils/change-unit-feature-projection.ts`, `harness/scripts/utils/blueprint-skill-projection.ts`, `harness/tests/unit/change-unit-progression.unit.test.ts`, `harness/tests/unit/blueprint-skill-projection.unit.test.ts`, `harness/tests/unit/real-chain.unit.test.ts`
+#### Scenario: A derived dependency is unresolved
+- **WHEN** closure includes an open or conflicting decision
+- **THEN** the CU SHALL NOT publish; the existing design owner recovery applies without silently authorizing a decision
+
+> **Enforced by:** `harness/scripts/utils/change-unit-feature-projection.ts`, `harness/scripts/utils/change-unit-provider-boundary.ts`, `harness/scripts/utils/change-unit-design-preparation.ts`
 
 ### Requirement: Architecture impact decisions are effective before construction
 

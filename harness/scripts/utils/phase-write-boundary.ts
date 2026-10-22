@@ -17,7 +17,7 @@ import {
   receiptDirPath,
 } from '../../config';
 import type { FeatureTrack } from './runtime-policy';
-import { resolveModulePathPrefixes } from './diff-scope';
+import { resolveModulePathPrefixes, resolveImplementationScope, projectImplementationModules } from './diff-scope';
 import { parseScope } from './scope-parser';
 import {
   loadArtifactInventory,
@@ -33,7 +33,7 @@ import type { ContractsSpec } from './types';
 export function partitionConstructionFiles(projectRoot: string, profileDir: string,
   contracts: Pick<ContractsSpec, 'files' | 'modules'>): { implementation: string[]; tests: string[] } {
   if (!profileDir) return { implementation: [...contracts.files], tests: [] };
-  const roots = (tryLoadUtSourceRootResolver(profileDir)?.(projectRoot, contracts.modules ?? []) ?? [])
+  const roots = (tryLoadUtSourceRootResolver(profileDir)?.(projectRoot, projectImplementationModules(projectRoot, contracts.modules ?? [])) ?? [])
     .map(root => path.resolve(root));
   const patterns = tryLoadDiffExcludeTestPathRegexes(profileDir) ?? [];
   const isTest = (file: string): boolean => roots.some(root => {
@@ -130,6 +130,7 @@ function loadCodingScope(
   options: ResolvePhaseWriteBoundaryOptions,
   planProduces: ReadonlyArray<{ artifact?: string }>,
 ): {
+  available: boolean;
   prefixes: string[];
   modules: Array<{ name: string; package_path: string }>;
   diagnostics: string[];
@@ -137,7 +138,7 @@ function loadCodingScope(
   if (options.constructionModules) {
     const modules = [...options.constructionModules];
     const resolved = resolveModulePathPrefixes(options.projectRoot, modules.map(module => module.name), modules);
-    return { prefixes: resolved.allowedPrefixes, modules, diagnostics: resolved.unmapped.map(name => `construction module has no path: ${name}`) };
+    return { available: true, prefixes: resolved.allowedPrefixes, modules, diagnostics: resolved.unmapped.map(name => `construction module has no path: ${name}`) };
   }
   if (options.runId) {
     const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
@@ -148,23 +149,23 @@ function loadCodingScope(
       const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.pendingOwnerPhase, options.authorityReaders);
       if (!scope || !phaseOwnsDesignOutput(planProduces, scope, 'plan', 'contracts@1')) throw error;
       // Keep valid authority when plan rejects a repair; unfinished output grants no new source domain.
-      return { prefixes: [], modules: [], diagnostics: ['plan still owns construction output; source domains are not yet authorized'] };
+      return { available: false, prefixes: [], modules: [], diagnostics: ['plan still owns construction output; source domains are not yet authorized'] };
     }
     const modules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
     const resolution = resolveModulePathPrefixes(options.projectRoot, modules.map(module => module.name), modules);
-    return { prefixes: resolution.allowedPrefixes, modules, diagnostics: resolution.unmapped.map(name => `bound module has no path: ${name}`) };
+    return { available: true, prefixes: resolution.allowedPrefixes, modules, diagnostics: resolution.unmapped.map(name => `bound module has no path: ${name}`) };
   }
   const loader = new SpecLoader(options.projectRoot, undefined, undefined, options.frameworkRoot);
   const featureSpec = loader.loadFeatureSpec(options.feature);
   const scopeDocName = options.track === 'lite' ? 'change.md' : 'plan.md';
   const scopeText = loader.loadFeatureDoc(options.projectRoot, options.feature, scopeDocName);
   if (!scopeText) {
-    return { prefixes: [], modules: [], diagnostics: [`${scopeDocName} missing; coding source owner unresolved`] };
+    return { available: false, prefixes: [], modules: [], diagnostics: [`${scopeDocName} missing; coding source owner unresolved`] };
   }
   const parsed = parseScope(scopeText);
   if (!parsed.scope || parsed.error) {
     return {
-      prefixes: [],
+      available: false, prefixes: [],
       modules: [],
       diagnostics: [`${scopeDocName} scope invalid: ${parsed.error?.kind ?? 'unknown'}`],
     };
@@ -182,7 +183,7 @@ function loadCodingScope(
   const allowed = new Set(parsed.scope.in_scope_modules);
   const modules = contractModules.filter((m) => allowed.has(m.name));
   const diagnostics = resolution.unmapped.map((name) => `in_scope module has no path resolver: ${name}`);
-  return { prefixes: resolution.allowedPrefixes, modules, diagnostics };
+  return { available: true, prefixes: resolution.allowedPrefixes, modules, diagnostics };
 }
 
 /**
@@ -246,7 +247,11 @@ export function resolvePhaseWriteBoundary(
     }
   }
 
-  const codingScope = loadCodingScope(options, contracts.get('plan')?.phase.produces ?? []);
+  const predictedScope = loadCodingScope(options, contracts.get('plan')?.phase.produces ?? []);
+  const implementation = predictedScope.available
+    ? resolveImplementationScope(options.projectRoot, options.feature, predictedScope.modules, options.runId) : null;
+  const codingScope = implementation ? { modules: implementation.modules, prefixes: implementation.allowedPrefixes, diagnostics: predictedScope.diagnostics }
+    : predictedScope;
   diagnostics.push(...codingScope.diagnostics);
   const codingContract = contracts.get('coding')?.phase;
   const codingProducesSource =
@@ -259,7 +264,7 @@ export function resolvePhaseWriteBoundary(
     phaseSet.has('ut') &&
     active('ut') &&
     utContract?.produces.some((o) => o.kind === 'source') === true;
-  const utRoots = utProducesSource && options.resolveUtSourceRoots
+  const utRoots = options.resolveUtSourceRoots
     ? options.resolveUtSourceRoots(options.projectRoot, codingScope.modules)
     : [];
   if (utProducesSource && utRoots.length === 0) {
@@ -285,7 +290,7 @@ export function resolvePhaseWriteBoundary(
       kind: 'source',
       match: 'prefix',
       path: prefix,
-      source: 'plan/change in_scope_modules + contracts/catalog module-path resolver',
+      source: 'project source modules + original request constraints; stage owns implementation',
       excludedPrefixes: utRoots,
     });
   }
@@ -309,6 +314,7 @@ export function resolvePhaseWriteBoundary(
 
   const protectedRoots = [
     featureDir(options.projectRoot, options.feature),
+    ...(fs.existsSync(path.join(options.projectRoot, 'framework')) ? [path.join(options.projectRoot, 'framework')] : []),
     ...options.productLayerDirs.map((dir) => path.join(options.projectRoot, dir)),
     ...['oh-package.json5', 'build-profile.json5', 'hvigorfile.ts', 'AppScope']
       .map((rel) => path.join(options.projectRoot, rel))

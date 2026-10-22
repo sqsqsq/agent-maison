@@ -21,4 +21,5 @@ phases:
       - { id: capability_coding_visual_context, axis: visual, inputs: [ui_spec, visual_parity], input_role: enhancement, applicability_provider_id: applicability.ui, on_missing: prune }
     produces:
       - { kind: source, id: implementation }
+      - { artifact: coding-upstream-issues@1 }
     verifies: { check: check-coding.ts }

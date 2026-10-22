@@ -205,6 +205,8 @@ export interface CanProduceVerifierRequestInput {
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   /** deriveSummaryVerdictLattice 的 has_blocked 投影（capability 输入未解析）。 */
   hasBlockedCapability: boolean;
+  /** Stage-authored proposals with concrete current readable evidence, resolved by the shared issue reader. */
+  upstreamDiagnosis?: { rows: readonly unknown[] } | null;
   /**
    * details 文本兜底归因解析器（harness-runner 的 extractFailureClassification）。
    * **不在这里复制第二段"失败归因：xxx"正则**——归因口径全仓只有一处实现。
@@ -270,6 +272,13 @@ export function canProduceVerifierRequest(
   }
   if (input.scriptVerdict !== 'FAIL') {
     return NOT_ALLOWED(`脚本 verdict=${input.scriptVerdict}：只有 FAIL 才可能进入诊断窄例外。`);
+  }
+  // Diagnosis consumes current evidence, not completion: original FAIL, blocked inputs and unexecuted checks remain intact.
+  if ((input.phase === 'coding' || input.phase === 'ut') && input.reportValidity !== 'FAIL'
+    && input.upstreamDiagnosis?.rows.length) {
+    return { allowed: true, kind: 'repair_diagnosis',
+      reason: `${input.phase} 已提交有当前可读证据的上游问题：逐条核实事实与责任；原 FAIL、blocked 与未执行检查不变。`,
+      diagnosticCheckIds: input.checks.filter(check => isBlockingCheck(check) || check.status === 'SKIP').map(check => check.id) };
   }
   // capability 输入未解析 = 材料/环境未就绪，先补输入，不叫 verifier 看半份材料。
   if (input.hasBlockedCapability) {

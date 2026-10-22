@@ -95,7 +95,7 @@ export function resolveContractFileReferences(
       raw,
       message:
         `${source} 看起来承载仓库文件路径，但不在 contracts 文件引用清单中；` +
-        '请改用受支持字段并在 contracts.files 授权，或先扩展 schema/resolver。',
+        '请改用受支持字段并在 contracts.files 记录预测位置，或先扩展 schema/resolver。',
     });
   };
 
@@ -331,7 +331,7 @@ export function resolveContractFileReferences(
   );
 
   return {
-    authorized_files: [...new Set(authorizedFiles)].sort(),
+    planned_files: [...new Set(authorizedFiles)].sort(),
     references: references.sort((a, b) =>
       a.path.localeCompare(b.path) || a.source.localeCompare(b.source) || a.kind.localeCompare(b.kind)),
     invalid_paths: invalidPaths.sort((a, b) => a.source.localeCompare(b.source)),
@@ -365,10 +365,10 @@ export interface ContractReferenceClosureViolation {
   sources: Array<{ kind: ContractFileReferenceKind; source: string }>;
 }
 
-export function findUnauthorizedContractFileReferences(
+export function findUnplannedContractFileReferences(
   closure: ContractReferenceClosure,
 ): ContractReferenceClosureViolation[] {
-  const authorized = new Set(closure.authorized_files);
+  const authorized = new Set(closure.planned_files);
   const byPath = new Map<string, ContractReferenceClosureViolation>();
   for (const reference of closure.references) {
     if (authorized.has(reference.path)) continue;

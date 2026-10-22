@@ -91,27 +91,16 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
-  { name: '28e31f53 actual closure and alignment route only real write expansion to the design owner', run(f) {
+  { name: '8a6d3f21 references and predicted file expansion do not request design permission', run(f) {
     const original = planContracts(f);
-    const context = (contracts: ContractsSpec) => ({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan',
-      featureSpec: { contracts }, phaseRule: {} } as CheckContext);
+    const context = (contracts: ContractsSpec) => ({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featureSpec: { contracts, useCases: deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').artifacts?.['use-cases@1'] }, phaseRule: {} } as CheckContext);
     const actual = structuredClone(original);
-    actual.interfaces = [{ module: 'ledger', layer: '02-Feature', class: 'LedgerFeature', file: original.files[0], methods: [{ name: 'run', params: [], return: 'void', async: false, description: 'execute ledger operation' }] }];
-    actual.files = actual.files.filter(file => file !== original.files[0]);
-    const omitted = checkContractFileReferenceClosure(context(actual))[0];
-    assert.equal(omitted.status, 'FAIL'); assert.equal(omitted.repair_owner, undefined);
-    const resource = 'src/ledger/existing.png'; fs.writeFileSync(path.join(f.root, resource), 'existing');
-    actual.files = [...original.files]; actual.resource_keys = { ledger: { media: [{ key: 'icon', value: 'app.media.icon', path: resource }] } };
-    const readOnly = checkContractFileReferenceClosure(context(actual))[0];
-    assert.equal(readOnly.status, 'FAIL'); assert.equal(readOnly.repair_owner, undefined);
-    actual.interfaces[0].file = 'src/ledger/ExtraService.ets';
-    const expanded = checkContractFileReferenceClosure(context(actual))[0];
-    const blockers = designOwnerBlockers(buildSummaryBlockers([expanded], (value, max) => value.slice(0, max), () => undefined));
-    assert.equal(blockers.length, 1, 'the production summary must enter the existing first-occurrence owner branch');
-    const guidance = buildDesignOwnerGuidance({ feature: f.feature, runId: 'r', phase: 'plan', blockers });
-      assert(guidance.includes('有人在场沿原确认流程') && guidance.includes('静默完成并重签'));
+    actual.files = [];
+    assert.equal(checkContractFileReferenceClosure(context(actual))[0].status, 'PASS');
     actual.files.push('src/ledger/ExtraService.ets');
-    assert(checkAuthoritativeContentAligned(context(actual), 'contracts').some(check => check.repair_owner === 'external' && check.details?.includes('ExtraService.ets')));
+    const checks = checkAuthoritativeContentAligned(context(actual), 'contracts');
+    assert(!checks.some(check => check.status === 'FAIL'), JSON.stringify(checks));
+    assert.equal(designOwnerBlockers(buildSummaryBlockers(checks, (value, max) => value.slice(0, max), () => undefined)).length, 0);
   } },
   { name: '28e31f53 shared projection rejects existing case mismatch and accepts author-corrected binding', run(f) {
     assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').state, 'resolved', 'planned output need not exist');
@@ -290,7 +279,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     fs.unlinkSync(source);
     const loader = new SpecLoader(f.root, undefined, undefined, frameworkRoot);
     const spec = loader.loadFeatureSpec(f.feature);
-    assert(checkChangeUnitFeatureProjection({ projectRoot: f.root, frameworkRoot, feature: f.feature, featureSpec: spec, phaseRule: {} } as CheckContext, 'coding').some(check => check.status === 'FAIL'));
+    assert(!checkChangeUnitFeatureProjection({ projectRoot: f.root, frameworkRoot, feature: f.feature, featureSpec: spec, phaseRule: {} } as CheckContext, 'coding').some(check => check.status === 'FAIL'), 'private implementation location alone is not proof of a missing behavior');
     assert(!resolveFeatureArtifact(f.root, f.feature, 'plan.md').exists);
     assert(!resolveFeatureArtifact(f.root, f.feature, 'spec.md').exists);
   } },
@@ -511,7 +500,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.deepStrictEqual(materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot), []);
     for (const name of ['spec.md', 'plan.md', 'spec/reports/summary.json', 'plan/reports/summary.json']) assert(!resolveFeatureArtifact(f.root, f.feature, name).exists);
   } },
-  { name: 'a3c7e9d1 不执行 plan：蓝图直接投影的 contracts.modules 越出 touches 派生集合即 invalid（同一共享校验）', run(f) {
+  { name: 'a3c7e9d1 不执行 plan：蓝图直接投影的 contracts.modules 越出预测 touches 不自动成为授权失败', run(f) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
     const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
@@ -522,7 +511,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     (node.contracts as BlueprintRecord).modules = [module('ledger'), module('SharedState')];
     fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
     const result = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
-    assert.equal(result.state, 'invalid'); assert(result.detail?.includes('可修改模块集合') && result.detail.includes('SharedState'), result.detail);
+    assert.equal(result.state, 'resolved', result.detail);
   } },
   { name: 'revision bytes mismatch invalidates projection', run(f) {
     fs.appendFileSync(f.blueprintFile, '\n# revision changed\n');
@@ -544,7 +533,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(!resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').exists);
     assert.equal(fs.readFileSync(file, 'utf8'), 'files: [human.ts]');
   } },
-  ...(['refs-only', 'text-only', 'missing-write', 'runtime-gap', 'unknown-usecase', 'missing-expected', 'ac-disguised-as-boundary', 'external-conflict', 'duplicate-design-id'] as const).map(mode => ({ name: 'projection responsibility gap: ' + mode, run(f: ReturnType<typeof fixture>) {
+  ...(['refs-only', 'text-only', 'runtime-gap', 'unknown-usecase', 'missing-expected', 'ac-disguised-as-boundary', 'external-conflict', 'duplicate-design-id'] as const).map(mode => ({ name: 'projection responsibility gap: ' + mode, run(f: ReturnType<typeof fixture>) {
     const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
     const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
     const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
@@ -553,7 +542,6 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     let kind: 'acceptance' | 'contracts' = 'contracts';
     if (mode === 'refs-only') { delete node.acceptance; kind = 'acceptance'; }
     if (mode === 'text-only') { node.acceptance = '验收按设计执行'; kind = 'acceptance'; }
-    if (mode === 'missing-write') (node.contracts as { files: string[] }).files = [];
     if (mode === 'runtime-gap') ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].publications = [];
     if (mode === 'unknown-usecase') { ((node.acceptance as BlueprintRecord).criteria as BlueprintRecord[])[0].linked_flow = 'undefined-usecase'; kind = 'acceptance'; }
     if (mode === 'missing-expected') { delete ((node.acceptance as BlueprintRecord).criteria as BlueprintRecord[])[0].expected_result; kind = 'acceptance'; }
