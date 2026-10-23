@@ -32,15 +32,6 @@
       ],
       "dynamic_count": 0
     },
-    "harness/scripts/check-change.ts": {
-      "literal_ids": [
-        "change_checkbox_syntax",
-        "change_file_exists",
-        "change_scope_modules_known",
-        "change_scope_yaml"
-      ],
-      "dynamic_count": 1
-    },
     "harness/scripts/check-coding.ts": {
       "literal_ids": [
         "coding_host_missing",
@@ -64,16 +55,6 @@
         "inventory_schema_valid",
         "requested_docs_present",
         "skill_body_max_lines"
-      ],
-      "dynamic_count": 0
-    },
-    "harness/scripts/check-exit.ts": {
-      "literal_ids": [
-        "exit_change_doc_present",
-        "exit_checkboxes_all_checked",
-        "exit_compile",
-        "exit_scope_declared",
-        "exit_ut"
       ],
       "dynamic_count": 0
     },

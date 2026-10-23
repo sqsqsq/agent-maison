@@ -1470,8 +1470,8 @@ function runTraceabilityChecks(ctx: CheckContext): CheckResult[] {
 }
 
 // ---------------------------------------------------------------------------
-// t5（plan e6a3c9f4）：checkCodingLint — lite/exit 轨与修正链路的快速 lint 派发
-// （profile-host-loader.ts 可选接口；check-exit.ts / correction-commands.ts 派发点
+// t5（plan e6a3c9f4）：checkCodingLint — 修正链路的快速 lint 派发
+// （profile-host-loader.ts 可选接口；correction-commands.ts 派发点
 // 此前空转退化 WARN——"coding.lint 声明 BLOCKER 但 provider 空缺"已知债清偿）。
 // 范围=高置信静态子集，不跑 hvigor 编译：
 //   - ArkUI 静态规则（bindsheet 双关/push 无守卫/单例多订阅/裁剪重叠，自带行内豁免）

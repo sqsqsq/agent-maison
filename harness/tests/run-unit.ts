@@ -66,6 +66,8 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
  * 而它是唯一能抓"夹具手喂生产本不会给的东西"那类 bug 的测试，所以发布前必跑。
  */
 const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> = [
+  { id: 'responsibility-host-replay', modulePath: './unit/responsibility-host-replay.unit.test' },
+  { id: 'repair-responsibility', modulePath: './unit/repair-responsibility.unit.test' },
   { id: 'implementation-authority', modulePath: './unit/implementation-authority.unit.test' },
   { id: 'request-entry', modulePath: './unit/request-entry.unit.test' },
   { id: 'compile-entry', modulePath: './unit/compile-entry.unit.test' },
@@ -278,7 +280,8 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'runner-layout-smoke', modulePath: './unit/runner-layout-smoke.unit.test' },
   { id: 'generic-coding-host', modulePath: './unit/generic-coding-host.unit.test' },
   { id: 'workflow-loader', modulePath: './unit/workflow-loader.unit.test' },
-  { id: 'workflow-tracks', modulePath: './unit/workflow-tracks.unit.test' },
+  { id: 'repair-dependencies', modulePath: './unit/repair-dependencies.unit.test' },
+  { id: 'lite-retirement', modulePath: './unit/lite-retirement.unit.test' },
   { id: 'skill-contract', modulePath: './unit/skill-contract.unit.test' },
   // plan 33714d0c：framework-init 纯正向入口的已发布文本契约（原 routing-contract 重写收窄）
   { id: 'framework-init-entry-contract', modulePath: './unit/framework-init-entry-contract.unit.test' },

@@ -387,9 +387,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   }) },
 ];
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string) {
+  const { matchesUnitCase, selectedUnitCases } = await import('../utils/unit-case-selection');
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(`feature-assessment: ${c.name}`, selector)) continue;
     try {
       await c.run();
       results.push({ name: `feature-assessment: ${c.name}`, ok: true });
@@ -397,5 +399,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       results.push({ name: `feature-assessment: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message });
     }
   }
-  return results;
+  return selectedUnitCases(results, selector, []);
 }
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

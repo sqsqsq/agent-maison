@@ -69,8 +69,7 @@ directions」），仍然**不是**要不要建蓝图的入口条件——正式
 
 - **建 Feature 目录之前**是主判点——判正式性；已明确属于某个既有 `blueprint_id` 的直接继续
   该演进工作区；
-- **`/spec` 与 `/change-lite` 首次冻结施工意图处各是一道兜底**（lite 轨没有 spec，兜底不能只
-  放 spec 阶段）：拿着事实（Context Facts Gate + Scope 守门的 in_scope_modules）复核正式性；
+- **`/spec` 首次冻结施工意图处是一道兜底**：拿着事实（Context Facts Gate + Scope 守门的 in_scope_modules）复核正式性；
   命中即停、指回 `/component-design`，只丢一份草稿；
 - **plan 装不下是最后报警**（TBD 堆积 / 反复 Scope 扩展提议）；coding 之前是回退的最后合理时机。
 

@@ -9,7 +9,7 @@ import * as YAML from 'yaml';
 import { listWorkflowPhases, loadWorkflowSpec } from '../../workflow-loader';
 import type { AxisId } from './quality-axes';
 
-export type FeatureTrackName = 'full' | 'lite';
+export type FeatureTrackName = 'full';
 export type Assurance = 'blocked' | 'degraded' | 'full';
 export type MinimumAssurance = Exclude<Assurance, 'blocked'>;
 
@@ -138,8 +138,8 @@ function assertStringArray(value: unknown, label: string, allowEmpty = false): a
 
 function validateTracks(value: unknown, label: string): FeatureTrackName[] {
   assertStringArray(value, label);
-  if (value.some((track) => track !== 'full' && track !== 'lite')) {
-    throw new Error(`[skill-contract] ${label} 仅支持 full|lite`);
+  if (value.some((track) => track !== 'full')) {
+    throw new Error(`[skill-contract] ${label} 仅支持 full；lite 已退役`);
   }
   if (new Set(value).size !== value.length) throw new Error(`[skill-contract] ${label} 不得重复`);
   return [...value] as FeatureTrackName[];

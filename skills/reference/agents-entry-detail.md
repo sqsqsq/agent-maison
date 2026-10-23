@@ -1,6 +1,6 @@
 # AGENTS.md 入口模板详细规则（条件加载：需要展开某条红线细则时读）
 
-> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
+> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 旧出生协议为 spec 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
 > SSOT 索引见实例根 `AGENTS.md`（由 `framework/templates/AGENTS.md.template` 渲染）。本文承载该模板 §三 红线清单每条的完整判据文本、§4.1 主 agent/verifier 职责切分反误读全文、§4.2 实例扩展生命周期钩子细则、§5 交付凭证与闭环判定/会话边界/跨会话恢复完整机制、§六 交互硬规则完整表述。实例路径（架构文档/模块画像/术语表等）以渲染后 AGENTS.md §二 SSOT 表为准，本文不重复模板占位符。
 
@@ -57,7 +57,7 @@
 
 ## Context Facts Gate（BLOCKER，C4 exploration-scale）
 
-该 track 首个 feature phase（full=spec / lite=change）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths` 与可核实的量化阈值由 harness BLOCKER 校验；`decisions_unlocked`、自报的文件数与搜索次数仍须如实填写，缺了会被披露并计入完成缺口、不单独阻断，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（full 含 plan/coding/review/ut/testing；lite 含 coding/exit）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
+该 track 首个 feature phase（旧出生协议为 spec）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths` 与可核实的量化阈值由 harness BLOCKER 校验；`decisions_unlocked`、自报的文件数与搜索次数仍须如实填写，缺了会被披露并计入完成缺口、不单独阻断，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
 
 `enforced_by`：context-facts。
 

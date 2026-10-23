@@ -796,7 +796,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           recursive: true,
           filter: (s) => {
             const b = path.basename(s);
-            return b !== 'node_modules' && b !== 'tests';
+            return b !== 'node_modules' && b !== 'tests' && b !== 'reports';
           },
         });
         junction(path.join(harnessRoot, 'node_modules'), path.join(fhar, 'node_modules'));

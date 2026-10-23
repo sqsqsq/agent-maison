@@ -203,10 +203,10 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'isFactsEstablishingPhase: 只有 spec/change 为建立阶段',
+    name: 'isFactsEstablishingPhase: 旧出生协议只有 spec 为建立阶段',
     run: () => {
       eq(isFactsEstablishingPhase('spec'), true, 'spec');
-      eq(isFactsEstablishingPhase('change'), true, 'change');
+      eq(isFactsEstablishingPhase('change'), false, 'retired change');
       eq(isFactsEstablishingPhase('plan'), false, 'plan');
       eq(isFactsEstablishingPhase('coding'), false, 'coding');
       eq(isFactsEstablishingPhase('testing'), false, 'testing');
@@ -429,7 +429,7 @@ exploration_mode: sequential
         writeFeatureTrackDecl(dir, 'demo', 'full');
         writeFactsFile(dir, 'demo', passingEstablishingFacts('demo', 'change'));
         const results = checkFactsArtifact(dir, 'demo', 'spec');
-        eq(includesId(results, 'context_exploration_facts_established_by_track_mismatch', 'FAIL'), true, '应命中 track_mismatch FAIL');
+        eq(includesId(results, 'context_exploration_facts_established_by_invalid', 'FAIL'), true, '应命中 track_mismatch FAIL');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -443,7 +443,7 @@ exploration_mode: sequential
         fs.writeFileSync(path.join(dir, 'doc', 'module-catalog.yaml'), 'modules: []', 'utf-8');
         writeFactsFile(dir, 'demo', passingEstablishingFacts('demo', 'spec'));
         const results = checkFactsArtifact(dir, 'demo', 'spec');
-        eq(includesId(results, 'context_exploration_facts_established_by_track_mismatch'), false, '不应命中 track_mismatch');
+        eq(includesId(results, 'context_exploration_facts_established_by_invalid'), false, '不应命中 track_mismatch');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -476,24 +476,7 @@ exploration_mode: sequential
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
-  },
-  {
-    name: 'lite 建立阶段（change）facts.md 齐全（阈值比 spec 更轻，同内容天然满足）→ PASS',
-    run: () => {
-      const dir = mkProject();
-      try {
-        fs.writeFileSync(path.join(dir, 'doc', 'module-catalog.yaml'), 'modules: []', 'utf-8');
-        writeFeatureTrackDecl(dir, 'demo', 'lite');
-        writeFactsFile(dir, 'demo', passingEstablishingFacts('demo', 'change'));
-        const results = checkFactsArtifact(dir, 'demo', 'change');
-        const fails = results.filter((r) => r.status === 'FAIL');
-        eq(fails.length, 0, `不应有 FAIL：${JSON.stringify(fails)}`);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  },
-];
+  },];
 
 
 function modernFactsCase(request: boolean): void {

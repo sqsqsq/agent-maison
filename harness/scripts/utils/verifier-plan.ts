@@ -3,7 +3,6 @@
 // ============================================================================
 // 病根（宿主 bc-openCard-1 实锤）：verifier 被做成了**每阶段必跑的仪式**——policy 说
 // off、runner 仍无条件装配 ai-prompt 与 subject、Skill 仍无条件要求四件套、
-// check-receipt 到最后一步才发现 lite 不适用。适用性只在消费端判断，生产端与文档写死
 // 全流程，于是「不适用」与「该有却缺失」被混成同一种 missing。
 //
 // 收口：verifier 降为**按 workflow/track/policy/adapter 能力动态启用的能力**。
@@ -50,7 +49,6 @@ export type VerifierPlanReason =
   | 'workflow_capability_absent'
   /** evidence policy 判 off（如 balanced 档的非保留 phase） */
   | 'policy_off'
-  /** evidence policy 判 not_applicable（如 lite track） */
   | 'policy_not_applicable'
   /** 当前 adapter 未登记 verifier_subagent = 没有审查员（如实披露，不阻断） */
   | 'adapter_has_no_reviewer'
@@ -72,7 +70,6 @@ export interface VerifierPlan {
 
 export interface ResolveVerifierPlanInput {
   phase: string;
-  /** feature track（lite 的 policy 已是 off，此处只进话术；不另立第二套判定）。 */
   track: FeatureTrack;
   runtimeMode: RuntimeMode;
   /** 已求解的 evidence policy（runtime-policy.resolveEvidencePolicy 唯一出处）。 */

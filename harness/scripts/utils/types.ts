@@ -588,7 +588,7 @@ export interface CheckResult {
   /** Hylyre native failure taxonomy second-level code; consumed only with failure_kind. */
   failure_code?: string;
   /** Existing repair-route projection; not a failure taxonomy or case state. */
-  repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+  repair_owner?: 'coding' | 'spec' | 'plan' | 'ut' | 'testing' | 'capability' | 'external';
   coding_candidate?: boolean;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
@@ -772,7 +772,7 @@ export interface HarnessRunSummary {
    */
   repair_candidates?: Array<{
     id: string;
-    category: 'spec' | 'plan' | 'coding';
+    category: 'spec' | 'plan' | 'coding' | 'verification';
     files: string[];
     summary: string;
     item_fingerprint: string;

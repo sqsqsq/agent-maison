@@ -35,7 +35,6 @@ export type FeaturePhase = string;
 
 export interface ReceiptValidation {
   /**
-   * `not_applicable`（C2）：lite track 的 receipt 机制架构性不适用——闭环判据是
    * change.md checkbox + exit script-report PASS，不经本文件。绝不映射为 passed。
    */
   status: 'passed' | 'failed' | 'missing' | 'error' | 'not_applicable';
@@ -268,7 +267,6 @@ export function mergeAndWritePhaseState(
       last_seen_session_id: carryLastSeenSid,
       last_seen_at: carryLastSeenAt,
       policy_snapshot: buildPolicySnapshot(
-        // 快照须含真实 track（OpenSpec runtime-policy）；C2 lite closure 与 hook 对账依赖此事实
         resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, partial.feature)),
       ),
       updated_at: new Date().toISOString(),
@@ -351,19 +349,6 @@ export function tryValidateReceipt(
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
   const receiptAbs = receiptResolved.path;
   const receiptRel = path.relative(projectRoot, receiptAbs).replace(/\\/g, '/');
-
-  // C2：lite track 的 receipt 机制架构性不适用——短路避免无谓 subprocess spawn，
-  // 且绝不能把「没有 receipt」误判为 status:'missing'（那会被上游当作待补齐的
-  // 未闭环凭证反复提示；lite 本就不产生这份凭证）。
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, opts?.goalIdentity?.runId));
-  if (track === 'lite') {
-    return {
-      status: 'not_applicable',
-      receipt_path: receiptRel,
-      message:
-        'lite track：receipt 机制不适用。闭环判据 = change.md checkbox 全勾 + exit 阶段 script-report verdict=PASS（非 receipt）。',
-    };
-  }
 
   const checker = path.join(harnessRoot, 'scripts', 'check-receipt.ts');
   if (!fs.existsSync(checker)) {
@@ -513,14 +498,6 @@ export function runSyncClosureDetailed(
   });
   const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
 
-  if (receiptValidation.status === 'not_applicable') {
-    // lite track：receipt 不是本 phase 的闭环判据，不动 state / summary。
-    console.log('');
-    console.log('ℹ️  sync-closure: receipt 机制对 lite track 不适用（not_applicable）');
-    console.log(`   ↳ ${receiptValidation.message}`);
-    console.log(`   请改查 harness-runner --phase ${phase} --feature ${feature} 的 script-report.json verdict。`);
-    return { exitCode: 0 };
-  }
 
   if (receiptValidation.status === 'passed') {
     if (hasGoalExecutionSignal() && !opts?.goalIdentity) {

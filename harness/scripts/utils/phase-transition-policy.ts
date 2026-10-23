@@ -248,9 +248,7 @@ export function resolveAutoChain(
       if (fp && !base.includes(fp)) base.push(fp);
     }
   } else {
-    // 分轨显式链优先（C1：lite 用 auto_chain_by_track，不做隐式推导）
-    const declaredChain =
-      track === 'full' ? workflow.auto_chain : workflow.auto_chain_by_track?.[track];
+    const declaredChain = workflow.auto_chain;
     if (declaredChain && declaredChain.length > 0) {
       base = [];
       for (const p of declaredChain) {

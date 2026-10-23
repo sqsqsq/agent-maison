@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { assertSupportedPhaseChain } from './scripts/utils/runtime-policy';
 import { OBLIGATION_PROVIDERS } from './scripts/utils/execution-scope';
 import type { FrameworkConfig } from './config';
 import { loadFrameworkConfig, DEFAULT_ACTIVE_WORKFLOW } from './config';
@@ -20,7 +21,6 @@ export interface WorkflowArtifact {
   optional_deps?: string[];
   verifier_prompt?: string;
   skill_doc?: string;
-  /** 1.1：feature phase 分轨成员资格；缺省 ["full"]（lite 须显式）；global 不得声明。 */
   tracks?: string[];
   /** 1.1：分轨依赖覆写；track 成员的 requires 引用轨外 feature phase 时必须声明（禁止隐式降空）。 */
   requires_by_track?: Record<string, string[]>;
@@ -66,7 +66,12 @@ export function resolveWorkflowSpec(
 }
 
 /** Only the historical built-in protocol falls back; custom workflow upgrades need their own compatible definition. */
-export function workflowForExistingRun(spec: WorkflowSpec, manifest: { execution_scope?: unknown }, frameworkRoot: string): WorkflowSpec {
+export function workflowForExistingRun(spec: WorkflowSpec, manifest: { execution_scope?: unknown; phase_chain?: readonly string[]; chain_override?: readonly string[]; start_phase?: string; end_phase?: string; report_dir?: string }, frameworkRoot: string, projectRoot?: string): WorkflowSpec {
+  assertSupportedPhaseChain([...(manifest.phase_chain ?? []), ...(manifest.chain_override ?? []), manifest.start_phase ?? '', manifest.end_phase ?? '']);
+  if (projectRoot) {
+    const { assertSupportedGoalRunHistory } = require('./scripts/utils/goal-manifest') as typeof import('./scripts/utils/goal-manifest');
+    assertSupportedGoalRunHistory(projectRoot, manifest);
+  }
   if (spec.name === DEFAULT_ACTIVE_WORKFLOW && spec.schema_version === '1.2' && !Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) return loadWorkflowSpec(frameworkRoot, 'spec-driven');
   return spec;
 }
@@ -213,10 +218,9 @@ function validateWorkflow(raw: Partial<WorkflowSpec>, filePath: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// 1.1 分轨校验（plan d4a7c1e8 C1：lite 成员/链/依赖必须显式，禁止隐式推导）
 // ---------------------------------------------------------------------------
 
-const KNOWN_TRACKS = new Set(['full', 'lite']);
+const KNOWN_TRACKS = new Set(['full']);
 
 function artifactBelongsToTrack(a: WorkflowArtifact, track: string): boolean {
   if (a.scope === 'global') return true;
@@ -251,7 +255,7 @@ function validateTrackDeclarations(spec: WorkflowSpec, isV11: boolean, filePath:
         a.tracks.length === 0 ||
         a.tracks.some((t) => typeof t !== 'string' || !KNOWN_TRACKS.has(t))
       ) {
-        throw new Error(`[workflow-loader] phase "${a.id}" tracks 非法（仅 full|lite）（${filePath}）`);
+        throw new Error(`[workflow-loader] phase "${a.id}" tracks 非法（仅 full；lite 已退役）（${filePath}）`);
       }
     }
     if (a.requires_by_track !== undefined) {

@@ -65,7 +65,7 @@ Goal status — progress projection reader
   let manifest;
   try {
     manifest = loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir });
-    workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
+    workflow = workflowForExistingRun(workflow, manifest, frameworkRoot, projectRoot);
   } catch (e) {
     console.error((e as Error).message);
     return 1;

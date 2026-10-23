@@ -811,7 +811,7 @@ async function main(): Promise<void> {
   const existingRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
   if (existingRunId && feature) {
     const { loadGoalManifestFromRun } = require('./scripts/utils/goal-manifest') as typeof import('./scripts/utils/goal-manifest');
-    workflowSpec = workflowForExistingRun(workflowSpec, loadGoalManifestFromRun(projectRoot, existingRunId, { feature }), resolvedFrameworkRoot);
+    workflowSpec = workflowForExistingRun(workflowSpec, loadGoalManifestFromRun(projectRoot, existingRunId, { feature }), resolvedFrameworkRoot, projectRoot);
   }
   const phaseIds = workflowPhaseIdSet(workflowSpec);
   if (!phaseIds.has(phase)) {
@@ -847,7 +847,6 @@ async function main(): Promise<void> {
 
 
   // D1.2（第三轮阻断 3）：**首次冻结必须早于 track 过滤**——否则 feature.yaml 里残留的
-  // `track: lite` 会在还没有冻结记录时把候选已请求的 review/ut 判成非法 phase。
   // 冻结记录仍是唯一权威：这里不看候选自报，只是把「确立权威」这一步放到它该在的位置。
   const featureScopeFreezeChecks: CheckResult[] = [];
   const capabilityInputChecks: CheckResult[] = [];
@@ -870,7 +869,6 @@ async function main(): Promise<void> {
     }
   }
   // C1 feature-track：按 feature 声明的 track 过滤合法 phase（缺省 full = 现状零变化；
-  // lite feature 误跑 full-only phase 明确报错而非静默跑——OpenSpec feature-track）。
   // D1.2：权威说不清（冻结入口已给出 BLOCKER）时**跳过这一步**——那时的 track 声明不可信，
   // 真正的失败会由下方 `capabilityInputChecks` 以 execution_scope_frozen 报出来。
   if (
@@ -1061,6 +1059,8 @@ async function main(): Promise<void> {
       }
     } catch (error) {
       const factsFailure = /^facts /i.test((error as Error).message);
+        const factsOwner = factsFailure ? (require('./scripts/utils/repair-responsibility') as typeof import('./scripts/utils/repair-responsibility')).factsCheckRepairOwner({
+          projectRoot, frameworkRoot: resolvedFrameworkRoot, feature, runId: process.env.MAISON_GOAL_RUN_ID?.trim(), currentPhase: phase }) : undefined;
       capabilityInputChecks.push({
         id: factsFailure ? 'context_exploration_facts_source_stale' : 'capability_resolution_contract',
         category: 'structure',
@@ -1068,6 +1068,7 @@ async function main(): Promise<void> {
         severity: 'BLOCKER',
         status: 'FAIL',
         details: (error as Error).message,
+          ...(factsOwner ? { repair_owner: factsOwner } : {}),
         suggestion: factsFailure ? '按实际变化来源回首个责任阶段读源并重建 canonical facts，不只改 run_id。' : '修复 contract.yaml 的 capability/input source 声明后重跑。',
         ...(factsFailure ? { affected_files: [resolveFactsAbsPath(projectRoot, feature)] } : {}),
       });
@@ -1509,7 +1510,6 @@ async function main(): Promise<void> {
   // script-report.json 读取 uncertain/disputed 信号。full track 若在这里先验 receipt 并关环，
   // 外层随后 halt 会形成 PASS/closed + WAITING 的矛盾权威态。现有 gate 标志即所有权边界：
   // 子进程只落 base summary；外层 goal-runner 完成裁决后独占 receipt validation/finalization。
-  // standalone 与无 testing 的 lite track 保持原有闭环语义。
   const deferFullClosureToGoalRunner =
     !phaseIsGlobal &&
     closureTrack === 'full' &&
@@ -1795,7 +1795,6 @@ function resolveVerifierRequestEligibility(
 
 /**
  * plan f7045213 §5：阶段结论的**唯一计算处**——既有质量格与有效结论函数在内存求值一次。
- * 控制台、verifier 签发资格、summary 写入器（进而闭环入口门、lite 闭环、退出码）用同一份结果；
  * 不先读磁盘。结果绑定到它所求值的那份报告对象：报告被致命失败替换后必须重算。
  * 脚本报告里的 legacy 结论字段保留，供旧产物读取与设备外部阻塞判据使用。
  */
@@ -2384,6 +2383,7 @@ export function writeRunSummaryBase(
     // 生产接线走**共享实现** buildSummaryRepairCandidates（测试调同一函数——
     // 源码正则冒充接线验证已被 codex 二轮冻结项③点名禁止）
     const repairCandidates = buildSummaryRepairCandidates({
+      responsibility: { projectRoot, frameworkRoot, feature: report.feature, runId: process.env.MAISON_GOAL_RUN_ID?.trim(), currentPhase: report.phase },
       reviewFidelity: loadFidelityIntentSsot(projectRoot, report.feature),
       phase: report.phase,
       checks: report.checks,
@@ -2690,7 +2690,6 @@ function patchRunSummaryClosure(
   receiptValidation: ReturnType<typeof tryValidateReceipt> | null,
   frameworkRoot: string,
 ): HarnessRunSummary {
-  // C2：closure 来源按 track 分派——lite 的 receipt 恒 not_applicable，闭环判据改用
   // 该 phase 自身脚本 verdict（如 exit 的 script-report PASS），不再被误判为"未闭环"。
   const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, report.feature));
   const closed = resolvePhaseClosureSource(closureTrack, base.verdict, base.closure_status) !== 'open';

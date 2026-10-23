@@ -7,12 +7,12 @@
 //   Q2 需求没变，接口/契约/设计变？ → plan 层
 //   Q3 上游都没错——要改产品代码？  → 是=coding；否（纯补验证）= verification
 // 本模块只做**确定性判定**（纯函数）：答案来自当前 correction request 的结构化分类；
-// 层→phase 的映射按 feature track 投影（lite 的 spec/plan 职能由 change.md
-// 承载 → change phase；verification → exit）。
 // 重验≠重做：revalidate = 落点 phase + 其下游**已闭环** phase 的脚本门禁。
 
 import type { WorkflowSpec } from '../../workflow-loader';
 import { resolvePhaseChain, type FeatureTrack } from './runtime-policy';
+import { resolveRepairResponsibility, type RepairResponsibilityContext, type RepairResponsibilityTarget } from './repair-responsibility';
+import { affectedScopePhases } from './execution-scope';
 
 // --------------------------------------------------------------------------
 // 三问 → 根因类别
@@ -53,43 +53,28 @@ export function touchedCategories(a: CorrectionAnswers): CorrectionCategory[] {
 // 类别 → phase（track 投影）
 // --------------------------------------------------------------------------
 
-/** 类别→候选 phase 名的共享偏好表（correction 路由与责任阶段路由共用——非平行表）。 */
-function categoryPhasePreference(track: FeatureTrack): Record<CorrectionCategory, string[]> {
-  return track === 'lite'
-    ? { spec: ['change'], plan: ['change'], coding: ['coding'], verification: ['exit'] }
-    : { spec: ['spec'], plan: ['plan'], coding: ['coding'], verification: ['ut', 'testing'] };
-}
-
-/**
- * 把根因类别投影到当前 track 的 phase。full：spec/plan/coding 同名，verification→ut；
- * lite：spec/plan 职能由 change.md 承载 → change，verification→exit。
- * 投影结果不在该 track 链内时回退链首（防 workflow 自定义链缺 phase 时产出幽灵 phase）。
- * （correction 修正意见路由语义保留；责任阶段回退路由须用下面的严格版本。）
- */
+/** Resolve the responsible capability; missing/ambiguous ownership never selects the queue head. */
 export function mapCategoryToPhase(
   category: CorrectionCategory,
   spec: WorkflowSpec,
   track: FeatureTrack,
-): string {
-  const chain = resolvePhaseChain(spec, track).featureOrdered;
-  return mapCategoryToChainPhase(category, chain, track) ?? chain[0];
+  context: RepairResponsibilityContext & { target?: RepairResponsibilityTarget } = {},
+): string | null {
+  const result = resolveRepairResponsibility({ ...context, workflow: spec, target: { ...context.target, category } });
+  return result.action === 'unavailable' ? null : result.owner;
 }
 
-/**
- * 责任阶段路由的**严格**类别→phase 映射（plan b6e4c9f2 t2，codex 三轮）：
- * 映射不到当前 resolved chain 的真实节点时返回 **null**——消费方走既有
- * backtrack_target_absent 语义。禁止静默回链首（未知责任误投错误阶段的根源）；
- * lite/custom workflow 不出现幽灵 spec/plan。
- */
+/** Chain-only legacy readers can identify a canonical owner, but cannot invent one from position. */
 export function mapCategoryToChainPhase(
   category: CorrectionCategory,
   chain: readonly string[],
   track: FeatureTrack,
+  context: RepairResponsibilityContext & { target?: RepairResponsibilityTarget } = {},
 ): string | null {
-  for (const p of categoryPhasePreference(track)[category]) {
-    if (chain.includes(p)) return p;
-  }
-  return null;
+  const workflow = context.workflow ?? { schema_version: '1.0', name: 'responsibility-view',
+    artifacts: chain.map(id => ({ id, scope: 'feature' as const, requires: [] })) };
+  const owner = mapCategoryToPhase(category, workflow, track, context);
+  return owner && chain.includes(owner) ? owner : null;
 }
 
 // --------------------------------------------------------------------------
@@ -120,18 +105,20 @@ export function classifyCorrection(input: {
   spec: WorkflowSpec;
   track: FeatureTrack;
   closedPhases: readonly string[];
+  context?: RepairResponsibilityContext & { target?: RepairResponsibilityTarget };
 }): CorrectionClassification {
   const { answers, spec, track, closedPhases } = input;
   const chain = resolvePhaseChain(spec, track).featureOrdered;
-  const rootLayer = mapCategoryToPhase(resolveCorrectionCategory(answers), spec, track);
+  const rootLayer = mapCategoryToPhase(resolveCorrectionCategory(answers), spec, track, input.context);
+  if (!rootLayer) throw new Error('[correction-routing] 无唯一且已授权的修复负责方；请提供实际修复对象或必要义务，不按队首派活。');
 
-  const touchedSet = new Set(touchedCategories(answers).map((c) => mapCategoryToPhase(c, spec, track)));
+  const touchedSet = new Set(touchedCategories(answers).map((c) => mapCategoryToPhase(c, spec, track, input.context)));
   const touched = chain.filter((p) => touchedSet.has(p));
 
-  const rootIdx = chain.indexOf(rootLayer);
+  const affected = new Set(affectedScopePhases([...touchedSet].filter((phase): phase is string => !!phase), chain, { scope: input.context?.executionScope, workflow: spec }));
   const closed = new Set(closedPhases);
   const revalidate: RevalidateEntry[] = chain
-    .filter((p, i) => i === rootIdx || (i > rootIdx && closed.has(p)))
+    .filter(p => touchedSet.has(p) || (affected.has(p) && closed.has(p)))
     .map((p) => ({ phase: p, status: 'pending' as const }));
 
   return { root_layer: rootLayer, touched_layers: touched, revalidate };

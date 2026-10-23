@@ -527,60 +527,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
-  },
-  {
-    name: 'upgraded receipt probe and real CLI use frozen legacy track; modern scope ignores candidate lite',
-    run: () => {
-      const { root } = buildProject('review', { omitVerifier: true });
-      try {
-        const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'legacy-lite', unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
-        createGoalRun({ projectRoot: root, manifest, chain: ['change', 'coding', 'exit'] });
-        fs.copyFileSync(path.join(HARNESS_ROOT, '../workflows/obligation-driven.workflow.yaml'), path.join(root, 'framework/workflows/obligation-driven.workflow.yaml'));
-        const configPath = path.join(root, 'framework.config.json');
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        config.active_workflow = 'obligation-driven';
-        fs.writeFileSync(configPath, JSON.stringify(config));
-        clearFrameworkConfigCache();
-        const featurePath = path.join(root, 'doc/features/demo/feature.yaml');
-        const goalIdentity = { runId: manifest.run_id, attemptId: 'exit-1', attemptPhase: 'exit' };
-        for (const candidate of ['track: full\n', '{}\n']) {
-          fs.writeFileSync(featurePath, candidate);
-          const probe = tryValidateReceipt(HARNESS_ROOT, root, 'exit', 'demo', { goalIdentity });
-          assert(probe.status === 'not_applicable', JSON.stringify(probe));
-        }
-        const cli = spawnCheckReceipt(root, 'exit', goalIdentity);
-        assert(cli.status === 0 && cli.stdout.includes('receipt 机制不适用'), JSON.stringify(cli));
-        const scope = resolveExecutionScope({ request: { completion_target: 'request', requested_results: ['review'], requested_phases: ['review'] }, contract_fingerprints: [], facts: [] }, loadWorkflowSpec(path.dirname(HARNESS_ROOT), 'obligation-driven'));
-        const modern = buildGoalManifestFromInput({ feature: 'demo', run_id: 'modern-review', execution_scope: scope, chain_override: scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
-        createGoalRun({ projectRoot: root, manifest: modern, chain: scope.phase_chain });
-        fs.writeFileSync(featurePath, 'track: lite\n');
-        const probe = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo', { goalIdentity: { runId: modern.run_id, attemptId: 'review-1', attemptPhase: 'review' } });
-        assert(probe.status === 'failed', JSON.stringify(probe));
-        const invalid = spawnCheckReceipt(root, 'exit', { ...goalIdentity, runId: modern.run_id });
-        assert(invalid.status === 2, JSON.stringify(invalid));
-      } finally { fs.rmSync(root, { recursive: true, force: true }); }
-    },
-  },
-  {
-    name: 'tryValidateReceipt：lite track → not_applicable，架构性短路（无 subprocess）',
-    run: () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-lite-'));
-      try {
-        fs.mkdirSync(path.join(root, 'doc', 'features', 'demo'), { recursive: true });
-        fs.writeFileSync(
-          path.join(root, 'doc', 'features', 'demo', 'feature.yaml'),
-          'schema_version: "1.0"\ntrack: lite\n',
-          'utf-8',
-        );
-        const v = tryValidateReceipt(HARNESS_ROOT, root, 'exit', 'demo');
-        assert(v.status === 'not_applicable', `expected not_applicable, got ${v.status}`);
-        assert(!!v.message && v.message.includes('lite'), 'message 应说明 lite 语义');
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
+  },{
     // review 不在 generic profile 的 phases_disabled 内、也不在默认保留集 {spec,coding}——
     // 干净的"非保留 phase"样本（ut/coding 会被 generic 直接禁用整阶段，测不到本矩阵逻辑）。
     name: 'full×strict（缺省，无 evidence_profile）：verifier 缺失仍 FAIL——零回归基线',

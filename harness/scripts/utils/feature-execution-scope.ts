@@ -398,7 +398,7 @@ export function registerFeatureScopeTransfer(input: {
 }
 
 /** `successorRunId` 的 events 里有一条 `supersede`：target = `sourceRunId`、superseding = 自己（goal-runner 在出生后写入的审计事件）。 */
-function isAuditedSuccessor(projectRoot: string, feature: string, sourceRunId: string, successorRunId: string): boolean {
+export function isAuditedSuccessor(projectRoot: string, feature: string, sourceRunId: string, successorRunId: string): boolean {
   let events: ReturnType<typeof loadAuthoritativeRunEvents>;
   try { events = loadAuthoritativeRunEvents(projectRoot, feature, successorRunId); } catch { return false; }
   return events.some(event => {

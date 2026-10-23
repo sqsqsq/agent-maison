@@ -123,7 +123,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'policy_snapshot 写入真实 track（feature.yaml lite / 缺省 full）——review 回归钉',
+    name: 'policy_snapshot 写入真实 track（feature.yaml 残留 lite / 缺省 full）——review 回归钉',
     run: () => {
       const root = mkProject();
       try {
@@ -138,7 +138,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.writeFileSync(path.join(root, 'doc', 'features', 'demo', 'feature.yaml'), 'track: lite\n');
         mergeAndWritePhaseState(root, workflow, { phase: 'coding', feature: 'demo', status: 'running' });
         st = JSON.parse(fs.readFileSync(stateAbs, 'utf-8')) as typeof st;
-        assert(st.policy_snapshot?.track === 'lite', `lite track=${st.policy_snapshot?.track}`);
+        assert(st.policy_snapshot?.track === 'full', `lite track=${st.policy_snapshot?.track}`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

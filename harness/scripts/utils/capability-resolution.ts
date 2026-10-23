@@ -396,8 +396,7 @@ function resolveDerive(
       // execution_identity 等于当前阶段身份（phase:<feature>:spec，不跨身份导入历史 goal 残留
       // 决策）。intent_fallback / 缺字段旧版 SSOT / corrupt / 跨身份一律**不解锁**，继续落
       // 到 change.md（legacy）。corrupt 按 absent 继续、不升 invalid、不抢 fidelity 门禁裁决权。
-      // **只在 spec 阶段启用**（review P1）：lite 的 change 阶段也用 derive.requirement，但必须
-      // 保持纯 change.md 分支零变化——否则创建 spec SSOT 会让语义未变的 change closure 被判 stale。
+      // 只有旧 spec 入口读取此来源；现代调用由已绑定的 requirement 提供。
       const change = featureFilePath(projectRoot, feature, 'change.md');
       if (options.phase === 'spec') {
         const ssotState = loadFidelityIntentSsotState(projectRoot, feature);
@@ -446,12 +445,7 @@ function resolveDerive(
             '<feature> --requirement "<需求文本>"`（或 `--requirement-file <path>`）。',
         };
       }
-      // 非 spec（lite change 等）：保留既有纯 change.md 分支（逐元素零变化——SSOT 不加载、不匹配、
-      // 不绑定，spec SSOT 的创建/变化不得影响 change closure 的新鲜度判定）。
-      const deps = [dependency(change, 'derive')];
-      return fs.existsSync(change)
-        ? { state: 'resolved', dependencies: deps, detail: change }
-        : { state: 'absent', dependencies: deps, detail: 'goal requirement/change.md missing' };
+      return { state: 'absent', dependencies: [], detail: 'requirement missing' };
     }
     // plan f3a8c6d2 t5a（plan c4e8a1f7 T2 收口）：pixel_1to1 意图但一张参考图都取不到＝**输入缺失**，走既有
     // capability input unresolved 通道（readiness/next_action/assess/merged-report 四处投影
@@ -942,7 +936,7 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
     && (() => {
       const workflow = loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven');
       return (options.goalRunId
-        ? workflowForExistingRun(workflow, loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) }), options.frameworkRoot)
+        ? workflowForExistingRun(workflow, loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) }), options.frameworkRoot, options.projectRoot)
         : workflow).schema_version !== '1.2';
     })();
   if (!legacyDesign && (indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
@@ -966,7 +960,6 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   // Only old workflow invocations retain the former track contract until P7 migration.
   if (legacyDesign && options.phase === 'coding') declaredCapabilities = [
     { id: 'capability_coding_full_context', axis: 'functional', inputs: ['codebase', 'plan', 'contracts', 'acceptance'], tracks: ['full'], on_missing: 'fail' },
-    { id: 'capability_coding_lite_context', axis: 'functional', inputs: ['codebase', 'change'], tracks: ['lite'], on_missing: 'fail' },
     ...indexed.phase.capabilities.filter(capability => ['capability_coding_spec_context', 'capability_coding_visual_context'].includes(capability.id)).map(capability => ({ ...capability, tracks: ['full'] as FeatureTrackName[] })),
   ];
   if (legacyDesign && options.phase === 'review') declaredCapabilities = indexed.phase.capabilities.filter(capability => !['capability_review_narrative_context', 'capability_review_use_cases'].includes(capability.id)).map(capability => capability.id === 'capability_review_design_context' ? { ...capability, inputs: ['spec', 'plan', 'contracts'] } : capability);
@@ -979,6 +972,11 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   }
   const capabilities = declaredCapabilities.filter(capability => !legacyDesign || !['capability_plan_existing_design', 'capability_spec_existing_acceptance'].includes(capability.id)).map((capability) =>
     resolveCapability(legacyDesign && options.phase !== 'coding' ? { ...capability, tracks: ['full'] } : capability, indexed.phase, options, artifactProducers, resolve));
+  // Source targets are a declared UT input even when no capability consumes them.
+  // Resolve the existing input so repair bindings retain their test domain rather than masquerading as product code.
+  if (inputs && options.testTargets?.length) for (const input of indexed.phase.inputs) {
+    if (input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.test-targets')) resolve(input);
+  }
   if (inputs && options.feature) {
     const inventory = loadArtifactInventory(options.frameworkRoot);
     for (const name of inputs.context.required_outputs) {

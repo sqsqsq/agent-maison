@@ -43,7 +43,7 @@ npx ts-node scripts/extension.ts --project-root <宿主工程根> --action <init
 2. 只写 manifest 支持的域：`skills`、`knowledge`、`hooks`、`capabilities`、`skill_assets`、`phase_rules_overlays`、`mcp_actions`、`phase_bindings`。
 3. 新增 Skill 时同时创建 `skills/<id>/SKILL.md` 并在 `provides.skills[]` 声明；1.1 起未声明目录不物化。
 4. `phase_bindings` 只管 Feature phases，只有 `before_phase_work`、`before_phase_verify`、`after_phase_verify_before_close`；没有 `before_component_design`。设计前置输入由扩展 Skill 自身流程承载。
-   phase 名必须来自 active workflow 的 Feature scope（full/lite 并集）；global phase 与拼错的 slug 都会失败。
+   phase 名必须来自 active workflow 的 Feature scope（Feature phase 集）；global phase 与拼错的 slug 都会失败。
 5. `/component-design` 前的可选知识用 `provides.skill_assets.component-design.knowledge: knowledge/<文件>.md`，由共享装配和根 Skill 在 P1 discovery 前真实读取；extension 优先于 profile 同 key，两处都未声明合法，不发明 audience。资料正文可引用已有项目内权威源，不复制契约。
 6. 每次编辑后 `verify`，通过后再 `materialize` 并复查 `inspect`。
 

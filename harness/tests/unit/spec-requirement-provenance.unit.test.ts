@@ -72,25 +72,6 @@ function resolveSpecReport(root: string, extra?: Partial<Parameters<typeof resol
   });
 }
 
-/** lite change 阶段的 requirement 输入（change-lite contract: capability_change_context/requirement）。 */
-function changeRequirementInput(report: CapabilityResolutionReport): InputResolution {
-  const capability = report.capabilities.find((c) => c.id === 'capability_change_context');
-  assert(capability, 'change-lite 契约须含 capability_change_context');
-  const input = capability!.inputs.find((i) => i.id === 'requirement');
-  assert(input, 'capability_change_context 须含 requirement input');
-  return input!;
-}
-
-function resolveChangeReport(root: string): CapabilityResolutionReport {
-  return resolveCapabilityReport({
-    frameworkRoot: FRAMEWORK_ROOT,
-    projectRoot: root,
-    feature: 'demo',
-    phase: 'change',
-    track: 'lite',
-  });
-}
-
 /** 用真实 writer 落一份 explicit_cli / intent_fallback / goal_manifest 的 SSOT。 */
 function writeRealSsot(
   root: string,
@@ -379,28 +360,7 @@ const cases: Case[] = [
         assert(deriveDeps.some((d) => path.resolve(d.path) === writeChangeMd(root)), 'change.md 本身仍绑定');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
-  },
-  {
-    name: 't1-④\' lite change 阶段零变化回归：SSOT 存在也不影响 change 的纯 change.md 分支（review P1 回归锁）',
-    run: () => {
-      const root = mkProject();
-      try {
-        // 先造一份 spec explicit_cli SSOT（若 SSOT 无条件参与 change 解析，会把 change deps 变 exists:false→true）
-        writeRealSsot(root, { requirement: '账户页。', provenance: 'explicit_cli' });
-        writeChangeMd(root);
-        const input = changeRequirementInput(resolveChangeReport(root));
-        assert(input.state === 'resolved', `change.md 仍 resolved，state=${input.state}`);
-        const deriveDeps = input.attempts[0].dependencies.filter((d) => d.role === 'derive');
-        const ssotPath = fidelityIntentSsotPath(root, 'demo');
-        // change 阶段不得加载/绑定 SSOT——否则 spec SSOT 的创建会让语义未变的 change closure 判 stale
-        assert(!deriveDeps.some((d) => path.resolve(d.path) === path.resolve(ssotPath)),
-          'lite change 阶段不得绑 SSOT 路径（纯 change.md 分支零变化）');
-        assert(deriveDeps.length === 1 && path.resolve(deriveDeps[0]!.path) === writeChangeMd(root),
-          `change 阶段 deps 应仅 [change.md]，实际=${JSON.stringify(deriveDeps.map(d => path.basename(d.path)))}`);
-      } finally { fs.rmSync(root, { recursive: true, force: true }); }
-    },
-  },
-  {
+  },{
     name: 't1-⑤ 三段全无 → blocked，detail 列出三段来源与两条修复路径（不写"框架缺陷"）',
     run: () => {
       const root = mkProject();

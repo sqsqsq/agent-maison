@@ -911,7 +911,7 @@ cases.push({
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, JSON.stringify({ schema_version: '1.1', verdict: 'PASS', blockers: [] }), 'utf-8');
     const { checkUpstreamVerdictGate } = require('../../scripts/utils/upstream-verdict-gate') as typeof import('../../scripts/utils/upstream-verdict-gate');
-    const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'ut' });
+    const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'testing' });
     assertEq(r.status, 'FAIL', r.details);
     assertTrue(r.details.includes('quality_axes'), '点名 lattice 缺失');
   }),

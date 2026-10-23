@@ -20,7 +20,6 @@ artifacts:
   - { id: contracts@1, schema: contracts.schema.yaml, paths: ["contracts.yaml"] }
   - { id: use-cases@1, schema: use-cases.schema.yaml, paths: ["use-cases.yaml"] }
   - { id: visual-parity@1, schema: visual-parity.schema.yaml, paths: ["plan/visual-parity.yaml"] }
-  - { id: change@1, schema: change.schema.yaml, paths: ["change.md"] }
   - { id: review-report@1, schema: review-report.schema.yaml, paths: ["review/review-report.md"] }
   - { id: coding-upstream-issues@1, schema: coding-upstream-issues.schema.yaml, paths: ["coding/upstream-issues.md"] }
   - { id: testability-audit@1, schema: testability-audit.schema.yaml, paths: ["ut/testability-audit.md"] }

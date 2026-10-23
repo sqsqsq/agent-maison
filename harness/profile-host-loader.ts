@@ -38,7 +38,6 @@ export type ProfileCodingHost = {
   /** 工程级构建与恢复；独立调用必须传宿主报告目录，不依赖 Feature 契约。 */
   compileProject?(ctx: ProjectCompileContext): ProjectCompileResult;
   /**
-   * 可选 lint provider（C1 feature-track：lite exit 门禁派发点）。
    * 未实现 = 宿主无 lint 工具链声明——exit 侧呈现 MAJOR WARN 可见缺项，不阻断闭环。
    */
   checkCodingLint?(ctx: CheckContext): CheckResult[] | Promise<CheckResult[]>;

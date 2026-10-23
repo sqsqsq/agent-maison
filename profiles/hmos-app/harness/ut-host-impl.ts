@@ -917,7 +917,7 @@ export interface UtReuseEligibility {
 /**
  * 复用资格前置：只有"本次调用内该模块真的出过包、且该包就是盘上这一份"才有资格谈复用。
  * 两条都满足才查 decideReuse——否则测试源码已改但没重编译时，旧 HAP 仍在盘会让编译与执行
- * 一起被跳过。无 collector 的路径（check-exit.ts 直调）天然不满足第一条，行为逐字不变。
+ * 一起被跳过。无 collector 的直接调用路径天然不满足第一条，行为逐字不变。
  */
 function evaluateUtReuseEligibility(
   ctx: CheckContext,

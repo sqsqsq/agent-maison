@@ -1,5 +1,6 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
-import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import { readRepairDependencyContext } from './repair-responsibility';
+import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
@@ -38,18 +39,9 @@ export function featureTrackDeclPath(projectRoot: string, feature: string): stri
 
 export function loadFeatureTrackDecl(projectRoot: string, feature: string, existingRunId?: string): FeatureTrackDecl | null {
   const runId = existingRunId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
-  // D1.6 / 批次 3 阻断 1：**现代有效范围在场即 full**，两个载体同口径。
-  // 否则 feature.yaml 里残留的 `track: lite` 会在冻结入口之前把 review/ut 判成非法 phase，
-  // 闭环出口也会按 lite 口径走——那正是「现代路径被旧 track 门控」的事故形状。
-  try {
-    if (resolveEffectiveScopeSource(projectRoot, feature, runId)) return { track: 'full' };
-  } catch {
-    // 权威说不清时（例如记录已转交而本次无 run 身份）不在这里裁决 track——
-    // 交给冻结入口 / 统一入口给出明确报错。
-  }
   if (runId && fs.existsSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'))) {
     const legacy = JSON.parse(fs.readFileSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'), 'utf8')) as { phase_chain?: string[] };
-    if (Array.isArray(legacy.phase_chain) && legacy.phase_chain.length) return { track: resolveFeatureTrack(undefined, legacy.phase_chain) };
+    if (Array.isArray(legacy.phase_chain) && legacy.phase_chain.length) resolveFeatureTrack(undefined, legacy.phase_chain);
   }
   try {
     const abs = featureTrackDeclPath(projectRoot, feature);
@@ -57,9 +49,13 @@ export function loadFeatureTrackDecl(projectRoot: string, feature: string, exist
     const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as unknown;
     if (!raw || typeof raw !== 'object') return null;
     const track = (raw as { track?: unknown }).track;
+    if (track === 'lite') {
+      console.warn('[lite-retired] feature.yaml 的 track: lite 已忽略；当前请求按义务范围运行，不恢复 change/exit 旧链。');
+      return { track: 'full' };
+    }
     return typeof track === 'string' ? { track } : {};
   } catch {
-    // 解析失败按未声明处理（full），不阻断——feature.yaml 语法问题由 change/exit 门禁另行报告
+    // 解析失败按未声明处理（full），候选范围语法由现有范围入口另行报告
     return null;
   }
 }
@@ -864,7 +860,8 @@ export function resolveCurrentScopeView(input: {
   const currentPhasePass = input.currentPhase && input.completedPhases?.has(input.currentPhase) ? input.currentPhase : undefined;
   if (currentPhasePass) events.push({ type: 'phase_verdict', phase: currentPhasePass, verdict: 'PASS', action: 'advance' });
   const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
-  const history = scopeProofHistory(birth, events, order);
+  const dependencies = readRepairDependencyContext(projectRoot, feature, input.workflow, input.previous, frameworkRoot);
+  const history = scopeProofHistory(birth, events, order, undefined, input.workflow, dependencies);
   const lastInvocation = [...events].reverse().find(event => event.type === 'agent_invoke_start')?.phase;
   // Interrupted downstream writes retain their existing ownership while that phase resumes.
   const pendingOwnerPhase = input.currentPhase ?? (lastInvocation && !history.passed.has(lastInvocation) ? lastInvocation : undefined);
@@ -881,7 +878,7 @@ export function resolveCurrentScopeView(input: {
     const eligible = input.currentRunId ? history.passed.has(phase) : !after || Date.parse(evidence!.manifest.generated_at) > Date.parse(after);
     if (eligible) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence!.manifest.aggregate_sha256 });
   }
-  return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, stalePhases: [...stale], reopen: input.reopen });
+  return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, stalePhases: [...stale], reopen: input.reopen, inputOwners: dependencies.inputOwners, inputEdges: dependencies.inputEdges });
 }
 
 export function resolveScopeRevisionProposal(input: {
@@ -921,17 +918,13 @@ export function resolveScopeRevisionProposal(input: {
   }
   // plan a9f3c7d2 第二笔：request 终点是单职责请求——修订只能关闭本阶段的定义缺口，
   // **不得把新阶段塞进请求动作**。边界取**冻结授权链**（见 `authorizedPhases` 注释）。
-  if (previous.completion_target === 'request' && proposal.request.requested_phases.some(phase => !input.authorizedPhases.includes(phase))) {
+  if (proposal.request.requested_phases.some(phase => !authorizedScopePhases(birth ?? previous, workflow).includes(phase))) {
     throw new Error('[execution-scope] request-scope revision cannot add phases');
   }
   if (!input.repairCandidates?.length && lastRevision?.revision_input
     && executionScopeFingerprint(lastRevision.revision_input) === executionScopeFingerprint(proposal)) return null;
   const progress = resolveCurrentScopeView(input);
-  const { SCOPE_REVISION_FACT_KIND } = require('./repair-candidates') as typeof import('./repair-candidates');
-  const repairFactIds = new Set((input.repairCandidates ?? []).map(candidate => {
-    const kind = SCOPE_REVISION_FACT_KIND[candidate.category as keyof typeof SCOPE_REVISION_FACT_KIND];
-    return kind ? `${kind}:${candidate.id}` : '';
-  }));
+  const repairFactIds = new Set(proposal.facts.filter(fact => (input.repairCandidates ?? []).some(candidate => fact.id.endsWith(`:${candidate.id}`))).map(fact => fact.id));
   for (const obligation of previous.obligations) {
     if (obligation.applicability !== 'required') continue;
     const existing = proposal.facts.find(fact => fact.id === obligation.id);
@@ -950,7 +943,7 @@ export function resolveScopeRevisionProposal(input: {
   }
   const order = [...new Set([...(workflow.auto_chain ?? []), ...workflow.artifacts.map(a => a.id)])];
   const nextDuties = proposal.facts.map(fact => ({ ...fact, owner_phase: workflow.artifacts.find(a => (OBLIGATION_PROVIDERS[a.obligation_provider_id ?? ''] ?? []).includes(fact.kind))?.id ?? '' }));
-  const revoked = new Set(scopeRevisionInvalidations(progress, { obligations: nextDuties }, order));
+  const revoked = new Set(scopeRevisionInvalidations(progress, { obligations: nextDuties }, order, undefined, workflow, readRepairDependencyContext(projectRoot, feature, workflow, progress, frameworkRoot)));
   for (const fact of proposal.facts) if (revoked.has(nextDuties.find(o => o.id === fact.id)!.owner_phase)) delete fact.satisfied_by;
   if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
   if (proposal.request.impact === undefined) proposal.request.impact = previous.request_impact;
@@ -980,10 +973,9 @@ export function resolveScopeRevisionProposal(input: {
   const withdrawsRecordedProof = previous.obligations.some(before => before.satisfied_by?.length
     && !resolved.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
   if (!withdrawsRecordedProof && executionScopeFingerprint(resolved) === executionScopeFingerprint(progress)) return null;
-  const confirmedRepair = previous.completion_target === 'feature' && input.repairCandidates?.some(candidate => {
-    const kind = SCOPE_REVISION_FACT_KIND[candidate.category as keyof typeof SCOPE_REVISION_FACT_KIND];
-    const fact = proposal.facts.find(item => item.id === kind + ':' + candidate.id && item.kind === kind && item.applicability === 'required');
-    return !!kind && candidate.files.length > 0 && !!fact?.basis.length && !previous.obligations.some(item => item.id === fact.id);
+  const confirmedRepair = input.repairCandidates?.some(candidate => {
+    const fact = proposal.facts.find(item => repairFactIds.has(item.id) && item.id.endsWith(':' + candidate.id) && item.applicability === 'required');
+    return (candidate.files.length > 0 || candidate.category === 'coding') && !!fact?.basis.length && !previous.obligations.some(item => item.id === fact.id);
   });
   const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
     && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));

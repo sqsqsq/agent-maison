@@ -17,7 +17,6 @@ import {
 import { LEGACY_EXPLORATION_PHASES } from './runtime-policy';
 import { validateProjectRelativePath } from './project-relative-path';
 
-/** `change` = lite track 的建立阶段（C4 facts.md 契约，与 `spec` 同源角色）。 */
 export type ContextExplorationPhase = string;
 
 /** legacy exploration-snippets.yaml phase keys（≥2 minor 窗口 fallback） */
@@ -36,8 +35,6 @@ export const CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS: Record<ContextExploration
   coding: ['plan', 'contract', 'acceptance'],
   review: ['contract', 'acceptance', 'coding-rule', 'plan'],
   ut: ['acceptance', 'contract', 'spec', 'plan'],
-  /** lite track 建立阶段，与 spec 同源角色（C4 facts.md 契约）。 */
-  change: ['glossary', 'module-catalog', 'architecture'],
 };
 
 /** schema 1.1.0 且 phase-rules 未声明时的 per-phase 默认阈值 */
@@ -81,18 +78,6 @@ export const DEFAULT_EXPLORATION_THRESHOLDS: Record<ContextExplorationPhase, Exp
     min_code_facts: 3,
     require_subagent_when_use_cases_gt: 2,
     exploration_mode_allowed: ['subagent', 'sequential'],
-  },
-  /**
-   * lite track 建立阶段（C4 facts.md 契约）：单模块假设下比 spec 略轻，
-   * 且未在 legacyRequiresSubagent 的 phase 分支中特判 → 恒不强制 subagent
-   * （lite 轻量化本意；有需要时可在 change-rules.yaml > exploration_strategy 显式覆写）。
-   */
-  change: {
-    min_files_inspected: 3,
-    min_source_code_paths: 1,
-    min_searches: 2,
-    min_code_facts: 1,
-    exploration_mode_allowed: ['subagent', 'sequential', 'minimal'],
   },
 };
 

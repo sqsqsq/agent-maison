@@ -3,6 +3,7 @@ import { checkUtUnsupportedTargetsHandled, checkUtTestabilityAuditPresent, inspe
 import { UT_REAL_ASSERTION_CHECK } from './repair-candidates.unit.test';
 import { renderResultBlock } from '../utils/verifier-evidence-fixture';
 import assert from 'assert';
+import { readRepairDependencyContext, repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
@@ -195,11 +196,12 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
           assert.equal(resolvePhasePathOwnership(boundary(), path.relative(root, contractFile)).owner, 'plan');
           fs.writeFileSync(contractFile, planCalls === 1 ? YAML.stringify({ ...hostContracts, interfaces: [{ class: 'BankCardRepository', file: inputSource, methods: [{ name: 'open', params: [], return: 'any' }] }] }) : contractsRaw);
           fs.writeFileSync(featureFilePath(root, feature, 'use-cases.yaml'), useCasesRaw);
-          assert.equal(resolvePhasePathOwnership(boundary(), inputSource).status, 'none', 'unverified plan output cannot grant coding scope: ' + JSON.stringify({
+          assert.equal(resolvePhasePathOwnership(boundary(), inputSource).owner, 'coding', 'existing product source retains its producer before construction is ready: ' + JSON.stringify({
             planCalls, recorded: resolveEffectiveScopeSource(root, feature, runId)?.scope.obligations.map(o => [o.id, o.owner_phase, o.applicability, o.satisfied_by?.map(p => 'input_id' in p ? p.input_id : p.phase)]),
             events: fs.readFileSync(featureFilePath(root, feature, `goal-runs/${runId}/events.jsonl`), 'utf8').trim().split('\n').map(line => JSON.parse(line))
               .filter(e => e.type === 'scope_revised' || e.type === 'phase_verdict').map(e => ({ type: e.type, phase: e.phase, verdict: e.verdict, action: e.action, chain: e.execution_scope?.phase_chain })),
           }));
+          assert.throws(() => readRunBoundContracts(root, frameworkRoot, feature, runId), /frozen construction contract missing|input binding stale/, 'known source ownership must not grant an unverified construction input');
         },
         onCoding: ctx => {
           runId = ctx.runId;
@@ -648,6 +650,11 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
           const body = phase === 'review' ? `${fence}issue-verification\n- issue: CR-CODING\n  verdict: confirmed\n  evidence: ${path.basename(codeFile)} | 补齐新验收所需实现\n${fence}\n`
             : '| id | status |\n|---|---|\n| end_to_end_driving | PASS |\n| business_assertion_value | PASS |\n';
           fs.writeFileSync(path.join(root, summary.verifier_report!), body + renderResultBlock(summary.verifier_subject_id!, 'PASS', 0));
+          if (phase === 'review') {
+            const responsibility = repairResponsibilityContext({ projectRoot: root, frameworkRoot, feature, runId: 'p2-attended', currentPhase: phase });
+            const targets = resolveRepairResponsibility({ ...responsibility, target: { files: [codeRel] } });
+            assert.equal(targets.owner, 'coding', JSON.stringify({ codeRel, targets, sourceDomains: responsibility.contracts?.domains.filter(domain => domain.kind === 'source') }));
+          }
           return { checks, writerOptions: { verifierPlan: plan } };
         }
         if (utDesignGap && phase === 'ut' && !designGap) {
@@ -719,10 +726,12 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
         // 修订的 request / facts / 绑定全部由生产函数算，impact 由它自己从有效范围继承。
         const violationDetails = `coding 改动超出 plan 冻结的 UI scope 白名单：${codeRel}`;
         const codingCandidates = buildSummaryRepairCandidates({
+          responsibility: { projectRoot: root, frameworkRoot, feature, runId: 'p2-attended', currentPhase: 'coding' },
           phase: 'coding', reportValidity: 'PASS', reviewReportText: null, verifierReportText: null,
           checks: [{ id: 'ui_diff_within_declared_files', status: 'FAIL', severity: 'BLOCKER', details: violationDetails, failure_kind: 'ui_scope_violation', affected_files: [codeRel] }],
         });
-        assert.deepStrictEqual(codingCandidates.map(candidate => [candidate.category, candidate.source_phase, candidate.files]), [['plan', 'coding', [codeRel]]], JSON.stringify(codingCandidates));
+        assert.deepStrictEqual(codingCandidates.map(candidate => [candidate.category, candidate.source_phase]), [['plan', 'coding']], JSON.stringify(codingCandidates));
+        assert(codingCandidates[0].files.some(file => file.endsWith('contracts.yaml')) && !codingCandidates[0].files.includes(codeRel), 'machine cause must target the plan producer, not the diagnosis source file');
         const codingRevision = scopeRevisionInputFromRepairCandidates(codingCandidates, { projectRoot: root, frameworkRoot, feature, runId: 'p2-attended' });
         assert(codingRevision, '真实 plan 归属候选没有产出修订输入');
         assert(codingRevision!.input.facts.some(fact => fact.kind === 'design-decision'), JSON.stringify(codingRevision!.input.facts.map(fact => fact.id)));
@@ -963,13 +972,31 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       const frozen = loadFrozenExecutionScope(root, feature, 'p2-attended')!;
       assert.equal(frozen.completion_target, 'request', JSON.stringify(frozen));
       assert.deepStrictEqual(frozen.phase_chain, [requestPhase], JSON.stringify(frozen.phase_chain));
-      // 反向边界（与上面的成功终局同一条修订通道）：单职责修订能关本阶段的缺口，但**不得**借提案
-      // 把别的阶段塞进请求动作——否则「只做本职责」会被一条 PASS 检查悄悄扩成整条链。
+      // 原实现义务可纳入必要验证，但仍须有真实新来源；单职责定义/审查不因此扩权。
       assert.throws(() => resolveScopeRevisionProposal({
         projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }),
         proposals: [{ request: { completion_target: 'request', requested_results: frozen.requested_results, requested_phases: [requestPhase, 'testing'] }, facts: [], contract_fingerprints: [] }],
         previous: frozen, authorizedPhases: frozen.phase_chain,
-      }), /request-scope revision cannot add phases/);
+      }), requestPhase === 'coding' ? /revision requires new sourced facts/ : /request-scope revision cannot add phases/);
+      if (requestPhase === 'coding') {
+        const verificationFile = '02-Feature/FinancialCard/src/ohosTest/ets/test/OriginalRequest.test.ets';
+        fs.mkdirSync(path.dirname(path.join(root, verificationFile)), { recursive: true });
+        fs.writeFileSync(path.join(root, verificationFile), 'export const verifiesOriginalImplementation = true;\n');
+        const resolved = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'ut', track: 'full', testTargets: [verificationFile],
+          inputContext: { schema_version: '1.1', subject: { feature }, obligations: { 'unit-evidence': 'required' }, required_outputs: [] } });
+        const targets = Object.values(resolved.inputs!.values).find(value => value.state === 'resolved' && value.binding.source.kind === 'derive' && value.binding.source.provider_id === 'derive.test-targets');
+        assert(targets?.state === 'resolved');
+        const proposal = resolveScopeRevisionProposal({ projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }),
+          proposals: [{ request: { completion_target: 'request', requested_results: frozen.requested_results, requested_phases: ['coding', 'ut'] },
+            facts: [...structuredClone(frozen.obligations), { id: 'unit-evidence:original-request', kind: 'unit-evidence', applicability: 'required', reason: 'verify original implementation', basis: [targets.binding] }], contract_fingerprints: [] }],
+          previous: frozen, authorizedPhases: frozen.phase_chain, currentRunId: 'p2-attended' });
+        assert(proposal, '真实新测试目标允许原实现请求补必要UT，不变成全Feature交付');
+        assert(proposal.scope.phase_chain.includes('ut'));
+        assert.equal(proposal.scope.completion_target, 'request');
+        const verification = resolveRepairResponsibility({ projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }), executionScope: proposal.scope,
+          profile: { ...loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot), phasesDisabled: new Set(['ut']) }, target: { files: [verificationFile] } });
+        assert.equal(verification.action, 'unavailable', '原验证义务不绕过实例能力禁用');
+      }
       // 「再收一次尾」：拿**本 run 真实发布的那份提案**（生产 `designScopeRevisionChecks` 写进
       // script-report 的原件，不是这里新拼的），在修订已应用、有效链已清空之后再重放一次。
       // 必须走到既有 no-op（`feature-track.ts` 尾部指纹相等 → 返回 null），而不是被越权校验挡住：
@@ -1058,7 +1085,8 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
         assert(!sourceEvents.some(event => event.type === 'phase_invalidated'), 'a second event was written next to the revision');
         assert(sourceEvents.slice(revokeAt).some(event => event.type === 'agent_invoke_start' && event.phase === 'spec'), 'recovery reused the pre-revision spec PASS');
         assert(injected, 'the post-revocation cut was never reached');
-        assert.deepStrictEqual(revokedPhasesByRevision(loadFrozenExecutionScope(root, feature, 'p2-attended')!, sourceEvents).get(2), ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], 'the owner and affected downstream invalidation comes from the same revision');
+        assert.deepStrictEqual(revokedPhasesByRevision(loadFrozenExecutionScope(root, feature, 'p2-attended')!, sourceEvents,
+          readRepairDependencyContext(root, feature, loadWorkflowSpec(frameworkRoot, 'scoped'), effective, frameworkRoot)).get(2), ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], 'the owner and actual consumed downstream invalidation comes from the same revision');
         const specDuty = effective.obligations.find(o => o.id === 'acceptance-context:request:spec')!;
         assert(specDuty.satisfied_by?.some(ref => 'run_id' in ref), 'the re-run phase never re-published its closure evidence');
         assert.notDeepStrictEqual(revisions[1].execution_scope.obligations.find((o: { id: string }) => o.id === 'acceptance-context:request:spec').satisfied_by, specDuty.satisfied_by, 'the revocation and the re-attachment are the same record');
@@ -2002,11 +2030,17 @@ cases.push({ name: 'D1 runless call under a live feature lock reports instead of
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'repair2 runless feature cannot propose chain-external coding', run() {
+cases.push({ name: 'repair2 runless feature may propose necessary coding only when its real provider is enabled', run() {
+  for (const codingEnabled of [true, false]) {
   const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['review', 'ut'] });
   const before = process.env.MAISON_GOAL_RUN_ID;
   try {
     delete process.env.MAISON_GOAL_RUN_ID;
+    if (codingEnabled) {
+      const configFile = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile = { name: 'hmos-app' };
+      fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+    }
     assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature }).status, 'frozen');
     const scope = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
     assert.equal(scope.completion_target, 'feature');
@@ -2014,11 +2048,14 @@ cases.push({ name: 'repair2 runless feature cannot propose chain-external coding
     const candidates = buildSummaryRepairCandidates({ phase: 'ut', reportValidity: 'PASS', checks: [UT_REAL_ASSERTION_CHECK],
       reviewReportText: null, verifierReportText: '| id | status |\n|---|---|\n| end_to_end_driving | PASS |\n| business_assertion_value | PASS |\n' });
     assert(candidates.some(candidate => candidate.category === 'coding'), '必须从真实 UT 断言失败产生候选');
-    assert.equal(scopeRevisionInputFromRepairCandidates(candidates, { projectRoot: root, frameworkRoot, feature }), null);
-    assert.deepStrictEqual(featureEffectiveScope(readFeatureFrozenScope(root, feature)!), scope, '无 run 不得产生额外范围修订');
+    const proposal = scopeRevisionInputFromRepairCandidates(candidates, { projectRoot: root, frameworkRoot, feature });
+    if (codingEnabled) assert(proposal?.input.request.requested_phases.includes('coding'), '获准完成目标的必要修复不因无run而丢失责任方');
+    else assert.equal(proposal, null, 'generic禁用coding时不能派幽灵责任方');
+    assert.deepStrictEqual(featureEffectiveScope(readFeatureFrozenScope(root, feature)!), scope, '提案不直接改写冻结范围，仍由既有修订入口核验');
   } finally {
     if (before === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = before;
     fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();
+  }
   }
 } });
 
@@ -2465,8 +2502,8 @@ cases.push({ name: 'D1 modern authority is not gated by a stale feature.yaml tra
     const decl = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8'));
     decl.track = 'lite';
     fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(decl));
-    // 冻结之前：没有权威，沿用声明（lite）——旧行为一行不改
-    assert.equal(resolveFeatureTrack(loadFeatureTrackDecl(root, feature)), 'lite');
+    // 冻结之前：退役声明同样被忽略，不改变现代义务
+    assert.equal(resolveFeatureTrack(loadFeatureTrackDecl(root, feature)), 'full');
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     // 冻结之后：现代有效范围在场 → full（phase 合法集与 closure 口径同源）
     assert.equal(resolveFeatureTrack(loadFeatureTrackDecl(root, feature)), 'full');
@@ -3359,6 +3396,9 @@ cases.push({ name: 'D1 a runless repair reopens its owner and cannot use old dow
   // 合法修订不得把它们重新变回未满足义务。
   const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['plan', 'coding', 'review', 'ut'] });
   try {
+    const configFile = path.join(root, 'framework.config.json');
+    const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile = { name: 'hmos-app' };
+    fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     const scope = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
     const chain = executionCompletionPhases(scope).map(String);
@@ -3366,10 +3406,13 @@ cases.push({ name: 'D1 a runless repair reopens its owner and cannot use old dow
     // 顺序是先改文件、再落阶段证据——否则证据会因为文件在它之后被改而 stale。
     fs.writeFileSync(path.join(root, 'src/demo/value.ts'), 'export const value: number = 42;' + String.fromCharCode(10));
     seedRunlessChain(root, feature, chain);
-    const candidate = {
+    const mislocated = {
       id: 'CR-PLAN-001', category: 'plan' as const, files: ['src/demo/value.ts'],
       summary: 'coding 发现 plan 未覆盖的设计决策', item_fingerprint: 'f'.repeat(64), source_phase: 'coding',
     };
+    const wrongTarget = scopeRevisionInputFromRepairCandidates([mislocated], { projectRoot: root, frameworkRoot, feature });
+    assert(!wrongTarget?.input.facts.some(fact => fact.id === 'design-decision:CR-PLAN-001'), '产品诊断落点不能凭category=plan取得设计修订职责');
+    const candidate = { ...mislocated, files: [path.relative(root, featureFilePath(root, feature, 'contracts.yaml')).replace(/\\/g, '/')] };
     // 生产函数：无 run 身份也要产出提案（统一入口自己读 feature 冻结记录）
     const proposal = scopeRevisionInputFromRepairCandidates([candidate], { projectRoot: root, frameworkRoot, feature });
     assert(proposal, '无 run 时没有产出修订提案');

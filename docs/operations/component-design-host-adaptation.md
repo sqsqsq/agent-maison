@@ -355,7 +355,7 @@ revision N（被评审）
        （按真实影响展开必要细节；未触发的义务是空集，不用空章节凑）
      · 设计准备子流程：0 CU 入口 → 1 个候选 → validator 原子写 1 个 canonical CU
      · 默认只读 readiness 完整校验 → 返回当前人读文档链接与独立交接结论
-5. 施工：/change-unit-progression（该 CU 按 L1 lite 或 L2 full 分档施工）
+5. 施工：/change-unit-progression（该 CU 按实际义务范围施工）
 6. 闭环：/component-closure（跨单元组装边为空集合法，退化为追溯核对）
 7. Maison：默认本地文档已生成并链接；（可选）宿主装配 Story Document                      ← 接缝 2
 8.（可选）宿主：评审结论回灌，授权裁决生成新 revision              ← 接缝 3

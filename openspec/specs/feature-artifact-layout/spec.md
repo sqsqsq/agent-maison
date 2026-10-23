@@ -393,13 +393,14 @@ feature 级档位声明 MUST 落盘于 `<features_dir>/<feature>/feature.yaml`�
 
 ### Requirement: change.md is the single lite narrative artifact
 
+> **已退役（c2f7a91e）**：本条款描述的 lite 执行能力及专用实现已删除，当前发布件 MUST NOT 执行本退役条款；迁移边界见 `MIGRATION.md`。标题暂留作 `responsibility-dispatch-convergence` 的 REMOVED 源条款，归档时删除，不构成当前可用能力或实现保证。
+
 lite track 的叙述产物 MUST 为单文档 `change.md`（意图 / scope in-out 模块 / 术语快查 / 验收 checkbox / 关键契约 / 任务 checkbox）；lite MUST NOT 要求 spec.md / plan.md / contracts.yaml / per-phase receipt。升档 full 时 change.md MUST 作为 spec/plan 的种子输入而非作废。
 
 #### Scenario: lite feature 全链产物
 - **WHEN** 单模块 feature 走 lite（change → coding → exit）完成
 - **THEN** feature 目录内叙述产物仅 change.md（+ exit 报告），无 spec/plan/contracts/receipt
 
-> **Enforced by:** `harness/scripts/check-change-lite.ts`, `workflows/spec-driven.workflow.yaml`
 
 ### Requirement: The verifier is invoked through a short request whose subject addresses the reviewed material
 

@@ -1,6 +1,6 @@
 # 交互式视觉能力自测卷（personal-setup 后置 · UI 相关阶段）
 
-**适用**：非 headless 的交互式会话（IDE 里 agent 即会话）。UI 相关需求（截图/像素级/视觉保真/界面描述等）进入 spec/coding/code-review/device-testing/change-lite 前，须确认当前模型**真的能看图**——IDE 模型是下拉框随手切换的，声明式探测会被纯文本模型套壳骗过（案A mx 2.7）。goal 模式已有自动金丝雀；交互式走本自测卷。
+**适用**：非 headless 的交互式会话（IDE 里 agent 即会话）。UI 相关需求（截图/像素级/视觉保真/界面描述等）进入 spec/coding/code-review/device-testing 前，须确认当前模型**真的能看图**——IDE 模型是下拉框随手切换的，声明式探测会被纯文本模型套壳骗过（案A mx 2.7）。goal 模式已有自动金丝雀；交互式走本自测卷。
 
 **强度诚实**：本流程是 `soft_rule_only` advisory（交互式无编排器强制 spawn）——比"依赖模型诚实自评"强（确定性判卷 + 随机卷 + 写盘缓存），但**不与 goal 模式等效**。
 

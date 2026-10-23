@@ -8,7 +8,6 @@ import {
   type AssessResult,
 } from './assess';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { mapCategoryToChainPhase } from './correction-routing';
 
 export interface AssessRenderOptions {
   projectRoot: string;
@@ -63,13 +62,7 @@ export function formatRepairCandidatesMenu(
   // 候选来自 assess 观测（其唯一真源=phase summary）——不再单独读文件，三模式同事实。
   const candidates = result.observed.phases.find((p) => p.phase === options.phase)?.repair_candidates ?? [];
   if (candidates.length === 0) return null;
-  const chainPhases = result.observed.phases.map((p) => p.phase);
-  const targets = [...new Set(candidates.map((c) => c.category))]
-    .map((category) => mapCategoryToChainPhase(category, chainPhases, result.track))
-    .filter((p): p is string => p !== null && p !== options.phase);
-  const upstream = targets.sort(
-    (a, b) => chainPhases.indexOf(a) - chainPhases.indexOf(b),
-  )[0];
+  const upstream = result.recommendation.runner_action === 'backtrack_to_phase' ? result.recommendation.phase : null;
   if (!upstream) return null;
   return [
     '',

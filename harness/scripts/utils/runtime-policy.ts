@@ -18,7 +18,7 @@ import { CANONICAL_FEATURE_PHASES } from './phase-alias';
 // ---------------------------------------------------------------------------
 
 export type RequestRoute = 'direct' | 'feature';
-export type FeatureTrack = 'lite' | 'full';
+export type FeatureTrack = 'full';
 export type RuntimeMode = 'interactive' | 'headless' | 'goal';
 export type EvidenceLevel = 'required' | 'optional' | 'off' | 'not_applicable';
 
@@ -83,21 +83,20 @@ export interface EvidencePolicySnapshot {
   };
 }
 
-/** 人读档位标签：lite→minimal（架构性，非"降档"）；full 按 mode/config 求解。 */
+/** 人读证据档位按 config 求解。 */
 export function resolveProfileLabel(
   track: FeatureTrack,
   ctx: RuntimeContext,
   config?: EvidenceProfileConfig | null,
 ): 'strict' | 'balanced' | 'minimal' {
-  if (track === 'lite') return 'minimal';
   // plan 7b3e9a15 D1：显式 balanced 在任意 mode 下都成立（缺省仍 strict）。
   return config?.evidence_profile === 'balanced' ? 'balanced' : 'strict';
 }
 
-export type ClosureSource = 'summary_closed' | 'closed_by_exit_report' | 'open';
+export type ClosureSource = 'summary_closed' | 'open';
 
 /**
- * closure 来源：full track 只认磁盘 summary.closure_status；lite track 由 exit 脚本 verdict 闭环。
+ * closure 来源：闭环只认磁盘 summary.closure_status。
  * 供 harness-runner writeRunSummary 与 goal-runner 的 closed 判定复用，避免各自各判。
  */
 export function resolvePhaseClosureSource(
@@ -105,9 +104,6 @@ export function resolvePhaseClosureSource(
   scriptVerdict: string | undefined,
   summaryClosureStatus: string | undefined,
 ): ClosureSource {
-  if (track === 'lite') {
-    return scriptVerdict === 'PASS' ? 'closed_by_exit_report' : 'open';
-  }
   return summaryClosureStatus === 'closed' ? 'summary_closed' : 'open';
 }
 
@@ -171,9 +167,9 @@ export function workflowOrderedPhases(spec: WorkflowSpec): string[] {
   return listWorkflowPhases(spec);
 }
 
-export const KNOWN_FEATURE_TRACKS: readonly FeatureTrack[] = ['full', 'lite'];
+export const KNOWN_FEATURE_TRACKS: readonly FeatureTrack[] = ['full'];
 
-/** phase 是否属于某 track（global 恒属；feature 缺省 ["full"]，lite 须显式——C1）。 */
+/** phase 是否属于某 track（global 恒属；feature 缺省 ["full"]）。 */
 export function artifactInTrack(a: WorkflowArtifact, track: FeatureTrack): boolean {
   if (a.scope === 'global') return true;
   return (a.tracks ?? ['full']).includes(track);
@@ -255,7 +251,7 @@ export interface PhaseChain {
 
 /**
  * 解析某 track 的合法 phase 集与顺序（按成员资格过滤 + effectiveRequires 拓扑）。
- * schema 1.0（无 tracks 字段）= full 单轨：lite/full 输出一致。
+ * schema 1.0（无 tracks 字段）= full 单轨：保留非 lite 定义兼容。
  * 只做一致性解析，不做隐式推导（auto_chain_by_track 缺失/不互洽由 loader FAIL——C1 决策 19）。
  */
 export function resolvePhaseChain(spec: WorkflowSpec, track: FeatureTrack = 'full'): PhaseChain {
@@ -263,7 +259,7 @@ export function resolvePhaseChain(spec: WorkflowSpec, track: FeatureTrack = 'ful
   const featureIds = new Set(
     spec.artifacts.filter((a) => a.scope === 'feature').map((a) => a.id),
   );
-  const autoChain = track === 'full' ? spec.auto_chain : spec.auto_chain_by_track?.[track];
+  const autoChain = spec.auto_chain;
   return {
     ordered,
     featureOrdered: ordered.filter((id) => featureIds.has(id)),
@@ -313,10 +309,16 @@ export interface FeatureTrackDecl {
   track?: string;
 }
 
-/** feature.yaml 缺失或未声明 → full（默认零变化不变式）。 */
+/** 旧 change/exit 执行协议已退役；仅退出提示，不映射为 full。 */
+export function assertSupportedPhaseChain(phases: readonly string[]): void {
+  if (phases.some(phase => phase === 'change' || phase === 'exit')) {
+    throw new Error('[lite-retired] change/exit 旧运行已退役，不能续跑或映射为 full。保留原 run、预算与报告；如需继续，请使用匹配的旧发布件完成该运行，或按当前需求经既有范围/接续入口建立新运行。');
+  }
+}
+
+/** track 声明已退出调度；现代请求由义务范围决定。 */
 export function resolveFeatureTrack(decl?: FeatureTrackDecl | null, frozenChain?: readonly string[]): FeatureTrack {
-  if (frozenChain?.length) return frozenChain.some(phase => phase === 'change' || phase === 'exit') ? 'lite' : 'full';
-  if (decl && decl.track === 'lite') return 'lite';
+  if (frozenChain) assertSupportedPhaseChain(frozenChain);
   return 'full';
 }
 
@@ -359,7 +361,7 @@ export function resolveEnforcementTier(
 }
 
 export interface EvidenceProfileConfig {
-  /** framework.config.json 顶层 evidence_profile（C2 引入；缺省 strict）。`minimal` 非法值——lite 的求解结果不可全局声明。 */
+  /** framework.config.json 顶层 evidence_profile（C2 引入；缺省 strict）。`minimal` 非法值——历史只读标签，不可全局声明。 */
   evidence_profile?: string;
   /** balanced 档下 verifier 仍必需的 phase 集合；config 可覆写默认 {spec,coding}（design.md 矩阵表保留集）。 */
   balanced_verifier_retained_phases?: readonly string[];
@@ -373,26 +375,12 @@ const STRICT_EVIDENCE: EvidencePolicy = {
   exploration: 'required',
 };
 
-/**
- * lite track 的证据矩阵（C2 design.md 表第三行 resolved=minimal）：receipt 机制
- * 架构性不适用——C1 起 lite 闭环走 change.md checkbox + exit 报告，不经 check-receipt.ts；
- * 与 mode/evidence_profile 无关，不是"降档决定"，是"这条轴对 lite 不存在"。故 lite 分支
- * 在 resolveEvidencePolicy 中优先于 mode 判定（headless/goal 的 lite feature 依旧
- * not_applicable，物理拦截/红线保证改由 exit 的脚本门禁承担，非本矩阵）。
- */
-const LITE_EVIDENCE: EvidencePolicy = {
-  verifier: 'off',
-  receipt: 'not_applicable',
-  trace: 'optional',
-  exploration: 'not_applicable',
-};
 
 /** balanced 档下 verifier 仍必需的默认 phase 集合（config.balanced_verifier_retained_phases 可覆写）。 */
 export const DEFAULT_BALANCED_VERIFIER_RETAINED_PHASES: readonly string[] = ['spec', 'coding'];
 
 /**
  * 证据档位求解（C2 verification-matrix；design.md 矩阵表；plan 7b3e9a15 D1）：
- *   - lite（任意 mode）→ LITE_EVIDENCE（架构性 not_applicable，见上）；
  *   - full × config.evidence_profile !== 'balanced' → STRICT（缺省零变化，**含三个 mode**）；
  *   - full × balanced（**任意 mode**：interactive / headless / goal 逐一相同）→ verifier
  *     仅保留集 phase required 其余 off，receipt 已退出闭环输入，trace **无条件**降 optional
@@ -408,9 +396,6 @@ export function resolveEvidencePolicy(
   ctx: RuntimeContext,
   config?: EvidenceProfileConfig | null,
 ): EvidencePolicy {
-  if (track === 'lite') {
-    return { ...LITE_EVIDENCE };
-  }
   if (config?.evidence_profile !== 'balanced') {
     return { ...STRICT_EVIDENCE };
   }
@@ -451,7 +436,7 @@ export function parsePolicySnapshot(raw: unknown): PolicySnapshot | null {
   if (!raw || typeof raw !== 'object') return null;
   const snap = raw as Partial<PolicySnapshot>;
   if (snap.policy_schema_version !== POLICY_SCHEMA_VERSION) return null;
-  if (snap.track !== 'lite' && snap.track !== 'full') return null;
+  if (snap.track !== 'full') return null;
   const ev = snap.evidence as Partial<EvidencePolicy> | undefined;
   const levels: EvidenceLevel[] = ['required', 'optional', 'off', 'not_applicable'];
   if (

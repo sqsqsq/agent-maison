@@ -1,5 +1,9 @@
 # Skill 契约与能力解析
 
+责任解析由 `repair-responsibility.ts::resolveRepairResponsibility` 统一读取原始 produces/verifies、profile 测试根、绑定与义务；剩余队列只决定执行顺序，不决定产物归属。问题引入者、合法修改者、验证签发者分别表达，未知角色保持未知。verification 的真实负责方由目标产物和当前义务决定，不固定为 UT。
+
+`source/implementation` 允许 coding 修补本次实现直接引发的既有测试兼容问题；`coding_existing_test_preserved` 比较真实前置原文，保留全部旧用例定义和断言，不增加测试/断言/跳过。新增或改变测试仍由 `ut_source_and_dag` 负责；测试 PASS 沿真实执行和原验证接口签发。无法取得 UT 更新后的真实前版时，不可用更旧 Git 版本假作原件，交 UT 核验。现有 coding 报告披露修改及原因，不新增披露门禁。
+
 Skill contract 是 feature phase 的可执行输入声明。它定义产生的 artifact、验证入口，以及在 checker 开始前能够确定的能力输入；它不替代 phase rules、quality axes、closure 或 release 的既有裁决。
 
 每个 feature Skill 在 `skills/feature/<skill>/contract.yaml` 中维护契约；`harness/scripts/utils/skill-contract.ts` 负责加载，`check-contract-consistency.ts` 负责静态一致性校验。新增或调整 phase 时，先调整 contract，再调整 checker 与 Skill 文档。
@@ -86,7 +90,6 @@ P1 调用上下文、阶段指令、assess、完成验证和 CU expected executi
 | review | diff/源码、对照契约、plan、验收、ui-spec | SpecLoader、check-review、verify-review | 真实审查目标；可选设计增强缺失诚实降级 | 已有代码可独立审查；review-report 是本阶段输出 | 输入 binding 与审查证据；P1/P4 |
 | ut | criteria/boundaries/ut_layer、use_cases/branches、目标符号、contracts | SpecLoader、check-ut、verify-ut | 有效验收或专项明确目标；不能从代码猜预期 | 必需单元证据；mock/确认等真实控制保留 | 目标与覆盖证据；P1/P5 |
 | testing | 用例意图、分层、contracts、review-report、设备/视觉目标 | SpecLoader、check-testing、verify-testing | 有效验收或 adhoc cases；必要输入缺失 blocked | 有设备义务才执行；构建/安装等操作先后保持 | 来源与实际设备输出；P1/P5 |
-| change/exit | change 原文与实现 | 旧 capability/SpecLoader/check-change/check-exit | 旧出生协议 artifact/derive | 仅旧运行兼容 | 旧 evidence；P7 |
 | 全局知识 | catalog/glossary/Graph/conventions/extension | 各 project checker、profile 与 collectContextFiles | 既有各自真源；optional 缺失不强造 bootstrap | 只完成请求的知识责任 | 实际引用；P6 |
 | 首 Skill facts | Code Facts/source_code_paths、ready/risk | context-facts、context-exploration、exploration-strategy | 当前调用 subject 与目标、真实调查；缺/坏 blocked | 写主产物前必须建立或承接 | facts 与来源；P1 内核，P2/P6 派发 |
 | 后继 facts/恢复 | 基线、phase_delta、来源新鲜度 | context-facts、goal-checkpoint | 显式 baseline；旧字段缺失不当零义务 | 保留原建立身份，只补当前增量 | 原基线 + 当前源；P1/P2 |
@@ -104,21 +107,16 @@ P1 调用上下文、阶段指令、assess、完成验证和 CU expected executi
 | ut | plan | plan@1 | capability_ut_design_context / prune |
 | ut | contracts | contracts@1 | capability_ut_design_context / prune |
 | ut | test_targets | derive.test-targets | capability_ut_design_context / prune |
-| change | requirement | derive.requirement | capability_change_context / fail |
-| change | codebase | derive.codebase | capability_change_context / fail |
-| exit | change | change@1 | capability_exit_context / fail |
-| exit | implementation | derive.codebase | capability_exit_context / fail |
 | review | code | derive.codebase | capability_review_code_context / fail |
 | review | spec | spec@1 | capability_review_design_context / prune |
 | review | plan | plan@1 → derive.test-targets | capability_review_design_context / prune |
 | review | contracts | contracts@1 | capability_review_design_context / prune |
 | review | acceptance | acceptance@1 | capability_review_acceptance_context / prune |
 | review | ui_spec | ui-spec@1 | capability_review_visual_context / prune |
-| coding | codebase | derive.codebase | capability_coding_full_context / fail；capability_coding_lite_context / fail |
+| coding | codebase | derive.codebase | capability_coding_full_context / fail |
 | coding | plan | plan@1 | capability_coding_full_context / fail |
 | coding | contracts | contracts@1 | capability_coding_full_context / fail |
 | coding | acceptance | acceptance@1 | capability_coding_full_context / fail |
-| coding | change | change@1 | capability_coding_lite_context / fail |
 | coding | spec | spec@1 | capability_coding_spec_context / prune |
 | coding | use_cases | use-cases@1 | capability_coding_spec_context / prune |
 | coding | ui_spec | ui-spec@1 | capability_coding_visual_context / prune |

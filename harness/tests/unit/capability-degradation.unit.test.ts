@@ -44,7 +44,7 @@ interface TestCase { name: string; run: () => void }
 
 const fallbackAndInvalidCases: TestCase[] = [
   {
-    name: 'upgraded legacy lite/full birth reaches real coding resolver while new calls still require context',
+    name: 'upgraded legacy full birth reaches real coding resolver while new calls still require context',
     run: () => project(root => {
       write(root, 'doc/features/demo/change.md', '# Change\n- [ ] implement');
       write(root, 'doc/features/demo/plan.md', '# Plan');
@@ -52,8 +52,8 @@ const fallbackAndInvalidCases: TestCase[] = [
       write(root, 'doc/features/demo/acceptance.yaml', 'criteria: []');
       execFileSync('git', ['init', '-q'], { cwd: root });
       execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'baseline'], { cwd: root });
-      for (const track of ['lite', 'full'] as const) {
-        const chain = track === 'lite' ? ['change', 'coding', 'exit'] : ['coding', 'review'];
+      for (const track of ['full'] as const) {
+        const chain = ['coding', 'review'];
         const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: `legacy-${track}`, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root });
         createGoalRun({ projectRoot: root, manifest, chain });
         write(root, 'framework.config.json', JSON.stringify({ active_workflow: 'obligation-driven' }));

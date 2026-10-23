@@ -25,7 +25,7 @@ import {
   outerGoalHarnessWillRerun,
   writeRunSummaryBase,
 } from '../../harness-runner';
-import { featureDir } from '../../config';
+import { featureDir, clearFrameworkConfigCache } from '../../config';
 import {
   casAcquireRunOwner,
   ensureRunControl,
@@ -42,6 +42,7 @@ import {
 import { buildSummaryRepairCandidates, loadRepairDeclineState, itemFingerprintOf, isRebuttalAppearance,
   declineAttemptExemption, declineDisputeLines } from '../../scripts/utils/repair-candidates';
 import { assembleGoalBrief } from '../../scripts/utils/goal-brief';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { resolveResumedBudget, loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
@@ -889,6 +890,21 @@ const REVIEW_VERIFIER_REPORT = [
   '',
 ].join('\n');
 
+/** Only the diagnosis cases needing a real coding owner materialize this source domain. */
+function prepareReviewCodingDomain(root: string): void {
+  const configFile = path.join(root, 'framework.config.json');
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  config.project_profile = { name: 'hmos-app' };
+  config.architecture.outer_layers = [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'forbid' }];
+  fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
+  const files = ['OpenCardFlow', ...Array.from({ length: 11 }, (_, index) => `File${index}`)]
+    .map(name => `02-Feature/F/src/main/ets/${name}.ets`);
+  for (const file of files) writeFile(path.join(root, file), 'function upsertCard() { return { duplicated: true }; }\nexport function openCard() { upsertCard(); }\n');
+  writeFile(path.join(featureDir(root, 'demo'), 'plan.md'), '# Scope\n```yaml\nin_scope_modules: [F]\nout_of_scope_modules: []\nrationale: 已批准的开卡实现范围\n```\n');
+  writeFile(path.join(featureDir(root, 'demo'), 'contracts.yaml'), JSON.stringify({ feature: 'demo', source: 'approved design', version: '1',
+    modules: [{ name: 'F', layer: '02-Feature', package_path: '02-Feature/F' }], files }));
+}
+
 function caseG_reviewNegativeVerdictProducesDiagnosisRequest(): void {
   const plan = {
     mode: 'enabled' as const,
@@ -898,6 +914,7 @@ function caseG_reviewNegativeVerdictProducesDiagnosisRequest(): void {
   };
   const { root } = makeVerifierProject();
   try {
+    prepareReviewCodingDomain(root);
     const dir = reportsDirOf(root, 'demo', 'review');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'ai-prompt.md'), '# review prompt v1\n', 'utf-8');
@@ -1405,6 +1422,7 @@ function caseT1_legacyDeclineThroughDiskAndSummary(): void {
   const { root } = makeVerifierProject();
   const previousRun = process.env.MAISON_GOAL_RUN_ID;
   try {
+    prepareReviewCodingDomain(root);
     const runId = 'legacy-decline-t1';
     process.env.MAISON_GOAL_RUN_ID = runId;
     const runDir = path.join(featureDir(root, 'demo'), 'goal-runs', runId);
@@ -1419,8 +1437,9 @@ function caseT1_legacyDeclineThroughDiskAndSummary(): void {
       to_phase: 'coding', invalidated_phases: ['coding', 'review', 'ut', 'testing'], candidates: [candidate, canonical] };
     const eventsPath = path.join(runDir, 'events.jsonl');
     // 真实旧格式出生、回退事件和责任阶段账本；不是手塞 declined Set。
-    writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({ feature: 'demo', run_id: runId,
-      requirement: '本次不做 NFC 卡', requirement_source_files: [] }));
+    writeFile(path.join(runDir, 'manifest.json'), JSON.stringify(buildGoalManifestFromInput({ feature: 'demo', run_id: runId,
+      requirement: '本次不做 NFC 卡', requirement_source_files: [], start_phase: 'coding', end_phase: 'testing',
+      unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: root })));
     writeFile(eventsPath, [
       { type: 'run_start', ts: '2026-01-01T00:00:00.000Z', planned_phases: ['coding', 'review', 'ut', 'testing'] }, bt,
     ].map(event => JSON.stringify(event)).join('\n') + '\n');
@@ -1515,6 +1534,7 @@ function caseT1_legacyDeclineThroughDiskAndSummary(): void {
 function caseT1_reviewRowDiagnosisHasReachableExit(): void {
   const { root } = makeVerifierProject();
   try {
+    prepareReviewCodingDomain(root);
     const dir = reportsDirOf(root, 'demo', 'review');
     writeFile(path.join(dir, 'ai-prompt.md'), '# row diagnosis prompt\n');
     writeFile(path.join(featureDir(root, 'demo'), 'review', 'review-report.md'), REVIEW_REPORT_NEGATIVE);

@@ -55,7 +55,7 @@ export function buildClosureWallGuidance(opts: ClosureWallGuidanceOpts): string[
       `     跑 ${verifyCmd} 看最终提交环节的报错，不要去补签名。`,
     ],
     not_applicable: [
-      '  1. 本 track（lite）**不产生回执**却出现 advance_blocked——runner 状态机不变量违例，',
+      '  1. 本次 receipt 探针标记不适用却出现 advance_blocked——runner 状态机不变量违例，',
       '     属框架缺陷，应回灌 agent-maison 源仓核查，不要试图补签或改产物。',
     ],
   };

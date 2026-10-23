@@ -36,9 +36,7 @@ const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 // ---------------------------------------------------------------------------
 const BASELINE_ALLOWLIST: Record<string, number> = {
   'harness/scripts/check-catalog.ts': 2,
-  'harness/scripts/check-change.ts': 1,
   'harness/scripts/check-docs.ts': 1,
-  'harness/scripts/check-exit.ts': 6,
   'harness/scripts/check-extensions.ts': 1,
   'harness/scripts/check-init.ts': 5,
   'harness/scripts/check-module-graph.ts': 2,

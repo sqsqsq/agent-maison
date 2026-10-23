@@ -2,7 +2,7 @@
 
 **P3 设计调用优先规则**：收到显式 1.1 调用时，先消费已绑定验收，只补本次未明确的行为、预期、边界与分层；叙述格式仅检查 required_outputs 中指定的 spec.md，无视觉义务不补 UI 占位件。产品共同决策缺口回 component-design，外部契约回原 owner；只请求设计时止步，不追加 plan/coding。完整规则见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
 
-> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `spec.terminology` / `spec.feature_path` / `spec.freeze` / `phase.next_step`。
 
@@ -51,7 +51,7 @@
 - 事项**符合**该判据却**没有**经过部件内设计阶段（当前 Feature 不由某个 canonical `change_unit_ref` 派生）→ 说明"这应先经 [`/component-design`](../../project/component-design/SKILL.md) 建立部件演进蓝图"，给出回退入口，由用户裁决是回退还是按当前理解继续；命中即停的成本只是一份 spec 草稿；
 - **上游显式**把它标为正式需求时，该分类具有权威性，不得用本地判断降级；
 - 信息不足以判断时**问人**，不猜测；
-- 需要用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design`、`/change-lite` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
+- 需要用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
 - 这是**指引不是门禁**：不加机器 BLOCKER、不改 `track_scoring`、不新增档位。
 
 ## 流程骨架

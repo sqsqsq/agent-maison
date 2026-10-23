@@ -608,14 +608,14 @@ export function runAll(): UnitCaseResult[] {
       // 反例先行：空映射照抄必然失败（证明"空数组示例"是错的）
       const emptyContracts = { feature: featureId, state_management: stateManagement, change_unit: { ...sidecar, predicate_mappings: [], provide_mappings: [], design_ref_mappings: [] } };
       const emptyResult = validateChangeUnitFeatureProjection(
-        projectRoot, featureId, emptyContracts as unknown as ContractsSpec, undefined, false, 'change',
+        projectRoot, featureId, emptyContracts as unknown as ContractsSpec, undefined, false, 'plan',
       );
-      assert(emptyResult.issues.length > 0, '空映射 sidecar 未被抓住 —— change-lite 示例若照抄空数组会假绿');
+      assert(emptyResult.issues.length > 0, '空映射 sidecar 未被抓住 —— 示例若照抄空数组会假绿');
 
-      // 正例：非空 1:1 映射通过（lite 轨的 change 阶段即校验）
+      // 正例：非空 1:1 映射通过（plan 阶段即校验）
       const contracts = { feature: featureId, state_management: stateManagement, change_unit: sidecar };
       const projected = validateChangeUnitFeatureProjection(
-        projectRoot, featureId, contracts as unknown as ContractsSpec, undefined, true, 'change',
+        projectRoot, featureId, contracts as unknown as ContractsSpec, undefined, true, 'plan',
       );
       assert(projected.applicable, 'CU sidecar 未被判为适用');
       assert(projected.issues.length === 0, `薄链 CU sidecar 被误拒：${projected.issues.map(i => `${i.id}:${i.message}`).join(' | ')}`);

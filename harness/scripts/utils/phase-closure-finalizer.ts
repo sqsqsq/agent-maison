@@ -624,7 +624,7 @@ function recomputeClosureRepairCandidates(
     // 而 `as never` 恰好把这个结构错误从类型检查里藏了起来。用真实结构子类型接住。
     const candidateChecks: RepairCandidateCheckInput[] = checks.map((c) => {
       const repairOwner = c.repair_owner === 'coding' || c.repair_owner === 'spec' ||
-        c.repair_owner === 'plan' || c.repair_owner === 'testing' ||
+        c.repair_owner === 'plan' || c.repair_owner === 'ut' || c.repair_owner === 'testing' ||
         c.repair_owner === 'capability' || c.repair_owner === 'external'
         ? c.repair_owner
         : undefined;
@@ -641,6 +641,8 @@ function recomputeClosureRepairCandidates(
       };
     });
     const candidates = buildSummaryRepairCandidates({
+      responsibility: { projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: opts.feature,
+        runId: opts.goalRunId?.trim() || base.run_id?.trim(), currentPhase: String(opts.phase) },
       reviewFidelity: loadFidelityIntentSsot(opts.projectRoot, opts.feature),
       phase: String(opts.phase),
       checks: candidateChecks,

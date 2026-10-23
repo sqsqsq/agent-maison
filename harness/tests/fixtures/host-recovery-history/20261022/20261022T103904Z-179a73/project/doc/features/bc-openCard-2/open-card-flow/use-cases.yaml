@@ -1,0 +1,148 @@
+schema_version: "2.0"
+use_cases:
+  - id: UC-OPEN-CARD
+    description: 从银行入口完成选类型、选卡、验证码、保存和结果收口
+    coordinator: BankOpeningCoordinator
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets
+    ui_bindings:
+      - ui: AddBankCardPage|AllBanksPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 点击银行
+            calls: coordinator.start
+      - ui: CardTypeSheet
+        role: dialog
+        subscribes:
+          - phase=TYPE_SELECTED
+        user_actions:
+          - trigger: 选择卡类型并继续
+            calls: coordinator.selectCardType
+      - ui: BankCardSelectionPage
+        role: progress
+        subscribes:
+          - phase=CARD_SELECTED
+        user_actions:
+          - trigger: 选择具体卡并下一步
+            calls: coordinator.selectCard
+      - ui: OtpVerificationSheet
+        role: dialog
+        subscribes:
+          - phase=OTP_READY
+        user_actions:
+          - trigger: 重新发送
+            calls: coordinator.resendOtp
+          - trigger: 提交六位验证码
+            calls: coordinator.confirmOtp
+      - ui: BankCardResultPage
+        role: result
+        subscribes:
+          - phase=RESULT
+        user_actions:
+          - trigger: 点击完成
+            calls: coordinator.finish
+    data_boundaries:
+      - name: bankRepo
+        type: BankRepository
+        kind: storage
+        methods:
+          - name: getMockCards
+            params:
+              - string
+              - BankCardType
+            returns: MockBankCard[]
+            async: true
+      - name: cardRepo
+        type: BankCardRepository
+        kind: storage
+        methods:
+          - name: save
+            params:
+              - BankCardRecord
+            returns: SaveBankCardResult
+            async: true
+    state_model:
+      phases:
+        - Idle
+        - TYPE_SELECTED
+        - CARD_SELECTED
+        - OTP_READY
+        - SAVING
+        - RESULT
+        - FINISHED
+      fields:
+        - name: selectedCardNumber
+          type: string | null
+        - name: saveResult
+          type: SaveBankCardResult | null
+    branches:
+      - id: happy_path
+        scenario: 写入成功并回首页
+        user_sequence:
+          - start
+          - selectCardType
+          - selectCard
+          - confirmOtp
+          - finish
+        local_stubs:
+          bankRepo.getMockCards: ok_nonempty
+          cardRepo.save: ok
+        expected_phase_seq:
+          - Idle
+          - TYPE_SELECTED
+          - CARD_SELECTED
+          - OTP_READY
+          - SAVING
+          - RESULT
+          - FINISHED
+        expected_port_calls:
+          - BankRepository.getMockCards
+          - BankCardRepository.save
+          - BankOpeningNavigator.finish
+        expected_state:
+          saveResult.success: true
+        not_called: []
+        local_expect:
+          - bankRepo.getMockCards
+          - cardRepo.save
+        linked_acceptance:
+          - AC-1
+          - AC-2
+          - AC-3
+          - AC-4
+          - AC-5
+      - id: storage_failure
+        scenario: 写入失败并回添加银行卡页
+        user_sequence:
+          - start
+          - selectCardType
+          - selectCard
+          - confirmOtp
+          - finish
+        local_stubs:
+          bankRepo.getMockCards: ok_nonempty
+          cardRepo.save: throw:StorageError
+        expected_phase_seq:
+          - Idle
+          - TYPE_SELECTED
+          - CARD_SELECTED
+          - OTP_READY
+          - SAVING
+          - RESULT
+          - FINISHED
+        expected_port_calls:
+          - BankRepository.getMockCards
+          - BankCardRepository.save
+          - BankOpeningNavigator.finish
+        expected_state:
+          saveResult.success: false
+        not_called: []
+        local_expect:
+          - bankRepo.getMockCards
+          - cardRepo.save
+        linked_acceptance:
+          - AC-4
+          - AC-5
+          - BD-1
+feature: cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw
+source: derive.blueprint-contracts:sha256:e6dde3fc4cf27cc97222d74c7e0666b8937902ff08ca0eecdf31ac8fdb495fbc:sha256:2267a825e892b3187df369459005e1d85ebd375aa1c7053cc43cf7924dcd19b7

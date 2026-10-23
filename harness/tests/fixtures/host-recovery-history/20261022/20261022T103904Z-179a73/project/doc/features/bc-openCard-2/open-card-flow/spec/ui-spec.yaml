@@ -1,0 +1,1230 @@
+{
+  "schema_version": "1.0",
+  "verified": "unverified",
+  "verified_method": "none",
+  "screens": [
+    {
+      "id": "card_type_sheet",
+      "priority": "P0",
+      "ref_id": "card_type_sheet",
+      "root": {
+        "id": "type_root",
+        "type": "sheet_scaffold",
+        "order": 0,
+        "bbox": [
+          0,
+          0.39,
+          1,
+          0.61
+        ],
+        "semantic_role": "neutral",
+        "color_ref": "color_text_primary",
+        "layout": "column",
+        "children": [
+          {
+            "id": "type_background",
+            "type": "navigation_frame",
+            "order": 0,
+            "bbox": [
+              0,
+              0,
+              1,
+              0.39
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "layout": "column",
+            "children": [
+              {
+                "id": "type_bg_title",
+                "type": "nav_bar",
+                "order": 0,
+                "text": "添加银行卡",
+                "bbox": [
+                  0.068,
+                  0.08,
+                  0.31,
+                  0.03
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary"
+              },
+              {
+                "id": "type_bg_subtitle",
+                "type": "content_display",
+                "order": 1,
+                "text": "免输卡号添卡",
+                "bbox": [
+                  0.065,
+                  0.175,
+                  0.22,
+                  0.025
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary"
+              },
+              {
+                "id": "type_bg_count",
+                "type": "content_display",
+                "order": 2,
+                "text": "支持 100 家银行",
+                "bbox": [
+                  0.7,
+                  0.175,
+                  0.24,
+                  0.025
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "data_binding": "bankCount",
+                "fidelity_note": "截图100；既有mock为20，按真实银行数据派生，不更改旧列表数量"
+              },
+              {
+                "id": "type_bg_search",
+                "type": "input",
+                "order": 3,
+                "text": "搜索银行",
+                "bbox": [
+                  0.12,
+                  0.24,
+                  0.2,
+                  0.025
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary"
+              },
+              {
+                "id": "type_bg_search_action",
+                "type": "action_button",
+                "order": 4,
+                "text": "搜索",
+                "bbox": [
+                  0.86,
+                  0.24,
+                  0.08,
+                  0.025
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "variant": "text"
+              },
+              {
+                "id": "type_bg_bank_logo",
+                "type": "content_display",
+                "order": 5,
+                "bbox": [
+                  0.07,
+                  0.31,
+                  0.08,
+                  0.05
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "asset_ref": "bank_logo_cmb",
+                "icon": {
+                  "kind": "brand_logo",
+                  "ref": "bank_logo_cmb"
+                }
+              },
+              {
+                "id": "type_bg_bank_name",
+                "type": "content_display",
+                "order": 6,
+                "text": "招商银行",
+                "bbox": [
+                  0.19,
+                  0.328,
+                  0.18,
+                  0.025
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary"
+              }
+            ]
+          },
+          {
+            "id": "type_title",
+            "type": "content_display",
+            "order": 1,
+            "text": "选择卡类型",
+            "bbox": [
+              0.038,
+              0.425,
+              0.25,
+              0.03
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary"
+          },
+          {
+            "id": "type_close",
+            "type": "action_button",
+            "order": 2,
+            "bbox": [
+              0.89,
+              0.42,
+              0.06,
+              0.04
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "icon": {
+              "kind": "system_symbol",
+              "ref": "sys.symbol.xmark"
+            },
+            "fidelity_note": "标准语义符号近似，外观未验真",
+            "variant": "tonal"
+          },
+          {
+            "id": "type_bank_surface",
+            "type": "list_card_container",
+            "order": 3,
+            "bbox": [
+              0.036,
+              0.485,
+              0.928,
+              0.23
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "layout": "column",
+            "children": [
+              {
+                "id": "type_bank_header",
+                "type": "list_row",
+                "order": 0,
+                "bbox": [
+                  0.065,
+                  0.51,
+                  0.86,
+                  0.055
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "type_bank_logo",
+                    "type": "content_display",
+                    "order": 0,
+                    "bbox": [
+                      0.065,
+                      0.512,
+                      0.06,
+                      0.04
+                    ],
+                    "semantic_role": "neutral",
+                    "color_ref": "color_text_primary",
+                    "asset_ref": "bank_logo_cmb",
+                    "icon": {
+                      "kind": "brand_logo",
+                      "ref": "bank_logo_cmb"
+                    }
+                  },
+                  {
+                    "id": "type_bank_name",
+                    "type": "content_display",
+                    "order": 1,
+                    "text": "招商银行",
+                    "bbox": [
+                      0.156,
+                      0.52,
+                      0.16,
+                      0.025
+                    ],
+                    "semantic_role": "neutral",
+                    "color_ref": "color_text_primary",
+                    "data_binding": "selectedBank.name"
+                  }
+                ]
+              },
+              {
+                "id": "type_savings",
+                "type": "list_row",
+                "order": 1,
+                "text": "储蓄卡",
+                "bbox": [
+                  0.065,
+                  0.59,
+                  0.86,
+                  0.045
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "layout_group": "type_options",
+                "data_binding": "supportedTypes.DEBIT"
+              },
+              {
+                "id": "type_credit",
+                "type": "list_row",
+                "order": 2,
+                "text": "信用卡",
+                "bbox": [
+                  0.065,
+                  0.67,
+                  0.86,
+                  0.045
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "layout_group": "type_options",
+                "data_binding": "supportedTypes.CREDIT"
+              }
+            ],
+            "bg_color": "color_card_bg"
+          },
+          {
+            "id": "type_disclosure",
+            "type": "content_display",
+            "order": 4,
+            "text": "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。",
+            "bbox": [
+              0.038,
+              0.741,
+              0.925,
+              0.042
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "data_binding": "selectedBank.name"
+          },
+          {
+            "id": "type_agreement",
+            "type": "content_display",
+            "order": 5,
+            "text": "我已阅读快捷支付服务协议、银联无卡自助消费授权协议",
+            "bbox": [
+              0.038,
+              0.821,
+              0.86,
+              0.025
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary"
+          },
+          {
+            "id": "type_continue",
+            "type": "primary_button",
+            "order": 6,
+            "text": "同意并继续",
+            "bbox": [
+              0.24,
+              0.881,
+              0.52,
+              0.055
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "brand_primary",
+            "variant": "filled",
+            "align": "center",
+            "width_ratio": 0.52
+          },
+          {
+            "id": "type_system_status",
+            "type": "content_display",
+            "order": 7,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          },
+          {
+            "id": "type_system_bottom",
+            "type": "content_display",
+            "order": 8,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          }
+        ],
+        "bg_color": "color_page_bg"
+      },
+      "forbidden_overlap": [
+        [
+          "type_close",
+          "type_bank_surface"
+        ]
+      ],
+      "must_have_elements": [
+        "type_background",
+        "type_bg_title",
+        "type_bg_subtitle",
+        "type_bg_count",
+        "type_bg_search",
+        "type_bg_search_action",
+        "type_bg_bank_logo",
+        "type_bg_bank_name",
+        "type_title",
+        "type_close",
+        "type_bank_surface",
+        "type_bank_header",
+        "type_bank_logo",
+        "type_bank_name",
+        "type_savings",
+        "type_credit",
+        "type_disclosure",
+        "type_agreement",
+        "type_continue",
+        "type_system_status",
+        "type_system_bottom"
+      ]
+    },
+    {
+      "id": "bank_card_selection",
+      "priority": "P0",
+      "ref_id": "bank_card_selection",
+      "root": {
+        "id": "selection_root",
+        "type": "navigation_frame",
+        "order": 0,
+        "bbox": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "semantic_role": "neutral",
+        "color_ref": "color_text_primary",
+        "layout": "column",
+        "children": [
+          {
+            "id": "selection_nav",
+            "type": "nav_bar",
+            "order": 0,
+            "bbox": [
+              0.03,
+              0.06,
+              0.94,
+              0.07
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "layout": "row",
+            "children": [
+              {
+                "id": "selection_back",
+                "type": "action_button",
+                "order": 0,
+                "bbox": [
+                  0.04,
+                  0.08,
+                  0.06,
+                  0.04
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "icon": {
+                  "kind": "system_symbol",
+                  "ref": "sys.symbol.chevron_left"
+                },
+                "fidelity_note": "标准语义符号近似，外观未验真",
+                "variant": "tonal"
+              },
+              {
+                "id": "selection_title",
+                "type": "content_display",
+                "order": 1,
+                "text": "招商银行",
+                "bbox": [
+                  0.14,
+                  0.08,
+                  0.3,
+                  0.04
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "data_binding": "selectedBank.name"
+              }
+            ]
+          },
+          {
+            "id": "selection_prompt",
+            "type": "content_display",
+            "order": 1,
+            "text": "请选择您要绑定的银行卡",
+            "bbox": [
+              0.065,
+              0.185,
+              0.65,
+              0.035
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary"
+          },
+          {
+            "id": "selection_cards",
+            "type": "list_card_container",
+            "order": 2,
+            "bbox": [
+              0.04,
+              0.235,
+              0.92,
+              0.075
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "layout": "column",
+            "children": [
+              {
+                "id": "selection_card_1",
+                "type": "list_row",
+                "order": 0,
+                "bbox": [
+                  0.065,
+                  0.25,
+                  0.87,
+                  0.045
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "selection_card_logo",
+                    "type": "content_display",
+                    "order": 0,
+                    "bbox": [
+                      0.065,
+                      0.25,
+                      0.07,
+                      0.045
+                    ],
+                    "semantic_role": "neutral",
+                    "color_ref": "color_text_primary",
+                    "asset_ref": "bank_logo_cmb",
+                    "icon": {
+                      "kind": "brand_logo",
+                      "ref": "bank_logo_cmb"
+                    }
+                  },
+                  {
+                    "id": "selection_card_number",
+                    "type": "content_display",
+                    "order": 1,
+                    "text": "4392 **** **** 2269",
+                    "bbox": [
+                      0.19,
+                      0.26,
+                      0.53,
+                      0.03
+                    ],
+                    "semantic_role": "neutral",
+                    "color_ref": "color_text_primary",
+                    "data_binding": "maskedCardNumber",
+                    "fidelity_note": "OCR漏识别卡号，文案据visual-observations；实际卡号按mock动态前四后四"
+                  },
+                  {
+                    "id": "selection_card_check",
+                    "type": "action_button",
+                    "order": 2,
+                    "bbox": [
+                      0.87,
+                      0.25,
+                      0.05,
+                      0.035
+                    ],
+                    "semantic_role": "neutral",
+                    "color_ref": "color_text_primary",
+                    "icon": {
+                      "kind": "system_symbol",
+                      "ref": "sys.symbol.checkmark_circle_fill"
+                    },
+                    "fidelity_note": "标准语义符号近似，外观未验真",
+                    "variant": "tonal"
+                  }
+                ]
+              }
+            ],
+            "bg_color": "color_card_bg"
+          },
+          {
+            "id": "selection_agreement_row",
+            "type": "detail_section",
+            "order": 3,
+            "bbox": [
+              0.065,
+              0.34,
+              0.87,
+              0.08
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "layout": "row",
+            "children": [
+              {
+                "id": "selection_agreement_check",
+                "type": "logic_condition",
+                "order": 0,
+                "bbox": [
+                  0.065,
+                  0.345,
+                  0.035,
+                  0.025
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "data_binding": "agreementAccepted"
+              },
+              {
+                "id": "selection_agreement",
+                "type": "content_display",
+                "order": 1,
+                "text": "同意并阅读《云闪付App一键绑卡用户授权协议》、《招商银行信用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信息。",
+                "bbox": [
+                  0.12,
+                  0.345,
+                  0.81,
+                  0.075
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "fidelity_note": "OCR有错字；据观察sidecar恢复可读协议，银行名/卡类型按实际数据替换"
+              }
+            ]
+          },
+          {
+            "id": "selection_next",
+            "type": "primary_button",
+            "order": 4,
+            "text": "下一步",
+            "bbox": [
+              0.35,
+              0.45,
+              0.3,
+              0.05
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "brand_primary",
+            "variant": "filled",
+            "align": "center",
+            "width_ratio": 0.3,
+            "fidelity_note": "观察sidecar声明红色按钮，需精确采色；暂用既有token，列为待复核"
+          },
+          {
+            "id": "selection_system_status",
+            "type": "content_display",
+            "order": 5,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          },
+          {
+            "id": "selection_lower_space",
+            "type": "content_display",
+            "order": 6,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "参考观察明确的背景/留白区域，非交互组件"
+          },
+          {
+            "id": "selection_system_bottom",
+            "type": "content_display",
+            "order": 7,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          }
+        ],
+        "bg_color": "color_page_bg"
+      },
+      "must_have_elements": [
+        "selection_nav",
+        "selection_back",
+        "selection_title",
+        "selection_prompt",
+        "selection_cards",
+        "selection_card_1",
+        "selection_card_logo",
+        "selection_card_number",
+        "selection_card_check",
+        "selection_agreement_row",
+        "selection_agreement_check",
+        "selection_agreement",
+        "selection_next",
+        "selection_system_status",
+        "selection_lower_space",
+        "selection_system_bottom"
+      ]
+    },
+    {
+      "id": "otp_sheet",
+      "priority": "P0",
+      "ref_id": "otp_sheet",
+      "root": {
+        "id": "otp_root",
+        "type": "sheet_scaffold",
+        "order": 0,
+        "bbox": [
+          0,
+          0.166,
+          1,
+          0.4
+        ],
+        "semantic_role": "neutral",
+        "color_ref": "color_text_primary",
+        "layout": "column",
+        "children": [
+          {
+            "id": "otp_title",
+            "type": "content_display",
+            "order": 0,
+            "text": "输入验证码",
+            "bbox": [
+              0.038,
+              0.2,
+              0.4,
+              0.04
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary"
+          },
+          {
+            "id": "otp_close",
+            "type": "action_button",
+            "order": 1,
+            "bbox": [
+              0.9,
+              0.2,
+              0.05,
+              0.04
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "icon": {
+              "kind": "system_symbol",
+              "ref": "sys.symbol.xmark"
+            },
+            "fidelity_note": "标准语义符号近似，外观未验真",
+            "variant": "tonal"
+          },
+          {
+            "id": "otp_prompt",
+            "type": "content_display",
+            "order": 2,
+            "text": "为确认是您本人操作，请输入发送至手机",
+            "bbox": [
+              0.065,
+              0.285,
+              0.88,
+              0.035
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary"
+          },
+          {
+            "id": "otp_phone",
+            "type": "content_display",
+            "order": 3,
+            "text": "185****3841的验证码。",
+            "bbox": [
+              0.065,
+              0.315,
+              0.65,
+              0.035
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "data_binding": "account.mockPhoneMasked",
+            "fidelity_note": "OCR号码错识别符号由观察sidecar校正；禁止硬编码截图手机号"
+          },
+          {
+            "id": "otp_field_row",
+            "type": "sms_code_field",
+            "order": 4,
+            "bbox": [
+              0.04,
+              0.365,
+              0.92,
+              0.065
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "layout": "row",
+            "children": [
+              {
+                "id": "otp_input",
+                "type": "input",
+                "order": 0,
+                "text": "请输入短信验证码",
+                "bbox": [
+                  0.065,
+                  0.38,
+                  0.58,
+                  0.03
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "color_text_primary",
+                "data_binding": "otpDigits",
+                "fidelity_note": "OCR情字据观察sidecar校正为请；只接受6位数字"
+              },
+              {
+                "id": "otp_resend",
+                "type": "action_button",
+                "order": 1,
+                "text": "55 秒后重试",
+                "bbox": [
+                  0.72,
+                  0.38,
+                  0.23,
+                  0.03
+                ],
+                "semantic_role": "neutral",
+                "color_ref": "brand_primary",
+                "variant": "text",
+                "data_binding": "remainingSeconds",
+                "fidelity_note": "截图55秒是运行快照；实际打开60秒，归零重新发送"
+              }
+            ],
+            "bg_color": "color_card_bg"
+          },
+          {
+            "id": "otp_next",
+            "type": "primary_button",
+            "order": 5,
+            "text": "下一步",
+            "bbox": [
+              0.04,
+              0.465,
+              0.92,
+              0.055
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "brand_primary",
+            "variant": "filled",
+            "align": "center",
+            "width_ratio": 0.92,
+            "fidelity_note": "默认禁用浅蓝态；六位数字且未提交时启用"
+          },
+          {
+            "id": "otp_system_keyboard",
+            "type": "content_display",
+            "order": 6,
+            "bbox": [
+              0,
+              0.57,
+              1,
+              0.43
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "fidelity_note": "系统数字键盘，由系统渲染；不复制OCR键盘乱码"
+          },
+          {
+            "id": "otp_system_status",
+            "type": "content_display",
+            "order": 7,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          },
+          {
+            "id": "otp_background_mask",
+            "type": "content_display",
+            "order": 8,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "参考观察明确的背景/留白区域，非交互组件"
+          },
+          {
+            "id": "otp_system_bottom",
+            "type": "content_display",
+            "order": 9,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          }
+        ],
+        "bg_color": "color_page_bg"
+      },
+      "must_have_elements": [
+        "otp_title",
+        "otp_close",
+        "otp_prompt",
+        "otp_phone",
+        "otp_field_row",
+        "otp_input",
+        "otp_resend",
+        "otp_next",
+        "otp_system_keyboard",
+        "otp_system_status",
+        "otp_background_mask",
+        "otp_system_bottom"
+      ]
+    },
+    {
+      "id": "bank_card_result",
+      "priority": "P0",
+      "ref_id": "bank_card_result",
+      "root": {
+        "id": "result_root",
+        "type": "result_state",
+        "order": 0,
+        "bbox": [
+          0,
+          0,
+          1,
+          1
+        ],
+        "semantic_role": "neutral",
+        "color_ref": "color_text_primary",
+        "layout": "column",
+        "children": [
+          {
+            "id": "result_status_icon",
+            "type": "content_display",
+            "order": 0,
+            "bbox": [
+              0.44,
+              0.17,
+              0.12,
+              0.075
+            ],
+            "semantic_role": "success",
+            "color_ref": "brand_fuel_green",
+            "icon": {
+              "kind": "system_symbol",
+              "ref": "sys.symbol.checkmark_circle_fill"
+            },
+            "fidelity_note": "失败状态改为失败符号；无标题/返回箭头"
+          },
+          {
+            "id": "result_title",
+            "type": "content_display",
+            "order": 1,
+            "text": "添卡成功",
+            "bbox": [
+              0.4,
+              0.248,
+              0.2,
+              0.03
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "data_binding": "result.success"
+          },
+          {
+            "id": "result_message",
+            "type": "content_display",
+            "order": 2,
+            "text": "可用于实体店二维码支付和网上商城支付",
+            "bbox": [
+              0.21,
+              0.296,
+              0.58,
+              0.025
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "data_binding": "result.success",
+            "fidelity_note": "mock成功说明不等于真实支付能力已激活；失败用错误摘要"
+          },
+          {
+            "id": "result_guide",
+            "type": "content_display",
+            "order": 3,
+            "bbox": [
+              0.24,
+              0.37,
+              0.53,
+              0.35
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "color_text_primary",
+            "asset_ref": "open_card_guide",
+            "icon": {
+              "kind": "illustration",
+              "ref": "open_card_guide"
+            },
+            "fidelity_note": "缺少已确定用途的仓内手持手机素材；按需求允许近似，显式可见占位且计入视觉债务"
+          },
+          {
+            "id": "result_finish",
+            "type": "primary_button",
+            "order": 4,
+            "text": "完成",
+            "bbox": [
+              0.04,
+              0.885,
+              0.92,
+              0.05
+            ],
+            "semantic_role": "neutral",
+            "color_ref": "brand_primary",
+            "variant": "tonal",
+            "align": "center",
+            "width_ratio": 0.92
+          },
+          {
+            "id": "result_system_status",
+            "type": "content_display",
+            "order": 5,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          },
+          {
+            "id": "result_top_space",
+            "type": "content_display",
+            "order": 6,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "参考观察明确的背景/留白区域，非交互组件"
+          },
+          {
+            "id": "result_system_bottom",
+            "type": "content_display",
+            "order": 7,
+            "semantic_role": "neutral",
+            "color_ref": "color_page_bg",
+            "fidelity_note": "系统状态栏/手势条由系统绘制，禁止把时间、电量或系统图标固化为应用组件"
+          }
+        ],
+        "bg_color": "color_page_bg"
+      },
+      "must_have_elements": [
+        "result_status_icon",
+        "result_title",
+        "result_message",
+        "result_guide",
+        "result_finish",
+        "result_system_status",
+        "result_top_space",
+        "result_system_bottom"
+      ]
+    }
+  ],
+  "tokens": {
+    "brand_primary": {
+      "kind": "color",
+      "value": "#007DFF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_primary"
+    },
+    "text_primary": {
+      "kind": "color",
+      "value": "#000000",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#text_primary"
+    },
+    "text_secondary": {
+      "kind": "color",
+      "value": "#888888",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#text_secondary"
+    },
+    "text_tertiary": {
+      "kind": "color",
+      "value": "#C7C7CC",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#text_tertiary"
+    },
+    "bg_page": {
+      "kind": "color",
+      "value": "#F2F2F2",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#bg_page"
+    },
+    "bg_surface": {
+      "kind": "color",
+      "value": "#FFFFFF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#bg_surface"
+    },
+    "wallet_primary": {
+      "kind": "color",
+      "value": "#007DFF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_primary"
+    },
+    "wallet_text_primary": {
+      "kind": "color",
+      "value": "#000000",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_text_primary"
+    },
+    "wallet_text_secondary": {
+      "kind": "color",
+      "value": "#888888",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_text_secondary"
+    },
+    "wallet_text_tertiary": {
+      "kind": "color",
+      "value": "#C7C7CC",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_text_tertiary"
+    },
+    "wallet_page_bg": {
+      "kind": "color",
+      "value": "#F2F2F2",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_page_bg"
+    },
+    "wallet_surface_bg": {
+      "kind": "color",
+      "value": "#FFFFFF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_surface_bg"
+    },
+    "brand_bank_orange": {
+      "kind": "color",
+      "value": "#FF9500",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_bank_orange"
+    },
+    "brand_bank_pink": {
+      "kind": "color",
+      "value": "#FF6B81",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_bank_pink"
+    },
+    "brand_fuel_green": {
+      "kind": "color",
+      "value": "#34C759",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_fuel_green"
+    },
+    "brand_id_yellow": {
+      "kind": "color",
+      "value": "#FFCC00",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_id_yellow"
+    },
+    "brand_danger": {
+      "kind": "color",
+      "value": "#FF3B30",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#brand_danger"
+    },
+    "wallet_badge_gray": {
+      "kind": "color",
+      "value": "#8E8E93",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#wallet_badge_gray"
+    },
+    "promo_placeholder": {
+      "kind": "color",
+      "value": "#F2F2F2",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#promo_placeholder"
+    },
+    "button_tonal_bg": {
+      "kind": "color",
+      "value": "#E8F3FF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#button_tonal_bg"
+    },
+    "home_banner_end": {
+      "kind": "color",
+      "value": "#FFFFFF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#home_banner_end"
+    },
+    "card_stack_cmb": {
+      "kind": "color",
+      "value": "#E8A317",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#card_stack_cmb"
+    },
+    "card_stack_transit": {
+      "kind": "color",
+      "value": "#1E6FD9",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#card_stack_transit"
+    },
+    "card_stack_fund": {
+      "kind": "color",
+      "value": "#2E8B57",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#card_stack_fund"
+    },
+    "card_stack_access": {
+      "kind": "color",
+      "value": "#F5F5F5",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#card_stack_access"
+    },
+    "color_page_bg": {
+      "kind": "color",
+      "value": "#F2F3F5",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_page_bg"
+    },
+    "color_card_bg": {
+      "kind": "color",
+      "value": "#FFFFFF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_card_bg"
+    },
+    "color_text_primary": {
+      "kind": "color",
+      "value": "#1A1A1A",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_text_primary"
+    },
+    "color_text_secondary": {
+      "kind": "color",
+      "value": "#606163",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_text_secondary"
+    },
+    "color_line_divider": {
+      "kind": "color",
+      "value": "#CCCCCC",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_line_divider"
+    },
+    "color_icon_chevron": {
+      "kind": "color",
+      "value": "#CCCCCC",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_icon_chevron"
+    },
+    "color_nav_btn_bg": {
+      "kind": "color",
+      "value": "#E7E8EA",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_nav_btn_bg"
+    },
+    "color_pill_bg": {
+      "kind": "color",
+      "value": "#F2F3F5",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_pill_bg"
+    },
+    "color_link_blue": {
+      "kind": "color",
+      "value": "#1F57C8",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_link_blue"
+    },
+    "color_badge_border": {
+      "kind": "color",
+      "value": "#D87639",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_badge_border"
+    },
+    "color_badge_bg": {
+      "kind": "color",
+      "value": "#FFFBEF",
+      "sampled": false,
+      "value_source": "repo:02-Feature/WalletMain/src/main/resources/base/element/color.json#color_badge_bg"
+    }
+  },
+  "assets": [
+    {
+      "key": "bank_logo_cmb",
+      "acquisition": "repo_ref",
+      "resolved_path": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png",
+      "role": "brand_logo",
+      "rationale": "BankRepository cmb.logo 与 BankListRow Image 用途明确，其他银行复用对应logo资源，未经视觉核对"
+    },
+    {
+      "key": "open_card_guide",
+      "acquisition": "placeholder",
+      "placeholder": true,
+      "role": "illustration",
+      "placeholder_kind": "illustration_frame",
+      "rationale": "无视觉能力，未找到用途明确的手持手机引导图；需求允许大差不差，coding按角色生成可见语义占位，major视觉债务待设备复核"
+    }
+  ]
+}

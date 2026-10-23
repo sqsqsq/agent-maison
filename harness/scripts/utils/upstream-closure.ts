@@ -124,7 +124,6 @@ export function tryCloseUpstreamPhase(input: UpstreamClosureInput): UpstreamClos
     }
     const incident =
       // error（含 checker 缺失/spawn 失败/超时——ReceiptValidation 无法区分，不细分）
-          // 与 not_applicable（lite track，在 full-track 上游关环路径上理论不可达，
           // 到达即不变量被破坏）统一按框架缺陷处理。
           'framework_bug';
     return {

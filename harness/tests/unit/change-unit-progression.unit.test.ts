@@ -1187,27 +1187,27 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  // M7：CU-bound lite 复用同一 contracts.yaml.change_unit sidecar，并在 `change` 阶段就被校验
-  results.push(test('M7: CU-bound lite reuses the same contracts sidecar and is checked at the change phase', () => {
+  // M7：CU-bound Feature 复用同一 contracts.yaml.change_unit sidecar，并在 `plan` 阶段就被校验
+  results.push(test('M7: CU-bound Feature reuses the canonical contracts sidecar at the plan phase', () => {
     withTempProject(projectRoot => {
       const fixture = projectionContracts(projectRoot);
       bindFeatureContracts(projectRoot, fixture.feature, fixture.contracts);
-      // lite 的首个 phase 与 full 的 plan 同属"冻结施工契约"阶段：同一 sidecar、同一校验通过
+      // plan 属于"冻结施工契约"阶段：同一 sidecar、同一校验通过
       const atChange = validateChangeUnitFeatureProjection(
-        projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'change', fixture.dags,
+        projectRoot, fixture.feature, fixture.contracts, fixture.acceptance, true, 'plan', fixture.dags,
       );
-      assert(atChange.applicable, 'CU sidecar 存在时 change 阶段必须适用');
-      assert(atChange.issues.length === 0, `lite sidecar 在 change 阶段被误拒：${atChange.issues.map(i => i.id).join(', ')}`);
+      assert(atChange.applicable, 'CU sidecar 存在时 plan 阶段必须适用');
+      assert(atChange.issues.length === 0, `sidecar 在 plan 阶段被误拒：${atChange.issues.map(i => i.id).join(', ')}`);
 
-      // 无 sidecar 的普通 lite Feature 不适用、零结果、行为不变
+      // 无 sidecar 的普通 Feature 不适用、零结果、行为不变
       const plain = validateChangeUnitFeatureProjection(
-        projectRoot, 'plain-lite', { feature: 'plain-lite' } as unknown as ContractsSpec, undefined, false, 'change',
+        projectRoot, 'plain-feature', { feature: 'plain-feature' } as unknown as ContractsSpec, undefined, false, 'plan',
       );
-      assert(!plain.applicable && plain.issues.length === 0, '普通 lite Feature 不应被 CU 投影影响');
+      assert(!plain.applicable && plain.issues.length === 0, '普通 Feature 不应被 CU 投影影响');
 
       // 返修 P0-3：**CU-bound** Feature 缺 sidecar 必须 BLOCKER，不得静默判"不适用"
       const missing = validateChangeUnitFeatureProjection(
-        projectRoot, fixture.feature, { feature: fixture.feature } as unknown as ContractsSpec, undefined, false, 'change',
+        projectRoot, fixture.feature, { feature: fixture.feature } as unknown as ContractsSpec, undefined, false, 'plan',
       );
       assert(missing.applicable, 'CU-bound Feature 缺 sidecar 被误判为不适用（假绿）');
       assert(
@@ -1215,13 +1215,13 @@ export async function runAll(): Promise<UnitCaseResult[]> {
         `CU-bound Feature 缺 sidecar 未 BLOCKER：${missing.issues.map(i => i.id).join(', ') || '(none)'}`,
       );
 
-      // 反例：sidecar 绑错 CU 身份在 change 阶段就被抓住（不推迟到 coding）
+      // 反例：sidecar 绑错 CU 身份在 plan 阶段就被抓住（不推迟到 coding）
       const wrong = projectionContracts(projectRoot);
       (wrong.contracts.change_unit!.change_unit_ref as unknown as ChangeUnitRecord).change_unit_id = 'ledger-consumer';
       const mismatched = validateChangeUnitFeatureProjection(
-        projectRoot, wrong.feature, wrong.contracts, wrong.acceptance, true, 'change', wrong.dags,
+        projectRoot, wrong.feature, wrong.contracts, wrong.acceptance, true, 'plan', wrong.dags,
       );
-      assert(mismatched.issues.length > 0, 'change 阶段未抓住错绑的 CU sidecar');
+      assert(mismatched.issues.length > 0, 'plan 阶段未抓住错绑的 CU sidecar');
     });
   }));
 
@@ -1231,14 +1231,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       // 合法 cu- identity，但 canonical CU 不存在 → BLOCKER 并路由回调和
       const orphan = deriveChangeUnitFeatureId('ledger-app-blueprint', 'never-created-cu');
       const orphanResult = validateChangeUnitFeatureProjection(
-        projectRoot, orphan, { feature: orphan } as unknown as ContractsSpec, undefined, false, 'change',
+        projectRoot, orphan, { feature: orphan } as unknown as ContractsSpec, undefined, false, 'plan',
       );
       assert(orphanResult.applicable, 'canonical CU 缺失的 cu- Feature 被误判为不适用');
       assert(orphanResult.issues.length > 0, 'canonical CU 缺失未 BLOCKER');
 
       // 非法 cu- payload → fail-closed，不回退成平铺 Feature
       const bogus = validateChangeUnitFeatureProjection(
-        projectRoot, 'cu-not-base64url!!', { feature: 'cu-x' } as unknown as ContractsSpec, undefined, false, 'change',
+        projectRoot, 'cu-not-base64url!!', { feature: 'cu-x' } as unknown as ContractsSpec, undefined, false, 'plan',
       );
       assert(bogus.applicable, '非法 cu- identity 被误判为不适用');
       assert(

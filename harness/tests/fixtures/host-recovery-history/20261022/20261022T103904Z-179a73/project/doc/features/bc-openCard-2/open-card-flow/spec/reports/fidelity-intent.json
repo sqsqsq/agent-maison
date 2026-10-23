@@ -1,0 +1,20 @@
+{
+  "schema_version": "2.0",
+  "inferred_fidelity": "pixel_1to1",
+  "selected_fidelity": "pixel_1to1",
+  "effective_fidelity": "pixel_1to1",
+  "acceptance_strictness": "best_effort",
+  "asset_acquisition_mode": "approximate",
+  "clamped": false,
+  "decision": {
+    "source": "requirement_self_declared",
+    "rationale": "inferred=pixel_1to1(strong_wording) selected=pixel_1to1 effective=pixel_1to1 strictness=best_effort asset=approximate(default)",
+    "decision_id": "dbdca7c0b69af705"
+  },
+  "execution_identity": "20261022T103904Z-179a73",
+  "requirement_sha256": "44c07207d37659ede531768c11d7f55115f96d649c697e09bff408f117738504",
+  "requirement_provenance": "goal_manifest",
+  "requirement_source_files": [
+    "doc/features/原始需求/1-2-银行卡/原始需求.md"
+  ]
+}

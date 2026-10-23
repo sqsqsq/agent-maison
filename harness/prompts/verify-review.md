@@ -112,6 +112,7 @@
      verdict 取值：`confirmed`（打开源码确认问题真实存在）/ `refuted`（误报）/
      `unclear`（无法判定）。未关闭 BLOCKER/MAJOR 每条恰列一次；confirmed/refuted 必须基于实际查阅。
      无法完成查阅或证据不足时如实列 unclear 并在正文说明缺口，不猜结果、不为了产候选改成 confirmed。
+     对确已核实真实修复对象及成因负责方的条目，可在同一条目追加既有责任字段 `repair_owner: <实际负责阶段>`。它只定位责任，不授写权；coding 处理测试兼容问题仍须经过原请求授权与 `coding_existing_test_preserved`，测试验证仍由真实职责签发。目标若仍是报错页/诊断文件、真正需改的是 spec/plan 等责任产物，不能只填 owner 覆盖路径：应 unclear/refuted，要求原报告更正「涉及文件」为真实修复对象后再核。缺该字段的旧 issue/verdict/evidence 继续按真实对象契约读取，不默认 coding。
      合法 refuted/unclear 不产生候选；漏行、重复冲突、非法 verdict 或绑定错行属于正文缺口。
      `evidence` **必填，格式＝`<涉及文件名> | <该行修复建议原文>`**：
      ①涉及文件名（如 `SelectBankCardPage.ets`）；

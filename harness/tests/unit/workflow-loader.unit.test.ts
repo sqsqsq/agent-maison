@@ -38,7 +38,7 @@ const cases: Case[] = [
     assert(modern.schema_version === '1.2', 'modern schema');
     assert(!modern.artifacts.some(a => ['change','exit'].includes(a.id)), 'retired phase exposed');
     const legacy = workflowForExistingRun(modern, {}, FRAMEWORK_ROOT);
-    assert(legacy.schema_version === '1.1' && legacy.artifacts.some(a => a.id === 'exit'), 'legacy definition missing');
+    assert(legacy.schema_version === '1.1' && legacy.artifacts.some(a => a.id === 'testing'), 'legacy definition missing');
     assert(workflowForExistingRun(modern, { execution_scope: null }, FRAMEWORK_ROOT) === modern, 'corrupt new field downgraded');
   } },
   {
@@ -47,8 +47,8 @@ const cases: Case[] = [
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       assert(spec.schema_version === '1.1', 'schema_version');
       assert(spec.name === 'spec-driven', 'name');
-      // 12 经典 phase + lite 轨 change/exit（C1 feature-track）
-      assert(spec.artifacts.length === 14, `artifacts len=${spec.artifacts.length}`);
+      // 非 lite 内置 phase 保留
+      assert(spec.artifacts.length === 12, `artifacts len=${spec.artifacts.length}`);
     },
   },
   {
@@ -57,9 +57,9 @@ const cases: Case[] = [
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const ids = workflowPhaseIdSet(spec);
       assert(ids.has('spec') && ids.has('coding') && ids.has('init') && ids.has('extensions'), 'missing ids');
-      assert(ids.size === 14, 'size');
+      assert(ids.size === 12, 'size');
       assert(ids.has('module-graph'), 'module-graph');
-      assert(ids.has('change') && ids.has('exit'), 'lite phases（C1）');
+      assert(!ids.has('change') && !ids.has('exit'), 'retired phases must be absent');
     },
   },
   {
@@ -77,7 +77,7 @@ const cases: Case[] = [
     run: () => {
       const spec = loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven');
       const order = listWorkflowPhases(spec);
-      assert(order.length === 14, 'topo length');
+      assert(order.length === 12, 'topo length');
       assert(order[order.length - 1] === 'testing', 'testing must be last');
       const iCat = order.indexOf('catalog');
       const iGloss = order.indexOf('glossary');

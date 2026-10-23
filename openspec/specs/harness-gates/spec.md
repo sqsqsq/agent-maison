@@ -1654,15 +1654,18 @@ Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/ut
 
 ### Requirement: change phase gate
 
+> **已退役（c2f7a91e）**：本条款描述的 lite 执行能力及专用实现已删除，当前发布件 MUST NOT 执行本退役条款；迁移边界见 `MIGRATION.md`。标题暂留作 `responsibility-dispatch-convergence` 的 REMOVED 源条款，归档时删除，不构成当前可用能力或实现保证。
+
 `change` phase MUST 由 `check-change-lite.ts` 校验：change.md 章节存在性、scope 模块名对照 architecture/catalog 合法、验收与任务 checkbox 语法合规。
 
 #### Scenario: scope 模块名不合法
 - **WHEN** change.md 的 in_scope 模块不存在于 catalog/architecture
 - **THEN** change phase BLOCKER FAIL
 
-> **Enforced by:** `harness/scripts/check-change-lite.ts`
 
 ### Requirement: exit gate is the single lite checkpoint
+
+> **已退役（c2f7a91e）**：本条款描述的 lite 执行能力及专用实现已删除，当前发布件 MUST NOT 执行本退役条款；迁移边界见 `MIGRATION.md`。标题暂留作 `responsibility-dispatch-convergence` 的 REMOVED 源条款，归档时删除，不构成当前可用能力或实现保证。
 
 `exit` phase MUST 一次性执行：编译 + lint（profile provider）+ `diff_within_scope` + 验收 checkbox 全勾校验 +（acceptance 存在 unit 层条目时）UT。`diff_within_scope` 在 lite 下 MUST NOT 被豁免（不降档红线）。
 
@@ -1674,7 +1677,6 @@ Enforcement: `harness/scripts/utils/derived-hylyre-plan.ts`, `harness/scripts/ut
 - **WHEN** feature 的验收清单不含 unit 层条目
 - **THEN** exit 不强制 UT，其余检查照跑
 
-> **Enforced by:** `harness/harness-runner.ts`, `harness/scripts/check-change-lite.ts`, 复用 coding 检查子集
 
 ### Requirement: Runner filters DAG by track
 

@@ -331,7 +331,7 @@ const HALT_DIAGNOSTIC_PROSE: Readonly<Record<string, string>> = {
   closure_probe_error:
     'receipt 探针自身执行失败（framework/toolchain 坏，非产物问题）——不派 agent 修 receipt，人工修复环境/回灌源仓后重新发起同一请求（或 --resume 续跑）',
   closure_state_invariant:
-    'lite track 不产生 receipt 却 advance_blocked——runner 状态机不变量违例（framework bug），请回灌源仓核查',
+    'receipt 探针标记不适用却 advance_blocked——runner 状态机不变量违例（framework bug），请回灌源仓核查',
   await_operator_toolchain:
     '环境/工具链阻塞（重试 agent 修不了环境）——operator 修复工具链后重新发起同一请求（或 --resume 续跑），详见 blocker details',
   await_human_gate_deferral:

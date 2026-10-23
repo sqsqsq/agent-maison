@@ -1,6 +1,8 @@
 # business-ut 阶段详细流程（条件加载：执行对应 Step 时读）
 
-> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
+新增/调整用例和断言由 UT 负责；coding 只获本次实现直接引发、且保留原用例与断言的既有兼容修补许可。旧误派或保留检查未通过的测试字节，UT 可真实核验后原样保留并在既有有效 manifest 登记当前哈希，不强求重复改写。采纳必须晚于原误写；新的越权改写仍会使它失效。review 等待 UT 修复时按真实 coding 输入与依赖先完成本职责，再回 review 裁定，不降低 testing/完成要求。
+
+> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 旧出生协议为 spec 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
 > SSOT 索引见 [`skills/feature/business-ut/SKILL.md`](../feature/business-ut/SKILL.md)。本文承载 Lite Mode 判定、Step 1.0 摘取协议、Step 1.5/1.6 可测性预检与 Test Double Plan、Step 2/3 DAG 与 UT 代码生成细节、Step 7.5/7.6 编译与装机运行闭环、Step 8.0 Core 节点闸门、约束#12 HARD STOP 完整流程；主 Skill 决定请求分流，本页各节按需要加载；正式门禁与闭环保留在末尾的正式阶段。
 

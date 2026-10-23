@@ -32,7 +32,7 @@ import {
   type DependencyPolicy,
   type PhaseVerdictAction,
 } from './phase-transition-policy';
-import { mapCategoryToChainPhase } from './correction-routing';
+import { resolveRepairResponsibility, repairResponsibilityContext, type RepairResponsibilityContext } from './repair-responsibility';
 import {
   SUMMARY_ASSURANCE_SCHEMA_VERSIONS,
   SUMMARY_SCHEMA_VERSION_CURRENT,
@@ -123,7 +123,7 @@ export interface AssessPhaseObservation {
    * （**唯一真源=summary.repair_candidates[]**；assess 直读，不经 reconcile 复制——
    * goal/manual/batch 三链共用同一判断，codex review 冻结项③）。
    */
-  repair_candidates?: Array<{ id: string; category: 'spec' | 'plan' | 'coding'; item_fingerprint: string; summary?: string }>;
+  repair_candidates?: Array<{ id: string; category: 'spec' | 'plan' | 'coding' | 'verification'; files?: string[]; item_fingerprint: string; summary?: string }>;
   summary_state: 'missing' | 'corrupt' | 'legacy' | 'current';
   schema_version: string | null;
   verdict: string | null;
@@ -156,6 +156,8 @@ export interface AssessPrunedPropagation {
   source: string;
 }
 export interface AssessObservation {
+  /** Existing authority evaluated once for this action; never persisted by the result projection. */
+  responsibility?: RepairResponsibilityContext;
   execution_scope?: ExecutionScope;
   schema_version: '1.0';
   feature: string;
@@ -312,13 +314,14 @@ function readRepairCandidatesFromSummary(
     if (!item || typeof item !== 'object') continue;
     const c = item as Record<string, unknown>;
     const category = String(c.category ?? '');
-    if (category !== 'spec' && category !== 'plan' && category !== 'coding') continue;
+    if (category !== 'spec' && category !== 'plan' && category !== 'coding' && category !== 'verification') continue;
     if (typeof c.id !== 'string' || !c.id.trim()) continue;
     if (typeof c.item_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(c.item_fingerprint)) continue;
     out.push({
       id: c.id,
       category,
       item_fingerprint: c.item_fingerprint,
+      ...(Array.isArray(c.files) ? { files: c.files.filter((file): file is string => typeof file === 'string') } : {}),
       ...(typeof c.summary === 'string' ? { summary: c.summary } : {}),
     });
   }
@@ -455,7 +458,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   // D1 §6.4：删掉「有 runId 才读范围」的三元——统一入口在无 run 时读 feature 冻结记录。
   const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId, options.frameworkRoot, options.reconcile?.phase_outcome?.phase, options.authorityReaders);
   const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
-  if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'));
+  if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'), options.projectRoot);
   const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));
   const allPhases = scope ? executionCompletionPhases(scope) : run?.phase_chain ?? resolvePhaseChain(workflow, track).featureOrdered.map(String);
   if (allPhases.length === 0) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
@@ -537,7 +540,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
         ].join(', ')
       : null;
     let closure: AssessPhaseObservation['closure'] = 'open';
-    if (track === 'full') {
+    {
       const commit = summary.closure_commit as { schema_version?: unknown } | undefined;
       if (
         !legacy &&
@@ -546,11 +549,6 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       ) {
         closure = evidenceVerdict === 'fresh' ? 'closed' : 'stale';
       }
-    } else {
-      // plan f7045213 §5：lite 闭环读 summary 的共享结论（与退出码、控制台同源），不再读脚本报告的 legacy 结论。
-      closure = resolvePhaseClosureSource(track, verdict ?? undefined, undefined) === 'closed_by_exit_report'
-        ? 'closed'
-        : 'open';
     }
     return {
       phase,
@@ -637,6 +635,8 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   return {
     schema_version: '1.0',
     feature: options.feature,
+    responsibility: repairResponsibilityContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: options.runId,
+      workflow, executionScope: scope ?? undefined, currentPhase: options.reconcile?.phase_outcome?.phase, authorityReaders: options.authorityReaders }),
     ...(scope ? { execution_scope: scope } : {}),
     workflow: workflow.name,
     track,
@@ -850,8 +850,10 @@ function recommendationForObservation(
       : [];
     if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
       const chainPhases = observation.phases.map((p) => p.phase);
-      const targets = [...new Set(candidates.map((c) => c.category))]
-        .map((category) => mapCategoryToChainPhase(category, chainPhases, observation.track))
+      const responsibilities = candidates.map(candidate => resolveRepairResponsibility({ ...observation.responsibility, currentPhase,
+        target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }));
+      const targets = responsibilities
+        .filter(result => result.action !== 'unavailable' && result.action !== 'design').map(result => result.owner)
         .filter((p): p is string => p !== null && p !== currentPhase);
       const upstream = targets.sort(
         (a, b) => chainPhases.indexOf(a) - chainPhases.indexOf(b),
@@ -862,7 +864,7 @@ function recommendationForObservation(
         return {
           action: 'stop',
           phase: null,
-          reason: `${reason}——责任类别映射不到当前 workflow 链内节点（backtrack_target_absent）`,
+          reason: `${reason}——${[...new Set(responsibilities.map(result => result.reason))].join('；')}（backtrack_target_absent）`,
           requires_driver_authorization: true,
           runner_action: 'backtrack_to_phase',
         };

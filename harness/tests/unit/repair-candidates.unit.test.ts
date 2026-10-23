@@ -5,13 +5,13 @@
 // ============================================================================
 
 import {
-  buildSummaryRepairCandidates,
-  collectPhaseRepairCandidates,
-  collectReviewRepairCandidates,
+  buildSummaryRepairCandidates as productionBuildSummaryRepairCandidates,
+  collectPhaseRepairCandidates as productionCollectPhaseRepairCandidates,
+  collectReviewRepairCandidates as productionCollectReviewRepairCandidates,
   checkOwnedCandidate,
   declineAttemptExemption,
   declineDisputeLines,
-  deriveCategoryFromFiles,
+  deriveCategoryFromFiles as productionDeriveCategoryFromFiles,
   isRebuttalAppearance,
   resolveRepairDeclineState,
   itemFingerprintOf,
@@ -41,6 +41,27 @@ import { recommendationAuthorized } from '../../scripts/utils/goal-in-session-dr
 import { formatRepairCandidatesMenu } from '../../scripts/utils/assess-renderer';
 import type { AssessRecommendation, AssessResult, ReconcileObservationV1 } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
+
+import * as path from 'path';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { loadArtifactInventory, loadFeatureContracts, phaseContractIndex } from '../../scripts/utils/skill-contract';
+import type { RepairResponsibilityContext } from '../../scripts/utils/repair-responsibility';
+const fixtureFramework = path.resolve(__dirname, '../../..');
+const fixtureWorkflow = loadWorkflowSpec(fixtureFramework, 'obligation-driven');
+const fixtureInventory = loadArtifactInventory(fixtureFramework);
+const fixtureContracts = phaseContractIndex(loadFeatureContracts(fixtureFramework));
+const responsibility: RepairResponsibilityContext = { frameworkRoot: fixtureFramework, workflow: fixtureWorkflow,
+  contracts: { projectRoot: fixtureFramework, feature: 'f', phaseOrder: fixtureWorkflow.auto_chain!, diagnostics: [], unresolvedSourcePhases: [], protectedRoots: [], domains: [
+    { owner: 'coding', kind: 'source', match: 'prefix', path: '02-Feature/F/src', source: 'unit construction module', excludedPrefixes: ['02-Feature/F/src/ohosTest'] },
+    { owner: 'ut', kind: 'source', match: 'prefix', path: '02-Feature/F/src/ohosTest', source: 'unit profile root' },
+    ...[...fixtureContracts].flatMap(([owner, contract]) => contract.phase.produces.flatMap(output =>
+      (fixtureInventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).flatMap(file =>
+        ['doc/features/f/', 'doc/features/f1/', ''].map(prefix => ({ owner, kind: 'artifact' as const, match: 'exact' as const, path: prefix + file, source: 'real artifact inventory' }))))),
+  ] } };
+const buildSummaryRepairCandidates = (input: Parameters<typeof productionBuildSummaryRepairCandidates>[0]) => productionBuildSummaryRepairCandidates({ ...input, responsibility });
+const collectPhaseRepairCandidates = (input: Parameters<typeof productionCollectPhaseRepairCandidates>[0]) => productionCollectPhaseRepairCandidates({ ...input, responsibility });
+const collectReviewRepairCandidates = (input: Parameters<typeof productionCollectReviewRepairCandidates>[0]) => productionCollectReviewRepairCandidates({ ...input, responsibility });
+const deriveCategoryFromFiles = (files: readonly string[]) => productionDeriveCategoryFromFiles(files, responsibility);
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
   try {
@@ -216,6 +237,17 @@ export const UT_REAL_ASSERTION_CHECK = (() => {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  run(results, 'optional verified repair_owner cannot override the actual repair object or the finite test boundary', () => {
+    const make = (file: string, owner: string, verdict = 'confirmed') => collectReviewRepairCandidates({
+      reportText: reviewReport({ verdict: '不通过', rows: [{ ...CR1, files: file }] }), reportValidityBlocked: false,
+      verifierReportText: verifierFresh([{ id: CR1.id, verdict, evidence: `${file} ${CR1.fix}` }]).replace(`  evidence:`, `  repair_owner: ${owner}\n  evidence:`),
+    });
+    assert(make('02-Feature/F/src/main/ets/A.ets', 'spec').length === 0, '诊断源码路径不能只填 spec owner 就派修');
+    assert(make('02-Feature/F/src/ohosTest/test.ets', 'coding').length === 0, '显式 coding 不替代真实保留检查');
+    assert(make('02-Feature/F/src/ohosTest/test.ets', 'ut').at(0)?.category === 'verification', '实际测试对象可交真实 UT');
+    assert(make('02-Feature/F/src/ohosTest/test.ets', 'ut', 'refuted').length === 0, 'refuted 不能派修');
+    assert(make('02-Feature/F/src/ohosTest/test.ets', 'ut', 'unclear').length === 0, 'unclear 不能派修');
+  });
 
   // --- 指纹两层 -----------------------------------------------------------
 
@@ -829,7 +861,8 @@ export function runAll(): UnitCaseResult[] {
     assert(validateRepairCandidatesShape(undefined).length === 0, '缺失合法');
     const good = checkOwnedCandidate({ checkId: 'ui_scope_violation', sourcePhase: 'coding', detail: 'x' })!;
     assert(validateRepairCandidatesShape([good]).length === 0, '合法条目过');
-    assert(validateRepairCandidatesShape([{ ...good, category: 'verification' }]).length > 0, 'verification 不是回退类别');
+    assert(validateRepairCandidatesShape([{ ...good, category: 'verification' }]).length === 0, 'verification 是既有责任类别');
+    assert(validateRepairCandidatesShape([{ ...good, category: 'unknown' }]).length > 0, '未知类别仍拒绝');
     assert(validateRepairCandidatesShape([{ ...good, item_fingerprint: 'short' }]).length > 0, '坏指纹报错');
     assert(validateRepairCandidatesShape('nope').length > 0, '非数组报错');
   });
@@ -839,10 +872,8 @@ export function runAll(): UnitCaseResult[] {
   run(results, 'mapCategoryToChainPhase 严格四态：full/lite/custom 缺节点→null（禁回链首）', () => {
     const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
     assert(mapCategoryToChainPhase('spec', FULL, 'full') === 'spec', 'full spec');
-    assert(mapCategoryToChainPhase('verification', FULL, 'full') === 'ut', 'full verification→ut');
+    assert(mapCategoryToChainPhase('verification', FULL, 'full') === null, 'full verification→ut');
     const LITE = ['change', 'coding', 'exit'];
-    assert(mapCategoryToChainPhase('spec', LITE, 'lite') === 'change', 'lite spec→change');
-    assert(mapCategoryToChainPhase('plan', LITE, 'lite') === 'change', 'lite plan→change');
     const CUSTOM = ['coding', 'review', 'testing'];
     assert(mapCategoryToChainPhase('spec', CUSTOM, 'full') === null, 'custom 缺 spec→null，不得回 chain[0]');
     assert(mapCategoryToChainPhase('plan', CUSTOM, 'full') === null, 'custom 缺 plan→null');
@@ -951,6 +982,7 @@ export function runAll(): UnitCaseResult[] {
 
   run(results, 'manual 菜单：候选来自 assess 观测（同一真源）；goal 模式或零候选不渲染', () => {
     const mkResult = (candidates: unknown[]): Parameters<typeof formatRepairCandidatesMenu>[0] => ({
+      recommendation: { phase: 'coding', runner_action: 'backtrack_to_phase' },
       observed: {
         phases: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'].map(p => ({
           phase: p, ...(p === 'review' && candidates.length > 0 ? { repair_candidates: candidates } : {}),
@@ -987,7 +1019,7 @@ export function runAll(): UnitCaseResult[] {
     }));
     // 候选挂在 **phase 观测**（唯一真源=summary），不再经 reconcile 复制
     const observation = {
-      schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track: 'full' as const,
+      responsibility, schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track: 'full' as const,
       goal_end: 'testing',
       phases: FULL.map(p => (p === 'review' ? { ...mkPhase(p), repair_candidates: cands } : mkPhase(p))),
       fingerprints: { workflow: 'w', track: 't', goal: 'g', run_attempt: 'r', summaries: 's', evidence: 'e', reconcile: 'rc', observed: 'o' },
@@ -1017,7 +1049,7 @@ export function runAll(): UnitCaseResult[] {
     const { assessObservation } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
     const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
     const observation = {
-      schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track: 'full' as const,
+      responsibility, schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track: 'full' as const,
       goal_end: 'testing',
       phases: FULL.map(p => ({
         phase: p, summary_state: 'current' as const, schema_version: '1.2',
@@ -1058,8 +1090,8 @@ export function runAll(): UnitCaseResult[] {
 
   run(results, '上游件目标：plan 的 spec 候选 → 推荐 spec；lite 轨映射 change（无幽灵 spec）', () => {
     const { assessObservation } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
-    const mk = (phases: string[], track: 'full' | 'lite', current: string) => ({
-      schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track,
+    const mk = (phases: string[], track: 'full', current: string) => ({
+      responsibility, schema_version: '1.0' as const, feature: 'f1', workflow: 'wf', track,
       goal_end: phases[phases.length - 1], phases: phases.map(p => ({
         phase: p, summary_state: 'current' as const, schema_version: '1.2', verdict: 'PASS',
         closure: 'closed' as const, assurance: 'full', required_assurance: null, assurance_satisfied: true,
@@ -1078,8 +1110,6 @@ export function runAll(): UnitCaseResult[] {
     });
     const full = assessObservation(mk(['spec', 'plan', 'coding', 'review', 'ut', 'testing'], 'full', 'plan') as never, { mode: 'goal_mode' });
     assert(full.recommendation.phase === 'spec', `full 轨 spec 候选应推荐 spec，实得 ${full.recommendation.phase}`);
-    const lite = assessObservation(mk(['change', 'coding', 'exit'], 'lite', 'coding') as never, { mode: 'goal_mode' });
-    assert(lite.recommendation.phase === 'change', `lite 轨 spec 候选应映射 change（无幽灵 spec），实得 ${lite.recommendation.phase}`);
   });
 
   // --- R8：生产接线级回归（codex review 冻结项⑧——纯函数测试盖不住路径/schema/链路） ---
@@ -1150,7 +1180,7 @@ export function runAll(): UnitCaseResult[] {
         `含 repair_candidates 的 summary 必须过正式 schema：${JSON.stringify(violations)}`,
       );
       // 判别性：坏形状必须被同一把尺拒绝（证明 schema 真在校验该字段，不是恒过）
-      const bad = { ...summary, repair_candidates: [{ ...candidates[0], category: 'verification' }] };
+      const bad = { ...summary, repair_candidates: [{ ...candidates[0], category: 'unknown' }] };
       assert(validateLiteSchema(bad, schema).length > 0, 'schema 须拒绝非法 category');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

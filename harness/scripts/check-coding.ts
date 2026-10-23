@@ -55,6 +55,7 @@ import { findBasenameCandidates, formatPrefixMismatchHint } from './utils/path-c
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 import { resolveHarnessDiffBaseRef } from './utils/phase-state';
 import { isBlockingCheck } from './utils/check-disposition';
+import { codingTestPreservation } from './utils/repair-responsibility';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -316,6 +317,46 @@ function diffWithinScopeDocsNote(ctx: CheckContext): string {
   );
 }
 
+/** Current profile paths and existing write/manifest facts, shared by both coding gates. */
+function codingTestChanges(ctx: CheckContext, files: readonly string[], events: ReturnType<typeof loadLineageRunEvents>, runId?: string): Array<{ file: string; preserved: boolean; reason: string }> {
+  const { partitionConstructionFiles } = require('./utils/phase-write-boundary') as typeof import('./utils/phase-write-boundary');
+  const { loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile } = require('./utils/phase-evidence-manifest') as typeof import('./utils/phase-evidence-manifest');
+  const contracts = ctx.featureSpec.contracts ?? { modules: [], files: [] };
+  const testPaths = partitionConstructionFiles(ctx.projectRoot, ctx.resolvedProfile?.profileDir ?? '', { ...contracts, files: [...files] }).tests;
+  const owned = replayUtOwnedWrites(events);
+  const priorUt = loadPhaseEvidenceManifest(ctx.projectRoot, ctx.feature, 'ut');
+  const codingWrites = new Map<string, string>();
+  for (const event of events) {
+    if (event.phase !== 'coding' || event.type !== 'phase_write_observed') continue;
+    for (const row of (event as { observations?: Array<{ path: string }> }).observations ?? []) codingWrites.set(row.path, event.ts ?? '');
+  }
+  return testPaths.flatMap(file => {
+    if (runId && !owned.has(file) && !codingWrites.has(file)) return [];
+    const fact = owned.get(file);
+    if (fact && !fact.voidedBy && currentFileHash(ctx.projectRoot, file) === fact.sha256) return [];
+    const lastWrite = codingWrites.get(file);
+    const laterUt = !runId || events.some(event => event.phase === 'ut' && event.type === 'phase_verdict' && event.verdict === 'PASS'
+      && !event.advance_blocked && event.action !== 'retry' && (!lastWrite || Date.parse(event.ts ?? '') > Date.parse(lastWrite)));
+    if (laterUt && priorUt?.integrityOk && (!lastWrite || Date.parse(priorUt.manifest.generated_at) > Date.parse(lastWrite))
+      && priorUt.manifest.outputs.some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return [];
+    return [{ file, ...codingTestPreservation({ projectRoot: ctx.projectRoot, feature: ctx.feature, file, runId }) }];
+  });
+}
+
+export function checkCodingExistingTestPreserved(ctx: CheckContext): CheckResult[] {
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const baseline = resolveEffectiveDiffBaseline(ctx.projectRoot, ctx.feature, runId);
+  const diff = baseline.available ? diffChangedFilesWithStatus({ projectRoot: ctx.projectRoot, baseRef: baseline.baseSha }) : null;
+  const events = runId ? loadLineageRunEvents(ctx.projectRoot, ctx.feature, runId) : [];
+  const rows = diff?.executed ? codingTestChanges(ctx, diff.entries.map(entry => entry.path), events, runId) : [];
+  const failures = rows.filter(row => !row.preserved);
+  return [{ id: 'coding_existing_test_preserved', category: 'traceability', severity: 'BLOCKER',
+    status: failures.length ? 'FAIL' : 'PASS', description: 'coding 有限兼容修补保留既有用例与断言',
+    details: rows.length ? rows.map(row => `${row.file}：${row.reason}`).join('\n') : '没有需要有限兼容豁免的 coding 测试源码修改。',
+    ...(failures.length ? { affected_files: failures.map(row => row.file), repair_owner: 'ut',
+      suggestion: '交真实 UT 负责方修正或以当前有效 manifest 核验采纳；新增/修改用例及断言不属于 coding 有限许可。' } : {}) }];
+}
+
 export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
   if (ctx.resolvedInputs) {
     const result = (status: 'PASS' | 'FAIL', details: string, files?: string[]): CheckResult[] => [{ id: 'diff_within_scope', category: 'traceability', severity: 'BLOCKER', status, description: '实现遵守原请求真实边界及阶段职责，预测文件不作许可', details, affected_files: files, ...(status === 'FAIL' ? { failure_kind: 'scope_violation', suggestion: '核对原请求明确限制与实际改动；误改由本阶段恢复，真实需求或公共契约变化交责任方。' } : {}) }];
@@ -338,27 +379,9 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
         .filter(file => !isCurrentComponentInventory(ctx.projectRoot, file));
       const scope = resolveImplementationScope(ctx.projectRoot, ctx.feature, contracts.modules, runId);
       const classified = classifyChangedFiles(files, scope.allowedPrefixes, scope.sourcePrefixes);
-      const { partitionConstructionFiles } = require('./utils/phase-write-boundary') as typeof import('./utils/phase-write-boundary');
-      const testPaths = partitionConstructionFiles(ctx.projectRoot, ctx.resolvedProfile?.profileDir ?? '', { ...contracts, files }).tests;
       const hasRunAuthority = !!runId && authority.source === 'run';
       const events = hasRunAuthority ? loadLineageRunEvents(ctx.projectRoot, ctx.feature, runId!) : [];
-      const utOwned = hasRunAuthority ? replayUtOwnedWrites(events) : new Map<string, { sha256: string | null; voidedBy?: string }>();
-      const notes: string[] = [];
-      const codingWrites = new Set<string>();
-      for (const event of events) {
-        if (event.phase !== 'coding' || event.type !== 'phase_write_observed') continue;
-        for (const row of (event as { observations?: Array<{ path: string }> }).observations ?? []) codingWrites.add(row.path);
-      }
-      const { loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile } = require('./utils/phase-evidence-manifest') as typeof import('./utils/phase-evidence-manifest');
-      const priorUt = loadPhaseEvidenceManifest(ctx.projectRoot, ctx.feature, 'ut');
-      const testViolations = testPaths.filter(file => {
-        if (hasRunAuthority && !utOwned.has(file) && !codingWrites.has(file)) return false; // A pre-existing diff is not evidence that coding wrote this test.
-        const fact = utOwned.get(file);
-        if (!codingWrites.has(file) && !fact?.voidedBy && priorUt?.integrityOk && priorUt.manifest.outputs.some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return false;
-        if (fact && !fact.voidedBy && currentFileHash(ctx.projectRoot, file) === fact.sha256) return false;
-        notes.push(file + '：' + (fact?.voidedBy ? 'UT 产出后被 ' + fact.voidedBy + ' 改写' : fact ? 'UT 产出后字节已变' : '缺本周期 UT 产出事实'));
-        return true;
-      });
+      // Test permission is judged once by coding_existing_test_preserved, with UT adoption support.
       // Use the existing invocation delta, not package-vs-host-Git differences from an earlier integration.
       const frameworkBefore = new Map<string, string | null>();
       for (const event of events) {
@@ -371,8 +394,8 @@ export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
         }
       }
       const frameworkViolations = [...frameworkBefore].filter(([file, before]) => currentFileHash(ctx.projectRoot, file) !== before).map(([file]) => file);
-      const violations = [...new Set([...classified.violations, ...testViolations, ...frameworkViolations])];
-      return violations.length ? result('FAIL', '实现违反原请求真实边界或阶段职责：\n' + violations.join('\n') + '\n' + notes.join('\n'), violations)
+      const violations = [...new Set([...classified.violations, ...frameworkViolations])];
+      return violations.length ? result('FAIL', '实现违反原请求真实边界或阶段职责：\n' + violations.join('\n'), violations)
         : result('PASS', '已核验绑定身份、工程源码域与实际 diff；文件/模块预测不作逐项许可，UT产出保持字节及归属承接。语义范围及公共契约由独立 review 核实。');
     } catch (error) { return result('FAIL', String(error)); }
   }
@@ -760,6 +783,7 @@ const checker: PhaseChecker = {
       ...safeRun(() => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
     );
     results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
+    results.push(...safeRun(() => checkCodingExistingTestPreserved(ctx), 'coding_existing_test_preserved'));
     // c4e8b1d3 G1：实际 UI 边界核对（正式契约身份 + 原需求 + diff 基线）
     results.push(...safeRun(() => checkUiDiffWithinDeclaredFiles(ctx), 'ui_diff_within_declared_files'));
     // （v23 D2）required_anchors 通道已删：spec 侧从无生产者（schema/模板都没有），该检查

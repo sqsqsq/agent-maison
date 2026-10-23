@@ -1,0 +1,866 @@
+{
+  "schema_version": "1.0",
+  "elements": [
+    {
+      "element_id": "type_bg_title",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "top_nav",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "《添加银行卡"
+        },
+        {
+          "source": "visual-observations",
+          "description": "A black left-pointing chevron sits inside a pale circular background near the upper left. Bold black text “添加银行卡” is positioned immediately to its right."
+        }
+      ]
+    },
+    {
+      "element_id": "type_bg_subtitle",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "免输卡号添卡支持100家银行"
+        },
+        {
+          "source": "visual-observations",
+          "description": "Below the header, “免输卡号添卡” is left aligned and “支持 100 家银行” is right aligned. Both appear in gray beneath the overlay."
+        }
+      ]
+    },
+    {
+      "element_id": "type_bg_search",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "Q搜索银行|搜索"
+        },
+        {
+          "source": "visual-observations",
+          "description": "A wide rounded search field spans nearly the full page width. It contains an outlined magnifying glass on the left, “搜索银行” beside it, and blue “搜索” at the right, separated from the rest of the field by a short vertical line."
+        }
+      ]
+    },
+    {
+      "element_id": "type_bg_bank_name",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "CA招商银行"
+        },
+        {
+          "source": "visual-observations",
+          "description": "Below the search field is the visible upper portion of a white rounded card. A red circular bank logo appears on the left, black “招商银行” appears beside it, and a gray right-pointing chevron sits near the right edge. A thin horizontal divider is visible below the row. The sheet obscures the card’s lower portion."
+        }
+      ]
+    },
+    {
+      "element_id": "type_title",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "选择卡类型XX"
+        },
+        {
+          "source": "visual-observations",
+          "description": "Bold black “选择卡类型” is placed near the sheet’s upper left. At the upper right, a black X is centered inside a pale gray circular button."
+        }
+      ]
+    },
+    {
+      "element_id": "type_bank_name",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "从招商银行"
+        }
+      ]
+    },
+    {
+      "element_id": "type_savings",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "储蓄卡@"
+        },
+        {
+          "source": "visual-observations",
+          "description": "The middle row shows black “储蓄卡” at the left. On the right is a filled bright blue circle containing a white check mark."
+        }
+      ]
+    },
+    {
+      "element_id": "type_credit",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "信用卡"
+        },
+        {
+          "source": "visual-observations",
+          "description": "The bottom row shows black “信用卡” at the left. A white circle with a thin gray outline appears on the right, aligned vertically with the blue circle above."
+        }
+      ]
+    },
+    {
+      "element_id": "type_disclosure",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名"
+        },
+        {
+          "source": "ocr",
+          "text": "信息给招商银行。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "Gray text is left aligned beneath the white panel and wraps over two lines: “为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。”"
+        }
+      ]
+    },
+    {
+      "element_id": "type_agreement",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "我已阅读快捷支付服务协议、银联无卡自助消费授权协议"
+        },
+        {
+          "source": "visual-observations",
+          "description": "Farther down the sheet, a left-aligned line begins with black “我已阅读”, followed by blue “快捷支付服务协议”, a dark separator “、”, and blue “银联无卡自助消费授权协议”."
+        }
+      ]
+    },
+    {
+      "element_id": "type_continue",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "bottom",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "同意并继续"
+        },
+        {
+          "source": "visual-observations",
+          "description": "A wide blue pill-shaped button is horizontally centered near the bottom of the sheet, with substantial side margins. White “同意并继续” is centered inside it."
+        }
+      ]
+    },
+    {
+      "element_id": "type_root",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "The portrait image shows a bank-selection page behind a bottom sheet. A translucent gray overlay darkens the exposed upper page. The bottom sheet begins approximately 39% down the image and extends to the bottom, with rounded upper corners and a very light gray background."
+        }
+      ]
+    },
+    {
+      "element_id": "type_system_status",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "The time “11:30” appears at the upper left beside a blue square containing a white USB symbol. The upper right contains black connectivity and status symbols, cellular indicators, and a battery display reading “100” with a lightning symbol."
+        }
+      ]
+    },
+    {
+      "element_id": "type_bank_surface",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "A white panel with rounded corners sits below the sheet header, inset from both sides. It contains three vertically stacked rows separated by thin light gray horizontal lines."
+        }
+      ]
+    },
+    {
+      "element_id": "type_bank_header",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "The first row contains a small red bank logo inside a white rounded square with a faint border, followed by black “招商银行”. The logo and text are aligned horizontally toward the left."
+        }
+      ]
+    },
+    {
+      "element_id": "type_system_bottom",
+      "screen_id": "card_type_sheet",
+      "ref_id": "card_type_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "There is open light gray space beneath the blue button. A short, pale gray horizontal pill is centered close to the bottom edge."
+        }
+      ]
+    },
+    {
+      "element_id": "selection_title",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "top_nav",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "《招商银行"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_prompt",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "请选择您要绑定的银行卡"
+        },
+        {
+          "source": "visual-observations",
+          "description": "标题区下方留有明显空白，随后靠左显示灰色文字“请选择您要绑定的银行卡”。文字左边缘与下方白色卡片左边缘基本对齐。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_agreement",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "侨同意并阅读《云内付App一键绑卡用户授权协议)》、《招商银行信"
+        },
+        {
+          "source": "ocr",
+          "text": "用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信"
+        },
+        {
+          "source": "ocr",
+          "text": "息。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "勾选图标右侧有三行文字。第一行显示灰色“同意并阅读”，随后为蓝色“《云闪付App一键绑卡用户授权协议》”，再接灰色顿号和蓝色“《招商银行信”。第二行以蓝色“用卡快捷支付服务协议》”开头，随后为灰色“，授权云闪付获得您在本行银行卡号等信”。第三行仅显示灰色“息。”。各行左边缘对齐。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_root",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "画面为竖向手机界面，背景呈浅灰色。内容集中在上半部，下半部大面积留空。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_system_status",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "左侧显示黑色时间“11:31”，右侧紧邻一个蓝色圆角方形图标，内部为白色连接状符号。右侧排列多个黑色状态图标，可见“N”、闹钟形状、蓝牙、无线网络、信号格、“5A”和显示“100”的电池图形，最右侧有闪电符号。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_nav",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "状态栏下方左侧有浅灰色圆形背景，圆内为黑色向左折线箭头。箭头右侧显示大号黑色粗体文字“招商银行”。标题区背景略带灰蓝色，与下方浅灰内容区域之间有横向色块边界。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_cards",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "提示文字下方是一张横向白色圆角矩形卡片，左右距画面边缘均有留白，卡片周围可见淡灰色阴影。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_card_number",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "白色卡片左侧放置红色圆形银行标志，内部为白色几何线条。标志右侧以深灰色文字显示“4392 **** **** 2269”。标志、卡号及右侧勾选图标沿卡片竖向中部排列。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_card_check",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "卡片右侧有红色圆形图标，内部为白色勾号；图标与卡片右边缘之间留有空白。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_agreement_check",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "白色卡片下方左侧有红色圆角方形图标，内部为白色勾号。其左边缘与白色卡片左边缘基本对齐，顶部接近右侧协议文字第一行。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_next",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "协议文字下方留有空白，随后在画面水平中央放置红色圆角矩形按钮。按钮内居中显示白色文字“下一步”，三个字之间有明显间隔。按钮宽度约为白色银行卡条目宽度的三分之一。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_lower_space",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "红色按钮下方直至底部导航区域为连续的浅灰色空白，没有其他可见文字、卡片或按钮。"
+        }
+      ]
+    },
+    {
+      "element_id": "selection_system_bottom",
+      "screen_id": "bank_card_selection",
+      "ref_id": "bank_card_selection",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "画面底部有一条略带灰蓝色的横向区域，其中央靠近底边位置显示浅灰色短横条，两端为圆角。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_title",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "输入验证码x"
+        },
+        {
+          "source": "visual-observations",
+          "description": "面板左上方显示黑色粗体文字“输入验证码”。右上方为浅灰色圆形区域，中央有黑色交叉线组成的关闭图标。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_prompt",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "为确认是您本人操作，请输入发送至手机"
+        },
+        {
+          "source": "visual-observations",
+          "description": "标题下方有两行左对齐文字。第一行为灰色“为确认是您本人操作，请输入发送至手机”；第二行开头为较深色的“185****3841”，后接灰色“的验证码。”。说明文字相对标题向右缩进。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_phone",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "185**#***3841的验证码。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_input",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "情输入短信验证码55秒后重试"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_system_keyboard",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "下袜世日-"
+        },
+        {
+          "source": "ocr",
+          "text": "一123四"
+        },
+        {
+          "source": "ocr",
+          "text": "答二9。王着"
+        },
+        {
+          "source": "visual-observations",
+          "description": "键盘背景为浅灰色。顶部工具栏从左至右可见键盘样式图标、衣服轮廓图标、带“AI”的圆形图标、笑脸图标，以及右侧向下的折线图标；笑脸与向下图标之间有一条细竖线。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "数字键排列为三列：第一行“1、2、3”，第二行“4、5、6”，第三行“7、8、9”。这些按键为白色圆角矩形，黑色字符居中，按键之间有浅灰色间隔。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "数字键左侧有一块纵向白色圆角长键，从上至下排列“+”“-”“=”“/”。其下方为灰色圆角按键，文字为“符号”。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "数字键右侧是一列灰色圆角按键，从上至下分别显示退格图标、“@”、“.”和“完成”。退格图标为带尖角的轮廓，内部有交叉符号。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "“符号”右侧依次为白底麦克风图标键、白底“0”键、灰底“返回”键和灰底“完成”键。麦克风图标下方有黑色横线及两端向上的短线。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_root",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "图像为纵向手机界面。顶部为状态栏与大片灰色区域，中部为浅灰白色圆角面板，底部为数字键盘。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "浅灰白色面板横跨图像宽度，顶部左右两角呈大圆弧，顶部约位于图像高度的六分之一处，下缘与键盘区域相接。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_system_status",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "左侧显示“11:31”，旁边有蓝底白色连接符号图标；右侧排列多个黑色状态图标、网络标识和显示“100”的电池图标，电池右侧有闪电符号。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_background_mask",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "状态栏下方至面板顶部是一片均匀灰色区域，没有可辨认的文字或内容。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_field_row",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "说明文字下方是一条白色圆角长条，左右接近面板边缘。长条左侧显示灰色“请输入短信验证码”，文字起始处有一条蓝色竖线；右侧显示蓝色“55 秒后重试”。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_next",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "输入区域下方留有间距，随后是一条浅蓝色圆角长按钮。按钮与输入区域左右边缘基本对齐，中央显示浅白色“下一步”。"
+        }
+      ]
+    },
+    {
+      "element_id": "otp_system_bottom",
+      "screen_id": "otp_sheet",
+      "ref_id": "otp_sheet",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "键盘下方左侧有地球轮廓图标，右侧有带星形装饰的圆弧图标。最底部中央有一条浅灰色横向圆角条。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_title",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "添卡成功"
+        },
+        {
+          "source": "visual-observations",
+          "description": "绿色圆形下方居中显示黑色粗体文字“添卡成功”。其下方另有一行灰色文字“可用于实体店二维码支付和网上商城支付”，横向居中，字号小于“添卡成功”。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_message",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "可用于实体店二维码支付和网上商城支付"
+        }
+      ]
+    },
+    {
+      "element_id": "result_guide",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "回中加"
+        },
+        {
+          "source": "visual-observations",
+          "description": "说明文字下方留有空隙，随后是一幅手持手机插画。手机位于插画左侧，外框为深灰色圆角轮廓，屏幕为白色。屏幕上部有蓝色区域，其前方叠放白色圆角卡片，卡片中央有黑白二维码图案。"
+        },
+        {
+          "source": "visual-observations",
+          "description": "一只浅桃色的手从手机右侧伸入，拇指横向覆盖屏幕偏下位置，其余可见手指沿手机右侧分布。手腕向右下方延伸，末端颜色逐渐淡入页面背景。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_nfc_info",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "excluded",
+      "requirement_quote": "再往下的激活nfc部分本次先不需要",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "激活NFC支付功能可用于实体店碰一碰支付"
+        },
+        {
+          "source": "visual-observations",
+          "description": "插画下方有一块接近页面全宽的浅灰色圆角矩形，左右留有窄边距。区域内文字左对齐，上行是深灰色文字“激活 NFC 支付功能可用于实体店碰一碰支付”，下行是蓝色文字“激活 NFC 支付”。两行之间有明显间距。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_nfc_action",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "excluded",
+      "requirement_quote": "再往下的激活nfc部分本次先不需要",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "激活NFC支付"
+        }
+      ]
+    },
+    {
+      "element_id": "result_finish",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "bottom",
+      "type": "content_display",
+      "disposition": "implement",
+      "fidelity_note": "原始OCR文本仅作捕获分母，噪声/状态栏/插画内字不可变成应用文案；可读校正在ui-spec记来源",
+      "source_records": [
+        {
+          "source": "ocr",
+          "text": "完成"
+        },
+        {
+          "source": "visual-observations",
+          "description": "信息区域下方以较小间隙排列一个接近页面全宽的浅灰色胶囊形区域，左右边缘与上方信息区域基本对齐。中央显示蓝色文字“完成”。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_root",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "画面为竖向手机界面，背景为浅灰色。内容沿纵向排列，上部为状态栏，中上部为成功图标及文字，中部为手持手机插画，下部为两块浅灰色圆角区域。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_system_status",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "左侧显示黑色时间“11:31”，其右侧有蓝色圆角方形图标，内含白色连接状符号。右侧排列多个黑色状态图标，包括闹钟、蓝牙、无线网络、蜂窝信号以及显示“100”的电池图标，电池右侧有闪电符号。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_top_space",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "状态栏与主体成功图标之间留有较大面积的浅灰色空白，没有可见的页面标题或返回按钮。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_status_icon",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "页面水平居中位置有一个绿色实心圆，圆内为浅色对勾。"
+        }
+      ]
+    },
+    {
+      "element_id": "result_system_bottom",
+      "screen_id": "bank_card_result",
+      "ref_id": "bank_card_result",
+      "zone": "content",
+      "type": "content_display",
+      "disposition": "implement",
+      "source_records": [
+        {
+          "source": "visual-observations",
+          "description": "“完成”区域下方留有浅灰色空白，靠近屏幕底边中央有一条浅灰色短横条，两端为圆角。"
+        }
+      ]
+    }
+  ]
+}

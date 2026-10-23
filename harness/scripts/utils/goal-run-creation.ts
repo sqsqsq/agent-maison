@@ -1,5 +1,5 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
-import { validateExecutionScope, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView } from './execution-scope';
+import { validateExecutionScope, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView, type ScopeDependencyContext } from './execution-scope';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 /**
  * Fresh goal-run birth contract.
@@ -110,11 +110,11 @@ export function applyScopeRevisions(birth: ExecutionScope, events: readonly Goal
  * atomic: there is no window in which the new scope is readable but the revocation is not, so an
  * interrupt between two writes cannot resurrect a pre-revision PASS (review B1/2).
  */
-export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[]): Map<number, string[]> {
+export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}): Map<number, string[]> {
   const out = new Map<number, string[]>();
   loadScopeRevisions(events, birth);
   const order = [...new Set([...FEATURE_PHASE_ORDER, ...birth.obligations.map(o => o.owner_phase)])];
-  const history = scopeProofHistory(birth, events, order);
+  const history = scopeProofHistory(birth, events, order, undefined, dependencies.workflow, dependencies);
   for (const [index, phases] of history.revisions) if (phases.length) out.set(Number((events[index] as unknown as ScopeRevisedEvent).revision_index), phases);
   return out;
 }
@@ -124,9 +124,9 @@ export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly 
  * is followed by the per-phase invalidation it implies. Pure projection — nothing is persisted, so
  * the recovery path and the in-run path read the same truth from the same single event.
  */
-export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[]): GoalRunEvent[] {
+export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}): GoalRunEvent[] {
   if (!birth) return [...events];
-  const revoked = revokedPhasesByRevision(birth, events);
+  const revoked = revokedPhasesByRevision(birth, events, dependencies);
   if (!revoked.size) return [...events];
   const out: GoalRunEvent[] = [];
   for (const event of events) {
@@ -198,7 +198,7 @@ export function loadEffectiveExecutionScope(projectRoot: string, feature: string
   const frameworkRoot = providedFrameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
   const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
   return resolveCurrentScopeView({ projectRoot, frameworkRoot, feature,
-    workflow: workflowForExistingRun(resolveWorkflowSpec(projectRoot, { frameworkRoot }), manifest, frameworkRoot), previous: recorded, currentRunId: runId, currentPhase: pendingOwnerPhase, authorityReaders });
+    workflow: workflowForExistingRun(resolveWorkflowSpec(projectRoot, { frameworkRoot }), manifest, frameworkRoot, projectRoot), previous: recorded, currentRunId: runId, currentPhase: pendingOwnerPhase, authorityReaders });
 }
 
 /**

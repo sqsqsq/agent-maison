@@ -139,7 +139,7 @@
           "id": { "type": "string", "minLength": 1 },
           "category": {
             "type": "string",
-            "enum": ["spec", "plan", "coding"],
+            "enum": ["spec", "plan", "coding", "verification"],
             "description": "责任类别（既有 CorrectionCategory 子集；phase 由 assess 按 workflow 映射，不存 phase 名）"
           },
           "files": { "type": "array", "items": { "type": "string" } },

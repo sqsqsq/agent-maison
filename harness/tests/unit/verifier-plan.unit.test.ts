@@ -55,7 +55,7 @@ function ctx(mode: RuntimeMode, phase: string): RuntimeContext {
 /** 与生产同源：policy 一律经 resolveEvidencePolicy 求解，测试里不手搓 policy。 */
 function planFor(opts: {
   phase: string;
-  track: 'full' | 'lite';
+  track: 'full';
   mode: RuntimeMode;
   balanced?: boolean;
   hasReviewer?: boolean;
@@ -84,29 +84,6 @@ function planFor(opts: {
 // --------------------------------------------------------------------------
 // 1. lite 全链零 verifier —— 含 lite×goal（生产路由矛盾的收口点）
 // --------------------------------------------------------------------------
-function case1_liteIsAlwaysDisabled(): void {
-  for (const mode of ['interactive', 'goal', 'headless'] as RuntimeMode[]) {
-    for (const phase of ['change', 'coding', 'exit']) {
-      const plan = planFor({ phase, track: 'lite', mode });
-      assert(
-        plan.mode === 'disabled',
-        `lite × ${mode} × ${phase} 必须 disabled，实得 ${plan.mode}/${plan.reason}`,
-      );
-    }
-  }
-  // lite×coding 尤其关键：workflow **声明了** verifier_prompt（full 轨要用），
-  // 但 lite 的 evidence policy 判 verifier=off —— 声明在场不等于本轮启用。
-  // 这一条也是 lite×goal 的收口点：goal 模式不得把它重新升级成"必跑"。
-  const liteCoding = planFor({ phase: 'coding', track: 'lite', mode: 'goal' });
-  assert(
-    liteCoding.verifier_prompt === 'prompts/verify-coding.md',
-    '构造性前提：coding 确实声明了 verifier_prompt（否则本例退化为"未声明"）',
-  );
-  assert(
-    liteCoding.reason === 'policy_off',
-    `lite×goal×coding 应由 policy 关掉（LITE_EVIDENCE.verifier='off'），实得 ${liteCoding.reason}`,
-  );
-}
 
 // --------------------------------------------------------------------------
 // 2. workflow 未声明 = 不适用（缺席即为零，不得 fallback 造模板）
@@ -541,9 +518,7 @@ function case8_goalBalancedProductionWiring(): void {
   }
 }
 
-const CASES: Array<{ name: string; fn: () => void }> = [
-  { name: '① lite（interactive/goal/headless × change/coding/exit）恒 disabled，零 verifier 产物', fn: case1_liteIsAlwaysDisabled },
-  { name: '② workflow 未声明 verifier_prompt = 不适用，不得 fallback 造模板', fn: case2_workflowSilenceMeansNotApplicable },
+const CASES: Array<{ name: string; fn: () => void }> = [{ name: '② workflow 未声明 verifier_prompt = 不适用，不得 fallback 造模板', fn: case2_workflowSilenceMeansNotApplicable },
   { name: '③ full + 已登记 adapter = enabled；balanced 按保留集分流 off', fn: case3_fullEnabledAndBalancedSplit },
   { name: '④ 三模式同判；adapter 无审查员 → disabled/adapter_has_no_reviewer', fn: case4_modeAgnosticAndReviewerDisclosure },
   { name: '⑤ profile 禁用 phase 优先于 policy 与 adapter 能力', fn: case5_profileDisabledWins },

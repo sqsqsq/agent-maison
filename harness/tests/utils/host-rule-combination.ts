@@ -354,8 +354,17 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
           const reportsDir = featurePhaseReportsDir(root, feature, 'coding', frameworkRoot);
           const summary = JSON.parse(fs.readFileSync(path.join(reportsDir, 'summary.json'), 'utf8'));
           if (!okay) assert.equal(summary.next_action, 'run_verifier_for_repair', JSON.stringify({ summary, selfcheck }));
+          const priorRunId = process.env.MAISON_GOAL_RUN_ID;
+          let issues: ReturnType<typeof readPhaseRepairIssues> = null;
+          try {
+            process.env.MAISON_GOAL_RUN_ID = ctx.runId;
+            issues = readPhaseRepairIssues(root, feature, 'coding');
+          } finally {
+            if (priorRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRunId;
+          }
+          if (!okay) assert(issues?.rows[0], '本次 coding 调用身份必须读到可核实的上游问题行');
           publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature, phase: 'coding', subjectId: summary.verifier_subject_id, skipSummaryPatch: true,
-            reportText: okay ? 'Current implementation typechecks and follows the owner reason.' : ['```issue-verification', `- issue: ${upstreamId}`, '  verdict: confirmed', `  evidence: ${path.basename(authority)} | ${readPhaseRepairIssues(root, feature, 'coding')!.rows[0].summary}`, '```'].join('\n') });
+            reportText: okay ? 'Current implementation typechecks and follows the owner reason.' : ['```issue-verification', `- issue: ${upstreamId}`, '  verdict: confirmed', `  evidence: ${path.basename(authority)} | ${issues!.rows[0].summary}`, '```'].join('\n') });
         } else { facts(ctx); proof(ctx); }
       },
       onReview: ctx => {

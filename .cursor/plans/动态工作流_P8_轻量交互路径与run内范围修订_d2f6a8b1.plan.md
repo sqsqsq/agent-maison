@@ -1240,7 +1240,7 @@ D0.2（需求 §3 D0.2 末段逐行）：
 | 同输入重跑文件字节不变 / 候选被手改后重跑报差异不覆盖 | `D0.2 generated candidate is directly usable by prepare-run and is byte-identical on regeneration`（两条断言在同一用例里：重跑字节不变、手改后报差异且不覆盖，显式 `--overwrite` 才写） |
 | 已有有效实现、仅缺 review / UT 的请求生成的候选不含 implementation，链为 `[review, ut]` | `D0.2 verification-only request yields no implementation obligation` |
 | 明确要求改代码的请求必含 implementation | `D0.2 missing acceptance becomes an unknown duty, and a code change without a write set is refused`（同一用例内断言「请求含 coding → 候选带 implementation 且 basis 是契约写集」与反例「跳过设计且无写集 → 拒绝」） |
-| AGENTS 模板 smoke：四项职责要素在场、四份入口文本无「手写」来源/指纹、入口文档指向 `--prepare-scope` | `D0.2 AGENTS template and entry docs hand the candidate to the machine, not to hand-written bindings`（`framework-init-entry-contract.unit.test.ts`）。**「无 lite/full」按 §11 批次 2 的记录收窄**：`AGENTS.md.template` 的 Context Facts Gate 行用 `full=spec/lite=change` 描述 track 机制，与候选生成无关，保留 |
+| AGENTS 模板 smoke：四项职责要素在场、四份入口文本无「手写」来源/指纹、入口文档指向 `--prepare-scope` | `D0.2 AGENTS template and entry docs hand the candidate to the machine, not to hand-written bindings`（`framework-init-entry-contract.unit.test.ts`）。**「无 lite/full」按 §11 批次 2 的记录收窄**：`AGENTS.md.template` 的 Context Facts Gate 行用 `full=spec/lite=change` 描述当时 track 机制，原验收保留；用户 10-22 裁决后该兼容措辞由总纲 g2/c2f7a91e 删除，原测试结果仍作历史 |
 | NEXT_STEP 消费新的有效范围，不出现范围外义务 | `D0.2 NEXT_STEP projects only in-scope obligations`（复用 `formatAssessNextStep`，不新建 renderer） |
 | **候选必须能证明「它是为哪句需求算的」**：任何候选都带机器解析的需求绑定；冻结时与本 run 出生的需求重解析比对，分叉 / 删除 / 替换一律经既有绑定校验拒绝（第三轮阻断 1） | `D0.2 the candidate proves which requirement it was computed for, and a fork or a deleted binding is refused`。前提断言**有** contracts / acceptance 的正常 feature（否则退化成第二轮那条无蓝图用例）；四条出口：同文本通过 / 换需求 `stale` / 删绑定 `requirement_basis` / 捏一条假绑定 `stale` |
 | `--prepare-scope` 与 `--prepare-run` 单次调用互斥，候选步骤不会顺带建 run（第三轮必修 1） | `D0.2 the CLI accepts --prepare-scope without a run mode and rejects half inputs`（同一条 CLI 用例扩充：断言拒绝 + **不生成 manifest**） |
@@ -1494,11 +1494,11 @@ OpenSpec delta（批次 3）：
 - `resolveExecutionScope` 只做 D0.1 的护栏增量与「应用修订」纯函数，不改其余义务语义。
 - 不动 request CLI（review/ut/testing 专项）、R8 护栏、P0 运行时证据规则。
 - 不重造 NEXT_STEP renderer；本批只保证既有 assess → NEXT_STEP 与新的有效范围一致。
-- 旧 track / lite 字样残留**不按数量清点**：只处理新路径误用旧逻辑的位置，真实旧 run 消费者保留。
+- 用户 2026-10-22 裁决取代原 lite 消费者保留承诺：lite 执行链、共享分支和公开入口彻底删除，旧运行用旧发布件收尾或新起运行，现代残留 track: lite 忽略并提示。由总纲 g2/c2f7a91e 实施；历史记录不按字样抹除。
 - `contract.capabilities[].obligation_kinds` 未被消费不直接定性为「合同未实现」；只检查实际必需输入是否被错误剪枝。
 - 不复制七份 plan 的实施日志，不为 facts 撞名做字段改名迁移。
 - **不新增确认点、模式菜单、长期 feature flag、registry、租约、签名体系；不做 A/B。**
-- 不批量改写宿主历史；旧 spec-driven run 按 P7 legacy 语义恢复。
+- 不批量改写宿主历史；旧 spec-driven 的非 lite run 按 P7 现有语义恢复，lite 不再兼容执行。这里的轻量交互与 RequestRoute.direct 保留，不等同于退役 lite。
 - Skill 单职责终点验收：spec / plan / coding 各补一条「只做本职责、在请求终点停止、不冒充整体完成」的验收，复用现有 request CLI 与阶段夹具；不为所有 Skill 新增无 Feature 的 request CLI。
 
 ## 9. 提交边界与验证

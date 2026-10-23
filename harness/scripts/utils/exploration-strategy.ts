@@ -19,7 +19,6 @@ import { parseScope } from './scope-parser';
 import { SpecLoader } from './spec-loader';
 import { computeMaxDependencyFanOut, computeMaxInScopeModuleLoc } from './fan-out-scanner';
 
-/** `change` = lite track 建立阶段（C4 facts.md 契约），与 context-exploration.ts 的同名类型保持同步。 */
 export type ContextExplorationPhase = string;
 
 /** frontmatter 子集（避免与 context-exploration 循环依赖） */

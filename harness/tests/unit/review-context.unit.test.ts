@@ -188,6 +188,13 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
 ];
 
 cases.push({ name: 'c6a3d918 shared visual disposition crosses conclusion closure candidates without erasing counts', run: async () => withTmpProject(async root => {
+  writeFile(path.join(root, 'framework.config.json'), JSON.stringify({ active_workflow: 'spec-driven', project_profile: { name: 'hmos-app' },
+    architecture: { outer_layers: [{ id: 'src', can_depend_on: [], intra_layer_deps: 'forbid' }], module_inner_layers: ['main'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.ts' } }));
+  clearFrameworkConfigCache();
+  writeFile(path.join(root, 'doc/features/demo/plan.md'), '# Scope\n```yaml\nin_scope_modules: [UI]\nout_of_scope_modules: []\nrationale: 已批准的界面实现范围\n```\n');
+  writeFile(path.join(root, 'doc/features/demo/contracts.yaml'), JSON.stringify({ feature: 'demo', source: 'approved design', version: '1',
+    modules: [{ name: 'UI', layer: 'src', package_path: 'src' }], files: ['src/UI.ts'] }));
+  const responsibility = { projectRoot: root, frameworkRoot: DEFAULT_LAYOUT.frameworkRoot, feature: 'demo', currentPhase: 'review' };
   const init = (hard: boolean) => initializeFidelityRouting({ projectRoot: root, frameworkRoot: root, feature: 'demo',
     requirement: hard ? '必须像素级完全还原 UI' : '尽量与参考图一致 UI', featuresDirRel: 'doc/features', executionIdentity: 'review-test', requirementProvenance: 'explicit_cli' });
   init(false);
@@ -211,7 +218,7 @@ cases.push({ name: 'c6a3d918 shared visual disposition crosses conclusion closur
     const result = await checker.check(ctx(root, { feature: 'demo' }));
     const checks = result.filter(r => ['conclusion_with_verdict', 'conditional_pass_closure', 'negative_verdict_closure'].includes(r.id));
     assertTrue(checks.every(r => r.status !== 'FAIL') === expected, `${classification}/${severity}/${verdict}/${hard}: ${JSON.stringify(checks)}`);
-    const candidates = collectReviewRepairCandidates({ reportText: body, verifierReportText: verified, reportValidityBlocked: false, reviewFidelity: loadFidelityIntentSsot(root, 'demo') });
+    const candidates = collectReviewRepairCandidates({ reportText: body, verifierReportText: verified, reportValidityBlocked: false, reviewFidelity: loadFidelityIntentSsot(root, 'demo'), responsibility });
     assertTrue(candidates.length === (classification === '视觉保真' && severity === 'MAJOR' && !hard ? 0 : 1), '候选处置必须同源');
     if (expected) {
       assertTrue(body.includes('MAJOR: 1') && body.includes('未关闭'), '不得抹统计或假闭合');
@@ -230,7 +237,7 @@ cases.push({ name: 'c6a3d918 shared visual disposition crosses conclusion closur
   assertTrue(resolveFidelityContextFromFeature(root, 'demo').fidelityDeferrals.length === 2, '复用既有延后读取');
   const negative = report('其他', 'MAJOR', '不通过');
   const refuted = verified.replace('confirmed', 'refuted');
-  assertTrue(collectReviewRepairCandidates({ reportText: negative, verifierReportText: refuted, reportValidityBlocked: false }).length === 0, '有效 defer 被逐条驳回后不派 coding');
+  assertTrue(collectReviewRepairCandidates({ reportText: negative, verifierReportText: refuted, reportValidityBlocked: false, responsibility }).length === 0, '有效 defer 被逐条驳回后不派 coding');
   writeFile(path.join(root, 'doc/features/demo/review-report.md'), negative);
   assertTrue((await checker.check(ctx(root, { feature: 'demo' }))).some(r => r.id === 'negative_verdict_closure' && r.status === 'FAIL'), '驳回不直接洗绿负面报告');
   const corrected = validReport.replace('TaskDemo', 'src/UI.ts');

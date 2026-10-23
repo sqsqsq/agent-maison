@@ -1994,9 +1994,9 @@ Enforcement: `harness/tests/unit/goal-runtime-structural-acceptance.unit.test.ts
 
 ### Requirement: Goal scope gates ignore live diff-base overrides
 
-Coding and exit scope gates SHALL ignore `HARNESS_DIFF_BASE_REF` whenever `hasGoalExecutionSignal` is true. The live variable MAY retain its legacy non-goal diagnostic behavior, but it MUST NOT select the baseline of either an agent-side or formal goal gate.
+Coding scope gates SHALL ignore `HARNESS_DIFF_BASE_REF` whenever `hasGoalExecutionSignal` is true. The live variable MAY retain its legacy non-goal diagnostic behavior, but it MUST NOT select the baseline of either an agent-side or formal goal gate.
 
-Enforcement: `harness/scripts/check-coding.ts`, `harness/scripts/check-exit.ts`, `harness/scripts/utils/phase-state.ts`
+Enforcement: `harness/scripts/check-coding.ts`, `harness/scripts/utils/phase-state.ts`
 
 #### Scenario: Goal agent resets the scrubbed variable
 - **WHEN** a goal agent sets `HARNESS_DIFF_BASE_REF` before self-invoking the harness

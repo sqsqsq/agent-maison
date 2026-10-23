@@ -15,6 +15,8 @@ phases:
       - { id: capability_ut_design_context, axis: functional, inputs: [contracts], input_role: base, on_missing: fail }
       - { id: capability_ut_use_case_context, axis: evidence, inputs: [use_cases], input_role: enhancement, on_missing: prune }
     produces:
+      # UT owns new/changed tests and assertions; coding's finite compatibility permission
+      # preserves existing cases/assertions and never signs test PASS.
       - { kind: source, id: ut_source_and_dag }
       - { artifact: testability-audit@1 }
       - { artifact: mock-plan@1 }

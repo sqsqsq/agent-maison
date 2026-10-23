@@ -1,6 +1,6 @@
 # Agent 行为规约 — Karpathy 四原则（Framework 全生命周期适配）
 
-> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
+> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 旧出生协议为 spec 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
 > **SSOT**：本文件是 framework 内 AI coding agent 的**行为层**约束，与 `framework/specs/phase-rules/`（产出结构）、`framework/harness/`（机械门禁）、`verify-*.md`（语义审查）叠加生效。
 >
@@ -18,7 +18,7 @@
 
 ### Framework 约束
 
-1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（full=spec / lite=change）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing、lite 的 coding/exit）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
+1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（旧出生协议为 spec）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；数量下限与磁盘存在性由 harness 在**建立阶段与旧 `context-exploration.md` 兼容路径**校验（delta 阶段只校验 `phase_delta` 节存在且非空——不校验数量不等于可以不读）。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
 4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding `default_mode: subagent`，spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）；L1 trivial 命中豁免条件、L2_small 复合评分低于阈值同样豁免，L4 architectural 全阶段强制。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。**该判定同样只在建立阶段与兼容路径生效**（`harness/scripts/utils/context-facts.ts`）——delta 阶段不按数量或 subagent 硬判，复杂问题该起子代理探索仍须起。
@@ -129,7 +129,7 @@
 
 ## 弱模型自检清单（Research Sub-Phase 结束前）
 
-> 下列量化项按**建立阶段**（full=spec / lite=change）与旧 `context-exploration.md` 兼容路径逐条校验；
+> 下列量化项按**建立阶段**（旧出生协议为 spec）与旧 `context-exploration.md` 兼容路径逐条校验；
 > delta 阶段（plan/coding/review/ut/testing）只校验 `facts.md` 的 `## phase_delta: <phase>` 节存在且非空。
 
 ```

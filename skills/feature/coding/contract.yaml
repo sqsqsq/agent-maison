@@ -9,7 +9,6 @@ phases:
       - { id: plan, sources: [{ kind: artifact, artifact: plan@1 }] }
       - { id: contracts, sources: [{ kind: artifact, artifact: contracts@1 }, { kind: derive, provider_id: derive.blueprint-contracts }] }
       - { id: acceptance, sources: [{ kind: artifact, artifact: acceptance@1 }, { kind: derive, provider_id: derive.blueprint-acceptance }] }
-      - { id: change, sources: [{ kind: artifact, artifact: change@1 }] }
       - { id: spec, sources: [{ kind: artifact, artifact: spec@1 }] }
       - { id: use_cases, sources: [{ kind: artifact, artifact: use-cases@1 }] }
       - { id: ui_spec, sources: [{ kind: artifact, artifact: ui-spec@1 }] }
@@ -20,6 +19,8 @@ phases:
       - { id: capability_coding_spec_context, axis: functional, inputs: [spec, use_cases], input_role: enhancement, on_missing: prune }
       - { id: capability_coding_visual_context, axis: visual, inputs: [ui_spec, visual_parity], input_role: enhancement, applicability_provider_id: applicability.ui, on_missing: prune }
     produces:
+      # Finite implementation-caused test import/type/data/double compatibility repairs require
+      # coding_existing_test_preserved; new/changed cases and assertions remain UT responsibility.
       - { kind: source, id: implementation }
       - { artifact: coding-upstream-issues@1 }
     verifies: { check: check-coding.ts }

@@ -86,6 +86,9 @@ structure_checks:
 semantic_checks: {}
 
 traceability_checks:
+  coding_existing_test_preserved:
+    severity: BLOCKER
+    description: 本次实现引发的既有测试兼容修补保留原用例定义与断言，不新增测试、断言或跳过声明；真实原件或解析无法确认时交 UT 核验。
   component_asset_selection:
     severity: BLOCKER
     description: 组件资产检查；语义见 docs/concepts/component-assets.md。

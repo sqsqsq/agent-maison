@@ -28,7 +28,7 @@ $defs:
         type: array
         minItems: 1
         uniqueItems: true
-        items: { enum: [full, lite] }
+        items: { enum: [full] }
       inputs:
         type: array
         items: { $ref: "#/$defs/input" }
@@ -89,7 +89,7 @@ $defs:
         type: array
         minItems: 1
         uniqueItems: true
-        items: { enum: [full, lite] }
+        items: { enum: [full] }
       applicability_provider_id:
         type: string
         pattern: "^[a-z][a-z0-9_.-]*$"

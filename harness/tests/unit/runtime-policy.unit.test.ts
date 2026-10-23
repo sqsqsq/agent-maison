@@ -53,16 +53,16 @@ function ctx(mode: RuntimeContext['mode']): RuntimeContext {
   };
 }
 
-/** 合成 workflow：含 lite 新 phase（change/exit），验证新 phase 一等公民。 */
-function syntheticLiteWorkflow(): WorkflowSpec {
+/** 合成 workflow：含自定义 phase（draft/publish），验证新 phase 一等公民。 */
+function syntheticCustomWorkflow(): WorkflowSpec {
   return {
     schema_version: '1.0',
-    name: 'synthetic-lite',
-    auto_chain: ['change', 'coding', 'exit'],
+    name: 'synthetic-custom',
+    auto_chain: ['draft', 'coding', 'publish'],
     artifacts: [
-      { id: 'change', scope: 'feature', requires: [] },
-      { id: 'coding', scope: 'feature', requires: ['change'] },
-      { id: 'exit', scope: 'feature', requires: ['coding'] },
+      { id: 'draft', scope: 'feature', requires: [] },
+      { id: 'coding', scope: 'feature', requires: ['draft'] },
+      { id: 'publish', scope: 'feature', requires: ['coding'] },
     ],
   };
 }
@@ -118,13 +118,13 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolveFeatureTrack：缺失/空/非 lite → full；显式 lite → lite',
+    name: 'resolveFeatureTrack：缺失/空/非 lite → full；残留 lite → full',
     run: () => {
       eq(resolveFeatureTrack(null), 'full', 'null');
       eq(resolveFeatureTrack(undefined), 'full', 'undefined');
       eq(resolveFeatureTrack({}), 'full', '{}');
       eq(resolveFeatureTrack({ track: 'weird' }), 'full', 'weird');
-      eq(resolveFeatureTrack({ track: 'lite' }), 'lite', 'lite');
+      eq(resolveFeatureTrack({ track: 'lite' }), 'full', 'retired declaration is ignored');
     },
   },
   {
@@ -182,30 +182,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '新 phase 一等公民：合成 lite workflow 的 change→exit 链可解析（C0 spec Scenario）',
+    name: '新 phase 一等公民：合成 custom workflow 的 draft→publish 链可解析（C0 spec Scenario）',
     run: () => {
-      const spec = syntheticLiteWorkflow();
-      eq(workflowFeaturePhases(spec), ['change', 'coding', 'exit'], 'feature phases');
-      eq(resolveAutoChain(spec, 'change', 'exit'), ['change', 'coding', 'exit'], 'lite chain');
-      assertWorkflowFeaturePhase(spec, 'change');
+      const spec = syntheticCustomWorkflow();
+      eq(workflowFeaturePhases(spec), ['draft', 'coding', 'publish'], 'feature phases');
+      eq(resolveAutoChain(spec, 'draft', 'publish'), ['draft', 'coding', 'publish'], 'custom chain');
+      assertWorkflowFeaturePhase(spec, 'draft');
     },
-  },
-  {
-    name: 'resolveEvidencePolicy（C2）：lite 恒 minimal 矩阵，与 mode 无关（架构性 not_applicable）',
-    run: () => {
-      const expected = { verifier: 'off', receipt: 'not_applicable', trace: 'optional', exploration: 'not_applicable' };
-      for (const mode of ['interactive', 'headless', 'goal'] as const) {
-        eq(resolveEvidencePolicy('lite', ctx(mode)), expected, `lite/${mode}`);
-      }
-      // config 声明 balanced 也不改变 lite 结果——lite 不经这条轴
-      eq(
-        resolveEvidencePolicy('lite', ctx('interactive'), { evidence_profile: 'balanced' }),
-        expected,
-        'lite + balanced config 仍 minimal',
-      );
-    },
-  },
-  {
+  },{
     name: 'resolveEvidencePolicy（C2）：full×interactive×balanced 保留集 required，其余 phase off',
     run: () => {
       const balancedCfg = { evidence_profile: 'balanced' };
@@ -279,17 +263,15 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'buildPolicySnapshot：receipt 对所有 track 都是闭环后投影，policy not_applicable',
     run: () => {
-      const snap = buildPolicySnapshot('lite');
-      eq(snap.track, 'lite', 'track');
+      const snap = buildPolicySnapshot('full');
+      eq(snap.track, 'full', 'track');
       eq(snap.evidence.receipt, 'not_applicable', 'receipt 项不参与 Stop/closure');
-      eq(snap.evidence.verifier, 'off', 'verifier 项');
+      eq(snap.evidence.verifier, 'required', 'verifier 项');
     },
   },
   {
-    name: 'resolveProfileLabel：lite→minimal；full 按 mode/config 求解',
+    name: 'resolveProfileLabel：按 mode/config 求解',
     run: () => {
-      eq(resolveProfileLabel('lite', ctx('interactive')), 'minimal', 'lite');
-      eq(resolveProfileLabel('lite', ctx('headless'), { evidence_profile: 'balanced' }), 'minimal', 'lite 恒 minimal');
       eq(resolveProfileLabel('full', ctx('interactive')), 'strict', 'full 缺省 strict');
       eq(resolveProfileLabel('full', ctx('interactive'), { evidence_profile: 'balanced' }), 'balanced', 'full balanced');
       // plan 7b3e9a15 D1：resolveProfileLabel:93 的同形早退一并删除——标签必须与
@@ -302,8 +284,8 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'buildEvidencePolicySnapshot：off→skipped_by_policy；not_applicable 恒钉；required 取 observed',
     run: () => {
-      const litePolicy = resolveEvidencePolicy('lite', ctx('interactive'));
-      const snap = buildEvidencePolicySnapshot(litePolicy, 'minimal', {});
+      const balancedPolicy = resolveEvidencePolicy('full', { ...ctx('interactive'), phase: 'review' }, { evidence_profile: 'balanced' });
+      const snap = buildEvidencePolicySnapshot(balancedPolicy, 'balanced', {});
       eq(snap.items.verifier, { policy: 'off', validation_status: 'skipped_by_policy' }, 'off 项恒 skipped_by_policy（无视 observed）');
       eq(snap.items.receipt, { policy: 'not_applicable', validation_status: 'not_applicable' }, 'not_applicable 项恒钉');
 
@@ -329,8 +311,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         ['full', ctx('interactive'), { evidence_profile: 'balanced' }],
         ['full', ctx('headless'), { evidence_profile: 'balanced' }],
         ['full', ctx('goal'), { evidence_profile: 'balanced' }],
-        ['lite', ctx('interactive'), undefined],
-        ['lite', ctx('goal'), { evidence_profile: 'balanced' }],
       ];
       for (const [track, c, cfg] of combos) {
         const keys = Object.keys(resolveEvidencePolicy(track, c, cfg)).sort();
@@ -360,11 +340,8 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'resolvePhaseClosureSource：lite 看 script verdict；full 只看 summary closure',
+    name: 'resolvePhaseClosureSource：只看 summary closure',
     run: () => {
-      eq(resolvePhaseClosureSource('lite', 'PASS', undefined), 'closed_by_exit_report', 'lite verdict=PASS');
-      eq(resolvePhaseClosureSource('lite', 'FAIL', 'closed'), 'open', 'lite 只看 verdict');
-      eq(resolvePhaseClosureSource('lite', undefined, undefined), 'open', 'lite verdict 缺失');
       eq(resolvePhaseClosureSource('full', 'PASS', 'closed'), 'summary_closed', 'full summary closed');
       eq(resolvePhaseClosureSource('full', 'PASS', 'open'), 'open', 'full 无视 verdict，只看 summary closure');
       eq(resolvePhaseClosureSource('full', 'PASS', undefined), 'open', 'full 缺 summary closure 不放行');

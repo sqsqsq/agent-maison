@@ -1159,6 +1159,23 @@ export function validateLoadedGoalManifest(
   }
 }
 
+/** Execution boundary only: historical manifest readers remain unchanged. */
+export function assertSupportedGoalRunHistory(projectRoot: string, manifest: {
+  phase_chain?: readonly string[]; chain_override?: readonly string[]; start_phase?: string; end_phase?: string; report_dir?: string;
+}): void {
+  const { assertSupportedPhaseChain } = require('./runtime-policy') as typeof import('./runtime-policy');
+  assertSupportedPhaseChain([...(manifest.phase_chain ?? []), ...(manifest.chain_override ?? []), manifest.start_phase ?? '', manifest.end_phase ?? '']);
+  if (manifest.phase_chain?.length || !manifest.report_dir) return;
+  const { loadEventsJsonl, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const eventsPath = path.resolve(projectRoot, manifest.report_dir, 'events.jsonl');
+  const creation = loadEventsJsonl(eventsPath).find(event => event.type === 'run_created');
+  const startup = loadAuthoritativeEvents(eventsPath).find(event => event.type === 'run_start');
+  for (const event of [creation, startup]) {
+    const chain = event && ((event as { phase_chain?: unknown }).phase_chain ?? (event as { chain?: unknown }).chain);
+    if (Array.isArray(chain)) assertSupportedPhaseChain(chain.filter((phase): phase is string => typeof phase === 'string'));
+  }
+}
+
 export function loadGoalManifestFromRun(
   projectRoot: string,
   runId: string,

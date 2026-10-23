@@ -39,7 +39,6 @@ import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-e
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { loadResolvedProfile } from '../../profile-loader';
-import { syntheticContractsView } from '../../scripts/check-exit';
 import { resolveModulePathPrefixes } from '../../scripts/utils/diff-scope';
 import { resolveMaterializedBuiltinSkillEntryRel } from '../../scripts/utils/instance-skill-bridge';
 import { resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
@@ -215,14 +214,6 @@ test('review collector and assembleAIPrompt include index/catalog/live usages', 
   const files = collectContextFiles(loader, { ...DEFAULT_LAYOUT, projectRoot: root }, 'review', 'demo', loader.loadFeatureSpec('demo'));
   const prompt = assembleAIPrompt(path.join(FRAMEWORK, 'harness'), root, 'review', 'demo', files, '{}', '', undefined, undefined, FRAMEWORK);
   for (const text of [ID, 'knowledge/curated.yaml', '02-Feature/Feature/Page.ets:2:', 'live 调用点']) assert(prompt.includes(text), text);
-}));
-test('exit 合成视图空缺省与含选型合同保持一致', () => setup(root => {
-  const ctx = context(root);
-  const resolution = { prefixByModule: new Map([['Feature', '02-Feature/Feature/']]) } as ReturnType<typeof resolveModulePathPrefixes>;
-  const existing = ctx.featureSpec.contracts!;
-  assert.deepEqual(syntheticContractsView(ctx, resolution).components, existing.components);
-  delete ctx.featureSpec.contracts;
-  assert.deepEqual(syntheticContractsView(ctx, resolution).components, []);
 }));
 test('six adapters and shared bundle resolve the indexed component curation skill', () => setup(root => {
   assert.equal(resolveSkillPath(FRAMEWORK, 'component-catalog-bootstrap').skillMdFrameworkRel, 'skills/project/component-catalog-bootstrap/SKILL.md');

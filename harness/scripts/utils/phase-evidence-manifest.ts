@@ -145,7 +145,6 @@ export const PHASE_OUTPUT_FILES_BY_PHASE: Partial<Record<Phase, string[]>> = {
   coding: [],
   review: ['review-report.md'],
   ut: [],
-  change: ['change.md'],
   testing: ['test-plan.md', 'test-report.md'],
 };
 

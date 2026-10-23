@@ -171,7 +171,6 @@ export function loadInstanceExtensions(
       });
       featurePhases = new Set([
         ...workflowFeaturePhases(workflow, 'full'),
-        ...workflowFeaturePhases(workflow, 'lite'),
       ]);
       bundle.featurePhases = [...featurePhases].sort();
     } catch (error) {

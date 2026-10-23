@@ -58,7 +58,7 @@ const cases: Case[] = [
     name: 'artifact inventory registers narrative artifacts and schemas',
     run: () => {
       const ids = new Set(loadArtifactInventory(FRAMEWORK_ROOT).artifacts.map((artifact) => artifact.id));
-      for (const required of ['change@1', 'use-cases@1', 'ui-spec@1', 'visual-parity@1', 'asset-manifest@1']) {
+      for (const required of ['use-cases@1', 'ui-spec@1', 'visual-parity@1', 'asset-manifest@1']) {
         assert(ids.has(required), `missing ${required}`);
       }
     },
@@ -68,7 +68,8 @@ const cases: Case[] = [
     run: () => {
       const contracts = loadFeatureContracts(FRAMEWORK_ROOT);
       const phases = contracts.flatMap((contract) => Object.keys(contract.phases));
-      assert(phases.includes('change') && phases.includes('exit'), 'change-lite phase sections missing');
+      assert(['spec', 'plan', 'coding', 'review', 'ut', 'testing'].every(phase => phases.includes(phase)), 'non-lite phase coverage missing');
+      assert(!phases.includes('change') && !phases.includes('exit'), 'retired phases must not be registered');
       const source = fs.readFileSync(path.resolve(FRAMEWORK_ROOT, 'harness/scripts/utils/skill-contract.ts'), 'utf8');
       assert(source.includes('listWorkflowPhases'), 'coverage must derive workflow phases');
       assert(!source.includes('enumerateTierCombinations'), 'tier enumeration must be removed');

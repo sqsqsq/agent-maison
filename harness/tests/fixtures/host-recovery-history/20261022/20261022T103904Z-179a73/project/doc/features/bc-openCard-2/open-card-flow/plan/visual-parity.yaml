@@ -1,0 +1,221 @@
+schema_version: "1.0"
+fidelity_target: pixel_1to1
+asset_acquisition_mode: approximate
+verified: unverified
+mappings:
+  assets:
+    - ui_spec_key: bank_logo_cmb
+      contract_resource_key: bank_logo_cmb
+    - ui_spec_key: open_card_guide
+      contract_resource_key: open_card_guide
+  tokens:
+    - ui_spec_key: brand_primary
+      contract_resource_key: brand_primary
+    - ui_spec_key: text_primary
+      contract_resource_key: text_primary
+    - ui_spec_key: text_secondary
+      contract_resource_key: text_secondary
+    - ui_spec_key: text_tertiary
+      contract_resource_key: text_tertiary
+    - ui_spec_key: bg_page
+      contract_resource_key: bg_page
+    - ui_spec_key: bg_surface
+      contract_resource_key: bg_surface
+    - ui_spec_key: wallet_primary
+      contract_resource_key: wallet_primary
+    - ui_spec_key: wallet_text_primary
+      contract_resource_key: wallet_text_primary
+    - ui_spec_key: wallet_text_secondary
+      contract_resource_key: wallet_text_secondary
+    - ui_spec_key: wallet_text_tertiary
+      contract_resource_key: wallet_text_tertiary
+    - ui_spec_key: wallet_page_bg
+      contract_resource_key: wallet_page_bg
+    - ui_spec_key: wallet_surface_bg
+      contract_resource_key: wallet_surface_bg
+    - ui_spec_key: brand_bank_orange
+      contract_resource_key: brand_bank_orange
+    - ui_spec_key: brand_bank_pink
+      contract_resource_key: brand_bank_pink
+    - ui_spec_key: brand_fuel_green
+      contract_resource_key: brand_fuel_green
+    - ui_spec_key: brand_id_yellow
+      contract_resource_key: brand_id_yellow
+    - ui_spec_key: brand_danger
+      contract_resource_key: brand_danger
+    - ui_spec_key: wallet_badge_gray
+      contract_resource_key: wallet_badge_gray
+    - ui_spec_key: promo_placeholder
+      contract_resource_key: promo_placeholder
+    - ui_spec_key: button_tonal_bg
+      contract_resource_key: button_tonal_bg
+    - ui_spec_key: home_banner_end
+      contract_resource_key: home_banner_end
+    - ui_spec_key: card_stack_cmb
+      contract_resource_key: card_stack_cmb
+    - ui_spec_key: card_stack_transit
+      contract_resource_key: card_stack_transit
+    - ui_spec_key: card_stack_fund
+      contract_resource_key: card_stack_fund
+    - ui_spec_key: card_stack_access
+      contract_resource_key: card_stack_access
+    - ui_spec_key: color_page_bg
+      contract_resource_key: color_page_bg
+    - ui_spec_key: color_card_bg
+      contract_resource_key: color_card_bg
+    - ui_spec_key: color_text_primary
+      contract_resource_key: color_text_primary
+    - ui_spec_key: color_text_secondary
+      contract_resource_key: color_text_secondary
+    - ui_spec_key: color_line_divider
+      contract_resource_key: color_line_divider
+    - ui_spec_key: color_icon_chevron
+      contract_resource_key: color_icon_chevron
+    - ui_spec_key: color_nav_btn_bg
+      contract_resource_key: color_nav_btn_bg
+    - ui_spec_key: color_pill_bg
+      contract_resource_key: color_pill_bg
+    - ui_spec_key: color_link_blue
+      contract_resource_key: color_link_blue
+    - ui_spec_key: color_badge_border
+      contract_resource_key: color_badge_border
+    - ui_spec_key: color_badge_bg
+      contract_resource_key: color_badge_bg
+  components:
+    - ui_spec_node_id: type_root
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_background
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_title
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_subtitle
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_count
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_search
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_search_action
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_bank_logo
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bg_bank_name
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_title
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_close
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bank_surface
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bank_header
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bank_logo
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_bank_name
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_savings
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_credit
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_disclosure
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_agreement
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_continue
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_system_status
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: type_system_bottom
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: selection_root
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_nav
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_back
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_title
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_prompt
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_cards
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_card_1
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_card_logo
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_card_number
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_card_check
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_agreement_row
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_agreement_check
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_agreement
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_next
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_system_status
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_lower_space
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: selection_system_bottom
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: otp_root
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_title
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_close
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_prompt
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_phone
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_field_row
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_input
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_resend
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_next
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_system_keyboard
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_system_status
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_background_mask
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: otp_system_bottom
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: result_root
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_status_icon
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_title
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_message
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_guide
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_finish
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_system_status
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_top_space
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: result_system_bottom
+      contract_component: BankCardResultPage
+    - ui_spec_node_id: card_type_sheet
+      contract_component: CardTypeSheet
+    - ui_spec_node_id: bank_card_selection
+      contract_component: BankCardSelectionPage
+    - ui_spec_node_id: otp_sheet
+      contract_component: OtpVerificationSheet
+    - ui_spec_node_id: bank_card_result
+      contract_component: BankCardResultPage
+blind_review_pending:
+  - id: guide-art
+    severity: major
+    description: open_card_guide 为可见语义占位，待当前设备及只读视觉评审；未声称已核图
+  - id: screen-layout
+    severity: minor
+    description: 四屏位置/字号/圆角/键盘与动态状态按 ui-spec 施工，需当前机器视觉证据核验

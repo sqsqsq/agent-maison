@@ -148,7 +148,7 @@
     "evidence_profile": {
       "type": "string",
       "enum": ["strict", "balanced"],
-      "description": "C2 verification-matrix：full track 交互态的证据档位（缺省 strict=现状零变化）。headless/goal 运行时恒强制 strict，本字段不参与求解。`minimal` 不是合法配置值——它是 lite track 的求解结果，不可全局声明以逃避门禁。"
+      "description": "证据档位：缺省 strict；显式 balanced 在 interactive/headless/goal 均生效。minimal 仅为历史只读标签，不可配置。"
     },
     "project_scale": {
       "type": "string",

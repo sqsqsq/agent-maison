@@ -484,6 +484,8 @@ CU 接受成功、非 busy readiness、B1 发布后 SHALL 刷新人读文档；�
 
 ### Requirement: CU-bound lite Features reuse the contracts change_unit sidecar
 
+> **已退役（c2f7a91e）**：本条款描述的 lite 执行能力及专用实现已删除，当前发布件 MUST NOT 执行本退役条款；迁移边界见 `MIGRATION.md`。标题暂留作 `responsibility-dispatch-convergence` 的 REMOVED 源条款，归档时删除，不构成当前可用能力或实现保证。
+
 CU-bound lite Feature MUST 使用与 full 轨**同一个** `contracts.yaml.change_unit` sidecar 承载机器映射：`change_unit_ref` 与 `predicate_mappings` / `provide_mappings` / `design_ref_mappings` 三组映射。MUST NOT 在 `change.md` 发明降维映射协议——Markdown 与 `contracts.yaml` 两套真源被明确拒绝。
 
 - lite **只**表示施工阶段更少、叙述文档规模更小，MUST NOT 表示可省略 CU 闭环所需的机器契约；
@@ -513,7 +515,6 @@ CU-bound lite Feature MUST 使用与 full 轨**同一个** `contracts.yaml.chang
 - **WHEN** 某实现试图用 `change.md` frontmatter 或正文承载 `change_unit_ref` 与映射
 - **THEN** 违反本契约——lite 与 full 共用同一 sidecar 真源
 
-> **Enforced by (P2 implementation):** `harness/scripts/utils/change-unit-feature-projection.ts`, `harness/scripts/check-change.ts`, `harness/scripts/utils/change-unit-path.ts`, `skills/feature/change-lite/SKILL.md`
 
 ### Requirement: A single-CU blueprint is a normal forward path
 

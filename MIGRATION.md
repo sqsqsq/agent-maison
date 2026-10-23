@@ -1,5 +1,7 @@
 # Framework 升级与迁移说明
 
+coding 现在允许对本次实现直接引发的既有测试类型/import/数据/替身作有限兼容修补，有无独立 UT 均适用；既有用例定义和断言须经 `coding_existing_test_preserved` 原样保留，不得新增测试/断言或跳过。新增或改变测试仍归 UT；无法确认真实前置原件时交 UT 核验。旧误派测试字节可由真实 UT 沿晚于误写的有效 manifest 核验采纳，不要求再改一遍；新越权写入仍使其失效。返修保留原 facts 建立者、基线及合法历史源码写入，下游仅添本阶段 delta；真实重建仍回原建立者。
+
 coding 现在可按需产出 `coding/upstream-issues.md`，UT 继续使用 `ut/testability-audit.md`。缺席不新增必需产物或完成义务；有当前具体证据的上游提案通过原 verifier 逐条核实后，沿原候选/范围修订或设计 owner 链处理。编译/测试 FAIL 和未执行检查保留，关闭的 verifier 不自动启用。owner 可按目标引文或经独立核实的当前事实拒修，理由返回原阶段；旧 subject 不能重派，原身份与累计预算不变。旧产物无需补空文件。
 
 实施文件与模块清单现在是预测，不再逐项许可。普通源码、资源和路由接线依据原需求真实边界实施，检查与 review 读取实际改动；公共接口、架构、明确禁止和阶段职责仍保持。正常 CU 接受/修订会先派生既有依赖闭包再验证发布；未决设计不会自动获批。结构台账缺项仅披露，实际结构仍须独立验证。
@@ -170,7 +172,8 @@ deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决
 
 - 集成的是 Maison 发布件，宿主 framework/ 不是 submodule；依赖仅在 framework/harness 安装。
 - framework-init UPDATE 将旧内置 active_workflow=spec-driven 更新为 obligation-driven；自定义 workflow 保留。UPDATE 沿既有 .framework-backup 备份并清理 change-lite 公共桥接，不删除任何 Feature、CU、run 或报告。
-- 已有运行优先恢复原 run：旧内置定义与内部 skills/legacy/change-lite 仍可读取，冻结链与预算不重新计算。新 scope 损坏不降级；跨不兼容自定义 workflow/发布件时使用匹配的旧定义/发布件，或按既有 correction/successor 创建新运行，不批量重写历史。
+- 非 lite 旧运行仍读取 spec-driven 的原定义与冻结链，预算不重新计算。lite 的 change/exit 执行链、专属 Skill/check/schema 已退役：真正包含 change/exit 的旧运行会在阶段注册校验前明确退出并提示迁移，不映射为 full。保留原 run、预算、Feature/CU 与报告；需要完成该旧运行时使用匹配的旧发布件，或按当前需求经既有范围/接续入口建立新运行，不批量重写历史。
+- 现代 Feature/request 中残留的 `track: lite` 会被忽略并提示，按实际义务范围运行；L0 direct 维护入口、通用 JSON Schema 校验与 CU/后继终态能力保留。新 scope 损坏不降级；跨不兼容自定义 workflow/发布件继续使用匹配定义或既有 correction/successor。
 - 新 completion 1.2 必须绑定实际出生 execution_scope_fingerprint；旧 1.1 仍用原完整链合同。request 结果不是 Feature/CU 完成凭证。CU 与 Component 继续核对各自目标及组合证据。
 - 设备、RDB 与组合场景须以真实宿主证据验收；框架 fixture 和临时 consumer 成功不代表真实设备通过。
 - 阶段 evidence 现在区分源码责任：合法 coding/UT 产出可推进此前 Research 观察，测试文件变化不再反向作废 coding/review；未归属源码、需求或 contracts 漂移仍照常 stale。旧 manifest 没有责任字段时不会被猜测洗绿，重跑责任阶段即可生成新证据。相同 UT 覆盖结论重复生成时，`ac-coverage.json` 保持原字节与时间，verifier subject 不因时钟单独换代。

@@ -4,7 +4,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { loadScopeRevisions } from '../../scripts/utils/goal-run-creation';
 import { effectiveScopeView, authorizedScopePhases } from '../../scripts/utils/execution-scope';
-import type { WorkflowSpec } from '../../workflow-loader';
+import { loadWorkflowSpec } from '../../workflow-loader';
 import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import { auditHostHistory, type HistoryEvent } from '../utils/host-history-audit';
 import type { UnitCaseResult } from '../run-unit';
@@ -20,8 +20,7 @@ export function readHostHistory(suffix: string, group = '20261016') {
 const cases: Array<{ name: string; run(): void }> = [
   { name: 'production obligation projection replays CR introduction without allowing an older plan PASS', run() {
     const { manifest, events } = readHostHistory('b9ac66');
-    const order = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const workflow: WorkflowSpec = { schema_version: '1.2', name: 'history', auto_chain: order, artifacts: order.map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
+    const workflow = loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');
     for (const revision of [3, 4]) {
       const end = events.findIndex(event => event.type === 'scope_revised' && event.revision_index === revision);
       const prefix = events.slice(0, end + 1);
@@ -33,8 +32,7 @@ const cases: Array<{ name: string; run(): void }> = [
     }
   } },
   { name: 'production obligation projection reopens repeated owner and stale upstream on FAIL', run() {
-    const order = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const workflow: WorkflowSpec = { schema_version: '1.2', name: 'history', auto_chain: order, artifacts: order.map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
+    const workflow = loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');
     for (const [run, owner] of [['b5ada8', 'plan'], ['b23184', 'coding']] as const) {
       const { manifest, events } = readHostHistory(run);
       const end = events.findIndex(event => event.type === 'phase_halt' && event.halt_reason === 'backtrack_target_absent');
@@ -46,8 +44,7 @@ const cases: Array<{ name: string; run(): void }> = [
   } },
   { name: 'new repair PASS is accepted while downstream proofs remain invalid and non-applicable work stays absent', run() {
     const { manifest, events } = readHostHistory('b9ac66');
-    const order = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const workflow: WorkflowSpec = { schema_version: '1.2', name: 'history', auto_chain: order, artifacts: order.map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
+    const workflow = loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');
     const end = events.findIndex(e => e.type === 'scope_revised' && e.revision_index === 3);
     // A controlled new observation is deliberately NOT stored as historical fixture data.
     const prefix = [...events.slice(0, end + 1), { type: 'phase_verdict', phase: 'plan', verdict: 'PASS', action: 'advance' }];
@@ -62,8 +59,7 @@ const cases: Array<{ name: string; run(): void }> = [
   } },
   { name: 'direct backtrack without a candidate uses authorization rather than the remaining queue', run() {
     const { manifest, events } = readHostHistory('b9ac66');
-    const order = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-    const workflow: WorkflowSpec = { schema_version: '1.2', name: 'history', auto_chain: order, artifacts: order.map(id => ({ id, scope: 'feature', requires: [], obligation_provider_id: `obligations.${id}` })) };
+    const workflow = loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');
     const end = events.findIndex(e => e.type === 'scope_revised' && e.revision_index === 4);
     assert(!events[end].execution_scope.phase_chain.includes('plan'), 'real recorded remaining queue omitted plan');
     assert(authorizedScopePhases(manifest.execution_scope, workflow).includes('plan'));
@@ -79,11 +75,11 @@ const cases: Array<{ name: string; run(): void }> = [
       assert.deepStrictEqual(effectiveScopeView({ birth: noDuty, events: [backtrack], workflow }).phase_chain, ['plan']);
       assert.deepStrictEqual(effectiveScopeView({ birth: noDuty, events: [backtrack, { type: 'phase_verdict', phase: 'plan', verdict: 'PASS', action: 'advance' }], workflow }).phase_chain, []);
   } },
-  { name: '19 complete run records plus OOBE partial history preserve source hashes and scope revisions', run() {
+  { name: '21 run manifests including OOBE partial history preserve source hashes and scope revisions', run() {
     const sources = JSON.parse(fs.readFileSync(path.join(historyRoot, 'sources.json'), 'utf8'));
     for (const file of sources.files) assert.equal(createHash('sha256').update(fs.readFileSync(path.join(historyRoot, file.file))).digest('hex'), file.sha256, file.file);
-    assert.equal(sources.files.filter((f: { file: string }) => f.file.endsWith('/manifest.json')).length, 20);
-    for (const group of ['20261016', 'r5', '20261019']) for (const name of fs.readdirSync(path.join(historyRoot, group))) {
+    assert.equal(sources.files.filter((f: { file: string }) => f.file.endsWith('/manifest.json')).length, 21);
+    for (const group of ['20261016', 'r5', '20261019', '20261020', '20261022']) for (const name of fs.readdirSync(path.join(historyRoot, group))) {
       if (!fs.existsSync(path.join(historyRoot, group, name, 'manifest.json'))) continue;
       const { manifest, events } = readHostHistory(name, group);
       loadScopeRevisions(events as GoalRunEvent[], manifest.execution_scope);

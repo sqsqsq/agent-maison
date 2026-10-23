@@ -68,14 +68,14 @@ function git(cwd: string, args: string[]): void {
 }
 
 /** 真实 git 工程 + demo-feat feature 目录（未声明 feature.yaml → 默认 full track）。 */
-function mkGitFeatureProject(evidenceProfile?: 'balanced'): string {
+function mkGitFeatureProject(evidenceProfile?: 'balanced', profileName: 'hmos-app' | 'generic' = 'hmos-app'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'correction-autoconfirm-'));
   fs.mkdirSync(path.join(dir, 'workflows'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'doc', 'features', 'demo-feat'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'framework.config.json'), JSON.stringify({
     schema_version: '1.0',
     project_name: 'correction-autoconfirm-fixture',
-    project_profile: { name: 'generic' },
+    project_profile: { name: profileName },
     ...(evidenceProfile ? { evidence_profile: evidenceProfile } : {}),
     architecture: {
       outer_layers: [{ id: '02-Feature', can_depend_on: [], intra_layer_deps: 'forbid' }],
@@ -95,15 +95,23 @@ function mkGitFeatureProject(evidenceProfile?: 'balanced'): string {
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  { name: 'generic禁用coding时correction不派幽灵阶段', run() {
+    const root = mkGitFeatureProject(undefined, 'generic');
+    try {
+      const code = runCorrectionInit(root, { requestedFeature: 'demo-feat', frameworkRoot: FRAMEWORK_ROOT, requestText: '修产品代码', answers: { requirement_changed: false, contract_changed: false, code_change_needed: true } });
+      eq(code, 1, '能力不可用时只报告缺口');
+      eq(readCorrectionState(root), null, '不制造执行授权');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } },
   {
-    name: 'C5/F1 真实 correction-init 排除 VALID 完成旧指针（含 drift 与旧 lite run），receipt-only 保持归属',
+    name: 'C5/F1 真实 correction-init 排除 VALID 完成旧指针（含 drift），receipt-only 保持归属',
     run: () => {
-      for (const stateKind of ['receipt-only', 'completed-full', 'completed-lite']) {
+      for (const stateKind of ['receipt-only', 'completed-full']) {
         const completed = stateKind !== 'receipt-only';
-        const track = stateKind === 'completed-lite' ? 'lite' : 'full';
+        const track = 'full';
         const root = mkGitFeatureProject();
         const feature = 'demo-feat';
-        const chain = track === 'lite' ? ['change', 'coding', 'exit'] : ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+        const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
         try {
           if (completed) {
             seedCleanCompletionChain({ projectRoot: root, feature, chain });
@@ -113,7 +121,7 @@ const cases: Array<{ name: string; run: () => void }> = [
             const result = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
             eq(result.verdict, 'VALID', JSON.stringify(result.reasons));
             fs.appendFileSync(path.join(root, 'doc/features', feature, 'spec.md'), '\ncurrent drift\n');
-            writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase: track === 'lite' ? 'change' : 'spec', extraInputs: [path.join(root, 'baseline.txt')] }));
+            writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase: 'spec', extraInputs: [path.join(root, 'baseline.txt')] }));
             const drifted = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
             eq(drifted.verdict, 'VALID', '当前输入漂移不损坏历史记录');
             eq(drifted.drift.length > 0, true, '反例必须包含真实 drift');
@@ -173,16 +181,12 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'track 投影：full spec/plan/coding/ut；lite change/change/coding/exit',
+    name: 'track 投影：full spec/plan/coding/ut',
     run: () => {
       const spec = specDriven();
       eq(mapCategoryToPhase('spec', spec, 'full'), 'spec', 'full spec');
       eq(mapCategoryToPhase('plan', spec, 'full'), 'plan', 'full plan');
-      eq(mapCategoryToPhase('verification', spec, 'full'), 'ut', 'full verification');
-      eq(mapCategoryToPhase('spec', spec, 'lite'), 'change', 'lite spec→change');
-      eq(mapCategoryToPhase('plan', spec, 'lite'), 'change', 'lite plan→change');
-      eq(mapCategoryToPhase('coding', spec, 'lite'), 'coding', 'lite coding');
-      eq(mapCategoryToPhase('verification', spec, 'lite'), 'exit', 'lite verification→exit');
+      eq(mapCategoryToPhase('verification', spec, 'full'), null, '没有修复对象时不固定投UT');
     },
   },
   {
@@ -199,21 +203,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       eq(cls.revalidate.map((r) => r.phase), ['coding', 'ut'], 'revalidate：根因 + 已闭环下游（跳过未闭环 review/testing）');
       eq(cls.revalidate.every((r) => r.status === 'pending'), true, '初始 pending');
     },
-  },
-  {
-    name: 'classifyCorrection lite：需求变 → change 根因，级联 coding/exit（已闭环时）',
-    run: () => {
-      const cls = classifyCorrection({
-        answers: { requirement_changed: true, contract_changed: false, code_change_needed: false },
-        spec: specDriven(),
-        track: 'lite',
-        closedPhases: ['change', 'coding', 'exit'],
-      });
-      eq(cls.root_layer, 'change', 'root');
-      eq(cls.revalidate.map((r) => r.phase), ['change', 'coding', 'exit'], 'lite 级联');
-    },
-  },
-  {
+  },{
     name: 'resolveCorrectionTarget：点名存在/点名不存在→ask_user/活跃 state/no_feature',
     run: () => {
       const exists = (f: string) => f === 'real-feature';
@@ -304,7 +294,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'closedPhasesFor：full 只认 receipt；lite 另认 script-report PASS（cursor 批次 2 P1）',
+    name: 'closedPhasesFor：只认正式receipt，不凭脚本PASS闭环',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'correction-closed-'));
       try {
@@ -312,8 +302,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         const receiptAbs = resolveReceiptFilePath(root, 'f', 'spec').path;
         fs.mkdirSync(path.dirname(receiptAbs), { recursive: true });
         fs.writeFileSync(receiptAbs, 'receipt', 'utf-8');
-        // exit：仅 script-report PASS（lite 过渡闭环判据）
-        const exitReports = featurePhaseReportsDir(root, 'f', 'exit', FRAMEWORK_ROOT);
+        // review：仅 script-report PASS不足以正式闭环
+        const exitReports = featurePhaseReportsDir(root, 'f', 'review', FRAMEWORK_ROOT);
         fs.mkdirSync(exitReports, { recursive: true });
         fs.writeFileSync(
           path.join(exitReports, 'script-report.json'),
@@ -328,13 +318,9 @@ const cases: Array<{ name: string; run: () => void }> = [
           JSON.stringify({ summary: { verdict: 'FAIL' } }),
           'utf-8',
         );
-        const phases = ['spec', 'coding', 'exit'];
+        const phases = ['spec', 'coding', 'review'];
         eq(closedPhasesFor(root, 'f', phases, 'full', FRAMEWORK_ROOT), ['spec'], 'full 只认 receipt');
-        eq(
-          closedPhasesFor(root, 'f', phases, 'lite', FRAMEWORK_ROOT),
-          ['spec', 'exit'],
-          'lite 认 report PASS，FAIL 不算',
-        );
+
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -348,14 +334,14 @@ const cases: Array<{ name: string; run: () => void }> = [
         const rulesDir = path.join(root, 'rules');
         fs.mkdirSync(rulesDir, { recursive: true });
         fs.writeFileSync(path.join(rulesDir, 'spec-rules.yaml'), 'phase: spec\n', 'utf-8');
-        fs.writeFileSync(path.join(rulesDir, 'change-rules.yaml'), 'phase: change\n', 'utf-8');
-        fs.writeFileSync(path.join(rulesDir, 'exit-rules.yaml'), 'phase: exit\n', 'utf-8');
+        fs.writeFileSync(path.join(rulesDir, 'draft-rules.yaml'), 'phase: draft\n', 'utf-8');
+        fs.writeFileSync(path.join(rulesDir, 'publish-rules.yaml'), 'phase: publish\n', 'utf-8');
         fs.writeFileSync(path.join(rulesDir, 'not-a-rule.txt'), 'x', 'utf-8');
         const loader = new SpecLoader(root, rulesDir, path.join(root, 'features'), FRAMEWORK_ROOT);
         const listed = loader.listAvailablePhaseRules();
         eq(listed.includes('spec'), true, '既有映射 phase');
-        eq(listed.includes('change'), true, '约定派生 change');
-        eq(listed.includes('exit'), true, '约定派生 exit');
+        eq(listed.includes('draft'), true, '约定派生 draft');
+        eq(listed.includes('publish'), true, '约定派生 publish');
         eq(listed.includes('not-a-rule' as never), false, '非规则文件不进');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -363,7 +349,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'runCorrectionInit 端到端：纯验证修正不再生成确认字段',
+    name: 'runCorrectionInit 端到端：无具体目标的多义验证不猜UT且不生成状态/确认字段',
     run: () => {
       const dir = mkGitFeatureProject('balanced');
       try {
@@ -373,7 +359,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           requestText: '补一个遗漏的验证用例',
           frameworkRoot: FRAMEWORK_ROOT,
         });
-        eq(code, 0, 'correction-init 应成功');
+        eq(code, 1, 'verification缺少唯一实际对象时只报告不可派发');
         eq(readCorrectionState(dir), null, 'feature 修正不写 .current-correction.json（plan 07a41ec6 T1）');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
+import { readRepairDependencyContext } from './repair-responsibility';
 // ============================================================================
 // verify-feature-completion.ts — feature 完成凭证：生成与唯一验证入口
 // （goal-fakepass-hardening t8；openspec goal-runner delta）
@@ -88,7 +89,14 @@ export function executionScopeEvidenceFindings(projectRoot: string, feature: str
   const featureRecord = !hasPhaseProof || currentRunId ? null : readFeatureFrozenScope(projectRoot, feature);
   const proofBirth = hasPhaseProof && currentRunId ? loadFrozenExecutionScope(projectRoot, feature, currentRunId) : featureRecord?.execution_scope;
   const proofEvents = hasPhaseProof && currentRunId ? loadAuthoritativeRunEvents(projectRoot, feature, currentRunId) : featureRecord?.revisions ?? [];
-  const proofHistory = proofBirth ? scopeProofHistory(proofBirth, proofEvents, [...new Set([...FEATURE_PHASE_ORDER, ...scope.obligations.map(o => o.owner_phase)])], currentPhasePass) : undefined;
+  const proofHistory = proofBirth ? (() => {
+    const { resolveWorkflowSpec, workflowForExistingRun } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+    const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+    const root = frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
+    const activeWorkflow = resolveWorkflowSpec(projectRoot, { frameworkRoot: root });
+    const proofWorkflow = currentRunId ? workflowForExistingRun(activeWorkflow, loadGoalManifestFromRun(projectRoot, currentRunId, { feature }), root, projectRoot) : activeWorkflow;
+    return scopeProofHistory(proofBirth, proofEvents, [...new Set([...FEATURE_PHASE_ORDER, ...scope.obligations.map(o => o.owner_phase)])], currentPhasePass, proofWorkflow, readRepairDependencyContext(projectRoot, feature, proofWorkflow, scope, root));
+  })() : undefined;
   for (const obligation of scope.obligations.filter(o => !obligationIds || obligationIds.has(o.id))) {
     for (const { ref, basis } of [...obligation.basis.map(ref => ({ ref, basis: true })), ...(obligation.satisfied_by ?? []).map(ref => ({ ref, basis: false }))]) {
       if ('input_id' in ref) {
@@ -682,7 +690,7 @@ export function shouldGenerateFeatureCompletion(
     const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
     const frameworkRoot = opts.frameworkRoot ?? resolveProbeFrameworkRoot(opts.projectRoot, path.resolve(__dirname, '../..'));
     let workflow = resolveWorkflowSpec(opts.projectRoot, { frameworkRoot });
-    if (opts.runId) workflow = workflowForExistingRun(workflow, loadGoalManifestFromRun(opts.projectRoot, opts.runId, { feature: opts.feature }), frameworkRoot);
+    if (opts.runId) workflow = workflowForExistingRun(workflow, loadGoalManifestFromRun(opts.projectRoot, opts.runId, { feature: opts.feature }), frameworkRoot, opts.projectRoot);
     const view = resolveCurrentScopeView({ ...opts, frameworkRoot, workflow, previous: scope, currentRunId: opts.runId,
       completedPhases: new Set(opts.chain) });
     for (const phase of view.phase_chain) issues.push({ phase, condition: 'execution_scope', kind: 'needs_fix', detail: '当前义务尚无本次修复之后的有效证明' });

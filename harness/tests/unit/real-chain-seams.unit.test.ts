@@ -27,6 +27,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import type { UnitCaseResult } from '../run-unit';
@@ -59,7 +60,7 @@ import {
 import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
-import { recomputePhaseEvidenceStaleness, loadPhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { recomputePhaseEvidenceStaleness, loadPhaseEvidenceManifest, stableStringify } from '../../scripts/utils/phase-evidence-manifest';
 import {
   ensureFeatureExecutionScopeFrozen,
   readFeatureFrozenScope,
@@ -68,7 +69,7 @@ import {
 } from '../../scripts/utils/feature-execution-scope';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
-import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { resolveCapabilityInputs, type ResolvedInput } from '../../scripts/utils/capability-resolution';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { readPhaseRepairIssues } from '../../scripts/utils/repair-candidates';
@@ -590,6 +591,9 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
   process.env.NODE_ENV = 'test';
   /** 每轮 ut 开始时盘上 summary 的 subject = **上一轮** harness 算出来的那个。 */
   const subjectBefore: Array<string | undefined> = [];
+  const bindingsByDigest = new Map<string, Record<string, ResolvedInput>>();
+  const bindingProjection = (values: Record<string, ResolvedInput>): unknown => Object.entries(values)
+    .map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]);
   /** 就绪门实际被调用的阶段（本条自备——显式 deviceGate 覆盖后 probe 的那份不再记录）。 */
   const gatedPhases: string[] = [];
   try {
@@ -617,6 +621,17 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
       onUt: ctx => {
         project.runId = ctx.runId;
         subjectBefore[ctx.attempt] = readSummary(project, 'ut')?.verifier_subject_id;
+        const captureBindings = (): void => {
+          const entry = resolveCapabilityResolutionEntryInput({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+            feature: project.feature, phase: 'ut', featuresDir: relFeaturesDir(project.root), goalRunId: ctx.runId, goalAttemptId: ctx.goalAttemptId });
+          const inputs = resolveCapabilityInputs({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+            feature: project.feature, phase: 'ut', track: 'full', ...entry }).inputs;
+          assert(!!inputs, 'RC-4 必须核对实际阶段输入绑定');
+          const digest = createHash('sha256').update(stableStringify(bindingProjection(inputs!.values))).digest('hex');
+          bindingsByDigest.set(digest, structuredClone(inputs!.values));
+        };
+        // 新测试经首轮真实写入观测后才成为输入；下一轮写前读取原代，写后读取新代。
+        if (ctx.attempt > 1) captureBindings();
         process.env.MAISON_TEST_AC_COVERAGE_NOW = RC4_CLOCKS[Math.min(ctx.attempt, RC4_CLOCKS.length) - 1];
         writeUtMaterials(project);
         // 第 2 轮起改一次业务内容并**保持不变**：第 2 轮换代、之后必须稳定。
@@ -627,6 +642,7 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
             "expect(banks.length).assertEqual(0);\n    expect(typeof banks).assertEqual('object');",
           ), 'utf-8');
         }
+        if (ctx.attempt > 1) captureBindings();
         if (ctx.attempt > 1) publishVerifier(project, 'ut');
       },
     });
@@ -707,9 +723,36 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
       JSON.stringify(drifted) === JSON.stringify([REAL_CHAIN_TEST]),
       `时钟漂移带进了材料（除 UT 正文外还有文件换 sha）：${JSON.stringify(drifted)}；${dump}`,
     );
-    // 材料的**非文件字段**同样不得随时钟漂移——subject 经 material_sha256 把它们一起吃进去
-    //（`computeMaterialSha256`，verifier-material.ts:74），只对 `files` 逐文件对账会漏掉这一格。
-    for (const key of ['schema', 'input_bindings_sha256', 'gate_fingerprint', 'phase_rule_sha256',
+    // 实际 UT 变化也必须进入 test_targets；逐字段核对，不能把真正业务输入变化误判成时钟污染。
+    const inputsA = bindingsByDigest.get(genA.view.input_bindings_sha256 ?? '');
+    const inputsB = bindingsByDigest.get(genB.view.input_bindings_sha256 ?? '');
+    assert(!!inputsA && !!inputsB, `材料 digest 必须对应本轮实际解析的完整输入绑定：${JSON.stringify({
+      material: [genA.view.input_bindings_sha256, genB.view.input_bindings_sha256],
+      captured: [...bindingsByDigest].map(([digest, values]) => ({ digest, projection: bindingProjection(values) })),
+    })}`);
+    assert(genA.view.input_bindings_sha256 !== genB.view.input_bindings_sha256, '真实 UT 正文变化必须改变输入绑定 digest');
+    assert(JSON.stringify(Object.keys(inputsA!)) === JSON.stringify(Object.keys(inputsB!)), '输入集合不得随本轮变化');
+    for (const [id, valueA] of Object.entries(inputsA!)) {
+      const valueB = inputsB![id];
+      if (id !== 'test_targets') {
+        assert(stableStringify(bindingProjection({ [id]: valueA })) === stableStringify(bindingProjection({ [id]: valueB })), `${id} 绑定不应变化`);
+        continue;
+      }
+      if (valueA.state !== 'resolved' || valueB.state !== 'resolved') throw new Error('真实测试输入必须解析成功');
+      const { dependencies: depsA, content_fingerprint: contentA, ...authorityA } = valueA.binding;
+      const { dependencies: depsB, content_fingerprint: contentB, ...authorityB } = valueB.binding;
+      assert(authorityA.source.kind === 'derive' && authorityA.source.provider_id === 'derive.test-targets', '核对对象必须是实际测试输入');
+      assert(stableStringify(authorityA) === stableStringify(authorityB), '测试绑定的来源/路径/输入身份必须稳定');
+      assert(contentA !== contentB && depsA.length === depsB.length, '只改变测试内容 fingerprint，不能改变依赖集合');
+      for (let index = 0; index < depsA.length; index++) {
+        const before = depsA[index], after = depsB[index];
+        if (path.resolve(before.path) === path.resolve(project.root, REAL_CHAIN_TEST)) {
+          assert(before.sha256 === shaOf(genA) && after.sha256 === shaOf(genB), '绑定依赖 hash 必须对应这一代真实 UT 文件');
+          assert(stableStringify({ ...before, sha256: after.sha256 }) === stableStringify(after), 'UT 依赖仅允许内容 hash 变化');
+        } else assert(stableStringify(before) === stableStringify(after), '其它测试依赖不得变化');
+      }
+    }
+    for (const key of ['schema', 'gate_fingerprint', 'phase_rule_sha256',
       'template_sha256', 'lifecycle_sha256', 'extension_sha256', 'script_checks'] as const) {
       assert(
         JSON.stringify(genA.view[key]) === JSON.stringify(genB.view[key]),
@@ -1285,10 +1328,11 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         }
         writeCodingMaterials(project);
         const observed = loadAuthoritativeEvents(path.join(featureFilePath(project.root, project.feature, 'goal-runs'), project.runId!, 'events.jsonl'));
-        const failures = observed.filter(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL').length;
+        const repairs = observed.filter(event => event.type === 'phase_backtrack_requested'
+          && (event as { candidates?: Array<{ id?: string }> }).candidates?.some(candidate => candidate.id === repairId)).length;
         // Keep the first repair ineffective to exercise reopening the same trusted defect twice.
-        writeRc9bService(project, backtracked && (upstreamAudit || failures >= 2));
-        if (!upstreamAudit && backtracked && failures === 1) {
+        writeRc9bService(project, backtracked && (upstreamAudit || repairs >= 2));
+        if (!upstreamAudit && backtracked && repairs === 1) {
           const file = path.join(project.root, REAL_CHAIN_SERVICE);
           // A real but incorrect first repair; unchanged-input retries remain subject to the existing fuse.
           fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(RC9B_SERVICE_DEFECT, 'Promise.resolve(id.length >= 0)'));
@@ -1310,9 +1354,18 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', RC4_DEVICE_ENV, 'agent');
         if (upstreamGap) {
           const summary = readSummary(project, 'ut');
+          const priorRunId = process.env.MAISON_GOAL_RUN_ID;
+          let issues: ReturnType<typeof readPhaseRepairIssues> = null;
+          try {
+            process.env.MAISON_GOAL_RUN_ID = ctx.runId;
+            issues = readPhaseRepairIssues(project.root, project.feature, 'ut');
+          } finally {
+            if (priorRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRunId;
+          }
+          assert(!!issues?.rows[0], '本次 UT 调用身份必须读到可核实的上游问题行');
           publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
             feature: project.feature, phase: 'ut', subjectId: summary?.verifier_subject_id, skipSummaryPatch: true,
-            reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${readPhaseRepairIssues(project.root, project.feature, 'ut')!.rows[0].summary}`, '```'].join('\n') });
+            reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${issues!.rows[0].summary}`, '```'].join('\n') });
         } else publishRc9bUtVerifier(project);
       },
     });
@@ -1341,10 +1394,24 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
       && (event as { trigger?: { check_id?: string } }).trigger?.check_id === 'ut_product_assertion_failure');
     const utFailures = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'FAIL');
     assert(utFailures.length >= 2, '必须实际重复暴露同一产品缺陷，不能只测首次重开');
-    for (const { index } of utFailures) {
+    const repairRequests = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'phase_backtrack_requested'
+      && (event as { candidates?: Array<{ id?: string }> }).candidates?.some(candidate => candidate.id === repairId));
+    assert(repairRequests.length >= 2, '同一可信缺陷必须在实际 owner 首次修复后再次交接，不能将未核实的 UT 重试算作修复');
+    assert(!events.slice(0, repairRequests[0].index).some(event => event.type === 'phase_halt' && String(event.halt_reason).startsWith('no_progress')),
+      '首次合法交接前不能先写 no_progress halt 再继续');
+    const repairIdentity = (event: typeof events[number]): string | undefined =>
+      (event as { candidates?: Array<{ id?: string; item_fingerprint?: string }> }).candidates?.find(candidate => candidate.id === repairId)?.item_fingerprint;
+    assert(!!repairIdentity(repairRequests[0].event) && repairIdentity(repairRequests[0].event) === repairIdentity(repairRequests[1].event), '两次必须是原身份的同一候选');
+    for (const { index } of repairRequests) {
       const next = events.slice(index + 1).find(event => event.type === 'agent_invoke_start');
       assert(next?.phase === 'coding', `每次可信缺陷重复出现后都应先交 coding，不能空跑 UT：${JSON.stringify(next)}`);
     }
+    const firstOwnerStart = events.findIndex((event, index) => index > repairRequests[0].index && event.type === 'agent_invoke_start' && event.phase === 'coding');
+    assert(utFailures.some(({ index }) => index > firstOwnerStart && index < repairRequests[1].index), '首次真实 coding 修复后 UT 仍应真实 FAIL，再交接同一缺陷');
+    const firstRepairWrites = events.slice(repairRequests[0].index, repairRequests[1].index)
+      .filter(event => event.type === 'phase_write_observed' && event.phase === 'coding')
+      .flatMap(event => (event as { owned?: Array<{ path: string; pre_sha256?: string; post_sha256?: string }> }).owned ?? []);
+    assert(firstRepairWrites.some(write => write.path === REAL_CHAIN_SERVICE && write.pre_sha256 !== write.post_sha256), '首次无效修复必须实际改过业务源码，不能空跑 owner');
     for (const { event } of revisions) {
       const input = (event as { revision_input?: { facts?: Array<{ id: string; satisfied_by?: unknown[] }> } }).revision_input;
       assert(input?.facts?.some(fact => fact.id === 'implementation:ut_product_assertion_failure' && !fact.satisfied_by?.length), '修复提案不得用问题出现前的 PASS 冒领');

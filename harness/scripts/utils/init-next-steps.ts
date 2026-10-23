@@ -313,7 +313,6 @@ export function findFirstLaunchableFeatureArtifact(
   glossary: GlossaryReadiness,
   moduleGraph: ModuleGraphReadiness,
 ): string | undefined {
-  // 默认入口建议只看 full 轨（lite-only phase 由 track 路由进入，不作 init 首步建议——C1）
   const order = resolvePhaseChain(spec, 'full').ordered;
   for (const phaseId of order) {
     const artifact = spec.artifacts.find(a => a.id === phaseId);

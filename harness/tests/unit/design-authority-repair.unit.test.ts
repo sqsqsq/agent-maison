@@ -299,6 +299,19 @@ export interface RepairFlow {
   evidence: string;
 }
 interface Halted { feature: string; completed?: string; halted: string; requirement: string; request: { start: string; end: string }; chain: string[]; events: Ev[]; saved: Ev; birthManifest?: Buffer; oldContractsBinding?: Parameters<typeof readBoundInput>[1]; oldContractsStale?: boolean; planAuthored?: boolean }
+
+/** Preparing a design input is not a runtime Research invocation. Keep any real facts unchanged. */
+function prepareSpecInput(s: Snapshot, write: (p: ReturnType<typeof project>) => void): void {
+  const p = project(s, SNAPSHOT_CU_FEATURE);
+  const file = featureFilePath(s.root, p.feature, 'context/facts.md');
+  const before = fs.existsSync(file) ? fs.readFileSync(file) : undefined;
+  try { write(p); }
+  finally {
+    if (before) fs.writeFileSync(file, before);
+    else fs.rmSync(file, { force: true });
+  }
+  assert(before ? fs.readFileSync(file).equals(before) : !fs.existsSync(file), '出生前准备只能保留已有真实facts，不得制造未执行阶段的建立身份');
+}
 /** 任务的原请求：上一次完成的 run 冻结的需求与起止（停机的 run 是它的后继，属于同一任务）。 */
 const originalRequest = (s: Snapshot, feature: string, completed: string): Pick<Halted, 'requirement' | 'request'> => {
   const manifest = readJson<{ requirement: string; start_phase: string; end_phase: string }>(runFile(s.root, feature, completed, 'manifest.json'));
@@ -308,7 +321,7 @@ const originalRequest = (s: Snapshot, feature: string, completed: string): Pick<
 /** 有效设计与未对齐作者草稿形成真实 A1 gap；resolver 选择 spec，施工输入尚为 derive。 */
 function prepareDerivedSpecRequest(s: Snapshot): { requirement: string; chain: string[]; contractsBinding: Parameters<typeof readBoundInput>[1] } {
   const feature = SNAPSHOT_CU_FEATURE;
-  writeCuSpecDraft(project(s, feature));
+  prepareSpecInput(s, writeCuSpecDraft);
   bumpBlueprint(s, changeProjectedAcceptance);
   const r = reconcileChangeUnitBlueprintRefs(s.root, BLUEPRINT_ID);
   assert(r.bumped.some(b => b.change_unit_id === CU) && !r.skipped.length, JSON.stringify(r));
@@ -1066,7 +1079,7 @@ async function withResumeCooldown<T>(cooldownMs: number, call: () => Promise<T>)
 async function parkOnStaleBindingWait(s: Snapshot): Promise<{ feature: string; runId: string; gateCalls: number; probes: number;
   deviceDeps: { listTargets: () => string[]; isLocked: () => boolean; wake: () => undefined; attestPhysical: () => boolean }; setDeviceReady: (ready: boolean) => void }> {
   const feature = SNAPSHOT_CU_FEATURE;
-  writeCuSpecMaterials(project(s, feature));
+  prepareSpecInput(s, writeCuSpecMaterials);
   const request = prepareFreshCuRequest(s);
   const chain = request.chain;
   assert.strictEqual(chain[0], 'plan', `有效 fresh 设计由真实 plan 首先施工：${JSON.stringify(chain)}`);

@@ -804,7 +804,7 @@ entries:
     skill: "component-design"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
-    skill_step: "正式性判定（component-design 第 0 步；spec / change-lite 首次冻结施工意图时的兜底复核共用同一确认点）"
+    skill_step: "正式性判定（component-design 第 0 步；spec 首次冻结施工意图时的兜底复核共用同一确认点）"
     portable_menu: "1=正式需求 2=非正式维护 3=信息不足"
     notes: "仅在判据信息不足、或兜底复核发现事项符合正式需求判据却未经蓝图时询问。上游已显式标为正式需求时该分类具权威性、不再询问。这是路由确认点，不是质量门禁：不新增 track_scoring 条目、不新增档位、不加机器 BLOCKER；三处入口共用本条目，不各建状态。"
     options:

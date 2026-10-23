@@ -15,6 +15,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import * as YAML from 'yaml';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 import {
   collectDisclosedFailures,
@@ -676,7 +678,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           const summary = writeRunSummaryBase(root, generateScriptReport('', 'plan', 'demo', root, [check('p4_upstream_basis', 'BLOCKER', 'FAIL', { affected_files: ['doc/features/demo/acceptance.yaml'] })], FRAMEWORK_ROOT), FRAMEWORK_ROOT);
           assert.deepStrictEqual(summary.repair_candidates?.map(c => [c.id, c.category]), [['p4_upstream_basis', 'spec']], JSON.stringify(summary.repair_candidates));
           assert.strictEqual(classifyFailureKind(summary as never), 'deterministic_gate_or_artifact_missing');
-          const observation = observe('plan', summary);
+          const observation = { ...observe('plan', summary), responsibility: { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', workflow: loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven') } };
           const assessment = assessObservation(observation as never, { mode: 'goal_mode' });
           assert(assessment.recommendation.phase === 'spec' && assessment.recommendation.runner_action === 'backtrack_to_phase', JSON.stringify(assessment.recommendation));
           assert.strictEqual(selectRunnerActionFromAssess({ assessment, observation: observation.reconcile as never, currentPhase: 'plan', chain: FULL, driverGuardAction: 'none' }), 'backtrack_to_phase');
@@ -849,6 +851,14 @@ async function withDesignOwnerHost(run: (h: {
       failExecutorFor: () => false,
       onHarnessSummary: ({ phase }) => {
         if (phase !== 'spec') return null;
+        const { parseContextExploration } = require('../../scripts/utils/context-exploration') as typeof import('../../scripts/utils/context-exploration');
+        const { resolveFactsRebuildOwner } = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
+        const original = parseContextExploration(fs.readFileSync(featureFilePath(root, feature, 'context/facts.md'), 'utf8')).fm as Record<string, unknown>;
+        const admission = { projectRoot: root, feature, phase, goalRunId: process.env.MAISON_GOAL_RUN_ID!, featuresDir: 'doc/features' };
+        assert.equal(resolveFactsRebuildOwner(admission, original, phase), 'spec', 'audited successor uses its immutable birth establishment phase');
+        assert.equal(resolveFactsRebuildOwner({ ...admission, goalRunId: String(original.run_id) }, original, 'spec'), original.established_by, 'same-run queue changes cannot replace the original facts owner');
+        assert.equal(resolveFactsRebuildOwner(admission, { ...original, run_id: 'unrelated-run' }, phase), original.established_by, 'unrelated predecessor identity grants no reconstruction');
+        assert.equal(resolveFactsRebuildOwner({ ...admission, phase: 'plan' }, original, 'plan'), original.established_by, 'a non-birth phase cannot use the successor exception');
         clearFrameworkConfigCache();
         const ctx = { projectRoot: root, frameworkRoot: fw, feature, phaseRule: {}, featureSpec: new SpecLoader(root, undefined, undefined, fw).loadFeatureSpec(feature) } as unknown as import('../../scripts/utils/types').CheckContext;
         const gate = checkAuthoritativeContentAligned(ctx, 'acceptance').find(c => c.id === 'authoritative_content_aligned');
@@ -870,15 +880,18 @@ async function withDesignOwnerHost(run: (h: {
   }
 }
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string) {
   const out: UnitCaseResult[] = [];
-  for (const c of cases) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases.filter(test => matchesUnitCase(test.name, selector))) {
+    const stop = startCaseTiming([c.name], timings);
     try {
       await c.run();
       out.push({ name: c.name, ok: true });
     } catch (err) {
       out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { stop(); }
   }
-  return out;
+  return selectedUnitCases(out, selector, timings);
 }
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

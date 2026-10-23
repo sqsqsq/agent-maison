@@ -1,0 +1,101 @@
+schema_version: "1.0"
+operation:
+  operation_id: saveBankCard
+  direction: internal
+  version: "1"
+request_dto:
+  dto_id: SaveBankCardRequest
+  fields:
+    - field_id: card_number
+      type: string
+      semantics: 完整银行卡号，仅持久化层处理，展示层不得直接显示
+      nullable: false
+    - field_id: card_kind
+      type: string
+      semantics: 银行卡大类，固定为 BANK_CARD
+      nullable: false
+    - field_id: bank_name
+      type: string
+      semantics: 发卡银行名称
+      nullable: false
+    - field_id: bank_card_type
+      type: string
+      semantics: 储蓄卡或信用卡
+      nullable: false
+response_dto:
+  dto_id: SaveBankCardResult
+  fields:
+    - field_id: success
+      type: boolean
+      semantics: RDB 写入是否成功
+      nullable: false
+    - field_id: card_number
+      type: string
+      semantics: 无论成功失败均回传本次完整卡号供结果流程携带
+      nullable: false
+    - field_id: error_message
+      type: string
+      semantics: 失败时的本地错误摘要，成功时为空字符串
+      nullable: false
+mappings:
+  - mapping_id: map_card_number
+    target_field: BankCardRecord.cardNumber
+    kind: direct
+    source_fields: [card_number]
+    rule: 原值写入 RDB，UI 仅使用 maskCardNumber 生成前四后四展示串
+  - mapping_id: map_card_kind
+    target_field: BankCardRecord.cardKind
+    kind: direct
+    source_fields: [card_kind]
+    rule: 原值写入
+  - mapping_id: map_bank_name
+    target_field: BankCardRecord.bankName
+    kind: direct
+    source_fields: [bank_name]
+    rule: 原值写入
+  - mapping_id: map_bank_card_type
+    target_field: BankCardRecord.bankCardType
+    kind: direct
+    source_fields: [bank_card_type]
+    rule: 原值写入
+  - mapping_id: map_success
+    target_field: SaveBankCardResult.success
+    kind: direct
+    source_fields: [success]
+    rule: RDB insert 返回值映射为布尔结果
+  - mapping_id: map_result_card_number
+    target_field: SaveBankCardResult.cardNumber
+    kind: direct
+    source_fields: [card_number]
+    rule: 无论写入结果均保留本次完整卡号
+  - mapping_id: map_error_message
+    target_field: SaveBankCardResult.errorMessage
+    kind: direct
+    source_fields: [error_message]
+    rule: 本地异常转为可展示摘要
+errors:
+  storage_failure: 返回 success=false、完整 card_number 与错误摘要；进入失败结果页，不把失败记录当作已添加卡片
+idempotency:
+  key: card_number
+  behavior: card_number 唯一约束；重复提交返回既有记录对应的成功结果，不新增重复卡
+nfr:
+  privacy: 完整卡号只在内存与 RDB 数据层流转，日志和 UI 均使用脱敏值
+  durability: 下一步仅在 insert 完成或抛错后进入结果页
+table_schema:
+  database: bank_card.db
+  version: 1
+  upgrade: 首版仅执行 CREATE TABLE IF NOT EXISTS；后续版本通过显式 version migration 升级，不执行破坏性重建
+  tables:
+    - name: bank_card
+      primary_key: id
+      unique_constraints: [card_number]
+      columns:
+        - { name: id, type: INTEGER, nullable: false, auto_increment: true }
+        - { name: card_number, type: TEXT, nullable: false }
+        - { name: card_kind, type: TEXT, nullable: false, default: BANK_CARD }
+        - { name: bank_name, type: TEXT, nullable: false }
+        - { name: bank_card_type, type: TEXT, nullable: false }
+        - { name: added_at, type: INTEGER, nullable: false }
+        - { name: huawei_pay_enabled, type: INTEGER, nullable: false, default: 0 }
+        - { name: unionpay_quickpass_enabled, type: INTEGER, nullable: false, default: 0 }
+        - { name: transactions_json, type: TEXT, nullable: false, default: "[]" }

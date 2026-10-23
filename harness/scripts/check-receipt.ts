@@ -262,7 +262,7 @@ function main(): void {
   try {
     workflowSpecForPlan = resolveWorkflowSpec(projectRoot, { config: fw });
     if (runId && workflowSpecForPlan.schema_version === '1.2') {
-      workflowSpecForPlan = workflowForExistingRun(workflowSpecForPlan, loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir: relFeaturesDir(projectRoot) }), frameworkRoot);
+      workflowSpecForPlan = workflowForExistingRun(workflowSpecForPlan, loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir: relFeaturesDir(projectRoot) }), frameworkRoot, projectRoot);
     }
     assertWorkflowFeaturePhase(workflowSpecForPlan, phase);
   } catch (err) {
@@ -307,17 +307,6 @@ function main(): void {
     adapterHasVerifierSubagent: resolveVerifierSubagentDeclared(frameworkRoot, fw.agent_adapter),
     adapterName: fw.agent_adapter,
   });
-
-  // lite track：receipt 机制架构性不适用（正常调用路径下 tryValidateReceipt 已在
-  // phase-state.ts 短路、不会走到本进程；本分支是直接 CLI 调用的防御性兜底）——
-  // 绝不当作 passed，也不触碰任何 state，交由 exit 阶段自身的 script-report 承载闭环。
-  if (track === 'lite') {
-    console.log(`\n🧾 check-receipt: feature=${feature}, phase=${phase}`);
-    console.log(`   track=lite：receipt 机制不适用（evidence_policy_snapshot.profile_resolved=${profileResolved}）`);
-    console.log('   闭环判据 = change.md checkbox 全勾 + exit 阶段 script-report verdict=PASS（非 receipt）。');
-    console.log('   本命令不会写入 .current-phase.json；请改查 exit 阶段的 script-report.json。\n');
-    process.exit(0);
-  }
 
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
   const receiptPath = receiptResolved.path;

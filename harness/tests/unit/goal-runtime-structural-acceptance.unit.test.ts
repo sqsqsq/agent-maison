@@ -242,7 +242,7 @@ const cases: Case[] = [
         assert(/if \(hasGoalExecutionSignal\(\)\) return undefined;[\s\S]*process\.env\.HARNESS_DIFF_BASE_REF/.test(reader.source),
           `${reader.file} does not ignore HARNESS_DIFF_BASE_REF for every goal execution signal`);
       }
-      for (const gate of ['check-coding.ts', 'check-exit.ts']) {
+      for (const gate of ['check-coding.ts']) {
         assert(readScript(gate).includes('resolveHarnessDiffBaseRef()'),
           `${gate} bypasses the shared diff-base resolver`);
       }

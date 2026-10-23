@@ -151,11 +151,11 @@ function mergeToFacts(
   }
 
   const establishing = parsed[0];
-  const establishedBy = establishing.phase === 'change' ? 'change' : 'spec';
-  if (establishing.phase !== 'spec' && establishing.phase !== 'change') {
+  const establishedBy = 'spec';
+  if (establishing.phase !== 'spec') {
     console.warn(
-      `[backfill --to-facts] 警告：--phases 中最早存量的 context-exploration.md 属于 "${establishing.phase}"（非 spec/change）；` +
-        `已将其 Code Facts 内容合成为 established_by="${establishedBy}"。若 spec/change 阶段本应有独立探索产物，请先补齐再归并。`,
+      `[backfill --to-facts] 警告：--phases 中最早存量的 context-exploration.md 属于 "${establishing.phase}"（非 spec）；` +
+        `已将其 Code Facts 内容合成为 established_by="${establishedBy}"。若 spec 阶段本应有独立探索产物，请先补齐再归并。`,
     );
   }
   const rest = parsed.slice(1);

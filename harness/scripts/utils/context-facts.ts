@@ -3,9 +3,7 @@
 // ============================================================================
 // 设计（openspec/changes/exploration-scale/design.md）：
 //   - <features_dir>/<feature>/context/facts.md 由该 track 的首个 feature phase 建立
-//     （full=spec / lite=change），承载 Code Facts 全量表 + frontmatter。
 //   - 后续所有 active feature phase（full 含 plan/coding/review/ut/testing；
-//     lite 含 coding/exit）以 `## phase_delta: <phase>` 增量节追加，不重做全量探索；
 //     量化阈值/subagent 强制只在建立阶段生效，delta 阶段只要求节存在且非空。
 //   - 兼容：facts.md 不存在但旧 per-phase context-exploration.md 存在时，
 //     回落旧契约校验 + WARN 提示 backfill；两者都不存在才 FAIL。
@@ -36,7 +34,7 @@ import { loadFeatureTrackDecl } from './feature-track';
 import { resolveFeatureTrack } from './runtime-policy';
 
 /** 该 track 的首个 feature phase——建立 facts.md 全量事实的阶段。 */
-export const FACTS_ESTABLISHING_PHASES: ReadonlySet<string> = new Set(['spec', 'change']);
+export const FACTS_ESTABLISHING_PHASES: ReadonlySet<string> = new Set(['spec']);
 
 /** Supplied by the invoking runtime/request entry, never read from authored facts. */
 export interface FactsInvocationContext {
@@ -76,13 +74,13 @@ export function resolveFactsAbsPath(projectRoot: string, feature: string | undef
   return path.join(featuresDirPath(projectRoot), ...featureRelativePath(feature).split('/'), 'context', 'facts.md');
 }
 
-interface PhaseDeltaSection {
+export interface PhaseDeltaSection {
   present: boolean;
   content: string;
 }
 
 /** 匹配 `## phase_delta: <phase>` 小节直到下一个 `##` 标题或文末。 */
-function findPhaseDeltaSection(body: string, phase: string, merge = false): PhaseDeltaSection {
+export function findPhaseDeltaSection(body: string, phase: string, merge = false): PhaseDeltaSection {
   const escaped = phase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`##\\s*phase_delta:\\s*${escaped}\\b([\\s\\S]*?)(?=\\n##\\s|$)`, merge ? 'gi' : 'i');
   if (merge) {
@@ -348,35 +346,14 @@ function checkFactsFile(
     results.push({
       id: 'context_exploration_facts_established_by_invalid',
       category: 'structure',
-      description: 'facts.md frontmatter.established_by 须为该 track 首个 feature phase（spec 或 change）',
+      description: 'facts.md frontmatter.established_by 须为旧出生协议的 spec 阶段',
       severity: 'BLOCKER',
       status: 'FAIL',
       details:
-        `established_by="${establishedBy || '<missing>'}"，期望 "spec"（full track）或 "change"（lite track）。` +
+        `established_by="${establishedBy || '<missing>'}"，旧出生协议期望 "spec"。` +
         `在 frontmatter 顶层补一行，如：established_by: spec`,
       affected_files: [relPath],
     });
-  } else if (!invocation) {
-    // codex review 采纳：仅校验 established_by ∈ {spec,change} 不够——full track 的 feature
-    // 若沿用早年 lite 阶段建立的 facts.md（established_by: change），delta 阶段（plan/coding/...）
-    // 只查 phase_delta 节，不会发现"这份事实基线其实是按 lite 更轻的门槛建立的"。
-    // 按 feature.yaml 声明的 track（缺省 full）推导期望值：full→spec，lite→change，不一致即 FAIL。
-    const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature!));
-    const expectedEstablishedBy = track === 'lite' ? 'change' : 'spec';
-    if (establishedBy !== expectedEstablishedBy) {
-      results.push({
-        id: 'context_exploration_facts_established_by_track_mismatch',
-        category: 'structure',
-        description: 'facts.md established_by 须与 feature.yaml 声明的 track 一致（full→spec，lite→change）',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: `established_by="${establishedBy}"，但 feature track="${track}"（期望 established_by="${expectedEstablishedBy}"）`,
-        suggestion: track === 'full'
-          ? '该 feature 现为 full track，facts.md 须由 spec 阶段重新建立（如从 lite 升档而来，请回 spec 阶段重跑 Research Sub-Phase 并重写 facts.md）。'
-          : '该 feature 现为 lite track，facts.md 须由 change 阶段建立。',
-        affected_files: [relPath],
-      });
-    }
   }
 
   if (fm.ready_to_produce !== true) {
@@ -432,7 +409,14 @@ export function checkFactsArtifact(
   const factsRel = path.relative(projectRoot, factsAbs).replace(/\\/g, '/');
 
   if (fs.existsSync(factsAbs)) {
-    return checkFactsFile(factsAbs, factsRel, projectRoot, feature, phase, options);
+    const checks = checkFactsFile(factsAbs, factsRel, projectRoot, feature, phase, options);
+    if (feature && checks.some(check => check.status === 'FAIL' && ['context_exploration_facts_source_stale', 'context_exploration_facts_baseline_stale', 'context_exploration_facts_established_by_invalid'].includes(check.id))) {
+      const { factsCheckRepairOwner } = require('./repair-responsibility') as typeof import('./repair-responsibility');
+      const owner = factsCheckRepairOwner({ projectRoot, feature, frameworkRoot: options?.frameworkRoot ?? path.resolve(__dirname, '../../..'),
+        runId: options?.factsContext?.subject && 'run_id' in options.factsContext.subject ? options.factsContext.subject.run_id : process.env.MAISON_GOAL_RUN_ID, currentPhase: phase });
+      for (const check of checks) if (check.status === 'FAIL' && ['context_exploration_facts_source_stale', 'context_exploration_facts_baseline_stale', 'context_exploration_facts_established_by_invalid'].includes(check.id) && owner) check.repair_owner = owner;
+    }
+    return checks;
   }
 
   if (feature !== undefined && !options?.factsContext && isContextExplorationPhase(phase)) {

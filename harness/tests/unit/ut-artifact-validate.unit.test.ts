@@ -49,6 +49,15 @@ function testAuditAcceptsFencedYaml(): void {
   assert(r.ok, `expected ok, got ${JSON.stringify(r.errors)}`);
 }
 
+function testAuditAllowsUpstreamTableAlongsideRecords(): void {
+  const records = '```yaml\nrecords:\n  - acceptance_id: AC-1\n    testability_level: L0\n    verdict: testable\n```\n';
+  const issues = '\n## 问题清单\n| ID | 涉及文件 | 问题描述 |\n|---|---|---|\n| UP-1 | src/service.ts | 当前实现缺口 |\n';
+  assert(validateTestabilityAuditContent(records + issues).ok, '合法 records 外允许模板声明的上游问题表');
+  const malformed = validateTestabilityAuditContent(records + '\n```yaml\nrecords: [\n```\n' + issues);
+  assert(!malformed.ok && malformed.errors.some(error => error.field === 'yaml'), '问题表和合法块不能掩盖另一非法 audit 块');
+  assert(!validateTestabilityAuditContent(issues).ok, '问题表不能替代机器 audit records');
+}
+
 function testMockPlanAcceptsYamlStandaloneComment(): void {
   const text = `# mock-plan 说明\nschema_version: "1.0"\nspies:\n  - target_class: Api\n    methods:\n      - name: fetch\n        returns:\n          ts_expr: "null as ApiResult"\n`;
   const r = validateMockPlanContent(text);
@@ -191,6 +200,7 @@ export function runAll(): UnitCaseResult[] {
   const cases: Array<{ name: string; fn: () => void }> = [
     { name: 'audit rejects markdown table', fn: testAuditRejectsMarkdownTable },
     { name: 'audit accepts fenced yaml', fn: testAuditAcceptsFencedYaml },
+    { name: 'audit allows upstream table alongside valid records', fn: testAuditAllowsUpstreamTableAlongsideRecords },
     { name: 'mock-plan accepts yaml standalone comment', fn: testMockPlanAcceptsYamlStandaloneComment },
     { name: 'mock-plan rejects markdown fence', fn: testMockPlanRejectsMarkdownFence },
     { name: 'mock-plan accepts pure yaml', fn: testMockPlanAcceptsPureYaml },

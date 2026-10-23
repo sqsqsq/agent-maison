@@ -6,7 +6,7 @@ import { validateProjectRelativePath } from './utils/project-relative-path';
 import { loadVerifierEvidence } from './utils/verifier-evidence';
 import { diffChangedFiles, resolveEffectiveDiffBaseline } from './utils/git-diff';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
-import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
+import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, affectedScopePhases, authorizedScopePhases, isEffectivePhasePass, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
 import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
 import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
 import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal, resolveCurrentScopeView } from './utils/feature-track';
@@ -385,7 +385,7 @@ import {
   roundFingerprintOfCandidates,
   type RepairCandidate,
 } from './utils/repair-candidates';
-import { mapCategoryToChainPhase } from './utils/correction-routing';
+import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext } from './utils/repair-responsibility';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
 import { validateMinimumAssurance } from './utils/skill-contract';
@@ -573,7 +573,8 @@ export function snapshotBacktrackRelatedInputs(projectRoot: string, paths: strin
 /** 只读进展输入；不补进候选files、不改变既有fp或证据引用。 */
 export function resolveBacktrackRelatedInputs(input: {
   projectRoot: string; frameworkRoot: string; feature: string; runId?: string;
-  candidates: readonly RepairCandidate[]; targetPhase: string; track?: 'full' | 'lite'; boundary: PhaseWriteBoundaryResolution | null;
+  candidates: readonly RepairCandidate[]; targetPhase: string; track?: 'full'; boundary: PhaseWriteBoundaryResolution | null;
+  responsibility?: import('./utils/repair-responsibility').RepairResponsibilityContext;
 }): string[] {
   const isProcessPath = createBacktrackProcessPredicate(input.projectRoot, { feature: input.feature,
     frameworkRoot: input.frameworkRoot, phaseOrder: input.boundary?.phaseOrder, targetPhase: input.targetPhase });
@@ -585,6 +586,7 @@ export function resolveBacktrackRelatedInputs(input: {
   if (!input.candidates.length) return [];
   const related = new Set<string>();
   let contractFiles: string[] | null = null;
+  let responsibility = input.responsibility;
   for (const candidate of input.candidates) {
     if (candidate.files.length) {
       if (candidate.files.some(file => !normalizeRelatedPath(input.projectRoot, file))) return [];
@@ -594,11 +596,13 @@ export function resolveBacktrackRelatedInputs(input: {
       if (explicit.some(file => !!file)) continue;
     }
     // 每个无源码映射的候选各自走原owner scope，不把组内其它候选的A当成它的B。
-    const ownerPhase = mapCategoryToChainPhase(candidate.category, input.boundary?.phaseOrder ?? [], input.track ?? 'full') ?? input.targetPhase;
+    try { responsibility ??= repairResponsibilityContext({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot, feature: input.feature, runId: input.runId, contracts: input.boundary ?? undefined }); }
+    catch { return []; }
+    const ownerPhase = resolveRepairResponsibility({ ...responsibility, target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }).owner;
     if (!input.boundary || input.boundary.unresolvedSourcePhases.includes(String(ownerPhase))) return [];
     try {
       if (contractFiles === null) {
-        const contracts = input.runId
+        const contracts = input.runId && resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope
           ? readRunBoundContracts(input.projectRoot, input.frameworkRoot, input.feature, input.runId)
           : new SpecLoader(input.projectRoot, undefined, undefined, input.frameworkRoot).loadFeatureSpec(input.feature).contracts;
         contractFiles = contracts?.files ?? [];
@@ -688,6 +692,7 @@ export interface SummaryJson {
   report_validity?: 'PASS' | 'FAIL' | 'UNVERIFIED';
   verifier_report?: string;
   blockers?: Array<{
+    repair_owner?: string;
     device_setup?: import('./utils/device-unlock-helper').DeviceSetupObservation;
     id?: string;
     blocking_class?: string;
@@ -3920,6 +3925,7 @@ export function buildPhasePrompt(
     renderGoalBrief(assembleGoalBrief(projectRoot, manifest.feature, { runId: manifest.run_id }), { sections: EXECUTOR_BRIEF_SECTIONS }),
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
+    ...(readPhaseRepairIssues(projectRoot, manifest.feature, String(phase))?.diagnostics ?? []).map(reason => `Upstream proposal feedback: ${reason}`),
     ...(capabilityAdvisory ? buildCapabilityBlock(capabilityAdvisory) : []),
     ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined, attended === true),
     '',
@@ -4151,7 +4157,7 @@ export function buildPhasePrompt(
     parts.push('', '## Frozen execution scope / P1 input protocol 1.1',
       `Completion target: ${scope.completion_target}; requested results: ${scope.requested_results.join(', ')}`,
       `Frozen phase chain: ${scope.phase_chain.join('→')}; execute only ${phase} in this invocation.`,
-      `Before substantive work, establish or adopt real facts at ${featureFilePath(projectRoot, manifest.feature, 'context/facts.md')}. The first phase in this run is ${scope.phase_chain[0]}.`,
+      `Before substantive work, establish or adopt real facts at ${featureFilePath(projectRoot, manifest.feature, 'context/facts.md')}. Preserve any validated original baseline and its establishing phase; a reordered remaining queue does not redefine its owner.`,
       'Preserve a validated predecessor baseline and its actual established_by; append only this phase_delta. Never invent spec/change execution.',
       'New facts belong to the responsible Skill/checker; do not edit the frozen manifest or cancel obligations because a check failed.',
       ...scope.obligations.filter(o => o.owner_phase === phase).map(o => `${o.id}: ${o.applicability}; ${o.reason}`));
@@ -5275,7 +5281,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
-  if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
+  if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot, projectRoot);
   const requestedSupersedeTargets = normalizeSupersedeTargets(argv.supersede);
   // plan b2d7f4e9 §3.2：`--supersede` 必须点名一个 run。feature 载体（无 run 的完成）没有 run 可 supersede——
   // 它的完成后修正是追加 feature 范围修订后起新 run；空值不得被静默当成 fresh run。
@@ -5902,7 +5908,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
       },
       adapterStatus,
     );
-    // C1：按 feature 声明 track 解析链（lite 走 auto_chain_by_track.lite；缺省 full 零变化）
     // Legacy receipt-derived fidelity bytes remain compatibility-readable but have no authority.
     // A downstream start cannot safely treat them as an ordinary missing/non-UI SSOT: doing so
     // would let the preflight recompute only in memory while the harness falls back to spec.md.
@@ -6978,7 +6983,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // ONE projected stream for every recovery reader: invalidation, validation-only eligibility
       // and closure-only retry must all see the phases this run's revisions revoked, or two of them
       // would happily skip the agent for a phase the third just sent back to the chain (review B1).
-      const recoveryEvents = eventsWithScopeRevocations(birthScope, priorEvents);
+      const recoveryEvents = eventsWithScopeRevocations(birthScope, priorEvents, birthScope ? readRepairDependencyContext(projectRoot, manifest.feature, workflow, birthScope, frameworkRoot) : {});
       const inv = applyInvalidationsToResume(chain, outcomes, recoveryEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
@@ -7431,7 +7436,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //      end 事件可能缺 timed_out 标记）。
         // Same projection as recovery: `isClosureOnlyRetryPending` below must not treat a revoked
         // phase's pre-revision PASS+retry as "only closure left".
-        const attemptHistory = eventsWithScopeRevocations(birthScope, loadAuthoritativeEvents(eventsPath));
+        const attemptHistory = eventsWithScopeRevocations(birthScope, loadAuthoritativeEvents(eventsPath), birthScope ? readRepairDependencyContext(projectRoot, manifest.feature, workflow, birthScope, frameworkRoot) : {});
         const latestPhaseVerdict = [...attemptHistory].reverse().find(
           (event) => event.type === 'phase_verdict' && event.phase === phase,
         );
@@ -7664,8 +7669,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 两个边界共用同一实现（codex P1：不另建检测器）。返回 true = 已处置（回退或
         // halt），调用方须 `phaseDone = true; continue;`。
         const runPlanAuthorityGate = (boundary: 'pre_spawn' | 'post_agent'): boolean => {
-          if (dryRun || phase !== ('coding' as FeaturePhase) || (!manifest.execution_scope && goalTrack === 'lite')) return false;
-          // Legacy lite authorization remains with change scope and its original checks; it never owned plan closure.
+          if (dryRun || phase !== ('coding' as FeaturePhase)) return false;
           // runner-owned-machine-facts 裁剪（codex 定案）：授权=仓内 fresh 的 plan
           // closure（recomputePhaseEvidenceStaleness 同一把尺），跨 run 稳定——fresh
           // --start coding 无需本 run 快照即可开工；pass snapshot 只承担同阶段
@@ -7837,6 +7841,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             }
           } catch (error) { factsAdmissionError = (error as Error).message; }
         }
+        let invocationResponsibility: import('./utils/repair-responsibility').RepairResponsibilityContext = { projectRoot, frameworkRoot,
+          feature: manifest.feature, runId: manifest.run_id, workflow, contracts: phaseWriteBoundary ?? undefined, authorityReaders: promptAuthorityReaders };
+        try { invocationResponsibility = repairResponsibilityContext(invocationResponsibility); }
+        catch { /* Existing capability/design recovery owns the gap; derived responsibility never adds an entry blocker. */ }
         // The read action ends before invocation events, writers, waits or model execution.
         promptAuthorityReaders = undefined;
         // An upstream facts gap goes directly to the ordinary harness/owner recovery, without granting a new executor window.
@@ -7888,7 +7896,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           (() => {
             if (closureOnlyAttempt || backtrackRepairCandidates.length === 0) return '';
             const mine = backtrackRepairCandidates.filter(
-              c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === String(phase),
+              c => resolveRepairResponsibility({ ...invocationResponsibility, target: { files: c.files, category: c.category, summary: c.summary } }).owner === String(phase),
             );
             // plan 33784ed1 §4.2/§4.5：拒修写法（有人在场与无人值守都注入）与反驳轮的逐条依据
             const declines = dryRun ? new Map() : loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id);
@@ -8419,7 +8427,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // A2: same resolver as the diff baseline — birth value, or the one frozen by the first
             // coding/ut-bearing revision (D2 §3 问题 9).
             runBaseSha: resolveRunBaseline(manifest, loadAuthoritativeEvents(eventsPath)).baseSha,
-            receiptRequired: goalTrack !== 'lite',
+            receiptRequired: true,
             resume: Boolean(argv.resume),
             successor: typeof manifest.successor_of === 'string',
           },
@@ -8870,10 +8878,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 .filter((owner): owner is string => owner !== null))];
               const targetOwner = owners.sort((a, b) =>
                 fullWorkflowChain.indexOf(a as FeaturePhase) - fullWorkflowChain.indexOf(b as FeaturePhase))[0] ?? null;
-              const targetIdx = targetOwner ? chain.indexOf(targetOwner as FeaturePhase) : -1;
+              let targetIdx = targetOwner ? chain.indexOf(targetOwner as FeaturePhase) : -1;
+              const responsibility = resolveRepairResponsibility({ ...invocationResponsibility, currentPhase: String(phase),
+                target: { files: violationFacts.map(fact => fact.path), owner: targetOwner ?? undefined } });
+              if (birthScope && targetOwner && responsibility.action !== 'unavailable') {
+                const view = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
+                  previous: applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)), currentRunId: manifest.run_id, reopen: targetOwner });
+                chain = [...view.phase_chain]; fullWorkflowChain = executionCompletionPhases(view);
+                targetIdx = chain.indexOf(targetOwner); phaseIdx = chain.indexOf(String(phase));
+              }
               let haltReason: string | null = null;
               if (repeated) haltReason = 'phase_write_violation_repeat';
-              else if (targetIdx < 0 || targetIdx >= phaseIdx) haltReason = 'backtrack_target_absent';
+              else if (targetIdx < 0 || responsibility.action === 'unavailable') haltReason = 'backtrack_target_absent';
 
               if (haltReason) {
                 const detail =
@@ -8896,7 +8912,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
 
               backtracksUsed++;
-              const invalidated = chain.slice(targetIdx, phaseIdx + 1).map(String);
+              const invalidated = affectedScopePhases(targetOwner ? [targetOwner] : [], fullWorkflowChain.map(String), invocationResponsibility.executionScope ? readRepairDependencyContext(projectRoot, manifest.feature, workflow, invocationResponsibility.executionScope, frameworkRoot) : { workflow });
               const txId = `${manifest.run_id}-writebt${backtracksUsed}`;
               goalEvents.emit({
                 type: 'phase_backtrack_requested',
@@ -9438,7 +9454,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const repairDeclinesNow = loadRepairDeclineState(projectRoot, manifest.feature, manifest.run_id);
           const repairRequest = currentRepairEvents[lastRequest] as { ts?: string; candidates?: unknown } | undefined;
           const delivered = (Array.isArray(repairRequest?.candidates) ? repairRequest.candidates as RepairCandidate[] : [])
-            .filter(c => mapCategoryToChainPhase(c.category, chain.map(String), goalTrack) === phase);
+            .filter(c => resolveRepairResponsibility({ ...invocationResponsibility, target: { files: c.files, category: c.category, summary: c.summary } }).owner === phase);
           const declined = delivered.length > 0 && delivered.every(c => {
             const basis = repairDeclinesNow.get(c.item_fingerprint)?.basis;
             return basis?.run_id === manifest.run_id && basis.round.ts === repairRequest?.ts;
@@ -9804,7 +9820,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   summaryPath: candidatePath,
                   // 合法 deterministic/provider machine evidence 直接物化；primary 文本和
                   // legacy confirmed_by 都没有否决或排除权。
-                  candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase)),
+                  candidates: actionableDefectsToCandidates(driverActionableDefects, String(phase), invocationResponsibility),
                 });
                 repairCandidatesUnwritable = null;
                 return true;
@@ -10353,7 +10369,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               },
             )),
           };
-        } else if (!factsAdmissionError && contentHasNoProgress()) {
+        } else if (!factsAdmissionError && failureKind !== 'code_regression' && contentHasNoProgress()) {
           haltForNoProgress();
         } else if (
           // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
@@ -10530,14 +10546,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
             });
             if (route.kind === 'halt') {
               // error=探针自身崩溃（framework/toolchain 坏，调 agent「修 receipt」只会空转）；
-              // not_applicable+advance_blocked=状态机不变量违例（lite 本不产生 receipt）。
               driverGuardAction = 'halt';
               haltReason = route.reason;
               console.error(
                 `\n===== ${route.reason} =====\n` +
                 (route.reason === 'closure_probe_error'
                   ? `receipt 探针自身执行失败（${(probe.message ?? '').slice(0, 300)}）——framework/toolchain 问题，不派 agent 修 receipt；人工修复后 --resume。\n`
-                  : 'lite track 不产生 receipt 却出现 advance_blocked——runner 状态机不变量违例，请回灌源仓核查。\n'),
+                  : 'receipt 不适用却出现 advance_blocked——runner 状态机不变量违例，请回灌源仓核查。\n'),
               );
             } else if (route.kind === 'deterministic_recheck') {
               // runner 不调 agent：正式 receipt state sync/closure patch → 直接推进
@@ -10683,6 +10698,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               chain: chain.map(String),
               hasActionable: hasActionable && (phase === 'ut' || phase === 'testing'),
               candidateCategories: summaryRepairCandidates.map((c) => c.category),
+              candidates: summaryRepairCandidates, responsibility: invocationResponsibility,
               track: goalTrack,
             }),
           ])],
@@ -10754,7 +10770,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             proposals,
             previous: old,
             // 授权边界取**出生冻结链**（`old` 是应用过修订的有效链，会缩短）。
-            authorizedPhases: validateExecutionScope(manifest.execution_scope).phase_chain,
+            authorizedPhases: authorizedScopePhases(validateExecutionScope(manifest.execution_scope), workflow),
             completedPhases: completed,
             currentPhase: String(phase),
             repairCandidates: summaryRepairCandidates,
@@ -10774,7 +10790,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
           && (assessment.recommendation.runner_action === 'backtrack_to_phase'
             ? reconcileObservation.invalidatable_phases?.includes(recoveryTarget)
             : assessment.recommendation.action === 'complete_closure');
-        if (driverGuardAction === 'none' && factsAdmissionError && !executableInputRecovery && contentHasNoProgress()) {
+        // A current producer's unchanged inputs do not preclude a verified, executable owner handoff.
+        const executableOwnerRecovery = eligibleForBacktrack.some(candidate => {
+          const responsibility = resolveRepairResponsibility({ ...invocationResponsibility, currentPhase: String(phase),
+            target: { files: candidate.files, category: candidate.category, summary: candidate.summary } });
+          const owner = responsibility.owner;
+          if (!owner || owner === String(phase) || responsibility.action === 'unavailable') return false;
+          return assessment.recommendation.action === 'revise_scope' && pendingScopeRevision?.phase_chain.includes(owner)
+            || assessment.recommendation.runner_action === 'backtrack_to_phase' && recoveryTarget === owner && chain.includes(owner);
+        });
+        if (driverGuardAction === 'none' && (factsAdmissionError || failureKind === 'code_regression')
+          && !executableInputRecovery && !executableOwnerRecovery && contentHasNoProgress()) {
           haltForNoProgress();
           reconcileObservation.state = 'fused';
           reconcileObservation.reason = haltReason;
@@ -10916,7 +10942,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           //     fail-closed。**不给 catch-all 起精确名字**。
           // 判据抽在 resolveAssessHaltIncident（纯函数，行为矩阵单测）——`retries >= max`
           // 只是必要条件，预算恰好用满时任何落进本 catch-all 的 halt 都会被误标。
-          haltReason = assessment.recommendation.reason.startsWith('execution_scope_unresolved:') ? 'execution_scope_unresolved' : resolveAssessHaltIncident({
+          haltReason = assessment.recommendation.runner_action === 'backtrack_to_phase' && !assessment.recommendation.phase ? 'backtrack_target_absent'
+            : assessment.recommendation.reason.startsWith('execution_scope_unresolved:') ? 'execution_scope_unresolved' : resolveAssessHaltIncident({
             retriesUsed: retries,
             maxRetriesPerPhase: manifest.budget.max_retries_per_phase,
             runnerAction: assessment.recommendation.runner_action,
@@ -11068,7 +11095,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             fullWorkflowChain = executionCompletionPhases(revised) as FeaturePhase[];
             // One judgement for both paths: the in-run cursor and `--resume` derive the revoked
             // phases from the same revision content and run it through the same function.
-            outcomes = applyInvalidationsToResume(chain, outcomes, eventsWithScopeRevocations(birth, loadAuthoritativeEvents(eventsPath))).outcomes;
+            outcomes = applyInvalidationsToResume(chain, outcomes, eventsWithScopeRevocations(birth, loadAuthoritativeEvents(eventsPath), readRepairDependencyContext(projectRoot, manifest.feature, workflow, birth, frameworkRoot))).outcomes;
             wallMs = resolveWallClockMs(manifest, chain);
             wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
             // The effective view already removed valid proofs; dispatch its first remaining owner.
@@ -11186,6 +11213,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             projectRoot, frameworkRoot, feature: manifest.feature,
             runId: manifest.execution_scope ? manifest.run_id : undefined,
             candidates: eligibleForBacktrack, targetPhase: String(targetPhaseBt), track: goalTrack, boundary: phaseWriteBoundary,
+            responsibility: invocationResponsibility,
           });
           const relatedInputSnapshot = relatedPaths.length ? snapshotBacktrackRelatedInputs(projectRoot, relatedPaths, {
             feature: manifest.feature, frameworkRoot, phaseOrder: phaseWriteBoundary?.phaseOrder, targetPhase: String(targetPhaseBt),
@@ -11214,7 +11242,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             haltReason = !targetAuthorized ? 'backtrack_target_absent' : 'backtrack_fingerprint_repeat';
             const disputeLines = declineDisputeLines(summaryRepairCandidates, repairDeclines);
             backtrackHaltGuidance = !targetAuthorized
-              ? buildBacktrackTargetAbsentGuidance(targetPhaseBt ?? null)
+              ? `${buildBacktrackTargetAbsentGuidance(targetPhaseBt ?? null)}\n${assessment.recommendation.reason}`
               : [repeatGuidance, ...disputeLines].join('\n');
             goalEvents.emit({
               type: 'phase_halt', phase, halt_reason: haltReason, recovery_reason: haltReason,
@@ -11238,7 +11266,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // M1 收敛（review 修复）：signal@1 只注入 eligible（attempted 已排除），
             // legacy 恒 eligible 原样保留——eligibleForBacktrack 在 assess 前一次性算出。
             backtrackRepairCandidates = eligibleForBacktrack.slice(0, 20);
-            const invalidatedBt = chain.slice(targetIdxBt);
+            const invalidatedBt = affectedScopePhases([targetPhaseBt!], fullWorkflowChain.map(String), birthScope
+              ? readRepairDependencyContext(projectRoot, manifest.feature, workflow, applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)), frameworkRoot) : { workflow });
             for (const invalidatedPhase of invalidatedBt) {
               resumePostAgentPhases.delete(invalidatedPhase);
               delete resumePostAgentAttemptIds[invalidatedPhase];
@@ -11264,6 +11293,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
               backtracks_used: backtracksUsed,
               invalidation_tx_id: txIdBt,
             });
+            if (birthScope) {
+              const refreshed = resolveCurrentScopeView({ projectRoot, frameworkRoot, feature: manifest.feature, workflow,
+                previous: applyScopeRevisions(birthScope, loadAuthoritativeEvents(eventsPath)), currentRunId: manifest.run_id, reopen: targetPhaseBt! });
+              chain = [...refreshed.phase_chain]; fullWorkflowChain = executionCompletionPhases(refreshed);
+              targetIdxBt = chain.indexOf(targetPhaseBt!); phaseIdx = chain.indexOf(String(phase));
+            }
             console.error(
               `\n===== backtrack_to_phase =====\n`
               + (gapDriven
@@ -11357,6 +11392,21 @@ Goal runner — tool-agnostic multi-phase orchestrator
           continue;
         }
 
+        const finalBlocker = decisionSummary?.blockers?.[0];
+        const finalRepair = finalBlocker ? resolveRepairResponsibility({ ...invocationResponsibility,
+          target: { files: finalBlocker.affected_files, owner: ['coding', 'spec', 'plan', 'ut', 'testing'].includes(String(finalBlocker.repair_owner))
+            ? finalBlocker.repair_owner : undefined } }) : null;
+        const latestGuidance = finalBlocker ? `最终检查 ${finalBlocker.id}：${finalBlocker.details_excerpt ?? ''}\n真实负责方：${finalRepair?.owner ?? '尚未明确'}；${finalRepair?.reason ?? ''}\n下一步：${finalBlocker.suggestion ?? assessment.recommendation.reason}`
+          : `最终原因：${haltReason ?? assessment.recommendation.reason}；下一步：${assessment.recommendation.reason}`;
+        const terminalEvents = loadAuthoritativeEvents(eventsPath);
+        const currentStart = terminalEvents.map(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId).lastIndexOf(true);
+        const existingHalt = terminalEvents.slice(currentStart + 1).reverse().find(event => event.type === 'phase_halt' && event.phase === phase && event.halt_reason === haltReason) as (GoalRunEvent & { halt_guidance?: string }) | undefined;
+        if (!finalBlocker && existingHalt) {
+          backtrackHaltGuidance ??= typeof existingHalt.halt_guidance === 'string' ? existingHalt.halt_guidance : latestGuidance;
+        } else if (haltReason?.endsWith('_retry_exhausted') || (!backtrackHaltGuidance && !awaitConfirmGuidance)) {
+          backtrackHaltGuidance = latestGuidance;
+          goalEvents.emit({ type: 'phase_halt', phase, verdict, halt_reason: haltReason, halt_guidance: latestGuidance });
+        }
         outcomes.push({
           phase,
           verdict,

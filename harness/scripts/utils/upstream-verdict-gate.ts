@@ -16,8 +16,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { receiptDirPath } from '../../config';
 import type { CheckResult } from './types';
-import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
+import { recomputePhaseEvidenceStaleness, createRuntimeArtifactPredicate } from './phase-evidence-manifest';
 import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality-axes';
+import { scopeDependencyEdges, type ExecutionScope } from './execution-scope';
+import type { WorkflowSpec } from '../../workflow-loader';
+import { repairResponsibilityContext, resolveRepairResponsibility, readRepairDependencyContext, type RepairResponsibilityContext } from './repair-responsibility';
+import { dropRedundantAggregates } from './check-disposition';
 
 /** 回退链序（workflow SSOT 不可解析时的保守缺省——与 spec-driven full 轨一致） */
 export const FEATURE_PHASE_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
@@ -32,6 +36,9 @@ export interface UpstreamChainResolution {
   /** workflow SSOT 解析失败——回退缺省链，且回退不覆盖的 phase 不得静默失守（P1-6 三轮修） */
   degraded: boolean;
   degradedReason?: string;
+  workflow?: WorkflowSpec;
+  scope?: ExecutionScope;
+  frameworkRoot?: string;
 }
 
 export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, runId?: string, pendingOwnerPhase?: string, frameworkRoot?: string): UpstreamChainResolution {
@@ -47,10 +54,10 @@ export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, 
       const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
       const root = frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
       const current = resolveWorkflowSpec(projectRoot, { frameworkRoot: root });
-      const workflow = runId ? workflowForExistingRun(current, loadGoalManifestFromRun(projectRoot, runId, { feature }), root) : current;
+      const workflow = runId ? workflowForExistingRun(current, loadGoalManifestFromRun(projectRoot, runId, { feature }), root, projectRoot) : current;
       const phases = executionCompletionPhases(scope);
       const order = [...new Set([...(workflow.auto_chain ?? []), ...workflow.artifacts.map(a => a.id), ...phases])];
-      return { chain: order.filter(phase => phases.includes(phase)), degraded: false };
+      return { chain: order.filter(phase => phases.includes(phase)), degraded: false, workflow, scope, frameworkRoot: root };
     }
   } catch (error) { return { chain: [], degraded: true, degradedReason: String(error) }; }
   try {
@@ -63,14 +70,17 @@ export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, 
     /* eslint-enable @typescript-eslint/no-require-imports */
     const config = loadFrameworkConfig(projectRoot);
     const layout = inferRepoLayout(projectRoot);
-    const spec = resolveWorkflowSpec(projectRoot, { config, frameworkRoot: layout.frameworkRoot });
+    const spec = resolveWorkflowSpec(projectRoot, { config, frameworkRoot: frameworkRoot ?? layout.frameworkRoot });
     const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
     const chain = resolvePhaseChain(spec, track);
     const ordered = (chain as { featureOrdered?: string[] }).featureOrdered;
-    if (Array.isArray(ordered) && ordered.length > 0) return { chain: ordered, degraded: false };
+    if (Array.isArray(ordered) && ordered.length > 0) return { chain: ordered, degraded: false, workflow: spec, frameworkRoot: frameworkRoot ?? layout.frameworkRoot };
     return { chain: FEATURE_PHASE_ORDER, degraded: true, degradedReason: 'workflow featureOrdered 为空' };
   } catch (e) {
-    return { chain: FEATURE_PHASE_ORDER, degraded: true, degradedReason: (e as Error).message };
+    const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+    let fallback: WorkflowSpec | undefined;
+    try { fallback = loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'spec-driven'); } catch { /* Existing degraded handling diagnoses a broken framework. */ }
+    return { chain: FEATURE_PHASE_ORDER, degraded: true, degradedReason: (e as Error).message, workflow: fallback };
   }
 }
 
@@ -87,6 +97,8 @@ export interface UpstreamPhaseView {
   blockerIds: string[];
   freshness: UpstreamFreshness;
   freshnessDetail?: string;
+  /** Raw recompute facts: report churn can allow an owner to work without reviving an old PASS. */
+  freshnessChangedPaths?: string[];
   /** 切片二：schema 1.1 quality_axes 摘要（信息面——裁决仍走 verdict 投影，单点不分叉） */
   axisNotes?: string[];
   /** S4（visual-capability-truth）：上游失败的环境层信号（ut_run_status.failure_code 等
@@ -206,6 +218,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
   // 新鲜度：单阶段重算（manifest 缺失 → no_manifest，不作阻断依据）
   let freshness: UpstreamFreshness = 'no_manifest';
   let freshnessDetail: string | undefined;
+  let freshnessChangedPaths: string[] | undefined;
   try {
     const [res] = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { pendingOwnerPhase, runId, frameworkRoot });
     if (res) {
@@ -213,6 +226,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
       else if (res.verdict === 'missing') freshness = 'no_manifest';
       else {
         freshness = res.verdict;
+        freshnessChangedPaths = res.changed_paths;
         freshnessDetail =
           res.integrity_errors?.join('；') ??
           (res.changed_paths.length > 0
@@ -238,7 +252,59 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
     }
   } catch { /* 信号缺失不影响主判定 */ }
 
-  return { phase, summaryExists: true, verdictReadable, verdict, blockerIds, freshness, freshnessDetail, axisNotes, environmentFailureCode };
+  return { phase, summaryExists: true, verdictReadable, verdict, blockerIds, freshness, freshnessDetail, freshnessChangedPaths, axisNotes, environmentFailureCode };
+}
+
+/** The current phase's actual input bindings augment workflow/control dependencies. */
+export function upstreamPhaseDependencies(projectRoot: string, feature: string, phase: string, resolution: UpstreamChainResolution): string[] {
+  const allowed = new Set(resolution.chain);
+  const actual = resolution.scope && resolution.workflow && resolution.frameworkRoot
+    ? readRepairDependencyContext(projectRoot, feature, resolution.workflow, resolution.scope, resolution.frameworkRoot) : undefined;
+  const edges = scopeDependencyEdges(resolution.scope, resolution.workflow, actual?.inputOwners, actual?.inputEdges)
+    .filter(edge => allowed.has(edge.before) && allowed.has(edge.after));
+  const summaryFile = summaryJsonPath(projectRoot, feature, phase);
+  if (fs.existsSync(summaryFile)) {
+    try {
+      const summary = JSON.parse(fs.readFileSync(summaryFile, 'utf8')) as { capability_resolutions?: Array<{ active?: boolean; inputs?: Array<{ state?: string; selected_source?: string; attempts?: Array<{ source?: string; state?: string; upstream_producer?: string }> }> }> };
+      for (const capability of summary.capability_resolutions ?? []) if (capability.active !== false) {
+        for (const input of capability.inputs ?? []) if (input.state === 'resolved') {
+          for (const attempt of input.attempts ?? []) if (attempt.state === 'resolved' && attempt.source === input.selected_source
+            && attempt.upstream_producer && allowed.has(attempt.upstream_producer)) {
+            edges.push({ before: attempt.upstream_producer, after: phase });
+          }
+        }
+      }
+    } catch { /* Current summary shape is checked by its own checker, not reinterpreted here. */ }
+  }
+  const ancestors = new Set<string>();
+  const pending = [phase];
+  while (pending.length) {
+    const current = pending.pop()!;
+    for (const edge of edges) if (edge.after === current && edge.before !== phase && !ancestors.has(edge.before)) { ancestors.add(edge.before); pending.push(edge.before); }
+  }
+  return [...new Set([...resolution.chain, ...ancestors])].filter(item => ancestors.has(item));
+}
+
+/** A failed producer may hand its test repair to the real test owner; product failures stay blocking. */
+function upstreamRepairIsCurrentWork(opts: { projectRoot: string; feature: string; phase: string }, upstream: UpstreamPhaseView, context: RepairResponsibilityContext): boolean {
+  if (!upstream.verdictReadable || upstream.freshness === 'tampered') return false;
+  if (upstream.freshness === 'stale') {
+    const isProcessArtifact = createRuntimeArtifactPredicate({ projectRoot: opts.projectRoot, feature: opts.feature,
+      phase: upstream.phase, frameworkRoot: context.frameworkRoot });
+    if (!upstream.freshnessChangedPaths?.length || !upstream.freshnessChangedPaths.every(isProcessArtifact)) return false;
+  }
+  try {
+    const summary = JSON.parse(fs.readFileSync(summaryJsonPath(opts.projectRoot, opts.feature, upstream.phase), 'utf8')) as { blocker_count?: number; blockers?: Array<{ id: string; details?: string; details_excerpt?: string; repair_owner?: string; affected_files?: string[]; files?: string[] }> };
+    const raw = summary.blockers ?? [];
+    const blockers = dropRedundantAggregates(raw.map(blocker => ({ ...blocker, details: blocker.details ?? blocker.details_excerpt })));
+    if (!blockers.length || (summary.blocker_count !== undefined && summary.blocker_count !== raw.length && summary.blocker_count !== blockers.length)) return false;
+    return blockers.every(blocker => {
+      const files = blocker.affected_files ?? blocker.files ?? [];
+      if (blocker.repair_owner !== opts.phase || !files.length) return false;
+      const owner = resolveRepairResponsibility({ ...context, currentPhase: opts.phase, target: { files } });
+      return owner.owner === opts.phase && owner.category === 'verification' && owner.action !== 'unavailable';
+    });
+  } catch { return false; }
 }
 
 /**
@@ -258,9 +324,7 @@ export function checkUpstreamVerdictGate(opts: {
   const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature, opts.runId, opts.phase, opts.frameworkRoot);
   const order = resolution.chain;
   const idx = order.indexOf(opts.phase);
-  if (idx < 0) {
-    if (resolution.degraded) {
-      // codex 三轮 P1-6：workflow 解析失败 + 当前 phase 不在回退链 → 门禁不得静默消失
+  if (resolution.degraded && (idx < 0 || (!resolution.workflow && idx > 0))) {
       return [{
         id,
         category: 'structure',
@@ -268,21 +332,28 @@ export function checkUpstreamVerdictGate(opts: {
         severity: 'BLOCKER',
         status: 'FAIL',
         details:
-          `【链解析降级】workflow SSOT 解析失败（${resolution.degradedReason ?? '未知'}），且当前 phase ` +
-          `"${opts.phase}" 不在保守回退链 [${order.join(', ')}] 内——自定义阶段的上游裁决传播无法保证，不得静默放行。`,
+          `【链解析降级】workflow SSOT 解析失败（${resolution.degradedReason ?? '未知'}），无法保证当前 phase ` +
+          `"${opts.phase}" 的真实上游裁决传播（回退链 [${order.join(', ')}]），不得静默放行。`,
         suggestion: '修复 workflow 配置（framework.config workflow / workflows/*.workflow.yaml）后重跑。',
         failure_kind: 'workflow_chain_unresolved',
         blocking_class: 'product_verdict',
       }];
-    }
-    return []; // workflow 正常解析且 phase 非 feature 链成员（global 等）——合法零结果
   }
-  if (idx === 0) {
-    return []; // 链首：无上游可消费
-  }
-  const upstream = order.slice(0, idx);
+  if (idx < 0) return []; // workflow 正常解析且 phase 非 feature 链成员（global 等）——合法零结果
+  const upstream = upstreamPhaseDependencies(opts.projectRoot, opts.feature, opts.phase, resolution);
+  if (!upstream.length && (!resolution.degraded || resolution.workflow)) return [];
   const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p, opts.phase, opts.runId, opts.frameworkRoot));
-  const violations = evaluateUpstreamViews(views);
+  let responsibility: RepairResponsibilityContext | undefined;
+  const pendingRepairs = views.filter(view => {
+    if (!view.summaryExists || (view.verdict === 'PASS' && !view.blockerIds.length)) return false;
+    try {
+      responsibility ??= repairResponsibilityContext({ projectRoot: opts.projectRoot, feature: opts.feature,
+        frameworkRoot: opts.frameworkRoot ?? resolution.frameworkRoot ?? path.resolve(__dirname, '../../..'), runId: opts.runId,
+        currentPhase: opts.phase, workflow: resolution.workflow, executionScope: resolution.scope });
+      return upstreamRepairIsCurrentWork(opts, view, responsibility);
+    } catch { return false; }
+  });
+  const violations = evaluateUpstreamViews(views.filter(view => !pendingRepairs.includes(view)));
   const consumed = views.filter(v => v.summaryExists).map(v => v.phase);
   const skipped = views.filter(v => !v.summaryExists).map(v => v.phase);
 
@@ -294,7 +365,8 @@ export function checkUpstreamVerdictGate(opts: {
       severity: 'BLOCKER',
       status: 'PASS',
       details: [
-        `上游机器裁决全部可消费且无负面结论。`,
+        `当前实际依赖可执行；未闭合的评审/验证结论仍由完成检查保留。`,
+        pendingRepairs.length ? `本阶段承接待修对象：${pendingRepairs.map(view => view.phase).join(', ')}；原失败不撤销，修复后回原阶段复验。` : null,
         consumed.length > 0 ? `已消费：${consumed.join(', ')}` : null,
         skipped.length > 0 ? `未跑（跳过，由 receipt/goal preflight 链负责该跑未跑治理）：${skipped.join(', ')}` : null,
       ].filter(Boolean).join('\n'),

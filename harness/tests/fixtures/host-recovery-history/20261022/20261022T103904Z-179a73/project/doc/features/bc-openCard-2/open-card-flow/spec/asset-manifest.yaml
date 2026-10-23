@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "fidelity_target": "pixel_1to1",
+  "asset_acquisition_mode": "approximate",
+  "verified": "unverified",
+  "assets": [
+    {
+      "key": "bank_logo_cmb",
+      "acquisition": "repo_ref",
+      "resolved_path": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png",
+      "role": "brand_logo",
+      "rationale": "BankRepository cmb.logo 与 BankListRow Image 用途明确，其他银行复用对应logo资源，未经视觉核对"
+    },
+    {
+      "key": "open_card_guide",
+      "acquisition": "placeholder",
+      "placeholder": true,
+      "role": "illustration",
+      "placeholder_kind": "illustration_frame",
+      "rationale": "无视觉能力，未找到用途明确的手持手机引导图；需求允许大差不差，coding按角色生成可见语义占位，major视觉债务待设备复核"
+    }
+  ],
+  "blind_review_pending": [
+    {
+      "screen_id": "card_type_sheet",
+      "status": "unverified",
+      "items": [
+        "精确颜色、字号、间距与圆角未由主agent验真",
+        "OCR噪声与系统区域边界由设备截图及只读视觉review复核"
+      ],
+      "severity": "minor"
+    },
+    {
+      "screen_id": "bank_card_selection",
+      "status": "unverified",
+      "items": [
+        "精确颜色、字号、间距与圆角未由主agent验真",
+        "OCR噪声与系统区域边界由设备截图及只读视觉review复核"
+      ],
+      "severity": "minor"
+    },
+    {
+      "screen_id": "otp_sheet",
+      "status": "unverified",
+      "items": [
+        "精确颜色、字号、间距与圆角未由主agent验真",
+        "OCR噪声与系统区域边界由设备截图及只读视觉review复核"
+      ],
+      "severity": "minor"
+    },
+    {
+      "screen_id": "bank_card_result",
+      "status": "unverified",
+      "items": [
+        "精确颜色、字号、间距与圆角未由主agent验真",
+        "OCR噪声与系统区域边界由设备截图及只读视觉review复核"
+      ],
+      "severity": "major"
+    }
+  ]
+}

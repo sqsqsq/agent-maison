@@ -56,7 +56,7 @@ export function classifyChangedFiles(
 }
 
 // --------------------------------------------------------------------------
-// 模块名 → 路径前缀解析（lite 轨专用；full 轨由 contracts.yaml 直接提供）
+// 模块名 → 路径前缀解析（施工范围与责任边界共享）
 // --------------------------------------------------------------------------
 
 /** 规范化为目录前缀：正斜杠 + 恰一个尾随 "/" */
@@ -77,8 +77,7 @@ export interface ModulePrefixResolution {
 
 /**
  * 把 in_scope 模块名解析为目录前缀，三级回退：
- *   1. contracts.yaml modules[].package_path（若 lite feature 恰好维护了 contracts，
- *      与 full 轨同源同语义）
+ *   1. contracts.yaml modules[].package_path
  *   2. module-catalog.yaml modules[].entry_file 的 dirname（catalog 是模块画像 SSOT）
  *   3. `<layer>/<name>/` 目录在磁盘上真实存在（catalog 有卡片但缺 entry_file 时的
  *      保守回退——目录不存在则不猜，计入 unmapped）

@@ -91,6 +91,8 @@ export function selectRunnerActionFromAssess(
     return 'backtrack_to_phase';
   }
   if (relation === 'same') return 'retry';
+  if (relation === 'later' && recommendation.runner_action === 'backtrack_to_phase'
+    && recommendation.phase && input.observation.invalidatable_phases?.includes(recommendation.phase)) return 'backtrack_to_phase';
   if (relation === 'later') return 'advance';
   if (relation === 'earlier') {
     const target = recommendation.phase;

@@ -198,7 +198,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 
   // ---------------- checkUpstreamVerdictGate（I/O 集成）----------------
   {
-    name: '集成：review summary=FAIL（negative gate 产物）→ ut 启动被 BLOCKER FAIL 并点名 review',
+    name: '集成：review FAIL不反挡并行UT修复，testing仍被BLOCKER并点名review',
     run: async () => withTmpProject(async root => {
       writeSummary(root, 'demo', 'review', {
         schema_version: '1.0', phase: 'review', feature: 'demo',
@@ -206,21 +206,22 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         blockers: [{ id: 'negative_verdict_closure', details_excerpt: '不通过' }],
       });
       const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'ut' });
-      assertEq(r.status, 'FAIL', 'status');
-      assertTrue(r.details.includes('[review]'), '点名 review');
-      assertEq(r.failure_kind, 'upstream_negative_verdict', 'failure_kind');
+      assertTrue(!r || r.status !== 'FAIL', 'review排序靠前不构成UT硬前置');
+      const [completionGate] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'testing' });
+      assertEq(completionGate.status, 'FAIL', 'testing仍须审查通过');
+      assertTrue(completionGate.details.includes('[review]'), '点名review');
     }),
   },
   {
     name: '集成：上游全 PASS 无 blocker（无 manifest 的 legacy 现场）→ PASS 且列出已消费/未跑阶段',
     run: async () => withTmpProject(async root => {
-      writeSummary(root, 'demo', 'review', {
-        schema_version: '1.0', phase: 'review', feature: 'demo',
+      writeSummary(root, 'demo', 'coding', {
+        schema_version: '1.0', phase: 'coding', feature: 'demo',
         verdict: 'PASS', blocker_count: 0, blockers: [],
       });
       const [r] = checkUpstreamVerdictGate({ projectRoot: root, feature: 'demo', phase: 'ut' });
       assertEq(r.status, 'PASS', 'status');
-      assertTrue(r.details.includes('review'), '已消费列出 review');
+      assertTrue(r.details.includes('coding'), '已消费列出真实coding依赖');
     }),
   },
   {

@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261022T103904Z-179a73",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "status": "HALTED",
+  "phases": [
+    {
+      "phase": "spec",
+      "verdict": "PASS",
+      "summary_path": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness",
+      "retries": 0,
+      "agent_exit_code": 1,
+      "snapshot_files": {
+        "summary.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/summary.json",
+        "script-report.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/script-report.json",
+        "merged-report.md": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/merged-report.md",
+        "trace.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/trace.json",
+        "review-report.md": null,
+        "verifier.report.md": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "plan",
+      "verdict": "PASS",
+      "summary_path": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness",
+      "retries": 0,
+      "agent_exit_code": 1,
+      "snapshot_files": {
+        "summary.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/summary.json",
+        "script-report.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/script-report.json",
+        "merged-report.md": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/merged-report.md",
+        "trace.json": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/trace.json",
+        "review-report.md": null,
+        "verifier.report.md": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "coding",
+      "verdict": "FAIL",
+      "halted": true,
+      "summary_path": "doc/features/bc-openCard-2/open-card-flow/coding/reports/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/open-card-flow/coding/reports",
+      "retries": 2,
+      "agent_exit_code": 1,
+      "halt_reason": "content_retry_exhausted",
+      "failure_kind_classified": "code_regression",
+      "agent_duration_ms": 219103,
+      "agent_stderr_excerpt": "Reading prompt from stdin... 2026-10-22T11:43:00.707253Z WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/ 2026-10-22T11:43:00.707293Z WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/ 2026-10-22T11:43:00.723660Z WARN codex_core::shell_snapshot: Failed to create shell s…",
+      "harness_error_excerpt": "据链新鲜度重算会将篡改判为 tampered。）；diff_within_scope（核对原请求明确限制与实际改动；误改由本阶段恢复，真实需求或公共契约变化交责任方。）；然后重跑：npx ts-node harness-runner.ts --phase coding --feature cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw ## 目标简报（goal brief） ### 明确不做 需求原文里明确写了不要或本次不做的内容同样是排除项，即使尚未登记。 - 参考图元素 result_nfc_info：「再往下的激活nfc部分本次先不需要」 - 参考图元素 result_nfc_action：「再往下的激活nfc部分本次先不需要」 ============================================================",
+      "run_disposition": "TERMINAL"
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-10-22T11:47:06.038Z",
+  "fidelity_routing": {
+    "inferred": "pixel_1to1",
+    "selected": "pixel_1to1",
+    "effective": "pixel_1to1",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "source": "requirement_self_declared",
+    "decision_id": "dbdca7c0b69af705"
+  },
+  "recovery": {
+    "reason": "repair_candidates",
+    "current_phase": "review",
+    "owner_phase": "coding",
+    "target_phase": "coding",
+    "action": "backtrack_to_phase",
+    "changed_paths": [
+      {
+        "path": "02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets"
+      }
+    ],
+    "fingerprint": "07aa2ce6e91ad3fd2cdf2a6d2c5f7bed36faabbd337044a56d54492380f2372b",
+    "backtracks_used": 1
+  }
+}

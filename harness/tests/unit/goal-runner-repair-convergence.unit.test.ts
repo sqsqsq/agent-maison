@@ -39,6 +39,7 @@ import { hashScreenshotFile } from '../../../profiles/hmos-app/harness/visual-di
 import { clearFrameworkConfigCache } from '../../config';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
+import { loadWorkflowSpec } from '../../workflow-loader';
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -518,6 +519,7 @@ export function runAll(): UnitCaseResult[] {
     const i13Defects = Array.from({ length: 12 }, (_, i) => `visual|screen|minor#${i}`);
     const observe = (candidates: AssessPhaseObservation['repair_candidates']): AssessObservation => ({
       schema_version: '1.0', feature: 'bc-openCard', workflow: 'spec-driven', track: 'full', goal_end: 'testing',
+      responsibility: { frameworkRoot: path.resolve(__dirname, '../../..'), workflow: loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'spec-driven') },
       phases: chain.map(p => phaseObs(p, p === 'testing' ? { repair_candidates: candidates } : {})),
       fingerprints: { workflow: H, track: H, goal: H, run_attempt: H, summaries: H, evidence: H, reconcile: H, observed: H },
       reconcile: {
@@ -531,9 +533,12 @@ export function runAll(): UnitCaseResult[] {
       },
     });
     // 对照：改动前 12 条 minor 各成一条 coding 候选 → assess 请求回 coding（第三次回退）
-    const before = assessObservation(observe(i13Defects.map((fp, i) => ({
+    const candidates = i13Defects.map((fp, i) => ({
       id: `visual_diff:screen${i}`, category: 'coding' as const, item_fingerprint: FP_A.slice(0, 63) + String(i % 10),
-    }))));
+    }));
+    const missingContext = assessObservation({ ...observe(candidates), responsibility: undefined });
+    assert(missingContext.recommendation.phase === null && missingContext.recommendation.reason.includes('backtrack_target_absent'), '缺真实职责契约仍须报告缺口，不能用coding或队首兜底');
+    const before = assessObservation(observe(candidates));
     assert(before.recommendation.action === 'rerun_phase' && before.recommendation.phase === 'coding'
       && before.recommendation.runner_action === 'backtrack_to_phase',
       `对照（候选非空）应请求回 coding：${JSON.stringify(before.recommendation)}`);

@@ -96,12 +96,11 @@
             "items": {
               "type": "string",
               "enum": [
-                "full",
-                "lite"
+                "full"
               ]
             },
             "minItems": 1,
-            "description": "1.1: feature phase track membership. Feature scope defaults to [\"full\"] when omitted (lite membership MUST be explicit); MUST NOT be declared on global scope (globals apply to all tracks)."
+            "description": "1.1: feature phase track membership. Feature scope defaults to [\"full\"] when omitted (only full remains supported); MUST NOT be declared on global scope (globals apply to all tracks)."
           },
           "requires_by_track": {
             "type": "object",

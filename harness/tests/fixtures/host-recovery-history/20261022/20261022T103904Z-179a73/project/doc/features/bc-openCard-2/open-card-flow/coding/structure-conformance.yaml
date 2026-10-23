@@ -1,0 +1,58 @@
+{
+  "entries": [
+    {
+      "node_id": "type_root",
+      "declaration": "bg_color=color_page_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "type_bank_surface",
+      "declaration": "bg_color=color_card_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "type_savings",
+      "declaration": "layout_group=type_options",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "type_credit",
+      "declaration": "layout_group=type_options",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "selection_root",
+      "declaration": "bg_color=color_page_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "selection_cards",
+      "declaration": "bg_color=color_card_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "otp_root",
+      "declaration": "bg_color=color_page_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "otp_field_row",
+      "declaration": "bg_color=color_card_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    },
+    {
+      "node_id": "result_root",
+      "declaration": "bg_color=color_page_bg",
+      "implemented_by": "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets",
+      "how": "同名 id 的 Column/Row 使用资源背景；类型选项共享单选状态。"
+    }
+  ]
+}

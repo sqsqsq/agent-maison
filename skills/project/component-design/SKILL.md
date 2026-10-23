@@ -18,7 +18,7 @@ description: Create or continue a component design from the user's request and e
 
 - “新需求 / 要改这个功能 / 这个 Story 怎么做 / 建部件设计 / Story Design / 继续设计 / 查看或质询蓝图 / 调和蓝图”
 - `/component-design <blueprint-id>`
-- `/spec` 或 `/change-lite` 的正式性兜底复核指回本入口时
+- `/spec` 的正式性兜底复核指回本入口时
 
 ## 先读请求与已有产物
 

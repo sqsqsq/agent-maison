@@ -1,0 +1,312 @@
+{
+  "criteria": [
+    {
+      "id": "AC-1",
+      "priority": "P0",
+      "description": "已有添加银行卡页和全部银行页点击任意银行均打开该银行卡类型半模态",
+      "testable": true,
+      "verification_steps": [
+        "从添加银行卡页点击任意银行",
+        "从全部银行页点击任意银行",
+        "检查银行信息、支持类型和单选状态"
+      ],
+      "expected_result": "银行信息与支持的储蓄卡/信用卡选项一致，最多单选一种",
+      "ut_layer": "both",
+      "ut_focus": "入口统一与单选状态",
+      "device_focus": "半模态布局和真实导航",
+      "prd_function": "F1",
+      "checkpoint": {
+        "pre_screen": "type_background",
+        "action": {
+          "type": "tap",
+          "target_element_id": "type_bg_bank_name"
+        },
+        "post_screen": "card_type_sheet",
+        "required_element_ids": [
+          "type_title",
+          "type_bank_name",
+          "type_savings",
+          "type_credit",
+          "type_continue"
+        ],
+        "forbidden_element_ids": []
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "用户在全部银行页面，任一银行点击后，效果与添加银行卡页面效果一致。"
+      }
+    },
+    {
+      "id": "AC-2",
+      "priority": "P0",
+      "description": "选择卡类型并同意后进入银行具体卡片页，卡号仅显示前四后四",
+      "testable": true,
+      "verification_steps": [
+        "选择储蓄卡进入具体卡页",
+        "选择信用卡进入具体卡页",
+        "核对候选数量与卡号脱敏"
+      ],
+      "expected_result": "只展示该银行该类型的 1-2 张 mock 卡，完整卡号不出现在 UI 与日志",
+      "ut_layer": "both",
+      "ut_focus": "按银行和类型筛选、脱敏",
+      "device_focus": "页面布局与选择状态",
+      "prd_function": "F2",
+      "checkpoint": {
+        "pre_screen": "card_type_sheet",
+        "action": {
+          "type": "tap",
+          "target_element_id": "type_continue"
+        },
+        "post_screen": "bank_card_selection",
+        "required_element_ids": [
+          "selection_title",
+          "selection_card_number",
+          "selection_agreement",
+          "selection_next"
+        ],
+        "forbidden_element_ids": []
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "卡号只显示前四后四，但实际后台数据要按完整卡号处理。"
+      }
+    },
+    {
+      "id": "AC-3",
+      "priority": "P0",
+      "description": "验证码半模态打开即模拟发送并倒计时，只允许六位数字启用下一步",
+      "testable": true,
+      "verification_steps": [
+        "打开验证码半模态",
+        "依次输入非数字、少于六位和六位数字",
+        "等待倒计时归零并重新发送"
+      ],
+      "expected_result": "无效输入不可提交，60 秒归零后出现重新发送并可再次倒计时",
+      "ut_layer": "both",
+      "ut_focus": "输入校验与倒计时状态机",
+      "device_focus": "键盘、按钮禁用态与半模态",
+      "prd_function": "F3",
+      "checkpoint": {
+        "pre_screen": "bank_card_selection",
+        "action": {
+          "type": "tap",
+          "target_element_id": "selection_next"
+        },
+        "post_screen": "otp_sheet",
+        "required_element_ids": [
+          "otp_title",
+          "otp_input",
+          "otp_resend",
+          "otp_next"
+        ],
+        "forbidden_element_ids": []
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "用户在短信输入框中，只能输入6位数字（需要校验）"
+      }
+    },
+    {
+      "id": "AC-4",
+      "priority": "P0",
+      "description": "提交验证码后等待 RDB 写入结果并携带完整卡号进入结果页",
+      "testable": true,
+      "verification_steps": [
+        "模拟 RDB 写入成功",
+        "模拟 RDB 写入失败",
+        "重复提交同一卡号"
+      ],
+      "expected_result": "成功或失败均携带完整卡号与结果；成功记录可重新读取且重复卡不新增",
+      "ut_layer": "both",
+      "ut_focus": "RDB mapping、唯一约束与结果传递",
+      "device_focus": "结果页面状态",
+      "prd_function": "F4",
+      "checkpoint": {
+        "pre_screen": "otp_sheet",
+        "action": {
+          "type": "tap",
+          "target_element_id": "otp_next"
+        },
+        "post_screen": "bank_card_result",
+        "required_element_ids": [
+          "result_title",
+          "result_message",
+          "result_finish"
+        ],
+        "forbidden_element_ids": []
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。"
+      }
+    },
+    {
+      "id": "AC-5",
+      "priority": "P0",
+      "description": "结果页禁止系统返回并且只能通过完成按钮退出",
+      "testable": true,
+      "verification_steps": [
+        "在结果页执行左滑和系统返回",
+        "成功结果点击完成",
+        "失败结果点击完成"
+      ],
+      "expected_result": "返回手势不退出；成功清除开卡流程并回钱包首页，失败清除后回最初添加卡片页",
+      "ut_layer": "device",
+      "ut_focus": "导航决策纯函数",
+      "device_focus": "真实 NavPathStack 清栈与返回手势",
+      "prd_function": "F5",
+      "checkpoint": {
+        "pre_screen": "bank_card_result",
+        "action": {
+          "type": "tap",
+          "target_element_id": "result_finish"
+        },
+        "post_screen": "home",
+        "required_element_ids": [
+          "home_root"
+        ],
+        "forbidden_element_ids": [
+          "result_root",
+          "selection_root",
+          "otp_root"
+        ]
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "同时本页面只有点击完成按钮才能退出页面"
+      }
+    },
+    {
+      "id": "AC-6",
+      "priority": "P1",
+      "description": "旧的添加银行卡展开、全部银行索引与原有路由保持可用",
+      "testable": true,
+      "verification_steps": [
+        "执行 Home 到 AddCardEntry 到 AddBankCard 到 AllBanks 的旧链路",
+        "逐层返回",
+        "再执行新页面跳转"
+      ],
+      "expected_result": "旧行为无回归且新路由均由既有 Navigation 注册",
+      "ut_layer": "both",
+      "ut_focus": "旧新路由注册与调用",
+      "device_focus": "真机回退路径",
+      "prd_function": "F6",
+      "checkpoint": {
+        "pre_screen": "add_bank_card",
+        "action": {
+          "type": "tap",
+          "target_element_id": "exp_view_all_banks_btn"
+        },
+        "post_screen": "all_banks",
+        "required_element_ids": [
+          "ab_page_title",
+          "ab_letter_index"
+        ],
+        "forbidden_element_ids": []
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "测试用例要包含老代码和本轮新开发代码的页面互相跳转功能，不能导致原有路由受损。"
+      }
+    },
+    {
+      "id": "AC-7",
+      "prd_function": "F7",
+      "priority": "P0",
+      "description": "四张权威参考图逐屏 pixel_1to1 视觉验收，包括禁用、选中与成败状态",
+      "testable": true,
+      "verification_steps": [
+        "分别捕获卡类型半模态、具体卡片页、验证码半模态、结果页",
+        "对照全部四图核对元素、同容器关系、文案与位置",
+        "结合运行时布局树和只读视觉review记录major/minor残差，补验失败状态及单类型银行"
+      ],
+      "expected_result": "四图均有当前机器视觉证据；确定性缺失与失败修复；major记视觉债务并阻止发布，minor披露；NFC按原需求排除",
+      "ut_layer": "device",
+      "device_focus": "全部四参考图、键盘、关闭、按钮变体、协议布局、结果无返回；盲档不声称已验证",
+      "checkpoint": {
+        "pre_screen": "otp_sheet",
+        "action": {
+          "type": "tap",
+          "target_element_id": "otp_next"
+        },
+        "post_screen": "bank_card_result",
+        "required_element_ids": [
+          "result_title",
+          "result_message",
+          "result_guide",
+          "result_finish"
+        ]
+      },
+      "requirement_ref": {
+        "source_path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+        "snippet": "页面布局完全参考'3-点击任意银行拉起添卡选卡半模态.jpg'"
+      }
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "BD-1",
+      "priority": "P0",
+      "description": "RDB 写入失败",
+      "scenario": "insert 抛错或返回失败",
+      "handling": "构造失败结果并进入失败结果页",
+      "expected_behavior": "数据库无新增记录，完成后回添加卡片页",
+      "ut_layer": "both",
+      "ut_focus": "Repository 异常到失败结果映射",
+      "device_focus": "失败结果页与完成回退",
+      "prd_exception": "E1"
+    },
+    {
+      "id": "BD-2",
+      "priority": "P0",
+      "description": "验证码流程被关闭",
+      "scenario": "用户关闭验证码半模态",
+      "handling": "取消计时器并保留具体卡片页选择",
+      "expected_behavior": "不写数据库，可重新打开验证码",
+      "ut_layer": "both",
+      "ut_focus": "timer cleanup 与选择保留",
+      "device_focus": "关闭半模态后页面状态",
+      "prd_exception": "E2"
+    },
+    {
+      "id": "BD-3",
+      "priority": "P0",
+      "description": "重复提交同一卡号",
+      "scenario": "同一卡号跨会话再次添加",
+      "handling": "按 card_number 唯一约束返回既有成功结果",
+      "expected_behavior": "不产生重复卡记录",
+      "ut_layer": "unit",
+      "ut_focus": "唯一约束与幂等返回",
+      "prd_exception": "E3"
+    }
+  ],
+  "performance": [
+    {
+      "id": "NFR-1",
+      "metric": "OTP 倒计时步长",
+      "threshold": "1",
+      "unit": "second",
+      "description": "倒计时每秒更新一次且页面消失时停止",
+      "ut_layer": "both",
+      "ut_focus": "时钟驱动每秒更新、销毁不再回调",
+      "device_focus": "真机60秒倒计时/重发，关闭后停止"
+    }
+  ],
+  "coverage_summary": {
+    "P0": {
+      "total": 6,
+      "covered": 6,
+      "coverage": "100%"
+    },
+    "P1": {
+      "total": 1,
+      "covered": 1,
+      "coverage": "100%"
+    },
+    "P2": {
+      "total": 0,
+      "covered": 0,
+      "coverage": "n/a"
+    }
+  }
+}

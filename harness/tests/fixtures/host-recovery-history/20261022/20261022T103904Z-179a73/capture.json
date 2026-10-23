@@ -1,0 +1,39 @@
+{
+  "run_id": "20261022T103904Z-179a73",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "baseline_fingerprint": "acc59a88af6e29ae5e517114c99339f9e2a66071e5b61bb39c47c119bbc2a8e9",
+  "project_state": "Host bytes at capture; historical freshness is checked against original events, never assumed.",
+  "missing": [
+    "Per-invocation coding-i3/i5/i6 full frozen summaries/checks and latest verifier pointer were overwritten by coding-i7. Available content-addressed verifier materials/reports/requests are preserved separately; original events retain verdicts and facts contexts."
+  ],
+  "derived": [
+    {
+      "file": "facts.spec-original.md",
+      "from": "plan-agent-line18.json item.aggregated_output",
+      "transformation": "Extract facts.md terminal output from the final frontmatter; normalize terminal CRLF to LF. Original baseline fingerprint matches coding-i5 admission."
+    },
+    {
+      "file": "facts.before-i6.md",
+      "from": "coding-agent-line14.json item.aggregated_output",
+      "transformation": "Extract prior facts prefix and stop before the coding-i6 retry section. Prefix contains original spec/plan/coding/review and coding-i5 investigation; not a byte-exact historical file claim."
+    },
+    {
+      "file": "SpyBankRepository.before.ets",
+      "from": "project/02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets",
+      "transformation": "Remove exactly the BankCardType import and supportedCardTypes field added in i5. Reconstructed bytes exactly match the original phase_write_observed pre_sha256.",
+      "sha256": "b4e2708c7ade963f2f1abba9ca4b8393173e140ce33dce068647b11657e36081"
+    },
+    {
+      "file": "BankInfo.before.ets",
+      "from": "project/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "transformation": "Remove exactly the BankCardType import and required supportedCardTypes declaration added in i3. Reconstructed bytes exactly match the original phase_write_observed pre_sha256 and spec evidence input hash.",
+      "sha256": "0415c01bfcae5b62cce9f754965729515a5d6ea9f675ff1730bdeddc45376222"
+    }
+  ],
+  "note": "No host commands, tests, Git operations, device access or writes performed. Model/transport logs are limited to two source lines required for original facts; no full agent log copied.",
+  "historical_framework_environment": {
+    "source_commit": "242f6b1d7efd067218950f37767d65f72f4cd25d",
+    "spec_rules": "spec-rules.original.yaml",
+    "spec_rules_sha256": "c7aae462a07e7165ad4a73040fa1c65412307f153bd875c343ebf3a8c582524e"
+  }
+}

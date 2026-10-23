@@ -35,15 +35,10 @@ import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateProjectRelativePath } from './project-relative-path';
 import { checkComponentSelections, componentProjectionFindings, projectComponentSelections } from './component-selection-check';
 
-/**
- * M7：`change` 是 lite 轨的首个 phase，扮演 full 轨 `plan` 在"冻结施工契约"上的角色。
- * CU-bound lite Feature 复用同一 `contracts.yaml.change_unit` sidecar，不在 change.md
- * 另造降维映射协议（拒绝 Markdown / contracts 两套真源）。
- */
-type ProjectionPhase = 'change' | 'plan' | 'coding' | 'review' | 'ut';
+type ProjectionPhase = 'plan' | 'coding' | 'review' | 'ut';
 
 /** 施工契约冻结阶段：此时 implementation ref 允许 `planned:` 前缀（尚未落地）。 */
-const CONTRACT_FREEZE_PHASES: ReadonlySet<ProjectionPhase> = new Set<ProjectionPhase>(['plan', 'change']);
+const CONTRACT_FREEZE_PHASES: ReadonlySet<ProjectionPhase> = new Set<ProjectionPhase>(['plan']);
 
 export interface ChangeUnitProjectionIssue {
   id: string;
@@ -434,7 +429,7 @@ function checkVerticalSlice(
  *
  * - 普通 Feature（identity 不以 `cu-` 派生）→ 不适用，零结果，既有行为不变；
  * - 合法 `cu-*` identity 且 canonical CU 存在 → **BLOCKER**：CU-bound Feature 必须有
- *   sidecar 承载机器映射（lite 与 full 同一份真源）；
+ *   sidecar 承载机器映射；
  * - 合法 `cu-*` identity 但 canonical CU 不存在 → BLOCKER，回 P1/P2 调和（不静默放行）；
  * - 非法 `cu-*` payload → 按既有 identity 规则 fail-closed（`parseChangeUnitFeatureId` 抛错）。
  */
@@ -465,7 +460,7 @@ function requireSidecarForChangeUnitFeature(
     applicable: true,
     issues: [issue(
       'change_unit_contracts_sidecar_missing',
-      `Feature ${feature} 由 canonical CU ${parsed.blueprintId}/${parsed.changeUnitId} 派生，必须在 contracts.yaml 提供 change_unit sidecar（change_unit_ref + predicate/provide/design_ref mappings）；lite 轨同样不免除该机器契约。`,
+      `Feature ${feature} 由 canonical CU ${parsed.blueprintId}/${parsed.changeUnitId} 派生，必须在 contracts.yaml 提供 change_unit sidecar（change_unit_ref + predicate/provide/design_ref mappings）。`,
       'repair_feature_mapping',
     )],
   };
@@ -610,8 +605,7 @@ export function validateChangeUnitFeatureProjection(
   const section = asRecord(contracts?.change_unit);
   if (!section && !options.designOnly) {
     // M7：缺 sidecar 时"不适用"只对**普通 Feature**成立。Feature identity 以 `cu-` 派生
-    // 时它归属某份蓝图，缺 `contracts.yaml.change_unit` 就是缺机器映射真源——lite 轨没有
-    // 强制 contracts.yaml 的阶段前置，若在这里静默放行，CU-bound lite 会一路假绿到闭环。
+    // 时它归属某份蓝图，缺 `contracts.yaml.change_unit` 就是缺机器映射真源，不能静默放行。
     return { ...requireSidecarForChangeUnitFeature(projectRoot, feature), useCasesRequired: false, dagRequired: false };
   }
   const issues: ChangeUnitProjectionIssue[] = [];
@@ -702,7 +696,7 @@ export function checkChangeUnitFeatureProjection(
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
 ): CheckResult[] {
-  const componentChecks = ['plan', 'change', 'coding', 'review'].includes(phase) ? checkComponentSelections(ctx) : [];
+  const componentChecks = ['plan', 'coding', 'review'].includes(phase) ? checkComponentSelections(ctx) : [];
   const result = validateChangeUnitFeatureProjection(
     ctx.projectRoot,
     ctx.feature,

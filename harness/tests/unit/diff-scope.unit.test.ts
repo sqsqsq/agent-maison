@@ -1,5 +1,5 @@
 // ============================================================================
-// diff-scope.unit.test.ts — lite exit 接线契约单测（C1 feature-track，plan d4a7c1e8）
+// diff-scope.unit.test.ts — 共享 diff-scope 契约单测（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
 // 覆盖：
 //   - classifyChangedFiles 分类三态（neutral / in_scope_hit / violation）
@@ -16,8 +16,6 @@ import {
   isUnderLayerDir,
   resolveModulePathPrefixes,
 } from '../../scripts/utils/diff-scope';
-import { unitAcceptanceEntries } from '../../scripts/check-exit';
-import { parseChangeDoc } from '../../scripts/check-change';
 import { resolveChainFromEvents } from '../../scripts/utils/goal-progress';
 import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 
@@ -55,7 +53,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const cls = classifyChangedFiles(
         [
           'doc/features/foo/change.md', // 层外 → neutral
-          'harness/scripts/check-exit.ts', // 层外 → neutral
+          'harness/scripts/check-coding.ts', // 层外 → neutral
           '02-Feature/ModA/src/main/ets/A.ets', // in_scope
           '02-Feature/ModB/src/main/ets/B.ets', // 层内未命中 → violation
         ],
@@ -141,50 +139,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
-  },
-  {
-    name: 'unitAcceptanceEntries：[unit] 标记大小写不敏感、位置任意；无标记为空',
-    run: () => {
-      const doc = parseChangeDoc(
-        [
-          '## 意图', 'x', '## Scope', '```yaml', 'in_scope_modules: [ModA]', '```',
-          '## 验收清单',
-          '- [x] [unit] parseFoo 空输入返回 null',
-          '- [ ] 页面可见（device 层）',
-          '- [x] 边界溢出保护 [UNIT] 生效',
-          '## 任务',
-          '- [x] 实现 parseFoo',
-        ].join('\n'),
-      );
-      const units = unitAcceptanceEntries(doc);
-      eq(units.length, 2, 'unit 条目数');
-      eq(units[0].text.includes('parseFoo'), true, '首条');
-      const none = parseChangeDoc('## 验收清单\n- [x] 纯 device 验收\n');
-      eq(unitAcceptanceEntries(none).length, 0, '无标记');
-    },
-  },
-  {
-    name: 'resolveChainFromEvents：lite 事件链在 workflow 全 phase 集下完整保留',
-    run: () => {
-      const events = [
-        { type: 'run_start', chain: ['change', 'coding', 'exit'] },
-      ] as unknown as GoalRunEvent[];
-      const allowed = ['spec', 'plan', 'coding', 'review', 'ut', 'testing', 'change', 'exit'];
-      eq(
-        resolveChainFromEvents(events, ['coding'], allowed),
-        ['change', 'coding', 'exit'],
-        'lite 链应完整保留',
-      );
-      // 反证：legacy 缺省集会把 lite-only phase 滤掉——这就是调用层必须传
-      // workflow 派生 allowedPhases 的原因（三轮 review 接线点）
-      eq(
-        resolveChainFromEvents(events, ['coding']),
-        ['coding'],
-        'legacy 缺省集滤掉 change/exit（文档化既有约束）',
-      );
-    },
-  },
-];
+  },];
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];

@@ -28,7 +28,7 @@ import { checkUpstreamVerdictGate } from '../../scripts/utils/upstream-verdict-g
 import { collectCleanPassIssues, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, resolvePhaseEvidenceManifest as resolvePhaseEvidenceManifestActual, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha, computeRequirementShaFromText } from '../../scripts/utils/fidelity-shared';
-import coding from '../../scripts/check-coding';
+import coding, { checkCodingExistingTestPreserved } from '../../scripts/check-coding';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
 import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
@@ -113,7 +113,7 @@ function fixture(newFile = false, baselineTest = false, extraContractFiles: stri
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   write('framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'P4', project_profile: { name: 'generic' }, paths: { features_dir: 'doc/features' }, architecture: { outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['shared', 'data', 'domain', 'presentation'] } }));
   write('src/demo/value.ts', 'export const value: number = 1;\n');
-  if (baselineTest) write(UT_BASELINE_TEST, 'export default function baseTest() {}\n');
+  if (baselineTest) write(UT_BASELINE_TEST, "export default function baseTest() { it('retains baseline assertion', 0, () => { expect(1).assertEqual(1); }); }\n");
   const contracts = { feature: 'demo', source: 'approved design', version: '1', modules: [{ name: 'demo', layer: 'src', package_path: 'src/demo' }], files: ['src/demo/value.ts'], module_dependencies: {}, data_models: [], interfaces: [], components: [], prd_to_code_traceability: [{ prd_id: 'AC-1', key_files: ['src/demo/value.ts'] }] };
   if (newFile) contracts.files.push('src/demo/new.ts');
   contracts.files.push(...extraContractFiles);
@@ -205,7 +205,43 @@ async function scopeCheck(f: ReturnType<typeof fixture>) {
   return check!;
 }
 
+
+async function testWriteCheck(f: ReturnType<typeof fixture>) {
+  const checks = await coding.check(f.context('coding'));
+  assert.equal(checks.find(check => check.id === 'diff_within_scope')?.status, 'PASS', '一般源码范围与测试保留职责已拆开');
+  const check = checks.find(check => check.id === 'coding_existing_test_preserved');
+  assert(check, 'coding_existing_test_preserved missing');
+  if (check.status === 'FAIL') {
+    assert.equal(check.severity, 'BLOCKER', '非法测试写入仍须最终阻断');
+    assert.equal(check.repair_owner, 'ut', '不得把测试设计问题反派给coding');
+  }
+  return check;
+}
+
 const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; extraContractFiles?: string[]; requirement?: string; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  { name: 'M1 repeated coding compatibility repairs preserve the first real test original through the formal gate', baselineTest: true, run(f) {
+    const original = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const fixture = { value: 1 };\n' + original));
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const fixture = { value: 1, required: [] };\n' + original));
+    const result = checkCodingExistingTestPreserved(f.context('coding'));
+    assert.equal(result[0].status, 'PASS', JSON.stringify(result));
+    assert(result[0].details.includes(UT_BASELINE_TEST), '必须真实检查多次写过的测试，不能因跳过目标而通过');
+  } },
+  { name: 'M1 a later coding assertion change remains rejected by the formal preservation gate', baselineTest: true, run(f) {
+    const original = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const fixture = { value: 1 };\n' + original));
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const fixture = { value: 1, required: [] };\n' + original.replace('assertEqual(1)', 'assertEqual(2)')));
+    const result = checkCodingExistingTestPreserved(f.context('coding'));
+    assert.equal(result[0].status, 'FAIL', JSON.stringify(result)); assert.equal(result[0].repair_owner, 'ut');
+  } },
+  { name: 'M1 coding after a real UT version cannot substitute an older Git original at the formal gate', baselineTest: true, run(f) {
+    const original = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
+    recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'const fixture = { utVersion: true };\n' + original));
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const fixture = { utVersion: true, required: [] };\n' + original));
+    const result = checkCodingExistingTestPreserved(f.context('coding'));
+    assert.equal(result[0].status, 'FAIL', JSON.stringify(result)); assert.equal(result[0].repair_owner, 'ut');
+    assert(result[0].details.includes('真实前置测试版本不在可读取的 Git 原件中'), result[0].details);
+  } },
   { name: '8a6d3f21 modern original Scope excludes other: actual code and UI gates reject it', requirement: '# Scope\n```yaml\nin_scope_modules: [demo]\nout_of_scope_modules: [other]\nrationale: explicit user boundary\n```', async run(f) {
     f.facts(); f.write('src/other/pages/Forbidden.ets', '@Component struct Forbidden { build() {} }');
     const checks = await coding.check(f.context('coding'));
@@ -347,7 +383,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
         .replace('source_code_paths:\n  - src/demo/value.ts', 'source_code_paths:\n  - src/demo/value.ts\n  - src/demo/researched.ts\n  - src/demo/Legacy.ets')
         .replace('key_inputs_read:\n  - src/demo/value.ts', 'key_inputs_read:\n  - src/demo/value.ts\n  - build-profile.json5\n  - src/demo/Legacy.ets'));
       fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace(`run_id: ${f.manifest.run_id}`, `frozen_scope_fingerprint: ${executionScopeFingerprint(frozen.record!.execution_scope)}`).replace('established_by: coding', 'established_by: spec'));
-      const first = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', requirement: 'make value 42' });
+      const first = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'spec', featuresDir: 'doc/features', requirement: 'make value 42' });
       writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'spec', factsContext: first.factsContext,
         requirementSha: computeRequirementShaFromText(f.root, 'demo', 'make value 42', 'doc/features') }));
       const before = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', requirement: 'make value 42' });
@@ -412,11 +448,13 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const accepted = entry();
       assert.deepStrictEqual(accepted.factsContext?.baseline, original.factsContext?.baseline, 'the original baseline hashes must remain frozen');
       assert(accepted.factsContext?.baseline, 'normal end without a Windows bound is a completed invocation');
-      assert(!resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'self-check-label' }).factsContext?.baseline, 'a label invocation cannot carry completed source writes');
+      assert.throws(() => resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'coding', featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: 'self-check-label' }), /facts baseline stale/, 'a label invocation cannot carry completed source writes');
       const reject = (label: string, mutate: (events: any[]) => void = () => {}) => {
         const events = recorded.trim().split('\n').map(line => JSON.parse(line)); mutate(events);
         fs.writeFileSync(eventsPath, events.map(event => JSON.stringify(event)).join('\n') + '\n');
-        assert(!entry().factsContext?.baseline, label);
+        let result: ReturnType<typeof entry> | undefined;
+        try { result = entry(); } catch (error) { assert.match(String(error), /facts (?:baseline stale|input invalid)/, label); }
+        assert(!result?.factsContext?.baseline, label);
         fs.writeFileSync(eventsPath, recorded);
       };
       f.write('src/demo/value.ts', 'export const value = 43;'); reject('unattributed source drift between invokes'); f.write('src/demo/value.ts', 'export const value = 42;\n');
@@ -601,7 +639,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       }
     } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
   } },
-  { name: 'c3f8a2d7 t1 plan without a construction binding keeps suffix ownership and the write boundary failure never escapes', run(f) {
+  { name: 'c3f8a2d7 t1 plan without a construction binding knows source producers but cannot consume construction authority', run(f) {
     const fw = frameworkDeclaringTsSources();
     const resource = 'src/demo/resources/base/element/string.json';
     try {
@@ -623,7 +661,8 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
         '## Code Facts', '| 路径 | 事实 | 影响 |', '|---|---|---|', '| src/demo/value.ts | existing source | extend safely |', `| ${resource} | existing strings | reuse keys |`, ''].join('\n'));
       const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: fw, feature: 'demo', phase: 'plan', featuresDir: 'doc/features', goalRunId: manifest.run_id });
       assert(bridge.factsContext!.source_paths.includes(resource), JSON.stringify(bridge.factsContext));
-      assert.deepStrictEqual(bridge.factsContext!.source_owners, { 'src/demo/value.ts': 'coding' }, '无施工绑定时不扩大归属，沿用后缀筛选');
+      assert.deepStrictEqual(bridge.factsContext!.source_owners, { 'src/demo/value.ts': 'coding', [resource]: 'coding' }, '实际产品模块中的源码与资源归同一producer；施工缺口不抹掉真实归属');
+      assert.throws(() => readRunBoundContracts(f.root, fw, 'demo', manifest.run_id), /frozen construction contract missing/, '已知producer和Research归属仍不能授予尚未核实的施工输入');
     } finally { removeShimFramework(fw); clearFrameworkConfigCache(); }
   } },
   /**
@@ -722,7 +761,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     f.write('src/demo/value.ts', 'export const value: number = "wrong";');
     assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'coding_compile')?.status, 'FAIL');
   } },
-  { name: '8a runless coding cannot write UT roots; only unchanged UT evidence can be carried', baselineTest: true, async run(f) {
+  { name: '8a runless coding preserves existing cases; new tests require unchanged UT evidence', baselineTest: true, async run(f) {
     const prior = process.env.MAISON_GOAL_RUN_ID;
     try {
       delete process.env.MAISON_GOAL_RUN_ID;
@@ -731,7 +770,11 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: f.root, frameworkRoot, feature: 'demo' });
       assert(!frozen.checks.some(check => check.status === 'FAIL'), JSON.stringify(frozen));
       const ctx = f.context('coding', '');
-      const check = async () => (await coding.check(ctx)).find(item => item.id === 'diff_within_scope')!;
+      const check = async () => {
+        const result = (await coding.check(ctx)).find(item => item.id === 'coding_existing_test_preserved')!;
+        if (result.status === 'FAIL') assert.equal(result.repair_owner, 'ut', '测试设计/断言改变必须交真实UT');
+        return result;
+      };
       const baseline = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST));
       f.write(UT_BASELINE_TEST, 'export default function changedByCoding() {}\n');
       assert.equal((await check()).status, 'FAIL', 'coding modifying an existing test has no UT proof');
@@ -749,27 +792,26 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     const body = 'export default function valueTest() {}\n';
     // 对照：同一文件没有 UT 事实时今天就判越界——否则下面的 PASS 证明不了承接。
     recordInvocation(f, 'coding', () => f.write(UT_TEST, body));
-    const before = await scopeCheck(f);
+    const before = await testWriteCheck(f);
     assert.equal(before.status, 'FAIL', before.details);
     assert(before.affected_files?.includes(UT_TEST), JSON.stringify(before));
     fs.rmSync(path.join(f.root, UT_TEST));
     recordInvocation(f, 'ut', () => f.write(UT_TEST, body));
-    const after = await scopeCheck(f);
+    const after = await testWriteCheck(f);
     assert.equal(after.status, 'PASS', after.details);
     // 首轮 coding 不列 UT 文件：contracts.files 不扩，file_completeness 不受影响。
     assert.deepStrictEqual(readRunBoundContracts(f.root, frameworkRoot, 'demo', f.manifest.run_id).files, ['src/demo/value.ts']);
     assert.equal((await coding.check(f.context('coding'))).find(check => check.id === 'file_completeness')?.status, 'PASS');
     // coding 修产品让 UT 旧输入失效，但测试字节没变：承接照常，不要求旧 UT manifest fresh（重验归 UT 自己）。
     recordInvocation(f, 'coding', () => f.write('src/demo/value.ts', 'export const value: number = 42;\n'));
-    assert.equal((await scopeCheck(f)).status, 'PASS');
+    assert.equal((await testWriteCheck(f)).status, 'PASS');
   } },
   { name: 'f3b8d261 U2 byte lock: a UT output whose bytes changed afterwards is coding drift again', async run(f) {
     recordInvocation(f, 'ut', () => f.write(UT_TEST, 'export default function valueTest() {}\n'));
     f.write(UT_TEST, 'export default function valueTest() { /* edited */ }\n');
-    const check = await scopeCheck(f);
+    const check = await testWriteCheck(f);
     assert.equal(check.status, 'FAIL', check.details);
     assert(check.affected_files?.includes(UT_TEST), JSON.stringify(check));
-    assert(check.details.includes('字节已变'), check.details);
   } },
   { name: 'f3b8d261 U3 ownership lock: coding rewriting a UT output voids it even after restoring the UT bytes', async run(f) {
     const body = 'export default function valueTest() {}\n';
@@ -777,25 +819,24 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     recordInvocation(f, 'coding', () => f.write(UT_TEST, 'export default function valueTest() { /* coding */ }\n'));
     // 上一次调用已落盘 observation；下一次调用恢复 UT 原字节——字节锁满足，归属锁仍须 FAIL。
     recordInvocation(f, 'coding', () => f.write(UT_TEST, body));
-    const check = await scopeCheck(f);
+    const check = await testWriteCheck(f);
     assert.equal(check.status, 'FAIL', check.details);
     assert(check.affected_files?.includes(UT_TEST), JSON.stringify(check));
-    assert(check.details.includes('被 coding 改写'), check.details);
     // 直到 UT 再次调用产出新事实。
     recordInvocation(f, 'ut', () => f.write(UT_TEST, 'export default function valueTest() { /* ut v2 */ }\n'));
-    assert.equal((await scopeCheck(f)).status, 'PASS');
+    assert.equal((await testWriteCheck(f)).status, 'PASS');
   } },
   { name: 'f3b8d261 U4 a test-root file without a UT fact of this run is not handed over', async run(f) {
     // coding 首轮自写测试：只有 observed，没有 owned。
     recordInvocation(f, 'coding', () => f.write(UT_TEST, 'export default function codingTest() {}\n'));
-    const own = await scopeCheck(f);
+    const own = await testWriteCheck(f);
     assert.equal(own.status, 'FAIL', own.details);
     assert(own.affected_files?.includes(UT_TEST), JSON.stringify(own));
     // 事实只在别的 run 的 events 里：不跨 run 承接。
     const other = 'src/demo/src/ohosTest/ets/test/Other.test.ets';
     recordInvocation(f, 'ut', () => f.write(other, 'export default function otherTest() {}\n'),
       path.join(f.root, path.dirname(f.manifest.report_dir), 'p4-other-run', 'events.jsonl'));
-    const cross = await scopeCheck(f);
+    const cross = await testWriteCheck(f);
     assert.equal(cross.status, 'FAIL', cross.details);
     assert(cross.affected_files?.includes(UT_TEST) && !cross.affected_files.includes(other), 'another run cannot excuse our coding write or be attributed to this phase');
   } },
@@ -819,9 +860,9 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
   } },
   { name: 'f3b8d261 U6① a baseline test UT rewrote and that is then deleted is not handed over', baselineTest: true, async run(f) {
     recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'export default function baseTest() { /* ut */ }\n'));
-    assert.equal((await scopeCheck(f)).status, 'PASS', '前提：UT 改写的基线测试先被承接');
+    assert.equal((await testWriteCheck(f)).status, 'PASS', '前提：UT 改写的基线测试先被承接');
     fs.rmSync(path.join(f.root, UT_BASELINE_TEST));
-    const check = await scopeCheck(f);
+    const check = await testWriteCheck(f);
     assert.equal(check.status, 'FAIL', check.details);
     assert(check.affected_files?.includes(UT_BASELINE_TEST), JSON.stringify(check));
   } },
@@ -829,24 +870,23 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'export default function baseTest() { /* ut */ }\n'));
     const moved = 'src/demo/moved.ts';
     fs.renameSync(path.join(f.root, UT_BASELINE_TEST), path.join(f.root, moved));
-    const check = await scopeCheck(f);
+    const check = await testWriteCheck(f);
     assert.equal(check.status, 'FAIL', check.details);
     assert(check.affected_files?.includes(UT_BASELINE_TEST), JSON.stringify(check));
   } },
   { name: 'f3b8d261 U6③ UT renaming inside its own root is judged end by end and handed over', baselineTest: true, async run(f) {
     const renamed = 'src/demo/src/ohosTest/ets/test/Renamed.test.ets';
     recordInvocation(f, 'ut', () => fs.renameSync(path.join(f.root, UT_BASELINE_TEST), path.join(f.root, renamed)));
-    const check = await scopeCheck(f);
+    const check = await testWriteCheck(f);
     assert.equal(check.status, 'PASS', check.details);
   } },
   { name: 'f3b8d261 U6④ coding deleting or renaming a UT output is never exempt', baselineTest: true, async run(f) {
     recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, 'export default function baseTest() { /* ut */ }\n'));
     const renamed = 'src/demo/src/ohosTest/ets/test/CodingRenamed.test.ets';
     recordInvocation(f, 'coding', () => fs.renameSync(path.join(f.root, UT_BASELINE_TEST), path.join(f.root, renamed)));
-    const rename = await scopeCheck(f);
+    const rename = await testWriteCheck(f);
     assert.equal(rename.status, 'FAIL', rename.details);
     assert(rename.affected_files?.includes(UT_BASELINE_TEST) && rename.affected_files.includes(renamed), JSON.stringify(rename));
-    assert(rename.details.includes('被 coding 改写'), rename.details);
   } },
   // ---- plan b2d7f4e9 t3c：successor 继承源 run 基线，UT 产出沿 supersede 血缘回放 ----
   { name: 'b2d7f4e9 t3c a successor inherits the source run UT output through the lineage, and a later source coding rewrite still voids it', async run(f) {
@@ -860,7 +900,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       process.env.MAISON_GOAL_RUN_ID = manifest.run_id;
       return manifest.run_id;
     };
-    const check = async (runId: string) => (await coding.check(f.context('coding', runId))).find(item => item.id === 'diff_within_scope')!;
+    const check = async (runId: string) => (await coding.check(f.context('coding', runId))).find(item => item.id === 'coding_existing_test_preserved')!;
     const inherited = await check(successor());
     assert.equal(inherited.status, 'PASS', inherited.details);
     // 反例：源 run 在 UT 之后由 coding 改写过（即便字节已恢复）→ 血缘回放照样作废，后继照判越界。
@@ -870,7 +910,6 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     const voided = await check(successor());
     assert.equal(voided.status, 'FAIL', voided.details);
     assert(voided.affected_files?.includes(UT_TEST), JSON.stringify(voided));
-    assert(voided.details.includes('被 coding 改写'), voided.details);
   } },
   { name: 'bound contracts cannot expand after birth and independent scope ignores unrelated old design verdicts', run(f) {
     f.write('doc/features/demo/plan/reports/summary.json', JSON.stringify({ verdict: 'FAIL', blockers: [{ id: 'old-plan' }] }));

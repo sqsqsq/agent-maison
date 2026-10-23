@@ -132,7 +132,6 @@ export type ClosureAdvanceBlockReason = 'closure_open' | 'receipt_missing' | 'ag
 //   error           → 立即 HALT closure_probe_error（探针自身崩溃=framework/toolchain 坏，
 //                     调 agent「修 receipt」只会空转回潮）
 //   not_applicable（且仍 advance_blocked）→ 立即 HALT closure_state_invariant
-//                    （lite track 本不产生 receipt，走到此即 runner 状态机 bug）
 // ============================================================================
 
 export type ClosureRoute =

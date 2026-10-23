@@ -1,0 +1,134 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261022T103904Z-179a73",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "status": "HALTED",
+  "status_reason": "content_retry_exhausted",
+  "run_disposition": "TERMINAL",
+  "recovery": {
+    "reason": "repair_candidates",
+    "current_phase": "review",
+    "owner_phase": "coding",
+    "target_phase": "coding",
+    "action": "backtrack_to_phase",
+    "changed_paths": [
+      {
+        "path": "02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets"
+      }
+    ],
+    "fingerprint": "07aa2ce6e91ad3fd2cdf2a6d2c5f7bed36faabbd337044a56d54492380f2372b",
+    "backtracks_used": 1
+  },
+  "generated_at": "2026-10-22T11:47:06.050Z",
+  "source": {
+    "events_path": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/events.jsonl",
+    "events_count": 149,
+    "last_event_at": "2026-10-22T11:47:06.048Z",
+    "last_event_type": "run_end"
+  },
+  "chain": {
+    "phases": [
+      "coding",
+      "review",
+      "ut",
+      "testing"
+    ],
+    "current_phase": "coding",
+    "current_index": 0,
+    "total": 4,
+    "estimated_percent": 0,
+    "percent_kind": "estimated"
+  },
+  "phase": {
+    "name": "coding",
+    "status": "HALTED",
+    "attempt": 4,
+    "started_at": "2026-10-22T11:29:37.620Z",
+    "elapsed_ms": 1048430,
+    "substep": "verdict",
+    "recovered": false
+  },
+  "liveness": {
+    "state": "DONE",
+    "last_activity_at": "2026-10-22T11:47:06.048Z",
+    "seconds_since_activity": 0,
+    "agent_output_stalled_ms": null,
+    "signals": {
+      "feature_lock_heartbeat": "missing",
+      "runner_lock": "missing",
+      "agent_output_log": "missing",
+      "child_process": "unknown",
+      "lingering_pipe": false
+    }
+  },
+  "budget": {
+    "turns_used": 7,
+    "turns_limit": 30,
+    "wall_elapsed_ms": 4060489,
+    "wall_limit_ms": 28800000,
+    "phase_timeout_ms": 5400000
+  },
+  "artifacts": {
+    "agent_output_log": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/agent-output.log",
+    "summary_path": null,
+    "goal_report_path": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/goal-report.json",
+    "progress_path": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/progress.json"
+  },
+  "recent_events": [
+    {
+      "ts": "2026-10-22T11:46:46.531Z",
+      "type": "heartbeat",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-22T11:47:05.511Z",
+      "type": "harness_end",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-22T11:47:05.810Z",
+      "type": "phase_verdict",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-22T11:47:05.811Z",
+      "type": "phase_halt",
+      "phase": "coding"
+    },
+    {
+      "ts": "2026-10-22T11:47:06.048Z",
+      "type": "run_end"
+    }
+  ],
+  "next_action": "read_goal_report",
+  "phases_summary": [
+    {
+      "phase": "coding",
+      "status": "HALTED",
+      "attempts": 4,
+      "duration_ms": 1048191,
+      "evidence": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/harness/summary.json"
+    },
+    {
+      "phase": "review",
+      "status": "NOT_STARTED",
+      "attempts": 0,
+      "duration_ms": null,
+      "evidence": "doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/summary.json"
+    },
+    {
+      "phase": "ut",
+      "status": "NOT_STARTED",
+      "attempts": 0,
+      "duration_ms": null,
+      "evidence": null
+    },
+    {
+      "phase": "testing",
+      "status": "NOT_STARTED",
+      "attempts": 0,
+      "duration_ms": null,
+      "evidence": null
+    }
+  ]
+}

@@ -811,7 +811,6 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const events = partition ? partition.authoritativeEvents : input.events;
   const eventsPath = relPath(projectRoot, path.join(projectRoot, reportDir, 'events.jsonl'));
 
-  // C1：链投影按 feature track（lite 走显式 lite 链）；事件链过滤放宽到 workflow 全部 feature phase
   const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature, manifest.run_id));
   const fallbackChain = manifest.execution_scope?.phase_chain ?? manifest.phase_chain ?? resolveAutoChain(
     workflow,
@@ -821,7 +820,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     progressTrack,
   );
   const allowedPhases = [
-    ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
+    ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full')]),
   ];
   // D2: the effective scope is the current truth about which phases this run must run — the first
   // `run_start.chain` is the birth projection and must not override it (review M3). Resolved through

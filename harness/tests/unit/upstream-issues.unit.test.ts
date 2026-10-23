@@ -68,6 +68,20 @@ const passed: CheckResult = { id: 'actual_stage_check', category: 'structure', d
 
 export function runAll(): UnitCaseResult[] {
   const cases: Array<[string, () => void]> = [
+    ['verified owner conflicts in coding and UT proposals give corrective feedback without dispatching a false owner', () => withProject(root => {
+      for (const phase of ['coding', 'ut'] as const) {
+        writeIssues(root, phase);
+        const issued = writer(root, phase, [compileFail]);
+        assert(issued.verifier_subject_id);
+        publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: featurePhaseReportsDir(root, FEATURE, phase, FW), feature: FEATURE, phase,
+          subjectId: issued.verifier_subject_id, reportText: verification().replace('verdict: confirmed', 'verdict: confirmed\n  repair_owner: spec'), skipSummaryPatch: true });
+        const diagnosed = readPhaseRepairIssues(root, FEATURE, phase);
+        assert(diagnosed?.diagnostics?.some(message => message.includes('UP-001') && message.includes('真实修复对象')), JSON.stringify(diagnosed));
+        const summary = writer(root, phase, [compileFail]);
+        assert(!summary.repair_candidates?.some(candidate => candidate.id === 'UP-001'), JSON.stringify(summary.repair_candidates));
+        assert.equal(summary.verdict, 'FAIL', '核实角色冲突反馈不能洗绿真实编译失败');
+      }
+    })],
     ['optional coding absence preserves machine candidates and never requests failed-phase diagnosis', () => withProject(root => {
       assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding'), null);
       const summary = writer(root, 'coding', [compileFail, { ...compileFail, id: 'machine_scope', details: '机器发现真实范围缺口', repair_owner: 'plan' }]);
@@ -99,7 +113,10 @@ export function runAll(): UnitCaseResult[] {
         assert(!writer(root, 'coding', [compileFail]).verifier_request, refs);
       }
       assert.strictEqual(readableIssueEvidence(root, '`build.log:1`').length, 1);
-      writeIssues(root, 'coding', issue('src/main/resources/string.json'));
+      writeFile(path.join(root, target), '# Plan\n## Scope\n```yaml\nin_scope_modules: [F]\nout_of_scope_modules: []\nrationale: owned source fixture\n```\n');
+      writeFile(path.join(root, 'doc/features/demo/contracts.yaml'), 'modules:\n  - name: F\n    package_path: 02-Feature/F\nfiles: []\n');
+      writeFile(path.join(root, '02-Feature/F/src/main/ets/A.ets'), 'export class A {}\n');
+      writeIssues(root, 'coding', issue('02-Feature/F/src/main/resources/string.json'));
       assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding')?.rows.length, 0, 'missing implementation/resource remains coding work');
       assert(!writer(root, 'coding', [compileFail]).verifier_request);
       const configFile = path.join(root, 'framework.config.json');

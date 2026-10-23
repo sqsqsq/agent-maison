@@ -21,7 +21,7 @@ Breaking / non-breaking 变更须同步写入 [`../../MIGRATION.md`](../../MIGRA
 - 三槽位仅为 `before_phase_work` / `before_phase_verify` /
   `after_phase_verify_before_close`，只管 Feature phases。
 - 1.1 Skill 物化以 `provides.skills[]` 为 SSOT；1.0 仍目录驱动，行为不变。
-- Feature phase 取 active workflow full/lite 并集；非法 manifest 选择零 Skill 并在 Feature/receipt
+- Feature phase 取 active workflow Feature phase 集；非法 manifest 选择零 Skill 并在 Feature/receipt
   复用同一诊断 BLOCKER。`usage` 不参与 M7 类型判断。
 
 ## 相关资产

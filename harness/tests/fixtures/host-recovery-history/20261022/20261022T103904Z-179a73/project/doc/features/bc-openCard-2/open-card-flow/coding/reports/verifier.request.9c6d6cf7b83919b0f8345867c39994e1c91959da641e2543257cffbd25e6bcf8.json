@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "kind": "maison_verifier_request",
+  "subject_id": "9c6d6cf7b83919b0f8345867c39994e1c91959da641e2543257cffbd25e6bcf8",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBvcGVuLWNhcmQtZmxvdw",
+  "phase": "coding",
+  "prompt_path": "doc/features/bc-openCard-2/open-card-flow/coding/reports/ai-prompt.md",
+  "prompt_sha256": "6ad648693c7d60008b0cc303b9177652f4b43750dbaec867d1637c2969c5e30b",
+  "material_sha256": "4133d03c883e0baf7b3a066a2885928449331934843b92bffa5735527568d925",
+  "gate_fingerprint": "3.1.0:b2ba1acb2f7e",
+  "source_commit_sha": "90fd8a947683c8cec39dc8ec03e9076cb149ffd6",
+  "worktree_digest": "69dd15da593e1b64"
+}

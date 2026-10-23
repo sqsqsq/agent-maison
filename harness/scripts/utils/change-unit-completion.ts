@@ -66,7 +66,7 @@ export function resolveChangeUnitExpectedExecution(
   frameworkRoot?: string,
 ): { expectedTrack: string; expectedChain: string[] } {
   let workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
-  let frozenTrack: string | undefined;
+  let frozenTrack: 'full' | undefined;
   if (forNewRun && workflow.schema_version === '1.2') {
     // 第五轮阻断 2：新 run 的交接期望链必须与**出生入口**同源。原来直接从候选算
     //（`resolveFeatureExecutionScope`），feature 已 S0→S1 时交接给的是 S0、出生用的是 S1。
@@ -96,12 +96,12 @@ export function resolveChangeUnitExpectedExecution(
         if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
         const manifestFile = featureFilePath(projectRoot, featureId, 'goal-runs/' + record.run_id + '/manifest.json');
         const legacy = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : {};
-        workflow = workflowForExistingRun(workflow, legacy, frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot);
+        workflow = workflowForExistingRun(workflow, legacy, frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, projectRoot);
         if (Array.isArray(legacy.phase_chain)) frozenTrack = resolveFeatureTrack(undefined, legacy.phase_chain);
       }
     }
   }
-  const track = frozenTrack === 'lite' ? 'lite' : frozenTrack === 'full' ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, featureId));
+  const track = frozenTrack ?? resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, featureId));
   return { expectedTrack: track, expectedChain: featurePhasesFromWorkflow(workflow, track) };
 }
 

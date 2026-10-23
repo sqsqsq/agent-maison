@@ -1674,6 +1674,824 @@
       "sha256": "ea4e4c4617babdd8aad9e26cb3380e2fd8f09427cd44ced70df4e0d948212f26",
       "bytes": 8692,
       "preserved_from": "harness/reports/host-20261020-1a0796/coding-agent-line47.json"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/manifest.json",
+      "sha256": "0d03e054f672c4223d6f6b9f4b1b4bde9b00fc113d36822684415b92bc7aa843",
+      "bytes": 48096
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/events.jsonl",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/events.jsonl",
+      "sha256": "58440d36194ef964b77371c6aa4ae7706bbdb2001ae07d1eaad9981f13e4f757",
+      "bytes": 281290
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/goal-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/goal-report.json",
+      "sha256": "45c1139effac904108526e52cf437c0c34f6128fa95ebcd2341fe9a7cc498de1",
+      "bytes": 5322
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/goal-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/goal-report.md",
+      "sha256": "9ffe220bd011ccfe9d1fb932835abec916e51c9f1e6cbdee7684e987296af38f",
+      "bytes": 6878
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/progress.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/progress.json",
+      "sha256": "8e0d1d6cbec65523bf743e7e27e376d0796733102e41bcee5479fbf3cfa86c4b",
+      "bytes": 3670
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/progress.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/progress.md",
+      "sha256": "adef1e445ba48d5d52e52d656904b013ada3caccc7da45d0bb08e79fe5054642",
+      "bytes": 1350
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/spec/prompt.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/prompt.md",
+      "sha256": "4cf162c9879b89cf5e496196e479ebc6f9f74dda34f50d6ce308946b2ad3b624",
+      "bytes": 41128
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/spec/harness/merged-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/merged-report.md",
+      "sha256": "ccb0bbf2b64d25bc56d9a84e8c27463694a9001dd53fe9c258f971299af4353e",
+      "bytes": 3225
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/spec/harness/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/script-report.json",
+      "sha256": "bdbb64cbc86b2d69afc0cc3bdc02a579eec87417dba9c99b75e3a45b74564e35",
+      "bytes": 58957
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/spec/harness/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/summary.json",
+      "sha256": "d724dbb31ae011da2307b615aaafbccba252112075fcc335a36a9455053662a9",
+      "bytes": 24031
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/spec/harness/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/trace.json",
+      "sha256": "207bba7fae0204c39c900a85ce08c0fdb2a808ce6d249ff44ee95da76f00d15a",
+      "bytes": 401
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/spec/harness/verifier.report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/spec/harness/verifier.report.md",
+      "sha256": "3845f2b3aa02009713624f25c5d9580a6d88dd97aec27c05e1db43106c0867cc",
+      "bytes": 2950
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/plan/prompt.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/prompt.md",
+      "sha256": "37587de8dbe359a4737d5b4f68d3b86555e5814f4efe52fafac23d4deec4cdda",
+      "bytes": 34043
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/plan/harness/merged-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/merged-report.md",
+      "sha256": "95eec67a432625a23564babdfff801c5f1a2fc8ab2defc6f47e3c23a9060226e",
+      "bytes": 758
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/plan/harness/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/script-report.json",
+      "sha256": "37a7592739f0530910fbc177c509ce6df9297b253b56cd6d7024fedcdc7d0473",
+      "bytes": 63164
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/plan/harness/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/summary.json",
+      "sha256": "b49b38b86a051b5238a89dd4b435fcb752280467e9c189eaa0a646e92551915a",
+      "bytes": 32395
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/plan/harness/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/trace.json",
+      "sha256": "a81dbc8fbe674993efd87e0cb4183ef68bc09aee729c9eb2ab348a98fb04f787",
+      "bytes": 401
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/plan/harness/verifier.report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/harness/verifier.report.md",
+      "sha256": "fe6117cf16535dd026c66bde67e1e0cfbedf13871f7271311143d59567725050",
+      "bytes": 2516
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/coding/prompt.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/prompt.md",
+      "sha256": "e7cb9fa88817e3e231b4e83efbcb0c480e8ca7ba0af277dc07f42b097ca6549f",
+      "bytes": 38966
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/coding/harness/merged-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/harness/merged-report.md",
+      "sha256": "46a0ff5ef11c220ca952f3c631edb6f7c9edcda5c35725739d13006af2b59caf",
+      "bytes": 4986
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/coding/harness/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/harness/script-report.json",
+      "sha256": "c54e0ff380196a45ed01b961c29c626bc3db5f2cc5b07522f88afabb14f418ee",
+      "bytes": 91839
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/coding/harness/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/harness/summary.json",
+      "sha256": "96814b754e6386ee9709cd78e04241460d829a1469fe30af95dd33a12acd29b3",
+      "bytes": 65590
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/coding/harness/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/harness/trace.json",
+      "sha256": "b9e501e28feb18bb5b74fbbb585e45be1c1e9724e01d3951cf44bda8e97aefff",
+      "bytes": 403
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/coding/harness/verifier.report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/harness/verifier.report.md",
+      "sha256": "9e9b45a31ed8236ae0b6c474e0a58b0b2c2c31b13850433afb2df4a4b3dbf3a0",
+      "bytes": 5884
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/prompt.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/prompt.md",
+      "sha256": "b1253fa224f527e64b77fa8aa2902e7c2099a68106d8a01cc19dc4d19b92c541",
+      "bytes": 37595
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/harness/merged-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/merged-report.md",
+      "sha256": "d168a96758231ccd3a36c5018b42fe314558c096104327c513a1c0111fcf8fcb",
+      "bytes": 1987
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/harness/review-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/review-report.md",
+      "sha256": "581e0f0dd9cf193e095160d0ba59a1d6b392359018aaa4acf5d850e5fbc7892c",
+      "bytes": 10466
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/harness/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/script-report.json",
+      "sha256": "13fc464166a6ce8f70263f6627a1c3b78638b66f14a212fb7dc27e1df6f4f14b",
+      "bytes": 104501
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/harness/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/summary.json",
+      "sha256": "7fd8a24b2dd3d0195267b962b5f747a8282ba379485507bba84d7bbf5c729603",
+      "bytes": 62153
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/harness/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/trace.json",
+      "sha256": "815e9c7a22a90c4a84a06e40e56393b7bfb289fa4e92a2f8df9d5332120bc451",
+      "bytes": 403
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/phases/review/harness/verifier.report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/review/harness/verifier.report.md",
+      "sha256": "72eb4fe9a9b4320ad2f006f0541971bf6211ca412a9ca9142cc8cd2d15896b79",
+      "bytes": 3626
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/01-Product/Phone/src/main/ets/pages/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/src/main/ets/pages/index.ets",
+      "sha256": "77ac5877cc3206b6b34f118f8db6af57efcdac7cb3de09c8f395d39b12aa42ee",
+      "bytes": 2978
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets",
+      "sha256": "5cb66415c1cd00731578dad7882ffd051741a31f50b4db3622ab33549efc7724",
+      "bytes": 2222
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/oh-package.json5",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/oh-package.json5",
+      "sha256": "41e2a1e86f02c41e33d9871125840d36d4dc4ef75660209e07278c438e475099",
+      "bytes": 389,
+      "original_sha256": "9d9e5b8c353a12c0b531a1b8665feb9630d1ddd3387dbe5fb3a89bb2f1122295",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/oh-package.json5.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankCardRecord.ets",
+      "sha256": "f64981d967cebc1d6275c62df9f468e2901a1906dc581a49a8574c8dd813cac6",
+      "bytes": 290
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankCardType.ets",
+      "sha256": "57186edbe5d6f4d65e94cfed1c94aae374a95e6d5099ffc3ecd04d84c0e16de1",
+      "bytes": 69
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "sha256": "3585dc2bf4f9baac6c46268613d60931129f7b1ec5851b4435c4f02ed48e2343",
+      "bytes": 680
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/model/MockBankCard.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/MockBankCard.ets",
+      "sha256": "433f68dbcc376891563264e7ccbcaae734df5646f555cc6105a147f02bca877b",
+      "bytes": 341
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/model/SaveBankCardResult.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/model/SaveBankCardResult.ets",
+      "sha256": "0ac399e28d787b030bd23394cfff2a5562868c0b534ab3808676733ab45fcf07",
+      "bytes": 107
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+      "sha256": "79bd760af62d2d97a5e62a7c59d3fb7fc5e44f9c81d3619b004eb5a337660a58",
+      "bytes": 4863
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "sha256": "d2194c250db9ef24d2eedb6cf42f1e413f757dac1588254b4895b96701e94732",
+      "bytes": 5810,
+      "original_sha256": "83ebefa03f7fa0db37a185cfe8e766bd9f0469d30e3cf92095c43752bf1bebe2",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/domain/model/BankOpeningResultPayload.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/model/BankOpeningResultPayload.ets",
+      "sha256": "2a446ff90ed0ba8ba0307e6d9950bf6202028c10219d255e2ec732424b3c9f42",
+      "bytes": 178
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/domain/model/OtpSession.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/model/OtpSession.ets",
+      "sha256": "ca260fe448b23bcf51a92d3ec13077c09c00ca82319ee302ae3630efc4efedd6",
+      "bytes": 1690
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningCoordinator.ets",
+      "sha256": "23bcd52044a01765988062a3922461a6142c46a4a6241762ac3c31fd715db6ee",
+      "bytes": 5540
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningNavigator.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/domain/service/BankOpeningNavigator.ets",
+      "sha256": "646170dd9c2652f332464e8bab662d07b750cccd1f485e04b9ffbd2a01fbcc00",
+      "bytes": 1069
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/index.ets",
+      "sha256": "957ffe5a35ef7cd642e696ad36e2b84e14d1b7f074285728aaa97131695a7b8b",
+      "bytes": 751
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/components/CardStackSection.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/CardStackSection.ets",
+      "sha256": "8dae23a3f9e1ddb62c8b9d66efbf3d06427687c176fce9f9f79d7d9c0be50a69",
+      "bytes": 3812,
+      "original_sha256": "01a8a843daf298a6dc9c9a985c90efd0f245b69d5e9218d5d37ad889107715a8",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/components/CardStackSection.ets.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+      "sha256": "484cd427a049a599efecc36016efe9d2066793e4dbaa83ca3abee21220e473f5",
+      "bytes": 4005
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+      "sha256": "c9e36491d5deb61d3f3d8bc0c3b77dc38821e2476dfd8d12890be00b25f31438",
+      "bytes": 4839
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "sha256": "4ecddbfb3678063ecc00dddf7688a8cd9b1e37d4552ad6891a6a1181d991861c",
+      "bytes": 12015,
+      "original_sha256": "73abd50c59052498695fc4a71041d49b86d128aa80565ec30d831213c0f84dff",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "sha256": "1967993621148584e0840b2090e91f878c12c2769af10c3fdfb253ee6760cba2",
+      "bytes": 8325,
+      "original_sha256": "be828bd5dcf33d062003045d4636fb6ceb961658a0e69364e10b7dafe0682baa",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardResultPage.ets",
+      "sha256": "6886b34ab01a6576f4aff1ef86e40b0632452dd12ac7a4487d4f679700a5a511",
+      "bytes": 2444
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+      "sha256": "2d8ac9e0c02d165b6aa11bbda8af7e2728ce29f5253a55dcf4b788e2e33e1311",
+      "bytes": 6270
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "sha256": "432e1fe58d52393b905d9b3a80ae117c3b2a54cfdf936e81abba5e256e2d8ff9",
+      "bytes": 5754,
+      "original_sha256": "0331d8705beb7607ee1887d09c26528357dfc58670fb6dbd44dbb3e0fb3c5726",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/shared/BankOpeningCompletionBridge.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/BankOpeningCompletionBridge.ets",
+      "sha256": "df33fa1aee634091ff5aab1a9c4d52b043bc42eba789c397c0a807113f4ca568",
+      "bytes": 700
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "sha256": "0efd6bf839b647ff04859424512e295c220c22ed61384a7e0af2a10dc5ff56ac",
+      "bytes": 1832
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "sha256": "bc4e0d84fc66221345980f0e8f8fe8c7de42c21274e5a8431582e8b13a613164",
+      "bytes": 2589
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+      "bytes": 1440
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "sha256": "e63db0dd0a98375266c05e182f19926093edfd638b0439c2eb89927b4e5c87e2",
+      "bytes": 9496,
+      "original_sha256": "5929ca48a89f00530433b0da0c115cbfa6ce1acba1c360282339584cbf11b44c",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/resources/base/element/string.json.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/main/resources/base/media/open_card_guide.svg",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/resources/base/media/open_card_guide.svg",
+      "sha256": "93ecfa95621759ba5ab6a350211611de21d96e7bc3cda3b808d4aa02716bdfe0",
+      "bytes": 913
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets",
+      "sha256": "27a003f80dee91bd5f8c84062da7c21900ded46ca76336b53b9cfdc99a436fa6",
+      "bytes": 7066
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets",
+      "sha256": "17da15453724aa12ea25382e1f537711b660241ea9ce1075d670a3d4757de933",
+      "bytes": 1612
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "sha256": "9610a426f9e8a177aaf3597ddd28ff19a0aeabb0d020c7c950adb821143a50c1",
+      "bytes": 864
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "sha256": "3af42a0b6baa6895bb91a6d66817c9546db2ef605d1b7e96a861d9c349c3be2b",
+      "bytes": 3313
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "source": "D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+      "bytes": 250
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/architecture.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/architecture.md",
+      "sha256": "3317c4d9cdd793772b80274a8093b62534deaf18466c31d49f2c4fee4347abec",
+      "bytes": 4951
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/component-index.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/component-index.yaml",
+      "sha256": "e8eaabf078d3680f94e42b70ef57e3bd3a0b26cf0251c0219e79b78da8b09f99",
+      "bytes": 5178
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+      "sha256": "0fb0380b975240a0578822c1593da3418fdf8753c20c6150787689f8865d68b0",
+      "bytes": 123270
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "sha256": "2267a825e892b3187df369459005e1d85ebd375aa1c7053cc43cf7924dcd19b7",
+      "bytes": 96153
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/blueprint/contract-authority.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/contract-authority.yaml",
+      "sha256": "507e48561a12e1a29f86210675bec177c66a805e02e325ab2dd59c7f0be5e231",
+      "bytes": 3728
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/acceptance.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/acceptance.yaml",
+      "sha256": "cded08ae12172c604a32c99025f35738900f2412b6d60e7676043cf435581c91",
+      "bytes": 11034
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/change-unit.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/change-unit.yaml",
+      "sha256": "e6dde3fc4cf27cc97222d74c7e0666b8937902ff08ca0eecdf31ac8fdb495fbc",
+      "bytes": 16178
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/notes.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/notes.md",
+      "sha256": "6984db4a0578913d8c6112ac2dadf17f462cc8865076187fab3edef45086ae07",
+      "bytes": 1928,
+      "original_sha256": "abc62cd0a6f9efbf8241181a4b2696dc789f7df4668ba80b81b3a1be4f168098",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/notes.md.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/phase-evidence-manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/phase-evidence-manifest.json",
+      "sha256": "22e0b99a38741b8778109c47a57449d15078a307da9321e65d68c945cc84233b",
+      "bytes": 23393
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/script-report.json",
+      "sha256": "13723a602ced81786f04fd9b66f8c2d1dd97919e0870401b30ff94a50f1ec5e2",
+      "bytes": 93349
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/summary.json",
+      "sha256": "4569bb86565b702052b3937578e7b29cc8ee16b141dc0dc4c8f2f332e36c2247",
+      "bytes": 66343
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/trace.json",
+      "sha256": "b9e501e28feb18bb5b74fbbb585e45be1c1e9724e01d3951cf44bda8e97aefff",
+      "bytes": 403
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.14cbf9e09aa401ab539e3fa8bc67fb56bcf8d3d509b89921a6c093f502ed6995.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.14cbf9e09aa401ab539e3fa8bc67fb56bcf8d3d509b89921a6c093f502ed6995.json",
+      "sha256": "5ff7c2e01b45931f23cebe4228d055baeae7085de8ad23ed1c3abb144b9e5397",
+      "bytes": 12848
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.326280e553e48bd1774d6938a57141d0079890f3bce4ce31ee4d414f2d4e18d1.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.326280e553e48bd1774d6938a57141d0079890f3bce4ce31ee4d414f2d4e18d1.json",
+      "sha256": "c47015a38a41caa273d181e68a17fff4490b48b4abb770a65043d6403e8180c1",
+      "bytes": 12848
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.5cf2ca55f9d837bd601d8f01836358284a8fcd0ccd884f854cb1a00474400a5e.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.5cf2ca55f9d837bd601d8f01836358284a8fcd0ccd884f854cb1a00474400a5e.json",
+      "sha256": "a6982d243f1caa8f88f2fa22dfa489b84fc36693dc2b8562ff4aca22dbe4ed0a",
+      "bytes": 13216
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.9c6d6cf7b83919b0f8345867c39994e1c91959da641e2543257cffbd25e6bcf8.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.material.9c6d6cf7b83919b0f8345867c39994e1c91959da641e2543257cffbd25e6bcf8.json",
+      "sha256": "2fa334e84f08dd33d13db0bba68cbc49b5c2dd76b9f2feb25b3886e063a66110",
+      "bytes": 13033
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.report.326280e553e48bd1774d6938a57141d0079890f3bce4ce31ee4d414f2d4e18d1.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.report.326280e553e48bd1774d6938a57141d0079890f3bce4ce31ee4d414f2d4e18d1.md",
+      "sha256": "9e9b45a31ed8236ae0b6c474e0a58b0b2c2c31b13850433afb2df4a4b3dbf3a0",
+      "bytes": 5884
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.report.5cf2ca55f9d837bd601d8f01836358284a8fcd0ccd884f854cb1a00474400a5e.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.report.5cf2ca55f9d837bd601d8f01836358284a8fcd0ccd884f854cb1a00474400a5e.md",
+      "sha256": "8aa5608faa3c3bc5b6b376f562c82631b405bb01daea430c0f9dfc162811c269",
+      "bytes": 4703
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.14cbf9e09aa401ab539e3fa8bc67fb56bcf8d3d509b89921a6c093f502ed6995.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.14cbf9e09aa401ab539e3fa8bc67fb56bcf8d3d509b89921a6c093f502ed6995.json",
+      "sha256": "7ee0e40b28f0896f147fe17bcb126350d5a92996b260f52794832b12ce223c5d",
+      "bytes": 648
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.326280e553e48bd1774d6938a57141d0079890f3bce4ce31ee4d414f2d4e18d1.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.326280e553e48bd1774d6938a57141d0079890f3bce4ce31ee4d414f2d4e18d1.json",
+      "sha256": "4873aa4c1ad3c6cdec67b65ad7407179c56425f031e24bf10e1ebef47763af00",
+      "bytes": 648
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.5cf2ca55f9d837bd601d8f01836358284a8fcd0ccd884f854cb1a00474400a5e.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.5cf2ca55f9d837bd601d8f01836358284a8fcd0ccd884f854cb1a00474400a5e.json",
+      "sha256": "494463af9ea6af69dc00d6af47a951c806695a8492f6d7e682ec6034563c9eda",
+      "bytes": 648
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.9c6d6cf7b83919b0f8345867c39994e1c91959da641e2543257cffbd25e6bcf8.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/reports/verifier.request.9c6d6cf7b83919b0f8345867c39994e1c91959da641e2543257cffbd25e6bcf8.json",
+      "sha256": "138eafc73e4c11e170f18b78e9809e505bdd0c3a7b179748a388835f7321c705",
+      "bytes": 648
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/structure-conformance.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/structure-conformance.yaml",
+      "sha256": "92f024bea5c92f5f1da7b99c7f95fac140e9777356368c36c1ad7936a481557a",
+      "bytes": 2678,
+      "original_sha256": "58889b2c33101a93ff8718af58a85354f79a714ce67d695df25601ff877ae1fe",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/structure-conformance.yaml.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/upstream-issues.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/upstream-issues.md",
+      "sha256": "180c89577951374d1dee1a919798593fab3d039313a05f4773ba4e80a3417fd5",
+      "bytes": 1467,
+      "original_sha256": "1116a2d7aa7cf479feb8fe88589fdbe945a7d2ebab7386ddfb6fd70b841cb06b",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/upstream-issues.md.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/visible-text-exemptions.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/coding/visible-text-exemptions.yaml",
+      "sha256": "cc6864c2cc92292f702a8e63d33f33e93d54cf123cc7c6837a6da98d33169ef1",
+      "bytes": 423,
+      "original_sha256": "1e15393089376f064c481099a3e4916efbfdb6d2c2649009e42058b79dc85c9f",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/coding/visible-text-exemptions.yaml.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/context/facts.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/context/facts.md",
+      "sha256": "fc119fe9f3ac79365fe2882530eaeef9e5c2dc0fb26083478834b13549847d0a",
+      "bytes": 12583,
+      "original_sha256": "f27f10ac0a2e8ceef133e98f0cf16844739cac2036f1d12b3329185cff5af49e",
+      "raw_file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/context/facts.md.source.gz",
+      "normalized": "CRLF -> LF; original bytes retained in raw_file"
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/contracts.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/contracts.yaml",
+      "sha256": "ecfe999122c3c8369b32fc2f0eb35c64f634d2b2ff86da0186d8e5af78157bae",
+      "bytes": 38799
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/plan.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/plan.md",
+      "sha256": "ba85fa2b13d35db6194c717745fefc90c16c15746542d8884d247a2465a57234",
+      "bytes": 14573
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/phase-evidence-manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/phase-evidence-manifest.json",
+      "sha256": "d0554ec70db4b9c3c704c4fc5758c4ab83d365e0f38ea5ab011da9ef34a81243",
+      "bytes": 11700
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/script-report.json",
+      "sha256": "37a7592739f0530910fbc177c509ce6df9297b253b56cd6d7024fedcdc7d0473",
+      "bytes": 63164
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/summary.json",
+      "sha256": "b49b38b86a051b5238a89dd4b435fcb752280467e9c189eaa0a646e92551915a",
+      "bytes": 32395
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/trace.json",
+      "sha256": "a81dbc8fbe674993efd87e0cb4183ef68bc09aee729c9eb2ab348a98fb04f787",
+      "bytes": 401
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/verifier.material.5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/verifier.material.5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9.json",
+      "sha256": "0f6d9c560a32c9c96ff33b41ef81131cbd6c2dde06edb8521bb402106283562c",
+      "bytes": 8697
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/verifier.report.5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/verifier.report.5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9.md",
+      "sha256": "fe6117cf16535dd026c66bde67e1e0cfbedf13871f7271311143d59567725050",
+      "bytes": 2516
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/reports/verifier.request.5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/reports/verifier.request.5e928818dc7d68f90d6654a476519bdc058798e12f502e6ac9cd018e39331ff9.json",
+      "sha256": "b0116b01d7279f30a9cde78168fa184a34547a3a972ea91f87253231f3e6124f",
+      "bytes": 644
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/plan/visual-parity.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/plan/visual-parity.yaml",
+      "sha256": "4811fec59b5f876ae980e921898b0c27b161711279aff5bc594b59b00685ab75",
+      "bytes": 8982
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/review/reports/verifier.material.6dec29fe5408910338f79b73b454a6c06d7e71168b3a6d4a2887de8f5b6574cd.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/review/reports/verifier.material.6dec29fe5408910338f79b73b454a6c06d7e71168b3a6d4a2887de8f5b6574cd.json",
+      "sha256": "874ac5f0999abd3e3eed1d0b8efa509b0db167464b178928ff00d1862869b4d7",
+      "bytes": 13297
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/review/reports/verifier.report.6dec29fe5408910338f79b73b454a6c06d7e71168b3a6d4a2887de8f5b6574cd.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/review/reports/verifier.report.6dec29fe5408910338f79b73b454a6c06d7e71168b3a6d4a2887de8f5b6574cd.md",
+      "sha256": "72eb4fe9a9b4320ad2f006f0541971bf6211ca412a9ca9142cc8cd2d15896b79",
+      "bytes": 3626
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/review/reports/verifier.request.6dec29fe5408910338f79b73b454a6c06d7e71168b3a6d4a2887de8f5b6574cd.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/review/reports/verifier.request.6dec29fe5408910338f79b73b454a6c06d7e71168b3a6d4a2887de8f5b6574cd.json",
+      "sha256": "108f85e27c97ae02144c2bc5e7117aafd116ca78a2eb2016fa6b5b29d04941fd",
+      "bytes": 648
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/review/review-report.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/review/review-report.md",
+      "sha256": "581e0f0dd9cf193e095160d0ba59a1d6b392359018aaa4acf5d850e5fbc7892c",
+      "bytes": 10466
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/asset-manifest.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/asset-manifest.yaml",
+      "sha256": "d88e95ac520f456ac661db2d286b05c929f351c5b7f07a793a7bb698bb710cb6",
+      "bytes": 2046
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/ref-elements.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/ref-elements.yaml",
+      "sha256": "6e73c44f8bb60764f665ea54f88e874399ef9204c89bd7b8811e92adfb1a7ffb",
+      "bytes": 33935
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/fidelity-intent.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/fidelity-intent.json",
+      "sha256": "9fc24edaa02dba74f477fe9f9714cafe6166c53b4e12e9575c55782505471d89",
+      "bytes": 783
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/phase-evidence-manifest.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/phase-evidence-manifest.json",
+      "sha256": "522fcf0ae2fa722e1a2947eac2c7fd3602828ae166d142fb2cce953324c95a18",
+      "bytes": 8931
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/script-report.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/script-report.json",
+      "sha256": "bdbb64cbc86b2d69afc0cc3bdc02a579eec87417dba9c99b75e3a45b74564e35",
+      "bytes": 58957
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/summary.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/summary.json",
+      "sha256": "d724dbb31ae011da2307b615aaafbccba252112075fcc335a36a9455053662a9",
+      "bytes": 24031
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/trace.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/trace.json",
+      "sha256": "207bba7fae0204c39c900a85ce08c0fdb2a808ce6d249ff44ee95da76f00d15a",
+      "bytes": 401
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/verifier.material.e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/verifier.material.e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb.json",
+      "sha256": "44ad322dfdb0a156c94a1f382a72c49d7bd64df1174ca2a4c7bee2c6e4e35688",
+      "bytes": 7139
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/verifier.report.e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/verifier.report.e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb.md",
+      "sha256": "3845f2b3aa02009713624f25c5d9580a6d88dd97aec27c05e1db43106c0867cc",
+      "bytes": 2950
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/reports/verifier.request.e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/reports/verifier.request.e7d852614fd3f0cc01084cb57150a29a985e516d88370b8d6052065406b350fb.json",
+      "sha256": "6e127d019ecaaba91c01446d49e3ce2a8e931ae7a015cc85c2fcfd4d65bc7736",
+      "bytes": 644
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/spec.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/spec.md",
+      "sha256": "8ab9dd50e77ff59643ea62acf96d76ecde23f85dc99861f8d28551bcfb2e505d",
+      "bytes": 11793
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/spec/ui-spec.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/spec/ui-spec.yaml",
+      "sha256": "61a034ef2d4b43b159d7edab964238bee4acaf882295845aaf631eb97f31f713",
+      "bytes": 38982
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/bc-openCard-2/open-card-flow/use-cases.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/use-cases.yaml",
+      "sha256": "a546dcd06f481cca58b4f900104427cc480c3dbacca28cf123d87fc53d1cf712",
+      "bytes": 4241
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+      "bytes": 296103
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+      "bytes": 199326
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+      "bytes": 560756
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+      "bytes": 189945
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+      "bytes": 5549
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/glossary.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/glossary.yaml",
+      "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a",
+      "bytes": 43978
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/doc/module-catalog.yaml",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/module-catalog.yaml",
+      "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7",
+      "bytes": 21957
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/project/framework.config.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/framework.config.json",
+      "sha256": "94ba8ce5f0164e36f665469af5bd20b519b5b8dd4869c6deb722f2828c9c50da",
+      "bytes": 3413
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/plan-agent-line18.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/plan/agent-output.log",
+      "line": 18,
+      "source_sha256": "0e7b7875e3350ecb0c3d8e170f2903aa5901c1c707d257b3b1832b2e5422e4c6",
+      "transformation": "Extract original JSONL line 18 only; other log content not copied",
+      "sha256": "23ad64a613b1523cdb3c755bae4cd2ab32a12dfa57ed8b7665e917038749dd26",
+      "bytes": 74649
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/coding-agent-line14.json",
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/open-card-flow/goal-runs/20261022T103904Z-179a73/phases/coding/agent-output.log",
+      "line": 14,
+      "source_sha256": "d401f3cdf19babf35da92f0d381a93e0b0e5f367297588e1ee31f830e96927f9",
+      "transformation": "Extract original JSONL line 14 only; other log content not copied",
+      "sha256": "ff08581b4ac1c3721051649f608cff32fe9dfd2ad4e29c7f0a6431ab2a1307f6",
+      "bytes": 70265
+    },
+    {
+      "file": "20261022/20261022T103904Z-179a73/spec-rules.original.yaml",
+      "source": "git:242f6b1d7efd067218950f37767d65f72f4cd25d:specs/phase-rules/spec-rules.yaml",
+      "source_commit": "242f6b1d7efd067218950f37767d65f72f4cd25d",
+      "sha256": "c7aae462a07e7165ad4a73040fa1c65412307f153bd875c343ebf3a8c582524e",
+      "bytes": 28914,
+      "transformation": "Immutable Maison source-commit rule bytes; their fingerprint matches the recorded host Spec gate. Used only in a copied historical framework environment."
     }
   ]
 }

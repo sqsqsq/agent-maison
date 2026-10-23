@@ -14,6 +14,7 @@ import {
   selectRunnerActionFromAssess,
 } from '../../scripts/utils/goal-assess-driver';
 import { checkGoalReconcileBoundarySource } from '../../scripts/utils/goal-reconcile-boundary';
+import { loadWorkflowSpec } from '../../workflow-loader';
 import type { PhaseVerdictAction } from '../../scripts/utils/phase-transition-policy';
 
 function assert(condition: unknown, message: string): void {
@@ -191,6 +192,7 @@ const cases: TestCase[] = [
         schema_version: '1.0',
         feature: 'demo',
         workflow: 'spec-driven',
+        responsibility: { workflow: loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven') },
         track: 'full',
         goal_end: 'testing',
         phases,
@@ -403,11 +405,10 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'earlier-gap disposition is total across full/lite/custom owner-current pairs',
+    name: 'earlier-gap disposition is total across full/custom owner-current pairs',
     run: () => {
       const chains = [
         { phases: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], track: 'full' as const },
-        { phases: ['change', 'coding', 'exit'], track: 'lite' as const },
         { phases: ['discover', 'build', 'verify', 'ship'], track: 'full' as const },
       ];
       const recoverable = ['missing', 'failed', 'legacy_unverified', 'stale', 'insufficient_assurance', 'pruned'] as const;

@@ -61,13 +61,13 @@ export function validateTestabilityAuditContent(text: string, filePath?: string)
   const warnings: ArtifactValidationIssue[] = [];
   const label = filePath ?? 'testability-audit.md';
 
-  if (MARKDOWN_TABLE_RE.test(text)) {
+  const parsed = parseTestabilityAuditFromTextDetailed(text);
+  if (MARKDOWN_TABLE_RE.test(text) && parsed.records.length === 0) {
     errors.push(
       err('format', `${label} 含 Markdown 表格；须改为 fenced yaml 块且根字段 records[]`),
     );
   }
 
-  const parsed = parseTestabilityAuditFromTextDetailed(text);
   for (const message of parsed.errors) {
     errors.push(err('yaml', `${label}: ${message}`));
   }

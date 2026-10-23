@@ -1,5 +1,0 @@
-{
-  "phase": "exit",
-  "feature": "lite-demo",
-  "env": { "HARNESS_SKIP_HVIGOR": "1" }
-}

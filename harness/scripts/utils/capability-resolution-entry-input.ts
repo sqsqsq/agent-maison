@@ -217,7 +217,7 @@ export function loadFactsInvocationContext(options: {
       && (event as { invalidated_phases: string[] }).invalidated_phases.includes(options.phase)))) return undefined;
   const context = events[index].facts_context;
   if (!context || !('run_id' in context.subject) || context.subject.feature !== options.feature || context.subject.run_id !== options.runId
-    || context.first_phase !== resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
+    || typeof context.first_phase !== 'string' || !Array.isArray(context.source_paths)) return undefined;
   const admitted = structuredClone(context);
   const writes = events.slice(index + 1).filter(event => event.type === 'phase_write_observed' && event.invoke_id === events[index].invoke_id && event.phase === options.phase);
   if (!writes.length) return admitted;
@@ -265,13 +265,18 @@ export function resolveFactsPhaseOwnedSources(options: {
 }
 
 /** Re-admit completed writes or an interrupted phase window, preserving the original admission hashes. */
-function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string, carryUnchangedBaseline = false): FactsInvocationContext | undefined {
+export function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string, carryUnchangedBaseline = false): FactsInvocationContext | undefined {
   if (!/^i\d+$/.test(options.goalAttemptId ?? '')) return undefined;
   const manifest = loadGoalManifestFromRun(options.projectRoot, runId, { feature: options.feature, featuresDir: options.featuresDir });
   const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope;
   if (!scope || !executionCompletionPhases(scope).includes(options.phase)) return undefined;
   const events = eventsWithScopeRevocations(manifest.execution_scope,
     loadAuthoritativeEvents(path.resolve(options.projectRoot, manifest.report_dir, 'events.jsonl')));
+  return completedFactsBaselineFromHistory(options, runId, frameworkRoot, manifest, events, carryUnchangedBaseline);
+}
+
+function completedFactsBaselineFromHistory(options: CapabilityResolutionEntryInputOptions, runId: string, frameworkRoot: string,
+  manifest: ReturnType<typeof loadGoalManifestFromRun>, events: ReturnType<typeof loadAuthoritativeEvents>, carryUnchangedBaseline: boolean): FactsInvocationContext | undefined {
   // An existing exact start belongs to the original admission/resume path, including legacy records.
   if (events.some(e => e.type === 'agent_invoke_start' && e.invoke_id === `${options.phase}-${options.goalAttemptId}`)) return undefined;
   let fence = -1;
@@ -282,20 +287,32 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
     && typeof e.invoke_id === 'string' && new RegExp(`^${options.phase}-i\\d+$`).test(e.invoke_id) ? i : -1).filter(i => i >= 0);
   if (!starts.length) {
     const handoff = events[fence];
+    const returningOwner = handoff?.from_phase ?? handoff?.phase;
+    if (handoff?.type === 'phase_backtrack_requested' && handoff.to_phase === options.phase && typeof returningOwner === 'string' && returningOwner !== options.phase) {
+      const sent = events.slice(0, fence).map(event => event.type === 'phase_backtrack_requested'
+        && (event.from_phase ?? event.phase) === options.phase && event.to_phase === returningOwner).lastIndexOf(true);
+      const signed = sent >= 0 && events.slice(sent + 1, fence).some(event => event.type === 'phase_verdict' && event.phase === returningOwner
+        && event.verdict === 'PASS' && event.action === 'backtrack_to_phase' && !event.advance_blocked);
+      if (signed && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [returningOwner], { frameworkRoot, runId, authorityReaders: options.authorityReaders })[0]?.verdict === 'fresh') {
+        // A verified owner returned this same transaction. Its strict admission must
+        // still validate unchanged business dependencies before the return revoked PASS.
+        return completedFactsBaselineFromHistory({ ...options, phase: returningOwner }, runId, frameworkRoot, manifest, events.slice(0, fence), true);
+      }
+    }
     const owner = handoff?.type === 'phase_backtrack_requested' ? handoff.to_phase : undefined;
     if (typeof owner === 'string' && owner !== options.phase && (handoff.from_phase ?? handoff.phase) === options.phase
       && events.slice(fence + 1).some(event => event.type === 'phase_verdict' && event.phase === owner && event.verdict === 'PASS' && event.action === 'advance')
       && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [owner], { frameworkRoot, runId, authorityReaders: options.authorityReaders })[0]?.verdict === 'fresh') {
       // The same repair transaction has revalidated its original baseline at the responsible owner.
       // Reuse that invocation's strict admission proof; labels and existing legacy starts cannot enter here.
-      return loadCompletedFactsBaseline({ ...options, phase: owner }, runId, frameworkRoot, true);
+      return completedFactsBaselineFromHistory({ ...options, phase: owner }, runId, frameworkRoot, manifest, events, true);
     }
     return undefined;
   }
   const first = starts[0];
   const context = events[first].facts_context;
   if (!context?.baseline || !Array.isArray(context.baseline.dependencies) || !('run_id' in context.subject) || context.subject.run_id !== runId || context.subject.feature !== options.feature
-    || context.first_phase !== resolveEffectiveScopeSource(options.projectRoot, options.feature, runId)?.scope.phase_chain[0] || !Array.isArray(context.source_paths)) return undefined;
+    || typeof context.first_phase !== 'string' || !Array.isArray(context.source_paths)) return undefined;
   const factsPath = resolveFactsAbsPath(options.projectRoot, options.feature);
   if (!fs.existsSync(factsPath) || factsBaselineFingerprint(fs.readFileSync(factsPath, 'utf8')) !== context.baseline.fingerprint) return undefined;
   const ownedSources = resolveFactsPhaseOwnedSources({ ...options, frameworkRoot, runId }, context);
@@ -359,7 +376,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   }
   for (const source of written) if (sha256File(path.join(options.projectRoot, source)) !== chain.get(source)) return undefined;
   if (carryUnchangedBaseline && changed.size) return undefined;
-  if (!changed.size && !interrupted && !carryUnchangedBaseline) return undefined;
+  // Reopening a duty revokes its PASS, not the unchanged original admission.
   const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
   const requirement = options.requirement ?? manifest.requirement;
   const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId, authorityReaders: options.authorityReaders,
@@ -384,6 +401,17 @@ export interface CapabilityResolutionEntryInput {
   /** plan c4e8a1f7 T2：goal manifest 冻结的 requirement source 列表（共享发现集合输入）。 */
   requirementSourceFiles?: string[];
   adhocCases?: string;
+}
+
+/** A genuine audited new birth may establish its own facts; a remaining-queue change cannot. */
+export function resolveFactsRebuildOwner(options: Pick<CapabilityResolutionEntryInputOptions, 'projectRoot' | 'feature' | 'phase' | 'goalRunId' | 'featuresDir'>,
+  record: Record<string, unknown>, originalFirstPhase: string): string {
+  const original = typeof record.established_by === 'string' ? record.established_by : originalFirstPhase;
+  if (!options.goalRunId || record.run_id === options.goalRunId || record.feature !== options.feature || typeof record.run_id !== 'string') return original;
+  const manifest = loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: options.featuresDir });
+  if (manifest.successor_of !== record.run_id || manifest.phase_chain?.[0] !== options.phase) return original;
+  const { isAuditedSuccessor } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+  return isAuditedSuccessor(options.projectRoot, options.feature, record.run_id, manifest.run_id) ? manifest.phase_chain[0] : original;
 }
 
 /**
@@ -493,7 +521,7 @@ export function resolveCapabilityResolutionEntryInput(
         const record = fm as Record<string, unknown>;
         if (record.request_sha256 !== undefined || (goalRunId && record.frozen_scope_fingerprint !== undefined)) throw new Error('facts input identity mismatch: subject');
         const establishing = (fm as Record<string, unknown>).established_by;
-        const currentResearch = establishing === options.phase && options.phase === scope.phase_chain[0]
+        const currentResearch = establishing === options.phase
           && (goalRunId ? record.run_id === goalRunId : record.frozen_scope_fingerprint === executionScopeFingerprint(scope));
         if (currentResearch) {
           // Current first-phase Research may exist before its first closure manifest; it is not a reusable predecessor baseline.
@@ -523,8 +551,8 @@ export function resolveCapabilityResolutionEntryInput(
             .find(result => result.phase === establishing);
           if (fresh?.verdict !== 'fresh' || !evidence?.integrityOk) {
             if (evidence || !currentResearch) {
-              factsRebuildReason = `facts baseline stale: return to ${scope.phase_chain[0]} to establish current facts; changed sources: ${(fresh?.changed_paths ?? []).join(', ') || fresh?.verdict || 'missing'}`;
-              if (options.phase !== scope.phase_chain[0]) throw new Error(factsRebuildReason);
+              factsRebuildReason = `facts baseline stale: return to ${establishing} to establish current facts; changed sources: ${(fresh?.changed_paths ?? []).join(', ') || fresh?.verdict || 'missing'}`;
+              if (options.phase !== establishing) throw new Error(factsRebuildReason);
             }
           } else {
             const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
@@ -536,7 +564,9 @@ export function resolveCapabilityResolutionEntryInput(
               const owner = ownerEvidence?.integrityOk && recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [entry.owner_phase!], semanticOptions)[0]?.verdict === 'fresh'
                 ? ownerEvidence.manifest.outputs.find(output => output.path === entry.path && output.owner_phase === entry.owner_phase) : undefined;
               const abs = path.join(options.projectRoot, entry.path);
-              const observed = observedSourceHash(entry, establishing, options.phase);
+              // Current-owner writes require the invocation admission above. A rejected
+              // start/revoked window cannot regain that authority through fallback freshness.
+              const observed = observedSourceHash(entry, establishing, goalRunId ? options.phase : undefined);
               if (observed) return { path: abs, ...observed, role: 'derive' };
               // plan c4e7a9b2 B2：身份中立条目存的是摘要；等价成立时基线依赖按当前字节登记（下游按字节核对）。
               const recorded = owner ?? entry;
@@ -576,8 +606,12 @@ export function resolveCapabilityResolutionEntryInput(
         }
         } catch (error) {
           const reason = (error as Error).message;
-          if (options.phase !== scope.phase_chain[0]) throw new Error(reason.startsWith('facts ') ? reason : `facts input invalid: ${reason}`);
-          factsRebuildReason = `Establish current facts from the actual source files: ${reason}`;
+          const original = parseContextExploration(fs.readFileSync(factsPath, 'utf8')).fm as Record<string, unknown>;
+          const establishing = resolveFactsRebuildOwner({ ...options, goalRunId }, original, factsContext.first_phase);
+          if (options.phase !== establishing) throw new Error(reason.startsWith('facts ') ? reason : `facts input invalid: ${reason}; return to ${establishing}`);
+          factsRebuildReason = establishing !== original.established_by
+            ? `Audited successor: establish new-run facts from actual sources at the immutable birth owner ${establishing}; predecessor baseline could not be reused (${reason}).`
+            : `Establish current facts from the actual source files: ${reason}`;
           delete factsContext.baseline;
         }
       }
@@ -670,7 +704,7 @@ export function resolveCapabilityResolutionEntryInput(
         owner === options.phase
         || (phaseIndex >= 0 && scope.phase_chain.indexOf(owner) > phaseIndex)
         || producesContracts
-        || (['spec', 'plan'].includes(options.phase) && scope.reused_phases.some(reuse => reuse.phase === owner))
+        || (['spec', 'plan'].includes(options.phase) && scope.obligations.some(obligation => obligation.owner_phase === owner && obligation.applicability === 'required'))
         // 观察期（出生链只有 spec/plan）：owner 阶段**还没进链**，`indexOf` 恒为 -1，上面三条
         // 全不成立 → 研究源码一个 owner 都盖不上，coding 一改就把 spec/plan 判 stale
         // （plan b5c1e9d7 §2 C）。资格只取冻结范围自己的字段，两个条件缺一不可：
@@ -756,7 +790,9 @@ export function resolveCapabilityResolutionEntryInput(
       factsContext.source_owners = Object.fromEntries(owners);
       if (admitted) {
         for (const [source, owner] of Object.entries(factsContext.source_owners)) {
-          if (owner === options.phase && admitted.source_owners?.[source] !== owner) delete factsContext.source_owners[source];
+          const repairTarget = scope.obligations.some(obligation => obligation.owner_phase === options.phase && obligation.applicability === 'required'
+            && obligation.basis.some(binding => binding.dependencies.some(dependency => path.resolve(resolveDependencyPath(options.projectRoot, dependency.path, inferLegacyProjectRoot(options.projectRoot, scope))) === path.resolve(options.projectRoot, source))));
+          if (owner === options.phase && admitted.source_owners?.[source] !== owner && !repairTarget) delete factsContext.source_owners[source];
         }
       }
       if (!admitted && factsContext.baseline) {
