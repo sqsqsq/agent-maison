@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import { loadWorkflowSpec } from '../../workflow-loader';
+import { resolveFeatureArtifact } from '../../config';
 import {
   AttendedGoalPhaseExecutor,
   createPhaseExecutionContext,
@@ -32,6 +34,8 @@ import {
 import { resolveGoalRunBaseline } from '../../scripts/utils/goal-run-baseline';
 import { resolveGoalRunHeadSha } from '../../scripts/utils/goal-run-creation';
 import { writeHandoffRequest } from '../../scripts/utils/goal-handoff';
+import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { readSessionExecution, acceptedSessionReport } from '../../scripts/utils/session-execution-handoff';
 
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
 interface Case { name: string; run: () => void | Promise<void> }
@@ -91,6 +95,261 @@ function seedUtFailureSummary(root: string, blockers: Array<Record<string, unkno
 }
 
 const cases: Case[] = [{
+  name: '1804 partial receipt takeover keeps epoch archives separate and expires without accepting old reports or resetting a two-turn budget',
+  run: async () => {
+    const nodeFs = require('fs') as typeof fs;
+    const manifests = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const build = manifests.buildGoalManifestFromInput;
+    for (const mode of ['resign', 'expired_takeover', 'expired_same_fence'] as const) {
+      const expired = mode !== 'resign', takeover = mode !== 'expired_same_fence';
+      const root = setupGoalRuntimeHost('codex').root, runId = `receipt-${mode}`;
+      const append = nodeFs.appendFileSync;
+      let injected = false;
+      try {
+        if (expired) manifests.buildGoalManifestFromInput = (input, options) => build({ ...input,
+          budget: { max_total_turns: 2, max_retries_per_phase: 1, wall_clock_minutes: 5 },
+          unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20, timeout_seconds: 0.01 },
+        }, options);
+        try {
+          await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+            onSpec: () => {
+              if (expired) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']);
+              nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
+                if (!injected && path.basename(String(args[0])) === 'events.jsonl' && String(args[1]).includes('"type":"agent_invoke_end"')) {
+                  injected = true; throw new Error('injected takeover receipt interruption');
+                }
+                return append(...args);
+              }) as typeof fs.appendFileSync;
+            },
+          });
+        } catch (error) { assert(String(error).includes('injected takeover receipt'), String(error)); }
+        finally { nodeFs.appendFileSync = append; manifests.buildGoalManifestFromInput = build; }
+        assert(injected, 'must interrupt after writing the real original archive');
+        const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
+        const runDir = path.resolve(root, manifest.report_dir), original = readSessionExecution(runDir)!;
+        const oldRequestPath = path.join(runDir, original.reference.path), oldRequestBytes = fs.readFileSync(oldRequestPath);
+        const originalReport = path.join(path.dirname(oldRequestPath), fs.readdirSync(path.dirname(oldRequestPath)).find(file => file.startsWith('execution-report'))!);
+        const originalReportBytes = fs.readFileSync(originalReport);
+        if (takeover) releaseRunOwner(runDir, original.request.context.owner);
+        const options = { projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId, adapter: 'codex', runMode: 'attended' };
+        const next = await runGoalModeSessionStep({ ...options, ...(takeover ? { forceTakeover: true } : {}) });
+        assert(next.type === 'phase_execute_request', JSON.stringify(next));
+        const issued = readSessionExecution(runDir)!;
+        if (!expired) {
+          assert(issued.request.invoke_id === original.request.invoke_id && issued.request.context.owner.epoch === original.request.context.owner.epoch + 1, 'cooperative takeover re-signs the same attempt');
+          assert(issued.request.issued_at === original.request.issued_at && issued.request.deadline === original.request.deadline, 're-sign cannot renew start or deadline');
+          assert(JSON.stringify(issued.request.pre_snapshot) === JSON.stringify(original.request.pre_snapshot), 'takeover keeps the original write baseline');
+        } else {
+          const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+          const end = events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === original.request.invoke_id);
+          assert(end?.timed_out === true && end.kill_reason === 'agent_timeout' && end.duration_ms >= 10, JSON.stringify(end));
+          assert(issued.request.invoke_id !== original.request.invoke_id && issued.request.context.owner.epoch > original.request.context.owner.epoch, 'an expired takeover closes first and then issues a new attempt');
+          assert(events.filter(event => event.type === 'agent_invoke_start').length === 2, 'the original failed receipt remains part of the hard budget');
+          if (!takeover) assert(end.status === 'passed' && end.handoff_report.request_sha256 === original.reference.sha256,
+            'same-fence deadline closure retains the real saved report while marking it timed out, never as quality PASS');
+        }
+        const beforeEvents = fs.readFileSync(path.join(runDir, 'events.jsonl')), beforeControl = fs.readFileSync(path.join(runDir, 'run-control.json'));
+        let rejected = false, oldResponse: Record<string, unknown> | undefined;
+        try { oldResponse = await runGoalModeSessionStep({ ...options, requestPath: oldRequestPath, report: { status: 'passed', phase: 'spec' } }); }
+        catch { rejected = true; }
+        assert((takeover ? rejected : !rejected && oldResponse?.duplicate === true)
+          && fs.readFileSync(path.join(runDir, 'events.jsonl')).equals(beforeEvents) && fs.readFileSync(path.join(runDir, 'run-control.json')).equals(beforeControl),
+          'old unconsumed fences reject; an already-committed identical timeout report is only a read-only duplicate');
+        assert(fs.readFileSync(oldRequestPath).equals(oldRequestBytes) && fs.readFileSync(originalReport).equals(originalReportBytes), 'old request and partial report remain immutable evidence');
+        if (expired) {
+          execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 25)']);
+          const result = await runGoalModeSessionStep(options);
+          assert(result.type === 'goal_session_result' && (result.result as { status: string }).status !== 'reconciled', 'timeouts cannot claim quality completion');
+          const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+          assert(events.filter(event => event.type === 'agent_invoke_start').length === 2, 'expiry and takeover cannot reset or bypass the two-turn ceiling');
+          assert(events.filter(event => event.type === 'agent_invoke_end').every(event => event.timed_out), 'only real timeout outcomes may close these windows');
+          assert(!events.some(event => event.type === 'agent_process_settled'), 'timeout is not a process-settlement claim');
+        } else {
+          const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
+          const accepted = acceptedSessionReport(runDir, issued)!;
+          assert(resumed.exitCode === 0 && accepted, JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
+          assert(path.join(runDir, accepted.event.handoff_report!.path) !== originalReport, 'the new epoch must not collide with the old partial archive');
+          assert(resumed.events.filter(event => event.type === 'agent_invoke_start').length === 1 && resumed.events.filter(event => event.type === 'agent_invoke_end').length === 1, 're-sign and receipt retries count the original attempt exactly once');
+        }
+      } finally { nodeFs.appendFileSync = append; manifests.buildGoalManifestFromInput = build; fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  },
+}, {
+  name: '1804 receipt replay preserves its original post-snapshot but still detects a later write across the original phase boundary',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex').root, runId = 'receipt-upstream-change';
+    const nodeFs = require('fs') as typeof fs, append = nodeFs.appendFileSync;
+    let injected = false;
+    const acceptanceFile = resolveFeatureArtifact(root, 'bc-openCard', 'acceptance.yaml').actualPath;
+    const originalAcceptance = fs.readFileSync(acceptanceFile);
+    try {
+      try {
+        await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'plan', viaSessionStep: true,
+          onPlan: () => {
+            fs.appendFileSync(resolveFeatureArtifact(root, 'bc-openCard', 'contracts.yaml').actualPath, '\n# original plan output\n');
+            nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
+              if (!injected && path.basename(String(args[0])) === 'events.jsonl' && String(args[1]).includes('"type":"phase_write_observed"')
+                && String(args[1]).includes('"phase":"plan"')) { append(...args); injected = true; throw new Error('injected plan receipt interruption'); }
+              return append(...args);
+            }) as typeof fs.appendFileSync;
+          },
+        });
+      } catch (error) { assert(String(error).includes('injected plan receipt'), String(error)); }
+      finally { nodeFs.appendFileSync = append; }
+      assert(injected, 'must interrupt the real plan report after its archive write');
+      const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
+      const runDir = path.resolve(root, manifest.report_dir), issued = readSessionExecution(runDir)!;
+      const archiveDir = path.join(runDir, path.dirname(issued.reference.path));
+      const archiveName = fs.readdirSync(archiveDir).find(file => file.startsWith('execution-report'));
+      assert(archiveName, 'the immutable post/report must be saved before the observation is committed');
+      const archiveFile = path.join(archiveDir, archiveName);
+      const archiveBytes = fs.readFileSync(archiveFile);
+      const changedAcceptance = Buffer.from('feature: bc-openCard\ncriteria:\n  - unapproved-change-after-receipt-archive\n');
+      fs.writeFileSync(acceptanceFile, changedAcceptance);
+      let ownerSawChange = false;
+      const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true,
+        onSpec: () => { ownerSawChange = fs.readFileSync(acceptanceFile).equals(changedAcceptance); fs.writeFileSync(acceptanceFile, originalAcceptance); },
+      });
+      assert(fs.readFileSync(archiveFile).equals(archiveBytes), 'post-receipt collaboration cannot replace the original archived post');
+      const violations = resumed.events.filter(event => event.type === 'phase_write_violation' && event.invoke_id === issued.request.invoke_id);
+      assert(violations.some(event => JSON.stringify(event.violations).includes('acceptance.yaml')), JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'phase_write_violation' || event.type === 'run_end')));
+      assert(resumed.events.some(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation' && event.to_phase === 'spec'), 'the later write must return to the original spec owner');
+      assert(resumed.invokedPhases.includes('spec'), 'an old report cannot bless the later upstream change');
+      assert(ownerSawChange, 'the runtime must preserve the later change for its real owner, without silently rolling it back');
+      assert(resumed.exitCode === 0, 'the responsible owner and normal gates must be able to recover');
+      assert(resumed.events.filter(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id).length === 1, 'partial report replay commits once');
+      assert(!resumed.events.some(event => event.type === 'agent_process_settled'), 'no process settlement may be fabricated');
+    } finally { nodeFs.appendFileSync = append; fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '1804 production receipt I/O interruption preserves the pending owner and reuses an immutable report after artifacts change',
+  run: async () => {
+    const nodeFs = require('fs') as typeof fs;
+    for (const cut of ['agent_invoke_end', 'archive_rename'] as const) {
+      const root = setupGoalRuntimeHost('codex').root;
+      const runId = `receipt-io-${cut}`;
+      const append = nodeFs.appendFileSync, rename = nodeFs.renameSync;
+      let injected = false, failure: unknown;
+      try {
+        try {
+          await runGoalRuntimeChain(root, { adapter: 'codex', runId, freshEndPhase: 'spec', viaSessionStep: true,
+            onSpec: () => {
+              nodeFs.appendFileSync(path.join(root, 'doc/features/bc-openCard/spec/spec.md'), '\nOriginal executor output before report.\n');
+              nodeFs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
+                if (cut === 'agent_invoke_end' && !injected && path.basename(String(args[0])) === 'events.jsonl'
+                  && String(args[1]).includes('"type":"agent_invoke_end"')) {
+                  injected = true; throw new Error('injected receipt event commit interruption');
+                }
+                return append(...args);
+              }) as typeof fs.appendFileSync;
+              nodeFs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+                if (cut === 'archive_rename' && !injected && path.basename(String(to)).startsWith('execution-report')) {
+                  injected = true; throw Object.assign(new Error('injected receipt rename EPERM'), { code: 'EPERM' });
+                }
+                return rename(from, to);
+              }) as typeof fs.renameSync;
+            },
+          });
+        } catch (error) { failure = error; }
+        finally { nodeFs.appendFileSync = append; nodeFs.renameSync = rename; }
+        assert(injected && String(failure).includes('injected receipt'), `the production report path must hit ${cut}: ${failure}`);
+        const manifest = loadGoalManifestFromRun(root, runId, { feature: 'bc-openCard' });
+        const runDir = path.resolve(root, manifest.report_dir), issued = readSessionExecution(runDir)!;
+        const requestPath = path.join(runDir, issued.reference.path), requestBytes = fs.readFileSync(requestPath);
+        assert(!acceptedSessionReport(runDir, issued), 'a failed event commit cannot count as an accepted report');
+        const control = readRunControl(runDir, runId)!;
+        assert(control.owner?.state === 'active' && control.current_epoch === issued.request.context.owner.epoch,
+          `${cut}: an unaccepted current request must keep its original owner: ${JSON.stringify(control)}`);
+        const reportDir = path.dirname(requestPath);
+        assert(!fs.readdirSync(reportDir).some(file => file.endsWith('.tmp')), 'failed rename must clean only its own temporary material');
+        const archiveName = fs.readdirSync(reportDir).find(file => file.startsWith('execution-report'));
+        const originalArchive = archiveName ? fs.readFileSync(path.join(reportDir, archiveName)) : null;
+        fs.appendFileSync(path.join(root, 'doc/features/bc-openCard/spec/spec.md'), '\nCollaboration changed the artifact after the interrupted report.\n');
+        const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
+        const accepted = acceptedSessionReport(runDir, issued)!;
+        assert(accepted && resumed.exitCode === 0, JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
+        assert(fs.readFileSync(requestPath).equals(requestBytes), 'report recovery cannot reissue or replace the original request');
+        if (originalArchive) assert(fs.readFileSync(path.join(runDir, accepted.event.handoff_report!.path)).equals(originalArchive), 'receipt retry must retain the first archived post-snapshot and report bytes');
+        assert(resumed.events.filter(event => event.type === 'agent_invoke_start').length === 1, 'I/O retry cannot reset or recount the original invocation');
+        assert(resumed.events.filter(event => event.type === 'agent_invoke_end').length === 1, 'the report commits once');
+        assert(resumed.harnessPhases.join(',') === 'spec', 'only the accepted report may enter one formal gate');
+        assert(!resumed.events.some(event => event.type === 'agent_process_settled'), 'receipt recovery cannot invent process settlement');
+      } finally { nodeFs.appendFileSync = append; nodeFs.renameSync = rename; fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  },
+}, {
+  name: '1804 detached empty process output still uses the CLI no-output failure policy',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex').root;
+    try {
+      const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'detached-empty-failure', freshEndPhase: 'spec',
+        invokeResultFor: () => ({ exitCode: 1, duration_ms: 10000, stdout: '', stderr: '' }),
+        onHarnessSummary: () => ({ checks: [{ id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+          description: 'the formal checker rejects incomplete output', details: 'The acceptance definition remains incomplete.', failure_kind: 'code_regression' }] }),
+      });
+      const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
+      assert(verdict?.failure_kind_classified === 'agent_no_output', JSON.stringify(verdict));
+      assert(probe.exitCode !== 0 && probe.invokedPhases.length === 1, 'a genuinely empty failed CLI process must retain its stop policy');
+      assert(!probe.events.some(event => event.handoff_report), 'this control uses the detached process transport');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '1804 an elapsed session failed report without details follows the formal regression and retries without CLI no-output classification',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex').root;
+    try {
+      const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'stepwise-elapsed-failure', freshEndPhase: 'spec', viaSessionStep: true,
+        failExecutorFor: (phase, attempt) => phase === 'spec' && attempt === 1,
+        onSpec: ctx => { if (ctx.attempt === 1) execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)']); },
+        onHarnessSummary: ({ phase, attempt }) => phase === 'spec' && attempt === 1 ? { checks: [{
+          id: 'acceptance_content_complete', category: 'structure', severity: 'BLOCKER', status: 'FAIL',
+          description: 'the first model output has an incomplete acceptance definition', failure_kind: 'code_regression',
+          details: 'The formal checker rejects the incomplete acceptance definition.',
+        }] } : null,
+      });
+      const end = probe.events.find(event => event.type === 'agent_invoke_end' && event.phase === 'spec');
+      assert(end?.status === 'failed' && end.exit_code === 1 && Number(end.duration_ms) >= 10000 && Number(end.duration_ms) < 30000, JSON.stringify(end));
+      const archived = JSON.parse(fs.readFileSync(path.join(probe.reportDir, (end!.handoff_report as { path: string }).path), 'utf8'));
+      assert(archived.report.details === undefined, 'a failed report does not require prose details to prove execution');
+      const processLog = path.join(probe.reportDir, 'phases/spec/agent-output.log');
+      assert(!fs.existsSync(processLog) || fs.statSync(processLog).size === 0, 'the session has no native CLI output');
+      const verdict = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
+      assert(verdict?.verdict === 'FAIL' && verdict.failure_kind_classified === 'code_regression', JSON.stringify({ verdict, terminal: probe.events.slice(-12), log: fs.readFileSync(path.join(probe.reportDir, 'session-control.log'), 'utf8').slice(-3000) }));
+      assert(!probe.events.some(event => event.failure_kind_classified === 'agent_no_output' || event.halt_reason === 'agent_no_output'), 'session reports must not inherit a native CLI empty-output heuristic');
+      assert(probe.invokedPhases.filter(phase => phase === 'spec').length === 2, 'the formal failure must return to the actual executor');
+      assert(probe.harnessPhases.filter(phase => phase === 'spec').length === 2 && probe.exitCode === 0, 'the retry must pass the real runtime gate/finalizer');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '1804 executor failure remains an execution fact while the formal gate independently judges quality',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex').root;
+    try {
+      const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'stepwise-failed-report', freshEndPhase: 'ut', viaSessionStep: true,
+        failExecutorFor: (phase, attempt) => phase === 'spec' && attempt === 1 });
+      const first = probe.events.find(event => event.type === 'phase_verdict' && event.phase === 'spec');
+      assert(first?.agent_failed === true, JSON.stringify(first));
+      assert(probe.events.some(event => event.type === 'agent_invoke_end' && event.phase === 'spec' && event.status === 'failed'), 'the original failed report must remain archived');
+      assert(probe.harnessPhases.includes('spec'), 'a report cannot substitute for the formal quality gate');
+      assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'run_end')));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: '1804 nonresident requests share runtime gate, ownership and finalizer',
+  run: async () => {
+    const root = setupGoalRuntimeHost('codex').root;
+    try {
+      const probe = await runGoalRuntimeChain(root, { adapter: 'codex', runId: 'stepwise-parity', freshEndPhase: 'ut', viaSessionStep: true });
+      assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(e => e.type === 'phase_halt' || e.type === 'run_end')));
+      const starts = probe.events.filter(e => e.type === 'agent_invoke_start');
+      const reports = probe.events.filter(e => e.type === 'agent_invoke_end' && e.handoff_report);
+      assert(starts.length === reports.length && starts.length > 0, JSON.stringify({starts, reports}));
+      assert(!probe.events.some(e => e.type === 'agent_process_settled'), 'session must not manufacture process settled');
+      assert(probe.harnessPhases.length >= reports.length, JSON.stringify(probe.harnessPhases));
+      assert(readRunControl(probe.reportDir)?.owner?.state === 'released', 'terminal session owner releases');
+    } finally { fs.rmSync(root, {recursive:true,force:true}); }
+  },
+}, {
     // V7（plan 3a7f9c12 D2.5）：goal 失败回喂必须把"写完报告即回传"讲清楚——
     // 少了这段，agent 只看到一串 blocker 就去改产品（这些失败恰恰要先由 verifier
     // 逐条确认），或为了拿候选自己再跑一次 harness（外层马上还要跑一次，纯重复）。
@@ -833,6 +1092,15 @@ const cases: Case[] = [{
     },
   },
 ];
+
+export async function runSelectedCases(selector?: string): Promise<import('../utils/unit-case-selection').SelectedUnitCases> {
+  const results: UnitCaseResult[] = [];
+  for (const testCase of cases.filter(item => selector === undefined || item.name.includes(selector))) {
+    try { await testCase.run(); results.push({ name: testCase.name, ok: true }); }
+    catch (error) { results.push({ name: testCase.name, ok: false, error: (error as Error).stack ?? String(error) }); }
+  }
+  return { results, matchedCaseCount: results.length, executionTimings: [] };
+}
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];

@@ -81,6 +81,29 @@ function review(p: PreparedRequest, verdict = '通过') {
   fs.writeFileSync(p.inputs.review_report, `# Review\n## 审查范围\nsrc/value.js\n## 审查方法\nRead source and compare selected baseline.\n## 问题清单\n无问题\n## 问题统计\n| 严重程度 | 数量 |\n|---|---|\n| BLOCKER | 0 |\n| MAJOR | 0 |\n| MINOR | 0 |\n| INFO | 0 |\n## 修复建议\n无\n## 结论\n**审查结论**: ${verdict}\n`);
 }
 const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixture>): void }> = [
+  { name: '1804 request provider exceptions retain framework gaps while ordinary failed assertions remain FAIL', phase: 'ut', run(f) {
+    const p = prepareExplicitRequest(f.options); facts(p, f.root);
+    const provider = path.join(f.framework, 'profiles/request-test/harness/providers/native-request.js');
+    fs.appendFileSync(provider, "\nexports.runRequestTests = () => { throw new TypeError('provider crashed before assertions'); };\n");
+    const result = cli(f); assert.notEqual(result.status, 0);
+    const report = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'script-report.json'), 'utf8'));
+    assert.equal(report.summary.verdict, 'INCOMPLETE');
+    const gap = report.checks.find((check: CheckResult) => check.id === 'request_provider_unavailable');
+    assert.equal(gap.status, 'SKIP'); assert.equal(gap.failure_kind, 'framework_bug');
+    assert(report.checks.some((check: CheckResult) => check.id === 'request_expectation_source'));
+    assert.equal(report.subject, 'request'); assert(!fs.existsSync(path.join(f.root, 'doc/features/live/ut')));
+  } },
+  { name: '1804 request checker async exceptions use the shared execution gap and retain request endpoint', run(f) {
+    const p = prepareExplicitRequest(f.options); facts(p, f.root); review(p);
+    const options = { projectRoot: f.root, frameworkRoot: f.framework, args: { phase: 'review', 'request-file': f.options.requestFile, 'report-dir': f.options.reportDir } };
+    const program = 'const checker=require(' + JSON.stringify(path.join(repo, 'harness/scripts/check-review.ts')) + ').default; checker.check=async()=>{throw new TypeError("checker rejected asynchronously")}; require(' + JSON.stringify(path.join(repo,'harness/scripts/utils/request-phase.ts')) + ').runExplicitRequest(' + JSON.stringify(options) + ').then(code=>process.exitCode=code);';
+    const result = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), '-e', program], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
+    assert.equal(result.status, 1, result.stderr + result.stdout);
+    const report = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'script-report.json'), 'utf8'));
+    assert.equal(report.summary.verdict, 'INCOMPLETE');
+    assert(report.checks.some((check: CheckResult) => check.id === 'request_checker_error' && check.failure_kind === 'framework_bug' && check.status === 'SKIP'));
+  } },
+
   { name: '38e5a7c2 request executes real checker with disclosed exploration mode and keeps raw failure', phase: 'ut', run(f) {
     const p = prepareExplicitRequest(f.options); facts(p, f.root);
     fs.writeFileSync(p.factsPath, fs.readFileSync(p.factsPath, 'utf8').replace('exploration_mode: sequential', 'exploration_mode: unknown'));
@@ -139,7 +162,12 @@ gate.__testing_setDetectScanForEnsure(() => { scans++; return { candidates: [], 
       const evidence = path.join(p.reportDir, 'native-test.log');
       assert.equal(fs.existsSync(evidence), ready && phase !== 'review');
       if (fs.existsSync(evidence)) assert.match(fs.readFileSync(evidence, 'utf8'), /# pass 1/);
-      if (!ready) assert.match(fs.readFileSync(path.join(p.reportDir, 'script-report.json'), 'utf8'), /DevEco 工具链未就绪/);
+      if (!ready) {
+        const report = JSON.parse(fs.readFileSync(path.join(p.reportDir, 'script-report.json'), 'utf8'));
+        assert.match(JSON.stringify(report), /DevEco 工具链未就绪/);
+        assert.equal(report.summary.verdict, 'INCOMPLETE');
+        assert(report.checks.some((check: CheckResult) => check.id === 'request_provider_unavailable' && check.status === 'SKIP' && check.failure_kind === 'capability_missing'));
+      }
     },
   })),
   { name: 'custom Feature reports and receipts are protected before creation while sibling requests run', run(f) {
@@ -609,6 +637,10 @@ gate.__testing_setDetectScanForEnsure(() => { scans++; return { candidates: [], 
     assert.notEqual(cli(f).status, 0, 'generic 下执行仍应失败');
   } },
 ];
+export function runSelectedCases(selector?: string) {
+  const results = cases.filter(test => selector === undefined || test.name.includes(selector)).map(test => { const f = fixture(test.phase); try { test.run(f); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: String(error) }; } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); } });
+  return { results, matchedCaseCount: results.length, executionTimings: [] };
+}
 export function runAll(): UnitCaseResult[] {
-  return cases.map(test => { const f = fixture(test.phase); try { test.run(f); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: String(error) }; } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); } });
+  return runSelectedCases().results;
 }

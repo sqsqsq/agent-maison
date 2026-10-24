@@ -46,7 +46,7 @@ With an index present, page/component/builder entries (including existing naviga
 
 #### Scenario: Illegal dependency
 - **WHEN** the consumer/provider layers or same-layer policy prohibit the dependency
-- **THEN** preflight SHALL fail without changing DSL; an unattended original-scope request uses the design owner and existing configuration writer for the new edge before construction; attended requests retain confirmation
+- **THEN** preflight SHALL fail without changing DSL; an authorized original-scope complete delivery uses the design owner and existing configuration writer for the new edge before construction; attended entry requires the current autonomy input derived from the original human grant, while unauthorized sessions retain confirmation
 
 #### Scenario: Existing consumer regression
 - **WHEN** a valid asset_selection is added to a component

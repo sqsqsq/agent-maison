@@ -158,13 +158,13 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
 - ❌ 阶段闭环（closed）后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
-- ❌ **headless / goal-mode** 下仍 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
+- ❌ **已获原目标内自动决议授权** 时仍为同项 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
 
 ---
 
 ## 9. Goal / headless 无人值守闸门解析（BLOCKER）
 
-当 **goal-runner** 以 headless 方式拉起 phase agent 时（`buildPhasePrompt` 注入 Unattended 块），阶段内确认闸门须按本节自动解析，**禁止** stop 问人。
+当共同授权策略确认原目标内自动决议时，阶段内确认按本节解析，不重复问已授权事项。detached 保留既有完整交付来源；attended 主 Agent 从可信原全权授权在 prepare/每次控制调用重传非持久 --authorize-autonomy。never/goal_mode、打印文本和 Agent 留痕不授业务权；真实目标/验收改变、秘密、不可逆动作与用户硬预算仍守实际授权。
 
 ### 9.1 按 interaction class 默认解析
 
@@ -202,7 +202,7 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 
 ### 9.4 与交互态关系
 
-本节 **仅** 在 goal-runner headless prompt 生效。用户对话内直接跑 spec/plan 等 Skill **不**注入 Unattended 块，仍走 §3 交互流程。
+本节按共同授权策略生效，运输声明仍如实区分 attended/detached。直接单职责 Skill 不因 goal_mode/默认 never 获得全权；未授权会话沿 §3。换会话先恢复可信原授权再重传，不能从日志自授，也不重复询问已明确授权的用户。
 
 ---
 

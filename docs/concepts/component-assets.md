@@ -38,7 +38,7 @@ CU 用既有 `design_refs` 保存依赖引用，不复写选型结论。Feature 
 
 UI 强制谓词沿既有 kind：page/component/builder，以及既有 Component/ComponentV2/Builder decorator 或 navigation destination 信号；不为工具类新增枚举约束。有 index 时命中谓词的条目必须选型。旧 Feature 缺局部映射交 plan，缺权威决定或 CU 依赖则交设计 owner；不在无权阶段重复重试。
 
-依赖从 `components[].module`（使用方）与 index.module（定义方）加 architecture DSL 实时计算，复用既有 outer/intra-layer 许可；module/file 仍为使用位置。非法时依次换合法候选、考虑组件下沉、必要时由设计 owner 裁决新边。无人值守原需求内静默重签并经配置 writer 落盘；有人在场仍保留确认，plan/coding 不自行改 DSL。蓝图中的未决新边用现有 gap（verification_refs 引 decision）记录 owner/needed_by，当前 CU 未获权责裁决不得施工。
+依赖从 `components[].module`（使用方）与 index.module（定义方）加 architecture DSL 实时计算，复用既有 outer/intra-layer 许可；module/file 仍为使用位置。非法时依次换合法候选、考虑组件下沉、必要时由设计 owner 裁决新边。已有完整交付全权的原需求内静默重签并经配置 writer 落盘；attended 用本次 --authorize-autonomy，detached 保留既有来源，未授权会话仍保留确认，plan/coding 不自行改 DSL。蓝图中的未决新边用现有 gap（verification_refs 引 decision）记录 owner/needed_by，当前 CU 未获权责裁决不得施工。
 
 错误选型/非法依赖、未登记共享导出、新共享组件静态不合规按 BLOCKER/FAIL 进入阶段最终裁定；蓝图投影不一致继续沿既有 BLOCKER。索引漂移保留 MAJOR 诊断，uncurated/dangling 等 WARN 不阻断，不改变全局严重级别规则。选型实际引用的 index/catalog 文件必须可读；未引用的 optional catalog 可以缺失，不新增锚点解析要求。映射覆盖按组件条目（file#name）计算，不同文件的同名组件分别覆盖。
 

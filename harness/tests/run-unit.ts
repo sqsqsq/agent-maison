@@ -308,6 +308,9 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'goal-handoff', modulePath: './unit/goal-handoff.unit.test' },
   { id: 'goal-handoff-runner-wiring', modulePath: './unit/goal-handoff-runner-wiring.unit.test' },
   { id: 'goal-in-session-driver', modulePath: './unit/goal-in-session-driver.unit.test' },
+  { id: 'session-execution-handoff', modulePath: './unit/session-execution-handoff.unit.test' },
+  { id: 'session-slow-gate', modulePath: './unit/session-slow-gate.integration.test', releaseOnly: true },
+  { id: 'session-transport-parity', modulePath: './unit/session-transport-parity.unit.test', releaseOnly: true },
   { id: 'goal-phase-runtime', modulePath: './unit/goal-phase-runtime.unit.test' },
   { id: 'repair-continuity', modulePath: './unit/repair-continuity.unit.test' },
   // plan a2f7c9e4 t6：脚本化执行者作为真实子进程的返修中断回归（只证 spawn / 终止 / 事件解析）

@@ -56,7 +56,7 @@ import { resolveComponentClosureInputs } from '../../scripts/utils/component-clo
 import { deriveComponentClosureObligations } from '../../scripts/utils/component-closure-obligations';
 import { buildChangeUnitGoalHandoff } from '../../scripts/utils/change-unit-progress-loop';
 import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
-import { verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
+import { generateFeatureCompletion, verifyReusedExecutionScope, executionScopeEvidenceIssues } from '../../scripts/utils/verify-feature-completion';
 import { assessFeature, assessmentReasons } from '../../scripts/utils/feature-assessment';
 
 /** plan b2d7f4e9：唯一评估入口 assessFeature 的 VALID/INVALID 投影（complete ⇔ VALID）。 */
@@ -88,6 +88,16 @@ const workflow: WorkflowSpec = {
 function request(phases: string[], completion_target: 'request' | 'feature' = 'request'): ExecutionScopeInput {
   return { request: { completion_target, requested_results: ['requested-result'], requested_phases: phases }, facts: [], contract_fingerprints: [] };
 }
+/** Historical reader fixture only; supported harness exits no longer invoke this writer. */
+function legacyFeatureCompletionFixture(input: Parameters<typeof applyFeatureScopeRevisionsThenMaybeComplete>[0]): { revisionApplied: boolean; completionPath: string } {
+  const scope = featureEffectiveScope(readFeatureFrozenScope(input.projectRoot, input.feature)!);
+  const chain = executionCompletionPhases(scope).map(String);
+  const { originalAbs } = generateFeatureCompletion({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
+    feature: input.feature, chain, workflowTrack: input.workflowTrack, runId: null,
+    runDirAbs: featureFilePath(input.projectRoot, input.feature, 'completion'), phaseRunIds: {}, executionScope: scope });
+  return { revisionApplied: false, completionPath: originalAbs };
+}
+
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   { name: '66457a08 fidelity uses dereferenced real requirements, never writes or promotes fallback text', run() {
     const { root, frameworkRoot, feature } = setupRunlessProject();
@@ -1863,26 +1873,18 @@ cases.push({ name: 'D1 a repeated runless closure of a single-duty request is a 
     fs.mkdirSync(reportsDir, { recursive: true });
     fs.writeFileSync(path.join(reportsDir, 'script-report.json'), JSON.stringify({ checks: [revisionCheck] }));
 
-    const first = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'spec', workflowTrack: 'full' });
-    assert.equal(first.revisionApplied, true, '第一次收尾没有应用修订：' + JSON.stringify(first));
-    const afterFirst = readFeatureFrozenScope(root, feature)!;
-    assert.equal(afterFirst.revisions.length, 1, JSON.stringify(afterFirst.revisions.length));
-    assert.deepStrictEqual(featureEffectiveScope(afterFirst).unresolved, [], '修订没关掉定义缺口');
-    // 第二次：同一份报告、同一份提案，**不得**抛错、不得再写一条修订。
-    const second = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'spec', workflowTrack: 'full' });
-    // `skippedReason` 必须是**完成阶段**那一条（`scope_not_complete`＝request 终点不生成 Feature
-    // completion），不是前置守卫（`run-authority` / `no-frozen-record` / `transferred`）——
-    // 后者意味着这一次根本没走到提案校验，断言就成了空转。
-    assert.equal(second.skippedReason, 'scope_not_complete', '第二次收尾没走到提案校验：' + JSON.stringify(second));
-    assert.equal(second.revisionApplied, false, '重复收尾又写了一条修订：' + JSON.stringify(second));
-    assert.equal(second.completionPath, undefined, 'request 终点的收尾生成了 Feature completion');
-    const afterSecond = readFeatureFrozenScope(root, feature)!;
-    assert.equal(afterSecond.revisions.length, 1, '修订数被重复收尾改动了：' + afterSecond.revisions.length);
-    assert.equal(executionScopeFingerprint(featureEffectiveScope(afterSecond)), executionScopeFingerprint(featureEffectiveScope(afterFirst)), '重复收尾改动了有效范围');
+    const before = fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8');
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const result = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'spec', workflowTrack: 'full' });
+      assert.equal(result.revisionApplied, false);
+      assert.equal(result.skippedReason, 'request-terminal');
+      assert.equal(result.completionPath, undefined);
+      assert.equal(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'), before, 'a single-duty request cannot advance feature orchestration');
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'D1 runless interactive delivery reaches VALID completion', run() {
+cases.push({ name: '1804 independent clean-pass cannot create Feature completion; historical completion readers remain valid', run() {
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {
     // ① 首次冻结（生产入口，无 run 身份）
@@ -1900,8 +1902,15 @@ cases.push({ name: 'D1 runless interactive delivery reaches VALID completion', r
     const chain = executionCompletionPhases(featureEffectiveScope(record)).map(String);
     seedRunlessChain(root, feature, chain);
 
-    // ③ 收尾出口：应用修订 → 重读有效范围 → 生成完成原件
-    const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
+    // ③ 独立收尾只保留阶段结果；历史完成原件仅在显式 reader 夹具中构造。
+    const frozenBytes = fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8');
+    const retired = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
+    assert.equal(retired.skippedReason, 'goal-runtime-required');
+    assert.equal(retired.completionPath, undefined);
+    assert.equal(fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8'), frozenBytes);
+    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'clean-pass does not authorize a new runless completion');
+    // Materialize a legacy record solely to preserve its reader compatibility assertions below.
+    const outcome = legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
     assert(outcome.completionPath, '无 run 完成原件未生成：' + JSON.stringify(outcome));
     assert(outcome.completionPath!.split(path.sep).join('/').includes(`${feature}/completion/`), outcome.completionPath);
 
@@ -1929,7 +1938,7 @@ export function runlessCompletionThenRevision(root: string, frameworkRoot: strin
   assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature }).status, 'frozen');
   const chain = executionCompletionPhases(featureEffectiveScope(readFeatureFrozenScope(root, feature)!)).map(String);
   seedRunlessChain(root, feature, chain);
-  const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
+  const outcome = legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
   assert(outcome.completionPath, '无 run 完成原件未生成：' + JSON.stringify(outcome));
   const originalBytes = fs.readFileSync(outcome.completionPath!, 'utf8');
   assert.equal(JSON.parse(originalBytes).scope_revision_count, 0, '前提：完成时无修订');
@@ -2240,7 +2249,7 @@ cases.push({ name: 'D1 runless completion rejects bare reports and tampered froz
     const bare = completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot });
     assert.notEqual(bare.verdict, 'VALID', JSON.stringify(bare));
     // ② 正常生成后 VALID
-    const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
+    const outcome = legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
     assert(outcome.completionPath, JSON.stringify(outcome));
     assert.equal(completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
     // ③ 冻结记录的范围内容被非法改动 → INVALID（指纹失配）
@@ -2434,12 +2443,8 @@ cases.push({ name: 'D1 in-run revision after transfer is not a conflict', async 
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'D1 runless completion is generated at the sync-closure exit', run() {
-  // §6.9：`--sync-closure` 出口走**真实 harness-runner CLI**（含真实 check-receipt 与生产
-  // finalize），断言无 run 完成原件确实由这条出口生成。
-  // 普通阶段尾部出口调的是**同一个** `applyFeatureScopeRevisionsThenMaybeComplete`
-  //（函数级覆盖见 `D1 runless interactive delivery reaches VALID completion`），
-  // 其 CLI 级覆盖的缺口在 §11 批次 3 如实记录。
+cases.push({ name: '1804 real sync-closure closes its phase without signing new runless Feature completion', run() {
+  // Real receipt/finalizer path, with a legacy frozen scope awaiting explicit Goal transfer.
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {
@@ -2463,13 +2468,9 @@ cases.push({ name: 'D1 runless completion is generated at the sync-closure exit'
       '--project-root', root, '--framework-root', frameworkRoot],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
     assert.equal(cli.status, 0, (cli.stdout ?? '') + (cli.stderr ?? ''));
-    assert(fs.existsSync(projectionAbs), 'sync-closure 出口没有生成无 run 完成原件：' + (cli.stdout ?? ''));
-    const projection = JSON.parse(fs.readFileSync(projectionAbs, 'utf8')) as { original_path: string };
-    assert(projection.original_path.includes(`${feature}/completion/`), projection.original_path);
-    const completion = JSON.parse(fs.readFileSync(path.join(root, projection.original_path), 'utf8'));
-    assert.equal(completion.run_id, null);
-    assert.equal(completion.scope_source, 'feature');
-    assert.equal(completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
+    assert(!fs.existsSync(projectionAbs), 'sync-closure must not sign a new runless Feature completion');
+    assert((cli.stdout ?? '').includes('goal-mode-entry --prepare-run'), 'full delivery must point to the shared runtime');
+    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -2525,7 +2526,7 @@ cases.push({ name: 'D1 an unreadable feature lock is unknown authority, not an a
     assert(blocked.checks[0]?.details?.includes('无法解析'), JSON.stringify(blocked.checks));
     assert(!fs.existsSync(featureFrozenScopePath(root, feature)), '损坏锁下仍然冻结了记录');
     // 同一条前置对无 run 收尾也生效
-    assert.throws(() => applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'coding', workflowTrack: 'full' }), /无法解析/);
+    assert.equal(applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'coding', workflowTrack: 'full' }).revisionApplied, false, 'retired closing path performs no writes; the actual entry still rejects unknown authority above');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -2564,7 +2565,7 @@ cases.push({ name: 'D1 completion rejects a tampered gate fingerprint', run() {
     ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
     const chain = executionCompletionPhases(featureEffectiveScope(readFeatureFrozenScope(root, feature)!)).map(String);
     seedRunlessChain(root, feature, chain);
-    const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
+    const outcome = legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: chain.at(-1)!, workflowTrack: 'full' });
     assert(outcome.completionPath, JSON.stringify(outcome));
     assert.equal(completionOf({ projectRoot: root, feature, expectedChain: chain, expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
     // 改一个阶段的 gate_fingerprint 并同步投影哈希——仍必须 INVALID
@@ -2674,6 +2675,8 @@ cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once
     assert.equal(readFeatureFrozenScope(root, feature)!.frozen_at, frozenAt, '后续阶段调用重写了冻结记录');
     // ④ 全程不造 run
     assert(!fs.existsSync(featureFilePath(root, feature, 'goal-runs')), '无 run 路径造出了 goal-runs 目录');
+    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'direct phase checks must not create Feature completion');
+    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0, 'direct phase checks must not act as the scope runner');
     // ⑤ 候选漂移 → 真实 CLI 报 execution_scope_frozen BLOCKER
     const drifted = YAML.parse(fs.readFileSync(featureTrackDeclPath(root, feature), 'utf8'));
     drifted.execution_scope.request.requested_results = ['drifted'];
@@ -2687,6 +2690,14 @@ cases.push({ name: 'D1 three real runless harness-runner phase calls freeze once
     const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'summary.json'), 'utf8')) as { verdict?: string; blockers?: Array<{ id?: string }> };
     assert.equal(summary.verdict, 'FAIL');
     assert(summary.blockers?.some(item => item.id === 'execution_scope_frozen'), '当前 scope 失败未刷新 base summary');
+    // Restore the original candidate, then transfer the unfinished legacy scope and existing reports.
+    fs.writeFileSync(featureTrackDeclPath(root, feature), YAML.stringify(decl));
+    const priorReport = fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json'));
+    const handed = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, adapter: 'generic', runId: '1804-legacy-transfer', requirement: '把 value 改成 42' });
+    assert.equal(readFeatureFrozenScope(root, feature)!.transfers!.at(-1)!.run_id, handed.manifest.run_id);
+    assert(fs.readFileSync(path.join(featurePhaseReportsDir(root, feature, 'coding', frameworkRoot), 'script-report.json')).equals(priorReport), 'formal transfer preserves the actual prior report bytes');
+    const rejoined = prepareGoalModeRun({ projectRoot: root, frameworkRoot, feature, adapter: 'generic', requirement: '把 value 改成 42' });
+    assert.equal(rejoined.manifest.run_id, handed.manifest.run_id, 'same unfinished delivery must rejoin instead of creating another active run');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -3122,11 +3133,8 @@ cases.push({ name: 'D1 a missing transferred run refuses instead of falling back
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
-cases.push({ name: 'D1 a closing-time scope failure lands in the report and exits non-zero', run() {
-  // 第四轮阻断 4：收尾抛错时「写 BLOCKER 进既有失败报告路径」与「非零退出」**两者都要**——
-  // 只非零退出，宿主 agent 看不到原因；只打印，脚本调用方会以 exit 0 溜过去。
-  // 触发用的是**收尾独有**的失败面：非法修订提案（改请求边界）。候选漂移到不了这里
-  //（冻结入口先早退），提案只在写完本阶段 summary 后才落进 script-report，正是收尾才读的东西。
+cases.push({ name: '1804 independent sync-closure does not consume a foreign request-boundary proposal', run() {
+  // 独立检查只闭环本阶段；既有修订输入仍需正式 Goal owner 消费和校验。
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject();
   try {
@@ -3152,26 +3160,25 @@ cases.push({ name: 'D1 a closing-time scope failure lands in the report and exit
       }],
       summary: { verdict: 'PASS', blockers: 0 },
     }, null, 2));
+    const originalReport = fs.readFileSync(reportAbs);
+    const frozenBytes = fs.readFileSync(featureFrozenScopePath(root, feature));
     const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'),
       path.join(repo, 'harness/harness-runner.ts'), '--sync-closure', '--phase', 'ut', '--feature', feature,
       '--project-root', root, '--framework-root', frameworkRoot],
       { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '' } });
     const out = (cli.stdout ?? '') + (cli.stderr ?? '');
-    // 正对照：同一条出口在**合法**提案（这里是没有提案）下会走到完成原件生成并 exit 0
-    //（`D1 runless completion is generated at the sync-closure exit` 用同一夹具断言），
-    // 所以这里的非零退出与缺原件不是「反正都失败」。
-    assert.notEqual(cli.status, 0, '收尾失败仍然以 0 退出：' + out);
-    assert(out.includes('feature 范围收尾失败'), out);
-    const report = JSON.parse(fs.readFileSync(reportAbs, 'utf8')) as
-      { checks: Array<{ id: string; severity: string; status: string; details?: string }>; summary?: { verdict?: string } };
-    const blocker = report.checks.find(check => check.id === 'execution_scope_frozen');
-    assert(blocker, '失败报告里没有收尾失败的 BLOCKER：' + JSON.stringify(report.checks.map(check => check.id)));
-    assert.equal(blocker!.severity, 'BLOCKER');
-    assert(blocker!.details?.includes('revision changes request boundary'), blocker!.details);
-    assert.equal(report.summary?.verdict, 'FAIL');
-    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), '收尾失败仍生成了完成原件');
-    // 非法提案没有被悄悄记进冻结记录
+    assert.equal(cli.status, 0, out);
+    assert(out.includes('goal-mode-entry --prepare-run'), out);
+    assert(fs.readFileSync(reportAbs).equals(originalReport), 'independent closure preserves the actual stage result');
+    assert(fs.readFileSync(featureFrozenScopePath(root, feature)).equals(frozenBytes), 'independent closure does not consume scope proposals');
+    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'independent closure must not sign Feature completion');
     assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0);
+    const previous = featureEffectiveScope(readFeatureFrozenScope(root, feature)!);
+    assert.throws(() => resolveScopeRevisionProposal({ projectRoot: root, frameworkRoot, feature,
+      workflow: resolveWorkflowSpec(root, { frameworkRoot }), previous, authorizedPhases: previous.phase_chain,
+      completedPhases: new Set(chain), currentPhase: 'ut',
+      proposals: [{ ...candidate, request: { ...candidate.request, requested_results: ['boundary moved'] } }],
+    }), /revision changes request boundary/, 'the shared owner-side validator still rejects the unauthorized proposal');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -3256,6 +3263,9 @@ cases.push({ name: 'b2d7 t3 #15 runless completion: --supersede is refused towar
       path.join(repo, 'harness/harness-runner.ts'), '--sync-closure', '--phase', 'ut', '--feature', feature,
       '--project-root', root, '--framework-root', frameworkRoot], { cwd: root, encoding: 'utf8', timeout: 180000, env });
     assert.equal(sync.status, 0, (sync.stdout ?? '') + (sync.stderr ?? ''));
+    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')), 'new independent closure cannot write a legacy completion');
+    // Only this explicit historical fixture creates the old null-run record consumed below.
+    legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: 'ut', workflowTrack: 'full' });
     const projection = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'feature-completion.json'), 'utf8')) as { original_path: string };
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, projection.original_path), 'utf8')).run_id, null, '前提：feature 载体完成');
     const recordBytes = fs.readFileSync(featureFrozenScopePath(root, feature), 'utf8');
@@ -3426,8 +3436,14 @@ cases.push({ name: 'D1 a runless repair reopens its owner and cannot use old dow
       checks: [{ id: 'coding_scope_facts', status: 'PASS', severity: 'MINOR', category: 'structure', description: '修订提案', scope_revision_input: proposal!.input }],
       summary: { verdict: 'PASS', blockers: 0 },
     }));
-    const outcome = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'coding', workflowTrack: 'full' });
-    assert(outcome.revisionApplied, '无 run 收尾没有应用修订：' + JSON.stringify(outcome));
+    const retired = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'coding', workflowTrack: 'full' });
+    assert.equal(retired.revisionApplied, false);
+    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0);
+    // Reconstruct the historical revision to exercise the existing owner/evidence readers.
+    const historical = resolveScopeRevisionProposal({ projectRoot: root, frameworkRoot, feature, workflow: resolveWorkflowSpec(root, { frameworkRoot }),
+      proposals: [proposal!.input], previous: scope, authorizedPhases: scope.phase_chain, completedPhases: new Set(chain), currentPhase: 'coding' });
+    assert(historical);
+    appendFeatureScopeRevision({ projectRoot: root, feature, nextScope: historical!.scope, trigger: { phase: 'coding' }, revisionInput: historical!.input });
     const record = readFeatureFrozenScope(root, feature)!;
     assert.equal(record.revisions.length, 1);
     // 建议 2：已闭环阶段的既有义务带着满足证明进了修订（不会被重新要求再跑一遍）
@@ -3438,7 +3454,7 @@ cases.push({ name: 'D1 a runless repair reopens its owner and cannot use old dow
     assert(revised.obligations.filter(ob => ['plan', 'coding', 'review', 'ut'].includes(ob.owner_phase) && ob.applicability === 'required')
       .every(ob => !ob.satisfied_by?.some(ref => 'evidence_manifest_aggregate' in ref)), 'no old downstream PASS may prematurely close repair');
     seedRunlessChain(root, feature, revised.phase_chain, undefined, () => new Date());
-    const closed = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'ut', workflowTrack: 'full' });
+    const closed = legacyFeatureCompletionFixture({ projectRoot: root, frameworkRoot, feature, phase: 'ut', workflowTrack: 'full' });
     assert(closed.completionPath, 'later runless proof must close the actual repair: ' + JSON.stringify(closed));
     assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 1, 'a normal PASS does not write a new scope event');
     assert.equal(completionOf({ projectRoot: root, feature, expectedChain: executionCompletionPhases(revised), expectedTrack: 'full', frameworkRoot }).verdict, 'VALID');
@@ -3531,7 +3547,7 @@ cases.push({ name: 'P1-T8 runless file and inline requirements reach the real sp
   }
 } });
 
-cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the real runless harness', run() {
+cases.push({ name: '1804 real independent spec updates acceptance but leaves scope revision to its Goal owner', run() {
   const repo = path.resolve(__dirname, '../../..');
   const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['spec'], completionTarget: 'feature' });
   const runSpec = () => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(repo, 'harness/harness-runner.ts'),
@@ -3560,20 +3576,14 @@ cases.push({ name: 'P1-T9 spec owner revises an in-place acceptance through the 
     const corrected = runSpec();
     assert.equal(corrected.status, 0, corrected.stderr + corrected.stdout);
     const after = readFeatureFrozenScope(root, feature)!;
-    assert.equal(after.revisions.length, 1, JSON.stringify(after.revisions));
-    const effective = featureEffectiveScope(after);
-    const acceptanceObligation = effective.obligations.find(item => item.kind === 'acceptance-context')!;
-    const unit = effective.obligations.find(item => item.kind === 'unit-evidence')!;
-    const currentSha = createHash('sha256').update(fs.readFileSync(acceptancePath)).digest('hex');
-    for (const obligation of [acceptanceObligation, unit]) {
-      assert(obligation.basis.some(binding => binding.input_id === 'acceptance' && binding.dependencies.some(dep => dep.sha256 === currentSha)), `${obligation.kind} 未同步当前 acceptance binding: ${JSON.stringify(obligation)}`);
-      assert(!obligation.basis.some(binding => binding.input_id === 'acceptance' && binding.dependencies.some(dep => dep.sha256 !== currentSha)), `${obligation.kind} 仍保留旧 acceptance generation`);
-    }
+    assert.equal(after.revisions.length, 0, 'independent checks do not advance a full-delivery scope');
+    assert.equal(executionScopeFingerprint(featureEffectiveScope(after)), fingerprint, 'the existing scope remains available for formal transfer');
+    assert(!fs.existsSync(featureFilePath(root, feature, 'feature-completion.json')));
     acceptance.criteria = [];
     fs.writeFileSync(acceptancePath, YAML.stringify(acceptance));
     const invalid = runSpec();
     assert.notEqual(invalid.status, 0, '非法减空验收不得形成第二条修订');
-    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 1, '非法验收仍推进了范围修订');
+    assert.equal(readFeatureFrozenScope(root, feature)!.revisions.length, 0, 'independent invalid acceptance cannot revise orchestration');
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 

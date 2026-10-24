@@ -17,6 +17,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { executeCheck } from './utils/check-execution';
 import * as path from 'path';
 
 import {
@@ -614,13 +615,13 @@ function runEntryFileMatchesOhPackageMain(ctx: CheckContext, catalog: ModuleCata
         '当前 project_profile 的 phase-rules 未声明 entry_file_matches_oh_package_main。',
     }];
   }
+  let mod: { checkEntryFileMatchesOhPackageMain: (c: CheckContext, cat: ModuleCatalog) => CheckResult[] };
   try {
     const augPath = path.join(ctx.resolvedProfile.profileDir, 'harness', 'catalog-entry-file-har');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require(augPath) as {
+    mod = require(augPath) as {
       checkEntryFileMatchesOhPackageMain: (c: CheckContext, cat: ModuleCatalog) => CheckResult[];
     };
-    return mod.checkEntryFileMatchesOhPackageMain(ctx, catalog);
   } catch (e) {
     return [{
       id: 'entry_file_matches_oh_package_main',
@@ -631,6 +632,7 @@ function runEntryFileMatchesOhPackageMain(ctx: CheckContext, catalog: ModuleCata
       details: `entry_file 与 oh-package main 同步规则需要 profile 实现，但加载失败：${(e as Error).message}`,
     }];
   }
+  return mod.checkEntryFileMatchesOhPackageMain(ctx, catalog);
 }
 
 function runKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
@@ -646,13 +648,13 @@ function runKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCatalog): C
         '当前 project_profile 的 phase-rules 未声明 key_exports_fresh_vs_index（例如 generic 文档型 profile）。',
     }];
   }
+  let mod: { checkKeyExportsFreshVsIndex: (c: CheckContext, cat: ModuleCatalog) => CheckResult[] };
   try {
     const augPath = path.join(ctx.resolvedProfile.profileDir, 'harness', 'catalog-key-exports-har');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require(augPath) as {
+    mod = require(augPath) as {
       checkKeyExportsFreshVsIndex: (c: CheckContext, cat: ModuleCatalog) => CheckResult[];
     };
-    return mod.checkKeyExportsFreshVsIndex(ctx, catalog);
   } catch (e) {
     return [{
       id: 'key_exports_fresh_vs_index',
@@ -663,6 +665,7 @@ function runKeyExportsFreshVsIndex(ctx: CheckContext, catalog: ModuleCatalog): C
       details: `key_exports 同步规则需要 profile 实现，但加载失败：${(e as Error).message}`,
     }];
   }
+  return mod.checkKeyExportsFreshVsIndex(ctx, catalog);
 }
 
 // --------------------------------------------------------------------------
@@ -759,20 +762,6 @@ function checkFeatureScopeIntegrity(
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: 'MINOR', status: 'SKIP',
-      details: `检查执行时发生错误：${(err as Error).message}`,
-    }];
-  }
-}
-
 const checker: PhaseChecker = {
   phase: 'catalog',
 
@@ -795,29 +784,29 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [];
 
     // Structure
-    results.push(...safeRun(() => checkSchemaVersionPresent(ctx, catalog), 'schema_version_present'));
-    results.push(...safeRun(() => checkModulesIsList(ctx, catalog), 'modules_is_list'));
-    results.push(...safeRun(() => checkModuleRequiredFields(ctx, catalog), 'module_required_fields'));
-    results.push(...safeRun(() => checkLayerValueValid(ctx, catalog), 'layer_value_valid'));
-    results.push(...safeRun(() => checkFormatValueValid(ctx, catalog), 'format_value_valid'));
-    results.push(...safeRun(() => checkNameUnique(ctx, catalog), 'name_unique'));
-    results.push(...safeRun(() => checkNotResponsibleForMinCount(ctx, catalog), 'not_responsible_for_min_count'));
-    results.push(...safeRun(() => checkOneLinerNotEmpty(ctx, catalog), 'one_liner_not_empty'));
-    results.push(...safeRun(
+    results.push(...executeCheck(ctx, () => checkSchemaVersionPresent(ctx, catalog), 'schema_version_present'));
+    results.push(...executeCheck(ctx, () => checkModulesIsList(ctx, catalog), 'modules_is_list'));
+    results.push(...executeCheck(ctx, () => checkModuleRequiredFields(ctx, catalog), 'module_required_fields'));
+    results.push(...executeCheck(ctx, () => checkLayerValueValid(ctx, catalog), 'layer_value_valid'));
+    results.push(...executeCheck(ctx, () => checkFormatValueValid(ctx, catalog), 'format_value_valid'));
+    results.push(...executeCheck(ctx, () => checkNameUnique(ctx, catalog), 'name_unique'));
+    results.push(...executeCheck(ctx, () => checkNotResponsibleForMinCount(ctx, catalog), 'not_responsible_for_min_count', { severity: 'MAJOR' }));
+    results.push(...executeCheck(ctx, () => checkOneLinerNotEmpty(ctx, catalog), 'one_liner_not_empty', { severity: 'MAJOR' }));
+    results.push(...executeCheck(ctx,
       () => checkTypicalVsNotResponsibleConflict(ctx, catalog),
-      'typical_vs_not_responsible_conflict',
+      'typical_vs_not_responsible_conflict', { severity: 'MAJOR' },
     ));
 
     // Traceability
-    results.push(...safeRun(() => checkEasilyConfusedReferencesExist(ctx, catalog, result.catalog), 'easily_confused_references_exist'));
-    results.push(...safeRun(() => checkEasilyConfusedNoSelfReference(ctx, catalog), 'easily_confused_no_self_reference'));
-    results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog, result.catalog), 'easily_confused_symmetric'));
-    results.push(...safeRun(() => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk'));
-    results.push(...safeRun(() => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path'));
-    results.push(...safeRun(() => runEntryFileMatchesOhPackageMain(ctx, catalog), 'entry_file_matches_oh_package_main'));
-    results.push(...safeRun(() => runKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index'));
+    results.push(...executeCheck(ctx, () => checkEasilyConfusedReferencesExist(ctx, catalog, result.catalog), 'easily_confused_references_exist'));
+    results.push(...executeCheck(ctx, () => checkEasilyConfusedNoSelfReference(ctx, catalog), 'easily_confused_no_self_reference'));
+    results.push(...executeCheck(ctx, () => checkEasilyConfusedSymmetric(ctx, catalog, result.catalog), 'easily_confused_symmetric', { severity: 'MAJOR' }));
+    results.push(...executeCheck(ctx, () => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk', { severity: 'MAJOR' }));
+    results.push(...executeCheck(ctx, () => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path', { severity: 'MAJOR' }));
+    results.push(...executeCheck(ctx, () => runEntryFileMatchesOhPackageMain(ctx, catalog), 'entry_file_matches_oh_package_main', { severity: 'MAJOR' }));
+    results.push(...executeCheck(ctx, () => runKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index', { severity: 'MAJOR' }));
     if (!ctx.module) {
-      results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
+      results.push(...executeCheck(ctx, () => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity', { severity: 'MAJOR' }));
       results.push(...checkComponentCatalog(ctx.projectRoot));
     }
 

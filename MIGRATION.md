@@ -1,5 +1,13 @@
 # Framework 升级与迁移说明
 
+## 3.1.0 会话交接与存量完整交付
+
+公开常驻 stdin 协议及 `--drive-round` 方案退役。旧活跃 stdin 调用不能热换协议：先以旧发布件收尾或按原机制安全停放，再从同一请求及已验证记录迁入。旧无 run 未完成范围由既有 prepare-run 出生/转交入口正式交给 run，保留有效成果和原件，不新建并行施工；旧 completion 原件只读，不补历史事件，不再产生新的无 run/manual_fallback 完整交付。
+
+控制命令只显示原件引用与短状态；完整 instruction、原身份、准确自检命令及原快照保存在本 run 原件。重领先查已有产物，不重做；已归档报告只补正式验证，不伪造 process-settled。按返回的 gate 时限/清理预留设置工具 timeout，或等待同一宿主原生任务句柄终态；不重复 report 催进度，不自造等待器。长日志在本 run 日志路径读取。
+
+完整交付明确全权时，主 Agent 从可信原用户授权在 attended prepare/每次 next/report 重传非持久 `--authorize-autonomy`；新会话先恢复原授权，无可信依据或冲突才询问。默认 never/goal_mode、日志或打印命令不授全权。原目标内设计/CU/必要架构修订仍由设计 owner 独立质询、检查、发布/重绑。默认额度变更沿现有 `--override-manifest`，覆盖前核全部差异；预算批准不授设计权，累计不清零、用户总上限不破、无进展守卫不解除。detached 保留既有完整交付设计授权，默认提额仍须明确不要询问。
+
 ## 3.1.0：产物契约、验证缺口与责任修订（7d9c2e41）
 
 用户 2026-10-23 裁决取代 07-16 P0-3 的无差别首触停机。适用 checker 抛异常表示该项未执行/结论未知：保留原必需性及 framework_bug/framework_internal/framework_blocked，以 SKIP 如实报告；必需证据未齐时阶段 INCOMPLETE/open，完成与发布不通过。独立且已授权的工作按真实依赖继续，依赖缺失结论的工作等待；真实产品 FAIL、框架发布件写保护、授权、秘密/不可逆动作及硬预算不变。宿主 Agent 不得改 framework 绕过；修后沿原恢复接口按影响复验，复用仍有效结果，不重置原请求义务或消耗。历史事故记录不改写。
@@ -178,7 +186,7 @@ deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决
 
 ## 3.1.0：按义务执行与旧运行恢复
 
-新请求默认使用 obligation-driven workflow 1.2。完整实现先有设计交接（admitted blueprint + ready CU），再由主 Agent 用 `goal-mode-entry --prepare-scope` 按实际输入、目标和义务建立 Feature 候选——该入口**只生成候选、不冻结范围**；随后两个载体二选一：交互路径直接逐阶段跑 harness，**首次阶段调用**由机器把范围冻结进 `doc/features/<feature>/execution-scope.json`；需要无人值守或 run 级预算/恢复时用现有 prepare-run/attach 产生真实运行身份（有 run 时以 run 为权威）。不选择轨道、不为了流水线补齐叙述文档。仅审查、UT、设备请求使用独立 request CLI，项目维护保持原生入口和请求终点。
+新请求默认使用 obligation-driven workflow 1.2。完整实现先完成设计交接（admitted blueprint + ready CU），再由 `goal-mode-entry --prepare-scope` 只生成候选、不冻结范围；新完整交付在 run 出生时冻结范围。会话经 `--prepare-run --run-mode attended` 后使用 `--next / --report-result @<run-relative-JSON-file> --request <已签发路径>`，无人值守仍用 `goal-runner --detach`；同一 GoalPhaseRuntime 负责正式 gate/finalizer、责任回退和恢复。所有可命令适配器同形接入，阶段隔离仅安排上下文；必需独立 verifier/设计质询保持真实独立。局部维护、纯编译、纯设计、专项 request 保留原终点。
 
 - 集成的是 Maison 发布件，宿主 framework/ 不是 submodule；依赖仅在 framework/harness 安装。
 - framework-init UPDATE 将旧内置 active_workflow=spec-driven 更新为 obligation-driven；自定义 workflow 保留。UPDATE 沿既有 .framework-backup 备份并清理 change-lite 公共桥接，不删除任何 Feature、CU、run 或报告。
@@ -1864,3 +1872,5 @@ UT 的 L3 审计通过现有候选链交回 coding 或 spec；option_a 仅提请
 successor 保留暂被上游缺口挡住的必需阶段；定义 owner 可补齐 unknown，代码输入的源/测试分组及有来源调研增补按投影对齐。真实输入漂移仍走原责任恢复，旧 scope/完成凭证不改写。规则或 verifier 模板变化导致旧证据失效时沿现有重验/后继路径处理，不重建旧证据假通过。
 
 缺核验/回执的 closure-only attempt 使用窄提示，受管阶段负责 verifier 与报告，外层不重复派审。明确无人值守完整交付请求采用既有有界监控；未有合法机器恢复路由时准确停放，repair-notes 不承担改道。刷新消费者生成的入口后再检验该指引生效；开发回归、HAP 真机专项与完整宿主交付分别记录，不互相替代。
+
+默认额度变更仍须原请求/单次明确授权及既有 --override-manifest，累计与用户硬上限不变。

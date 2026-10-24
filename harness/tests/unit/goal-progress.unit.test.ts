@@ -292,6 +292,25 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: '1804 progress keeps the original signed invocation start across re-sign and validation resume',
+    run: () => {
+      const events: GoalRunEvent[] = [
+        { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['coding'] },
+        { ts: '2026-06-10T12:00:01.000Z', type: 'phase_start', phase: 'coding', attempt: 1 },
+        { ts: '2026-06-10T12:00:02.000Z', type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i1' },
+        { ts: '2026-06-10T12:00:03.000Z', type: 'phase_start', phase: 'coding', driver: 'session', invoke_id: 'coding-i1', handoff_request: { path: 'first.json', sha256: 'a'.repeat(64) } },
+        { ts: '2026-06-10T12:03:00.000Z', type: 'phase_start', phase: 'coding', driver: 'session', invoke_id: 'coding-i1', handoff_request: { path: 'resigned.json', sha256: 'b'.repeat(64) } },
+        { ts: '2026-06-10T12:04:00.000Z', type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i1' },
+        { ts: '2026-06-10T12:04:01.000Z', type: 'resume', start_index: 0 },
+        { ts: '2026-06-10T12:04:02.000Z', type: 'phase_start', phase: 'coding', attempt: 1 },
+      ];
+      const snapshot = projectGoalProgress({ projectRoot: '/tmp', manifest: mkManifest({ start_phase: 'coding', end_phase: 'coding' }), events, workflow,
+        nowMs: Date.parse('2026-06-10T12:05:02.000Z') });
+      const row = snapshot.phases_summary.find(phase => phase.phase === 'coding');
+      assert(row?.duration_ms === 300000, `original execution start must survive re-sign and post-agent resume: ${JSON.stringify(row)}`);
+    },
+  },
+  {
     name: 'projectGoalProgress: completed phase duration stops at phase_verdict',
     run: () => {
       const snap = projectGoalProgress({
@@ -1988,6 +2007,30 @@ cases.push({ name: '395 等待一开始显示引导原因，ready/timeout 清除
     }
     assert(!events.some(e => e.type === 'phase_halt'), '无需虚假 halt');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+} });
+
+cases.push({ name: 'session budget projection: 有效窗内睡眠、隔夜迟到收口和后续 gate 与累计预算同源', run: () => {
+  const minute = 60_000;
+  const origin = Date.parse('2026-10-23T08:00:00Z');
+  const at = (minutes: number): string => new Date(origin + minutes * minute).toISOString();
+  const manifest = mkManifest({ start_phase: 'coding', end_phase: 'coding' });
+  const events: GoalRunEvent[] = [
+    { type: 'run_start', ts: at(0), chain: ['coding'] },
+    { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i1', command: 'phase_execute_request', ts: at(0), effective_timeout_ms: 44 * minute },
+    { type: 'phase_start', phase: 'coding', invoke_id: 'coding-i1', driver: 'session', ts: at(0),
+      handoff_request: { path: 'phases/coding/request.json', sha256: 'a' } },
+  ];
+  const project = (now: number) => projectGoalProgress({ projectRoot: '/tmp', manifest, workflow, events, nowMs: origin + now * minute }).budget.wall_elapsed_ms / minute;
+  assert(project(20) === 20, '有效窗内睡眠不得扣除');
+  assert(project(840) === 44, `未报告隔夜必须封窗：${project(840)}`);
+  events.push({ type: 'phase_write_observed', phase: 'coding', ts: at(839) },
+    { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i1', ts: at(840), timed_out: true,
+      handoff_report: { path: 'phases/coding/report.json', sha256: 'report', request_sha256: 'a' } });
+  assert(project(840) === 44, '迟到观察/report不能拉长旧段');
+  events.push({ type: 'run_start', ts: at(840), chain: ['coding'] }, { type: 'harness_start', phase: 'coding', ts: at(840), invoke_id: 'gate' });
+  assert(project(842) === 46, '当前 CLI/gate 直播继续计时');
+  events.push({ type: 'harness_end', phase: 'coding', ts: at(842), invoke_id: 'gate' }, { type: 'run_end', ts: at(842), status: 'HALTED' });
+  assert(project(900) === 46, '收口后停机等待不再计时');
 } });
 
 export async function runAll(): Promise<UnitCaseResult[]> {

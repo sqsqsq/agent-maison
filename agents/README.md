@@ -49,20 +49,20 @@ framework/agents/
 | 字段 | 含义 |
 |---|---|
 | `level` | 既有 native/external/hook 能力级别 |
-| `in_session_reconcile` | 宿主可运行 assess 驱动的会话内循环 |
-| `phase_context_isolation` | 每个 phase 可在新鲜隔离上下文执行 |
-| `supports_resume` | 能恢复同一 goal ledger |
+| `in_session_reconcile` | 既有原生会话调和能力；不是共同 next/report 的准入门槛 |
+| `phase_context_isolation` | 阶段可在隔离上下文执行；false 时主上下文执行并披露 |
+| `supports_resume` | 模型 CLI 原生运输恢复能力；不控制框架交接续作 |
 | `handoff` | `none` / `to_detached` / `bidirectional` |
 
 约束：
 
-- `in_session_reconcile=true` 必须同时声明 `phase_context_isolation=true`；
+- 可运行框架命令且配置有效的会话统一进入同一 runtime 的 `--next / --report-result`；
 - `handoff!=none` 必须声明 `supports_resume=true`；
 - 未声明的新字段按保守 `false` / `none` 处理，不从 CLI 存在性推断；
-- adapter 缺会话隔离时，用户的“有人在场”请求降级为手动 harness+assess；
+- 缺阶段隔离时在主上下文按同一请求执行并披露，必需 verifier/设计质询仍须独立；
 - 无人值守仍须通过 `external_runner.unattended` preflight。
 
-当前显式声明：Codex 支持会话内隔离、resume 与双向 handoff；Claude 支持会话内隔离，但不声明 resume/handoff。其他 adapter 保持保守默认，继续走既有 external runner 或手动路径。用户界面只显示“有人在场 / 无人值守”，不显示内部能力层级。
+当前显式声明：Codex/Claude 支持阶段隔离，Codex 另声明原生 resume 与双向 handoff。其它 adapter 保持保守默认；claude/codex/cursor/codeagent/opencode/chrys/generic/deepseek-harness 的可命令会话均使用同一 next/report 请求与结果形状，不虚改 YAML 能力值。不能运行命令或配置无效时准确报告能力缺口。用户界面只显示“有人在场 / 无人值守”。
 
 schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.yaml) 和 [`goal-adapter-capability.ts`](../harness/scripts/utils/goal-adapter-capability.ts) 为准。
 

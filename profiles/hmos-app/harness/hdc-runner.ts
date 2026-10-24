@@ -556,15 +556,17 @@ function parseJson5(content: string): unknown {
  * 从 AppScope/app.json5 读取 bundleName。
  * 找不到文件或字段缺失抛错（让调用方翻译成 BLOCKER FAIL，不静默兜底）。
  */
-export function loadAppBundleName(projectRoot: string): string {
+export function loadAppBundleName(projectRoot: string, onInvalid: (details: string) => never = details => { throw new Error(details); }): string {
   const appJson = path.join(projectRoot, 'AppScope', 'app.json5');
   if (!fs.existsSync(appJson)) {
-    throw new Error(`未找到 AppScope/app.json5：${appJson}`);
+    return onInvalid(`未找到 AppScope/app.json5：${appJson}`);
   }
-  const obj = parseJson5(fs.readFileSync(appJson, 'utf-8')) as { app?: { bundleName?: string } };
+  let obj: { app?: { bundleName?: string } };
+  try { obj = parseJson5(fs.readFileSync(appJson, 'utf-8')) as typeof obj; }
+  catch (error) { if (error instanceof SyntaxError) return onInvalid(`AppScope/app.json5 不是合法 JSON5：${error.message}`); throw error; }
   const name = obj?.app?.bundleName;
   if (!name || typeof name !== 'string') {
-    throw new Error('AppScope/app.json5 > app.bundleName 缺失或非字符串');
+    return onInvalid('AppScope/app.json5 > app.bundleName 缺失或非字符串');
   }
   return name;
 }

@@ -148,9 +148,6 @@ export function loadGoalCapability(
     issues.push(`goal_capability.handoff 非法（${String(gc.handoff)}）`);
   }
   if (handoff !== 'none' && !supportsResume) issues.push('handoff 要求 supports_resume=true');
-  if (inSessionReconcile && !phaseContextIsolation) {
-    issues.push('in_session_reconcile 要求 phase_context_isolation=true');
-  }
   const capability: GoalCapabilitySpec = {
     mode: mode ?? 'external_runner',
     native_goal: gc.native_goal as GoalCapabilityNative | undefined,
@@ -282,7 +279,6 @@ export function survivalCapabilityOf(
 export type GoalRunMode = 'attended' | 'unattended';
 export type GoalCapabilityRoute =
   | { kind: 'in_session'; reason: string }
-  | { kind: 'manual'; reason: string }
   | { kind: 'external_runner'; reason: string }
   | { kind: 'halt'; reason: string };
 
@@ -293,9 +289,7 @@ export function routeGoalCapability(
 ): GoalCapabilityRoute {
   const capability = loaded.capability;
   if (!loaded.present || !loaded.valid || !capability) {
-    return requested === 'attended'
-      ? { kind: 'manual', reason: 'adapter 未声明有效会话内能力，回退为手动 harness+assess' }
-      : { kind: 'halt', reason: 'adapter goal capability 缺失或非法，不能无人值守执行' };
+    return { kind: 'halt', reason: 'adapter goal capability 缺失或非法，不能执行完整交付' };
   }
   if (options.requireHandoff && (
     !capability.supports_resume || capability.handoff === 'none'
@@ -303,10 +297,12 @@ export function routeGoalCapability(
     return { kind: 'halt', reason: 'adapter 未声明 resume+handoff 能力' };
   }
   if (requested === 'attended') {
-    if (capability.in_session_reconcile && capability.phase_context_isolation) {
-      return { kind: 'in_session', reason: 'adapter 支持会话内调和与 phase 隔离' };
-    }
-    return { kind: 'manual', reason: 'adapter 不支持 phase 隔离，回退为手动 harness+assess' };
+    return {
+      kind: 'in_session',
+      reason: capability.phase_context_isolation
+        ? '会话以共同 next/report 内核交接，阶段在隔离上下文执行'
+        : '会话以共同 next/report 内核交接，阶段在主上下文执行；必需独立核验仍须独立',
+    };
   }
   if (options.unattendedPreflightOk !== true) {
     return { kind: 'halt', reason: '无人值守 preflight 未通过' };

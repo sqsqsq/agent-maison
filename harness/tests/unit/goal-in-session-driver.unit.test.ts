@@ -1,6 +1,10 @@
 import { freezeExistingGoalDelivery } from '../utils/existing-goal-delivery-fixture';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
+import { spawnSync } from 'child_process';
+import { prepareSessionCliProject } from '../utils/session-cli-project';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import { clearFrameworkConfigCache } from '../../config';
 import {
   assertAttendedRunMode,
@@ -8,6 +12,7 @@ import {
   defaultGoalModeFrameworkRoot,
   deriveInSessionFingerprint,
   prepareGoalModeRun,
+  parseSessionReportResult,
   runGoalModeHostBridge,
 } from '../../scripts/goal-mode-entry';
 import {
@@ -46,6 +51,74 @@ function assert(condition: unknown, message: string): asserts condition {
 interface TestCase { name: string; run: () => Promise<void> | void }
 
 const cases: TestCase[] = [
+  {
+    name: '1804 report-result explicit file input keeps inline JSON, BOM and the run boundary',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'session-report-input-'));
+      const runDir = path.join(root, 'run'); fs.mkdirSync(runDir);
+      try {
+        const report = { status: 'waiting', phase: 'coding', details: '真实结果' };
+        const json = JSON.stringify(report);
+        fs.writeFileSync(path.join(runDir, 'result.json'), '\uFEFF' + json);
+        const expected = path.join(runDir, 'result.json');
+        assert(JSON.stringify(parseSessionReportResult(json, runDir, expected)) === json, 'inline report changed');
+        assert(JSON.stringify(parseSessionReportResult('@result.json', runDir, expected)) === json, 'BOM file report changed');
+        fs.writeFileSync(path.join(runDir, 'other.json'), json);
+        fs.writeFileSync(path.join(root, 'outside.json'), json);
+        for (const input of ['@../outside.json', '@other.json', 'result.json', '@result.json/../missing.json']) {
+          let rejected = false;
+          try { parseSessionReportResult(input, runDir, expected); } catch { rejected = true; }
+          assert(rejected, `invalid report input accepted: ${input}`);
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: '1804 generated PowerShell 5.1 report command handles spaces and current interruption overrides historical waiting',
+    run: async () => {
+      if (process.platform !== 'win32') return;
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'maison cli quoting-'));
+      const root = path.join(temporary, 'host with spaces');
+      const oldTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+      try {
+        prepareSessionCliProject(root, 'claude', false);
+        const harness = path.join(root, 'framework/harness');
+        const runDir = path.join(root, 'doc/features/clamp/goal-runs/session-cli');
+        const env = { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') };
+        const args = [path.join(harness, 'node_modules/ts-node/dist/bin.js'), '--project', path.join(harness, 'tsconfig.json'),
+          path.join(harness, 'scripts/goal-mode-entry.ts'), '--project-root', root, '--framework-root', path.join(root, 'framework'),
+          '--feature', 'clamp', '--run-id', 'session-cli', '--adapter', 'claude', '--run-mode', 'attended', '--authorize-autonomy', '--next'];
+        const next = spawnSync(process.execPath, args, { cwd: harness, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        assert(next.status === 0, next.stderr + next.stdout);
+        const issued = JSON.parse(next.stdout.trim());
+        const request = JSON.parse(fs.readFileSync(issued.request.path, 'utf8'));
+        const resultFile = path.join(path.dirname(issued.request.path), `result-e${request.context.owner.epoch}.json`);
+        fs.writeFileSync(resultFile, '\uFEFF' + JSON.stringify({ status: 'waiting', phase: 'coding', details: 'unfinished fixture work' }));
+        const psScript = path.join(temporary, 'generated command.ps1');
+        fs.writeFileSync(psScript, `$PSVersionTable.PSVersion.ToString()\n${issued.next_command}\nexit $LASTEXITCODE\n`);
+        const reported = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript],
+          { cwd: harness, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        assert(reported.status === 0, reported.stderr + reported.stdout);
+        assert(/^5\.1\./.test(reported.stdout), 'test must use Windows PowerShell 5.1');
+        const waiting = JSON.parse(reported.stdout.trim().split(/\r?\n/).at(-1)!);
+        assert(waiting.result.status === 'waiting' && waiting.exit_code === 0, JSON.stringify(waiting));
+        const fault = path.join(temporary, 'startup-fault.cjs');
+        fs.writeFileSync(fault, `const fs=require('fs'),append=fs.appendFileSync;let fired=false;fs.appendFileSync=function(file,data,...args){if(!fired&&String(file).endsWith('events.jsonl')&&String(data).includes('"type":"run_start"')){fired=true;throw new Error('current startup write failure');}return append.call(this,file,data,...args)};`);
+        const interrupted = spawnSync(process.execPath, args, { cwd: harness, env: { ...env, NODE_OPTIONS: `--require ${JSON.stringify(fault)}` }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        assert(interrupted.status === 1, interrupted.stderr + interrupted.stdout);
+        const result = JSON.parse(interrupted.stdout.trim());
+        assert(result.result.status === 'fused' && result.exit_code === 1, JSON.stringify(result));
+        assert(result.recovery.reason === 'uncaught_exception' && result.recovery.guidance.includes('current startup write failure'), JSON.stringify(result));
+        assert(!result.next_command && !JSON.stringify(result).includes('unfinished fixture work'), 'old waiting reason or blind retry escaped');
+        const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line));
+        assert(events.at(-1).status === 'INTERRUPTED', 'runtime terminal must remain authoritative');
+      } finally {
+        if (oldTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = oldTrust;
+        fs.rmSync(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
   {
     name: 'goal-mode CLI default framework root contains workflows',
     run: () => {
@@ -215,7 +288,7 @@ const cases: TestCase[] = [
           runId: 'host-manual-zero',
           hostAuthorization: { mode: 'manual' },
         });
-        assert(probe.exitCode === 0, `manual boundary exit=${probe.exitCode}`);
+        assert(probe.exitCode === 2, `manual authorization must return waiting, exit=${probe.exitCode}`);
         assert(probe.invokedPhases.length === 0, `manual invoked=${probe.invokedPhases.join(',')}`);
         assert(probe.harnessPhases.length === 0, `manual gates=${probe.harnessPhases.join(',')}`);
       } finally {
@@ -224,32 +297,19 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'attended adapter without phase isolation falls back to manual before owner or invoke',
+    name: 'attended adapter without phase isolation executes the shared session runtime and discloses its main context',
     run: async () => {
       const root = setupGoalRuntimeHost('generic').root;
       try {
-        const prepared = prepareGoalModeRun({
-          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
-          feature: 'bc-openCard', runId: 'host-capability-manual', adapter: 'generic',
-          requirement: 'manual capability fallback', endPhase: 'spec',
-        });
-        const before = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'));
-        let invoked = 0;
-        const result = await runGoalModeHostBridge({
-          projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
-          feature: 'bc-openCard', runId: prepared.manifest.run_id,
-          adapter: 'generic', runMode: 'attended',
-          executePhase: async phase => {
-            invoked += 1;
-            return { status: 'passed', phase };
-          },
-        });
-        assert(result.status === 'manual_fallback', JSON.stringify(result));
-        assert(invoked === 0, `manual capability fallback invoked=${invoked}`);
-        assert(before.equals(fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'))),
-          'manual capability fallback appended lifecycle events');
-        assert(readRunControl(prepared.runDir, prepared.manifest.run_id)?.owner === null,
-          'manual capability fallback acquired an owner');
+        let prompt = '';
+        const probe = await runGoalRuntimeChain(root, { adapter: 'generic', runId: 'host-main-context',
+          freshEndPhase: 'spec', viaSessionStep: true, onSpec: ctx => { prompt = ctx.prompt; } });
+        assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'phase_halt')));
+        assert(probe.invokedPhases.join(',') === 'spec' && probe.harnessPhases.join(',') === 'spec', 'main-context execution must still use the formal gate');
+        assert(prompt.includes('在主上下文按本请求执行并披露') && prompt.includes('仍须实际独立上下文或独立 provider'), 'isolation disclosure must preserve required independent verification');
+        assert(probe.events.some(event => event.type === 'agent_invoke_end' && event.handoff_report), 'the public session result must be archived');
+        assert(!probe.events.some(event => event.type === 'agent_process_settled'), 'main context cannot manufacture process settlement');
+        assert(readRunControl(probe.reportDir, 'host-main-context')?.owner?.state === 'released', 'completed session releases its owner');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -515,15 +575,20 @@ const cases: TestCase[] = [
 
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export function getCases() { return cases; }
+export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   for (const testCase of cases) {
+    if (!matchesUnitCase(testCase.name, filter)) continue;
+    const finish = startCaseTiming([testCase.name], timings);
     try {
       await testCase.run();
       results.push({ name: testCase.name, ok: true });
     } catch (error) {
       results.push({ name: testCase.name, ok: false, error: (error as Error).stack ?? String(error) });
-    }
+    } finally { finish(); }
   }
-  return results;
+  return selectedUnitCases(results, filter, timings);
 }
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

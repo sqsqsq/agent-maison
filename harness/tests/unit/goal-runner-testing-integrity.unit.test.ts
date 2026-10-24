@@ -128,7 +128,7 @@ import { buildScriptReport, generateScriptReport, resolveVerdictFromChecks } fro
 import { resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { computeReplayChecks, seedReplay } from './test-report-writer.unit.test';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
-import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
+import { prepareGoalModeRun, runGoalModeHostBridge, runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import { checkUiSpecFidelityGate } from '../../../profiles/hmos-app/harness/spec-ui-spec-check';
 import { decideRunContinuation } from '../../scripts/utils/goal-run-creation';
@@ -462,12 +462,15 @@ export async function runGoalRuntimeChain(
     executorMode?: 'attended' | 'detached';
     adapter?: string;
     viaHostBridge?: boolean;
+    viaSessionStep?: boolean;
+    sessionSelfCheck?: boolean;
     viaRuntimeClass?: boolean;
     launchCwd?: string;
     launchArgs?: string[];
     hostAuthorization?: {
       mode: 'manual' | 'batch_authorized' | 'goal_mode';
       through_phase?: string;
+      autonomyAuthorized?: boolean;
     };
     hostLeaseMs?: number;
     hostMaxRounds?: number;
@@ -975,6 +978,7 @@ export async function runGoalRuntimeChain(
         attempt: n,
         prompt,
         runId,
+        goalAttemptId: issued?.attemptId ?? childEnv.MAISON_GOAL_ATTEMPT,
         // attended 走 phase_execute_request，本轮**不产生**任何 invoke 日志（plan 8d2b4f60 D2）
         outputLogPath: '',
         ...(issued ? { issued } : {}),
@@ -985,6 +989,10 @@ export async function runGoalRuntimeChain(
       if (phase === 'plan') opts.onPlan?.(ctx);
       if (phase === 'ut') opts.onUt?.(ctx);
       if (phase === 'review') opts.onReview?.(ctx);
+      if (opts.onOutOfChain && (phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
+        const outcome = await opts.onOutOfChain({ ...ctx, goalAttemptId: issued?.attemptId });
+        return { status: outcome?.exitCode && outcome.exitCode !== 0 ? 'failed' : 'passed', phase };
+      }
       return {
         status: opts.failExecutorFor?.(phase, n) ? 'failed' : 'passed',
         phase,
@@ -1019,7 +1027,7 @@ export async function runGoalRuntimeChain(
       writeFile(root, 'increment-req.txt', opts.freshRequirementFile);
     }
     const useManifestPath = Boolean(opts.freshBudget || opts.freshManifestContent);
-    if (opts.resume && !opts.skipLegacySeal) {
+    if (opts.resume && !opts.skipLegacySeal && !opts.viaSessionStep) {
       // plan c6a9e4d2 t3 适配：3.0.0 起 resume 前对账要求 run 有过 Job 绑定事件
       // （agent_process_bound）。测试桩代际的 events 由基线 runner 产出、无该事件
       // （旧版 run 语义）；追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态
@@ -1080,7 +1088,7 @@ export async function runGoalRuntimeChain(
     process.chdir(opts.launchCwd ?? root);
     clearFrameworkConfigCache();
     let bridgeReportDir: string | null = null;
-    const exitCode = opts.viaHostBridge
+    const exitCode = opts.viaHostBridge || opts.viaSessionStep
       ? await (async () => {
           const bridgeManifest = opts.resume
             ? loadGoalManifestFromRun(root, opts.resume, { feature: featureId })
@@ -1096,6 +1104,41 @@ export async function runGoalRuntimeChain(
                 endPhase: opts.freshEndPhase,
               }).manifest;
           bridgeReportDir = path.resolve(root, bridgeManifest.report_dir);
+          if (opts.viaSessionStep) {
+            const stepOptions = { projectRoot: root, frameworkRoot, feature: featureId, runId: bridgeManifest.run_id,
+              adapter: opts.adapter ?? 'codex', runMode: 'attended', authorization: opts.hostAuthorization ?? { mode: 'goal_mode' as const } };
+            let step = await runGoalModeSessionStep(stepOptions);
+            for (let round = 0; round < 30 && step.type === 'phase_execute_request'; round++) {
+              const requestPath = (step.request as { path: string }).path;
+              const request = JSON.parse(fs.readFileSync(requestPath, 'utf8')) as import('../../scripts/utils/session-execution-handoff').SessionExecutionRequest;
+              const ctx = request.context;
+              let outcome: Awaited<ReturnType<typeof recordAttendedPhase>>;
+              try { outcome = await recordAttendedPhase(ctx.phase, ctx.instruction ?? '', ctx.runId, {}, {
+                runId: ctx.runId, phase: ctx.phase, attemptId: ctx.attemptId, ownerId: ctx.owner.owner_id, ownerEpoch: ctx.owner.epoch }); }
+              catch (error) { throw new Error(`${(error as Error).stack}\nRecent session events: ${JSON.stringify(readEvents(ctx.runDir).slice(-35))}\nControl log: ${fs.readFileSync(path.join(ctx.runDir, 'session-control.log'), 'utf8').slice(-5000)}`); }
+              if (opts.sessionSelfCheck && !request.purpose) {
+                const { spawnSync } = require('child_process') as typeof import('child_process');
+                const arguments_ = [require.resolve('ts-node/dist/bin.js'), '--project', path.join(frameworkRoot, 'harness/tsconfig.json'), path.join(frameworkRoot, 'harness/harness-runner.ts'),
+                  '--project-root', root, '--phase', ctx.phase, '--feature', featureId,
+                  '--goal-run-id', ctx.runId, '--goal-attempt-id', ctx.attemptId, '--goal-owner-id', ctx.owner.owner_id, '--goal-owner-epoch', String(ctx.owner.epoch)];
+                spawnSync(process.execPath, [...arguments_, '--summary'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000, windowsHide: true });
+                const reports = featurePhaseReportsDir(root, featureId, ctx.phase, frameworkRoot);
+                const summaryFile = path.join(reports, 'summary.json');
+                const summary = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, 'utf8')) : {};
+                if (summary.verifier_subject_id) {
+                  (require('../utils/verifier-evidence-fixture') as typeof import('../utils/verifier-evidence-fixture')).publishFixtureVerifierEvidence({
+                    projectRoot: root, reportsDir: reports, feature: featureId, phase: ctx.phase, subjectId: summary.verifier_subject_id,
+                    reportText: 'Independent verifier model substitute for deterministic transaction regression.', skipSummaryPatch: true });
+                  spawnSync(process.execPath, [...arguments_, '--sync-closure'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000, windowsHide: true });
+                }
+              }
+              bridgeReportDir = ctx.runDir;
+              step = await runGoalModeSessionStep({ ...stepOptions, runId: ctx.runId, requestPath, report: outcome });
+            }
+            if (step.type === 'phase_execute_request') throw new Error('session step did not converge');
+            const result = step.result as import('../../scripts/utils/goal-phase-runtime').InSessionRoundResult;
+            return result.status === 'reconciled' || result.status === 'executed' ? 0 : result.status === 'waiting' ? 2 : 1;
+          }
           const result = await runGoalModeHostBridge({
             projectRoot: root,
             frameworkRoot: frameworkRoot,
@@ -6335,6 +6378,10 @@ test('P3 t5 A12/A14 attended：执行者停在授权确认处——有人在场�
     // 调度方 2026-09-29 裁定：有人在场不设冷却——刚停下就重发即重新接入，原授权检查照常执行。
     await requestVia('attended', root, common);
     assert(goalRunIds(root).length === 1 && waits() === 2, `有人在场、未补授权的立即重发须重新接入并以原因再停、不新建 run：runs=${goalRunIds(root).length} waits=${waits()}`);
+    const waitingEvents = goalRunEvents(root, run);
+    assert(waitingEvents.filter(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.status === 'waiting').length === 2,
+      'each returned callback window must close as waiting, without borrowing a CLI process identity');
+    assert(!waitingEvents.some(event => event.type === 'agent_process_settled'), 'callback waiting must not fabricate process settlement');
     authorized = true;
     const done = await requestVia('attended', root, common);
     assert(goalRunIds(root).length === 1 && done.invokedPhases.includes('coding'), `补授权后须重新接入并执行：${done.invokedPhases.join(',')}`);
@@ -6917,6 +6964,12 @@ for (const entry of ['foreground', 'detach', 'attended'] as const) {
       assert(goalRunIds(root).length === 1, `孤儿 run 须被重新接入，不新建：${goalRunIds(root).join(',')}`);
       assert(done.invokedPhases.includes('coding'), `重新接入后须执行 coding：${done.invokedPhases.join(',')}`);
       assertSealedComplete(goalRunEvents(root, run), `${entry} 孤儿锁`);
+      if (entry === 'attended') {
+        const events = goalRunEvents(root, run);
+        assert(events.some(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.status === 'failed'
+          && String(event.detail).includes('injected crash inside coding')), 'a thrown callback must preserve its actual failed terminal result');
+        assert(!events.some(event => event.type === 'agent_process_settled'), 'callback recovery cannot invent process settlement to bypass orphan reconciliation');
+      }
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

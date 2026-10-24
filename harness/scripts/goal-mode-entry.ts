@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import * as readline from 'readline';
+import { readSessionExecution, acceptedSessionReport, normalizeSessionReport, assertSessionRequestFence, sessionRunMaterialPath, sessionReportInputPath, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import type {
@@ -16,6 +16,7 @@ import { collectSupersededAncestorEvents, loadEventsJsonl } from './utils/goal-r
 import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
 import { projectCanonicalLifecycle } from './utils/goal-canonical-lifecycle';
 import {
+  readRunControl,
   ensureRunControl,
   releaseRunOwner,
 } from './utils/goal-run-control';
@@ -94,6 +95,8 @@ export interface PrepareGoalModeRunOptions {
   startPhase?: string;
   endPhase?: string;
   forceFresh?: boolean;
+  budgetOverride?: boolean;
+  autonomyAuthorized?: boolean;
 }
 
 /** harness/scripts → framework root；standalone 与 consumer 的目录层级一致。 */
@@ -124,6 +127,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
           requirement,
           ...(options.requirementSourceFiles?.length ? { requirementSourceFiles: options.requirementSourceFiles } : {}),
           attended: true,
+          budgetOverride: options.budgetOverride === true,
         },
       });
   if (continuation.kind === 'hold') throw new Error(`[goal-mode-entry] ${continuation.guidance}`);
@@ -164,10 +168,10 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
     }, { projectRoot: options.projectRoot, featuresDir });
     const manifest = inheritSuccessorManifest(birthInput, source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
-    // plan a2f7c9e4 §3.1：与 runtime 出生段同一个有效预算解析；无法核验时在建 run 之前抛出（有人在场入口没有 --override-manifest）。
+    // Same budget inheritance and explicit override as the runtime birth path.
     const effectiveBudget = resolveCycleEffectiveBudget({
       projectRoot: options.projectRoot, featuresDir, feature, frameworkRoot: options.frameworkRoot, targets: continuation.targets,
-      sourceBudget: source.budget, birthInputBudget: birthInput.budget, override: false,
+      sourceBudget: source.budget, birthInputBudget: birthInput.budget, override: options.budgetOverride === true,
     });
     manifest.budget = effectiveBudget.budget;
     console.log(`[goal-mode-entry] 后继预算：${effectiveBudget.basis}`);
@@ -265,6 +269,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
 }
 
 export interface GoalModeHostBridgeOptions {
+  sessionHandoff?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['sessionHandoff'];
+  overrideManifest?: boolean;
   onScopeRevision?: import('./goal-phase-runtime').GoalPhaseRuntimeLaunchOptions['onScopeRevision'];
   projectRoot: string;
   frameworkRoot: string;
@@ -357,18 +363,6 @@ export async function runGoalModeHostBridge(
     loadGoalCapability(options.frameworkRoot, adapter),
     'attended',
   );
-  if (attendedRoute.kind === 'manual') {
-    const result: InSessionRoundResult = {
-      status: 'manual_fallback',
-      assessment: null,
-      waiting_item: attendedRoute.reason,
-      status_line:
-        `feature=${manifest.feature} | phase=${manifest.start_phase} | ` +
-        `运行方式=有人在场 | 等待=${attendedRoute.reason}`,
-    };
-    options.onRound?.(result);
-    return result;
-  }
   if (attendedRoute.kind !== 'in_session') {
     throw new Error(`[goal-mode-entry] attended capability route 非法：${attendedRoute.reason}`);
   }
@@ -391,6 +385,7 @@ export async function runGoalModeHostBridge(
   });
   const runtime = new GoalPhaseRuntime({
     onScopeRevision: options.onScopeRevision,
+    sessionHandoff: options.sessionHandoff,
     args: [
       hasExecutionStart ? '--resume' : '--attach-created', manifest.run_id,
       '--feature', manifest.feature,
@@ -401,6 +396,7 @@ export async function runGoalModeHostBridge(
       '--project-root', options.projectRoot,
       '--framework-root', options.frameworkRoot,
       ...(options.forceTakeover ? ['--force-resume'] : []),
+      ...(options.overrideManifest ? ['--override-manifest'] : []),
     ],
     ownerKind: 'session',
     executor,
@@ -408,64 +404,173 @@ export async function runGoalModeHostBridge(
     ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
     ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
   });
+  const priorEventCount = loadEventsJsonl(path.join(runDir, 'events.jsonl')).length;
+  const invocationStartedAt = new Date().toISOString();
   const exitCode = await runtime.run();
+  const changedRun = runtime.lastRunId && runtime.lastRunId !== manifest.run_id;
   if (runtime.lastRunId && runtime.lastRunId !== manifest.run_id) {
     manifest = loadGoalManifestFromRun(options.projectRoot, runtime.lastRunId, { feature: options.feature });
     runDir = path.resolve(options.projectRoot, manifest.report_dir);
   }
 
   const rawEvents = loadEventsJsonl(path.join(runDir, 'events.jsonl'));
-  const canonical = projectCanonicalLifecycle(rawEvents);
+  const currentEvents = changedRun
+    ? rawEvents.filter(event => typeof event.ts === 'string' && event.ts >= invocationStartedAt)
+    : rawEvents.slice(priorEventCount);
+  const canonical = projectCanonicalLifecycle(currentEvents);
   const lastVerdict = [...canonical].reverse().find((event) => event.type === 'phase_verdict');
   const lastHalt = [...canonical].reverse().find((event) => event.type === 'phase_halt');
-  const lastEnd = [...canonical].reverse().find((event) => event.type === 'run_end');
+  const rawHalt = [...currentEvents].reverse().find(event => event.type === 'phase_halt') as Record<string, unknown> | undefined;
+  const haltDetail = [rawHalt?.detail, rawHalt?.halt_guidance].find(value => typeof value === 'string' && value.trim()) as string | undefined;
+  const lastEnd = [...currentEvents].reverse().find(event => event.type === 'run_end') as Record<string, unknown> | undefined;
+  const completed = exitCode === 0 && (lastEnd?.status === 'CHAIN_SLICE_COMPLETED'
+    || !currentEvents.length && [...rawEvents].reverse().find(event => event.type === 'run_end')?.status === 'CHAIN_SLICE_COMPLETED');
+  const waiting = lastHalt?.type === 'phase_halt' && lastHalt.halt_reason === 'executor_waiting'
+    && (!lastEnd || lastEnd.halt_reason === 'executor_waiting');
+  const terminalFailure = !waiting && (lastEnd?.status === 'HALTED' || lastEnd?.status === 'INTERRUPTED');
+  const terminalDetail = [lastEnd?.error, haltDetail, lastEnd?.halt_reason, lastEnd?.reason]
+    .find((value): value is string => typeof value === 'string' && !!value.trim())?.slice(0, 1200);
   const phase = lastVerdict?.type === 'phase_verdict'
     ? lastVerdict.phase
     : lastHalt?.type === 'phase_halt'
       ? lastHalt.phase
       : manifest.start_phase;
-  const outcome = lastVerdict?.type === 'phase_verdict'
+  const outcome = terminalFailure
+    ? { status: 'failed' as const, phase, details: terminalDetail }
+    : lastVerdict?.type === 'phase_verdict'
     ? {
         status: lastVerdict.verdict === 'PASS' ? 'passed' as const : 'failed' as const,
         phase,
         details: lastVerdict.halt_reason,
       }
     : lastHalt?.type === 'phase_halt'
-      ? { status: 'waiting' as const, phase, details: lastHalt.halt_reason }
+      ? { status: 'waiting' as const, phase, details: haltDetail?.slice(0, 1200) ?? lastHalt.halt_reason }
       : undefined;
   const result: InSessionRoundResult = {
+    run_id: manifest.run_id,
+    exit_code: exitCode,
     status: exitCode === 0 && options.authorization?.mode === 'manual'
-      ? 'manual_fallback'
-      : lastEnd?.type === 'run_end' && lastEnd.status === 'CHAIN_SLICE_COMPLETED'
+      ? 'waiting'
+      : completed
       ? 'reconciled'
-      : lastHalt?.type === 'phase_halt' && lastHalt.halt_reason === 'executor_waiting'
+      : waiting
         ? 'waiting'
         : exitCode === 0
           ? 'executed'
           : 'fused',
     assessment: null,
     outcome,
-    ...(exitCode !== 0 ? { waiting_item: lastHalt?.type === 'phase_halt'
-      ? lastHalt.halt_reason ?? 'runtime halted'
-      : 'runtime halted' } : {}),
-    status_line: `feature=${manifest.feature} | phase=${phase} | runtime=canonical | exit=${exitCode}`,
+    ...(exitCode !== 0 ? { waiting_item: terminalDetail ?? lastHalt?.halt_reason ?? 'runtime halted' } : {}),
+    ...(exitCode !== 0 && (lastEnd || rawHalt) ? { recovery: {
+      reason: String(lastEnd?.halt_reason ?? lastEnd?.reason ?? rawHalt?.halt_reason ?? '') || undefined,
+      ...(rawHalt?.probe ? { probe: rawHalt.probe } : {}),
+      guidance: terminalDetail,
+    } } : {}),
+    status_line: `feature=${manifest.feature} | phase=${phase} | runtime=canonical | exit=${exitCode}${terminalFailure ? ` | ${lastEnd?.status}: ${terminalDetail ?? ''}` : ''}`,
   };
   options.onRound?.(result);
   return result;
+}
+
+export function parseSessionReportResult(value: string, runDir: string, expectedInputPath: string): SessionExecutionReport {
+  let text = value;
+  if (value.startsWith('@')) {
+    const file = sessionRunMaterialPath(runDir, path.resolve(runDir, value.slice(1)));
+    if (file !== sessionRunMaterialPath(runDir, expectedInputPath)) throw new Error('[session-handoff] report input is not the current request result file');
+    text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  }
+  return normalizeSessionReport(JSON.parse(text));
+}
+
+export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOptions, 'executePhase' | 'sessionHandoff'> & {
+  requestPath?: string; report?: SessionExecutionReport;
+}): Promise<Record<string, unknown>> {
+  assertAttendedRunMode(options.runMode);
+  const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) });
+  if (manifest.adapter !== options.adapter) throw new Error('[goal-mode-entry] attach adapter mismatch');
+  assertGoalRunAttachable(options.projectRoot, manifest);
+  const runDir = path.resolve(options.projectRoot, manifest.report_dir);
+  const current = readSessionExecution(runDir, options.requestPath);
+  if (options.report) {
+    options = { ...options, report: normalizeSessionReport(options.report) };
+    if (current && current.request.context.phase !== options.report!.phase) throw new Error('[session-handoff] invalid execution phase');
+  }
+  const quote = (value: string): string => process.platform === 'win32'
+    ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\\''")}'`;
+  const command = (action: string, commandRunId = options.runId): string => `npx ts-node ${quote(path.join(options.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(options.feature)} --run-id ${quote(commandRunId)} --adapter ${quote(options.adapter)} --run-mode attended --project-root ${quote(options.projectRoot)} --framework-root ${quote(options.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''} ${action}`;
+  const project = (issued: IssuedSessionExecution): Record<string, unknown> => ({
+    type: 'phase_execute_request', run_id: issued.request.context.runId, phase: issued.request.context.phase, attempt_id: issued.request.context.attemptId,
+    request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
+    log: path.join(runDir, 'session-control.log'),
+    status: 'execution_required', status_line: '读取请求原件，按原身份执行并自检，再报告；本次领取不表示等待或通过。',
+    deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
+    next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + path.relative(issued.request.context.runDir, sessionReportInputPath(issued.request.context.runDir, issued)).replace(/\\/g, '/'))}`, issued.request.context.runId),
+  });
+  if (options.report && !current) throw new Error('[session-handoff] report has no signed request');
+  if (current) {
+    const accepted = acceptedSessionReport(runDir, current);
+    if (accepted && options.report) {
+      if (JSON.stringify(accepted.report) !== JSON.stringify(options.report)) throw new Error('[session-handoff] conflicting execution report');
+      return { type: 'goal_session_report_received', run_id: options.runId, phase: accepted.report.phase, status: accepted.report.status, duplicate: true,
+        next_command: command('--next'), report: path.resolve(runDir, accepted.event.handoff_report!.path) };
+    }
+    if (!accepted) {
+      const control = readRunControl(runDir, options.runId);
+      const releasedForTakeover = options.forceTakeover && !options.report && control?.owner?.state === 'released'
+        && control.current_epoch === current.request.context.owner.epoch && control.owner.owner_id === current.request.context.owner.owner_id;
+      if (!releasedForTakeover) assertSessionRequestFence(runDir, current);
+      if (releasedForTakeover) { /* runtime acquires and appends the replacement fence under its physical locks */ }
+      else if (!options.report && Date.parse(current.request.deadline) > Date.now()) return project(current);
+    }
+  }
+  let issued: IssuedSessionExecution | undefined;
+  const controlLog = path.join(runDir, 'session-control.log');
+  const logOffset = fs.existsSync(controlLog) ? fs.statSync(controlLog).size : 0;
+  const original = { log: console.log, warn: console.warn, error: console.error };
+  const log = (...args: unknown[]): void => fs.appendFileSync(controlLog, args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ') + '\n');
+  console.log = log; console.warn = log; console.error = log;
+  const showFatalExit = (code: number): void => {
+    if (!code) return;
+    let detail = '';
+    try { detail = fs.readFileSync(controlLog, 'utf8').trim().split(/\r?\n/).slice(-3).join(' | ').slice(-700); } catch { /* original exit remains authoritative */ }
+    original.error(`[goal-mode-entry] exit=${code} ${detail}\nlog=${controlLog}`);
+  };
+  process.once('exit', showFatalExit);
+  let result: InSessionRoundResult;
+  try {
+    result = await runGoalModeHostBridge({ ...options,
+      executePhase: async () => { throw new Error('nonresident session cannot call an in-process executor'); },
+      sessionHandoff: { requestPath: options.requestPath, report: options.report, onRequest: request => { issued = request; } },
+    });
+  } finally { process.removeListener('exit', showFatalExit); Object.assign(console, original); }
+  if (issued) return project(issued);
+  const actualRunId = result.run_id ?? options.runId;
+  const actualRunDir = actualRunId === options.runId ? runDir : path.resolve(options.projectRoot,
+    loadGoalManifestFromRun(options.projectRoot, actualRunId, { feature: options.feature }).report_dir);
+  if (result.exit_code && result.status !== 'waiting' && !result.recovery) {
+    const detail = fs.readFileSync(controlLog).subarray(logOffset).toString('utf8').trim().split(/\r?\n/).slice(-3).join(' | ').slice(-1200);
+    if (detail) { result.waiting_item = detail; result.recovery = { guidance: detail }; }
+  }
+  return { type: 'goal_session_result', run_id: actualRunId, result, log: controlLog,
+    exit_code: result.status === 'waiting' ? 0 : result.exit_code ?? 0,
+    report_dir: actualRunDir,
+    ...(result.status === 'executed' || result.status === 'waiting' ? { next_command: command('--next', actualRunId) } : {}),
+    ...(result.recovery && (result.status === 'waiting' || result.status === 'fused') ? { recovery: result.recovery } : {}),
+    ...(!options.authorization?.autonomyAuthorized ? { authorization_guidance: '本次按需确认；主 Agent 应先核对已有可信原授权再重传。' } : {}) };
 }
 
 async function main(): Promise<void> {
   const argv = minimist(process.argv.slice(2), {
     string: [
       'project-root', 'framework-root', 'feature', 'run-id', 'adapter', 'requirement', 'start', 'end',
-      'authorization-mode', 'through-phase', 'run-mode', 'adapter-source',
+      'authorization-mode', 'through-phase', 'run-mode', 'adapter-source', 'request', 'report-result',
       // D0.2 候选生成入参（主 Agent 四项职责的机器接口）
       'completion-target', 'requested-results', 'requested-phases',
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file',
     ],
-    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help'],
+    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest'],
   });
   if (argv.help) {
     console.log(
@@ -482,8 +587,7 @@ async function main(): Promise<void> {
       '       --requested-results "refreshed balance is correct" --requested-phases coding,review,ut\n' +
       '       --impact-behavior-change false --impact-reason "internal value only" --impact-basis src/ledger/Balance.ets\n' +
       'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
-      'Protocol: stdout emits one JSON phase_execute_request per round; stdin supplies ' +
-      'one JSON {status:"passed|failed|waiting",phase,details?} response.',
+      'Protocol: --next returns a saved request and exits; --report-result @<run-relative JSON file> --request <saved path> consumes a result (inline JSON remains supported). Only the current request result input file may be written by the executor. Optional --authorize-autonomy and --override-manifest are trusted launch inputs.',
     );
     return;
   }
@@ -533,6 +637,8 @@ async function main(): Promise<void> {
       startPhase: typeof argv.start === 'string' ? argv.start : undefined,
       endPhase: typeof argv.end === 'string' ? argv.end : undefined,
       forceFresh: Boolean(argv.force),
+      budgetOverride: Boolean(argv['override-manifest']),
+      autonomyAuthorized: Boolean(argv['authorize-autonomy']),
     });
     console.log(JSON.stringify({
       type: 'goal_run_prepared',
@@ -541,7 +647,7 @@ async function main(): Promise<void> {
       run_dir: prepared.runDir,
       // plan 4e6fb3b6 §7：fresh = 新出生；rejoin = 同一任务的未终局 run，附着它继续（条件是否解除由原检查判断）
       continuation: prepared.continuation.kind,
-      next: 'rerun without --prepare-run to attach the attended host bridge',
+      next: 'rerun with --next and this run id; re-pass any still-valid explicit launch authorization',
     }));
     return;
   }
@@ -645,46 +751,24 @@ async function main(): Promise<void> {
   if (!['manual', 'batch_authorized', 'goal_mode'].includes(mode)) {
     throw new Error(`authorization mode 非法：${mode}`);
   }
-  const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-  const lines = input[Symbol.asyncIterator]();
-  try {
-    const result = await runGoalModeHostBridge({
-      projectRoot,
-      frameworkRoot,
-      feature,
-      runId,
-      adapter,
-      runMode,
-      forceTakeover: Boolean(argv['force-takeover']),
-      authorization: {
-        mode: mode as 'manual' | 'batch_authorized' | 'goal_mode',
-        ...(argv['through-phase'] ? { through_phase: String(argv['through-phase']) } : {}),
-      },
-      onRound: (round) => console.error(round.status_line),
-      executePhase: async (phase, recommendation, context) => {
-        console.log(JSON.stringify(buildPhaseExecuteRequest(context, recommendation)));
-        const next = await lines.next();
-        if (next.done) throw new Error('phase executor protocol EOF');
-        const response = JSON.parse(next.value) as {
-          status?: string; phase?: string; details?: string;
-        };
-        if (!['passed', 'failed', 'waiting'].includes(response.status ?? '')) {
-          throw new Error('phase executor response.status 非法');
-        }
-        if (response.phase && response.phase !== phase) {
-          throw new Error(`phase executor response phase mismatch: ${response.phase} != ${phase}`);
-        }
-        return {
-          status: response.status as 'passed' | 'failed' | 'waiting',
-          phase,
-          details: response.details,
-        };
-      },
-    });
-    console.log(JSON.stringify({ type: 'goal_session_result', result }));
-  } finally {
-    input.close();
+  if (Boolean(argv.next) === (typeof argv['report-result'] === 'string')) throw new Error('choose exactly one of --next or --report-result <JSON>');
+  if (argv['report-result'] && !argv.request) throw new Error('--report-result requires --request');
+  let report: SessionExecutionReport | undefined;
+  if (typeof argv['report-result'] === 'string') {
+    const reportRunDir = path.resolve(projectRoot, loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir: relFeaturesDir(projectRoot) }).report_dir);
+    const issued = readSessionExecution(reportRunDir, path.resolve(String(argv.request)));
+    if (!issued) throw new Error('[session-handoff] report has no signed request');
+    report = parseSessionReportResult(argv['report-result'], reportRunDir, sessionReportInputPath(reportRunDir, issued));
   }
+  const result = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature, runId, adapter, runMode,
+    forceTakeover: Boolean(argv['force-takeover']), overrideManifest: Boolean(argv['override-manifest']),
+    authorization: { mode: mode as 'manual' | 'batch_authorized' | 'goal_mode', autonomyAuthorized: Boolean(argv['authorize-autonomy']),
+      ...(argv['through-phase'] ? { through_phase: String(argv['through-phase']) } : {}) },
+    ...(argv.request ? { requestPath: path.resolve(String(argv.request)) } : {}), ...(report ? { report } : {}),
+  });
+  console.log(JSON.stringify(result));
+  if (typeof result.exit_code === 'number') process.exitCode = result.exit_code;
+
 }
 
 if (require.main === module) {

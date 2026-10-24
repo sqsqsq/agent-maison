@@ -658,8 +658,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
-    // D1 §6.5 出口②：同一条三步顺序。晚到候选（§5.1.2 ②）正是在这条路上才成立，
-    // 所以这里**同样要先应用修订再判完成**，不能只接生成函数。
+    // Independent closure reports its result; full delivery must transfer to the shared runtime.
     if (exitCode === 0 && !hasGoalExecutionSignal()) {
       try {
         const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
@@ -670,8 +669,7 @@ async function main(): Promise<void> {
           workflowTrack: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, syncFeature)),
           runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
         });
-        if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
-        if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+        if (outcome.skippedReason === 'goal-runtime-required') console.log('   → 本次仅完成独立阶段检查；完整交付须经 goal-mode-entry --prepare-run 正式承接既有范围，再用 --next / --report-result。');
       } catch (error) {
         // 第四轮阻断 4：`--sync-closure` 出口同样「写 BLOCKER 进失败报告 + 非零退出」。
         // 这条出口的报告面就是本阶段的 script-report，用既有 writer 追加一条 BLOCKER。
@@ -1586,9 +1584,7 @@ async function main(): Promise<void> {
       resolvedFrameworkRoot,
     );
   }
-  // D1 §6.5/§6.7 出口①（普通阶段尾部）：**先应用修订、再重读有效范围、最后判完成并生成原件**。
-  // 有 run 身份时整段是 no-op（run 有自己的 runtime 收尾）。三步顺序与判据与 `--sync-closure`
-  // 出口**同一个函数**，不复制。
+  // Same independent-check exit as --sync-closure; no runless orchestration or completion writer.
   let featureScopeClosingFailure: Error | undefined;
   if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL && !hasGoalExecutionSignal()) {
     try {
@@ -1600,8 +1596,7 @@ async function main(): Promise<void> {
         workflowTrack: closureTrack,
         runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
       });
-      if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
-      if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+      if (outcome.skippedReason === 'goal-runtime-required') console.log('   → 本次仅完成独立阶段检查；完整交付须经 goal-mode-entry --prepare-run 正式承接既有范围，再用 --next / --report-result。');
     } catch (error) {
       // D1.2（第四轮阻断 4）：收尾失败**两件事都要做**——把 BLOCKER 写进既有失败报告路径
       //（宿主 agent 才看得到原因），并让进程非零退出（脚本调用方才拦得住）。

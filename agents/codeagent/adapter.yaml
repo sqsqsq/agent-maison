@@ -65,6 +65,9 @@ user_confirmation:
 image_input: tool_read
 
 goal_capability:
+  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
+  # 隔离声明只决定阶段上下文；缺省 false 时主上下文执行，必需独立核验仍真实独立。
+  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
   mode: native_goal
   # 2026-07-29 宿主实证：stream-json 事件流（api_retry/result/tool_use Read）与 claude
   # 逐字段同构；agent-invoke.ts 按家族谓词复用 claude argv（二进制 codeagentcli）。

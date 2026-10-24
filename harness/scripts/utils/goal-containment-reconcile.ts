@@ -91,7 +91,7 @@ export function unclosedAgentInvokeCount(events: ReadonlyArray<unknown>): number
   let count = 0;
   for (const raw of events) {
     if (!raw || typeof raw !== 'object') continue;
-    const e = raw as { type?: unknown; phase?: unknown; invoke_id?: unknown };
+    const e = raw as { type?: unknown; phase?: unknown; invoke_id?: unknown; command?: unknown };
     const type = e.type;
     if (type !== 'agent_invoke_start' && type !== 'agent_invoke_end'
       && type !== 'agent_invoke_recovered' && type !== 'agent_invoke') {
@@ -101,6 +101,7 @@ export function unclosedAgentInvokeCount(events: ReadonlyArray<unknown>): number
     const invokeId = typeof e.invoke_id === 'string' ? e.invoke_id : '';
     if (type === 'agent_invoke_start') {
       if (!phase) continue;
+      if (e.command === 'phase_execute_request') continue; // 会话交接没有遗留 CLI 进程。
       // 同 invoke_id/phase 的旧 start 先闭合（重试形态），再开新窗
       open.set(invokeId || phase, { phase });
       continue;
@@ -145,6 +146,8 @@ export type PerBoundReconcile =
       kind: 'guardian_identity_unverifiable';
       bound: GuardianBoundRecord;
       reason: string;
+      /** 身份已查明但不属于旧绑定；gate 可放行，身份暂不可得则须等待。 */
+      identity_mismatch?: true;
     };
 
 export type GuardianReconcileResult =
@@ -171,16 +174,19 @@ function normalizeExe(p: string): string {
   }
 }
 
-function classifyBound(
+export function classifyGuardianBinding(
   bound: GuardianBoundRecord,
   probe: ProcessProbe,
   exists: PidExistenceProbe,
 ): PerBoundReconcile {
+  if (!bound.pid || !bound.started_at_ms || !bound.executable) {
+    return { kind: 'guardian_identity_unverifiable', bound, reason: `绑定事件字段不完整（pid=${bound.pid}）——不猜测、不回收` };
+  }
   // 二轮 review P0：`identify()===null` **不得**当作死亡证明——CIM 查询可因
   // 暂时不可见/查询失败/解析失败返回 null，而进程仍活着。死亡判定走**独立通道**
   // 的 PID existence probe（Get-Process，与 CIM 不同 API 面）：只在其确定性
-  // 报告不存在时才判 guardian 已消失（Job 已关闭）。identify null 但进程存在 →
-  // 身份不可核实（不杀、不阻断、仅警告），绝不静默放行。
+  // 报告不存在时才判 guardian 已消失（Job 已关闭）。identify null 但进程存在时，
+  // 仅创建时间确定不同时可排除旧绑定，其余身份不可核实，不杀且保守等待。
   if (!exists(bound.pid)) {
     return {
       kind: 'guardian_gone',
@@ -191,29 +197,33 @@ function classifyBound(
     };
   }
   const actual = probe.identify(bound.pid);
+  const startedAtMs = actual?.startedAtMs ?? probe.readStartedAtMs?.(bound.pid);
+  // SYSTEM 进程可能只公开创建时间；确定不同足以排除旧绑定，绝不授权杀进程。
+  if (startedAtMs !== bound.started_at_ms && (actual !== null ||
+      (typeof startedAtMs === 'number' && Number.isFinite(startedAtMs) && startedAtMs > 0))) {
+    return {
+      kind: 'guardian_identity_unverifiable',
+      bound,
+      identity_mismatch: true,
+      reason:
+        `pid ${bound.pid} 的 OS 创建时间与登记值不符（${startedAtMs} ≠ ${bound.started_at_ms}，` +
+        'PID 重用）——不杀、不阻断，仅警告',
+    };
+  }
   if (!actual) {
     return {
       kind: 'guardian_identity_unverifiable',
       bound,
       reason:
-        `pid ${bound.pid} 进程存在但身份不可得（CIM 暂不可见/查询失败）——` +
+        `pid ${bound.pid} 进程存在但身份不可读，且创建时间未能排除旧绑定（权限不足/查询不可用）——` +
         '不得认定死亡，不杀、不阻断，仅警告（下次 resume 再核）',
-    };
-  }
-  // R10：严格等值，不留容差窗口（同一 CIM 时钟源）。
-  if (actual.startedAtMs !== bound.started_at_ms) {
-    return {
-      kind: 'guardian_identity_unverifiable',
-      bound,
-      reason:
-        `pid ${bound.pid} 的 OS 创建时间与登记值不符（${actual.startedAtMs} ≠ ${bound.started_at_ms}，` +
-        'PID 重用）——不杀、不阻断，仅警告',
     };
   }
   if (normalizeExe(actual.executable) !== normalizeExe(bound.executable)) {
     return {
       kind: 'guardian_identity_unverifiable',
       bound,
+      identity_mismatch: true,
       reason: `pid ${bound.pid} 可执行文件与登记值不符（${actual.executable}）——不杀、不阻断，仅警告`,
     };
   }
@@ -229,6 +239,7 @@ function classifyBound(
     return {
       kind: 'guardian_identity_unverifiable',
       bound,
+      ...(bound.token ? { identity_mismatch: true as const } : {}),
       reason:
         `pid ${bound.pid} 命令行不含登记 token「${bound.token}」` +
         '——guardian argv 身份契约不成立，不杀、不阻断，仅警告',
@@ -338,17 +349,7 @@ export function reconcileGuardianOwnership(
   }
   const items: PerBoundReconcile[] = [];
   for (const bound of unclosed) {
-    // 字段完整性守卫（findUnclosedGuardianBounds 已过滤，此处兜底）
-    if (!bound.pid || !bound.started_at_ms || !bound.executable) {
-      // 身份残缺的绑定不得引为可杀对象；也不应静默放行——归为不可核实警告。
-      items.push({
-        kind: 'guardian_identity_unverifiable',
-        bound,
-        reason: `绑定事件字段不完整（pid=${bound.pid}）——不猜测、不回收`,
-      });
-      continue;
-    }
-    items.push(classifyBound(bound, probe, existsProbe));
+    items.push(classifyGuardianBinding(bound, probe, existsProbe));
   }
   return { kind: 'outcomes', items };
 }

@@ -161,26 +161,30 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   } },
   { name: 'native UT request reaches HAP executor with selected classes and isolated logs', async run() {
     const f = requestFixture('ut'); const hvigor = require('../../../profiles/hmos-app/harness/hvigor-runner');
-    const gate = require('../../scripts/utils/device-readiness-gate'); const oldRun = hvigor.runHvigorTest; const oldGate = gate.applyPhaseEntryDeviceGate;
+    const gate = require('../../scripts/utils/device-readiness-gate'); const oldRun = hvigor.runHvigorTest; const oldBuild = hvigor.runHvigorBuild; const oldGate = gate.applyPhaseEntryDeviceGate;
+    const hdc = require('../../../profiles/hmos-app/harness/hdc-runner'); const oldIdentity = hdc.resolveExecutionDeviceIdentity;
     try {
       nativeProfile(f); const testFile = 'entry/src/ohosTest/ets/test/Value.test.ets'; fs.mkdirSync(path.dirname(path.join(f.root, testFile)), { recursive: true });
       fs.writeFileSync(path.join(f.root, testFile), "describe('ValueSuite',()=>{it('value',0,()=>{expect(42).assertEqual(42);});});");
-      fs.writeFileSync(path.join(f.root, 'build-profile.json5'), JSON.stringify({ modules: [{ name: 'entry', srcPath: './entry' }] }));
+      fs.writeFileSync(path.join(f.root, 'build-profile.json5'), JSON.stringify({ app: { products: [{ name: 'fixture-product' }] }, modules: [{ name: 'entry', srcPath: './entry' }] }));
       // 正常载体：此前这里缺 `module.json5`，只因 hvigor 被打桩才没被真实执行链拦住（第一轮代码 review 建议）。
       fs.writeFileSync(path.join(f.root, 'entry/src/ohosTest/module.json5'), '{"module":{"name":"entry_test"}}');
       fs.writeFileSync(path.join(f.root, f.options.requestFile), JSON.stringify({ ...f.request, targets: { ...f.request.targets, tests: [testFile] } }));
       const before = tree(path.join(f.root, 'doc/features')); let calls = 0; let fail = false;
       gate.applyPhaseEntryDeviceGate = async () => ({ ok: true });
-      hvigor.runHvigorTest = (opts: any) => { calls++; assert.equal(opts.feature, undefined); assert.deepStrictEqual(opts.testClasses, ['ValueSuite']); assert(opts.reportDir.startsWith(path.join(f.root, f.options.reportDir))); const logPath = path.join(opts.reportDir, 'native-ut.log'); fs.writeFileSync(logPath, 'native fixture output'); return { executed: true, exitCode: fail ? 1 : 0, logPath, logExcerpt: 'native fixture output', testResult: { total: 1, passed: fail ? 0 : 1, failed: fail ? 1 : 0, skipped: 0 } }; };
+      hdc.resolveExecutionDeviceIdentity = () => ({ device: null, display_env: '' });
+      hvigor.runHvigorBuild = (opts: any) => { assert.equal(opts.product, 'fixture-product'); assert.equal(opts.target, 'ohosTest'); return { executed: true, exitCode: 0, successMarkerFound: true, durationMs: 1, logExcerpt: 'BUILD SUCCESSFUL', errors: [] }; };
+      hvigor.runHvigorTest = (opts: any) => { calls++; assert.equal(opts.feature, undefined); assert.equal(opts.product, 'fixture-product'); assert.equal(opts.prebuild?.successMarkerFound, true); assert.deepStrictEqual(opts.testClasses, ['ValueSuite']); assert.equal(path.basename(opts.reportDir), 'ut'); assert.equal(path.dirname(path.dirname(opts.reportDir)), path.join(f.root, f.options.reportDir)); const logPath = path.join(opts.reportDir, 'native-ut.log'); fs.writeFileSync(logPath, 'native fixture output'); return { executed: true, exitCode: fail ? 1 : 0, durationMs: 1, errors: [], logPath, logExcerpt: 'native fixture output', testResult: { total: 1, passed: fail ? 0 : 1, failed: fail ? 1 : 0, skipped: 0, failures: [] } }; };
       assert.equal(await runRequest(f), 0, fs.readFileSync(path.join(f.root, f.options.reportDir, 'script-report.json'), 'utf8')); assert.equal(calls, 1); assert.deepStrictEqual(tree(path.join(f.root, 'doc/features')), before);
       fail = true; assert.equal(await runRequest(f), 1);
       gate.applyPhaseEntryDeviceGate = async () => ({ ok: false, reason: 'device offline' }); const beforeOffline = calls; assert.equal(await runRequest(f), 1); assert.equal(calls, beforeOffline);
-    } finally { hvigor.runHvigorTest = oldRun; gate.applyPhaseEntryDeviceGate = oldGate; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    } finally { hvigor.runHvigorTest = oldRun; hvigor.runHvigorBuild = oldBuild; hdc.resolveExecutionDeviceIdentity = oldIdentity; gate.applyPhaseEntryDeviceGate = oldGate; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: 'native device request consumes v1 assertions; fake session and absent native outcomes cannot PASS', async run() {
     const f = requestFixture('testing'); const native = require('../../../profiles/hmos-app/harness/providers/device-test-run');
     const gate = require('../../scripts/utils/device-readiness-gate'); const oldReady = native.ensureHylyreReady; const oldRun = native.runHylyreDeviceTest; const oldGate = gate.applyPhaseEntryDeviceGate;
     const hylyre = require('../../../profiles/hmos-app/harness/hylyre-spawn'); const oldSpawn = hylyre.spawnHylyre;
+    const hdc = require('../../../profiles/hmos-app/harness/hdc-runner'); const oldIdentity = hdc.resolveExecutionDeviceIdentity;
     try {
       nativeProfile(f); fs.mkdirSync(path.join(f.root, 'AppScope')); fs.writeFileSync(path.join(f.root, 'AppScope/app.json5'), JSON.stringify({ app: { bundleName: 'com.fixture.app' } }));
       fs.writeFileSync(path.join(f.root, 'doc/requests/cases.txt'), '打开应用 -> 点击按钮 -> 等待详情');
@@ -188,8 +192,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       fs.writeFileSync(path.join(f.root, f.options.requestFile), JSON.stringify({ ...f.request, inputs: { cases: 'doc/requests/cases.txt', test_plan: 'doc/requests/plan.md' } }));
       const steps = JSON.parse(fs.readFileSync(path.join(frameworkRoot, 'harness/tests/fixtures/hylyre-contracts-0.4-p0/contracts/golden/trace/valid/all-passed.json'), 'utf8')).cases[0].steps;
       let mode = 'missing_expected'; let calls = 0; let expectedCalls = 0;
-      native.ensureHylyreReady = (opts: any) => { assert.equal(opts.feature, undefined); assert.equal(opts.reportDir, path.join(f.root, f.options.reportDir)); return { ok: true, pythonPath: 'fixture-python' }; };
+      native.ensureHylyreReady = (opts: any) => { assert.equal(opts.feature, undefined); assert.equal(path.basename(opts.reportDir), 'hylyre'); assert.equal(path.dirname(path.dirname(opts.reportDir)), path.join(f.root, f.options.reportDir)); return { ok: true, pythonPath: 'fixture-python' }; };
       gate.applyPhaseEntryDeviceGate = async () => ({ ok: true });
+      hdc.resolveExecutionDeviceIdentity = () => ({ device: null, display_env: '' });
       native.runHylyreDeviceTest = (opts: any) => { calls++; assert.equal(opts.feature, undefined); assert(fs.existsSync(opts.stepsFilePath)); const value = structuredClone(steps); if (mode === 'fake') value[0].device_session = false; const logPath = path.join(opts.reportDir, 'device-test-run.log'); fs.writeFileSync(logPath, JSON.stringify({ result_protocol: 'hylyre.step-outcome/1', total: 2, executed: 2, results: value.map((step: any, index: number) => ({ index, status: 'ok', ...(mode !== 'flat' ? { step_result: step } : {}) })) })); return { executed: true, exitCode: 0, logPath }; };
       const planFile = path.join(f.root, 'doc/requests/plan.md'); fs.writeFileSync(planFile, fs.readFileSync(planFile, 'utf8').replace('详情可见', '详情显示余额 0 元'));
       hylyre.spawnHylyre = (opts: any) => {
@@ -206,7 +211,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const raw = JSON.parse(fs.readFileSync(path.join(f.root, f.options.requestFile), 'utf8')); raw.requested_result = 'pixel_1to1 visual verification';
       fs.writeFileSync(path.join(f.root, f.options.requestFile), JSON.stringify(raw)); f.options.reportDir = 'doc/reports/visual-request';
       assert.equal(await runRequest(f), 1); assert.equal(calls, beforeVisual);
-    } finally { hylyre.spawnHylyre = oldSpawn; native.ensureHylyreReady = oldReady; native.runHylyreDeviceTest = oldRun; gate.applyPhaseEntryDeviceGate = oldGate; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    } finally { hylyre.spawnHylyre = oldSpawn; native.ensureHylyreReady = oldReady; native.runHylyreDeviceTest = oldRun; hdc.resolveExecutionDeviceIdentity = oldIdentity; gate.applyPhaseEntryDeviceGate = oldGate; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   // ==========================================================================
   // 准备期只读探测的判据（plan a9f3c7d2 第一笔 · R3）

@@ -27,6 +27,10 @@ import { runGoalRuntimeChain, setupGoalRuntimeHost, writeFile } from './goal-run
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { CheckContext, CheckResult, Phase, PhaseRuleSpec } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import catalogChecker from '../../scripts/check-catalog';
+import glossaryChecker from '../../scripts/check-glossary';
+import * as catalogParser from '../../scripts/utils/catalog-parser';
+import * as glossaryParser from '../../scripts/utils/glossary-parser';
 
 const ROOT = path.resolve(__dirname, '../../..');
 const FEATURE = 'bc-openCard';
@@ -42,6 +46,36 @@ function report(root: string, phase: Phase, checks: CheckResult[]) {
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
+  name: '1804 catalog and glossary exceptions retain original severity while loader failures retain their original error',
+  async run() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'global-execution-gap-'));
+    const originalCatalog = catalogParser.loadCatalog, originalGlossary = glossaryParser.loadGlossary;
+    const replace = (object: object, key: string, value: unknown) => { (object as Record<string, unknown>)[key] = value; };
+    const ctx = { ...context('catalog'), projectRoot: root, frameworkRoot: ROOT, harnessRoot: path.join(ROOT, 'harness'),
+      resolvedProfile: { name: 'generic', profileDir: path.join(ROOT, 'profiles/generic') } } as unknown as CheckContext;
+    try {
+      const loading = await catalogChecker.check(ctx);
+      assert(loading.some(check => check.id === 'catalog_file_exists' && check.status === 'FAIL' && !check.failure_kind));
+      const module = { layer: 'feature', format: 'HAR', one_liner: 'plain responsibility', responsibilities: [], typical_business_terms: [],
+        easily_confused_with: [], key_exports: [], entry_file: 'missing.ts', get name(): string { throw new TypeError('catalog name helper crashed'); },
+        get NOT_responsible_for(): string[] { throw new Error('catalog nonblocking helper crashed'); } };
+      replace(catalogParser, 'loadCatalog', () => ({ ok: true, catalog: { schema_version: '1.0', modules: [module] } }));
+      const catalogChecks = await catalogChecker.check(ctx);
+      const required = catalogChecks.find(check => check.id === 'name_unique')!;
+      assert.equal(required.severity, 'BLOCKER'); assert.equal(required.status, 'SKIP'); assert.equal(required.failure_kind, 'framework_bug');
+      assert.equal(resolveVerdictFromChecks([required]), 'INCOMPLETE');
+      const major = catalogChecks.find(check => check.id === 'not_responsible_for_min_count')!;
+      assert.equal(major.severity, 'MAJOR'); assert.equal(major.failure_kind, 'framework_bug');
+      assert.equal(resolveVerdictFromChecks([major]), 'PASS', 'an optional MAJOR exception must not become a required blocker');
+      replace(catalogParser, 'loadCatalog', () => ({ ok: true, catalog: { schema_version: '1.0', modules: [] } }));
+      replace(glossaryParser, 'loadGlossary', () => ({ ok: true, glossary: { schema_version: '1.0', terms: [{ get term(): string { throw new TypeError('glossary term helper crashed'); }, aliases: [], easily_confused_with: [] }] } }));
+      const glossaryChecks = await glossaryChecker.check({ ...ctx, phase: 'glossary' });
+      const term = glossaryChecks.find(check => check.id === 'term_required_fields')!;
+      assert.equal(term.severity, 'BLOCKER'); assert.equal(term.status, 'SKIP'); assert.equal(term.failure_kind, 'framework_bug');
+      assert.equal(resolveVerdictFromChecks([term]), 'INCOMPLETE');
+    } finally { replace(catalogParser, 'loadCatalog', originalCatalog); replace(glossaryParser, 'loadGlossary', originalGlossary); fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  },
+}, {
   name: '7d9 compatibility: simple UT without DAG keeps legacy SKIP and PASS for verifier review',
   run: () => {
     const { root } = setupGoalRuntimeHost('codex');

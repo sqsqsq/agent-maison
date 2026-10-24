@@ -61,3 +61,11 @@ hmos 设备专项须额外提供 `inputs.test_plan`，内容采用既有 Hylyre 
 review 复用现有章节、问题、计数、引用、负面结论等检查。UT/testing 通过原 profile 的 ut.run / device_test.run capability 查找 `runRequestTests(ctx)`，不新增 provider registry。该导出须列入原 provider metadata.exports，接收明确目标、基线、P1 输入与 reportDir，返回实际 `{executed, total, failed, checks, evidence_paths}`；原生日志/coverage/trace 放本目录或宿主内独立 provider 目录，不能借 Feature 报告。
 
 P6 交付入口与传参/报告闭环，P4/P5 接通专业消费和 hmos 原生 request provider。**未实现该导出的现有 provider 会明确 BLOCKED/FAIL，不能回落到假 Feature 或用未执行结果签发成功。**机械验收包含 Node 实际执行与 hmos provider 接线夹具；不代表 HarmonyOS/真机专项已通过，真实宿主验收仍由 P7 汇总。
+
+## 异常与原生结果复用
+
+checker/provider 意外程序异常按共同 check-execution 分类保留未执行缺口与结论未知；真实输入拒绝、断言失败和外部能力问题保持本来归属，不混称 framework_bug。普通未分类 SKIP 不自动升级。完整交付仍回其 run，不拆 request 绕开义务。
+
+UT/testing 按本次实际目标、模块/用例、构建/测试包、设备/显示、步骤/预期、工具版本与 flags 消费既有 execution-key 和冻结原生证据；等价成功只重算派生报告，输入变化、较新失败、证据不全或 fresh 必须真跑。不能借其他用例/Feature 的成功；selected 断言全部成立才通过。request 只证明本请求，无真实 run/attempt 时不制造同轮身份，也不把独立重发当旧 FAIL 重放；完整交付同次调用的真实 FAIL 继续失败。
+
+显式要求重新执行沿现有 `--force-device`，不增加另一 fresh 协议。UT 成功复用限本 request 的独立 reportDir 与实际新构建测试包、选定类、设备、工具一致且冻结原生证据完整。testing 只读核实际已装包摘要；拿不到摘要只禁复用、仍真实执行，不以缺摘要伪造通过。本批开发接线不证明该装机摘要探测已在真实设备验证。

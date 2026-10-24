@@ -67,7 +67,7 @@ An autonomous in-session goal SHALL execute each phase in a fresh phase-scoped c
 
 ### Requirement: In-session execution writes canonical goal evidence
 
-The attended entry SHALL create every fresh run through the shared fresh-only `createGoalRun` operation and the in-session driver SHALL attach only to a manifest with exactly one valid `run_created` event. It SHALL use the same manifest, events, progress, phase outcome, receipt, and run ID schemas as `harness/scripts/goal-runner.ts`, fenced by `run-control@1`. Before owner CAS, attach SHALL reject `CREATION_INCOMPLETE`, reject a caller adapter that differs from `manifest.adapter`, and route only from the persisted manifest; it MUST NOT fill a missing birth event, reparse workflow/chain, or resolve HEAD. Every emitted `phase_execute_request` SHALL include the authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}` captured from the current fence. The host SHALL pass that context unchanged to the spec initializer, phase harness, and `harness-runner --sync-closure`; the session driver SHALL create the attempt-bound receipt skeleton before yielding the request. Normal non-orphan session/process conversion SHALL use mailbox handoff; an orphaned session MAY be taken over only through explicit user-authorized `--force-resume` epoch takeover.
+The attended entry SHALL create every fresh run through the shared fresh-only `createGoalRun` operation and the in-session driver SHALL attach only to a manifest with exactly one valid `run_created` event. It SHALL use the same manifest, events, progress, phase outcome, receipt, and run ID schemas as `harness/scripts/goal-runner.ts`, fenced by `run-control@1`. Before owner CAS, attach SHALL reject `CREATION_INCOMPLETE`, reject a caller adapter that differs from `manifest.adapter`, and route only from the persisted manifest; it MUST NOT fill a missing birth event, reparse workflow/chain, or resolve HEAD. Every emitted `phase_execute_request` SHALL include the authoritative `{run_id, phase, attempt_id, owner_id, owner_epoch}` captured from the current fence. The host SHALL pass that context unchanged to the spec initializer, phase harness, and `harness-runner --sync-closure`; the session driver SHALL create the attempt-bound receipt skeleton before yielding the request. Normal non-orphan session/process conversion SHALL use mailbox handoff; an orphaned session MAY be taken over only through explicit user-authorized `--force-resume` epoch takeover. A same unconsumed issued request whose deadline expired while its original fence remains current MAY be closed through existing agent_timeout semantics without takeover; no physical kill/settled or validation-priority fact SHALL be fabricated.
 
 Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-run-creation.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
 
@@ -200,7 +200,7 @@ Enforcement: `skills/project/goal-mode/SKILL.md`, `docs/operations/goal-mode-run
 
 ### Requirement: Attended goal mode is a thin executor over the shared runtime
 
-Two attended entries SHALL exist and SHALL be mutually exclusive for one task: Maison `/goal-mode`, where `GoalPhaseRuntime` owns every lifecycle decision through the `phase_execute_request` transport, and the native goal path, where the host session is the thin driver over per-phase executors. A task started on one entry SHALL NOT be advanced by the other. Under `/goal-mode` the request SHALL still carry the immutable fenced `PhaseExecutionContext` and retries, closure and owner fences remain runtime-owned.
+All attended complete delivery SHALL use the one GoalPhaseRuntime through the common issued-request/report transport. Native goal persistence MAY preserve or wake the host session but SHALL NOT select phases or sign completion independently. A task SHALL have only one active progression owner; immutable fenced context, retries, closure and ownership SHALL remain runtime-owned.
 
 Enforcement: `harness/scripts/utils/goal-in-session-driver.ts`, `harness/scripts/utils/goal-phase-executor.ts`, `skills/project/goal-mode/SKILL.md`, `skills/reference/goal-mode-operations.md`
 
@@ -230,15 +230,13 @@ Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-r
 - **WHEN** `runInSessionRound` invokes the runtime with `maxRounds=1`
 - **THEN** the runtime starts at most the current phase and returns before starting the next phase
 
-### Requirement: Unsupported attended autonomy returns the documented manual route
+### Requirement: Command-capable sessions share non-resident runtime handoff
 
-The attended host entry SHALL evaluate the existing adapter capability route before autonomous runtime progression. When the route is manual, it MUST return `manual_fallback` with a user-facing reason and perform zero autonomous agent, gate or lifecycle invokes; it MUST NOT throw an unprojected preflight exception.
-
-Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/goal-adapter-capability.ts`, `harness/scripts/utils/goal-preflight.ts`
+Every materialized command-capable adapter with valid configuration SHALL use the same GoalPhaseRuntime through `goal-mode-entry --next` and `--report-result @<run-relative-JSON-file> --request <issued-path>`. Phase isolation SHALL only determine executor context. Missing required independent verifier or design-questioning capability SHALL retain its actual gap policy. New complete delivery SHALL NOT select runless or manual_fallback execution.
 
 #### Scenario: Adapter lacks phase-context isolation
-- **WHEN** attended mode is requested for an adapter without `in_session_reconcile` and `phase_context_isolation`
-- **THEN** the host returns manual harness+assess fallback and does not enter `GoalPhaseRuntime`
+- **WHEN** attended mode is requested with valid configuration but false or absent isolation/reconcile flags
+- **THEN** the same runtime SHALL issue the same handoff shape for main-context execution and disclose the context arrangement without waiving required independent verification
 
 ### Requirement: Equivalent fresh entries preserve the same birth defaults
 
@@ -250,26 +248,29 @@ Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-r
 - **WHEN** equivalent session-source and process-source runs are created without an explicit invocation-turn limit
 - **THEN** their unattended identity field and complete birth identity hash are equal before the handoff direction differs
 
-### Requirement: Attended stdio has one protocol endpoint
+### Requirement: Non-resident handoff has one production endpoint
 
-`goal-mode-entry` SHALL be the sole production stdio endpoint that constructs `phase_execute_request`, reads its response and validates response identity. `GoalPhaseRuntime` MUST receive an injected attended executor and MUST NOT construct a second implicit request payload.
+`goal-mode-entry` SHALL expose mutually exclusive `--next` and `--report-result`, retain the programmatic callback API, and retire the public resident stdin loop. `--report-result @<run-relative JSON file>` SHALL read only the current request's designated result input within the same run, including UTF-8 BOM; inline JSON SHALL remain compatible. The generated command SHALL execute unchanged in Windows PowerShell 5.1, including paths containing spaces. Only that result input is executor-writable; immutable requests, archived reports and other run state SHALL remain runtime-owned. The runtime SHALL prepare full author instruction and original pre-write snapshot before committing a session phase_start request reference. CLI stdout SHALL contain only immutable request path/hash, phase/attempt, actual status, next command, gate timeout and cleanup reserve. Report identity SHALL derive from the issued request and current owner/epoch, not caller-invented tuples. A current HALTED or INTERRUPTED result SHALL expose its actual reason and nonzero exit code rather than an earlier phase halt or unconditional next command; normal dispatch and waiting SHALL retain zero CLI exit status.
 
-Enforcement: `harness/scripts/goal-mode-entry.ts`, `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/goal-phase-executor.ts`
+#### Scenario: Request is re-acquired before report
+- **WHEN** the issuing CLI exits and the session calls next again for an unconsumed request
+- **THEN** it SHALL receive the same request without new attempt/count/snapshot; executor work SHALL continue from actual artifacts
 
-#### Scenario: Attended runtime is invoked without a host executor
-- **WHEN** code requests attended execution directly from `GoalPhaseRuntime` without an injected executor
-- **THEN** startup fails before owner progression instead of exposing another stdio protocol shape
+#### Scenario: An accepted report is retried after gate interruption
+- **WHEN** report has been archived but the formal gate or finalizer has not completed
+- **THEN** runtime SHALL verify old gate process termination/containment and resume only missing validation, never call the author again or fabricate agent_process_settled
 
-### Requirement: The native goal path runs one phase executor per phase and never hand-rolls waiting
+#### Scenario: The host needs a long gate command
+- **WHEN** formal verification exceeds a short shell default
+- **THEN** the host SHALL set timeout from current gate timeout plus cleanup reserve or await the same native task handle through terminal state, without repeated report submissions or custom polling
 
-When a task is driven by the host's native goal persistence (Claude `/goal`), the main session SHALL act as a thin driver: it SHALL delegate each feature phase to exactly one `phase-executor` subagent with the minimal inputs (requirement path, acceptance / ui-spec / reference image paths, current changed files, current blockers, accepted gaps, previous phase summary path, the phase skill path), SHALL NOT pass conversation history, and SHALL NOT execute two phases consecutively in the same context. The executor SHALL run the phase harness, invoke the verifier when required and call finalize. Verifier and subagent results SHALL be awaited synchronously or left for unrelated work; `sleep`, polling loops and background waiters SHALL NOT be used, and verifier inputs SHALL NOT be modified while a verifier runs.
+### Requirement: Host goal persistence preserves the single runtime
 
-Enforcement: `skills/project/goal-mode/SKILL.md`, `skills/reference/agents-entry-detail.md`, `agents/claude/templates/goal-condition.md`, `agents/claude/templates/agents/phase-executor.md`
+Native goal persistence MAY preserve or wake a host session but SHALL NOT establish another phase-selection or completion loop. Executors SHALL read the original issued instruction, use its exact self-check/closure commands and return actual outcomes. Hosts SHALL use available phase isolation truthfully; required independent verification SHALL remain genuinely independent. Native long-task handle waiting SHALL be permitted; custom sleep, event polling and background waiters SHALL remain forbidden. Verifier inputs SHALL NOT change while verification is running.
 
-#### Scenario: Six phases, six fresh contexts
-
-- **WHEN** a native goal spans spec through testing
-- **THEN** each phase runs in its own executor and the main context only accumulates six summary paths and terminal blocks
+#### Scenario: Main-context execution retains independent verification
+- **WHEN** phase isolation is unavailable but a required verifier can run independently
+- **THEN** author work SHALL run in the main context and required verification SHALL run through the real independent context/provider
 
 ### Requirement: Fresh delivery uses the existing design handoff
 
@@ -280,16 +281,16 @@ The main Agent SHALL honor the fresh design handoff in `complex-capability-meta-
 - **WHEN** a design-lens new complete delivery returns a design preparation result
 - **THEN** the authorized main Agent SHALL complete the design handoff in the same session before starting the selected ready CU in attended or detached mode
 
-### Requirement: Explicit unattended full-delivery authorization permits default budget expansion
+### Requirement: Automation authority is independent of execution transport
 
-只有明确无人值守＋不要询问＋授权完整交付时，主 Agent SHALL 可在核对原始有效请求和更正后通过现有 manifest/--override-manifest 显式提高默认额度并继续同一 run。普通静默或局部请求 SHALL NOT 获得该权；用户单独指定的最终时间、轮次或费用总上限 SHALL 不可突破。runner SHALL 到当前额度照常停，累计资源与 no_progress_guard 等熔断 SHALL 不重置。主 Agent 最终回复 SHALL 用现有 manifest/budget_changed 披露每次前后额度、原因、授权依据及累计消耗；不增加参数、字段、账本或自动无限提额循环。
+主 Agent SHALL 从可信原用户请求及更正判断完整交付全权授权；attended prepare 和每次控制调用 SHALL 显式重传非持久 `--authorize-autonomy`，不新增持久授权位。缺省 never/goal_mode、日志、打印命令和 Agent 自写决定 SHALL NOT 授权。新会话 SHALL 先恢复仍有效原授权，只有不可恢复或冲突才澄清，不重复询问已授权用户。detached SHALL 保留用户选择无人值守完整交付的既有原目标内设计修订授权。原目标内设计/CU/必要架构修订 SHALL 仍由设计 owner 草稿、独立质询、检查、发布及重绑。
 
-#### Scenario: Authorized default expansion retains a separate user cap
+完整交付且明确不要询问时，主 Agent MAY 经现有 manifest/`--override-manifest` 显式提高默认额度；prepare 与控制入口 SHALL 透传覆盖，先核全部 manifest 差异。预算单独批准 SHALL NOT 授设计全权；用户总时间/轮次/费用上限 SHALL 不突破，累计 SHALL 不清零，无进展守卫 SHALL 不解除，runner SHALL NOT 自动循环提额。最终 SHALL 披露来源、前后额度及累计消耗。
 
-- **WHEN** 用户明确无人值守、不要询问并授权完整交付，且默认额度耗尽但用户指定的总上限仍有余额
-- **THEN** 主 Agent MAY 显式调整默认额度并沿现有入口恢复同一 run，记录 budget_changed 并在最终回复说明；不得超总上限或清累计/解除熔断
+#### Scenario: Re-entry preserves prior human authority without inferring it from records
+- **WHEN** a new attended control invocation lacks autonomy input but the main Agent can recover the still-valid original grant
+- **THEN** the main Agent SHALL retransmit the input from that grant instead of asking again or treating printed output as a credential
 
-#### Scenario: Silence is insufficient authority
-
-- **WHEN** 用户只有静默、继续或局部任务请求
-- **THEN** 默认预算扩容 SHALL 仍按既有授权边界处理
+#### Scenario: Budget-only approval
+- **WHEN** the user approves only a budget change
+- **THEN** existing override semantics MAY apply but design authority SHALL remain unchanged

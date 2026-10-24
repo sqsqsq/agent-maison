@@ -13,7 +13,7 @@
 - **有人在场**：自动执行已授权工作；出现必须由人决定或补充的信息时，立即列出等待项并询问。
 - **无人值守**：自动执行已授权工作；把必须由人处理的事项停放为等待项，并确保 run 可脱离当前会话继续或稍后恢复。
 
-明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。**当前存在对话不等于用户选择了有人在场**。意图不明确时必须使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`，只问“有人在场 / 无人值守”，不向用户暴露 `in-session`、`headless`、tier 等内部术语。选择有人在场后先走 `goal-mode-entry --prepare-scope` 生成范围候选，然后**两个载体二选一**：① 不建 run 的交互完整交付——直接 `harness-runner --phase <p> --feature <f>` 逐阶段跑，首次调用由机器把范围冻结进 `<features_dir>/<feature>/execution-scope.json`；② 需要 run 级预算 / 恢复时走 `--prepare-run` → attach（两次调用都显式传 `--run-mode attended`，`--prepare-scope` 不传也不接受该参数），run 以**转交时 feature 的有效范围**出生。权威优先级：本次关联的 run > feature 冻结记录；说不清时工具明确报错，不替你选边。选择无人值守后只走 `goal-runner --detach`。**候选生成是通用前置步骤**，与需求是否涉及 UI 无关。
+明确说“我会看着、需要时问我”按有人在场处理；明确说“我先离开、后台继续、`--detach`”按无人值守处理，不重复确认。当前有对话不等于选择有人在场；歧义使用 [confirmation-registry.yaml](../../reference/confirmation-registry.yaml) 的 `goal.run_mode`。完整交付先 `--prepare-scope`，会话随后 `--prepare-run --run-mode attended`，再以 `--next / --report-result` 一步一交接进入同一 GoalPhaseRuntime；无人值守沿 `goal-runner --detach`。旧无 run 有效范围由出生入口正式转交，旧完成原件只读；不新增无 run 或 manual_fallback 完整交付。维护、纯编译、单独设计与 review/UT/testing 请求保留原终点。
 
 ## 输入
 
@@ -35,9 +35,11 @@
 3. **Execute one phase**：runtime 冻结 phase-scoped context，再调用薄 executor。attended 请求中的 `run_id/phase/attempt_id/owner_id/owner_epoch` 必须原样传给 initializer、harness 与 `--sync-closure`，不得靠兄弟 shell 继承 env；**无人值守（`--detach`）相反**——上下文由 runner 注入的 env 继承，harness 与闭环命令不带这组 `--goal-*` 参数，传了会被判「模式不匹配」当场拒绝（入口拒绝 ≠ 执行了测试，也不是租约过期）。attended 自检与 `--sync-closure` 检查 exit 0、summary 为 `PASS/open` 即可回传 `passed`；正式 `closed` 由 runtime 在随后 gate/finalizer 中提交。
 4. **Gate / verdict / reassess**：runtime 独占 gate、verdict、重试/回退、closure 与下一轮；不得根据上一轮宿主内存直接决定下一 phase。
 
-若 adapter 未声明 `in_session_reconcile + phase_context_isolation`，回退为“agent 自跑单 phase harness，再 assess”的手动编排；不得伪装为自治循环。无人值守执行要求 external runner preflight 通过；跨载体 handoff 另要求 adapter 的 resume/handoff 能力，缺失时明确说明该交接能力缺口。
+Goal 已在合法作者窗口按阶段机器准备蓝图投影，执行者直接消费；只有无 Goal 的 CU 单独 spec/plan 才先按对应 Skill 用 `prepare-blueprint-design --phase spec|plan` 导出本阶段，不重复整包写三份。
 
-**两入口互斥与 phase executor（plan 07a41ec6 T9）**：本 Skill（GoalPhaseRuntime）与 Claude 原生 `/goal` 路径是两个入口，不得同时推进同一任务。原生 `/goal` 路径下主会话是薄 driver：每个阶段最多派发一个 `subagent_type: phase-executor` 子代理负责该阶段的产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入并收回 summary 路径与终态块；同一会话上下文不连续执行两个阶段；`--revalidate` 只是检查命令，不推进阶段。
+全部可运行框架命令且配置有效的 adapter 共用 next/report；`in_session_reconcile` 不再是准入门槛，`phase_context_isolation` 仅决定派隔离子代理还是主上下文执行，并披露实际安排。必需 verifier/设计质询仍须真实独立；能力缺失沿原缺口策略。无人值守仍须 external runner preflight，原生运输 handoff 仍须对应 resume/handoff 能力，框架交接续作不依赖模型 CLI 原生 resume。
+
+**单一推进者**：同一任务只由其 active run 的 GoalPhaseRuntime 推进；原生目标持久能力可唤起/保存宿主会话，不另建 phase 选择与收口循环。阶段执行者按已签发请求读取完整 instruction，完成本阶段工作及原身份自检后报告；主 Agent 消费 runtime 返回的下一请求/等待/完成，不连续自选 phase。
 
 ## 启动与续跑
 
@@ -48,7 +50,7 @@
 3. 链路含设备阶段时执行 [device-policy-gate.md](../../reference/device-policy-gate.md)。`device_policy_unset` 必须先确认（**只看 `code`，不看 `configured`**——坏凭据/只有 `disabled` 时 `configured=true` 而 `code=unset`；退出码非零或 stdout 非 JSON = 执行失败须停止，含凭据库不可读，不得当成"未配置"引导重新登记）；PIN 只能由用户在真实 TTY 登记，**绝不要让用户把 PIN 发到对话里**，也不得代输。
 4. 有人在场且需求 UI 相关的新 run，先按 [interactive-vision-canary.md](../../reference/interactive-vision-canary.md) 完成 interactive canary（新鲜缓存会自动 `SKIP`），再消费同一条 effective image-input 结论：primary blind 时可按 personal setup S2.1 配置合法 provider，也可保持未配置；这不产生盲跑 waiver。随后按运维文档的通用两步走：先 `--prepare-scope` 生成范围候选（本步与 UI 无关，任何完整交付都要做；主 Agent 只提供四项输入，绑定与指纹一律由机器计算），核对它打印的范围投影与说明，再用 operations 文档的 `goal-mode-entry.ts --prepare-run --run-mode attended --feature ... --requirement ... --adapter ...` 创建 `manifest + run_created + run-control`；chain 含 coding/ut 时创建会冻结 `manifest.run_base_sha`，HEAD 不可得即停止且不派发 agent。严格视觉需求是否可继续由 requirement/capability 门禁裁决。已有 run 只按同一 `run_id` 恢复，attach/resume 不得补造 `run_created`。停机后请用户补上缺的输入、**重新发起同一请求**：`--prepare-run` 按接续决策返回既有 run 或新出生的后继 run（都照常以返回的 `run_id` attach；后继的承接审计与范围转交在附着时补写），或说明保持停止；无人值守重跑同一条 `--detach` 命令即可（正式开始过的 run 停下不到 5 分钟且无可验证变化时会先保持停止，过了冷却再发；有人在场不设冷却）。不要让用户找 run id 或拼 `--resume` / `--supersede` / `--force-resume`。attach 必须显式传 `--run-mode attended`，且 `--adapter` 必须等于 manifest adapter。具备 design lens 的新完整交付在无人值守时，由当前会话先完成初始设计与 CU readiness，再走 `goal-runner --detach`。
 
-有人在场由当前会话提供 executor transport，生产入口固定为可执行 `harness/scripts/goal-mode-entry.ts` host bridge（`runGoalModeHostBridge()`→`GoalPhaseRuntime`）；完整命令和 JSONL phase callback 协议见 operations 文档。唯一 runtime 负责 assess、attempt、receipt/gate、verdict、重试/回退、closure 与 owner fence；Skill/宿主不得另拼推进循环或自行构造 owner token。active adapter 必须为每个 bridge 请求提供隔离 phase context，能力缺失即按上节回退。无人值守必须使用真正的 detached runner；`--detach` 本身即选择无人值守，差异仅是 `DetachedGoalPhaseExecutor` 的 adapter spawn transport。**非 orphan 状态下**，session 与 detached process 互转只能走 mailbox handoff：当前 owner 写 `handoff_requested`、静默并释放，新 owner 以 `epoch+1` CAS 接管并写 `handoff_accepted`。仅 `orphaned_session` 可在用户显式授权后通过既有 `--force-resume` / `forceTakeoverRunOwner` 执行 epoch takeover；supervisor 永不得触发该例外。禁止复制或转换 ledger。
+有人在场统一使用可执行 `goal-mode-entry --next / --report-result`。CLI 原子保存完整请求、原快照并签发后退出，stdout 只给原件路径/sha、phase/attempt、状态、下一命令及 gate 时限；隔离执行者按路径读原件，主上下文执行者按需读取。精确身份与自检命令以本次原件为准，不手拼 token，不把自检当正式完成。未报告的重领返回同一请求，先核已产物再续作；已收报告后只补正式 gate/finalizer，不重调作者。真实 waiting 输出原因和探针后交回，再次同请求由原门复验；交出执行请求本身不是 waiting。detached 仍由薄 executor spawn。session/process 正常转换沿 mailbox，真实接管仍遵守原 owner/epoch 与显式授权；同一未消费请求 deadline 自然到期且 fence 未变时可沿原 agent_timeout 自动收口，不冒充 kill/settled 或通用 force takeover。
 
 具体 CLI、adapter 解析、detach 启动握手、进度汇报与有界终态跟踪见 [goal-mode-operations.md](../../reference/goal-mode-operations.md)。
 
@@ -74,8 +76,8 @@
 - 主 agent 必须自己运行 harness/runner；不得把命令作为唯一出路推给用户。
 - goal agent、attended/detached executor 与 supervisor 永不得构造 `--rebaseline-to`；该参数只属于 goal runtime 外的操作者管理命令，详见运行手册。
 - 不得把 INCOMPLETE 软化为 PASS，不得在 Skill 内新增阶段顺序或 verdict→next-phase 表。
-- 子代理（verifier / phase-executor）的结果只能同步等待，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。
+- 子代理结果使用宿主原生等待，或先做无关工作；正式 gate 按返回的 gate 时限和清理预留设置工具 timeout，可等待同一原生后台任务句柄直到终态。禁止自造 sleep/事件轮询/后台等待器，不重复提交 report 催进度；verifier 未返回前不改其材料。
 
 ## 默认额度与用户总上限
 
-明确“无人值守＋不要询问＋完整交付”时，主 Agent 可显式调整默认额度并沿现有 manifest/--override-manifest 恢复同一 run；普通静默不授予提额权。先核原始请求与更正，用户总上限不破，runner 照停，累计消耗和无进展熔断不重置。最终回复依据 manifest/budget_changed 披露逐次前后额度、原因、授权与累计消耗；完整口径见 [运行细则](../../reference/goal-mode-operations.md)。
+明确完整交付并要求“别问/全权处理”时，主 Agent 先核可信原请求，在 attended prepare 及每次 `--next / --report-result` 重传非持久 `--authorize-autonomy`；新会话恢复已有授权，不把打印命令、never/goal_mode 或 Agent 记录当凭证，不重复问已授权用户。缺本次输入时按需确认，先找原授权，只有不可恢复/冲突才澄清。detached 保留选择无人值守完整交付的既有设计修订权限；默认额度提高仍须明确不要询问。原目标内设计/CU/必要架构修订由设计 owner 经独立质询、检查、发布和重绑，不能由 coding/plan 自授。现有 `--override-manifest` 在 prepare/控制调用透传；覆盖前核全部差异，单独批预算不授设计全权。用户总上限不破、累计不清零、不解除无进展守卫；披露额度前后、原因、来源和累计消耗。

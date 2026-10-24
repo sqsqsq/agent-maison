@@ -294,15 +294,15 @@ optional_fields:
       in_session_reconcile:
         type: boolean
         default: false
-        description: 声明宿主可在当前会话内运行 assess/authorize/execute/reassess 薄 driver。
+        description: 既有原生会话调和能力声明；可命令会话统一以 next/report 进入 GoalPhaseRuntime，不以此字段作为准入门槛。
       phase_context_isolation:
         type: boolean
         default: false
-        description: 声明每个 feature phase 可在新鲜隔离上下文中执行并只返回结构化 outcome。
+        description: 声明阶段可在新鲜隔离上下文执行；false 仅表示主上下文执行并披露，不阻止共同 next/report，也不取消必需独立核验。
       supports_resume:
         type: boolean
         default: false
-        description: 声明 adapter 可恢复同一 goal run_id 与权威事件序列。
+        description: 声明模型 CLI 原生运输的恢复能力；框架 next/report 的同 run 续作不依赖此值。
       handoff:
         type: string
         default: "none"

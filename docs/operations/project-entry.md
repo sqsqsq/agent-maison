@@ -29,9 +29,9 @@
 
 无 Feature 的局部 review/UT/testing 先按请求终点使用对应 Skill 的共享方法：只审查、解释或设计用例直接交付结果，不要求 request/facts/报告；实际写/跑测试或要求 checker 校验报告时使用 [request CLI](request-harness.md)，结果隔离在显式报告目录，不能伪造 Feature 或借用活跃 Feature 证据；**落笔写测试之前先跑 `--prepare-request` 确认落点与载体**。完整实现根据实际义务安排验证，未知责任保留 unresolved，不因输入可解析就宣称验收通过。
 
-完整交付按依赖顺序发生：设计交接（admitted blueprint + ready CU）是范围候选的输入；**`--prepare-scope` 只生成候选、不冻结范围**，冻结发生在**首次阶段调用**（不建 run）或 run 出生时（建 run）。完整交付的机器接线复用 [P2 输入协议](../concepts/skill-contracts.md)：已有 CU 对应 Feature 的 `feature.yaml.execution_scope` 只承载出生前请求与来源事实候选，**由 `goal-mode-entry --prepare-scope` 生成**——主 Agent 只提供四项输入（完成终点、请求结果、明确的请求动作 `--requested-phases`、影响判断及其来源路径），绑定与指纹一律由机器经同一份 `resolveCapabilityInputs` 计算，证据类义务由 resolver 从验收分层与 fidelity SSOT 派生。同输入重跑字节不变；候选被手改后重跑只报差异，须显式 `--overwrite` 才覆盖。随后有**两个载体**可选（权威优先级：本次关联的 run > feature 冻结记录）：① 交互完整交付可以**不建 run**——直接 `harness-runner --phase <p> --feature <f>` 逐阶段跑，首次调用由机器把范围冻结进 `<features_dir>/<feature>/execution-scope.json`（与 feature.yaml 并列，机器单 writer），之后每次只读并核对候选指纹，候选被改而未经修订即 BLOCKER；② 需要无人值守或 run 级预算/恢复时，1.2 workflow 下 `goal-mode-entry --prepare-run --run-mode attended` 以**转交时 feature 的有效范围**出生（不重算候选）并登记转交，再按返回的真实 run 身份 attach。不为已全部复用的空范围创建 run。旧 run 直接恢复，不重新读取候选；默认使用 obligation-driven 1.2；旧内置定义仅供兼容恢复。
+完整交付按依赖顺序发生：设计交接（admitted blueprint + ready CU）是范围候选的输入；`--prepare-scope` 只生成候选、不冻结范围。主 Agent 只提供完成终点、请求结果、明确请求动作 `--requested-phases`、影响判断及来源路径，机器经同一 `resolveCapabilityInputs` 派生义务与绑定。同输入重跑字节不变，冲突须显式 `--overwrite`。新完整交付统一在 run 出生时冻结范围：会话由 `goal-mode-entry --prepare-run --run-mode attended` 准备/接回，再用 `--next` 领取、按原件执行、`--report-result @<run-relative-JSON-file> --request <原件路径>` 上报；无人值守沿 `goal-runner --detach`。全部可命令适配器进入同一 GoalPhaseRuntime，无阶段隔离时在主上下文执行并披露，必需独立 verifier/设计质询不能取消。旧无 run 未完成范围经既有出生/转交入口正式交给同一 run，有效成果复用、原件不改；已有 active run 优先接回，不另起并行 run。不为全复用的空范围造 run，不再新增无 run/manual_fallback 完整交付。默认 obligation-driven 1.2，旧内置定义只供恢复。
 
-无 run 的 spec 仍必须消费原始需求：`--prepare-scope --requirement-file <path>` 会把来源文件写入候选绑定，后续 harness 可从该来源恢复并核对漂移；inline 或旧候选不保存正文，运行 spec 时须再次传同文的 `--requirement` 或 `--requirement-file`。Goal 模式始终只认冻结 manifest，拒绝这两个覆盖参数。任何路径都不另存需求快照。
+单独 spec/plan 设计止于原职责，需求文件沿既有来源绑定读取；无 Goal 的 CU 单阶段动笔前用 `prepare-blueprint-design --phase spec|plan` 只导出本阶段，已有内容和冲突保护不变，Goal 已准备的不重复调用。无 run 的只读检查与旧范围/完成读取保持兼容，不能据此签发新的 Feature 完成。Goal 只认冻结 manifest，阶段命令不以 `--requirement` 或 `--requirement-file` 覆盖它；不另存平行需求快照。
 
 范围只决定责任与写入许可，不决定阶段能否读取源码。只做 review/UT 的候选无需虚构 implementation；入口会从冻结 contracts/CU 解析现存产品源码，并按 profile 单独识别测试目标。plan 新声明的待创建文件可以先不存在，coding/UT 完成后才由后继消费门禁要求其真实字节；禁止为了让入口变绿而预先创建空文件或手工补 target/binding。
 
@@ -43,6 +43,6 @@
 
 无人值守 detach 的 launcher 会在返回前做一次有界启动确认；调用方只消费同一 JSON 的 `startup`，不因 pid/目录存在宣称健康，也不另等下一次心跳。`alive_timeout` 保留活跃 child 并如实报告尚未就绪；早退保留 `detach.log` 原因。`--attach-created`、`--resume`、manifest 与 `--run-id` 必须解析为同一 run 身份，冲突在 parent fork 前拒绝。当前 terminal cooldown 仍为保守 5 分钟：现有 runtime 没有提供可证明恢复完成的 `blockingCleared` 生产事实，因此本批不缩短、不按 mtime 绕过；错误信息给出剩余秒数。
 
-默认预算扩容：只有用户明确同时选择“无人值守＋不要询问＋授权完整交付”，主 Agent 才可在读取原始有效请求及已有更正后，显式提高框架默认额度，并通过现有 manifest / `--override-manifest` / `budget_changed` 继续同一 run。普通静默、“继续”或局部任务不授予该权；用户另行指定的最终时间、轮次或费用总上限不可突破，授权不能证明或冲突时保持原边界。runner 到当前生效额度仍照常停，不自动循环增额；lineage 累计消耗不清零，提额不解除 no_progress_guard、重复回退、外部条件或其它授权。最终回复按现有 manifest 与 budget_changed 披露每次扩容前后值、原因、授权依据及累计消耗；费用只在有可靠数据时给数值。不增加参数、授权字段或预算账本。
+默认预算扩容：用户明确授权完整交付并要求“别问/全权处理”时，主 Agent 可按原有效请求调整默认额度，透传现有 `--override-manifest` 继续同一 run；attended 在 prepare 和每次控制调用显式重传非持久 `--authorize-autonomy`。缺省 never/goal_mode、日志或 Agent 自写记录不授予全权；新会话先恢复可信原授权，不重复问已授权用户。预算单独批准不授设计全权，覆盖前须核对 manifest 全部差异。用户最终时间/轮次/费用上限不破、累计不清零、无进展守卫不解除，runner 不自动循环提额。最终披露前后额度、原因、来源及累计消耗；费用只在可靠时量化。
 
-无人值守完整交付时，原需求内的蓝图/CU与必要架构变更由 runner 交设计 owner 静默修订、隔离质询、检查、发布和重绑后继续；不需要个人 B1 开关，不由 plan/coding 或外层主 Agent 就地自授。有人在场沿原确认流程。改变原需求或实质验收、真实秘密/不可逆外部动作、突破用户总预算或明确禁止仍须用户决定。
+已授权完整交付的设计修订由同一 runtime 交设计 owner 草稿、独立质询、检查、发布与重绑；attended 由本次 `--authorize-autonomy` 传递原请求全权判断，detached 保留用户选择无人值守完整交付的既有授权来源。初始设计仍归主 Agent；plan/coding 不就地扩权。未授权会话沿原确认，改变原目标/实质验收、真实秘密、不可逆外部动作、用户总预算及明确禁止仍按实际授权处理。

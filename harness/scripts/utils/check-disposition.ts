@@ -41,6 +41,9 @@ export interface DispositionEntry {
  * 38e5a7c2 再将必读登记与三条模式声明归入披露；`origin_tag_required`、`seed_no_technical_words` 仍暂缓。
  */
 export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
+  { match: { id: 'request_provider_unavailable' }, protects: 'capability_gap',
+    basis: '1804ac3b §4.5：既有 request provider 缺口在能力生产点明确分类',
+    consequence: '专项测试缺少实际执行能力，不能将未执行当作产品通过；补齐能力后重发同一请求' },
   { match: { id: 'coding_existing_test_preserved' }, protects: 'product_truth',
     basis: 'c2f7a91e §5.3.1；179a73 兼容修补需保留旧用例和断言',
     consequence: 'coding 可通过删改测试或新增跳过掩盖回归；无法确认原件时不得授有限写权' },

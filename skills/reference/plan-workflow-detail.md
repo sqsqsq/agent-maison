@@ -16,7 +16,7 @@
 
 in_scope_modules/out_of_scope_modules/files 记录预计实施范围，不是逐项许可；原始请求明确限制不能被模型预测覆盖。计划保留行为、验收、公共接口和有效架构，允许下游调整必要的私有组织与位置。
 
-超出预计模块但仍在原需求内的必要改动，在既有 review 显著披露必要性、影响与回归依据；无需登记 expansions_with_user_approval。真实目标/验收变化仍确认；已授权无人值守的原需求内设计或架构变化，由原 owner 经正式修订、质询、发布和重绑接续。有人在场沿原确认点，plan/coding 不自行改 DSL 自授。
+超出预计模块但仍在原需求内的必要改动，在既有 review 显著披露必要性、影响与回归依据；无需登记 expansions_with_user_approval。真实目标/验收变化仍确认；已获完整交付全权的原需求内设计或架构变化，由原 owner 经正式修订、独立质询、发布和重绑接续；attended 需本次 --authorize-autonomy，detached 保留既有授权来源。未授权会话沿原确认点，plan/coding 不自行改 DSL 自授。
 
 ## UseCase 复杂度判定与 use-cases.yaml（条件式产出）
 

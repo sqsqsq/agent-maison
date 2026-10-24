@@ -15,6 +15,29 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { featurePhaseReportsDir } from '../../../harness/config';
+import { resolveHdcExecutableSync, runHdcRaw } from './hdc-runner';
+
+/** Read the installed HAP bytes; bundle version or a local build is insufficient for reuse. */
+export function probeInstalledHapSha256(bundleName: string, device: string | null): string | null {
+  if (!device || !/^[A-Za-z0-9_.]+$/.test(bundleName)) return null;
+  try {
+    const exe = resolveHdcExecutableSync();
+    const dump = runHdcRaw(exe, ['-t', device, 'shell', 'bm', 'dump', '-n', bundleName], { timeout: 5000 });
+    if (dump.status !== 0) return null;
+    const output = String(dump.stdout ?? '').trim();
+    const data = JSON.parse(output.slice(output.indexOf('{'))) as { name?: string; bundleName?: string; hapModuleInfos?: Array<{ name?: string; hapPath?: string }> };
+    if ((data.name ?? data.bundleName) !== bundleName || !data.hapModuleInfos?.length) return null;
+    const inputs: string[] = [];
+    for (const module of data.hapModuleInfos) {
+      if (!module.name || !module.hapPath || !/^\/(?:data|system|vendor|product)\/[A-Za-z0-9_./-]+\.hap$/.test(module.hapPath) || module.hapPath.split('/').includes('..')) return null;
+      const read = runHdcRaw(exe, ['-t', device, 'shell', 'sha256sum', module.hapPath], { timeout: 5000 });
+      const hash = /^([a-fA-F0-9]{64})\s+/.exec(String(read.stdout ?? ''))?.[1];
+      if (read.status !== 0 || !hash) return null;
+      inputs.push(`${module.name}:${module.hapPath}:${hash.toLowerCase()}`);
+    }
+    return crypto.createHash('sha256').update(inputs.sort().join('\n')).digest('hex');
+  } catch { return null; }
+}
 
 /** 实际 hap 文件内容 sha256 前 12 hex；文件缺失/读取失败 → null（消费侧保守处理）。 */
 export function computeHapBuildFingerprint(hapPath: string | null | undefined): string | null {

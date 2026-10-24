@@ -4,7 +4,15 @@
 import type { CapabilityProvider } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
-import { listBuildProfileModules, runHvigorTest as executeUt } from '../hvigor-runner';
+import { listBuildProfileModules, runHvigorTest as executeUt, runHvigorBuild, isHvigorBuildSuccessful, type HvigorRunResult } from '../hvigor-runner';
+import { discoverOhosTestArtifacts, resolveExecutionDeviceIdentity } from '../hdc-runner';
+import { computeHapSha256Full } from '../build-fingerprint';
+import { computeHvigorConfigDigest } from '../toolchain-probe';
+import { resolveProductSelection, summarizeUnresolvedCause } from '../product-selection';
+import { decideReuse, startExecutionKeyRun, writeExecutionKeyRecord, freezeRunArtifacts, restoreFrozenRunArtifacts, utFrozenRunArtifacts, sha256Text, computeExecutionKey, type ExecutionKeyInputs } from '../execution-key';
+import { CheckExecutionError } from '../../../../harness/scripts/utils/check-execution';
+import { buildUtHvigorTestFailDetails } from '../ut-hvigor-test-failure';
+import { findFilesRecursive } from '../../../../harness/scripts/utils/find-files-recursive';
 import { extractUtItBlocks } from '../../../../harness/scripts/utils/ut-it-blocks';
 import { applyPhaseEntryDeviceGate } from '../../../../harness/scripts/utils/device-readiness-gate';
 import { validateProjectRelativePath } from '../../../../harness/scripts/utils/project-relative-path';
@@ -76,17 +84,24 @@ export function inspectRequestTargets(projectRoot: string, tests: readonly strin
   return { groups, gaps: typedGaps.map(gap => gap.message), typedGaps };
 }
 
+function reject(details: string, failure_kind?: string): never {
+  throw new CheckExecutionError({ id: 'request_ut_native', category: 'structure', severity: 'BLOCKER', status: failure_kind ? 'SKIP' : 'FAIL', description: '专项 UT 未满足执行条件', details,
+    ...(failure_kind ? { failure_kind, blocking_class: 'externalBlocked' } : {}) });
+}
+
 /** Explicit request target selection; the existing HAP build/install/aa-test chain remains the executor. */
 export async function runRequestTests(ctx: RequestCheckContext) {
-  if (process.env.HARNESS_SKIP_HVIGOR || process.env.HARNESS_SKIP_HVIGOR_TEST || ctx.resolvedProfile.capabilities['ut.compile']?.severity === 'SKIP') throw new Error('UT native compile/run disabled; request cannot claim execution');
+  if (process.env.HARNESS_SKIP_HVIGOR || process.env.HARNESS_SKIP_HVIGOR_TEST || ctx.resolvedProfile.capabilities['ut.compile']?.severity === 'SKIP') reject('UT native compile/run disabled; request cannot claim execution', 'capability_missing');
   // 模块归属 / 载体判据与准备期**共用同一函数**（不复制谓词）；源码内容校验仍在本函数内。
   const inspected = inspectRequestTargets(ctx.projectRoot, ctx.request.targets.tests);
-  // 只对执行期本来就拒绝的落点类缺口抛错；载体类缺口是准备期的事前告知，执行期沿用既有反应。
+  // 输入拒绝与测试载体能力缺口在事实已知处分别保留。
   const blocking = inspected.typedGaps.find(gap => gap.kind === 'landing');
-  if (blocking) throw new Error(blocking.message);
+  if (blocking) reject(blocking.message);
+  const missingCarrier = inspected.typedGaps.find(gap => gap.kind === 'carrier');
+  if (missingCarrier) reject(missingCarrier.message, 'capability_missing');
   const ownerOf = (file: string): { name: string; srcPath: string } => {
     const owner = [...inspected.groups.values()].find(module => file.startsWith(`${module.srcPath}/src/ohosTest/`));
-    if (!owner) throw new Error(`UT target must belong to one configured ohosTest module: ${file}`);
+    if (!owner) reject(`UT target must belong to one configured ohosTest module: ${file}`);
     return owner;
   };
   const groups = new Map<string, { name: string; srcPath: string; classes: Set<string>; count: number }>();
@@ -95,23 +110,66 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     const source = ctx.request.sourceContents.find(item => item.path === file)?.content;
     const classes = [...(source ?? '').matchAll(/\bdescribe\s*\(\s*['"]([^'"]+)['"]/g)].map(match => match[1]);
     const count = extractUtItBlocks(source ?? '').length;
-    if (!count || !classes.length || classes.some(name => !/^[A-Za-z0-9_.-]+$/.test(name))) throw new Error(`UT target needs real literal Hypium classes and assertions: ${file}`);
+    if (!count || !classes.length || classes.some(name => !/^[A-Za-z0-9_.-]+$/.test(name))) reject(`UT target needs real literal Hypium classes and assertions: ${file}`);
     const group = groups.get(module.name) ?? { ...module, classes: new Set<string>(), count: 0 };
-    for (const name of classes) { if (group.classes.has(name)) throw new Error(`duplicate selected UT class: ${name}`); group.classes.add(name); }
+    for (const name of classes) { if (group.classes.has(name)) reject(`duplicate selected UT class: ${name}`); group.classes.add(name); }
     group.count += count; groups.set(module.name, group);
   }
-  if (!groups.size) throw new Error('no selected UT module');
-  const gate = await applyPhaseEntryDeviceGate({ projectRoot: ctx.projectRoot, phase: 'ut', startedBy: `request-${ctx.request.request_sha256}`, log: message => console.error(message) });
-  if (!gate.ok) throw new Error(gate.reason ?? 'UT device environment unavailable');
+  if (!groups.size) reject('no selected UT module');
+  const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
+  if (!selection.product) reject(summarizeUnresolvedCause(selection), 'project_build_environment_inconsistent');
+  const inputs: ExecutionKeyInputs = {
+    hap_sha256_full: null,
+    derived_plan_sha256: sha256Text(JSON.stringify({ targets: ctx.request.targets.tests, groups: [...groups.values()].map(group => ({ module: group.name, path: group.srcPath, classes: [...group.classes], count: group.count })) })),
+    device: process.env.HARNESS_HDC_TARGET?.trim() || null, display_env: '', reset_mode: 'n/a', hylyre_version: null, manifest_version: null,
+    profile: ctx.resolvedProfile.name, tool_config_sha256: computeHvigorConfigDigest(ctx.projectRoot), flags: ['request_ut', 'ohosTest', 'selected_classes', 'product=' + selection.product],
+  };
+  const started = startExecutionKeyRun(ctx.reportDir, 'ut', inputs);
+  const runDir = started.runDir; let record = started.record;
+  const gate = await applyPhaseEntryDeviceGate({ projectRoot: ctx.projectRoot, phase: 'ut', startedBy: 'request-' + ctx.request.request_sha256, log: message => console.error(message) });
+  if (!gate.ok) reject(gate.reason ?? 'UT device environment unavailable', 'device_blocked');
+  const identity = resolveExecutionDeviceIdentity();
+  const builds = new Map<string, HvigorRunResult>();
+  const haps: Array<[string, string | null]> = [];
+  for (const group of groups.values()) {
+    const build = runHvigorBuild({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot,
+      phase: 'ut', reportDir: runDir, moduleName: group.name, target: 'ohosTest', product: selection.product });
+    builds.set(group.name, build);
+    haps.push([group.name, computeHapSha256Full(discoverOhosTestArtifacts(ctx.projectRoot, group.srcPath, group.name, selection.product).signedPath)]);
+  }
+  Object.assign(inputs, { hap_sha256_full: sha256Text(JSON.stringify(haps)), device: identity.device, display_env: identity.display_env });
+  record = { ...record, inputs, execution_key: computeExecutionKey(inputs) }; writeExecutionKeyRecord(runDir, record);
+  const artifacts = [...utFrozenRunArtifacts([...groups.keys()]), ...[...groups.keys()].map(name => ({ top: 'hvigor-build.' + name + '.log', frozen: 'frozen.hvigor-build.' + name + '.log', group: 'execution' as const }))];
+  const eligible = haps.every(([, digest]) => digest) && [...builds.values()].every(isHvigorBuildSuccessful);
+  const reused = !ctx.forceDevice && eligible && identity.device
+    ? decideReuse(ctx.reportDir, record.execution_key, { leg: 'ut', artifacts, excludeRunDir: runDir }).reusable : null;
+  if (reused) restoreFrozenRunArtifacts(reused.runDir, runDir, artifacts);
+  for (const [name, build] of builds) if (build.logPath && fs.existsSync(path.resolve(build.logPath))) fs.copyFileSync(path.resolve(build.logPath), path.join(runDir, 'hvigor-build.' + name + '.log'));
   const checks: CheckResult[] = []; const evidence_paths: string[] = []; let total = 0; let failed = 0; let executed = true;
   for (const group of groups.values()) {
-    const reportDir = path.join(ctx.reportDir, group.name); fs.mkdirSync(reportDir, { recursive: true });
-    const result = executeUt({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot, phase: 'ut', reportDir, moduleName: group.name, moduleSrcPath: group.srcPath, testClasses: [...group.classes] });
-    const ok = result.executed && result.exitCode === 0 && result.testResult?.total === group.count && result.testResult.failed === 0 && result.testResult.skipped === 0;
+    const resultFile = path.join(runDir, 'ut-result.' + group.name + '.json');
+    let result: HvigorRunResult | undefined;
+    if (reused) { try { result = JSON.parse(fs.readFileSync(resultFile, 'utf8')); } catch { /* Damaged evidence is rerun. */ } }
+    if (!result?.testResult) result = executeUt({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot,
+      phase: 'ut', reportDir: runDir, moduleName: group.name, moduleSrcPath: group.srcPath, testClasses: [...group.classes], product: selection.product,
+      prebuild: builds.get(group.name) });
+    fs.writeFileSync(resultFile, JSON.stringify(result));
+    const nativeLog = path.join(runDir, 'hdc-test.' + group.name + '.log');
+    if (!fs.existsSync(nativeLog) && result.logPath && fs.existsSync(path.resolve(result.logPath))) fs.copyFileSync(path.resolve(result.logPath), nativeLog);
+    const ok = result.executed && !result.toolMissing && !result.skippedByEnv && !result.timedOut && !result.installBlocking && result.exitCode === 0 && result.testResult?.total === group.count && result.testResult.failed === 0 && result.testResult.skipped === 0;
     executed &&= result.executed && !!result.testResult;
     total += result.testResult?.total ?? 0; failed += ok ? 0 : Math.max(1, result.testResult?.failed ?? 0);
-    checks.push({ id: 'request_ut_native', category: 'structure', severity: 'BLOCKER', status: ok ? 'PASS' : 'FAIL', description: '指定 Hypium 类的原生执行', details: `${group.name}: requested=${group.count}; actual=${result.testResult?.total ?? 0}\n${result.logExcerpt}`, ...(ok ? {} : { suggestion: '修复真实工具链/注册/断言问题后重跑；不以模块其他测试的 PASS 替代目标。' }) });
-    if (result.logPath) evidence_paths.push(path.resolve(result.logPath));
+    const diagnosis = ok ? undefined : buildUtHvigorTestFailDetails([{ module: group.name, packagePath: group.srcPath, result }]);
+    const external = result.toolMissing || result.skippedByEnv ? 'capability_missing' : diagnosis?.blockingClass === 'externalBlocked' ? diagnosis.failureKind : undefined;
+    checks.push({ id: 'request_ut_native', category: 'structure', severity: 'BLOCKER', status: ok ? 'PASS' : external ? 'SKIP' : 'FAIL', description: '指定 Hypium 类的原生执行', details: group.name + ': requested=' + group.count + '; actual=' + (result.testResult?.total ?? 0) + (reused ? '; reused_by_execution_key' : '') + '\n' + result.logExcerpt,
+      ...(external ? { failure_kind: external, blocking_class: 'externalBlocked' } : diagnosis ? { failure_kind: diagnosis.failureKind, blocking_class: diagnosis.blockingClass } : {}),
+      ...(ok ? {} : { suggestion: diagnosis?.suggestion ?? '修复真实工具链/注册/断言问题后重跑；不以模块其他测试的 PASS 替代目标。' }) });
+    evidence_paths.push(resultFile);
+    if (fs.existsSync(nativeLog)) evidence_paths.push(nativeLog);
+    const buildLog = path.join(runDir, 'hvigor-build.' + group.name + '.log');
+    if (fs.existsSync(buildLog)) evidence_paths.push(buildLog);
   }
-  return { executed, total, failed, checks, evidence_paths };
+  const frozen = freezeRunArtifacts(runDir, runDir, artifacts);
+  writeExecutionKeyRecord(runDir, { ...record, outcome: executed && failed === 0 ? 'success' : 'failed', timing_complete: frozen.length === artifacts.length, frozen_files: frozen });
+  return { executed, total, failed, checks, evidence_paths: [...new Set([...evidence_paths, ...findFilesRecursive(runDir, /^(?!frozen\.)/)])] };
 }

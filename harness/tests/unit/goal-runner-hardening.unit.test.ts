@@ -349,7 +349,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(guidance.includes('--repair-notes') && guidance.includes('已有返修窗口'), '修法假设只进返修窗口');
       assert(guidance.includes('包含 coding 阶段的请求'), '越界目标须由用户授权对应范围');
       assert(buildBacktrackTargetAbsentGuidance(null).includes('重新发起同一请求'), '缺失输入补齐后重发原请求');
-      assert(guidance.includes('静默完成并重签') && guidance.includes('有人在场沿原确认流程'), '设计修订按当前授权，保留有人在场确认');
+      assert(guidance.includes('静默完成并重签') && guidance.includes('未获得本次可信全权输入的会话沿原确认流程'), '设计修订按本次可信授权，缺输入仍沿原确认流程');
       assert(guidance.includes('coding'), `须带 recommendation.phase：${guidance}`);
       // 三处可见接线（b3f7d9a2 硬学习：同一文案契约枚举全部承载处）——
       // ① phase_halt 事件 halt_guidance；② outcome halt_guidance；
@@ -546,7 +546,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert(src.includes('killProcessTree'), 'killProcessTree import');
       assert(src.includes('createChildSettleWaiter'), 'createChildSettleWaiter import');
       assert(src.includes('spawn('), 'spawn for harness child');
-      assert(!/async function runHarnessPhase[\s\S]*?spawnSync/.test(src), 'no spawnSync in runHarnessPhase');
+      const fn = /async function runHarnessPhase[\s\S]*?\n}/.exec(src)?.[0] ?? '';
+      assert(fn.includes('const child = spawn('), 'the harness itself must spawn asynchronously');
+      const synchronousProbes = fn.match(/spawnSync\([^\n]*/g) ?? [];
+      assert(synchronousProbes.every(call => call.includes("spawnSync('ps',") && call.includes('timeout: 5000')), 'only the bounded POSIX process identity probe may be synchronous');
     },
   },
   {

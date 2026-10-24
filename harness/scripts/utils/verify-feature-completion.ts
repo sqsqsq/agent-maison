@@ -1,3 +1,4 @@
+import { phaseInvocationStart } from './goal-runner-phase';
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { readRepairDependencyContext } from './repair-responsibility';
 // ============================================================================
@@ -892,10 +893,12 @@ export function resolvePhaseRunIds(
   const latest: Record<string, { run_id: string; ts: string }> = {};
   // plan e7c2a4d8 T1d：权威枚举单一入口——更晚的 .dry run/残留不得被选为最新阶段证据。
   for (const runId of classifyGoalRunsDir(runsDir).runs) {
-    for (const ev of readRunEventLines(projectRoot, feature, runId)) {
-      if (ev.type !== 'phase_start' || typeof ev.phase !== 'string' || typeof ev.ts !== 'string') continue;
-      const cur = latest[ev.phase];
-      if (!cur || ev.ts > cur.ts) latest[ev.phase] = { run_id: runId, ts: ev.ts };
+    const events = readRunEventLines(projectRoot, feature, runId);
+    for (const phase of chain) {
+      const ev = phaseInvocationStart(events, phase);
+      if (!ev?.ts) continue;
+      const cur = latest[phase];
+      if (!cur || ev.ts > cur.ts) latest[phase] = { run_id: runId, ts: ev.ts };
     }
   }
   const runIds: Record<string, string> = {};

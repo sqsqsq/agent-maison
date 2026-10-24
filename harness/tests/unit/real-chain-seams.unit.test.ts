@@ -66,8 +66,9 @@ import {
   readFeatureFrozenScope,
   featureEffectiveScope,
   applyFeatureScopeRevisionsThenMaybeComplete,
+  appendFeatureScopeRevision,
 } from '../../scripts/utils/feature-execution-scope';
-import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { prepareFeatureScopeCandidate, resolveScopeRevisionProposal } from '../../scripts/utils/feature-track';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveCapabilityInputs, type ResolvedInput } from '../../scripts/utils/capability-resolution';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
@@ -331,7 +332,7 @@ test('RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位�
 // 直接早退，根本不发提案。本条末尾把这条"优雅拒绝而不是抛异常"的真实行为一并锁住。
 // ===========================================================================
 
-test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解析不抛 stale', withProject(async project => {
+test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解析不抛 stale（历史 reader；新独立出口不修订）', withProject(async project => {
   const { root, frameworkRoot, feature } = { root: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature };
   // 冻结 feature 记录只在 workflow 1.2 下存在（`resolveFeatureExecutionScope` 的前置）。
   const cfgPath = path.join(root, 'framework.config.json');
@@ -398,8 +399,15 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
   // 报告形态里被消费（codex 2026-09-22 阻断 2）。
   generateScriptReport('', 'plan' as Phase, feature, root, [revisionCheck as CheckResult], frameworkRoot);
 
-  const applied = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'plan', workflowTrack: 'full' });
-  assert(applied.revisionApplied === true, `修订未被应用：${JSON.stringify(applied)}`);
+  const retired = applyFeatureScopeRevisionsThenMaybeComplete({ projectRoot: root, frameworkRoot, feature, phase: 'plan', workflowTrack: 'full' });
+  assert(retired.revisionApplied === false, `独立检查不能推进完整交付范围：${JSON.stringify(retired)}`);
+  assert(readFeatureFrozenScope(root, feature)!.revisions.length === 0, 'new runless closing cannot act as a runner');
+  // Historical revision fixture: the production readers retain this old representation.
+  const historical = resolveScopeRevisionProposal({ projectRoot: root, frameworkRoot, feature,
+    workflow: require('../../workflow-loader').resolveWorkflowSpec(root, { frameworkRoot }), previous: born,
+    proposals: [revisionCheck!.scope_revision_input!], authorizedPhases: born.phase_chain, completedPhases: new Set(), currentPhase: 'plan' });
+  assert(historical, 'the historical valid proposal must still resolve');
+  appendFeatureScopeRevision({ projectRoot: root, feature, nextScope: historical!.scope, trigger: { phase: 'plan' }, revisionInput: historical!.input });
 
   // ① implementation 义务 basis 随新契约刷新：既不留 `[]`，也不停在出生那代契约回落上
   //    ——写集里有既有文件之后，它必须绑到真实的 codebase 写集。

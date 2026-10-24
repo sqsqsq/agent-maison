@@ -9,6 +9,7 @@ import {
   type RunControlV1,
 } from './goal-run-control';
 import { loadEventsJsonlStrict } from './goal-runner-phase';
+import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
 
 export interface AttendedGoalPhaseIdentity {
   runId: string;
@@ -104,6 +105,16 @@ export function validateAttendedGoalContext(input: {
       `issued=${String(issued.phase)}/${String(issued.attempt_id)} ` +
       `received=${phase}/${attemptId}`,
     );
+  }
+  if (issued.handoff_request) {
+    const reference = issued.handoff_request as import('./session-execution-handoff').HandoffReference;
+    const request = readHandoffMaterial<SessionExecutionRequest>(runDir, reference);
+    if (request.context.owner.owner_id !== ownerId || request.context.owner.epoch !== ownerEpoch
+      || request.context.phase !== phase || request.context.attemptId !== attemptId
+      || Date.parse(request.deadline) <= (input.nowMs ?? Date.now())) throw new Error('[attended-goal-context] signed execution window is stale or expired');
+    if (loaded.events.some(event => event.type === 'agent_invoke_end' && event.handoff_report?.request_sha256 === reference.sha256)) {
+      throw new Error('[attended-goal-context] execution window has already been returned');
+    }
   }
   return { manifest, control, runDir, identity };
 }

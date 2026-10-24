@@ -31,6 +31,8 @@ import {
   findUnclosedAgentInvokeStart,
   isReceiptFreshForInvokeStart,
   foldBudgetLineage,
+  partitionExecutionSessions,
+  resolveResumedBudget,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
 import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
@@ -751,6 +753,73 @@ cases.push(
         assert(count(chained.budgetFoldEvents, 'agent_invoke_start') === 5, `轮次应为 S(2)+N(2)+O(1)：${count(chained.budgetFoldEvents, 'agent_invoke_start')}`);
       },
     },
+  );
+}
+
+{
+  const minute = 60_000;
+  const origin = Date.parse('2026-10-23T08:00:00Z');
+  const at = (minutes: number): string => new Date(origin + minutes * minute).toISOString();
+  const handoff = (minutes = 0, sha = 'a'): GoalRunEvent => ({ type: 'phase_start', ts: at(minutes), phase: 'coding',
+    driver: 'session', invoke_id: 'coding-i1', handoff_request: { path: 'phases/coding/request.json', sha256: sha } });
+  const started = (): GoalRunEvent[] => [
+    { type: 'run_start', ts: at(0) },
+    { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i1', command: 'phase_execute_request', ts: at(0), effective_timeout_ms: 44 * minute },
+  ];
+  const report = (minutes: number, sha = 'a'): GoalRunEvent => ({ type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i1', ts: at(minutes),
+    timed_out: minutes >= 44, handoff_report: { path: 'phases/coding/report.json', sha256: 'report', request_sha256: sha } });
+  const active = (events: GoalRunEvent[], now = 840): number => resolveResumedBudget(events, { nextSessionStartMs: origin + now * minute }).priorActiveMs / minute;
+
+  cases.push(
+    { name: 'session budget: 有效窗内睡眠继续计时；签发前真实启动耗时不丢', run: () => {
+      assert(active([...started(), handoff()], 20) === 20, '有效窗内的 CLI 间隔/睡眠必须计时');
+      const events = started();
+      events[0].ts = at(-2);
+      assert(active([...events, handoff()]) === 46, '原执行窗 44m 加真实启动 2m');
+    } },
+    { name: 'session budget: 未报告和迟到 timeout/观察均不把 44m 窗口拉成隔夜 840m', run: () => {
+      for (const late of [[], [report(840)], [{ type: 'phase_write_observed', phase: 'coding', ts: at(839) }, report(840)]] as GoalRunEvent[][]) {
+        for (const next of [[], [{ type: 'run_start', ts: at(840) }]] as GoalRunEvent[][]) {
+          const events = [...started(), handoff(), ...late, ...next];
+          assert(active(events) === 44, `隔夜 author 窗口必须封在 44m：${active(events)}`);
+          assert(resolveResumedBudget(events, { nextSessionStartMs: origin + 840 * minute }).totalTurns === 1, '计次不重置');
+        }
+      }
+    } },
+    { name: 'session budget: 交回后正式 gate/新 CLI 与启动提前退出仍计真实活跃区间', run: () => {
+      const gate = [{ type: 'run_start', ts: at(840) }, { type: 'harness_start', ts: at(840), invoke_id: 'gate' },
+        { type: 'harness_end', ts: at(842), invoke_id: 'gate' }, { type: 'run_end', ts: at(842) }] as GoalRunEvent[];
+      assert(active([...started(), handoff(), report(840), ...gate], 842) === 46, '44m author 加 2m gate');
+      assert(active([...started(), handoff(), report(20), ...gate], 842) === 22, '20m 已交回 author 加 2m gate');
+      assert(active([...started(), handoff(), { type: 'run_end', ts: at(20), status: 'HALTED' }]) === 20, '真实停机后不继续计作者窗');
+      const earlyExit = { type: 'run_end', ts: at(842), session_started_at: at(840) } as GoalRunEvent;
+      const partition = partitionExecutionSessions([...started(), handoff(), report(840), earlyExit]);
+      assert(partition.priorActiveMs === 46 * minute && partition.sessions[0].intervals.length === 2, '提前退出不能填满隔夜空档');
+    } },
+    { name: 'session budget: 同 attempt 重签使用原 invoke_start，不滚动 deadline 或重复计次', run: () => {
+      assert(active([...started(), handoff(), handoff(20, 'b'), report(840, 'b')]) === 44, '重签不能后移窗口');
+    } },
+    { name: 'session budget: 半签发沿崩溃补收；补签仍受原 invoke_start 的 44m 窗口约束', run: () => {
+      assert(active(started()) === 1, '未正式签发请求不把离开期当执行期');
+      const recovered = [...started(), { type: 'run_start', ts: at(10) }, handoff(10)] as GoalRunEvent[];
+      assert(active(recovered) === 35, '原崩溃段 1m 加原窗口剩余 34m，不能从补签起重给 44m');
+    } },
+    { name: 'session budget: 真实受管作业跨 deadline 仍计入，未 settled 不伪造停止', run: () => {
+      for (const [startType, endType] of [['agent_process_bound', 'agent_process_settled'], ['harness_start', 'harness_end']]) {
+        const bound = { type: startType, ts: at(30), invoke_id: 'managed-job' };
+        assert(active([...started(), handoff(), bound], 90) === 90, `${startType} 未结束仍计时`);
+        assert(active([...started(), handoff(), bound, { type: endType, ts: at(60), invoke_id: 'managed-job' }], 90) === 60, `${startType} 真实到 60m`);
+        assert(active([...started(), bound, handoff(35), { type: endType, ts: at(60), invoke_id: 'managed-job' }], 90) === 60, `${startType} 签发前已绑定的真实活动也不能截断`);
+      }
+    } },
+    { name: 'session budget: 普通 detached 心跳崩溃、run_end、harness/backoff 与直播睡眠口径不变', run: () => {
+      const detached = [{ type: 'run_start', ts: at(0) }, { type: 'agent_invoke_start', phase: 'coding', invoke_id: 'coding-i1',
+        command: 'claude', effective_timeout_ms: 44 * minute, ts: at(0) }, { type: 'heartbeat', ts: at(5) }] as GoalRunEvent[];
+      assert(active(detached) === 6, '崩溃只补一个心跳，不能按 invoke timeout 计满');
+      assert(active([...detached, { type: 'harness_start', ts: at(20) }, { type: 'harness_end', ts: at(30) },
+        { type: 'heartbeat', ts: at(60) }, { type: 'run_end', ts: at(120) }]) === 120, '真实驻留会话内睡眠/harness/backoff不能按 invoke 窗口截断');
+      assert(partitionExecutionSessions(detached, { liveTailMs: origin + 90 * minute }).priorActiveMs === 90 * minute, '驻留直播仍随 now 计时');
+    } },
   );
 }
 

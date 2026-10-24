@@ -13,6 +13,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { executeCheck } from './utils/check-execution';
 
 import {
   PhaseChecker,
@@ -464,20 +465,6 @@ function checkTermCoveredByCatalogTypicalTerms(
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: 'MINOR', status: 'SKIP',
-      details: `检查执行时发生错误：${(err as Error).message}`,
-    }];
-  }
-}
-
 const checker: PhaseChecker = {
   phase: 'glossary',
 
@@ -516,19 +503,19 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [];
 
     // Structure
-    results.push(...safeRun(() => checkSchemaVersionPresent(ctx, glossary), 'schema_version_present'));
-    results.push(...safeRun(() => checkTermsIsList(ctx, glossary), 'terms_is_list'));
-    results.push(...safeRun(() => checkTermRequiredFields(ctx, glossary), 'term_required_fields'));
-    results.push(...safeRun(() => checkTermUnique(ctx, glossary, gResult.glossary), 'term_unique'));
-    results.push(...safeRun(() => checkAliasUniqueAcrossTerms(ctx, glossary, gResult.glossary), 'alias_unique_across_terms'));
-    results.push(...safeRun(() => checkOwnerLayerValueValid(ctx, glossary), 'owner_layer_value_valid'));
-    results.push(...safeRun(() => checkSeedNoTechnicalWords(ctx, catalog, ctx.term || ctx.module ? glossary.terms.map(t => t.term) : undefined), 'seed_no_technical_words'));
+    results.push(...executeCheck(ctx, () => checkSchemaVersionPresent(ctx, glossary), 'schema_version_present'));
+    results.push(...executeCheck(ctx, () => checkTermsIsList(ctx, glossary), 'terms_is_list'));
+    results.push(...executeCheck(ctx, () => checkTermRequiredFields(ctx, glossary), 'term_required_fields'));
+    results.push(...executeCheck(ctx, () => checkTermUnique(ctx, glossary, gResult.glossary), 'term_unique'));
+    results.push(...executeCheck(ctx, () => checkAliasUniqueAcrossTerms(ctx, glossary, gResult.glossary), 'alias_unique_across_terms'));
+    results.push(...executeCheck(ctx, () => checkOwnerLayerValueValid(ctx, glossary), 'owner_layer_value_valid'));
+    results.push(...executeCheck(ctx, () => checkSeedNoTechnicalWords(ctx, catalog, ctx.term || ctx.module ? glossary.terms.map(t => t.term) : undefined), 'seed_no_technical_words'));
 
     // Traceability
-    results.push(...safeRun(() => checkCanonicalModuleExistsInCatalog(ctx, glossary, catalog), 'canonical_module_exists_in_catalog'));
-    results.push(...safeRun(() => checkOwnerLayerMatchesCatalog(ctx, glossary, catalog), 'owner_layer_matches_catalog'));
-    results.push(...safeRun(() => checkEasilyConfusedModulesExistInCatalog(ctx, glossary, catalog), 'easily_confused_modules_exist_in_catalog'));
-    results.push(...safeRun(() => checkTermCoveredByCatalogTypicalTerms(ctx, glossary, catalog), 'term_covered_by_catalog_typical_terms'));
+    results.push(...executeCheck(ctx, () => checkCanonicalModuleExistsInCatalog(ctx, glossary, catalog), 'canonical_module_exists_in_catalog'));
+    results.push(...executeCheck(ctx, () => checkOwnerLayerMatchesCatalog(ctx, glossary, catalog), 'owner_layer_matches_catalog'));
+    results.push(...executeCheck(ctx, () => checkEasilyConfusedModulesExistInCatalog(ctx, glossary, catalog), 'easily_confused_modules_exist_in_catalog'));
+    results.push(...executeCheck(ctx, () => checkTermCoveredByCatalogTypicalTerms(ctx, glossary, catalog), 'term_covered_by_catalog_typical_terms', { severity: 'MAJOR' }));
 
     return results;
   },

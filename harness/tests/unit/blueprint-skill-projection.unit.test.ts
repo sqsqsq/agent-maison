@@ -91,6 +91,36 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: '1804 independent projection CLI scopes spec and plan; invalid phases write nothing', run(f) {
+    for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
+    const invoke = (phaseArgs: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'),
+      '--project', path.join(frameworkRoot, 'harness/tsconfig.json'), path.join(frameworkRoot, 'harness/scripts/prepare-blueprint-design.ts'),
+      '--feature', f.feature, '--project-root', f.root, '--framework-root', frameworkRoot, ...phaseArgs],
+      { cwd: f.root, encoding: 'utf8', timeout: 60000 });
+    const files = (dir = f.root): Array<[string, string, number]> => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+      const file = path.join(dir, entry.name);
+      return entry.isDirectory() ? files(file) : [[path.relative(f.root, file), sha(file), fs.statSync(file).mtimeMs]] as Array<[string, string, number]>;
+    });
+    const before = files();
+    for (const args of [['--phase', 'coding'], ['--phase'], ['--phase', 'spec', '--phase', 'plan']]) {
+      const rejected = invoke(args);
+      assert.equal(rejected.status, 1, rejected.stderr + rejected.stdout);
+      assert(rejected.stderr.includes('--phase must be spec or plan'), rejected.stderr);
+      assert.deepEqual(files(), before, 'invalid phase must fail before any materialization');
+    }
+    const spec = invoke(['--phase', 'spec']);
+    assert.equal(spec.status, 0, spec.stderr + spec.stdout);
+    assert.deepEqual(JSON.parse(spec.stdout).written.map((file: string) => path.basename(file)), ['acceptance.yaml']);
+    assert(!resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists);
+    assert(!resolveFeatureArtifact(f.root, f.feature, 'use-cases.yaml').exists);
+    const acceptance = resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath;
+    fs.appendFileSync(acceptance, '\nauthor_notes: retained by plan export\n');
+    const preserved = fs.readFileSync(acceptance);
+    const plan = invoke(['--phase', 'plan']);
+    assert.equal(plan.status, 0, plan.stderr + plan.stdout);
+    assert.deepEqual(JSON.parse(plan.stdout).written.map((file: string) => path.basename(file)).sort(), ['contracts.yaml', 'use-cases.yaml']);
+    assert(fs.readFileSync(acceptance).equals(preserved), 'plan export must not rewrite spec output');
+  } },
   { name: '7d9c2e41 staged preparation writes only the responsible outputs and preserves increments', run(f) {
     for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
     let invocation = 0;

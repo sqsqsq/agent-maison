@@ -82,11 +82,11 @@ Feature evidence/恢复/verifier 使用同一 facts 路径；request 不调用 F
 
 workflow 1.2 用静态 `obligation_provider_id` 表达职责，`resolveExecutionScope` 统一计算执行范围；auto_chain 只提供稳定默认次序。P3/P6 提供规范化请求与有来源的业务事实，验收分层复用既有检查，未知保持具体缺口。候选中的契约指纹由出生入口从安装的 contracts 重算。
 
-完整交付有**两个载体**：① 交互路径把 execution_scope 冻结在 feature 级记录（`<features_dir>/<feature>/execution-scope.json`，机器单 writer，与候选文件分开）；② Goal 路径在 manifest/run_created 冻结，phase_chain、chain_override、start/end 必须同值投影。权威优先级是「本次关联的 run > feature 冻结记录」，说不清时明确报错、不选边。两条路都只读出生范围，Feature 候选和后来的 track/默认排序不覆盖它；同一 feature 后起 run 以**转交时 feature 的有效范围**出生并登记转交指纹。Scope 的控制边与依据仍在同一载体内，不建立平行图。
+新完整交付统一使用 run：同一 GoalPhaseRuntime 在 manifest/run_created 冻结范围，phase_chain、chain_override、start/end 同值投影。会话用非驻留 next/report，无人值守用 detached。feature 级 `execution-scope.json` 只保留旧范围/修订/完成的读取及正式转交；新完整交付不再首次冻结 feature 载体或由无 run 出口签完成。既有权威优先级和转交校验不变，同一 feature 后起 run 以转交时的有效范围出生，不重算旧成果；不建立平行图。
 
 P1 调用上下文、阶段指令、assess、完成验证和 CU expected execution 都经**同一个统一入口**读取该范围（有 run 身份读 run，无身份读 feature 冻结记录），消费方不自行判断载体。有效施工输入可承接信息要求，真正未完成的设计决策/控制前置仍回责任方；request-only 及 unknown 不签 Feature completion，全复用只验证现有结果，不造空 run。
 
-责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`；两个载体的提案校验是**同一个函数**，feature 载体把修订记在冻结记录的 `revisions[]` 里（形状与 `scope_revised` 一致，无 run 字段）。合法修订在**同一 run / 同一条冻结记录**内追加一条即完成：不封卷、不释放 owner/锁、不生成后继，出生范围与失败历史不被改写，有效范围 = 出生 + 按 index 应用的修订。后继只留给失败修复型 supersede、用户显式改需求与建 run 未完成的修复；那条路上预算、权限和 pin 继承，前驱临时恢复状态保留到后继完成后沿既有 GC 清理。失败来源保持 PARTIAL/HALTED，其裸 PASS 不变成复用证据。默认 spec-driven 尚未切换，P3–P6 的具体 Skill 迁移和 P7 的公开切换继续按计划推进。
+责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`，同一校验与回退重签规则继续用于 run 范围；旧 feature 记录的修订读取保持兼容。合法修订在同一 run 追加，出生范围与失败历史不改写；后继仍只用于既有 supersede/请求变化等适用场景，预算、权限与 pin 继承。request-only/unknown 不签 Feature completion，全复用只核现有结果，不造空 run。
 
 ## 输入读取矩阵与迁移责任（P1）
 

@@ -632,13 +632,13 @@ const cases: Array<{ name: string; run: () => void }> = [
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.length > 0, '模板缺 §4.0 需求路由节');
       const DESIGN_HANDOFF_SENTENCE =
-        '**设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源';
+        '**设计交接**（admitted blueprint + ready CU）是范围候选的输入；由当前主 Agent 先完成';
       const CANDIDATE_NOT_FREEZE_SENTENCE = '**`--prepare-scope` 只生成候选、不冻结范围**';
-      const FIRST_PHASE_FREEZE_SENTENCE = '**首次阶段调用**冻结 feature 级范围记录并核对候选指纹';
+      const FIRST_PHASE_FREEZE_SENTENCE = '**新完整交付在 run 出生时冻结范围**';
       for (const [why, sentence] of [
         ['设计交接是候选的输入（需求 R2 第二条）', DESIGN_HANDOFF_SENTENCE],
         ['候选与冻结分清，不得写成 prepare-scope 冻结范围（需求 R2 第一条）', CANDIDATE_NOT_FREEZE_SENTENCE],
-        ['冻结发生在首次阶段调用（需求 R2 第一条）', FIRST_PHASE_FREEZE_SENTENCE],
+        ['新完整交付冻结发生在 run 出生时（1804ac3b）', FIRST_PHASE_FREEZE_SENTENCE],
       ] as const) {
         assert(section.includes(sentence), `AGENTS 模板 §4.0 缺原句：${why}。期望逐字包含：\n${sentence}`);
       }
@@ -681,11 +681,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       // R4：整句含「既有确认点」五项枚举——删掉枚举或反转前半句都会失配。
       // **只锁「授权延续到终点」这一句**；「建 run 具体怎么做」由模板 §4.0 的上下文说明承载。
       const AUTHORITY_CONTINUATION_SENTENCE =
-        '**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、有人在场时的设计缺口澄清）。';
+        '**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、未获授权的预算调整、外部不可逆动作、有人在场时的设计缺口澄清）。';
       const template = read('templates/AGENTS.md.template');
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.includes(AUTHORITY_CONTINUATION_SENTENCE), `AGENTS 模板 §4.0 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);
-      const projectAuthority = AUTHORITY_CONTINUATION_SENTENCE.replace('策展语义、预算、', '策展语义、未获授权的预算调整、');
+      const projectAuthority = AUTHORITY_CONTINUATION_SENTENCE;
       assert(read('docs/operations/project-entry.md').includes(projectAuthority), `project-entry 缺交付授权延续及未获授权预算确认边界：\n${projectAuthority}`);
     },
   },
@@ -701,7 +701,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         'skills/project/change-unit-progression/SKILL.md',
       ]) {
         const text = read(rel);
-        for (const marker of ['首次阶段调用', '只生成候选、不冻结范围']) {
+        for (const marker of ['run 出生时', '只生成候选、不冻结范围']) {
           assert(text.includes(marker), `${rel} 未与入口同步冻结口径标记: ${marker}（需求 R2 第三条）`);
         }
       }
@@ -753,7 +753,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       // reference/ 与 agent 模板没有机器预算。§3.7 要求"原位改句、不加长"，用既有
       // lineCount 把两处钉在当前基线上（要加长须连同这里一起裁决）。
       const docBudget: ReadonlyArray<readonly [string, number]> = [
-        ['skills/reference/goal-mode-operations.md', 225],
+        ['skills/reference/goal-mode-operations.md', 250],
         ['agents/claude/templates/agents/phase-executor.md', 50],
       ];
       for (const [rel, budget] of docBudget) {

@@ -31,6 +31,7 @@ export function isSummaryFresh(beforeMtime: number | null, afterMtime: number | 
 }
 
 export interface RepairInvocationEvent {
+  status?: unknown;
   type?: string;
   phase?: unknown;
   invoke_id?: unknown;
@@ -63,6 +64,7 @@ export function repairInvocationCompleted(
   const settled = [...own].reverse().find(e => e.type === 'agent_process_settled');
   const verdict = [...own].reverse().find(e => e.type === 'phase_verdict');
   const facts = end ?? settled;
+  if (end?.status === 'waiting') return false;
   if ([end, settled].some(e => e?.timed_out === true || e?.kill_reason === 'agent_timeout' ||
       e?.terminal_failure_observed === true || e?.silent_killed === true)) return false;
   if (facts?.completion_observed === true) return true;
@@ -250,6 +252,9 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  command?: string;
+  handoff_request?: import('./session-execution-handoff').HandoffReference;
+  handoff_report?: import('./session-execution-handoff').HandoffReference & { request_sha256: string };
   /** Facts admitted before this exact phase invocation; source ownership is runtime-derived. */
   facts_context?: import('./context-facts').FactsInvocationContext;
   /** 原回退窗口的相关输入实值；不参与候选/round身份或预算。 */
@@ -349,6 +354,13 @@ export interface ResumedBudget {
   firstAuthoritativeStartMs: number | null;
 }
 
+/** Execution starts at invoke_start; session signatures may be reissued later. */
+export function phaseInvocationStart(events: readonly GoalRunEvent[], phase: string, beforeMs = Number.POSITIVE_INFINITY): GoalRunEvent | undefined {
+  const before = events.filter(event => Date.parse(event.ts ?? '') <= beforeMs);
+  return [...before].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase)
+    ?? [...before].reverse().find(event => event.type === 'phase_start' && event.phase === phase && event.driver !== 'session');
+}
+
 /** Count agent attempts from events (new start/end + legacy agent_invoke). */
 export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
   let n = 0;
@@ -381,7 +393,7 @@ export interface ExecutionSession {
   mode: 'dry' | 'authoritative';
   /**
    * 本段真实的活动区间（ms，互不重叠、按时间序）；Σ(end−start) = activeMs。通常只有一段 [startMs, startMs+activeMs]；
-   * 段内第一个 run_end 之后的启动提前退出（带 session_started_at 的 run_end）各自多一段——它们在时间上不与前段连续，
+   * session 交接窗口与之后的 CLI/gate、启动提前退出各自保留区间——它们在时间上不一定与前段连续，
    * 按时间窗求交集的消费方（恢复成本）必须用这里，不能把 [startMs, startMs+activeMs] 当连续区间。
    */
   intervals: Array<{ startMs: number; endMs: number }>;
@@ -409,6 +421,7 @@ function eventTsMs(e: GoalRunEvent): number | null {
  * resume/首事件兜底为段首）。段尾=本段 run_end；无 run_end 的段（崩溃/hard-kill）
  * 保守补收：end = min(下一段首 ts, 段内最大事件 ts + SESSION_HEARTBEAT_MS)——
  * 误差方向=多计 ≤1 心跳间隔（安全方向，预算只会更快耗尽，累计漏算为零）。
+ * 正式 session handoff 按原 invoke_start + effective_timeout_ms 封作者窗；迟到收口不计离开时间。
  * 段 mode：段首 run_start.dry_run===true 或段内全事件携 dry_run:true → dry。
  * 时间异常（乱序/回拨导致负时长）保守钳 0，不判负。
  */
@@ -418,6 +431,8 @@ export function partitionExecutionSessions(
     /** codex 五轮 P1-②：resume 边界——priorEvents 里最后一个未闭合历史段的补收上界
      * （=当前进程 sessionStartMs），防与当前段（elapsed 另行承载）重复计时。 */
     tailCapMs?: number;
+    /** 仅状态直播使用；普通驻留尾段随此时刻前进，session 交接仍受原执行窗约束。 */
+    liveTailMs?: number;
   },
 ): PartitionedSessions {
   const sessions: ExecutionSession[] = [];
@@ -454,36 +469,75 @@ export function partitionExecutionSessions(
     }
     let endMs: number;
     let clean = false;
+    const nextStartMs = nextStartIndex < events.length ? eventTsMs(events[nextStartIndex]) : null;
+    const cap = nextStartMs ?? opts?.tailCapMs ?? opts?.liveTailMs ?? null;
     if (runEnd) {
       endMs = eventTsMs(runEnd) ?? maxTs;
       clean = true;
     } else {
       // 崩溃段保守补收一个心跳周期，nextSessionStart/tailCap 截断防与后段重叠。
       const credited = maxTs + SESSION_HEARTBEAT_MS;
-      const nextStartMs = nextStartIndex < events.length ? eventTsMs(events[nextStartIndex]) : null;
-      const cap = nextStartMs ?? opts?.tailCapMs ?? null;
-      endMs = cap !== null ? Math.min(cap, credited) : credited;
+      endMs = nextStartMs === null && opts?.liveTailMs !== undefined ? opts.liveTailMs
+        : cap !== null ? Math.min(cap, credited) : credited;
     }
     const startEvent = events[startIndex] as { dry_run?: unknown };
     const isDry =
       (events[startIndex].type === 'run_start' && startEvent.dry_run === true) ||
       (seg.length > 0 && seg.every((e) => (e as { dry_run?: unknown }).dry_run === true));
     let activeMs = Number.isNaN(startMs) ? 0 : Math.max(0, endMs - startMs);
-    const intervals = [{ startMs: Number.isNaN(startMs) ? 0 : startMs, endMs: Number.isNaN(startMs) ? 0 : startMs + activeMs }];
+    let intervals = [{ startMs: Number.isNaN(startMs) ? 0 : startMs, endMs: Number.isNaN(startMs) ? 0 : startMs + activeMs }];
     let segCoveredUntil = endMs;
+    const handoffIndex = seg.findIndex(e => e.type === 'phase_start' && e.handoff_request && e.invoke_id);
+    const handoff = seg[handoffIndex];
+    const invocation = handoff && [...events.slice(0, startIndex + handoffIndex)].reverse()
+      .find(e => e.type === 'agent_invoke_start' && e.invoke_id === handoff.invoke_id && e.phase === handoff.phase);
+    const invokeStartMs = invocation ? eventTsMs(invocation) : null;
+    const timeoutMs = invocation?.effective_timeout_ms;
+    const boundedHandoff = invokeStartMs !== null && typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0;
+    if (boundedHandoff) {
+      const observedUntil = cap ?? Date.now();
+      const report = seg.find(e => e.type === 'agent_invoke_end' && e.invoke_id === handoff.invoke_id && e.handoff_report);
+      const authorEnd = Math.min(invokeStartMs + timeoutMs!, report ? eventTsMs(report) ?? observedUntil : observedUntil,
+        runEnd ? eventTsMs(runEnd) ?? observedUntil : observedUntil, observedUntil);
+      // Late receipt/timeout timestamps describe the returning CLI, not execution during its absence.
+      intervals = [
+        { startMs, endMs: Math.max(startMs, Math.min(eventTsMs(handoff) ?? startMs, observedUntil)) },
+        { startMs: Math.max(startMs, invokeStartMs), endMs: authorEnd },
+      ];
+      for (let i = 0; i < seg.length; i++) {
+        const activity = seg[i];
+        const endType = activity.type === 'agent_process_bound' ? 'agent_process_settled'
+          : activity.type === 'harness_start' ? 'harness_end' : null;
+        const from = eventTsMs(activity);
+        if (!endType || from === null) continue;
+        const settled = seg.slice(i + 1).find(e => e.type === endType && e.invoke_id === activity.invoke_id);
+        intervals.push({ startMs: from, endMs: Math.min(observedUntil, settled ? eventTsMs(settled) ?? observedUntil : observedUntil) });
+      }
+    }
     if (runEnd) {
-      for (const e of seg.slice(seg.indexOf(runEnd) + 1)) {
+      for (const e of boundedHandoff ? seg : seg.slice(seg.indexOf(runEnd) + 1)) {
         if (e.type !== 'run_end') continue;
         const declared = sessionStartedAtMs(e);
         const endE = eventTsMs(e);
         if (declared === null || endE === null) continue;
-        const from = Math.max(declared, segCoveredUntil);
+        const from = boundedHandoff ? declared : Math.max(declared, segCoveredUntil);
         if (endE > from) {
           activeMs += endE - from;
           intervals.push({ startMs: from, endMs: endE });
           segCoveredUntil = endE;
         }
       }
+    }
+    if (boundedHandoff) {
+      const merged: ExecutionSession['intervals'] = [];
+      for (const interval of intervals.filter(i => i.endMs > i.startMs).sort((a, b) => a.startMs - b.startMs)) {
+        const previous = merged[merged.length - 1];
+        if (previous && interval.startMs <= previous.endMs) previous.endMs = Math.max(previous.endMs, interval.endMs);
+        else merged.push({ ...interval });
+      }
+      intervals = merged;
+      activeMs = intervals.reduce((sum, interval) => sum + interval.endMs - interval.startMs, 0);
+      segCoveredUntil = intervals[intervals.length - 1]?.endMs ?? startMs;
     }
     coveredUntilMs = Math.max(coveredUntilMs, segCoveredUntil);
     sessions.push({

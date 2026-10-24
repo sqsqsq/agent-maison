@@ -108,22 +108,22 @@ Enforcement: `agents/adapter-schema.yaml`, `harness/scripts/check-init.ts`
 - **THEN** adapter validation MUST fail
 
 ### Requirement: Capability routing is fail-closed
-The goal driver SHALL route in-session, unattended, and handoff behavior only when the active adapter declares and passes the corresponding capability/preflight. Missing capability SHALL select a documented fallback or halt rather than optimistic execution.
+Command-capable sessions with valid materialized adapters SHALL share the same non-resident next/report runtime handoff regardless of in_session_reconcile or phase_context_isolation. Isolation SHALL describe only executor context arrangement, without waiving required independent verification. Unattended execution and native transport handoff SHALL retain corresponding capability/preflight requirements; missing required capability SHALL halt with a truthful gap. Framework handoff recovery SHALL NOT depend on model CLI native resume.
 
 #### Scenario: Unattended permission contract is incomplete
 - **WHEN** unattended mode is requested and the active adapter fails existing external-runner preflight
 - **THEN** the run MUST halt before autonomous mutation and report the missing capability
 
 #### Scenario: In-session capability is absent
-- **WHEN** attended goal mode is requested without in-session support
-- **THEN** the framework SHALL fall back to manual harness+assess
+- **WHEN** attended goal mode is requested with valid configuration but no phase isolation
+- **THEN** the framework SHALL use the same next/report runtime in the main context and disclose the arrangement
 
 ### Requirement: Existing adapter behavior remains backward compatible
 Adapters that currently support external-runner goal execution SHALL retain their existing headless invoke, permission, output-delivery, tool-event, and usage-capture semantics unless they explicitly opt into new in-session or handoff capability fields.
 
 #### Scenario: Legacy adapter omits new capability fields
 - **WHEN** an existing adapter is loaded after upgrade
-- **THEN** external-runner behavior SHALL remain available under existing preflight while new in-session/handoff behavior remains disabled
+- **THEN** external-runner behavior SHALL remain available under existing preflight while next/report session handoff is available independently of the new flags and native transport handoff remains disabled
 
 ### Requirement: Phase-driven fidelity routing initialization has one flow owner and one implementation
 

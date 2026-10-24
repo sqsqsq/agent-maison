@@ -36,7 +36,7 @@ import {
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { applyLegacyTimeoutMigration, loadGoalManifestFile } from '../../scripts/utils/goal-manifest';
+import { applyLegacyTimeoutMigration, buildGoalManifestFromInput, loadGoalManifestFile } from '../../scripts/utils/goal-manifest';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import { FEATURE_PHASE_ORDER } from '../../scripts/utils/phase-transition-policy';
 
@@ -155,14 +155,16 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '预算自洽：Σ(全链 per-phase) ≤ 派生 wall（默认表 495m，派生应 ≥ 495+缓冲）',
+    name: '预算自洽：真实默认 manifest 的 480m 经全链 555m 加缓冲派生为 585m',
     run: () => {
-      const chain = resolveChainPhasesForBudget(FULL_CHAIN);
-      const sumMin = chain.reduce((a, p) => a + resolvePhaseTimeoutSeconds(p, FULL_CHAIN), 0) / 60;
-      const wall = resolveWallClockMinutes(FULL_CHAIN);
+      const manifest = buildGoalManifestFromInput({ feature: 'default-wall-budget' }, { projectRoot: process.cwd() });
+      assertEq(manifest.budget.wall_clock_minutes, 480, '真实构造路径补入 DEFAULT_BUDGET');
+      const chain = resolveChainPhasesForBudget(manifest);
+      const sumMin = chain.reduce((a, p) => a + resolvePhaseTimeoutSeconds(p, manifest), 0) / 60;
+      const wall = resolveWallClockMinutes(manifest);
       assertTrue(sumMin <= wall, `Σ=${sumMin}m 必须 ≤ wall=${wall}m`);
       assertEq(wall, Math.ceil(sumMin) + WALL_CLOCK_BUFFER_MINUTES, 'wall 应=Σ+缓冲（>旧480）');
-      assertTrue(wall > 480, `派生 wall=${wall} 应 > 旧默认 480`);
+      assertEq(wall, 585, '默认全链预算不能被构造器的默认 480 截断');
     },
   },
   {

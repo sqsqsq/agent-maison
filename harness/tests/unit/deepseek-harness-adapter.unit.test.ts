@@ -137,7 +137,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert.strictEqual(loaded.capability?.usage_capture, 'none');
       assert.strictEqual(loaded.capability?.tool_event_provenance, 'none');
       assert.strictEqual(routeGoalCapability(loaded, 'unattended', { unattendedPreflightOk: true }).kind, 'external_runner');
-      assert.strictEqual(routeGoalCapability(loaded, 'attended').kind, 'manual');
+      assert.strictEqual(routeGoalCapability(loaded, 'attended').kind, 'in_session');
       assert.strictEqual(resolveTerminalEventParser(ADAPTER), 'none');
       const patch = path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/headless-patch.yaml');
       assert.deepStrictEqual(YAML.parse(fs.readFileSync(patch, 'utf8')), [

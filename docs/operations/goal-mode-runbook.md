@@ -9,7 +9,7 @@
 
 视觉 minor-only 与 soft 可降级 provider major 的 writer 候选为 warn，gate/evidence/候选/debt 同源裁决：minor 只披露；soft major 记债务且阻断发布；真实 blocker 和缺证分别回修/补证，不能因 minor 放过。
 
-`GoalPhaseRuntime` 是 Maison 工具无关的唯一 phase 生命周期：按 workflow 派生 chain，统一负责 owner/epoch、assess、attempt、runtime facts、receipt/gate、verdict、回退与封口。`goal-runner` 只是 detached CLI/process shell；有人在场与无人值守仅在 executor transport（宿主回调 / adapter spawn）上不同。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
+`GoalPhaseRuntime` 是 Maison 工具无关的唯一 phase 生命周期：按 workflow 派生 chain，统一负责 owner/epoch、assess、attempt、runtime facts、receipt/gate、verdict、回退与封口。`goal-runner` 只是 detached CLI/process shell；有人在场与无人值守仅在 executor transport（会话 next/report 交接 / detached adapter spawn；程序宿主可保留回调）上不同。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
 
 ## 3.0 调和模型：一个循环、两个运行方式
 
@@ -17,7 +17,7 @@ interactive session 与 detached `goal-runner` 现在共用：
 
 - 冻结的 `PhaseExecutionContext`（run/workflow/track/chain/phase/attempt/owner fence/baseline）；
 - 同一个 `GoalPhaseRuntime` 生命周期与 owner 前后 fence；
-- 生产纯函数 `projectCanonicalLifecycle(events)` 的规范投影（executor/stdio/lease 遥测不入投影）。
+- 生产纯函数 `projectCanonicalLifecycle(events)` 的规范投影（executor/交接运输/lease 遥测不入投影）。
 
 ```text
 assess@1 → GoalPhaseRuntime authorize/guard → executor transport → gate/verdict → reassess
@@ -43,7 +43,7 @@ adapter root `goal_capability` 新增：
 - `supports_resume`
 - `handoff: none | to_detached | bidirectional`
 
-in-session 自治必须同时声明 reconcile 与 phase context isolation；缺失时降级为手动 harness+assess。无人值守仍要求 external runner preflight。handoff 还要求 resume 能力。
+全部可命令且配置有效的会话均使用同一 `goal-mode-entry --next / --report-result`，不以 reconcile/隔离合取准入，也不退回手动完整交付。`phase_context_isolation` 仅决定阶段在隔离上下文或主上下文执行并披露，必需独立 verifier/设计质询仍须真实独立。原生 resume/handoff 只管原运输交接，框架交接续作不依赖它；无人值守仍要求 external runner preflight。精确命令、原件读取、长 gate 原生任务等待与恢复见 [运维细则](../../skills/reference/goal-mode-operations.md#可执行命令从实例工程的-frameworkharness-目录运行)。
 
 ### Run control 与 handoff
 
@@ -236,7 +236,7 @@ run 在某个阶段的门上发现：问题不在手写产物，而在设计权�
 
 ### B 类：设计内容需要修订
 
-无人值守完整交付时，原需求内的蓝图/CU与必要架构变更由 runner 交设计 owner 静默修订、隔离质询、检查、发布和重绑后继续；不需要个人 B1 开关，不由 plan/coding 或外层主 Agent 就地自授。有人在场沿原确认流程。改变原需求或实质验收、真实秘密/不可逆外部动作、突破用户总预算或明确禁止仍须用户决定。
+原目标内设计/CU与必要架构修订按共同授权策略由 runtime 交设计 owner 草稿、独立质询、检查、发布和重绑；detached 保留既有完整交付授权，attended 由主 Agent 从可信原全权授权在每次控制调用重传 --authorize-autonomy。未授权会话沿原确认；默认 never/goal_mode、日志或 Agent 自写记录不授设计权。plan/coding 不就地自授，改变原目标/实质验收、真实秘密/不可逆外部动作、用户总上限或明确禁止仍按实际授权处理。
 
 按具体原因区分投影缺口与设计决定：有唯一权威时重建派生映射；缺失/冲突决定由设计 owner 按原需求裁定。B1/B2 仍可解释原因，不再把 B2 一律等同于需要人签。
 
@@ -669,6 +669,8 @@ npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
 
 ## 默认额度与用户总上限
 
-只有用户明确同时选择“无人值守＋不要询问＋授权完整交付”，主 Agent 才可在读取原始有效请求及已有更正后，显式提高框架默认额度，并通过现有 manifest / `--override-manifest` / `budget_changed` 继续同一 run。普通静默、“继续”或局部任务不授予该权；用户另行指定的最终时间、轮次或费用总上限不可突破，授权不能证明或冲突时保持原边界。runner 到当前生效额度仍照常停，不自动循环增额；lineage 累计消耗不清零，提额不解除 no_progress_guard、重复回退、外部条件或其它授权。最终回复按现有 manifest 与 budget_changed 披露每次扩容前后值、原因、授权依据及累计消耗；费用只在有可靠数据时给数值。不增加参数、授权字段或预算账本。
+完整交付并明确“不要询问/全权处理”时，主 Agent 按可信原授权在 attended prepare 及每次 next/report 重传 `--authorize-autonomy`，可沿既有 manifest/`--override-manifest` 调整默认额度并继续同一 run；新会话先恢复原授权，不重复问已授权用户。缺省 never/goal_mode 不授全权；覆盖前核 manifest 全部差异，预算单独批准不授设计全权。原目标内设计/CU/必要架构修订由设计 owner 独立质询、检查、发布与重绑；detached 保留原完整交付设计授权。用户最终时间/轮次/费用上限不破、累计不清零、无进展熔断不解除、runner 不循环提额。最终披露额度前后、原因、来源及累计消耗。
 
 返修诊断材料 `--repair-notes` 只在已有本阶段返修候选的窗口消费，不改变冻结起止或需求；无可执行候选时不能靠附加文字声称改道。按实际 phase_start/scope_revised 证明接续；同输入无进展保留原熔断，真实预算/授权/外部缺口准确回报。
+
+默认额度变更仍须原请求/单次明确授权及既有 --override-manifest，累计与用户硬上限不变。

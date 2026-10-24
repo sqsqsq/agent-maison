@@ -122,7 +122,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
 
 **边界（BLOCKER）**：本 Skill **停在设计交接**——设计阶段不启动 run：不进入 P2 selector、不进入施工
-循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内按用户选择启动 attended 或 detached Goal；无人值守的初始设计仍先在当前主 Agent 会话完成，ready 后才 detach；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 无人值守时框架派出的 B1 修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
+循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内按用户选择启动 attended 或 detached Goal；无人值守的初始设计仍先在当前主 Agent 会话完成，ready 后才 detach；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 按共同有效授权派出的设计修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
 
 ### 5. 默认本地人读文档与可选宿主接入
 

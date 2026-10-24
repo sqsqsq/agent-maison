@@ -27,6 +27,9 @@ export interface InSessionPhaseOutcome {
 
 export interface InSessionRoundResult {
   status: 'executed' | 'waiting' | 'reconciled' | 'fused' | 'manual_fallback';
+  run_id?: string;
+  exit_code?: number;
+  recovery?: { reason?: string; probe?: unknown; guidance?: string };
   assessment: AssessResult | null;
   outcome?: InSessionPhaseOutcome;
   waiting_item?: string;

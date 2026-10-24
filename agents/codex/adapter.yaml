@@ -59,6 +59,9 @@ visual_provider:
   model_replay: '--model'
 
 goal_capability:
+  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
+  # 隔离声明只决定阶段上下文；缺省 false 时主上下文执行，必需独立核验仍真实独立。
+  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
   mode: native_goal
   # plan e6b3f8d2 t1：`codex exec --json` 打印 JSONL 事件流（0.149.0 本机实证）。
   # · output_delivery=streaming —— stdout 逐事件即时到达（非整段缓冲），活性判据可据此

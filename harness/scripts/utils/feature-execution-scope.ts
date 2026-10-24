@@ -560,16 +560,7 @@ export function ensureFeatureExecutionScopeFrozen(input: {
   }
 }
 
-/**
- * D1.5 / D2.7 的**唯一**无 run 收尾函数：两个出口（普通阶段尾部、`--sync-closure`）都调它，
- * 三步顺序与判据零重复：
- *
- *   ① 消费本阶段 script-report 里的修订输入 → 追加进 feature 冻结记录的 `revisions[]`；
- *   ② 重新读取有效范围；
- *   ③ 按 §6.5 四条件检查并生成无 run 完成原件。
- *
- * 有 run 身份时整个函数是 no-op（run 有自己的 runtime 收尾路径）。
- */
+/** Compatibility exit for independent checks; only GoalPhaseRuntime advances full delivery. */
 export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   projectRoot: string;
   frameworkRoot: string;
@@ -577,95 +568,14 @@ export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   phase: string;
   workflowTrack: string;
   runId?: string;
-  /** 本轮已确认闭环的阶段（用于按当前证据补既有满足证明）——与 run 路径同义。 */
   completedPhases?: ReadonlySet<string>;
 }): { revisionApplied: boolean; completionPath?: string; skippedReason?: string } {
   if (input.runId?.trim()) return { revisionApplied: false, skippedReason: 'run-authority' };
-  const { projectRoot, frameworkRoot, feature } = input;
-  // 与冻结入口**同一条**锁前置：说不清权威时不写任何东西（含修订与完成原件）。
-  const lockBlocker = featureAuthorityLockBlocker(projectRoot, feature, input.runId);
-  if (lockBlocker) throw new Error(lockBlocker.details ?? '[execution-scope] 无法确定权威');
-  let record = readFeatureFrozenScope(projectRoot, feature);
+  const record = readFeatureFrozenScope(input.projectRoot, input.feature);
   if (!record) return { revisionApplied: false, skippedReason: 'no-frozen-record' };
   if (currentFeatureScopeTransfer(record)) return { revisionApplied: false, skippedReason: 'transferred' };
-  // D1.2：收尾同样要核候选指纹——候选被改而记录未经修订时，不得基于旧冻结范围生成完成原件。
-  const candidateFingerprint = featureScopeCandidateFingerprint(projectRoot, feature);
-  if (candidateFingerprint !== record.candidate_fingerprint) {
-    throw new Error(`[execution-scope] 候选已变更而冻结范围未经修订，收尾不予继续 | candidate_fingerprint=${candidateFingerprint.slice(0, 16)} frozen_candidate_fingerprint=${record.candidate_fingerprint.slice(0, 16)}`);
-  }
-
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const { executionCompletionPhases } = require('./execution-scope') as typeof import('./execution-scope');
-  const { resolveScopeRevisionProposal } = require('./feature-track') as typeof import('./feature-track');
-  const completionModule = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-  /* eslint-enable @typescript-eslint/no-require-imports */
-
-  // ① 修订：触发面与校验**与 run 路径同一个函数**（`resolveScopeRevisionProposal`）——
-  //    单提案、请求边界、已完成阶段补证明、impact 继承/修正、失效 satisfied_by 剔除、
-  //    「范围变了就必须有新来源」全部同源。边界是「写完本阶段结果、退出前」，
-  //    **不以 closure 成功为条件**（§6.7）。
-  const workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
-  const proposals = readPhaseScopeRevisionInputs(projectRoot, feature, input.phase, frameworkRoot);
-  let revisionApplied = false;
-  const previous = featureEffectiveScope(record!);
-  // 第五轮建议 2：已闭环阶段交给提案校验去补既有满足证明——不接的话，一次合法修订会把
-  // 已经闭环的阶段重新加回未满足义务，白跑一遍。取法与判据复用**同一个** clean-pass 收集器：
-  // 修订前链上没有 issue 的阶段就是「本次可以自证闭环」的阶段，不另造一套完成判定。
-  const previousChain = executionCompletionPhases(previous).map(String);
-  const cleanIssues = completionModule.collectCleanPassIssues({
-    projectRoot, feature, chain: previousChain, executionScope: previous, frameworkRoot,
-  });
-  const completedPhases = input.completedPhases
-    ?? new Set(previousChain.filter(phase => !cleanIssues.some(issue => issue.phase === phase)));
-  const outcome = resolveScopeRevisionProposal({
-    projectRoot, frameworkRoot, feature, workflow,
-    proposals,
-    previous,
-    // 授权边界取**出生段的链**（`previous` 是应用过修订的有效范围，链会随义务满足而缩短/变空——
-    // 拿它当边界时，重复收尾会把同一份合法提案判成越权、连后面的 no-op 判断都到不了）。
-    authorizedPhases: record!.execution_scope.phase_chain,
-    completedPhases,
-    currentPhase: input.phase,
-  });
-  if (outcome) {
-    record = appendFeatureScopeRevision({ projectRoot, feature, nextScope: outcome.scope, trigger: { phase: input.phase }, revisionInput: outcome.input }).record;
-    revisionApplied = true;
-  }
-
-  // ② 重新读取有效范围（修订后的那一份）
-  const scope = featureEffectiveScope(record!);
-
-  // ③ 四条件：无 run 身份 + 有冻结记录（上面已确保）、completion_target=feature、无 unresolved、
-  //    完整完成链每个阶段 clean-pass（与 goal 侧**同一个** `shouldGenerateFeatureCompletion`）。
-  const chain = executionCompletionPhases(scope).map(String);
-  const gate = completionModule.shouldGenerateFeatureCompletion(scope, {
-    projectRoot, feature, chain, executionScope: scope, frameworkRoot,
-  });
-  if (!gate.eligible) {
-    return { revisionApplied, skippedReason: gate.issues.length ? `non_clean_pass: ${gate.issues.slice(0, 3).map(issue => `[${issue.phase}] ${issue.condition}`).join('; ')}` : 'scope_not_complete' };
-  }
-  const { originalAbs } = completionModule.generateFeatureCompletion({
-    projectRoot, feature, chain,
-    workflowTrack: input.workflowTrack,
-    runId: null,
-    runDirAbs: featureFilePath(projectRoot, feature, 'completion'),
-    phaseRunIds: {},
-    executionScope: scope,
-    frameworkRoot,
-  });
-  return { revisionApplied, completionPath: originalAbs };
-}
-
-/** 读本阶段 script-report 上的修订输入（runtime 的同一读取面：`checks[].scope_revision_input`）。 */
-function readPhaseScopeRevisionInputs(projectRoot: string, feature: string, phase: string, frameworkRoot: string): ExecutionScopeInput[] {
-  const abs = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'script-report.json');
-  if (!fs.existsSync(abs)) return [];
-  try {
-    const report = JSON.parse(fs.readFileSync(abs, 'utf8')) as { checks?: Array<{ scope_revision_input?: ExecutionScopeInput }> };
-    return (report.checks ?? []).map(check => check.scope_revision_input).filter((input): input is ExecutionScopeInput => !!input);
-  } catch {
-    return [];
-  }
+  return { revisionApplied: false, skippedReason: featureEffectiveScope(record).completion_target === 'feature'
+    ? 'goal-runtime-required' : 'request-terminal' };
 }
 
 /**

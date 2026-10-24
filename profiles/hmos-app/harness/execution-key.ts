@@ -162,6 +162,22 @@ export interface ExecutionKeyRunView {
 /** plan 5e1c7a93 D2：run 目录段名——testing 侧恒 'hylyre'，UT 侧 'ut'。 */
 export type ExecutionKeyLeg = 'hylyre' | 'ut';
 
+/** Record the attempt before dispatch so a crash cannot expose an older success. */
+export function startExecutionKeyRun(reportsBase: string, leg: ExecutionKeyLeg, inputs: ExecutionKeyInputs): { runDir: string; record: ExecutionKeyRecord } {
+  const latest = listExecutionKeyRuns(reportsBase, leg)[0]?.record.run_started_at;
+  const prior = latest ? Date.parse(latest) : NaN;
+  const now = new Date(Math.max(Date.now(), Number.isFinite(prior) ? prior + 1 : 0));
+  const stamp = now.toISOString().replace(/[-:.]/g, '');
+  const runDir = path.join(reportsBase, stamp, leg);
+  const record: ExecutionKeyRecord = {
+    schema_version: '1.0', execution_key: computeExecutionKey(inputs), inputs,
+    trace_path: '', run_started_at: now.toISOString(), outcome: 'started',
+    trace_sha256: null, timing_complete: false, frozen_files: [],
+  };
+  writeExecutionKeyRecord(runDir, record);
+  return { runDir, record };
+}
+
 /** 扫描 <reportsBase>/<stamp>/<leg>/execution-key.json，按目录 stamp 降序（最新在前）。 */
 export function listExecutionKeyRuns(reportsBase: string, leg: ExecutionKeyLeg = 'hylyre'): ExecutionKeyRunView[] {
   const out: ExecutionKeyRunView[] = [];

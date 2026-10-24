@@ -1,5 +1,7 @@
 # Plan 阶段 Skill (`plan`)
 
+**独立 plan-only 准备**：无 Goal、且绑定 canonical CU 时，动笔前在 `framework/harness` 运行 `npx ts-node scripts/prepare-blueprint-design.ts --feature <canonical-feature-id> --phase plan --project-root <工程根> --framework-root <工程根>/framework`，沿同源投影仅导出 contracts 及适用的 use-cases；Goal 已机器准备的直接消费，不重复调用。已有内容与冲突保护保持，不覆盖冲突、不省略 `--phase` 一次写三份；非 CU 的局部设计保留原入口与终点。
+
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `plan.scope_expansion` / `plan.ok_to_code` / `plan.arch_impact` / `plan.split_table` / `phase.next_step`。 **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 **P3 设计输入与职责边界**：见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)，只完成请求指定的设计工作，不自动进入施工。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
 
 ## 前置
@@ -144,7 +146,3 @@ CU 有所引蓝图时与其适用惯例一致，不适用项须在 review 台账
 | 阶段级规约 | `framework/specs/phase-rules/plan-rules.yaml` |
 | 脚本 Harness | `framework/harness/scripts/check-plan.ts` |
 | Trace | `<features_dir>/<feature>/plan/reports/<timestamp>/<model>-plan/trace.json`（schema=trace.schema.json，phase=plan）；`human_interventions` 须记 Scope 扩展批准（`type: scope_expansion_approval`），模型擅自扩展被拦截记 `human_pain_points`（category=`scope_creep`）+ 同目录 `gap-notes.md` |
-
-## 收尾
-
-阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。

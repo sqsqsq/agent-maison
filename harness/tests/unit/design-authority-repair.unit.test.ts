@@ -17,7 +17,8 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache, featureFilePath, relFeaturesDir } from '../../config';
-import { designRepairAttempted } from '../../scripts/utils/design-repair-unattended';
+import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
+import { designRepairAttempted, runUnattendedDesignRepair } from '../../scripts/utils/design-repair-unattended';
 import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { readBoundInput } from '../../scripts/utils/capability-resolution';
 import {
@@ -798,6 +799,26 @@ async function s16Born(s: Snapshot, opts: {
   return { feature, runId: current, events: born.flatMap(id => eventsOf(s, feature, id)), requirement: freshRequest.requirement,
     request: { start: chain[0], end: chain[chain.length - 1] }, saved: saved!, baseRevision, chain, log: adapter.log, ...(error ? { error } : {}) };
 }
+/** Child-only physical crash: canonical rename succeeds, no published event can be written. */
+export async function __nonresidentDesignPublicationFaultWorker(metadataFile: string): Promise<void> {
+  await withFreshCuHost(async s => {
+    const nodeFs = require('fs') as typeof fs;
+    const rename = nodeFs.renameSync;
+    const canonical = blueprintFile(s);
+    fs.writeFileSync(metadataFile, JSON.stringify({ ...s, feature: SNAPSHOT_CU_FEATURE }));
+    nodeFs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+      rename(from, to);
+      if (path.resolve(String(to)) === path.resolve(canonical) && String(from).includes('.tmp-')) {
+        const revision = Number(readDoc(canonical).revision);
+        fs.writeFileSync(metadataFile, JSON.stringify({ ...s, feature: SNAPSHOT_CU_FEATURE, cutRevision: revision, cutAt: new Date().toISOString() }));
+        process.exit(77);
+      }
+    }) as typeof fs.renameSync;
+    await s16Born(s, { allowSuccessors: true, extra: { viaSessionStep: true, sessionSelfCheck: true, hostAuthorization: { mode: 'goal_mode', autonomyAuthorized: true } } });
+    throw new Error('publication fault cut was not reached');
+  });
+}
+
 const contentRepairs = (events: Ev[]): Ev[] => events.filter(e => e.type === 'design_authority_repair' && e.action === 'content_repair');
 const outOfChainStarts = (events: Ev[]): Ev[] => events.filter(e => e.type === 'agent_invoke_start' && String(e.phase).startsWith('design-repair-'));
 const describeS16 = (b: { events: Ev[]; error?: string }): string => JSON.stringify({
@@ -1167,6 +1188,30 @@ function assertS15BudgetInherited(s: Snapshot, feature: string, source: string, 
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
+    name: 'S16-r1804 a resumed published transaction preserves its draft and publication fact when a replay input is unavailable',
+    run: () => withFreshCuHost(async s => {
+      const runId = 'published-tail-unit';
+      const runDir = runFile(s.root, SNAPSHOT_CU_FEATURE, runId, '');
+      fs.mkdirSync(runDir, { recursive: true });
+      const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+      const input = { projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: SNAPSHOT_CU_FEATURE, phase: 'spec', runId,
+        reportDir: path.relative(s.root, runDir).replace(/\\/g, '/'), signature: 'a'.repeat(64), brief: { class: 'B1' as const, items: [] },
+        heldFeatureLock: null, runtimeWrites: [], emit, registerLockRelease: () => {}, recordEventLines: () => () => [] };
+      const prepared = await runUnattendedDesignRepair({ ...input, invoke: async () => ({ started: true, ok: false, detail: 'request yielded', handoff: true }) });
+      assert.equal(prepared.outcome, 'handoff');
+      const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+      const published = readDoc(draft); published.revision = Number(published.revision) + 1;
+      const bytes = YAML.stringify(published); fs.writeFileSync(draft, bytes); fs.writeFileSync(blueprintFile(s), bytes);
+      const resumed = await runUnattendedDesignRepair({ ...input, invoke: async () => ({ started: false, ok: false, detail: 'original report temporarily unreadable' }) });
+      assert(resumed.outcome === 'published' && resumed.recovered === false, JSON.stringify(resumed));
+      assert(fs.existsSync(draft) && fs.readFileSync(blueprintFile(s), 'utf8') === bytes, 'already-published bytes and recovery originals must survive the tail failure');
+      const events = eventsOf(s, SNAPSHOT_CU_FEATURE, runId);
+      assert(!contentRepairs(events).some(event => event.stage === 'failed'), 'a publication cannot be reclassified as an unpublished failed draft');
+      assert(contentRepairs(events).some(event => event.stage === 'published' && event.outcome === 'unrecovered'));
+    }),
+  },
+
+  {
     name: 'A3 探针：真 harness 写出的 run 冻结的输入绑定，在蓝图纯身份升版并经调和器原位升版 CU 指针之后仍全部可复读（不放宽绑定校验）',
     run: () => withHost(async s => {
       const feature = SNAPSHOT_CU_FEATURE;
@@ -1490,6 +1535,59 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     }),
   },
   // S15 四支、S16 主线与两个绑定失效支、S16-c1 无预授权：只在 reliability-scenarios 的 S15 / S16 里跑（plan b0e0621c §3.3，断言在共享流程函数里）。
+  {
+    name: 'S16-c1804p physical exit after publication before event resumes original transaction without a second revision',
+    run: async () => {
+      const { spawn } = require('child_process') as typeof import('child_process');
+      const metadataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-publication-cut-'));
+      const metadataFile = path.join(metadataDir, 'cut.json');
+      const reportDir = path.resolve(__dirname, '../../reports/1804ac3b');
+      fs.mkdirSync(reportDir, { recursive: true });
+      let restored: Snapshot | undefined;
+      try {
+        const child = spawn(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--project', path.resolve(__dirname, '../../tsconfig.json'), path.resolve(__dirname, '../utils/design-publication-fault-worker.ts'), metadataFile],
+          { cwd: path.resolve(__dirname, '../..'), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        let output = ''; child.stdout?.on('data', chunk => { output = (output + chunk).slice(-8000); }); child.stderr?.on('data', chunk => { output = (output + chunk).slice(-8000); });
+        const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
+        const code = await new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+        clearTimeout(timer);
+        assert.strictEqual(code, 77, `must cut the actual process at canonical rename: ${output}`);
+        const metadata = readJson<Snapshot & { feature: string; cutRevision: number; cutAt: string }>(metadataFile); restored = metadata;
+        const feature = metadata.feature;
+        const [runId] = runIds(metadata.root, feature);
+        const before = eventsOf(metadata, feature, runId);
+        assert(contentRepairs(before).some(event => event.stage === 'attempted') && !contentRepairs(before).some(event => event.stage === 'published'), 'publication event must actually be absent at the physical crash');
+        await runGoalModeSessionStep({ projectRoot: metadata.root, frameworkRoot: metadata.frameworkRoot, feature, runId, adapter: 'codex', runMode: 'attended',
+          authorization: { mode: 'goal_mode', autonomyAuthorized: true } });
+        const recoveredPrefix = eventsOf(metadata, feature, runId);
+        assert.strictEqual(contentRepairs(recoveredPrefix).filter(event => event.stage === 'published').length, 1, `the original publication must be finalized before scope continuation: ${describeS16({ events: recoveredPrefix })}`);
+        const p = project(metadata, feature);
+        const hooks = specFirstCuHooks(p, true);
+        const resumed = await runGoalRuntimeChain(metadata.root, { frameworkRoot: metadata.frameworkRoot, featureId: feature, adapter: 'codex', resume: runId,
+          ...hooks, viaSessionStep: true, sessionSelfCheck: true, skipLegacySeal: true,
+          hostAuthorization: { mode: 'goal_mode', autonomyAuthorized: true } });
+        const all = runIds(metadata.root, feature).flatMap(id => eventsOf(metadata, feature, id));
+        assert.strictEqual(Number(loadCanonicalBlueprint(metadata.root, BLUEPRINT_ID).blueprint.revision), metadata.cutRevision, 'publication recovery must not bump canonical twice');
+        assert.strictEqual(outOfChainStarts(all).length, 2, 'publication recovery must consume both original reports without another design invocation');
+        assert.strictEqual(contentRepairs(all).filter(event => event.stage === 'attempted').length, 1);
+        assert.strictEqual(contentRepairs(all).filter(event => event.stage === 'published').length, 1);
+        assert(contentRepairs(all).some(event => event.stage === 'published' && event.outcome === 'recovered'), describeS16({ events: all }));
+        assert.strictEqual(resumed.exitCode, 0, describeS16({ events: all }));
+        fs.writeFileSync(path.join(reportDir, 'design-publication-fault.json'), JSON.stringify({ physical_exit: code, cut_at: metadata.cutAt,
+          cut_revision: metadata.cutRevision, final_revision: Number(loadCanonicalBlueprint(metadata.root, BLUEPRINT_ID).blueprint.revision),
+          design_invokes: outOfChainStarts(all).length, attempted: 1, published: 1, final_status: endOf(all)?.status,
+          boundary: 'author and independent-verifier outputs are deterministic model substitutes; original CLI/runtime, filesystem publication, native harness, CU reconciliation and finalizers are real; no device' }, null, 2) + '\n');
+      } catch (error) {
+        const diagnostic = restored ? { root: restored.root, runs: runIds(restored.root, SNAPSHOT_CU_FEATURE).map(id => ({ run_id: id, events: eventsOf(restored!, SNAPSHOT_CU_FEATURE, id) })) } : {};
+        fs.writeFileSync(path.join(reportDir, 'design-publication-fault-diagnostic.json'), JSON.stringify({ error: String((error as Error).stack ?? error), ...diagnostic }, null, 2) + '\n');
+        throw error;
+      } finally {
+        clearFrameworkConfigCache();
+        if (restored) fs.rmSync(restored.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+        fs.rmSync(metadataDir, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'S16-c1c 有人在场（会话 owner，host bridge）+ 预授权 + B1 → 不派发，交会话里的设计 owner',
     run: () => withFreshCuHost(async s => {

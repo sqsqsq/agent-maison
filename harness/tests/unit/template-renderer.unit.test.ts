@@ -128,7 +128,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         const opencode = renderFor('opencode');
         for (const adapter of ['cursor', 'claude', 'codeagent', 'codex', 'opencode', 'chrys', 'generic']) {
           const output = renderFor(adapter); assert.equal(output, cursor);
-          assert(output.includes('请求终点') && output.includes('真实 attended Goal'));
+          assert(output.includes('请求终点') && output.includes('--prepare-run --run-mode attended'));
+          assert(output.includes('--next') && output.includes('--report-result <JSON> --request <原件路径>'));
+          assert(output.includes('GoalPhaseRuntime') && output.includes('必需独立核验保持独立'));
           assert(!output.includes('拿不准一律进 lite') && !output.includes('档位经 `feature.track` 确认'));
         }
         assert.strictEqual(cursor, opencode, '共享 AGENTS.md 不得因 active adapter 不同而变化');

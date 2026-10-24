@@ -459,3 +459,12 @@ export function parsePolicySnapshot(raw: unknown): PolicySnapshot | null {
     },
   };
 }
+/** Business authority is independent of process/session transport capabilities. */
+export function resolveTaskAutomationPolicy(input: {
+  fullDelivery: boolean; autonomyAuthorized?: boolean; detachedFullDelivery?: boolean;
+}): { automaticDesignRepair: boolean; defaultBudgetChangeAuthorized: boolean; source: 'session_authorization' | 'detached_delivery' | 'confirmation_required' } {
+  const explicit = input.fullDelivery && input.autonomyAuthorized === true;
+  const legacy = input.fullDelivery && input.detachedFullDelivery === true;
+  return { automaticDesignRepair: explicit || legacy, defaultBudgetChangeAuthorized: explicit,
+    source: explicit ? 'session_authorization' : legacy ? 'detached_delivery' : 'confirmation_required' };
+}

@@ -128,6 +128,8 @@ export interface ProcessProbe {
   identify(
     pid: number,
   ): (Omit<ManagedProcessIdentity, 'profile'> & { commandLine?: string }) | null;
+  /** 身份路径不可读时仍可核对 PID 重用；单独的创建时间绝不授权回收。 */
+  readStartedAtMs?(pid: number): number | null;
   /** 终止进程树；返回是否发出了终止 */
   killTree(pid: number): boolean;
 }
@@ -201,47 +203,54 @@ function normalizeExe(p: string): string {
   return path.resolve(p).toLowerCase();
 }
 
-/**
- * 生产用进程探针（Windows：WMIC/PowerShell 取创建时间与可执行路径）。
- *
- * 取不到身份时返回 null（= 视作进程不存在），**宁可不回收也不误杀**——
- * 误杀用户自己的模拟器比留一个孤儿进程严重得多。
- */
+/** Windows 创建时间统一取 CIM CreationDate；路径/命令行可因权限单独不可读。 */
+function readWindowsProcess(pid: number, includeIdentity: boolean): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { spawnSync } = require('child_process') as typeof import('child_process');
+    if (process.platform !== 'win32') {
+      // POSIX：/proc 不可移植地给创建时间，这里保守返回 null（不回收）
+      return null;
+    }
+    const fields = includeIdentity
+      ? '"{0}|{1}|{2}" -f ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds(), $p.ExecutablePath, ($p.CommandLine -replace "\\r|\\n", " ")'
+      : '([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds()';
+    const ps = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
+        `if ($p) { ${fields} }`,
+      ],
+      { encoding: 'utf-8', timeout: 10_000, windowsHide: true },
+    );
+    return (ps.stdout ?? '').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 身份不完整时 identify 仍返回 null；创建时间只供排除旧绑定，不能授权回收。 */
 export function defaultProcessProbe(): ProcessProbe {
   return {
     identify(pid: number) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { spawnSync } = require('child_process') as typeof import('child_process');
-        if (process.platform !== 'win32') {
-          // POSIX：/proc 不可移植地给创建时间，这里保守返回 null（不回收）
-          return null;
-        }
-        const ps = spawnSync(
-          'powershell.exe',
-          [
-            '-NoProfile', '-NonInteractive', '-Command',
-            `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; ` +
-            'if ($p) { "{0}|{1}|{2}" -f ([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds(), ' +
-            '$p.ExecutablePath, ($p.CommandLine -replace "\\r|\\n", " ") }',
-          ],
-          { encoding: 'utf-8', timeout: 10_000, windowsHide: true },
-        );
-        const line = (ps.stdout ?? '').trim();
-        if (!line || !line.includes('|')) return null;
-        const [ms, exe, ...rest] = line.split('|');
-        const startedAtMs = Number(ms);
-        if (!Number.isFinite(startedAtMs) || !exe?.trim()) return null;
-        const commandLine = rest.join('|').trim();
-        return {
-          pid,
-          startedAtMs,
-          executable: exe.trim(),
-          ...(commandLine ? { commandLine } : {}),
-        };
-      } catch {
-        return null;
-      }
+      const line = readWindowsProcess(pid, true);
+      if (!line || !line.includes('|')) return null;
+      const [ms, exe, ...rest] = line.split('|');
+      const startedAtMs = Number(ms);
+      if (!Number.isFinite(startedAtMs) || !exe?.trim()) return null;
+      const commandLine = rest.join('|').trim();
+      return {
+        pid,
+        startedAtMs,
+        executable: exe.trim(),
+        ...(commandLine ? { commandLine } : {}),
+      };
+    },
+    readStartedAtMs(pid: number) {
+      const line = readWindowsProcess(pid, false);
+      const startedAtMs = line ? Number(line) : NaN;
+      return Number.isFinite(startedAtMs) && startedAtMs > 0 ? startedAtMs : null;
     },
     killTree(pid: number) {
       try {

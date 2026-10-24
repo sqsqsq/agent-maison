@@ -10,12 +10,13 @@ import { SpecLoader } from './spec-loader';
 import { assembleKnowledge, renderKnowledge } from './knowledge-context';
 import { checkFactsArtifact } from './context-facts';
 import { generateRequestScriptReport } from './report-generator';
-import { resolveCheckDisposition } from './check-disposition';
+import { resolveCheckDisposition, isRequiredCheckGap } from './check-disposition';
 import type { CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckContext } from './types';
 import { dispatchRequestTests, dispatchRequestTargetProbe, isCapabilitySkipped } from '../../capability-registry';
 import { isInsideProjectRoot } from './project-relative-path';
 import { classifyUtExpectations, extractUtItBlocks, type UtExpectationScan } from './ut-it-blocks';
 import { ensurePersonalSetup } from './personal-setup-gate';
+import { executeCheckAsync, CheckExecutionError } from './check-execution';
 
 export async function checkRequestTests(ctx: RequestCheckContext): Promise<CheckResult[]> {
   // R2：预期来源登记与 provider 执行**并列产出**，每条 return 路径都带上它（失败、未执行、provider 异常同样要呈现）。
@@ -24,15 +25,16 @@ export async function checkRequestTests(ctx: RequestCheckContext): Promise<Check
     (expectation ? [...checks, finalizeExpectationCheck(expectation, result)] : checks);
   if (ctx.phase === 'ut' && !ctx.request.targets.tests.length) return withExpectation([requestFailure('request_tests_missing', 'UT test targets are not yet prepared')]);
   if (ctx.phase === 'testing' && ctx.resolvedInputs.values.cases?.state !== 'resolved') return [requestFailure('request_cases_missing', 'device cases must resolve through the existing cases provider')];
-  try {
+  return executeCheckAsync(ctx, async () => {
     const capability = ctx.phase === 'ut' ? 'ut.run' : 'device_test.run';
     const requiredPrerequisites = new Set(ctx.resolvedProfile.personalPrerequisites?.[capability] ?? []);
     if (!isCapabilitySkipped(ctx.resolvedProfile, capability) && requiredPrerequisites.size) {
       const setup = ensurePersonalSetup(ctx.projectRoot, { requiredPrerequisites });
-      if (!setup.ok) throw new Error(setup.message);
+      if (!setup.ok) throw new CheckExecutionError({ ...requestFailure('request_provider_unavailable', setup.message), status: 'SKIP', failure_kind: 'capability_missing', blocking_class: 'externalBlocked' });
     }
     const result = await dispatchRequestTests(ctx) as RequestProviderResult;
-    if (Array.isArray(result?.checks) && result.checks.some(check => !check || !['PASS', 'FAIL', 'WARN', 'SKIP'].includes(check.status) || !['BLOCKER', 'MAJOR', 'MINOR'].includes(check.severity) || typeof check.id !== 'string' || typeof check.details !== 'string')) return withExpectation([requestFailure('request_provider_result_invalid', 'provider returned malformed checks')]);
+    if (Array.isArray(result?.checks) && result.checks.some(check => !check || !['PASS', 'FAIL', 'WARN', 'SKIP'].includes(check.status) || !['BLOCKER', 'MAJOR', 'MINOR'].includes(check.severity) || typeof check.id !== 'string' || typeof check.details !== 'string')) throw new TypeError('provider returned malformed checks');
+    if (result?.executed !== true && result?.checks?.some(check => isRequiredCheckGap(check))) return withExpectation(result.checks);
     if (!result || result.executed !== true || !Number.isInteger(result.total) || result.total! < 1 || !Number.isInteger(result.failed) || result.failed! < 0 || result.failed! > result.total!
       || !Array.isArray(result.checks) || !result.evidence_paths?.length) return withExpectation([...(Array.isArray(result?.checks) ? result.checks : []), requestFailure('request_test_not_executed', 'provider did not return actual case results and evidence')]);
     const protectedPaths = requestProtectedPaths(ctx.projectRoot, ctx.frameworkRoot);
@@ -43,8 +45,11 @@ export async function checkRequestTests(ctx: RequestCheckContext): Promise<Check
       if (!isInsideProjectRoot(fs.realpathSync(ctx.projectRoot), real) || protectedPaths.some(dir => isInsideProjectRoot(dir, real)) || !fs.statSync(real).isFile()) return withExpectation([requestFailure('request_test_evidence_invalid', 'provider evidence must be in an isolated host report directory')], result);
       evidence.push({ path: path.relative(ctx.projectRoot, real).replace(/\\/g, '/'), sha256: crypto.createHash('sha256').update(fs.readFileSync(real)).digest('hex') });
     }
-    return withExpectation([...result.checks, { id: 'request_test_execution', category: 'structure', severity: 'BLOCKER', status: result.failed === 0 ? 'PASS' : 'FAIL', description: '专项测试实际执行结果', details: `total=${result.total}, failed=${result.failed}`, affected_files: evidence.map(item => item.path), structured: { request_evidence: evidence }, suggestion: result.failed ? '修复本次失败后重新执行，不复用旧报告宣称通过。' : undefined }], result);
-  } catch (error) { return withExpectation([requestFailure('request_provider_unavailable', String(error))]); }
+    const gap = result.checks.find(check => isRequiredCheckGap(check));
+    return withExpectation([...result.checks, { id: 'request_test_execution', category: 'structure', severity: 'BLOCKER', status: result.failed === 0 ? 'PASS' : gap ? 'SKIP' : 'FAIL',
+      ...(gap ? { failure_kind: gap.failure_kind, blocking_class: gap.blocking_class, actionability: gap.actionability } : {}),
+      description: '专项测试实际执行结果', details: `total=${result.total}, failed=${result.failed}`, affected_files: evidence.map(item => item.path), structured: { request_evidence: evidence }, suggestion: result.failed ? gap?.suggestion ?? '修复本次失败后重新执行，不复用旧报告宣称通过。' : undefined }], result);
+  }, 'request_provider_unavailable').then(checks => expectation && !checks.some(check => check.id === 'request_expectation_source') ? withExpectation(checks) : checks);
 }
 
 interface RequestProviderResult { executed?: boolean; total?: number; failed?: number; checks?: CheckResult[]; evidence_paths?: string[] }
@@ -237,6 +242,7 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
       frameworkRel: path.relative(options.projectRoot, options.frameworkRoot).replace(/\\/g, '/'), harnessRoot: path.join(options.frameworkRoot, 'harness'),
       phaseRule: loadPhaseRuleWithOverlays(prepared.phase, loader.loadPhaseRule(prepared.phase, rulePath), profile),
       resolvedProfile: profile,
+      forceDevice: args['force-device'] === true,
       resolvedInputs: resolveRequestInputs(options.projectRoot, options.frameworkRoot, prepared),
       factsContext: { subject: { request_sha256: prepared.request_sha256, report_dir: path.relative(options.projectRoot, prepared.reportDir).replace(/\\/g, '/') }, first_phase: prepared.phase, source_paths: [...new Set([...prepared.bindings.filter(binding => binding.exists).map(binding => binding.path), ...Object.entries(prepared.inputs).filter(([id, file]) => id !== 'review_report' && fs.existsSync(file)).map(([, file]) => path.relative(options.projectRoot, file).replace(/\\/g, '/'))])], required_input_snippets: [] },
     };
@@ -248,8 +254,7 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
       const loaded = require(checkerPath); const checker: PhaseChecker = loaded.default ?? loaded.checker ?? loaded;
       if (checker.phase !== ctx.phase || !checker.subjects?.includes('request')) checks.push(requestFailure('request_checker_unsupported', `${artifact.check} does not support this phase/request subject`));
       else {
-        try { checks.push(...await checker.check(ctx)); }
-        catch (error) { checks.push(requestFailure('request_checker_error', String(error))); }
+        checks.push(...await executeCheckAsync(ctx, () => checker.check(ctx), 'request_checker_error'));
       }
     }
     try {

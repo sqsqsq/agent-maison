@@ -529,6 +529,27 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
     },
   },
   {
+    name: 'M4: 完整身份不可读时仅不同的已知创建时间排除旧绑定，同值/未知仍等待且绝不回收',
+    run: () => {
+      for (const startedAtMs of [undefined, null, 0, NaN, Infinity, 1723953600000, 1723953601000]) {
+        let killed = false;
+        const probe: ProcessProbe = {
+          identify: () => null,
+          ...(startedAtMs === undefined ? {} : { readStartedAtMs: () => startedAtMs }),
+          killTree: () => { killed = true; return true; },
+        };
+        const result = reconcileGuardianOwnership([bound({})], probe, () => true);
+        assert(result.kind === 'outcomes', `kind=${result.kind}`);
+        if (result.kind !== 'outcomes') return;
+        const item = result.items[0];
+        assert(item.kind === 'guardian_identity_unverifiable', `partial identity must never authorize recovery: ${item.kind}`);
+        if (item.kind !== 'guardian_identity_unverifiable') return;
+        assert(Boolean(item.identity_mismatch) === (startedAtMs === 1723953601000), `unexpected mismatch for ${startedAtMs}`);
+        assert(!killed, 'creation time alone must never authorize a kill');
+      }
+    },
+  },
+  {
     name: 't3: 对账矩阵——PID 重用/可执行文件不符/命令行不可读/缺 token 均不可回收',
     run: () => {
       const exists = (): boolean => true;

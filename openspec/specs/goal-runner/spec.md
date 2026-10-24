@@ -726,7 +726,7 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/utils/fidelity-s
 
 ### Requirement: Headless auto-decisions are recorded in a schema-validated JSONL ledger
 
-The unattended prompt block SHALL be injected only for the **detached** execution shape. Its mode segment — the headless declaration, the effective approval mode, "MUST NOT stop to ask", the override of every phase SKILL stop-and-ask instruction, and the per-gate auto-resolution with its ledger instruction — SHALL NOT be injected for an attended run. The gate-integrity red lines and the deterministic-detector segment SHALL be injected in both shapes, with their text unchanged. An attended run SHALL instead be told plainly that a session owner is present and that the phase SKILL's stop-and-ask confirmations execute as written and are relayed by the executor bridge; it SHALL NOT be given any wording that widens scope or invites asking in place of doing the work. The injection SHALL be driven by the runtime's existing executor mode, which is already constrained so that an attended executor implies a session owner; no new environment variable, driver or run-control read SHALL be introduced for it.
+Prompt automation SHALL consume the shared in-memory task automation policy. The physical headless/approval-mode declaration SHALL reflect the actual detached transport; original-goal automatic decisions and design repair SHALL follow the trusted original grant, including attended control calls with current --authorize-autonomy. Default never/goal_mode SHALL NOT grant business authority. Unauthorized attended prompts SHALL retain applicable confirmations; authorized attended prompts SHALL NOT lose granted recovery merely because a session owner is present. Gate-integrity red lines and deterministic-detector guidance SHALL remain in both transports. No persistent authorization flag or parallel ledger SHALL be introduced.
 
 The unattended prompt MAY record deterministic/default decisions in `<phase>/headless-assumptions.jsonl` for audit, with markdown as a human projection. The prompt SHALL describe that ledger as an audit trail that is not authorization, and SHALL NOT claim that a gate without a ledger line fails phase closure — that veto is retired and its only remaining consumer is an advisory, non-gating check. Ledger `must_review` and user-like source strings SHALL be legacy/report-only and MUST NOT cap run status, advance a phase, authorize a gate change, or block completion. A decision requiring genuine external authority SHALL be represented by the existing external prerequisite state, while a quality uncertainty SHALL remain repair, UNVERIFIED/FAIL, optional advisory, or capability defer.
 
@@ -739,8 +739,8 @@ Enforcement: `harness/scripts/goal-runner.ts`, `harness/scripts/goal-phase-runti
 
 #### Scenario: an attended phase prompt does not forbid asking
 
-- **WHEN** a phase prompt is built for an attended run
-- **THEN** it SHALL NOT contain the unattended mode segment
+- **WHEN** a phase prompt is built for an attended run without current autonomy authorization
+- **THEN** it SHALL retain applicable confirmation rules without a false headless declaration
 - **AND** it SHALL still contain the gate-integrity red lines and the deterministic-detector segment
 
 #### Scenario: a detached phase prompt is unchanged apart from the ledger wording
@@ -2253,12 +2253,12 @@ The runner SHALL use the existing closure-only attempt for missing verification 
 
 ### Requirement: Unattended original-scope design and architecture repair uses the existing owner chain
 
-For an unattended original-scope task the runtime SHALL dispatch the design owner before retrying an incapable downstream stage. B1/B2 labels and the legacy personal opt-in SHALL NOT replace task authorization. Design/CU changes and all existing architecture_impact variants SHALL use drafts, isolated questioning, existing validation and writers, and re-evaluation. The current caller MAY lend its existing locks to the CU content consumer; unrelated live runs SHALL remain busy. Runtime publication SHALL preserve identity and unrelated configuration, and source/verification changes SHALL NOT reset accumulated budget.
+For an authorized original-scope complete delivery the runtime SHALL dispatch the design owner before retrying an incapable downstream stage. B1/B2 labels and the legacy personal opt-in SHALL NOT replace task authorization. Design/CU changes and all existing architecture_impact variants SHALL use drafts, isolated questioning, existing validation and writers, and re-evaluation. The current caller MAY lend its existing locks to the CU content consumer; unrelated live runs SHALL remain busy. Runtime publication SHALL preserve identity and unrelated configuration, and source/verification changes SHALL NOT reset accumulated budget.
 
-If bindings remain valid, the same run SHALL continue; otherwise the existing continuation decision SHALL automatically select the successor, without an outer Agent or a human re-issuing the request. New effective input SHALL be distinguished from unchanged repeated failure using existing events and bounded recovery. Missing facts SHALL NOT be fabricated. Changes to original requirements or substantive acceptance, explicit prohibitions, secrets, irreversible external actions and user budget limits retain their real authority boundaries. Attended behavior remains unchanged.
+If bindings remain valid, the same run SHALL continue; otherwise the existing continuation decision SHALL automatically select the successor, without an outer Agent or a human re-issuing the request. New effective input SHALL be distinguished from unchanged repeated failure using existing events and bounded recovery. Missing facts SHALL NOT be fabricated. Changes to original requirements or substantive acceptance, explicit prohibitions, secrets, irreversible external actions and user budget limits retain their real authority boundaries. Attended entry SHALL obtain autonomy only from the current non-persistent input retransmitted by the main Agent from a trusted original human grant; detached SHALL retain its existing complete-delivery authorization source. Unauthorized sessions SHALL keep existing confirmation rules.
 
 #### Scenario: A CU lacks a required selection reference
-- **WHEN** a design-owned failure occurs during an authorized unattended task
+- **WHEN** a design-owned failure occurs during an authorized complete-delivery task
 - **THEN** the runner SHALL obtain a revised design/CU through the original consumer, validate and rebind it, and continue construction without asking the outer Agent to edit files
 
 #### Scenario: A genuine authority boundary remains
@@ -2288,3 +2288,28 @@ Stage gates, assess, resume and completion SHALL consume the same existing sourc
 - **WHEN** plan adds a needed entry symbol to an existing integration declaration with no stable row ID
 - **THEN** comparison SHALL check the authority's declared fields and retain ordered-array semantics, allowing the non-conflicting supplement
 - **AND** changed declared values or an expanded authorized file set SHALL still fail
+
+
+### Requirement: Session handoff preserves original invocation lifecycle
+
+会话 next/report SHALL 调用同一 GoalPhaseRuntime，交出请求 SHALL 为非终态控制结果，不写 executor_waiting/phase_halt/run_end。签发前 SHALL 保全原作者 instruction、写前快照、写界和身份，session phase_start SHALL 引用不可变原件；请求/报告只由共同 handoff writer 保存，不另建 pending 状态库。重领/重报/补 gate SHALL 不重计 attempt/预算，不重拍前态；同一 attempt 重签只换合法 fence，不移动原 invoke 时间。签发后的作者窗口 SHALL 计时至报告到达与原截止时间中的较早者；截止后返回 CLI 前的离开时间 SHALL 不计，真实返回 CLI、gate 与收尾仍按原口径计时。
+
+#### Scenario: Last authorized invocation uses the remaining turn
+- **WHEN** the last legal invocation has consumed the turn budget and reports a genuine result within the remaining verification reserve
+- **THEN** runtime SHALL archive its facts and continue formal gate/finalizer under the original wall deadline without dispatching another model call
+
+#### Scenario: Expired unconsumed request retains the original fence
+- **WHEN** request deadline expired and run-control still carries the issuing owner/epoch with no later cancellation/takeover
+- **THEN** next/report MAY close the window via existing agent_timeout semantics, preserving writes and elapsed consumption; it SHALL NOT invent process settlement, force takeover or verification priority
+
+#### Scenario: Long formal gate is interrupted
+- **WHEN** the host kills the report CLI after accepting execution but before gate completion
+- **THEN** re-entry SHALL check the old harness process identity/termination or contain it, reuse the accepted report and resume only missing verification; it SHALL NOT run overlapping gates or call the author again
+
+### Requirement: Out-of-chain repair uses the same handoff transport
+
+Design author, independent questioning and verifier-format repair SHALL use the same issued-request/report mechanism under existing purpose labels, fence and budget. They SHALL NOT become workflow phases or invoke ordinary phase harness/receipt. Design draft/context SHALL survive re-entry; progress SHALL derive from issued calls, accepted reports and existing design repair/publish events. Published canonical content SHALL be reconciled after an interrupted event write, without publishing twice or discarding the original draft.
+
+#### Scenario: Design repair crosses commands
+- **WHEN** author, questioning and publication run across separate control commands
+- **THEN** they SHALL remain the same transaction with original authority/snapshot and accumulated budget, and only the existing publication/rebind transaction SHALL update canonical artifacts

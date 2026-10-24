@@ -162,3 +162,20 @@ Source bindings SHALL preserve frozen file existence and bytes while aligning th
 - **WHEN** the active definition owner is scheduled to resolve an unknown obligation using its declared outputs
 - **THEN** its own materialization is checked as current output and re-signed through existing scope revision
 - **AND** unrelated producers and already-settled definitions gain no implicit rewrite permission
+
+
+### Requirement: New complete delivery has one runtime authority
+
+新完整交付 SHALL 统一在真实 run 冻结范围并由同一 GoalPhaseRuntime 完成；会话用非驻留 next/report，无人值守用 detached。旧 feature 冻结范围、修订和 completion SHALL 保留读取，未完成范围 SHALL 经既有出生/正式转交后继续，不改原件、不补历史事件、不签新的无 run completion。纯维护、编译、局部设计和单职责 request SHALL 保留原终点，不扩大为完整交付。
+
+#### Scenario: Existing runless work continues
+- **WHEN** a previously frozen runless Feature has unfinished authorized delivery
+- **THEN** preparation SHALL transfer its effective scope and valid evidence into the existing run authority before further complete-delivery work, without creating a parallel active run
+
+### Requirement: Request failures and native evidence remain truthful
+
+request checker/provider SHALL 通过共同异常分类保留意外框架缺口，真实输入拒绝、产品断言失败和外部能力问题 SHALL 保持各自原因。catalog/glossary SHALL 使用同源包装而不把未执行当 PASS。UT/testing request SHALL 消费既有真实输入 execution-key 与冻结证据，等价成功 MAY 重算派生报告；较新失败、输入变化、缺证或 fresh SHALL 真执行。request SHALL NOT 伪造 run/attempt 或借 Feature 证据签本请求通过。
+
+#### Scenario: A new request follows a failed invocation
+- **WHEN** a separately submitted request has no reliable same-invocation identity
+- **THEN** the provider SHALL execute according to existing successful-reuse criteria instead of replaying a stale FAIL as if it were the same invocation

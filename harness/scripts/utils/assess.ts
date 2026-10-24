@@ -64,6 +64,8 @@ export type AssessAuthorizationMode = 'manual' | 'batch_authorized' | 'goal_mode
 export interface AssessAuthorizationContext {
   mode: AssessAuthorizationMode;
   through_phase?: string;
+  /** Trusted launch input, never persisted as business authorization. */
+  autonomyAuthorized?: boolean;
 }
 
 /** Injected by a reconcile driver; assess never reads event logs directly. */

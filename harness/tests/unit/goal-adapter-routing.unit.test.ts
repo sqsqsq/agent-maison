@@ -25,11 +25,11 @@ interface TestCase { name: string; run: () => void }
 
 const cases: TestCase[] = [
   {
-    name: 'legacy/missing capability: attended manual, unattended halt',
+    name: 'missing capability: both transports report a real configuration gap',
     run: () => {
       const env = fixture('name: fixture\n');
       const loaded = loadGoalCapability(env.root, env.adapter);
-      assert(routeGoalCapability(loaded, 'attended').kind === 'manual', 'attended fallback');
+      assert(routeGoalCapability(loaded, 'attended').kind === 'halt', 'attended configuration gap');
       assert(routeGoalCapability(loaded, 'unattended').kind === 'halt', 'unattended fail closed');
     },
   },
@@ -50,15 +50,29 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'attended capability requires phase isolation',
+    name: 'attended capability does not require phase isolation',
     run: () => {
       const env = fixture([
         'goal_capability:',
         '  mode: native_goal',
         '  in_session_reconcile: true',
-        '  phase_context_isolation: true',
+        '  phase_context_isolation: false',
       ].join('\n'));
       assert(routeGoalCapability(loadGoalCapability(env.root, env.adapter), 'attended').kind === 'in_session', 'in-session route');
+    },
+  },
+  {
+    name: 'all eight command adapters share handoff without claiming isolation or native resume',
+    run: () => {
+      const frameworkRoot = path.resolve(__dirname, '../../..');
+      for (const adapter of ['claude', 'codex', 'cursor', 'codeagent', 'opencode', 'chrys', 'generic', 'deepseek-harness']) {
+        const loaded = loadGoalCapability(frameworkRoot, adapter);
+        assert(loaded.valid, `${adapter}: ${loaded.issues.join(', ')}`);
+        assert(routeGoalCapability(loaded, 'attended').kind === 'in_session', `${adapter}: shared handoff`);
+        if (adapter !== 'claude' && adapter !== 'codex') {
+          assert(loaded.capability?.phase_context_isolation === false, `${adapter}: isolation must remain truthful`);
+        }
+      }
     },
   },
   {

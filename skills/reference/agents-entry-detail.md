@@ -87,8 +87,8 @@
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
 5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式重新发起同一请求即重新接入原 run 并重检放行）。
-6. **唯一执行 owner 与上下文减负（plan 07a41ec6 T9）**：Claude 原生 `/goal` 路径下主会话是薄 driver——每个阶段最多派发**一个** `subagent_type: phase-executor` 子代理，由它负责该阶段产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入（需求/acceptance/ui-spec/参考图路径、当前改动文件、当前 blocker、已接受 gaps、上一阶段 summary 路径、Skill 路径），收回 summary 路径与终态块；不传历史对话，子代理按需读取。同一会话上下文不连续执行两个阶段。Maison `/goal-mode`（GoalPhaseRuntime）是另一入口，两者不得同时推进同一任务；`--revalidate` 只是检查命令，不推进阶段。
-7. **子代理等待纪律**：对 verifier / phase-executor 的结果只能**同步等待**，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。harness 输出末尾的 `NEXT:` 行就是下一步动作，照做即可，不要读 framework TS 源码反推门禁判词。
+6. **唯一执行 owner 与上下文减负**：完整交付统一由 GoalPhaseRuntime 推进，会话用 next/report。主会话只投递已签发原件路径/sha并消费结果，不另建原生 /goal phase 循环；有阶段隔离则派 phase-executor，无则主上下文执行并披露，必需 verifier/设计质询仍真实独立。执行者按原件读完整 instruction、原身份与精确命令，不传整段历史；同一任务不由两个入口共推。`--revalidate` 只是机械检查，不签完成。
+7. **子代理等待纪律**：verifier/phase-executor 同步等待，或先做无关工作；正式 gate 使用返回的时限与清理预留设置工具 timeout，允许等待同一宿主原生后台任务句柄终态。禁止 sleep、自造轮询/等待器和重复 report 催进度；verifier 未返回前不改其材料。按真实 NEXT 和请求原件执行，不读 framework 源码反推门禁。
 
 ## §4.2 实例扩展与生命周期钩子
 

@@ -17,6 +17,7 @@ import {
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import {
+  phaseInvocationStart,
   countAgentInvokeStarts,
   canRecheckLegacyBacktrackLimit,
   filterAuthoritativeEvents,
@@ -329,8 +330,10 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
     const idx = spanByPhase.get(phase)!;
     const span = spans[idx];
 
-    if (e.type === 'phase_start') {
-      span.started_at = e.ts ?? span.started_at;
+    if (e.type === 'phase_start' && e.driver !== 'session') {
+      const original = phaseInvocationStart(events.slice(0, i + 1), phase);
+      const handoff = original?.invoke_id && events.some(event => event.type === 'phase_start' && event.handoff_request && event.invoke_id === original.invoke_id);
+      span.started_at = (handoff ? original?.ts : e.ts) ?? span.started_at;
       span.attempt = (e as { attempt?: number }).attempt ?? countPhaseAttempts(events, phase);
       if (!span.ended) span.status = 'PROMPT_READY';
     }
@@ -340,7 +343,8 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
     }
     if (e.type === 'agent_invoke_start' && !span.ended) {
       span.attempt = countPhaseAttempts(events.slice(0, i + 1), phase);
-      span.started_at = span.started_at ?? e.ts ?? null;
+      const handoff = e.invoke_id && events.some(event => event.type === 'phase_start' && event.handoff_request && event.invoke_id === e.invoke_id);
+      span.started_at = handoff ? e.ts ?? span.started_at : span.started_at ?? e.ts ?? null;
       span.status = 'AGENT_RUNNING';
       span.substep = 'agent_invoke';
     }
@@ -868,22 +872,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       feature: input.manifest.feature,
       currentEvents: events,
     });
-    const foldPartition = partitionExecutionSessions(fold.budgetFoldEvents);
-    const auth = foldPartition.sessions.filter((s) => s.mode === 'authoritative');
-    const last = auth.length > 0 ? auth[auth.length - 1] : null;
+    const foldPartition = partitionExecutionSessions(fold.budgetFoldEvents, { liveTailMs: nowMs });
     turnsUsed = foldPartition.totalTurns;
-    if (!last) {
-      wallElapsed = 0;
-    } else if (!lastRunEnd && Number.isFinite(last.startMs) && last.startMs > 0) {
-      // 直播段（无 run_end）：活跃计时随 now 前进，与 runner 的
-      // elapsed = priorActive + (now − sessionStart) 同构（崩溃段的保守补收只在
-      // 段后出现新段/终局时收敛，面板侧宁多计不漏计）。
-      wallElapsed =
-        auth.slice(0, -1).reduce((a, s) => a + s.activeMs, 0) +
-        Math.max(0, nowMs - last.startMs);
-    } else {
-      wallElapsed = foldPartition.priorActiveMs;
-    }
+    wallElapsed = foldPartition.priorActiveMs;
   }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
   // 同源包括**链**：runtime 在修订后按有效链重算 wall（goal-phase-runtime 的 revise_scope 分支），

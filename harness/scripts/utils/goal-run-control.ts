@@ -236,10 +236,37 @@ export function renewSessionLease(
       ...control,
       owner: {
         ...control.owner,
-        lease_expires_at: new Date(Date.now() + Math.max(1, leaseMs)).toISOString(),
+        lease_expires_at: new Date(Math.max(Date.parse(control.owner.lease_expires_at ?? '') || 0,
+          Date.now() + Math.max(1, leaseMs))).toISOString(),
       },
       updated_at: new Date().toISOString(),
     };
+    atomicWriteJson(controlPath(runDir), next);
+    return next;
+  });
+}
+
+/** A signed execution window has a fixed deadline; ordinary heartbeats cannot re-sign it. */
+export function setSessionExecutionLease(runDir: string, token: RunFenceToken, deadlineMs: number): RunControlV1 {
+  return withControlMutex(runDir, () => {
+    const control = assertFencedOwner(runDir, token, 'session_execution_lease');
+    if (control.owner?.kind !== 'session' || !Number.isFinite(deadlineMs)) throw new Error('[goal-run-control] invalid session execution deadline');
+    const next: RunControlV1 = { ...control, owner: { ...control.owner, lease_expires_at: new Date(deadlineMs).toISOString() }, updated_at: new Date().toISOString() };
+    atomicWriteJson(controlPath(runDir), next);
+    return next;
+  });
+}
+
+/** Resume only the already-issued session window; no takeover and no new authority. */
+export function resumeIssuedSessionOwner(runDir: string, token: RunFenceToken): RunControlV1 {
+  return withControlMutex(runDir, () => {
+    const control = readRunControl(runDir, token.run_id);
+    if (!control?.owner || control.owner.kind !== 'session' || control.current_epoch !== token.epoch
+      || control.owner.owner_id !== token.owner_id || !['active', 'orphaned_session'].includes(control.owner.state)) {
+      throw new Error('[goal-run-control] stale owner rejected at session_report');
+    }
+    if (control.owner.state === 'active') return control;
+    const next: RunControlV1 = { ...control, owner: { ...control.owner, state: 'active' }, updated_at: new Date().toISOString() };
     atomicWriteJson(controlPath(runDir), next);
     return next;
   });

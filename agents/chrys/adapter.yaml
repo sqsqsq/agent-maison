@@ -31,6 +31,9 @@ user_confirmation:
 image_input: none
 
 goal_capability:
+  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
+  # 隔离声明只决定阶段上下文；缺省 false 时主上下文执行，必需独立核验仍真实独立。
+  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
   mode: external_runner
   # P1-7（plan d9b4f7e2）spike 待核实：07-13 现场表现为"被杀 attempt agent-output.log
   # 恒 0 字节、成功 attempt 结束时一次性写结果 JSON"——与 --json 缓冲输出**一致但未经**

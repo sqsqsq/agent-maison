@@ -1,3 +1,8 @@
+import { featureFilePath } from '../../config';
+import { deriveChangeUnitFeatureId } from './change-unit-path';
+import { BLUEPRINT_RECONCILE_LOCK_NAME } from './change-unit-design-preparation';
+import { FEATURE_LOCK_NAME } from './goal-run-lock';
+import { readHandoffMaterial, sessionEvents, type HandoffReference } from './session-execution-handoff';
 // ============================================================================
 // design-repair-unattended.ts — plan 9c3d7e1a §5.5：无人值守时 B1 由框架派设计修复自动接手（一次尝试）
 // ----------------------------------------------------------------------------
@@ -58,6 +63,26 @@ export const designRepairInvokeLabel = (purpose: DesignRepairPurpose): string =>
 
 export interface DesignRepairBriefLike { class: DesignRepairClass; items: DesignAuthorityFinding[] }
 
+/** Recover the existing publication cut before stale birth bindings can hide it. */
+export function pendingPublishedDesignRepair(projectRoot: string, runDir: string): { phase: string; signature: string; brief: DesignRepairBriefLike } | null {
+  const events = sessionEvents(runDir);
+  const attempted = [...events].reverse().find(event => event.type === 'design_authority_repair'
+    && (event as Record<string, unknown>).stage === 'attempted' && (event as Record<string, unknown>).handoff_context) as Record<string, unknown> | undefined;
+  if (!attempted) return null;
+  const attemptedIndex = events.indexOf(attempted);
+  if (events.slice(attemptedIndex + 1).some(event => event.type === 'design_authority_repair'
+    && (event as Record<string, unknown>).signature === attempted.signature && ['published', 'failed'].includes(String((event as Record<string, unknown>).stage)))) return null;
+  const original = readHandoffMaterial<{ baseline: string; brief: DesignRepairBriefLike }>(runDir, attempted.handoff_context as HandoffReference);
+  if (!original.brief) return null;
+  const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+  const canonical = componentBlueprintPath(projectRoot, String(attempted.blueprint_id));
+  if (!fs.existsSync(draft) || !fs.readFileSync(canonical).equals(fs.readFileSync(draft))) return null;
+  const before = YAML.parse(Buffer.from(original.baseline, 'base64').toString('utf8')) as BlueprintRecord;
+  const current = YAML.parse(fs.readFileSync(canonical, 'utf8')) as BlueprintRecord;
+  if (Number(current.revision) !== Number(before.revision) + 1) return null;
+  return { phase: String(attempted.phase), signature: String(attempted.signature), brief: original.brief };
+}
+
 /** 停机签名：feature + 责任阶段 + 设计 owner 阻断的检查 id 与原因码（不含 run_id、时间、草稿版本——后继借不了这些绕过判重）。 */
 export function designRepairSignature(feature: string, phase: string, items: ReadonlyArray<Pick<DesignAuthorityFinding, 'check' | 'codes'> & Partial<Pick<DesignAuthorityFinding, 'artifacts'>>>, inputFingerprint?: string): string {
   const checks = items.map(item => `${/^(coding|ut):/.test(item.check) && item.artifacts?.length
@@ -93,7 +118,13 @@ export function designRepairAttempted(events: ReadonlyArray<object>, signature: 
 }
 
 /** `containmentUnresolved`：子进程收容绑定失败且没能证明它已消失——不是普通失败，由运行时走既有 agent_containment_unresolved 处置。 */
-export interface DesignRepairInvokeOutcome { started: boolean; ok: boolean; detail: string; containmentUnresolved?: boolean }
+export interface DesignRepairInvokeOutcome { started: boolean; ok: boolean; detail: string; containmentUnresolved?: boolean; handoff?: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }
+
+export interface DesignRepairInvocationGuard {
+  pre: ReturnType<typeof capturePhaseInvocationSnapshot>;
+  resolution: Parameters<typeof capturePhaseInvocationSnapshot>[0];
+  options: Parameters<typeof capturePhaseInvocationSnapshot>[1];
+}
 
 export interface UnattendedDesignRepairInput {
   /** Original unattended task, supplied by the runner, not a draft or a new requirement. */
@@ -111,7 +142,7 @@ export interface UnattendedDesignRepairInput {
   /** 调用期间运行时自己会写的其它路径（本 feature 锁的心跳），工程相对。 */
   runtimeWrites: string[];
   emit: (event: Record<string, unknown>) => void;
-  invoke: (purpose: DesignRepairPurpose, prompt: string) => Promise<DesignRepairInvokeOutcome>;
+  invoke: (purpose: DesignRepairPurpose, prompt: string, guard?: DesignRepairInvocationGuard) => Promise<DesignRepairInvokeOutcome>;
   /** 尝试期间多持的锁登记进运行时的统一放锁（信号处理也经它）；null = 已释放。 */
   registerLockRelease: (release: (() => void) | null) => void;
   /** 开始记录运行时经唯一发射口写出的事件行；返回的函数停止记录并交回记下的行（原顺序）。 */
@@ -119,6 +150,7 @@ export interface UnattendedDesignRepairInput {
 }
 
 export type UnattendedDesignRepairResult =
+  | { outcome: 'handoff'; reason: string }
   | { outcome: 'not_dispatched'; reason: string }
   | { outcome: 'failed'; step: string; reason: string }
   /** 草稿外改动，或必需快照不可验证（`changes` 为空）——两者都走既有违规处置，不降为设计等待。 */
@@ -322,24 +354,46 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
   let reviewDocument: BlueprintReviewResult | undefined;
   const evidence: Record<string, unknown> = {};
   try {
-    // 记账：attempted 落盘成功后才派发（appendFileSync 抛错即整次尝试中止、不调用 adapter）。
-    input.emit({ ...base, stage: 'attempted', preauthorization: input.requirement ? `${input.reportDir}/manifest.json#requirement` : DESIGN_REPAIR_PREAUTH_KEY });
-    const baseline = fs.readFileSync(canonicalPath);
-    const baseDoc = YAML.parse(baseline.toString('utf8')) as BlueprintRecord;
-    const draftDir = path.join(projectRoot, input.reportDir, 'design-repair');
+    const runDir = path.join(projectRoot, input.reportDir);
+    const priorAttempt = [...sessionEvents(runDir)].reverse().find(event => event.type === 'design_authority_repair'
+      && (event as Record<string, unknown>).signature === input.signature && (event as Record<string, unknown>).stage === 'attempted') as Record<string, unknown> | undefined;
+    const draftDir = path.join(runDir, 'design-repair');
     const draftFile = path.join(draftDir, 'component-blueprint.yaml');
-    fs.rmSync(draftDir, { recursive: true, force: true });
-    fs.mkdirSync(draftDir, { recursive: true });
-    fs.writeFileSync(draftFile, baseline);
     const identity = parseChangeUnitFeatureId(input.feature);
-    const originalCu = input.requirement ? loadCanonicalChangeUnit(projectRoot, blueprintId, identity.changeUnitId) : undefined;
     const cuDraftFile = path.join(draftDir, 'change-unit.yaml');
     const architectureDraftFile = path.join(draftDir, 'architecture.json');
     const configFile = path.join(projectRoot, 'framework.config.json');
-    const configBaseline = input.requirement ? fs.readFileSync(configFile) : undefined;
+    type OriginalContext = { baseline: string; cu?: string; config?: string; startedAt: string; brief: DesignRepairBriefLike; eventOriginals?: Record<string, string> };
+    let original: OriginalContext;
+    if (priorAttempt?.handoff_context) original = readHandoffMaterial<OriginalContext>(runDir, priorAttempt.handoff_context as HandoffReference);
+    else {
+      original = { baseline: fs.readFileSync(canonicalPath).toString('base64'), brief: input.brief,
+        eventOriginals: Object.fromEntries(workspaceEventFiles(changeUnitDirectory(projectRoot, blueprintId))
+          .map(file => [path.relative(projectRoot, file).replace(/\\/g, '/'), fs.readFileSync(file).toString('base64')])),
+        ...(input.requirement ? { cu: loadCanonicalChangeUnit(projectRoot, blueprintId, identity.changeUnitId).bytes.toString('base64'), config: fs.readFileSync(configFile).toString('base64') } : {}),
+        startedAt: new Date().toISOString() };
+      fs.rmSync(draftDir, { recursive: true, force: true });
+      fs.mkdirSync(draftDir, { recursive: true });
+      const file = path.join(draftDir, 'original-context.json');
+      const bytes = JSON.stringify(original, null, 2) + '\n';
+      fs.writeFileSync(file, bytes, { flag: 'wx' });
+      input.emit({ ...base, stage: 'attempted', preauthorization: input.requirement ? `${input.reportDir}/manifest.json#requirement` : DESIGN_REPAIR_PREAUTH_KEY,
+        handoff_context: { path: path.relative(runDir, file).replace(/\\/g, '/'), sha256: sha256Hex(Buffer.from(bytes)) } });
+      fs.writeFileSync(draftFile, Buffer.from(original.baseline, 'base64'));
+      if (original.cu) fs.writeFileSync(cuDraftFile, Buffer.from(original.cu, 'base64'));
+      if (original.config) fs.writeFileSync(architectureDraftFile, JSON.stringify(JSON.parse(Buffer.from(original.config, 'base64').toString('utf8')).architecture, null, 2) + '\n');
+    }
+    const baseline = Buffer.from(original.baseline, 'base64');
+    const baseDoc = YAML.parse(baseline.toString('utf8')) as BlueprintRecord;
+    if (fs.existsSync(draftFile) && fs.readFileSync(canonicalPath).equals(fs.readFileSync(draftFile))
+      && Number((YAML.parse(fs.readFileSync(canonicalPath, 'utf8')) as BlueprintRecord).revision) === Number(baseDoc.revision) + 1) {
+      published = { revision: Number(baseDoc.revision) + 1 };
+    }
+    const originalCu = original.cu ? { canonicalPath: path.join(changeUnitDirectory(projectRoot, blueprintId), identity.changeUnitId, 'change-unit.yaml'),
+      bytes: Buffer.from(original.cu, 'base64'), artifactSha256: `sha256:${sha256Hex(Buffer.from(original.cu, 'base64'))}`,
+      changeUnit: YAML.parse(Buffer.from(original.cu, 'base64').toString('utf8')) as ReturnType<typeof loadCanonicalChangeUnit>['changeUnit'] } : undefined;
+    const configBaseline = original.config ? Buffer.from(original.config, 'base64') : undefined;
     const originalArchitecture = configBaseline ? JSON.parse(configBaseline.toString('utf8')).architecture : undefined;
-    if (originalCu) fs.writeFileSync(cuDraftFile, originalCu.bytes);
-    if (configBaseline) fs.writeFileSync(architectureDraftFile, JSON.stringify(originalArchitecture, null, 2) + '\n');
     // 核对范围：本任务的工作区（蓝图工作区：canonical 蓝图、全部 CU、各 run 的 manifest / run-control）不套用通用的运行时目录排除；
     // 本任务实际引用的输入（蓝图 source_ref 指向的项目内文件）即使在通常排除的目录里也逐个核；只排除调用期间运行时自己会写的路径。
     // 工作区里的事件文件按整文件期望值单独核（restoreEventFiles）。
@@ -349,16 +403,19 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const eventFiles = workspaceEventFiles(workspace);
     const excluded = [
       `${runRel}/design-repair`, `${runRel}/phases/${designRepairInvokeLabel('author')}`, `${runRel}/phases/${designRepairInvokeLabel('questioning')}`,
-      `${runRel}/progress.json`, `${runRel}/progress.md`, `${runRel}/${LIVENESS_BEACON_FILENAME}`, ...input.runtimeWrites,
+      `${runRel}/run-control.json`, `${runRel}/.runner.lock`,
+      path.relative(projectRoot, path.join(workspace, BLUEPRINT_RECONCILE_LOCK_NAME)),
+      ...allChangeUnits.map(id => path.relative(projectRoot, featureFilePath(projectRoot, deriveChangeUnitFeatureId(blueprintId, id), path.join('goal-runs', FEATURE_LOCK_NAME)))), `${runRel}/session-control.log`, `${runRel}/progress.json`, `${runRel}/progress.md`, `${runRel}/${LIVENESS_BEACON_FILENAME}`, ...input.runtimeWrites,
       ...eventFiles.map(file => path.relative(projectRoot, file)),
     ];
     const relOf = (file: string): string => path.relative(projectRoot, file).replace(/\\/g, '/');
     const baselineRefs = blueprintSourceRefFiles(projectRoot, baseDoc).map(relOf);
-    const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[]): Promise<ReturnType<typeof capturePhaseInvocationSnapshot>> => {
+    const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[]): Promise<ReturnType<typeof capturePhaseInvocationSnapshot> | { handoff: true }> => {
       // 根在调用前后各列一次：调用里新建的顶层条目也要进差集。
-      const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(
-        { projectRoot, protectedRoots: snapshotRoots(projectRoot) }, { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: referenced });
-      const pre = capture();
+      const resolution = { projectRoot, protectedRoots: snapshotRoots(projectRoot) };
+      const snapshotOptions = { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: referenced };
+      const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(resolution, snapshotOptions);
+      let pre = capture();
       // 调用前就不可验证：还没有派出调用，尝试失败（不发布）；调用后不可验证：可能有越界写入而无从核对，按违规处置。
       if (pre.failureReason) throw new AttemptFailure(purpose, `调用前写归因快照不可核实（不得当作干净继续）：${pre.failureReason}`);
       const eventsBefore = new Map(eventFiles.map(file => [file, fs.readFileSync(file)] as const));
@@ -366,16 +423,27 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       let written: Array<{ file: string; line: string }> = [];
       let result: DesignRepairInvokeOutcome;
       try {
-        result = await input.invoke(purpose, prompt);
+        result = await input.invoke(purpose, prompt, { pre, resolution, options: snapshotOptions });
       } finally {
         written = stopRecording();
       }
+      if (result.handoff) return { handoff: true };
+      if (result.preSnapshot) pre = result.preSnapshot;
       if (!result.started) throw new AttemptFailure(purpose, `未启动：${result.detail}`);
       // 收容没能证明子进程已消失：它可能还在写，后面的核对与发布都没有意义——交运行时走既有收容停机。
       if (result.containmentUnresolved) throw new AttemptFailure(purpose, `调用的子进程收容失败且未证明已消失：${result.detail}`, undefined, true);
-      const post = capture();
+      const post = result.postSnapshot ?? capture();
       const diff = diffPhaseInvocationSnapshots(pre, post);
       const eventChanges = restoreEventFiles(eventsBefore, written, projectRoot);
+      for (const [relative, encoded] of Object.entries(original.eventOriginals ?? {})) {
+        const file = path.join(projectRoot, relative);
+        const bytes = Buffer.from(encoded, 'base64');
+        const current = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0);
+        if (!current.subarray(0, bytes.length).equals(bytes)) {
+          eventChanges.push({ path: relative, how: 'modified', preSha256: sha256Hex(bytes), postSha256: sha256Hex(current) });
+          fs.writeFileSync(file, Buffer.concat([bytes, current.subarray(bytes.length)]));
+        }
+      }
       if (diff.kind === 'unverifiable') {
         throw new AttemptFailure(purpose, `调用后写归因快照不可核实（不得当作干净继续）：${diff.reason}`, { changes: eventChanges, preSnapshot: pre.sha256, postSnapshot: post.sha256 });
       }
@@ -398,6 +466,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
 
     // ② 编写修复。
     const preAuthor = await guarded('author', authorPrompt(input, draftFile, canonicalRel), baselineRefs);
+    if ('handoff' in preAuthor) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
     const authored = readDraft('author');
     for (const field of ['admission', 'questioning'] as const) {
       if (canon(reviewOf(authored)[field]) !== canon(reviewOf(baseDoc)[field])) throw new AttemptFailure('self_reported', `编写调用改了 review_summary.${field}（自报，不予采信）`);
@@ -407,9 +476,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       declineGates.has(String(decision.decision_id)) && typeof decision.rationale === 'string' && decision.rationale.startsWith('declined:'));
     if (declined.length) {
       const before = structuredClone(authored); delete asRecord(before.review_summary)?.questioning;
-      await guarded('questioning', questioningPrompt(input, draftFile, authored) + '\n本次作者拒修理由：\n'
+      const declinedQuestioning = await guarded('questioning', questioningPrompt(input, draftFile, authored) + '\n本次作者拒修理由：\n'
         + declined.map(decision => `${decision.decision_id}：${decision.rationale}`).join('\n')
         + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。', blueprintSourceRefFiles(projectRoot, authored).map(relOf));
+      if ('handoff' in declinedQuestioning) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
       const questioned = readDraft('questioning');
       const after = structuredClone(questioned); delete asRecord(after.review_summary)?.questioning;
       if (canon(before) !== canon(after)) throw new AttemptFailure('questioning_scope', '拒修质询改了 questioning 之外的草稿内容');
@@ -478,7 +548,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       source_kind: 'design_repair_unattended',
       source_ref: input.requirement ? `${input.reportDir}/manifest.json#requirement` : `framework.local.json#${DESIGN_REPAIR_PREAUTH_KEY}`,
       source_revision: `revision-${String(baseDoc.revision)}`,
-      observed_at: new Date().toISOString(),
+      observed_at: original.startedAt,
       extraction_method: `unattended_b1_repair:${input.brief.items.map(item => `${item.check}[${item.codes.join(',')}]`).join(';')}`,
     };
     // 派生结论只从基线派生，作者对它的改动不采信（与上方"运行时覆盖"的豁免一致）：旧结论按既有规则标 stale、保留原输入版本。
@@ -492,7 +562,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const auxBeforeQuestioning = originalCu ? [cuDraftFile, architectureDraftFile].map(file => fs.readFileSync(file)) : [];
 
     // ④ 独立质询：隔离的第二次调用，只许改质询结果。
-    await guarded('questioning', questioningPrompt(input, draftFile, beforeQuestioning), [...new Set([...baselineRefs, ...draftRefs])]);
+    const questioningStep = await guarded('questioning', questioningPrompt(input, draftFile, beforeQuestioning), [...new Set([...baselineRefs, ...draftRefs])]);
+    if ('handoff' in questioningStep) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
     const questioned = readDraft('questioning');
     if (originalCu && [cuDraftFile, architectureDraftFile].some((file, index) => !fs.readFileSync(file).equals(auxBeforeQuestioning[index]))) {
       throw new AttemptFailure('questioning', '质询调用改写了CU或架构候选');
@@ -510,8 +581,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     }
     fs.writeFileSync(draftFile, text);
     // ⑥ 发布：单写者，先复核 canonical 字节仍等于基线（两层锁约束不了所有手工写入者）；rename 成功即发布边界。
-    if (!fs.readFileSync(canonicalPath).equals(baseline)) throw new AttemptFailure('publish', 'canonical 蓝图在尝试期间被别处改动，不发布');
-    if (architectureChanged) {
+    const alreadyPublished = fs.readFileSync(canonicalPath).equals(Buffer.from(text));
+    if (!alreadyPublished && !fs.readFileSync(canonicalPath).equals(baseline)) throw new AttemptFailure('publish', 'canonical 蓝图在尝试期间被别处改动，不发布');
+    if (architectureChanged && !alreadyPublished) {
       if (!fs.readFileSync(configFile).equals(configBaseline!)) throw new AttemptFailure('publish', '架构配置在尝试期间被别处修改，不发布');
       publishArchitectureRevision(projectRoot, context.architecture as unknown as Record<string, unknown>);
       const writtenConfig = fs.readFileSync(configFile);
@@ -523,8 +595,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     }
     const tmp = `${canonicalPath}.tmp-${process.pid}`;
     try {
-      fs.writeFileSync(tmp, text);
-      fs.renameSync(tmp, canonicalPath);
+      if (!alreadyPublished) { fs.writeFileSync(tmp, text); fs.renameSync(tmp, canonicalPath); }
     } catch (error) {
       fs.rmSync(tmp, { force: true });
       throw new AttemptFailure('publish', `发布写出失败（canonical 保持原字节）：${(error as Error).message}`);
@@ -542,8 +613,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         }
         cuCandidate.provenance.extraction_method += ';design-repair';
         cuCandidate.provenance.source_revision = `revision-${revision}`;
-        cuCandidate.provenance.observed_at = new Date().toISOString();
-        const revised = reviseChangeUnitContent(projectRoot, blueprintId, [{ expectedRef: createChangeUnitRef(originalCu),
+        cuCandidate.provenance.observed_at = original.startedAt;
+        const currentCu = loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId);
+        const cuAlreadyPublished = alreadyPublished && canon(asChangeUnitArtifact(currentCu.changeUnit)) === canon({ ...cuCandidate, revision: currentCu.changeUnit.revision });
+        const revised = cuAlreadyPublished ? { revised: [], unchanged: [changeUnitId], busy: undefined } : reviseChangeUnitContent(projectRoot, blueprintId, [{ expectedRef: createChangeUnitRef(originalCu),
           candidate: { providerId: 'design-repair', artifact: cuCandidate } }], {
           heldBlueprintLocks: locks, heldFeatureLocks: input.heldFeatureLock ? [input.heldFeatureLock] : [],
           activeRun: { feature: input.feature, runId: input.runId },
