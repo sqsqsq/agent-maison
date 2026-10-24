@@ -1,3 +1,4 @@
+import { executeCheck } from './utils/check-execution';
 // ============================================================================
 // spec 阶段脚本 Harness — check-spec.ts
 // ============================================================================
@@ -1525,35 +1526,6 @@ function checkHeadlessAssumptionsTrace(ctx: CheckContext): CheckResult[] {
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : {}),
-    }];
-  }
-}
 
 const checker: PhaseChecker = {
   phase: 'spec',
@@ -1569,7 +1541,7 @@ const checker: PhaseChecker = {
           ?? (input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '');
         results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, visualDefinition), ...dispatchSpecUiSpec(ctx, visualDefinition), ...dispatchSpecAssetAcquisition(ctx));
       }
-      results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
+      results.push(...executeCheck(ctx, () => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
       return [...results, ...designScopeRevisionChecks(ctx, results)];
     }
     const prd = loadPrd(ctx);
@@ -1588,17 +1560,17 @@ const checker: PhaseChecker = {
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md']),
     ];
 
-    results.push(...safeRun(() => checkRequiredChapters(ctx, prd), 'required_chapters'));
-    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundSpecScope(ctx, prd) ?? [], 'terminology_mapping_table') : null;
+    results.push(...executeCheck(ctx, () => checkRequiredChapters(ctx, prd), 'required_chapters'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? executeCheck(ctx, () => checkChangeUnitBoundSpecScope(ctx, prd) ?? [], 'terminology_mapping_table') : null;
     if (cuBoundScope) {
       results.push(...cuBoundScope);
-      results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
+      results.push(...executeCheck(ctx, () => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
     } else {
-      results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
-      results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
-      results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
-      results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
-      results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
+      results.push(...executeCheck(ctx, () => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
+      results.push(...executeCheck(ctx, () => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
+      results.push(...executeCheck(ctx, () => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
+      results.push(...executeCheck(ctx, () => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
+      results.push(...executeCheck(ctx, () => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
     }
     if (isSpecVisualHandoffSkipped(ctx.resolvedProfile)) {
       results.push({
@@ -1612,11 +1584,11 @@ const checker: PhaseChecker = {
     } else {
       // visual_handoff 先于 ui_spec：structured_ref_elements 注入 ctx.refElementsManifest，
       // capture-completeness 同 run 优先读内存 manifest（见 capability-registry dispatchSpec*）。
-      results.push(...safeRun(() => dispatchSpecVisualHandoff(ctx, prd), 'visual_handoff'));
+      results.push(...executeCheck(ctx, () => dispatchSpecVisualHandoff(ctx, prd), 'visual_handoff'));
     }
     // 反证器先于 ui-spec/fidelity gate 执行，让终签消费同一 run 的当前结论；
     // 无 ui-spec 文档返回空结果，与 profile 开关无耦合。
-    results.push(...safeRun(() => checkVisionOutputCounterevidence(ctx), 'vision_output_counterevidence'));
+    results.push(...executeCheck(ctx, () => checkVisionOutputCounterevidence(ctx), 'vision_output_counterevidence'));
     if (isSpecUiSpecSkipped(ctx.resolvedProfile)) {
       results.push({
         id: 'ui_spec_structure',
@@ -1627,13 +1599,13 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 spec.ui_spec 脚本守门`,
       });
     } else {
-      results.push(...safeRun(() => dispatchSpecUiSpec(ctx, prd), 'ui_spec_structure'));
+      results.push(...executeCheck(ctx, () => dispatchSpecUiSpec(ctx, prd), 'ui_spec_structure'));
     }
     if (!isSpecAssetAcquisitionSkipped(ctx.resolvedProfile)) {
       // v7 P1-2：provider 确认执行标记——只有**本 invocation** 中 provider 真跑完
       //（未 skip、未 throw）才置位；盲档 crop 免 c3 判据消费此标记（skip/throw 时
       // 磁盘旧报告/agent 预写报告不构成豁免）。
-      results.push(...safeRun(() => {
+      results.push(...executeCheck(ctx, () => {
         // post-impl4 P1-4：执行回执不从聚合 CheckResult[] 猜——provider 在真正跑完验真
         // 并写盘 asset-crop-validation.json 的位置内部置位（空数组/不适用/SKIP/WARN 未
         // 裁图均不会写盘 → 不授信）。
@@ -1641,26 +1613,26 @@ const checker: PhaseChecker = {
       }, 'asset_acquisition'));
     }
     // --- e7c2a4d8 T1d（round2 P1）：corrupt goal-run 残留 fail-closed（在 intent 门之前）---
-    results.push(...safeRun(() => checkGoalRunIdentityIntact(ctx), 'goal_run_identity_intact'));
+    results.push(...executeCheck(ctx, () => checkGoalRunIdentityIntact(ctx), 'goal_run_identity_intact'));
     // --- blind-visual-hardening d4：fidelity 意图三态前置闸（逐阶段路径扩面）---
-    results.push(...safeRun(() => checkFidelityCapabilityPregate(ctx), 'fidelity_capability_pregate'));
+    results.push(...executeCheck(ctx, () => checkFidelityCapabilityPregate(ctx), 'fidelity_capability_pregate'));
 
     // --- blind-visual-hardening d2：盲档 crop 左移禁令（不依赖 profile capability 开关——
     //     盲模型自证裁剪在任何 profile 下都非法）---
-    results.push(...safeRun(() => checkBlindCropProhibition(ctx), 'blind_crop_prohibition'));
+    results.push(...executeCheck(ctx, () => checkBlindCropProhibition(ctx), 'blind_crop_prohibition'));
     // vision_output_counterevidence 已前移至 ui_spec 检查之前，供同 run 终签直接消费。
     // --- blind-visual-hardening P1-F：盲档素材问人清单（side artifact，best-effort）---
     try { maybeWriteAssetRequest(ctx); } catch { /* 清单生成失败不阻断 */ }
-    results.push(...safeRun(() => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
-    results.push(...safeRun(() => checkPriorityValues(ctx, prd), 'priority_values'));
-    results.push(...safeRun(() => checkAtLeastOneP0(ctx, prd), 'at_least_one_p0'));
-    results.push(...safeRun(() => checkAcceptanceCriteriaFormat(ctx, prd), 'acceptance_criteria_format'));
-    results.push(...safeRun(() => checkMermaidFlowchart(ctx, prd), 'mermaid_flowchart'));
-    results.push(...safeRun(() => checkExceptionTableFormat(ctx, prd), 'exception_table_format'));
-    results.push(...safeRun(() => checkMinimumExceptionScenarios(ctx, prd), 'minimum_exception_scenarios'));
-    results.push(...safeRun(() => checkNfrQuantified(ctx, prd), 'nfr_quantified'));
-    results.push(...safeRun(() => checkPageDescriptionCompleteness(ctx, prd), 'page_description_completeness'));
-    results.push(...safeRun(() => checkMetadataHeader(ctx, prd), 'metadata_header'));
+    results.push(...executeCheck(ctx, () => checkFeatureTableFormat(ctx, prd), 'feature_table_format'));
+    results.push(...executeCheck(ctx, () => checkPriorityValues(ctx, prd), 'priority_values'));
+    results.push(...executeCheck(ctx, () => checkAtLeastOneP0(ctx, prd), 'at_least_one_p0'));
+    results.push(...executeCheck(ctx, () => checkAcceptanceCriteriaFormat(ctx, prd), 'acceptance_criteria_format'));
+    results.push(...executeCheck(ctx, () => checkMermaidFlowchart(ctx, prd), 'mermaid_flowchart'));
+    results.push(...executeCheck(ctx, () => checkExceptionTableFormat(ctx, prd), 'exception_table_format'));
+    results.push(...executeCheck(ctx, () => checkMinimumExceptionScenarios(ctx, prd), 'minimum_exception_scenarios'));
+    results.push(...executeCheck(ctx, () => checkNfrQuantified(ctx, prd), 'nfr_quantified'));
+    results.push(...executeCheck(ctx, () => checkPageDescriptionCompleteness(ctx, prd), 'page_description_completeness'));
+    results.push(...executeCheck(ctx, () => checkMetadataHeader(ctx, prd), 'metadata_header'));
 
     const acceptanceRuleDesc = (
       c: CheckContext,
@@ -1670,11 +1642,11 @@ const checker: PhaseChecker = {
       ruleDesc(c, s as 'structure_checks' | 'semantic_checks' | 'traceability_checks', id);
     results.push(...runAcceptanceYamlStructureChecks(ctx, acceptanceRuleDesc));
 
-    results.push(...safeRun(() => checkFeatureToAcceptance(ctx, prd), 'feature_to_acceptance'));
-    results.push(...safeRun(() => checkAcceptanceToFeature(ctx, prd), 'acceptance_to_feature'));
-    results.push(...safeRun(() => checkGlossaryTermsUsedInBody(ctx, prd), 'glossary_terms_used_in_body'));
+    results.push(...executeCheck(ctx, () => checkFeatureToAcceptance(ctx, prd), 'feature_to_acceptance'));
+    results.push(...executeCheck(ctx, () => checkAcceptanceToFeature(ctx, prd), 'acceptance_to_feature'));
+    results.push(...executeCheck(ctx, () => checkGlossaryTermsUsedInBody(ctx, prd), 'glossary_terms_used_in_body'));
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,
@@ -1687,12 +1659,12 @@ const checker: PhaseChecker = {
     );
 
     // --- goal-fakepass-hardening t6：档位声明 vs 需求 SSOT 强意图对账（BLOCKER，双模式）---
-    results.push(...safeRun(() => checkFidelityIntentReconciliation(ctx), 'fidelity_intent_reconciliation'));
+    results.push(...executeCheck(ctx, () => checkFidelityIntentReconciliation(ctx), 'fidelity_intent_reconciliation'));
 
     // --- goal-fakepass-hardening t4a：P0 结构化流程模型 + flow_contract 确认点 ---
-    results.push(...safeRun(() => evaluateAcceptanceFlowStructure(ctx.projectRoot, ctx.feature), 'acceptance_flow_structure'));
+    results.push(...executeCheck(ctx, () => evaluateAcceptanceFlowStructure(ctx.projectRoot, ctx.feature), 'acceptance_flow_structure'));
     results.push(
-      ...safeRun(() => {
+      ...executeCheck(ctx, () => {
         const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
         const reqText = collectRequirementIntentText(ctx.projectRoot, ctx.feature, featuresDirRel);
         return evaluateFlowContract(ctx.projectRoot, ctx.feature, reqText);
@@ -1700,10 +1672,10 @@ const checker: PhaseChecker = {
     );
 
     // --- goal-fakepass-hardening t7：ux-reference 逐图建模对账（out-of-scope 加界）---
-    results.push(...safeRun(() => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
+    results.push(...executeCheck(ctx, () => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
 
     // plan c4e7a9b2 A1：手写 acceptance 与当前设计权威对齐（spec 是责任阶段，不对齐不得 PASS）。
-    results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
+    results.push(...executeCheck(ctx, () => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
 
     return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
@@ -1727,10 +1699,12 @@ export function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
  */
 function checkRefElementsExcluded(ctx: CheckContext): CheckResult[] {
   const id = 'ref_elements_excluded';
-  const description = 'ref-elements excluded 须逐字引自需求原文且不被 ui-spec 覆盖';
-  const excluded = (loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature))?.elements ?? [])
+  const description = 'ref-elements 形状及 excluded 须逐字引自需求原文且不被 ui-spec 覆盖';
+  const refDoc = loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature));
+  const failures: string[] = [...(refDoc?.shape_issues ?? [])];
+  const excluded = (refDoc?.elements ?? [])
     .filter((e) => e?.disposition === 'excluded');
-  if (excluded.length === 0) return [];
+  if (excluded.length === 0 && failures.length === 0) return [];
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   const covered = new Set([
     ...(uiDoc ? collectAllComponentNodes(uiDoc).map((n) => n.id) : []),
@@ -1738,7 +1712,6 @@ function checkRefElementsExcluded(ctx: CheckContext): CheckResult[] {
   ].filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()));
   const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
   const reqText = collectCurrentRequirementText(ctx.projectRoot, ctx.feature, featuresDirRel);
-  const failures: string[] = [];
   for (const e of excluded) {
     const quoteCheck = checkRequirementQuote(e.requirement_quote, reqText);
     if (quoteCheck === 'missing') failures.push(`${e.element_id}：excluded 缺 requirement_quote`);

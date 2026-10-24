@@ -591,8 +591,8 @@ const cases: Case[] = [
       assertEq(Array.isArray(ucs[1]?.ui_bindings?.[0]?.user_actions), true, '嵌套 user_actions 归空数组（trace-gates 遍历防崩）');
       const joined = (spec.shape_issues ?? []).join('|');
       assertEq((spec.shape_issues ?? []).length, 4, `四处嵌套坏形状全留痕: ${joined}`);
-      assertEq(/use_cases\[uc-1\]\.ui_bindings/.test(joined), true, `嵌套留痕带路径: ${joined}`);
-      assertEq(/use_cases\[uc-2\]\.ui_bindings\[HomePage\]\.user_actions/.test(joined), true, `深层留痕带路径: ${joined}`);
+      assertEq(/use_cases\[0\]\.ui_bindings/.test(joined), true, `嵌套留痕带路径: ${joined}`);
+      assertEq(/use_cases\[1\]\.ui_bindings\[0\]\.user_actions/.test(joined), true, `深层留痕带路径: ${joined}`);
     }),
   },
 ];

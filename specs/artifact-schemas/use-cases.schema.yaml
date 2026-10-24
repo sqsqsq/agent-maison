@@ -1,12 +1,255 @@
-$schema: "https://json-schema.org/draft/2020-12/schema"
-$id: "agentmaison://artifact/use-cases@1"
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: agentmaison://artifact/use-cases@1
 title: Business use cases
 x-artifact-id: use-cases@1
 x-version: 1
-x-authority: "Compatibility identity; profile schemas and ut-artifact-validate.ts remain semantic authorities."
-x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
+x-authority: Compatibility identity; profile schemas and ut-artifact-validate.ts remain semantic authorities.
+x-blueprint-projection: Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported.
 type: object
-required: [use_cases]
+required:
+  - use_cases
 properties:
-  use_cases: { type: array }
+  schema_version: {}
+  feature:
+    type: string
+    minLength: 1
+  source:
+    type: string
+    minLength: 1
+  coordinator:
+    type: string
+    minLength: 1
+  ui_bindings:
+    type:
+      - array
+      - "null"
+    items:
+      $ref: "#/$defs/binding"
+  use_cases:
+    type: array
+    items:
+      $ref: "#/$defs/usecase"
 additionalProperties: true
+$defs:
+  strings:
+    type: array
+    items:
+      type: string
+      minLength: 1
+  action:
+    type: object
+    properties:
+      trigger:
+        type: string
+        minLength: 1
+      calls:
+        anyOf:
+          - type: array
+            items:
+              type: string
+              minLength: 1
+              pattern: ^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\([^\r\n]*\))?$
+            description: External string or non-empty string list; normalized in memory to an ordered list, retaining duplicate calls.
+            minItems: 1
+          - type: string
+            minLength: 1
+            pattern: ^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\([^\r\n]*\))?$
+        description: External string or non-empty string list; normalized in memory to an ordered list, retaining duplicate calls.
+    additionalProperties: true
+  binding:
+    type: object
+    properties:
+      ui:
+        type: string
+        minLength: 1
+      role:
+        type: string
+      subscribes:
+        type:
+          - array
+          - "null"
+        items:
+          type: string
+          minLength: 1
+      user_actions:
+        type:
+          - array
+          - "null"
+        items:
+          anyOf:
+            - type: string
+              minLength: 1
+            - $ref: "#/$defs/action"
+    additionalProperties: true
+  usecase:
+    type: object
+    properties:
+      id:
+        type: string
+        minLength: 1
+      description:
+        type: string
+      name:
+        type: string
+      coordinator:
+        type: string
+        minLength: 1
+      coordinator_file:
+        type:
+          - string
+          - "null"
+      ui_bindings:
+        type:
+          - array
+          - "null"
+        items:
+          $ref: "#/$defs/usecaseBinding"
+      data_boundaries:
+        type:
+          - array
+          - "null"
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+              minLength: 1
+            type:
+              type: string
+              minLength: 1
+            kind:
+              type: string
+            methods:
+              type:
+                - array
+                - "null"
+              items:
+                anyOf:
+                  - type: string
+                    minLength: 1
+                  - type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                      params:
+                        type:
+                          - array
+                          - "null"
+                      returns:
+                        type: string
+                      async:
+                        type: boolean
+                    additionalProperties: true
+          additionalProperties: true
+      state_model:
+        type: object
+        properties:
+          phases:
+            type:
+              - array
+              - "null"
+            items:
+              type: string
+              minLength: 1
+          fields:
+            type:
+              - array
+              - "null"
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                type:
+                  type: string
+                  minLength: 1
+              additionalProperties: true
+        additionalProperties: true
+      branches:
+        type:
+          - array
+          - "null"
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+              minLength: 1
+            scenario:
+              type: string
+              minLength: 1
+            user_sequence:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+            expected_phase_seq:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+            expected_port_calls:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+            expected_boundary_calls:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+            not_called:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+            local_expect:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+            linked_acceptance:
+              type:
+                - array
+                - "null"
+              items:
+                type: string
+                minLength: 1
+          additionalProperties: true
+    additionalProperties: true
+  usecaseBinding:
+    type: object
+    properties:
+      ui:
+        type: string
+        minLength: 1
+      role:
+        type: string
+      subscribes:
+        type:
+          - array
+          - "null"
+        items:
+          type: string
+          minLength: 1
+      user_actions:
+        type:
+          - array
+          - "null"
+        items:
+          $ref: "#/$defs/action"
+    additionalProperties: true

@@ -21,7 +21,7 @@ import type { CheckResult, Phase } from './types';
 import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
 import { validateRepairCandidatesShape } from './repair-candidates';
-import { isBlockingCheck, resolveCheckDisposition } from './check-disposition';
+import { isBlockingCheck, isRequiredCheckGap, resolveCheckDisposition } from './check-disposition';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
 export const AXIS_IDS: readonly AxisId[] = ['functional', 'visual', 'asset', 'evidence'];
@@ -462,18 +462,20 @@ export function deriveSummaryVerdictLattice(
   // plan c8e5b3f1 t2：手动投影以暴露 pre/rawPost/post 供因果归因——projectPhaseAdvanceVerdict 纯函数、
   // applyCapabilityResolutionProjection 原地改 axes，前后各调一次即得标量；post 必须含 hasBlocked 顶层
   // 钳制（visual/asset blocked 依赖它，否则会被误判）。
-  const pre = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const requiredGap = checks.some(check => isRequiredCheckGap(check));
+  const rawPre = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const pre = requiredGap && rawPre === 'PASS' ? 'INCOMPLETE' : rawPre;
   const { hasBlocked } = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
   const rawPost = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
-  const post = hasBlocked && rawPost === 'PASS' ? 'INCOMPLETE' : rawPost;
+  const post = (hasBlocked || requiredGap) && rawPost === 'PASS' ? 'INCOMPLETE' : rawPost;
   return {
     report_validity,
     quality_axes,
     pre_projection_verdict: pre,
     projected_verdict: post,
     has_blocked: hasBlocked,
-    release_readiness: hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
-    completion_status: hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes, extractCompletionGaps(checks)),
+    release_readiness: hasBlocked || requiredGap ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
+    completion_status: hasBlocked || requiredGap ? 'INCOMPLETE' : projectCompletionStatus(quality_axes, extractCompletionGaps(checks)),
   };
 }
 

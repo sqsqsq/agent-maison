@@ -1,0 +1,487 @@
+[goal-runner] 视觉金丝雀探测无效/调用失败（invoke 非零退出（exitCode=1）：2026-10-23T04:40:39.103410Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind="mcp" store_mode="auto" selected_store="secrets" actual_store="file" operation="load" secure_outcome="not_found" outcome="not_found" fallback_reason="secure_entry_missing" secure_error="none" storage_phase="policy" originator="codex_desktop"），未缓存——本次 run 回退 adapter 声明路径，下次 run 自动重探
+[goal-runner] fidelity 路由：inferred=pixel_1to1(strong_wording) selected=pixel_1to1 effective=pixel_1to1 strictness=best_effort asset=approximate(default)（source=requirement_self_declared）
+[goal-runner] run_start 预算（本交付周期口径：自上次可信完成起，含 supersede 链）: turns 0/30（remaining 30）；wall 0m/480m（remaining ~480m）；回退 0 次
+GOAL_PHASE phase=spec event=start index=0 total=2 attempt=1
+(node:57196) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+🔍 Harness 验证开始: phase=spec, feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+
+📋 Step 1: 加载 Spec 规约...
+   ✓ 阶段级规约: framework/specs/phase-rules/spec-rules.yaml
+   ✓ project_profile: hmos-app / app
+   Feature 目录: doc/features/cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93/ (directory)
+   阶段必需文件均已解析到：
+     - acceptance.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml
+     - spec/ui-spec.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml
+     - spec/ref-elements.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml
+     - spec/asset-manifest.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/spec/asset-manifest.yaml
+   ⊘ 功能级规约: contracts.yaml 不存在 (跳过契约检查)
+   ✓ 功能级规约: doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml
+
+🔧 Step 2: 运行脚本 Harness...
+   ▶ 执行 check-spec.ts ...
+
+📊 Step 3: 生成脚本报告...
+
+============================================================
+  Harness Script Report — spec/cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+  2026-10-23T04:59:27.909Z
+  assurance=full
+  capability_resolutions=4
+============================================================
+
+  Showing FAIL/WARN/BLOCKER-SKIP only (3 shown, 22 PASS/SKIP hidden; use --verbose to expand).
+
+  ⚠ WARN [MAJOR] ui_spec_structure
+       ui_change=new_or_changed；screens=4；tokens=14；assets=2；verified=unverified
+本规则只查结构完整，非对图保真（保真由 DSL gate + 静态分 + 渲染 diff 承担）。
+提示：ui-spec verified=unverified：DSL 未过原图 gate；下游 parity 只报结构不报保真。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml
+       Source: check-spec.ts
+  ⚠ WARN [MAJOR] ui_spec_fidelity_gate
+       ui-spec verified=unverified：未经当前机器多模态证据核对，不得作为保真基线进 plan（可降级继续但须显式标注）。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml
+       Fix: 处理：①adapter 有逐图 Read 审计能力（tool_event_provenance=structured_events）且本 invocation 真视觉在位时，逐张读图并签 refs receipt 后设 verified: verified + verified_method: vl_multimodal；②adapter 无逐图 Read 审计能力（none-provenance）或本 invocation 判盲时，vl_multimodal 结构性不可达，诚实保留 verified: unverified（soft 档 WARN 可继续、hard contract 仍 FAIL，不伪造签名）。
+       Source: check-spec.ts
+  ⚠ WARN [MAJOR] capture_completeness_external
+       【P0-D 盲档降级】原图 OCR 文本 6/30 行未被 spec 捕获（真分母覆盖率 80%）——当前 adapter 无视觉能力（adapterImageInput=none），无法逐条辨认噪声/真文本，已自动登记待复核清单：
+  doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/blind-review-pending.yaml
+【诚实边界】本门禁只保证"原图文本都进了 spec 分母"（真分母=OCR 全文），不保证建模位置/分组正确（归 structure lint / review 视觉维度 / device 回环）；单字符角标/纯符号行已剔除（误报面>收益，known-miss）。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/blind-review-pending.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml
+       Fix: 已写入 doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/blind-review-pending.yaml（6 条，auto_disposition: unverifiable_blind）；收口阶段真人一次终审：确需实现→补 ref-elements + ui-spec 建模；确不实现→ref-elements defer + 签字。盲档下不要求 agent 逐条判断（那是无解题），不得靠删分母放行——分母是原图 OCR，删不掉。
+       Source: check-spec.ts
+
+────────────────────────────────────────────────────────────
+  Total: 25  |  PASS: 21  |  FAIL: 0  |  WARN: 3  |  SKIP: 1
+  Blockers: 0
+  Verdict: PASS
+────────────────────────────────────────────────────────────
+
+🤖 Step 4: 组装 AI Harness prompt...
+   ✓ AI prompt 已写入 doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/ai-prompt.md
+
+📝 Step 5: 生成合并报告...
+   ✓ 合并报告已写入 doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/merged-report.md
+
+HARNESS_SUMMARY
+phase=spec
+feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+verdict=PASS
+blocker_count=0
+summary_json=doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/summary.json
+next_action=fill_receipt_then_sync_closure
+closure_status=open
+readiness_signals:
+  - visual_debt_disclosure [unknown]: 保留视觉差异/未验披露：card_type_status_bar, selection_status_bar, otp_status_bar, otp_system_numeric_keyboard, result_status_bar, result_ocr_uncertain_copy；阶段检查不构成设备视觉验真，release 仍 BLOCKED。
+END_HARNESS_SUMMARY
+
+NEXT_STEP
+feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 phase=spec mode=goal_mode status=PASS/open
+observed_fingerprint=6a0701c69ebb7466 gaps=2 fused=false
+recommendation=complete_closure:spec
+reason=unclosed: PASS 但 verified closure 尚未提交
+authorization=driver_required policy=goal_mode
+END_NEXT_STEP
+
+============================================================
+  ✅ 脚本 Harness 检查通过
+  ♻️ 当前审查材料的 verifier 证据已验真可复用，**无需重跑 verifier**
+  📝 下一步：按 summary/verifier/policy 收口 → npx ts-node harness-runner.ts --sync-closure --phase spec --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+  NEXT: 本轮中间检查 PASS；继续完成冻结目标与尚未完成的返修任务。工作完成后回传结果与证据路径，由 goal runtime 正式 gate 和统一收口；自检 PASS 不代表本次工作已经完成。
+
+## 目标简报（goal brief）
+
+### 明确不做
+
+需求原文里明确写了不要或本次不做的内容同样是排除项，即使尚未登记。
+- 参考图元素 result_nfc_panel：「再往下的激活nfc部分本次先不需要」
+
+### 本次延后
+
+以下是 spec 登记的本次延后及债务，不是用户原文排除；理由和登记正当性仍须依当前目标核验。
+- card_type_status_bar（ref_card_type_sheet）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- selection_status_bar（ref_bank_card_selection）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- otp_status_bar（ref_otp_verification_sheet）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- otp_system_numeric_keyboard（ref_otp_verification_sheet）：系统数字键盘由输入类型触发；不由应用绘制，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- result_status_bar（ref_opening_result_success）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- result_ocr_uncertain_copy（ref_opening_result_success）「回中加」：OCR 低置信孤立文本，reviewer 观察判定为插画区域而非可靠产品文案；留待有视觉能力复核（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+有效范围已明确而审查意见相反：更正 review 报告，不派扩大范围的 coding 返修；实现违约由 coding 恢复契约。只有登记错误、定义缺口或目标需要改变时回原设计/spec 责任方。
+合法延后按当前严格度披露债务与发布状态；不豁免真实功能、数据或关键交互缺陷。
+
+============================================================
+
+GOAL_PHASE phase=spec event=verdict result=advance
+GOAL_PHASE phase=plan event=start index=0 total=5 attempt=1
+
+🔍 Harness 验证开始: phase=plan, feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+
+📋 Step 1: 加载 Spec 规约...
+   ✓ 阶段级规约: framework/specs/phase-rules/plan-rules.yaml
+   ✓ project_profile: hmos-app / app
+   Feature 目录: doc/features/cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93/ (directory)
+   阶段必需文件均已解析到：
+     - contracts.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml
+     - use-cases.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml
+     - plan/visual-parity.yaml: doc/features/bc-openCard-2/bank-card-opening-flow/plan/visual-parity.yaml
+   ✓ 功能级规约: doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml
+   ✓ 功能级规约: doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml
+
+🔧 Step 2: 运行脚本 Harness...
+   ▶ 执行 check-plan.ts ...
+
+📊 Step 3: 生成脚本报告...
+
+============================================================
+  Harness Script Report — plan/cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+  2026-10-23T05:16:56.936Z
+  assurance=full
+  capability_resolutions=4
+============================================================
+
+  Showing FAIL/WARN/BLOCKER-SKIP only (0 shown, 22 PASS/SKIP hidden; use --verbose to expand).
+
+  No FAIL/WARN checks.
+
+────────────────────────────────────────────────────────────
+  Total: 22  |  PASS: 21  |  FAIL: 0  |  WARN: 0  |  SKIP: 1
+  Blockers: 0
+  Verdict: PASS
+────────────────────────────────────────────────────────────
+
+🤖 Step 4: 组装 AI Harness prompt...
+   ✓ AI prompt 已写入 doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/ai-prompt.md
+
+📝 Step 5: 生成合并报告...
+   ✓ 合并报告已写入 doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/merged-report.md
+
+HARNESS_SUMMARY
+phase=plan
+feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+verdict=PASS
+blocker_count=0
+summary_json=doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/summary.json
+next_action=fill_receipt_then_sync_closure
+closure_status=open
+readiness_signals:
+  - visual_debt_disclosure [unknown]: 保留视觉差异/未验披露：card_type_status_bar, selection_status_bar, otp_status_bar, otp_system_numeric_keyboard, result_status_bar, result_ocr_uncertain_copy；阶段检查不构成设备视觉验真，release 仍 BLOCKED。
+END_HARNESS_SUMMARY
+
+NEXT_STEP
+feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 phase=plan mode=goal_mode status=PASS/open
+observed_fingerprint=4322e0fd7e9fe7ba gaps=5 fused=false
+recommendation=complete_closure:plan
+reason=unclosed: PASS 但 verified closure 尚未提交
+authorization=driver_required policy=goal_mode
+END_NEXT_STEP
+
+============================================================
+  ✅ 脚本 Harness 检查通过
+  ♻️ 当前审查材料的 verifier 证据已验真可复用，**无需重跑 verifier**
+  📝 下一步：按 summary/verifier/policy 收口 → npx ts-node harness-runner.ts --sync-closure --phase plan --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+  NEXT: 本轮中间检查 PASS；继续完成冻结目标与尚未完成的返修任务。工作完成后回传结果与证据路径，由 goal runtime 正式 gate 和统一收口；自检 PASS 不代表本次工作已经完成。
+
+## 目标简报（goal brief）
+
+### 明确不做
+
+需求原文里明确写了不要或本次不做的内容同样是排除项，即使尚未登记。
+- 参考图元素 result_nfc_panel：「再往下的激活nfc部分本次先不需要」
+
+### 本次延后
+
+以下是 spec 登记的本次延后及债务，不是用户原文排除；理由和登记正当性仍须依当前目标核验。
+- card_type_status_bar（ref_card_type_sheet）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- selection_status_bar（ref_bank_card_selection）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- otp_status_bar（ref_otp_verification_sheet）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- otp_system_numeric_keyboard（ref_otp_verification_sheet）：系统数字键盘由输入类型触发；不由应用绘制，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- result_status_bar（ref_opening_result_success）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- result_ocr_uncertain_copy（ref_opening_result_success）「回中加」：OCR 低置信孤立文本，reviewer 观察判定为插画区域而非可靠产品文案；留待有视觉能力复核（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+有效范围已明确而审查意见相反：更正 review 报告，不派扩大范围的 coding 返修；实现违约由 coding 恢复契约。只有登记错误、定义缺口或目标需要改变时回原设计/spec 责任方。
+合法延后按当前严格度披露债务与发布状态；不豁免真实功能、数据或关键交互缺陷。
+
+============================================================
+
+GOAL_PHASE phase=plan event=verdict result=advance
+GOAL_PHASE phase=coding event=start index=0 total=4 attempt=1
+
+🔍 Harness 验证开始: phase=coding, feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+
+📋 Step 1: 加载 Spec 规约...
+   ✓ 阶段级规约: framework/specs/phase-rules/coding-rules.yaml
+   ✓ project_profile: hmos-app / app
+   Feature 目录: doc/features/cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93/ (directory)
+   ✓ 功能级规约: doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml
+   ✓ 功能级规约: doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml
+
+🔧 Step 2: 运行脚本 Harness...
+   ▶ 执行 check-coding.ts ...
+
+📊 Step 3: 生成脚本报告...
+
+============================================================
+  Harness Script Report — coding/cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+  2026-10-23T05:27:30.118Z
+  assurance=full
+  capability_resolutions=4
+============================================================
+
+  Showing FAIL/WARN/BLOCKER-SKIP only (29 shown, 35 PASS/SKIP hidden; use --verbose to expand).
+
+  ⚠ WARN [MAJOR] context_exploration_facts_source_stale
+       本阶段授权内源码已变化但未登记精确 delta：02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_source_stale
+       本阶段授权内源码已变化但未登记精确 delta：02-Feature/WalletMain/src/main/ets/index.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/index.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_source_stale
+       本阶段授权内源码已变化但未登记精确 delta：02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_source_stale
+       本阶段授权内源码已变化但未登记精确 delta：02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_source_stale
+       本阶段授权内源码已变化但未登记精确 delta：02-Feature/WalletMain/src/main/resources/base/element/color.json；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/resources/base/element/color.json 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_source_stale
+       本阶段授权内源码已变化但未登记精确 delta：02-Feature/WalletMain/src/main/resources/base/element/string.json；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/resources/base/element/string.json 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/data/model/BankOpeningCompletionContext.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/data/model/BankOpeningCompletionContext.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/data/model/OpeningResult.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/data/model/OpeningResult.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/data/model/StoredCard.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/data/model/StoredCard.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/domain/service/OpeningNavigationService.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/domain/service/OpeningNavigationService.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⚠ WARN [MAJOR] context_exploration_facts_scope_coverage
+       本阶段授权内新增或修改的源码未登记：02-Feature/WalletMain/src/main/resources/base/media/result_payment_guide_placeholder.png；追溯弱一级，不阻断本阶段。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md
+       Fix: 可在 ## phase_delta: coding 的「路径 | 事实 | 影响」表补一行 02-Feature/WalletMain/src/main/resources/base/media/result_payment_guide_placeholder.png 以完善追溯；缺少登记只披露，不阻断本阶段。
+       Source: context_exploration_gate
+  ⊘ SKIP [BLOCKER] module_config_registered
+       无新增模块需要注册。
+       Source: profile_coding_host_structure
+  ⚠ WARN [MAJOR] page_registration
+       以下实际页面所属模块未识别到静态路由形式，须由 review/真机核验可达性：02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets、02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets、02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets、02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+       Files: 01-Product/Phone/src/main/ets/pages/index.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets, 02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets
+       Source: profile_coding_host_structure
+  ⚠ WARN [MAJOR] naming_conventions
+       2 处命名规范问题：
+  - 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets:4: 资源 key "*" 不是 snake_case
+  - 文件名 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets 不是 PascalCase
+       Files: 02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets, 02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets
+       Fix: 模块名/组件名/文件名使用 PascalCase，资源 key 使用 snake_case。
+       Source: profile_coding_host_structure
+  ✗ FAIL [BLOCKER] named_business_handler
+       [Harness 内部错误] ua.calls.split is not a function
+TypeError: ua.calls.split is not a function
+    at scanNamedBusinessHandler (D:\1.code\SimulatedWalletForHmos\framework\profiles\hmos-app\harness\named-handler.ts:108:32)
+    at scanNamedBusinessHandler (D:\1.code\SimulatedWalletForHmos\framework\harness\scripts\utils\named-handler.ts:23:12)
+    at checkNamedBusinessHandlerCoding (D:\1.code\SimulatedWalletForHmos\framework\harness\scripts\check-coding.ts:522:40)
+    at D:\1.code\SimulatedWalletForHmos\framework\harness\scripts\check-coding.ts:762:35
+    at safeRun (D:\1.code\SimulatedWalletForHmos\framework\harness\scripts\check-coding.ts:660:12)
+    at Object.check (D:\1.code\SimulatedWalletForHmos\framework\harness\scripts\check-coding.ts:762:21)
+    at runScriptHarness (D:\1.code\SimulatedWalletForHmos\framework\harness\harness-runner.ts:3262:26)
+    at main (D:\1.code\SimulatedWalletForHmos\framework\harness\harness-runner.ts:1328:15)
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+       Fix: 门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。
+       Source: check-coding.ts
+  ⚠ WARN [MAJOR] component_new_static_checks
+       WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets#buildBankCardOpeningResultPage: 静态分析未确认 scalable_font_unit=unknown、declared_touch_target=unknown；review 核对真实组件源码，适用交互/视觉由 testing 验证；不代表通过或不适用。
+       Source: change_unit_feature_projection
+  ⚠ WARN [MAJOR] component_new_static_checks
+       WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets#buildBankCardSelectionPage: 静态分析未确认 scalable_font_unit=unknown、declared_touch_target=unknown；review 核对真实组件源码，适用交互/视觉由 testing 验证；不代表通过或不适用。
+       Source: change_unit_feature_projection
+  ⚠ WARN [MAJOR] static_fidelity_score
+       基线未校验（ui-spec verified=unverified）：静态保真分仅供参考，不作保真结论。
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml
+       Source: visual_parity
+  ⚠ WARN [MAJOR] structure_declaration_ledger
+       implemented_by 定位未命中当前源码，需更新定位并核实实际结构：card_type_overlay_root｜bg_color=color.overlay_dim → AddBankCardPage|AllBanksPage.bindSheet；card_type_background_page｜bg_color=color.page_bg → AddBankCardPage|AllBanksPage；debit_card_row｜layout_group=card_type_rows → CardTypeSheet.cardTypeRow；credit_card_row｜layout_group=card_type_rows → CardTypeSheet.cardTypeRow；otp_overlay_root｜bg_color=color.overlay_dim → BankCardSelectionPage.bindSheet
+（台账仅用于定位：缺项或位置过时不证明产品缺陷；实际结构由独立 review 与设备/视觉验证。）
+       Files: doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml, doc/features/bc-openCard-2/bank-card-opening-flow/coding/structure-conformance.yaml
+       Fix: 补齐 doc/features/bc-openCard-2/bank-card-opening-flow/coding/structure-conformance.yaml 后重跑；按实际源码更新 implemented_by；不能用补登记代替实际结构核验。
+       Source: visual_parity
+  ⚠ WARN [MAJOR] code_to_plan
+       37 个 .ets 文件不在 contracts.yaml 的规划中：
+  - 02-Feature/WalletMain/src/main/ets/data/model/BankGroup.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/CardCategory.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/FinanceEntry.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/HomeCardState.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/MessageInfo.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/PromoInfo.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/ServiceEntry.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/SettingEntry.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/MineRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/domain/service/BankGroupService.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/components/AccountCard.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/components/AccountConfirmDialog.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/components/AddCardParityAnchors.ets
+  ... 还有 22 项
+       Files: 02-Feature/WalletMain/src/main/ets/data/model/BankGroup.ets, 02-Feature/WalletMain/src/main/ets/data/model/CardCategory.ets, 02-Feature/WalletMain/src/main/ets/data/model/FinanceEntry.ets, 02-Feature/WalletMain/src/main/ets/data/model/HomeCardState.ets, 02-Feature/WalletMain/src/main/ets/data/model/MessageInfo.ets (+32 more)
+       Fix: 请确认这些文件是否应在 plan.md / contracts.yaml 中补充规划。
+       Source: profile_coding_host_trace
+  ✗ FAIL [BLOCKER] coding_run_status
+       can_claim_done: NO
+contracts.files: 29
+contracts.modules: 3
+coding_compile: PASS
+blocker_fail_count: 1
+critical_skip_count: 0
+blocking_warn_count: 0
+blocker_fail_ids: named_business_handler
+       Fix: 先修复 BLOCKER FAIL；若存在 critical_skip_ids，请补齐 contracts.yaml / plan trace / diff baseline 后重跑。
+       Source: check-coding.ts
+
+────────────────────────────────────────────────────────────
+  Total: 64  |  PASS: 34  |  FAIL: 2  |  WARN: 26  |  SKIP: 2
+  Blockers: 1
+  Verdict: FAIL
+────────────────────────────────────────────────────────────
+
+🤖 Step 4: 跳过 AI Harness prompt 装配 —— phase=coding 无已复现的可诊断失败形态：保持原分流（先修 BLOCKER）。
+
+📝 Step 5: 生成合并报告...
+   ✓ 合并报告已写入 doc/features/bc-openCard-2/bank-card-opening-flow/coding/reports/merged-report.md
+
+HARNESS_SUMMARY
+phase=coding
+feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+verdict=FAIL
+blocker_count=1
+summary_json=doc/features/bc-openCard-2/bank-card-opening-flow/coding/reports/summary.json
+next_action=fix_run_status_blockers_then_rerun
+closure_status=open
+run_statuses:
+  - coding_run_status: FAIL, can_claim_done=NO
+blockers:
+  - named_business_handler (framework_bug)
+readiness_signals:
+  - visual_debt_disclosure [unknown]: 保留视觉差异/未验披露：card_type_status_bar, selection_status_bar, otp_status_bar, otp_system_numeric_keyboard, result_status_bar, result_ocr_uncertain_copy；阶段检查不构成设备视觉验真，release 仍 BLOCKED。
+END_HARNESS_SUMMARY
+
+NEXT_STEP
+feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 phase=coding mode=goal_mode status=FAIL/open
+observed_fingerprint=aec6618690e7d111 gaps=4 fused=false
+recommendation=rerun_phase:coding
+reason=failed: verdict=FAIL
+authorization=driver_required policy=goal_mode
+END_NEXT_STEP
+
+============================================================
+  ❌ 脚本 Harness 检查未通过 (1 BLOCKER)
+  🔧 请修复 BLOCKER 项后重新运行
+  NEXT: 一轮修完全部 1 个 blocker：named_business_handler（门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。）；然后重跑：npx ts-node harness-runner.ts --phase coding --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+
+## 目标简报（goal brief）
+
+### 明确不做
+
+需求原文里明确写了不要或本次不做的内容同样是排除项，即使尚未登记。
+- 参考图元素 result_nfc_panel：「再往下的激活nfc部分本次先不需要」
+
+### 本次延后
+
+以下是 spec 登记的本次延后及债务，不是用户原文排除；理由和登记正当性仍须依当前目标核验。
+- card_type_status_bar（ref_card_type_sheet）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- selection_status_bar（ref_bank_card_selection）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- otp_status_bar（ref_otp_verification_sheet）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- otp_system_numeric_keyboard（ref_otp_verification_sheet）：系统数字键盘由输入类型触发；不由应用绘制，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- result_status_bar（ref_opening_result_success）：系统状态栏；非应用自绘，保留为 best-effort 视觉债务（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+- result_ocr_uncertain_copy（ref_opening_result_success）「回中加」：OCR 低置信孤立文本，reviewer 观察判定为插画区域而非可靠产品文案；留待有视觉能力复核（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml）
+有效范围已明确而审查意见相反：更正 review 报告，不派扩大范围的 coding 返修；实现违约由 coding 恢复契约。只有登记错误、定义缺口或目标需要改变时回原设计/spec 责任方。
+合法延后按当前严格度披露债务与发布状态；不豁免真实功能、数据或关键交互缺陷。
+
+============================================================
+
+
+===== framework_bug =====
+【cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 · run 20261023T044016Z-fe4512 · coding】门禁脚本自身异常（[Harness 内部错误]，checker: named_business_handler）——这是 framework 缺陷，**不是 agent 产物的问题**。
+  首行栈：[Harness 内部错误] ua.calls.split is not a function
+
+处置：
+  1. 把该缺陷回灌 agent-maison 源仓修复并重新发布（附 harness 报告里的完整栈）；
+  2. 等不及发布需本地热修的：这是**真人/updater 的操作**。先停 run，由用户/CI 明确集成
+     已修复的发布件或在有权限的维护环境处理；宿主 Git add/stage/commit 不是 Maison 放行条件；
+  3. **不要**让 agent 继续修改自己的产物来绕过——崩溃发生在 checker 内部，产物怎么改都可能复现；
+     agent 也不得修改 framework 发布件。
+
+处置完后续跑：补上缺的输入后，重新发起同一请求（对 agent 说同一句话，或重跑同一条启动命令）：框架会重新接入本 run，条件是否解除仍由原来的检查判断，没解除就以原来的原因再停一次、不新建 run。有人在场时补好即可立即重发；无人值守时，本 run 停止后 5 分钟内重发会先保持停止（显式续跑命令也一样要等），过了这段冷却再发。
+  也可以显式执行（已填好）：npm --prefix framework/harness run goal -- --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 --resume 20261023T044016Z-fe4512 --force-resume
+
+GOAL_PHASE phase=coding event=verdict result=halt
+GOAL_RUN event=end status=HALTED run_id=20261023T044016Z-fe4512
+
+GOAL_RUN_SUMMARY
+run_id=20261023T044016Z-fe4512
+status=HALTED
+report_dir=doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512
+phases=spec,plan,coding
+agent_invokes=3

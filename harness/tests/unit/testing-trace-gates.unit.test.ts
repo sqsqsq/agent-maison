@@ -441,12 +441,12 @@ test('evaluateUiEntryCoverage: AC-8 from acceptance.yaml → P0 blocker', () => 
           {
             ui: 'BankCardAddPage',
             role: 'entry',
-            user_actions: [{ trigger: 'tap bank', calls: 'flow.selectBank' }],
+            user_actions: [{ trigger: 'tap bank', calls: ['flow.selectBank'] }],
           },
           {
             ui: 'AllBanksPage',
             role: 'entry',
-            user_actions: [{ trigger: 'tap bank', calls: 'flow.selectBank' }],
+            user_actions: [{ trigger: 'tap bank', calls: ['flow.selectBank'] }],
           },
         ],
         state_model: { phases: ['start'] },

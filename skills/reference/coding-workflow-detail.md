@@ -38,7 +38,7 @@
 | B. 普通协调类（Flow/Coordinator） | 多 UI 共享状态、多步调用、可能回滚 | 模块业务语义最贴合目录的非 UI 组件 class |
 | C. 导出命名函数 | 工具化/无状态业务编排 | `domain/`或`shared/`下 `export async function xxx(...)` |
 
-**关键约束（三形态通用）**：①`ui_bindings[].user_actions[].calls` 引用的必须是**真实存在的命名符号**（传统函数/类方法/顶层导出/宿主语言类字段函数/顶层 const 箭头函数均合法，`named_business_handler` BLOCKER 严格校验）；②**禁止匿名 inline lambda 承载业务**（`.onClick(() => { 做一堆业务 })` 禁止用于 use-cases 列出的入口，须先有命名符号再被转发）；③每次 `calls` 引用须 UT 可直接调用（无需构造 UI 组件/runtime）；④**禁止新造 Port 接口**——`data_boundaries.type` 必须是 contracts.yaml 已登记的既有 data 层类，UT 用 Spy/Fake/Stub 打桩。
+**关键约束（三形态通用）**：①`ui_bindings[].user_actions[].calls` 引用的必须是**真实存在的命名符号**（传统函数/类方法/顶层导出/宿主语言类字段函数/顶层 const 箭头函数均合法，`named_business_handler` BLOCKER 严格校验）；②**禁止匿名 inline lambda 承载业务**（`.onClick(() => { 做一堆业务 })` 禁止用于 use-cases 列出的入口，须先有命名符号再被转发）；③命名定位只证明入口存在，Page 方法可承接 UI 事件；unit/both 业务义务须由无需构造 UI runtime 的真实入口执行证明，缺接缝经原可测性/owner 链补齐；④**禁止新造 Port 接口**——`data_boundaries.type` 必须是 contracts.yaml 已登记的既有 data 层类，UT 用 Spy/Fake/Stub 打桩。
 
 **禁用 import**：宿主具体禁入符号见 `framework/profiles/<project_profile>/skills/coding/profile-addendum.md`；中立约束：形态 B/C 源文件及形态 A 命名方法体内，禁止 import 任何 UI/导航/资源运行时 API（含类型引用），除非 profile 明确豁免。
 

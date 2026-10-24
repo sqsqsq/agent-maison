@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "execution_identity": "20261023T044016Z-fe4512",
+  "decision_id": "fe22ac30d19ab059",
+  "vision": {
+    "verdict": false,
+    "source": "probe:none"
+  },
+  "ocr": {
+    "verdict": true,
+    "source": "profile_probe_or_canary"
+  },
+  "vision_mode": "delegated",
+  "visual_provider": {
+    "adapter": "codex",
+    "model": "gpt-6.1-sol"
+  },
+  "created_at": "2026-10-23T04:40:54.243Z"
+}

@@ -1,0 +1,2 @@
+{"decision_id":"plan-scope-20261023-001","run_id":"20261023T044016Z-fe4512","phase":"plan","gate_id":"plan.scope_expansion","class":"freeform","decision":"n/a: CU-bound 范围严格沿 canonical CU touches，不扩展模块或需求范围","must_review":false,"source":"agent","ts":"2026-10-23T05:00:00-04:00"}
+{"decision_id":"plan-split-20261023-001","run_id":"20261023T044016Z-fe4512","phase":"plan","gate_id":"plan.split_table","class":"gate","decision":"确认蓝图派生拆分：WalletMain 承担开卡业务/UI/RDB，AccountManager 仅提供 mock mobile，Phone 仅注册目的页","must_review":false,"source":"agent","ts":"2026-10-23T05:00:01-04:00"}

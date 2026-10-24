@@ -12,7 +12,7 @@
   1. Page 上的**命名方法**（简单场景，默认首选）
   2. Page 持有的**普通业务类**（Flow/Coordinator，多 UI 共享状态时用）
   3. 模块级**导出函数**（纯计算流程）
-- 唯一硬约束：`ui_bindings.user_actions[].calls` 指向的目标必须是 **UT 可直接调用的命名函数**（不能只是 `.onClick(() => {...})` 里的 inline lambda）
+- `ui_bindings.user_actions[].calls` 指向真实具名入口；命名扫描只证明声明可定位，Page 方法可以承接 UI 事件。unit/both 验收必须另有无需构造 UI runtime 可驱动的真实业务入口与执行证据；缺接缝沿原可测性/owner 链修复，不能因为有名字就宣称可测。
 
 ## 何时需要产出 `use-cases.yaml`（复杂度阈值）
 
@@ -57,7 +57,7 @@ use_cases:
     # ui_bindings：UI 节点 ↔ 业务入口的映射表 ★ 最关键字段
     #   作用：
     #     - 告诉 coding：哪些函数必须是命名方法（由 named_business_handler 强制）
-    #     - 告诉 business-ut：每条 UT 翻译成"按 user_actions.calls 顺序 await 一遍"
+    #     - 告诉 business-ut：按 unit/both 义务驱动实际业务入口；UI runtime 行为交设备测试
     #     - 告诉 device-testing：role ∈ {progress, result} 且 user_actions 为空的 UI 交它
     # ------------------------------------------------------------------------
     ui_bindings:
@@ -69,8 +69,8 @@ use_cases:
         #   空数组表示该 UI 纯展示 → UT 不覆盖，交 device-testing 真机
         user_actions:
           - trigger: string                  # 中文描述用户动作，如 "点击提交"
-            calls: string                    # UT 要调用的命名函数，如 "flow.submitTask"
-                                             # ★ 必须是命名方法/导出函数，不能是 inline lambda
+            calls: [string]                  # 按声明顺序的具名调用，如 ["flow.submitTask"]；兼容旧非空字符串
+                                             # ★ 保留全部调用与重复；具名定位不等于 UT 可执行证明
 
     # ------------------------------------------------------------------------
     # data_boundaries：业务编排依赖的外部数据源（替代旧 ports）
@@ -103,7 +103,7 @@ use_cases:
       - id: string               # snake_case，如 "happy_path"
         scenario: string         # 中文描述该分支语义
 
-        # user_sequence：UT 按此顺序调用 ui_bindings.user_actions.calls
+        # user_sequence：按动作顺序驱动真实业务入口；每个 calls 列表保持原顺序
         #   对应"用户交互触发序列"
         user_sequence: [string]  # 如 ["submitTask", "confirmOtp"]
 

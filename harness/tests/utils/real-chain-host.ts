@@ -7,8 +7,8 @@
 // 造法由 plan §10.1 的 T0 实验钉死，**不得改回轻法**：
 //   N：Node 对模块路径做 realpath，junction 的 `framework/harness` 会被解开、
 //      子进程 `detectRepoLayout(__dirname)` 解析回源仓并往源仓写产物。故 harness
-//      必须**整拷**（`*.ts` + tsconfig* + package.json + 八个子目录），只 junction
-//      `harness/node_modules`。`profiles/` 同样整拷——profile 侧模块用
+//      必须**整拷**（`*.ts` + tsconfig* + package.json + 八个子目录及已安装依赖）。
+//      `profiles/` 同样整拷——profile 侧模块用
 //      `createRequire('../../../harness/harness-runner.ts')`，junction 会让它们
 //      realpath 回源仓、与入口形成两套模块级状态。
 //   P：框架根必须坐落在宿主根之下（`<hostRoot>/framework`），否则
@@ -16,6 +16,7 @@
 //      宿主 `.gitignore` 必须含 `framework/`，否则 `git add -A` 把整份框架纳入基线。
 // ============================================================================
 
+import './transpile-only-env';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -67,10 +68,9 @@ export function provisionFrameworkUnder(hostRoot: string): { frameworkRoot: stri
   for (const d of ['scripts', 'schemas', 'templates', 'prompts', 'code-graph', 'graph-extractor', 'state', 'trace']) {
     copyDir(path.join(srcHarness, d), path.join(harness, d));
   }
-  link(path.join(srcHarness, 'node_modules'), path.join(harness, 'node_modules'));
-  // framework 资产：其中无 `__dirname` 根检测，junction 安全且省 IO。
+  copyDir(path.join(srcHarness, 'node_modules'), path.join(harness, 'node_modules'));
   for (const d of ['skills', 'workflows', 'specs', 'templates', 'agents', 'docs']) {
-    link(path.join(SOURCE_REPO_ROOT, d), path.join(fw, d));
+    copyDir(path.join(SOURCE_REPO_ROOT, d), path.join(fw, d));
   }
   // profiles 整拷（见顶部 N）。
   copyDir(path.join(SOURCE_REPO_ROOT, 'profiles'), path.join(fw, 'profiles'));

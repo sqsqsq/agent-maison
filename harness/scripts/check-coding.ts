@@ -1,3 +1,4 @@
+import { executeCheck } from './utils/check-execution';
 // ============================================================================
 // Coding 阶段脚本 Harness — check-coding.ts
 // ============================================================================
@@ -54,7 +55,7 @@ import { validateProjectRelativePath } from './utils/project-relative-path';
 import { findBasenameCandidates, formatPrefixMismatchHint } from './utils/path-candidates';
 import { tryLoadProfileCodingHost } from '../profile-host-loader';
 import { resolveHarnessDiffBaseRef } from './utils/phase-state';
-import { isBlockingCheck } from './utils/check-disposition';
+import { isBlockingCheck, isRequiredCheckGap, isFrameworkExecutionGap } from './utils/check-disposition';
 import { codingTestPreservation } from './utils/repair-responsibility';
 
 // --------------------------------------------------------------------------
@@ -527,7 +528,9 @@ function checkNamedBusinessHandlerCoding(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
       severity: 'BLOCKER',
       status: 'SKIP',
-      details: 'use-cases.yaml 不存在，跳过（简单 feature 由 acceptance.yaml + dag.yaml 主导）。',
+      details: !ctx.featureSpec.useCases ? 'use-cases.yaml 不存在，跳过（简单 feature 由 acceptance.yaml + dag.yaml 主导）。'
+        : '当前 profile 不提供具名入口扫描；此检查不适用，真实实现仍须经编译、审查与测试验证。',
+      ...(scan.structured ? { structured: scan.structured } : !ctx.featureSpec.useCases ? { structured: { applicability: 'not_applicable' } } : {}),
     }];
   }
   if (scan.issues.length === 0) {
@@ -547,7 +550,7 @@ function checkNamedBusinessHandlerCoding(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${scan.issues.length} 处命名入口缺失：\n${truncateList(scan.issues, 10)}`,
-    suggestion: '将 UI 组件 onClick = () => {...} 中的业务逻辑抽成 Page 命名方法 / Flow 类方法 / 导出函数，并在 use-cases.yaml > ui_bindings.user_actions.calls 指向该命名符号，以便 UT 直接调用。',
+    suggestion: '将 UI 事件入口提取为可定位的具名方法，并在 user_actions.calls 逐项引用；命名可定位不代表 UT 可直接调用。UT 按 acceptance.ut_layer 与真实业务入口验证，需要时由责任方补最小测试接缝。',
   }];
 }
 
@@ -561,6 +564,7 @@ function checkCoordinatorFileExistsIfDeclared(ctx: CheckContext): CheckResult[] 
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'use-cases.yaml 不存在，跳过。',
+      structured: { applicability: 'not_applicable' },
     }];
   }
   const missing: string[] = [];
@@ -591,7 +595,6 @@ function checkCoordinatorFileExistsIfDeclared(ctx: CheckContext): CheckResult[] 
     suggestion: '若业务编排以独立文件承载，请确认 coordinator_file 路径真实存在；若编排是 Page 内方法，可省略 coordinator_file 字段。',
   }];
 }
-
 const CODING_CRITICAL_SKIP_IDS = new Set([
   'file_completeness',
   'layer_compliance',
@@ -609,7 +612,7 @@ const CODING_CRITICAL_SKIP_IDS = new Set([
 
 function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): CheckResult {
   const blockerFails = results.filter(r => isBlockingCheck(r));
-  const criticalSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER' && CODING_CRITICAL_SKIP_IDS.has(r.id));
+  const criticalSkips = results.filter(r => r.status === 'SKIP' && r.severity === 'BLOCKER' && (CODING_CRITICAL_SKIP_IDS.has(r.id) || isRequiredCheckGap(r)));
   const blockingWarnings = results.filter(r => r.status === 'WARN' && r.severity === 'BLOCKER');
   const compile = results.find(
     r => r.id === CANONICAL_CODING_COMPILE_ID || r.id === LEGACY_CODING_COMPILE_ID,
@@ -642,7 +645,8 @@ function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): 
     category: 'structure',
     description: 'Coding 阶段脚本门禁总体状态',
     severity: 'BLOCKER',
-    status: canClaimDone ? 'PASS' : 'FAIL',
+    status: canClaimDone ? 'PASS' : blockerFails.length === 0 && criticalSkips.length > 0 && criticalSkips.every(check => isRequiredCheckGap(check)) ? 'SKIP' : 'FAIL',
+    ...(blockerFails.length === 0 && criticalSkips.length > 0 && criticalSkips.every(isFrameworkExecutionGap) ? { failure_kind: 'framework_bug', blocking_class: 'framework_internal', actionability: 'framework_blocked' as const } : {}),
     details: lines.join('\n'),
     suggestion: canClaimDone
       ? '脚本门禁可进入 verifier + receipt 闭环；注意 BLOCKER/WARN 仍需人工确认风险。'
@@ -650,48 +654,6 @@ function buildCodingRunStatusResult(ctx: CheckContext, results: CheckResult[]): 
   };
 }
 
-function safeRun(
-  fn: () => CheckResult[],
-  checkId: string,
-  opts?: { failClosed?: boolean },
-): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    // cursor 深度 review P2：视觉关键检查（visual_parity）普通异常不得静默降 MINOR SKIP——
-    // 整包 dispatch 崩掉时 coding 可 PASS 收口=视觉门禁被异常绕过。failClosed 站点异常恒 BLOCKER。
-    const hard = isProgrammerError || opts?.failClosed === true;
-    return [{
-      id: checkId,
-      category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: hard ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : opts?.failClosed
-          ? {
-              suggestion:
-                '视觉关键检查执行异常按 fail-closed 阻断（不得当 MINOR 跳过）——排查异常原因（环境/输入产物）后重跑；无法定位时把完整信息回灌 agent-maison 源仓。',
-            }
-          : {}),
-    }];
-  }
-}
 
 const checker: PhaseChecker = {
   phase: 'coding',
@@ -728,7 +690,7 @@ const checker: PhaseChecker = {
     ];
 
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'coding', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,
@@ -743,26 +705,26 @@ const checker: PhaseChecker = {
     // （host_entry_reachability 定义见文件下方 checkHostEntryReachability）
     // --- blind-visual-hardening d1 切片一：上游裁决传播 ---
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
 
     // --- visual-capability-truth S6（P1-G）：宿主入口可达性（review 前静态走查）---
-    results.push(...safeRun(() => checkHostEntryReachability(ctx), 'host_entry_reachability'));
+    results.push(...executeCheck(ctx, () => checkHostEntryReachability(ctx), 'host_entry_reachability'));
 
     // --- Structure checks ---
-    results.push(...safeRun(() => checkFileCompleteness(ctx), 'file_completeness'));
-    results.push(...safeRun(() => checkLayerCompliance(ctx, analyses), 'layer_compliance'));
-    results.push(...safeRun(() => checkInterModuleDependency(ctx, analyses), 'inter_module_dependency'));
+    results.push(...executeCheck(ctx, () => checkFileCompleteness(ctx), 'file_completeness'));
+    results.push(...executeCheck(ctx, () => checkLayerCompliance(ctx, analyses), 'layer_compliance'));
+    results.push(...executeCheck(ctx, () => checkInterModuleDependency(ctx, analyses), 'inter_module_dependency'));
     results.push(
-      ...safeRun(() => host.runStructureChecks(ctx, analyses), 'profile_coding_host_structure'),
+      ...executeCheck(ctx, () => host.runStructureChecks(ctx, analyses), 'profile_coding_host_structure'),
     );
-    results.push(...safeRun(() => checkNamedBusinessHandlerCoding(ctx), 'named_business_handler'));
-    results.push(...safeRun(() => checkCoordinatorFileExistsIfDeclared(ctx), 'coordinator_file_exists_if_declared'));
-    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'coding'), 'change_unit_feature_projection'));
-    results.push(...safeRun(() => host.checkCodingCompile(ctx), 'coding_compile'));
+    results.push(...executeCheck(ctx, () => checkNamedBusinessHandlerCoding(ctx), 'named_business_handler'));
+    results.push(...executeCheck(ctx, () => checkCoordinatorFileExistsIfDeclared(ctx), 'coordinator_file_exists_if_declared'));
+    results.push(...executeCheck(ctx, () => checkChangeUnitFeatureProjection(ctx, 'coding'), 'change_unit_feature_projection'));
+    results.push(...executeCheck(ctx, () => host.checkCodingCompile(ctx), 'coding_compile'));
 
     if (ctx.resolvedInputs?.context.obligations['visual-evidence'] === 'not_applicable' || isCodingVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({
@@ -774,24 +736,24 @@ const checker: PhaseChecker = {
         details: ctx.resolvedInputs?.context.obligations['visual-evidence'] === 'not_applicable' ? '本次已确认无视觉义务，UI 越界仍由写集门禁检查。' : `project_profile=${ctx.resolvedProfile.name} 未启用 coding.visual_parity`,
       });
     } else {
-      results.push(...safeRun(() => dispatchCodingVisualParity(ctx), 'visual_parity', { failClosed: true }));
+      results.push(...executeCheck(ctx, () => dispatchCodingVisualParity(ctx), 'visual_parity', { failClosed: true }));
     }
 
     // --- Traceability checks ---
-    results.push(...safeRun(() => checkDesignToCode(ctx), 'plan_to_code'));
+    results.push(...executeCheck(ctx, () => checkDesignToCode(ctx), 'plan_to_code'));
     results.push(
-      ...safeRun(() => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
+      ...executeCheck(ctx, () => host.runTraceabilityChecks(ctx), 'profile_coding_host_trace'),
     );
-    results.push(...safeRun(() => checkDiffWithinScope(ctx), 'diff_within_scope'));
-    results.push(...safeRun(() => checkCodingExistingTestPreserved(ctx), 'coding_existing_test_preserved'));
+    results.push(...executeCheck(ctx, () => checkDiffWithinScope(ctx), 'diff_within_scope'));
+    results.push(...executeCheck(ctx, () => checkCodingExistingTestPreserved(ctx), 'coding_existing_test_preserved'));
     // c4e8b1d3 G1：实际 UI 边界核对（正式契约身份 + 原需求 + diff 基线）
-    results.push(...safeRun(() => checkUiDiffWithinDeclaredFiles(ctx), 'ui_diff_within_declared_files'));
+    results.push(...executeCheck(ctx, () => checkUiDiffWithinDeclaredFiles(ctx), 'ui_diff_within_declared_files'));
     // （v23 D2）required_anchors 通道已删：spec 侧从无生产者（schema/模板都没有），该检查
     // 永久 SKIP 只制造"已覆盖"错觉。锚点缺失如今作为 testing 的 actionable 缺陷回 coding 修。
 
     // --- goal-fakepass-hardening t3：产品行为开关扫描（coding 期早警，与 testing 同门禁）---
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => buildBehaviorSwitchCheckResult({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding' }),
         'product_behavior_switch_scan',
       ),

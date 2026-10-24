@@ -1,4 +1,5 @@
 import { hasNonEmptyFocus, isUnitUtLayer } from './acceptance-layering';
+import { resolveArtifactContent } from './artifact-content';
 import { takeArray } from './shape-guards';
 
 /** 条目自身的内容问题；路径相对输入片段，不包含 Feature/CU/合并裁决。 */
@@ -99,35 +100,10 @@ export function inspectTypedConstructionContent(contracts: unknown, at = ''): De
 
 /** SpecLoader 已有集合判据在 typed 片段中的只读接点；缺失/null 保持合法。 */
 export function inspectDesignContentCollections(kind: 'acceptance' | 'contracts' | 'use_cases', value: unknown, at: string): DesignContentIssue[] {
-  const source = record(value);
-  if (!source) return [];
-  const out: DesignContentIssue[] = [];
-  const maps = (parent: Row, field: string, path: string): void => {
-    const shape = inspectMapArray(parent[field]);
-    if (shape.nonArray) out.push({ path, message: '应为数组（YAML list）' });
-    for (const i of shape.invalidIndices) out.push({ path: `${path}[${i}]`, message: '应为映射（map）' });
-  };
-  const strings = (parent: Row, field: string, path: string): void => {
-    const shape = inspectStringArray(parent[field]);
-    if (shape.nonArray) out.push({ path, message: '应为 string[]' });
-    for (const i of shape.invalidIndices) out.push({ path: `${path}[${i}]`, message: '应为非空字符串' });
-  };
-  const fields = kind === 'acceptance' ? ['criteria', 'boundaries'] : kind === 'contracts'
-    ? ['modules', 'data_models', 'interfaces', 'components', 'state_management', 'integration_points'] : ['use_cases'];
-  for (const key of fields) maps(source, key, `${at}.${key}`);
-  if (kind === 'contracts') for (const [i, raw] of rows(source.state_management).entries()) {
-    const state = record(raw); if (!state) continue;
-    for (const key of ['contract_refs', 'ordered_steps', 'lifecycle_triggers']) strings(state, key, `${at}.state_management[${i}].${key}`);
-    for (const key of ['mutations', 'publications', 'subscriptions', 'consumers']) maps(state, key, `${at}.state_management[${i}].${key}`);
-  }
-  if (kind === 'use_cases') for (const [i, raw] of rows(source.use_cases).entries()) {
-    const uc = record(raw); if (!uc) continue;
-    for (const key of ['ui_bindings', 'data_boundaries', 'branches']) maps(uc, key, `${at}.use_cases[${i}].${key}`);
-    for (const [j, rawBinding] of rows(uc.ui_bindings).entries()) {
-      const ub = record(rawBinding); if (ub) maps(ub, 'user_actions', `${at}.use_cases[${i}].ui_bindings[${j}].user_actions`);
-    }
-  }
-  return out;
+  const artifact = kind === 'use_cases' ? 'use-cases@1' : kind + '@1';
+  return resolveArtifactContent(artifact, value, { mode: 'fragment' }).issues.map(problem => ({
+    path: at + problem.path.replace(/^\$/, ''), message: problem.message,
+  }));
 }
 
 /** usecase_spec_schema 原逐条规则；顶层元数据和全局非空仍由阶段入口检查。 */

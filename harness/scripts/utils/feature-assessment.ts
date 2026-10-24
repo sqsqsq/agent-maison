@@ -72,7 +72,7 @@ export interface AssessFeatureOptions {
  */
 const CLEAN_PASS_CLASS: Readonly<Record<string, ObligationGapClass>> = {
   lineage_fresh: 'evidence', attestation_present: 'evidence', summary_schema_current: 'evidence', closure_commit_present: 'evidence',
-  runtime_step_evidence: 'evidence', runtime_step_evidence_identity: 'evidence', acceptance_binding: 'binding',
+  runtime_step_evidence: 'evidence', runtime_step_evidence_identity: 'evidence', required_check_conclusion: 'evidence', acceptance_binding: 'binding',
 };
 
 const CONTRACTS_SOURCES = (binding: ExecutionScope['obligations'][number]['basis'][number]): boolean =>

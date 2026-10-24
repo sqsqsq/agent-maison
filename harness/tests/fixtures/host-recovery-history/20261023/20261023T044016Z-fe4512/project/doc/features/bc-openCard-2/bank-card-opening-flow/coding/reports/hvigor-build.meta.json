@@ -1,0 +1,21 @@
+{
+  "tool": "hvigor",
+  "command": "\"D:\\Program Files\\Huawei\\DevEco Studio\\tools\\node\\node.exe\" \"D:\\Program Files\\Huawei\\DevEco Studio\\tools\\hvigor\\bin\\hvigorw.js\" --mode module -p product=default -p buildMode=debug --no-daemon --parallel --incremental --analyze=advanced assembleHap",
+  "cwd": "D:\\1.code\\SimulatedWalletForHmos",
+  "exitCode": 0,
+  "signal": null,
+  "durationMs": 2207,
+  "timedOut": false,
+  "logBytes": 4939,
+  "successMarkerRequired": true,
+  "successMarkerFound": true,
+  "invocationDriver": "node_hvigorw_js",
+  "envProbe": {
+    "DEVECO_SDK_HOME": true,
+    "DEVECO_SDK_HOME_PATH": "D:\\Program Files\\Huawei\\DevEco Studio\\sdk",
+    "JAVA_HOME": "D:\\Program Files\\Huawei\\DevEco Studio\\jbr",
+    "DEVECO_STUDIO_HOME": false,
+    "HUAWEI_DEVECO_STUDIO_HOME": false
+  },
+  "logFile": "hvigor-build.log"
+}

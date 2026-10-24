@@ -189,6 +189,23 @@ verification_result:
 
 ---
 
+### 7.3 必需验收的实质问题与责任核实
+
+`acceptance_ids` 与 `affected_files` 是本批在原 checks 项新增的可选字段；id/status/severity/details/suggestion 和 issue-verification 的逐条结论、evidence/repair_owner 继续复用。旧合法报告缺新增字段时保留原发现，回原独立 verifier 同次批量补核，不改历史报告、不静默丢弃；仅建议显式写 `acceptance_ids: []`，不进入派修。
+
+只有确实妨碍本次必需验收的具体 FAIL，才在原 `verification_result.checks` 项补 `acceptance_ids: [AC-ID]` 与 `affected_files: [真正待修的项目相对路径]`。`details` 用反引号标明当前可读的 `项目相对路径:行号`（范围可用 `:起-止`），指出具体字段和验收义务；`suggestion` 说明由谁改、改什么。路径是修复对象，源码或日志只作证据时不能误填成责任产物。只有优化建议、文字漂移或未核实风险不补此义务声明，MAJOR 标签本身不自动升级。
+
+同一次独立检视逐条核实上述发现及已有拒修理由，复用原块；不为每条发现另派 verifier、不新建 plan 问题文件。原报告总 PASS 不抹掉已确认的必需验收问题：
+
+```issue-verification
+- issue: <原 check id>
+  verdict: confirmed|refuted|unclear
+  repair_owner: external
+  evidence: <修复目标文件名 | 对应 details 全文；suggestion 全文 | 当前事实、义务及拒修理由核实结果，保持一行>
+```
+
+`repair_owner` 按真实对象填写：蓝图/CU 用 external（既有设计 owner 链），普通验收/施工产物用原 spec/plan。与产物作者保持独立；作者不能自写 confirmed。拒修须对照当前真实入口、执行依据或需求原文核实；无依据拒修不能取消原 unit/both 义务，历史 subject 未读新理由不能重派。倒计时/重发规则须有无需 UI runtime 可驱动的真实业务入口；真实 NavPathStack/UI/手势仍归 device。Page 具名声明可定位不等于 UT 可直接执行，不为测试强制大型架构，也不只测辅助函数冒充业务义务。
+
 ## 八、注意事项
 
 1. **不要重复脚本 Harness 已覆盖的检查**（章节存在性、表格格式、优先级值域等）

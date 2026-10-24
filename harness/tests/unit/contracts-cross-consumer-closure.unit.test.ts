@@ -21,6 +21,8 @@ import { tryLoadProfileCodingHost } from '../../profile-host-loader';
 import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { isCheckNotApplicable, type CheckContext, type CheckResult, type FeatureSpec } from '../../scripts/utils/types';
+import { isRequiredCheckGap } from '../../scripts/utils/check-disposition';
+import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
 import { ensureConsumerFrameworkTree, DEFAULT_LAYOUT } from '../utils/layout-test-helper';
 
 export interface UnitCaseResult {
@@ -63,6 +65,8 @@ interface HostShape {
   navDestination?: boolean;
   /** 是否落盘 build-profile.json5（默认否） */
   buildProfile?: boolean;
+  moduleChangeType?: 'new' | 'modify';
+  buildProfileContents?: string;
 }
 
 /**
@@ -81,7 +85,7 @@ function hostContractsYaml(shape: HostShape): string {
     '  - name: CardFeature',
     '    layer: 02-Feature',
     '    format: HAR',
-    '    change_type: modify',
+    `    change_type: ${shape.moduleChangeType ?? 'modify'}`,
     '    package_path: 02-Feature/CardFeature',
     'components:',
     `  - { name: CardPage, module: CardFeature, file: ${COMPONENT_FILE}, kind: page${shape.navDestination === false ? '' : ', nav_destination: CardPage'} }`,
@@ -141,6 +145,7 @@ function withHostProject<T>(shape: HostShape, fn: (root: string, spec: FeatureSp
       fs.mkdirSync(path.join(root, dir), { recursive: true });
     }
     if (shape.buildProfile) writeFile(path.join(root, 'build-profile.json5'), '{ "modules": [{ "name": "CardFeature" }] }\n');
+    if (shape.buildProfileContents !== undefined) writeFile(path.join(root, 'build-profile.json5'), shape.buildProfileContents);
 
     writeFile(
       path.join(root, 'doc', 'features', FEATURE, 'contracts.yaml'),
@@ -333,11 +338,46 @@ const cases: Case[] = [
     }),
   },
   {
-    name: 'd7e3b9a4 §2.3 反例：build-profile.json5 缺席 → module_config_registered SKIP 不打标（工件缺失不是不适用）',
-    run: () => withHostProject({ navDestination: false }, (root, spec) => {
+    name: 'd7e3b9a4 §2.3 反例：新增模块且 build-profile.json5 缺席 → module_config_registered SKIP 不打标（工件缺失不是不适用）',
+    run: () => withHostProject({ navDestination: false, moduleChangeType: 'new' }, (root, spec) => {
       const r = pageRegistration(root, spec, 'module_config_registered');
       assert(r.status === 'SKIP' && r.severity === 'BLOCKER', JSON.stringify(r));
       assert(!isCheckNotApplicable(r), `工件缺失出口不得打标：${JSON.stringify(r)}`);
+      assert(!isRequiredCheckGap(r) && resolveVerdictFromChecks([r]) === 'PASS', '旧未分类 SKIP 保留 verifier 复核语义');
+    }),
+  },
+  {
+    name: '7d9 module registration: modify without build-profile is n/a before the file read',
+    run: () => withHostProject({ navDestination: false }, (root, spec) => {
+      const r = pageRegistration(root, spec, 'module_config_registered');
+      assert(isCheckNotApplicable(r) && !isRequiredCheckGap(r), JSON.stringify(r));
+      assert(resolveVerdictFromChecks([r]) === 'PASS', '无新增义务不能制造必需缺件');
+    }),
+  },
+  {
+    name: '7d9 module registration: modify ignores unrelated malformed build-profile',
+    run: () => withHostProject({ navDestination: false, buildProfileContents: '{ broken' }, (root, spec) => {
+      const r = pageRegistration(root, spec, 'module_config_registered');
+      assert(r.status === 'SKIP' && isCheckNotApplicable(r), JSON.stringify(r));
+    }),
+  },
+  {
+    name: '7d9 module registration: new module must actually be registered',
+    run: () => withHostProject({ navDestination: false, moduleChangeType: 'new', buildProfileContents: '{ "modules": [] }' }, (root, spec) => {
+      const missing = pageRegistration(root, spec, 'module_config_registered');
+      assert(missing.status === 'FAIL' && !isCheckNotApplicable(missing), JSON.stringify(missing));
+      writeFile(path.join(root, 'build-profile.json5'), '{ "modules": [{ "name": "CardFeature" }] }');
+      const registered = pageRegistration(root, spec, 'module_config_registered');
+      assert(registered.status === 'PASS', JSON.stringify(registered));
+    }),
+  },
+  {
+    name: '7d9 module registration: no module declaration keeps the legacy unclassified SKIP',
+    run: () => withHostProject({ navDestination: false }, (root, spec) => {
+      spec.contracts = undefined;
+      const r = pageRegistration(root, spec, 'module_config_registered');
+      assert(r.status === 'SKIP' && !isCheckNotApplicable(r) && !isRequiredCheckGap(r), JSON.stringify(r));
+      assert(resolveVerdictFromChecks([r]) === 'PASS', '没有模块义务证据不能全局升级缺口');
     }),
   },
 ];

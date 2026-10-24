@@ -274,7 +274,7 @@ const naCases: Case[] = [
       assert(spec.contracts !== undefined, '构造性前提：contracts 仍挂载（只是集合被归空）');
       for (const collection of ['data_models', 'interfaces', 'components']) {
         assert(
-          (spec.shape_issues ?? []).some(i => i.includes('contracts.yaml') && i.includes(`\`${collection}\``)),
+          (spec.shape_issues ?? []).some(i => i.includes('contracts.yaml') && i.includes(`$.${collection}`)),
           `构造性前提：${collection} 必须留下 shape_issues；实得 ${JSON.stringify(spec.shape_issues)}`,
         );
         assert(

@@ -303,7 +303,7 @@ env 三条路径）。
 
 ### Requirement: Failure attribution considers every blocker before the code-regression fallback
 
-The goal failure classifier SHALL classify an attempt as `external_block` when the summary top level or **any** blocker belongs to the deferrable external class, regardless of its position. In a round that did not time out, it SHALL classify the attempt as `framework_bug` when any blocker is a framework blocker according to the shared blocker actionability registry, the same aggregation already used for toolchain blockers; content blockers in the same round SHALL remain listed and SHALL still require repair once the framework defect is resolved. `code_regression` SHALL remain the fallback only when none of these judgements holds. Timed-out rounds SHALL keep the existing freshness decision table.
+The goal failure classifier SHALL classify an attempt as `external_block` when the summary top level or **any** blocker belongs to the deferrable external class, regardless of its position. In a round that did not time out, it SHALL classify the attempt as `framework_bug` when any blocker is a framework blocker according to the shared blocker actionability registry, the same aggregation already used for toolchain blockers; content blockers in the same round SHALL remain listed and SHALL still require repair. A trustworthy per-check execution gap SHALL instead use the 2026-10-23 dependency-aware SKIP/INCOMPLETE/deferred contract, permit independent authorized repair/work, and SHALL NOT be treated as a blanket first-touch run halt. `code_regression` SHALL remain the fallback only when none of these judgements holds. Timed-out rounds SHALL keep the existing freshness decision table.
 
 Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/scripts/goal-phase-runtime.ts`
 
@@ -312,9 +312,9 @@ Enforcement: `harness/scripts/utils/goal-failure-classifier.ts`, `harness/script
 - **WHEN** a round's summary has a content blocker first and a device external blocker second, and no external meta at the top level
 - **THEN** the attempt SHALL be classified `external_block`, not `code_regression`
 
-#### Scenario: Mixed framework and content blockers halt as a framework defect
+#### Scenario: Mixed hard framework faults and content blockers retain hard-stop behavior
 
-- **WHEN** a non-timed-out round reports one content blocker and one checker-crash blocker
+- **WHEN** a non-timed-out round reports one content blocker and a hard framework fault preventing a trustworthy report
 - **THEN** the phase SHALL halt as `framework_bug` without consuming a content retry, the summary SHALL still list the content blocker, and the guidance SHALL name both
 
 ### Requirement: Probed halts wait in-process with a bound before parking

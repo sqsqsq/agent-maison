@@ -1,3 +1,4 @@
+import { executeCheck } from './utils/check-execution';
 import { implementationFiles } from './utils/diff-scope';
 // ============================================================================
 // Review 阶段脚本 Harness — check-review.ts
@@ -671,6 +672,7 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
       description: ruleDesc(ctx, 'traceability_checks', 'issue_to_file'),
       severity: 'BLOCKER', status: 'SKIP',
       details: '问题清单中无可解析的文件路径。',
+      ...(table.rows.length === 0 ? { structured: { applicability: 'not_applicable' } } : {}),
     }];
   }
 
@@ -1033,35 +1035,6 @@ export function checkConventionsCoverage(ctx: CheckContext<'feature' | 'request'
   return result(errors.length ? 'FAIL' : 'PASS', errors.length ? errors.join('\n') : `全部 ${cards.length} 条惯例覆盖与声明一致；gate 仅验证引用存在性。`);
 }
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : {}),
-    }];
-  }
-}
 
 const checker: PhaseChecker = {
   phase: 'review',
@@ -1107,7 +1080,7 @@ const checker: PhaseChecker = {
     ];
     results.push(...checkReviewContext(ctx));
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'review', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,
@@ -1120,34 +1093,34 @@ const checker: PhaseChecker = {
     );
 
     // --- Structure checks ---
-    results.push(...safeRun(() => checkRequiredChapters(ctx, report), 'required_chapters'));
-    results.push(...safeRun(() => checkIssueTableFormat(ctx, report), 'issue_table_format'));
-    results.push(...safeRun(() => checkSeverityValues(ctx, report), 'severity_values'));
-    results.push(...safeRun(() => checkIssueCategoryValues(ctx, report), 'issue_category_values'));
-    results.push(...safeRun(() => checkStatisticsSummary(ctx, report), 'statistics_summary'));
+    results.push(...executeCheck(ctx, () => checkRequiredChapters(ctx, report), 'required_chapters'));
+    results.push(...executeCheck(ctx, () => checkIssueTableFormat(ctx, report), 'issue_table_format'));
+    results.push(...executeCheck(ctx, () => checkSeverityValues(ctx, report), 'severity_values'));
+    results.push(...executeCheck(ctx, () => checkIssueCategoryValues(ctx, report), 'issue_category_values'));
+    results.push(...executeCheck(ctx, () => checkStatisticsSummary(ctx, report), 'statistics_summary'));
     // codex review P2：统计表可能刚被回写——后续检查读回写后的正文，避免一轮无意义 WARN
     report = loadReviewReport(ctx) ?? report;
-    results.push(...safeRun(() => checkReviewReferenceLint(ctx, report), 'review_reference_lint'));
-    results.push(...safeRun(() => checkScopeDeclaration(ctx, report), 'scope_declaration'));
-    results.push(...safeRun(() => checkConclusionWithVerdict(ctx, report), 'conclusion_with_verdict'));
-    results.push(...safeRun(() => checkMetadataHeader(ctx, report), 'metadata_header'));
+    results.push(...executeCheck(ctx, () => checkReviewReferenceLint(ctx, report), 'review_reference_lint'));
+    results.push(...executeCheck(ctx, () => checkScopeDeclaration(ctx, report), 'scope_declaration'));
+    results.push(...executeCheck(ctx, () => checkConclusionWithVerdict(ctx, report), 'conclusion_with_verdict'));
+    results.push(...executeCheck(ctx, () => checkMetadataHeader(ctx, report), 'metadata_header'));
     // P1-B（f2d8c4a6）：UI 需求须有视觉保真审查维度 + 证据引用（pixel_1to1 全覆盖）
-    results.push(...safeRun(() => checkVisualFidelityReview(ctx, report), 'visual_fidelity_review'));
+    results.push(...executeCheck(ctx, () => checkVisualFidelityReview(ctx, report), 'visual_fidelity_review'));
 
     // --- Traceability checks ---
-    results.push(...safeRun(() => checkIssueToFile(ctx, report), 'issue_to_file'));
-    results.push(...safeRun(() => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
-    results.push(...safeRun(() => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
-    results.push(...safeRun(() => checkConventionsCoverage(ctx, report), 'conventions_coverage'));
-    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
+    results.push(...executeCheck(ctx, () => checkIssueToFile(ctx, report), 'issue_to_file'));
+    results.push(...executeCheck(ctx, () => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
+    results.push(...executeCheck(ctx, () => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
+    results.push(...executeCheck(ctx, () => checkConventionsCoverage(ctx, report), 'conventions_coverage'));
+    results.push(...executeCheck(ctx, () => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
 
     // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---
-    results.push(...safeRun(() => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
+    results.push(...executeCheck(ctx, () => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
 
     // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
-    results.push(...safeRun(() => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
+    results.push(...executeCheck(ctx, () => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),

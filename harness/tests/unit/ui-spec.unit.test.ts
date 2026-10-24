@@ -412,7 +412,7 @@ export function runAll(): UnitCaseResult[] {
     try {
       const hit = r.find(x => x.id === 'ui_spec_structure');
       if (!hit || hit.status !== 'FAIL') throw new Error(`expect FAIL got ${JSON.stringify(hit)}`);
-      if (!/shape: assets/.test(hit.details ?? '')) throw new Error(`missing shape issue: ${hit.details}`);
+      if (!/shape: \$\.assets/.test(hit.details ?? '')) throw new Error(`missing shape issue: ${hit.details}`);
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
@@ -429,7 +429,7 @@ export function runAll(): UnitCaseResult[] {
     try {
       const hit = r.find(x => x.id === 'ui_spec_structure');
       if (!hit || hit.status !== 'FAIL') throw new Error(`expect FAIL got ${JSON.stringify(hit)}`);
-      if (!/shape: assets/.test(hit.details ?? '')) throw new Error(`missing shape issue: ${hit.details}`);
+      if (!/shape: \$\.assets/.test(hit.details ?? '')) throw new Error(`missing shape issue: ${hit.details}`);
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });
@@ -452,7 +452,7 @@ export function runAll(): UnitCaseResult[] {
     try {
       const hit = r.find(x => x.id === 'ui_spec_structure');
       if (!hit || hit.status !== 'FAIL') throw new Error(`expect FAIL got ${JSON.stringify(hit)}`);
-      if (!/shape: screens\[home\]\.root\.children/.test(hit.details ?? '')) throw new Error(`missing children shape issue: ${hit.details}`);
+      if (!/shape: \$\.screens\[0\]\.root\.children/.test(hit.details ?? '')) throw new Error(`missing children shape issue: ${hit.details}`);
     } finally {
       clearFrameworkConfigCache();
       fs.rmSync(root, { recursive: true, force: true });

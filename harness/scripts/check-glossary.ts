@@ -263,6 +263,7 @@ function checkSeedNoTechnicalWords(
       description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
       severity: 'BLOCKER', status: 'SKIP',
       details: `${seedRel} 不存在——bootstrap 流程尚未开启或已收尾。`,
+      structured: { applicability: 'not_applicable' },
       suggestion: '若准备开启 /glossary-bootstrap，catalog-bootstrap Phase B Step 1 会自动创建带注释的模板。',
     }];
   }
@@ -274,6 +275,7 @@ function checkSeedNoTechnicalWords(
       description: ruleDesc(ctx, 'structure_checks', 'seed_no_technical_words'),
       severity: 'BLOCKER', status: 'SKIP',
       details: '种子清单为空（仅注释或纯空白）——未达检查触发条件。',
+      structured: { applicability: 'not_applicable' },
     }];
   }
 

@@ -617,6 +617,14 @@ goal-runner 向每个 phase agent 注入 **Unattended execution** 块（SSOT：[
 - glossary 命中 → high 自动解析；新术语 → medium/low + legacy `must_review` 审计标记（goal-report 顶部清单，不参与门禁）。
 - `freeform_approval`（scope 扩展、改源码）→ **保守默认**（不扩 / 不改），记录推迟请求。
 
+### checker 未执行时的依赖接续（7d9c2e41）
+
+用户 2026-10-23 裁决取代 07-16 P0-3 无差别首触停机：适用 checker 异常保留 SKIP、原 severity 与 framework_bug/internal/blocked，文案为“未执行/结论未知”。必需缺口使阶段 INCOMPLETE/open；缺证据不能完成/发布。按 requires/control_edges/实际输入依赖继续独立授权工作，依赖它的工作不调用；无独立工作准确 deferred/WAITING，不烧无变化内容重试。修好框架发布件后沿原恢复路径复验受影响阶段，保留有效成果与累计预算。真实 FAIL 仍送可信责任候选，无法形成可信报告、写保护、真实授权和硬预算仍硬停；不能让宿主 Agent 改 framework。
+
+只有明确标注 framework_bug/framework_internal，或 device_blocked/externalBlocked/capability_missing 的未执行缺口，才按其必需性影响完成，并复用对应框架或外部等待路径。未分类的旧 BLOCKER SKIP 仍留在 `summary.blocking_skips` 供 verifier 复核；不能仅凭 SKIP/severity 自动改成 FAIL、INCOMPLETE 或派给作者返修，旧 PASS 保持兼容。n/a/披露维持原语义；真实 FAIL 不因并存缺口改变责任归因。
+
+新阶段按 runtime 提供的实际自检/收口命令执行，detached 不加 attended 的身份参数，sync-closure 保留 phase。已有上下文按路径与适用段落使用；没有 receipt 的新调用不跑必然失败的恢复检查，已有 receipt 的恢复照旧。
+
 ### 防御纵深（盲目重试）
 
 | 机制 | 行为 |

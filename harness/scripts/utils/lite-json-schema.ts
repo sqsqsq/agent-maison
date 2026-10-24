@@ -28,9 +28,9 @@ type Schema = Record<string, unknown>;
 
 /** 参与判定的关键字——本实现逐条执行。 */
 const SUPPORTED_KEYWORDS = new Set([
-  '$ref', '$defs',
+  '$ref', '$defs', 'definitions',
   'type', 'const', 'enum',
-  'properties', 'required', 'additionalProperties', 'propertyNames',
+  'properties', 'required', 'additionalProperties', 'propertyNames', 'minProperties', 'maxProperties',
   'items', 'minItems', 'maxItems', 'contains', 'uniqueItems',
   'pattern', 'minLength', 'maxLength',
   'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
@@ -103,7 +103,7 @@ export function auditSchemaSupport(schema: unknown, pointer = '#'): SchemaSuppor
     }
     const value = schema[key];
     // 这些关键字的值是「名字 → 子 schema」的映射，键名不是关键字。
-    if (key === 'properties' || key === '$defs') {
+    if (key === 'properties' || key === '$defs' || key === 'definitions') {
       if (isSchemaObject(value)) {
         for (const [name, sub] of Object.entries(value)) {
           out.push(...auditSchemaSupport(sub, `${pointer}/${key}/${name}`));
@@ -124,9 +124,9 @@ export function auditSchemaSupport(schema: unknown, pointer = '#'): SchemaSuppor
 
 function resolveRef(ref: string, root: Schema, atPath: string): { schema: Schema } | { error: LiteSchemaViolation } {
   if (ref === '#') return { schema: root };
-  const m = ref.match(/^#\/\$defs\/([\w-]+)$/);
-  const defs = (root.$defs ?? {}) as Record<string, Schema>;
-  const target = m ? defs[m[1]] : undefined;
+  const m = ref.match(/^#\/(\$defs|definitions)\/([\w-]+)$/);
+  const defs = (m ? root[m[1]] ?? {} : {}) as Record<string, Schema>;
+  const target = m ? defs[m[2]] : undefined;
   if (!target) return { error: { path: atPath, message: `无法解析 $ref：${ref}` } };
   return { schema: target };
 }
@@ -224,6 +224,13 @@ export function validateLiteSchema(
 
   if (isSchemaObject(value)) {
     const obj = value as Record<string, unknown>;
+    const count = Object.keys(obj).filter(key => obj[key] !== undefined).length;
+    if (typeof schema.minProperties === 'number' && count < schema.minProperties) {
+      out.push({ path: atPath, message: `minProperties 不符：须 ≥${schema.minProperties} 项，实际 ${count}` });
+    }
+    if (typeof schema.maxProperties === 'number' && count > schema.maxProperties) {
+      out.push({ path: atPath, message: `maxProperties 不符：须 ≤${schema.maxProperties} 项，实际 ${count}` });
+    }
     const props = (schema.properties ?? {}) as Record<string, Schema>;
     const required = (schema.required ?? []) as string[];
     for (const key of required) {

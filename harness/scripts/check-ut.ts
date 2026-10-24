@@ -1,3 +1,4 @@
+import { executeCheck } from './utils/check-execution';
 // ============================================================================
 // UT 阶段脚本 Harness — check-ut.ts
 // ============================================================================
@@ -29,6 +30,7 @@ import {
   CHECK_NOT_APPLICABLE_MARKER,
 } from './utils/types';
 import { scanNamedBusinessHandler } from './utils/named-handler';
+import { resolveArtifactContent } from './utils/artifact-content';
 import { inspectUseCaseItem } from './utils/design-content-checks';
 import {
   diffChangedFiles,
@@ -1524,14 +1526,13 @@ export function checkUseCaseSpecSchema(ctx: CheckContext): CheckResult[] {
     }];
   }
 
-  const issues: string[] = [];
+  const resolved = resolveArtifactContent('use-cases@1', spec, { mode: 'complete', frameworkRoot: ctx.frameworkRoot });
+  const issues = resolved.issues.map(issue => `${issue.path}: ${issue.message}`);
   if (!spec.schema_version) issues.push('顶层缺少 schema_version');
   if (!spec.feature) issues.push('顶层缺少 feature');
-  if (!Array.isArray(spec.use_cases) || spec.use_cases.length === 0) {
-    issues.push('顶层 use_cases 必须为非空数组');
-  }
-
-  for (const [index, uc] of (spec.use_cases ?? []).entries()) issues.push(...inspectUseCaseItem(uc, `use_cases[${index}]`).map(issue => issue.message));
+  if (!Array.isArray(spec.use_cases) || spec.use_cases.length === 0) issues.push('顶层 use_cases 必须为非空数组');
+  const canonical = resolved.value as UseCasesSpec;
+  for (const [index, unit] of (canonical?.use_cases ?? []).entries()) issues.push(...inspectUseCaseItem(unit, `use_cases[${index}]`).map(issue => issue.message));
 
   if (issues.length === 0) {
     return [{
@@ -1564,9 +1565,8 @@ export function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
       description: ruleDesc(ctx, 'structure_checks', 'named_business_handler'),
       severity: 'BLOCKER',
       status: 'SKIP',
-      details: 'use-cases.yaml 不存在，跳过。',
-      // scan.skip 也覆盖 profile named-handler 加载失败/未导出（检查没执行）：只在 use-cases 确认缺席时打标。
-      ...(loadUseCaseSpec(ctx) ? {} : { structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }),
+      details: !loadUseCaseSpec(ctx) ? 'use-cases.yaml 不存在，跳过。' : '当前 profile 不提供具名入口扫描，此检查不适用。',
+      ...(scan.structured ? { structured: scan.structured } : loadUseCaseSpec(ctx) ? {} : { structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }),
     }];
   }
 
@@ -1588,7 +1588,7 @@ export function checkNamedBusinessHandler(ctx: CheckContext): CheckResult[] {
     severity: 'BLOCKER',
     status: 'FAIL',
     details: `${scan.issues.length} 处命名入口缺失：\n${truncateList(scan.issues, 10)}`,
-    suggestion: 'use-cases.yaml 中 user_actions.calls 声明的业务函数必须是具名函数 / 类方法 / 导出函数（非 inline lambda / 箭头函数赋值给 onClick），以便 UT 直接调用。',
+    suggestion: 'user_actions.calls 声明的 UI 事件入口必须具名且可定位；这只证明声明可定位。UT 按 acceptance.ut_layer 与真实业务入口执行，UI 方法不能直接隔离时交责任方补最小测试接缝。',
   }];
 }
 
@@ -4084,36 +4084,6 @@ export function checkDagSpyPresetResolvable(
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId,
-      category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : {}),
-    }];
-  }
-}
 
 function checkHarnessHostArtifactPollution(ctx: CheckContext, utHost: UtHostImpl): CheckResult[] {
   const desc = ruleDesc(ctx, 'structure_checks', 'harness_host_artifact_pollution');
@@ -4374,7 +4344,7 @@ const checker: PhaseChecker = {
     const results: CheckResult[] = [
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
-    results.push(...safeRun(
+    results.push(...executeCheck(ctx,
       () => checkChangeUnitFeatureProjection(ctx, 'ut', dags),
       'change_unit_feature_projection',
     ));
@@ -4434,10 +4404,10 @@ const checker: PhaseChecker = {
     }
 
     results.push(...(featureGatesActive
-      ? safeRun(() => checkDagFilesParseable(ctx, dagObservation), 'dag_files_parseable')
+      ? executeCheck(ctx, () => checkDagFilesParseable(ctx, dagObservation), 'dag_files_parseable')
       : modeSkip('dag_files_parseable', 'structure')));
     const featureGate = (id: string, run: () => CheckResult[], category: CheckResult['category'] = 'structure', section: 'structure_checks' | 'semantic_checks' | 'traceability_checks' = 'structure_checks'): void => {
-      results.push(...(featureGatesActive ? safeRun(run, id) : modeSkip(id, category, section)));
+      results.push(...(featureGatesActive ? executeCheck(ctx, run, id) : modeSkip(id, category, section)));
     };
 
     featureGate('ut_testability_audit_parseable', () =>
@@ -4468,7 +4438,7 @@ const checker: PhaseChecker = {
 
     // --- Structure checks ---（宿主产物污染是安全红线，任何模式都查）
     results.push(
-      ...safeRun(() => checkHarnessHostArtifactPollution(ctx, utHost), 'harness_host_artifact_pollution'),
+      ...executeCheck(ctx, () => checkHarnessHostArtifactPollution(ctx, utHost), 'harness_host_artifact_pollution'),
     );
     // v2 A: use-cases.yaml 自身
     featureGate('usecase_spec_recommended', () => checkUseCaseSpecRecommended(ctx));
@@ -4499,8 +4469,8 @@ const checker: PhaseChecker = {
         : checkDagSpyPresetResolvable(ctx, dags, mockPlanDoc));
 
     // v1 保留 + v2 修订：UT 代码（宿主工具链规则由 profile ut-host-impl 提供）
-    results.push(...safeRun(() => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
-    results.push(...safeRun(() => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
+    results.push(...executeCheck(ctx, () => utHost.checkUtFileNaming(ctx, allUtFiles), 'ut_file_naming'));
+    results.push(...executeCheck(ctx, () => utHost.checkUtFrameworkImport(ctx, allUtFiles), 'ut_framework_import'));
     // mockkit 政策=需求工件门禁（要求 mock-plan/contracts 登记），repair/cover_existing 模式
     // 无 feature 工件可对齐 → 按模式 SKIP（新增 mock 用法由 verifier/review 兜底）。
     featureGate('ut_hypium_mockkit_policy', () =>
@@ -4515,17 +4485,17 @@ const checker: PhaseChecker = {
             `\n身份基线：${utBaseline.note}`,
             legacyIncrements,
           ));
-    results.push(...safeRun(() => checkUtAssertionExists(ctx, allUtFiles), 'ut_assertion_exists'));
+    results.push(...executeCheck(ctx, () => checkUtAssertionExists(ctx, allUtFiles), 'ut_assertion_exists'));
     // v2.2 方案 A：静态 tsc --noEmit 检查。plan 423e5d0f P0-1：全量跑但只作快速诊断
     // （WARN）——模拟 tsc 会对存量代码产生真实工具链不报的假错，编译 BLOCKER 唯一来源
     // 是真实编译门禁（canonical id: ut_compile）；仅当 profile 把 ut.compile 声明 SKIP
     // 时 tsc 保持 FAIL（仅存护城河不降级）。降级逻辑在 profile checkUtTscCompiles 内。
-    results.push(...safeRun(() => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
+    results.push(...executeCheck(ctx, () => utHost.checkUtTscCompiles(ctx, allUtFiles), 'ut_tsc_compiles'));
     // v2.2 方案 B：由 profile ut.compile 能力驱动的真实测试模块编译
     // plan 5e1c7a93 D1：collector 按次创建，生命周期就是这一次 check-ut——build 侧写入、
     // test 侧命中即跳过内建出包，同一门禁内同 (module, product) 只出一次 ohosTest 包。
     const utBuilds = new Map<string, unknown>();
-    const hvigorBuildResults = safeRun(
+    const hvigorBuildResults = executeCheck(ctx,
       // 显式目标文件（repair）必须进编译/执行集合，即使不在 scoped
       () => utHost.checkUtHvigorBuild(
         ctx,
@@ -4588,23 +4558,23 @@ const checker: PhaseChecker = {
         ...scopedUtFiles,
         ...targetResolution.explicitTargetFiles.filter(e => !scopedUtFiles.some(s => s.path === e.path)),
       ];
-      results.push(...safeRun(() => utHost.checkUtHvigorTest(ctx, runScope, targetCases, utBuilds), 'ut_hvigor_test'));
+      results.push(...executeCheck(ctx, () => utHost.checkUtHvigorTest(ctx, runScope, targetCases, utBuilds), 'ut_hvigor_test'));
     }
     // v2.2 红线 5.2：business-ut 不得擅改业务源码
-    results.push(...safeRun(() => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
+    results.push(...executeCheck(ctx, () => checkUtNoSrcMutation(ctx), 'ut_no_src_mutation'));
     featureGate('mock_stub_for_async', () => checkMockStubForAsync(ctx, dags, allUtFiles));
-    results.push(...safeRun(() => utHost.checkTestRegistration(ctx, allUtFiles), 'test_registration'));
+    results.push(...executeCheck(ctx, () => utHost.checkTestRegistration(ctx, allUtFiles), 'test_registration'));
     // v2 C: UT 代码——P1-1 需求房规**统一消费 targetCaseView**（新建文件原样 + legacy
     // 文件内新增 import/it 的合成条目），存量文件基线已有内容不受问责，新增内容与
     // 新文件同等问责（codex 第四轮：不得只有标签/mockkit 消费增量）。
     const targetCaseView = targetResolution.targetCaseView;
-    results.push(...safeRun(() => checkUtImportWhitelist(ctx, targetCaseView), 'ut_import_whitelist'));
+    results.push(...executeCheck(ctx, () => checkUtImportWhitelist(ctx, targetCaseView), 'ut_import_whitelist'));
     featureGate('boundaries_all_stubbed', () => checkBoundariesAllStubbed(ctx, targetCaseView));
     // 标签只问责 feature 责任域——存量文件被 context 提及/git 触碰仍会进 scoped，
     // 但"提及 ≠ 归属"；基线已有的存量 it 不得被逼挂本需求 AC 标签（假覆盖源头）。
     // [REG-*] 仅 repair/cover_existing 模式放行（cover_feature_change 禁用，防绕 AC 绑定）。
     const allowRegTag = targetResolution.mode !== 'cover_feature_change';
-    results.push(...safeRun(() => checkItNameHasAcOrBranchTag(ctx, targetCaseView, undefined, { allowRegTag }), 'it_name_has_ac_or_branch_tag')
+    results.push(...executeCheck(ctx, () => checkItNameHasAcOrBranchTag(ctx, targetCaseView, undefined, { allowRegTag }), 'it_name_has_ac_or_branch_tag')
       .map(r => ({
         ...r,
         details: `${r.details}\n身份口径：只问责本 feature 责任域（新建 ${featureNewUtFiles.length} 个文件 + 存量文件内新增 ${legacyIncrements.reduce((s, f) => s + f.newCases.size, 0)} 个用例；工作模式=${targetResolution.mode}）。${utBaseline.note}`,

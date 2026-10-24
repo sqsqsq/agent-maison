@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { executeCheck } from '../../scripts/utils/check-execution';
 import {
   checkBoundaryMatchesContracts,
   checkBoundariesAllStubbed,
@@ -428,7 +429,11 @@ function testNamedHandlerLoadFailureStaysUnmarked(): void {
       (c.resolvedProfile as { profileDir: string }).profileDir = profileDir;
       return c;
     };
-    assertBlockerSkip(checkNamedBusinessHandler(withProfile(USE_CASES))[0], false, 'named_business_handler（use-cases 在场、模块加载失败）');
+    const current = withProfile(USE_CASES);
+    const failed = executeCheck(current, () => checkNamedBusinessHandler(current), 'named_business_handler')[0];
+    assertBlockerSkip(failed, false, 'named_business_handler（use-cases 在场、模块加载失败）');
+    assert(failed.failure_kind === 'framework_bug' && failed.blocking_class === 'framework_internal'
+      && failed.actionability === 'framework_blocked', '坏模块须由共同执行包装如实记录验证缺口');
     assertBlockerSkip(checkNamedBusinessHandler(withProfile())[0], true, 'named_business_handler（use-cases 缺席）');
   } finally {
     fs.rmSync(profileDir, { recursive: true, force: true });

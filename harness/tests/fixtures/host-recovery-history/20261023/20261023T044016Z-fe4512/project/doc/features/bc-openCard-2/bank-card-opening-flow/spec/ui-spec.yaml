@@ -1,0 +1,551 @@
+schema_version: "1.0"
+verified: unverified
+verified_method: none
+
+screens:
+  - id: card_type_sheet
+    priority: P0
+    ref_id: ref_card_type_sheet
+    must_have_elements:
+      - background_add_bank_title
+      - background_add_bank_subtitles
+      - background_search_bank
+      - background_bank_row
+      - card_type_sheet_title
+      - card_type_sheet_close
+      - card_type_sheet_panel
+      - card_type_bank_row
+      - debit_card_row
+      - credit_card_row
+      - card_type_authorization_copy
+      - card_type_agreement_copy
+      - card_type_continue_btn
+    forbidden_overlap:
+      - [card_type_sheet_close, card_type_bank_card]
+    protected_region: [card_type_sheet_close]
+    root:
+      id: card_type_overlay_root
+      type: overlay_panel
+      layout: stack
+      order: 0
+      bg_color: color.overlay_dim
+      children:
+        - id: card_type_background_page
+          type: navigation_frame
+          layout: column
+          order: 0
+          bg_color: color.page_bg
+          children:
+            - id: background_add_bank_title
+              type: nav_bar
+              layout: row
+              order: 0
+              text: "添加银行卡"
+              source_ref: background_add_bank_title
+              semantic_role: neutral
+              color_ref: color.text_primary
+              bbox: [0.2530, 0.0807, 0.1174, 0.0264]
+            - id: background_add_bank_subtitles
+              type: content_display
+              layout: row
+              order: 1
+              text: "免输卡号添卡    支持 100 家银行"
+              source_ref: background_add_bank_subtitles
+              semantic_role: neutral
+              color_ref: color.text_secondary
+              bbox: [0.0652, 0.1736, 0.8697, 0.0283]
+              fidelity_note: "OCR 显示线上参考图为支持 100 家银行；该节点属于遮罩后的既有页面上下文。"
+            - id: background_search_bank
+              type: input
+              layout: row
+              order: 2
+              text: "搜索银行    搜索"
+              source_ref: background_search_bank
+              semantic_role: neutral
+              color_ref: color.text_secondary
+              bbox: [0.0667, 0.2420, 0.8583, 0.0212]
+            - id: background_bank_row
+              type: list_row
+              layout: row
+              order: 3
+              text: "招商银行"
+              source_ref: background_bank_row
+              semantic_role: neutral
+              color_ref: color.text_primary
+              icon: { kind: brand_logo, ref: bank_logo_cmb }
+              asset_ref: bank_logo_cmb
+              bbox: [0.1917, 0.3283, 0.1432, 0.0212]
+        - id: card_type_sheet_panel
+          type: sheet_scaffold
+          layout: column
+          order: 1
+          align: stretch
+          bg_color: color.sheet_bg
+          bbox: [0.0000, 0.3900, 1.0000, 0.6100]
+          children:
+            - id: card_type_sheet_title
+              type: content_display
+              layout: row
+              order: 0
+              text: "选择卡类型"
+              source_ref: card_type_sheet_title
+              semantic_role: neutral
+              color_ref: color.text_primary
+              bbox: [0.0379, 0.4259, 0.2235, 0.0264]
+            - id: card_type_sheet_close
+              type: action_button
+              layout: row
+              order: 1
+              variant: tonal
+              semantic_role: neutral
+              color_ref: color.nav_button_bg
+              icon: { kind: system_symbol, ref: sys.symbol.xmark }
+              bbox: [0.8850, 0.4200, 0.0600, 0.0400]
+              fidelity_note: "关闭图标由系统符号近似。"
+            - id: card_type_bank_card
+              type: list_card_container
+              layout: column
+              order: 2
+              bg_color: color.surface
+              bbox: [0.0370, 0.4950, 0.9260, 0.2200]
+              children:
+                - id: card_type_bank_row
+                  type: list_row
+                  layout: row
+                  order: 0
+                  text: "招商银行"
+                  source_ref: card_type_bank_row
+                  semantic_role: neutral
+                  color_ref: color.text_primary
+                  icon: { kind: brand_logo, ref: bank_logo_cmb }
+                  asset_ref: bank_logo_cmb
+                  layout_group: card_type_rows
+                  align: space_between
+                  bbox: [0.1561, 0.5203, 0.1424, 0.0208]
+                - id: debit_card_row
+                  type: list_row
+                  layout: row
+                  order: 1
+                  text: "储蓄卡"
+                  source_ref: debit_card_row
+                  semantic_role: brand_primary
+                  color_ref: color.primary
+                  icon: { kind: system_symbol, ref: sys.symbol.checkmark_circle_fill }
+                  layout_group: card_type_rows
+                  align: space_between
+                  bbox: [0.0652, 0.5948, 0.8606, 0.0283]
+                - id: credit_card_row
+                  type: list_row
+                  layout: row
+                  order: 2
+                  text: "信用卡"
+                  source_ref: credit_card_row
+                  semantic_role: neutral
+                  color_ref: color.text_primary
+                  icon: { kind: system_symbol, ref: sys.symbol.circle }
+                  layout_group: card_type_rows
+                  align: space_between
+                  bbox: [0.0644, 0.6717, 0.1068, 0.0321]
+            - id: card_type_authorization_copy
+              type: content_display
+              layout: column
+              order: 3
+              text: "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。"
+              source_ref: card_type_authorization_copy
+              semantic_role: neutral
+              color_ref: color.text_secondary
+              bbox: [0.0371, 0.7387, 0.9227, 0.0448]
+            - id: card_type_agreement_copy
+              type: content_display
+              layout: row
+              order: 4
+              text: "我已阅读快捷支付服务协议、银联无卡自助消费授权协议"
+              source_ref: card_type_agreement_copy
+              semantic_role: brand_primary
+              color_ref: color.primary
+              bbox: [0.0379, 0.8193, 0.6788, 0.0250]
+            - id: card_type_continue_btn
+              type: primary_button
+              layout: row
+              order: 5
+              text: "同意并继续"
+              source_ref: card_type_continue_btn
+              variant: filled
+              semantic_role: brand_primary
+              color_ref: color.primary
+              align: center
+              width_ratio: 0.50
+              bbox: [0.4121, 0.8962, 0.1773, 0.0321]
+
+  - id: bank_card_selection
+    priority: P0
+    ref_id: ref_bank_card_selection
+    must_have_elements:
+      - selection_back_btn
+      - selection_nav_title
+      - selection_hint
+      - selection_card_container
+      - bank_card_candidate_1
+      - selection_agreement_check
+      - selection_agreement
+      - selection_next_btn
+    forbidden_overlap:
+      - [selection_back_btn, selection_nav_title]
+    protected_region: [selection_back_btn]
+    root:
+      id: bank_card_selection_root
+      type: navigation_frame
+      layout: column
+      order: 0
+      bg_color: color.page_bg
+      children:
+        - id: selection_nav_bar
+          type: nav_bar
+          layout: row
+          order: 0
+          align: start
+          children:
+            - id: selection_back_btn
+              type: action_button
+              layout: row
+              order: 0
+              variant: tonal
+              semantic_role: neutral
+              color_ref: color.nav_button_bg
+              icon: { kind: system_symbol, ref: sys.symbol.chevron_left }
+              bbox: [0.0500, 0.0780, 0.0600, 0.0350]
+            - id: selection_nav_title
+              type: content_display
+              layout: row
+              order: 1
+              text: "招商银行"
+              source_ref: selection_nav_title
+              semantic_role: neutral
+              color_ref: color.text_primary
+              bbox: [0.1523, 0.0807, 0.1735, 0.0264]
+        - id: selection_hint
+          type: content_display
+          layout: row
+          order: 1
+          text: "请选择您要绑定的银行卡"
+          source_ref: selection_hint
+          semantic_role: neutral
+          color_ref: color.text_secondary
+          bbox: [0.0485, 0.1906, 0.2970, 0.0160]
+        - id: selection_card_container
+          type: list_card_container
+          layout: column
+          order: 2
+          bg_color: color.surface
+          bbox: [0.0450, 0.2350, 0.9100, 0.0900]
+          children:
+            - id: bank_card_candidate_1
+              type: list_row
+              layout: row
+              order: 0
+              text: "4392 **** **** 2269"
+              source_ref: bank_card_candidate_1
+              semantic_role: neutral
+              color_ref: color.text_primary
+              icon: { kind: brand_logo, ref: bank_logo_cmb }
+              asset_ref: bank_logo_cmb
+              layout_group: bank_card_candidates
+              align: space_between
+              bbox: [0.1902, 0.2675, 0.2772, 0.0142]
+        - id: selection_agreement_check
+          type: logic_condition
+          layout: row
+          order: 3
+          semantic_role: danger
+          color_ref: color.brand_action
+          icon: { kind: system_symbol, ref: sys.symbol.checkmark_square_fill }
+          bbox: [0.0500, 0.3350, 0.0450, 0.0300]
+        - id: selection_agreement
+          type: content_display
+          layout: column
+          order: 4
+          text: "同意并阅读《云内付App一键绑卡用户授权协议》、《招商银行信用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信息。"
+          source_ref: selection_agreement
+          semantic_role: neutral
+          color_ref: color.text_secondary
+          bbox: [0.1114, 0.3363, 0.7886, 0.0749]
+          fidelity_note: "逐字采用 OCR JSON；首个产品名存在低置信识别，保留盲档待复核。"
+        - id: selection_next_btn
+          type: primary_button
+          layout: row
+          order: 5
+          text: "下一步"
+          source_ref: selection_next_btn
+          variant: filled
+          semantic_role: danger
+          color_ref: color.brand_action
+          align: center
+          width_ratio: 0.30
+          bbox: [0.3500, 0.4400, 0.3000, 0.0500]
+          fidelity_note: "按钮文案来自需求；OCR 未稳定识别浅色按钮文字。"
+
+  - id: otp_verification_sheet
+    priority: P0
+    ref_id: ref_otp_verification_sheet
+    must_have_elements:
+      - otp_sheet_title
+      - otp_sheet_close
+      - otp_sheet_panel
+      - otp_instruction
+      - otp_phone_hint
+      - otp_input
+      - otp_resend_action
+      - otp_next_btn
+    forbidden_overlap:
+      - [otp_sheet_close, otp_sheet_title]
+    protected_region: [otp_sheet_close]
+    root:
+      id: otp_overlay_root
+      type: overlay_panel
+      layout: column
+      order: 0
+      bg_color: color.overlay_dim
+      children:
+        - id: otp_sheet_panel
+          type: sheet_scaffold
+          layout: column
+          order: 0
+          bg_color: color.sheet_bg
+          bbox: [0.0000, 0.1600, 1.0000, 0.4400]
+          children:
+            - id: otp_sheet_title
+              type: content_display
+              layout: row
+              order: 0
+              text: "输入验证码"
+              source_ref: otp_sheet_title
+              semantic_role: neutral
+              color_ref: color.text_primary
+              bbox: [0.0379, 0.1925, 0.2232, 0.0538]
+            - id: otp_sheet_close
+              type: action_button
+              layout: row
+              order: 1
+              variant: tonal
+              semantic_role: neutral
+              color_ref: color.nav_button_bg
+              icon: { kind: system_symbol, ref: sys.symbol.xmark }
+              bbox: [0.9045, 0.2142, 0.0273, 0.0175]
+            - id: otp_instruction
+              type: content_display
+              layout: row
+              order: 2
+              text: "为确认是您本人操作，请输入发送至手机"
+              source_ref: otp_instruction
+              semantic_role: neutral
+              color_ref: color.text_secondary
+              bbox: [0.0750, 0.2849, 0.6508, 0.0302]
+            - id: otp_phone_hint
+              type: content_display
+              layout: row
+              order: 3
+              text: "185**#***3841 的验证码。"
+              source_ref: otp_phone_hint
+              semantic_role: neutral
+              color_ref: color.text_primary
+              bbox: [0.0758, 0.3113, 0.3811, 0.0283]
+              fidelity_note: "号码逐字采用 OCR JSON；# 字符为低置信盲档残余，实际数据必须由账号 mock 脱敏生成。"
+            - id: otp_code_row
+              type: list_card_container
+              layout: row
+              order: 4
+              align: space_between
+              bg_color: color.surface
+              bbox: [0.0600, 0.3550, 0.8800, 0.0750]
+              children:
+                - id: otp_input
+                  type: sms_code_field
+                  layout: row
+                  order: 0
+                  text: "输入短信验证码"
+                  source_ref: otp_input
+                  semantic_role: neutral
+                  color_ref: color.text_secondary
+                  layout_group: otp_code_row
+                  width_ratio: 0.65
+                  bbox: [0.1265, 0.3844, 0.2371, 0.0217]
+                - id: otp_resend_action
+                  type: action_button
+                  layout: row
+                  order: 1
+                  text: "55 秒后重试"
+                  source_ref: otp_resend_action
+                  variant: text
+                  semantic_role: brand_primary
+                  color_ref: color.primary
+                  layout_group: otp_code_row
+                  width_ratio: 0.30
+                  bbox: [0.7553, 0.3726, 0.1705, 0.0420]
+                  data_binding: "countdown_seconds: 60..0; zero_label: 重新发送"
+            - id: otp_next_btn
+              type: primary_button
+              layout: row
+              order: 5
+              text: "下一步"
+              source_ref: otp_next_btn
+              variant: tonal
+              semantic_role: brand_primary
+              color_ref: color.primary_tonal
+              align: center
+              width_ratio: 0.88
+              bbox: [0.0600, 0.4550, 0.8800, 0.0550]
+              fidelity_note: "参考态为未输入的禁用浅蓝按钮；文案来自需求。"
+
+  - id: opening_result_success
+    priority: P0
+    ref_id: ref_opening_result_success
+    must_have_elements:
+      - result_status_icon
+      - result_title
+      - result_description
+      - result_guide_illustration
+      - result_finish_btn
+    protected_region: [result_status_icon]
+    root:
+      id: opening_result_root
+      type: navigation_frame
+      layout: column
+      order: 0
+      align: center
+      bg_color: color.page_bg
+      children:
+        - id: result_state_group
+          type: result_state
+          layout: column
+          order: 0
+          align: center
+          children:
+            - id: result_status_icon
+              type: content_display
+              layout: row
+              order: 0
+              semantic_role: success
+              color_ref: color.success
+              icon: { kind: system_symbol, ref: sys.symbol.checkmark_circle_fill }
+              bbox: [0.4200, 0.1500, 0.1600, 0.0800]
+              fidelity_note: "成功圆形对勾以系统符号近似。"
+            - id: result_title
+              type: content_display
+              layout: row
+              order: 1
+              text: "添卡成功"
+              source_ref: result_title
+              semantic_role: success
+              color_ref: color.text_primary
+              bbox: [0.4114, 0.2477, 0.1773, 0.0262]
+            - id: result_description
+              type: content_display
+              layout: row
+              order: 2
+              text: "可用于实体店二维码支付和网上商城支付"
+              source_ref: result_description
+              semantic_role: neutral
+              color_ref: color.text_secondary
+              bbox: [0.2159, 0.2937, 0.5689, 0.0276]
+        - id: result_guide_illustration
+          type: content_display
+          layout: row
+          order: 1
+          semantic_role: promo
+          icon: { kind: illustration, ref: result_payment_guide }
+          asset_ref: result_payment_guide
+          bbox: [0.2100, 0.3400, 0.5800, 0.3300]
+          fidelity_note: "真实手持手机二维码插画未提供独立可验证素材，使用中性可见占位，属于 major 视觉债务。"
+        - id: result_finish_btn
+          type: primary_button
+          layout: row
+          order: 2
+          text: "完成"
+          source_ref: result_finish_btn
+          variant: tonal
+          semantic_role: brand_primary
+          color_ref: color.primary
+          align: center
+          width_ratio: 0.88
+          bbox: [0.0600, 0.8750, 0.8800, 0.0650]
+          fidelity_note: "需求排除 NFC 激活区后，完成按钮保持页面底部唯一退出入口。"
+
+tokens:
+  color.page_bg:
+    kind: color
+    value: "#F2F3F5"
+    placeholder: false
+    value_source: "repo: WalletMain color_page_bg"
+  color.sheet_bg:
+    kind: color
+    value: "#F2F3F5"
+    placeholder: false
+    value_source: "repo: WalletMain color_page_bg"
+  color.surface:
+    kind: color
+    value: "#FFFFFF"
+    placeholder: false
+    value_source: "repo: WalletMain color_card_bg"
+  color.text_primary:
+    kind: color
+    value: "#1A1A1A"
+    placeholder: false
+    value_source: "repo: WalletMain color_text_primary"
+  color.text_secondary:
+    kind: color
+    value: "#606163"
+    placeholder: false
+    value_source: "repo: WalletMain color_text_secondary"
+  color.nav_button_bg:
+    kind: color
+    value: "#E7E8EA"
+    placeholder: false
+    value_source: "repo: WalletMain color_nav_btn_bg"
+  color.primary:
+    kind: color
+    value: "#007DFF"
+    placeholder: false
+    value_source: "repo: WalletMain brand_primary"
+  color.primary_tonal:
+    kind: color
+    value: "#E8F3FF"
+    placeholder: false
+    value_source: "repo: WalletMain button_tonal_bg"
+  color.brand_action:
+    kind: color
+    value: "#FF3B30"
+    placeholder: false
+    value_source: "repo: WalletMain brand_danger; visual sidecar describes red action state"
+  color.success:
+    kind: color
+    value: "#34C759"
+    placeholder: false
+    value_source: "repo: WalletMain brand_fuel_green reused as existing success-like token; visual sidecar describes green result icon"
+  color.overlay_dim:
+    kind: color
+    value: "#66000000"
+    placeholder: true
+    value_source: "blind_inference_neutral_placeholder"
+  spacing.page_margin:
+    kind: spacing
+    value: "16vp"
+  radius.card:
+    kind: radius
+    value: "16vp"
+  font.page_title:
+    kind: font_size
+    value: "20fp"
+
+assets:
+  - key: bank_logo_cmb
+    acquisition: repo_ref
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png
+    role: brand_logo
+    rationale: "BankRepository 已明确把该资源绑定到招商银行，盲档可确认用途但不声称外观已验真。"
+  - key: result_payment_guide
+    acquisition: placeholder
+    placeholder: true
+    rationale: "参考图含手持手机二维码插画，但仓内没有用途明确的对应素材且本执行者无视觉裁剪能力。"
+    blind_fallback_reason: "missing_verified_asset_and_no_direct_vision"
+    role: illustration
+    placeholder_kind: illustration_frame

@@ -27,7 +27,8 @@ import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-uni
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
-import type { CheckContext } from '../../scripts/utils/types';
+import { isCheckNotApplicable, type CheckContext, type ScriptReport } from '../../scripts/utils/types';
+import { buildScriptReport } from '../../scripts/utils/report-generator';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { handWriteProjections, authorCurrentCuPlan } from './component-design-handoff.unit.test';
 import { changeProjectedAcceptance } from './successor-exit.unit.test';
@@ -161,6 +162,30 @@ const planGate = (root: string, fw: string) => checkChangeUnitFeatureProjection(
 } as unknown as CheckContext, 'plan').find(check => check.id === 'authoritative_content_aligned');
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  ...[
+    { feature: SNAPSHOT_FLAT_FEATURE, dir: 'demo-card' },
+    { feature: SNAPSHOT_CU_FEATURE, dir: 'ledger-app-blueprint/ledger-refresh' },
+  ].flatMap(({ feature, dir }) => (['coding', 'ut'] as const).map(phase => ({
+    name: `3.1.0 原始 PASS 兼容：${dir}/${phase} 未分类 SKIP 保留，真实 FAIL 仍阻断`,
+    run() {
+      const root = path.resolve(__dirname, '../fixtures/host-snapshot-3.1.0/project');
+      const file = path.join(root, 'doc/features', dir, phase, 'reports/script-report.json');
+      const bytes = fs.readFileSync(file);
+      const original = JSON.parse(bytes.toString('utf8')) as ScriptReport;
+      const skips = original.checks.filter(check => check.status === 'SKIP' && check.severity === 'BLOCKER' && !isCheckNotApplicable(check));
+      assert.equal(original.summary.verdict, 'PASS', '历史事实必须原样保留');
+      assert(skips.length > 0, '反例必须包含旧未分类 BLOCKER SKIP');
+      const report = buildScriptReport(phase, feature, root, structuredClone(original.checks));
+      assert.equal(report.summary.verdict, 'PASS', JSON.stringify(report.checks.filter(check => check.status === 'FAIL')));
+      for (const skipped of skips) assert.equal(report.checks.find(check => check.id === skipped.id)?.status, 'SKIP', skipped.id);
+      const failed = buildScriptReport(phase, feature, root, [...structuredClone(original.checks), {
+        id: 'recorded_product_defect', category: 'structure', description: '真实产品失败不能被兼容读取吞掉',
+        severity: 'BLOCKER', status: 'FAIL', details: '明确失败结论',
+      }]);
+      assert.equal(failed.summary.verdict, 'FAIL');
+      assert(fs.readFileSync(file).equals(bytes), '不得改写旧快照原件');
+    },
+  }))),
   { name: '★1 原快照换目录加载：历史原件仍 record ok，当前 review gate 失效且不改旧原件', run: () => withSnapshot((root, fw) => {
     for (const feature of [SNAPSHOT_FLAT_FEATURE, SNAPSHOT_CU_FEATURE]) {
       const projection = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'feature-completion.json'), 'utf8'));
@@ -232,6 +257,31 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     assert(!(coding.reason ?? '').includes('[execution_scope]'), JSON.stringify(coding));
     assert.strictEqual(a.complete, false);
   }) },
+  { name: '7d9c2e41 missing required conclusion is evidence; real FAIL and mixed FAIL remain result', run: () => {
+    const { generateScriptReport } = require('../../scripts/utils/report-generator') as typeof import('../../scripts/utils/report-generator');
+    const { writeRunSummaryBase } = require('../../harness-runner') as typeof import('../../harness-runner');
+    const { executeCheck } = require('../../scripts/utils/check-execution') as typeof import('../../scripts/utils/check-execution');
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    const passed = { id: 'product_gate', category: 'structure' as const, description: 'product gate', severity: 'BLOCKER' as const, status: 'PASS' as const, details: 'checked' };
+    const failed = { ...passed, status: 'FAIL' as const, details: 'actual product failure' };
+    const missing = executeCheck({ phaseRule: {} } as CheckContext, () => { throw new Error('checker unavailable'); }, 'checker_execution');
+    const scope = scopeOf({ phase_chain: ['spec', 'plan'], obligations: [
+      { id: 'acceptance-context:probe', kind: 'acceptance-context', owner_phase: 'spec', applicability: 'required', reason: 'probe', basis: [] },
+    ] });
+    for (const [checks, expected] of [[[passed, ...missing], 'evidence'], [[failed], 'result'], [[failed, ...missing], 'result']] as const) {
+      withSeededCompletion(root => {
+        const report = generateScriptReport('', 'spec', SEED_FEATURE, root, [...checks], frameworkRoot);
+        report.assurance = 'full';
+        const summary = writeRunSummaryBase(root, report, frameworkRoot);
+        assert.strictEqual(summary.verdict, expected === 'evidence' ? 'INCOMPLETE' : 'FAIL');
+        const assessment = seededAssess(root, scope);
+        const item = obligation(assessment, 'acceptance-context:probe');
+        assert.strictEqual(item.class, expected, brief(assessment));
+        assert.strictEqual(assessment.complete, false);
+        if (checks.length === 2 && checks[0].status === 'FAIL') assert((item.reason ?? '').includes('required_check_conclusion'), brief(assessment));
+      });
+    }
+  } },
   { name: 'codex P1-1：合法范围声明 required UT 义务、无 satisfied_by、无证据 → 绑定检查为空，但义务 uncovered/evidence', run: () => withSeededCompletion(root => {
     const scope = scopeOf({
       phase_chain: ['ut'],

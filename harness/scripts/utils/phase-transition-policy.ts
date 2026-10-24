@@ -112,6 +112,8 @@ export interface ClassifyPhaseVerdictInput {
   verdict: HarnessVerdict;
   blocking_class?: string;
   failure_kind?: string;
+  /** Effective required checker execution gap; no content retry can supply that evidence. */
+  verification_gap?: boolean;
   dependency_policy?: DependencyPolicy;
   retries_used?: number;
   max_retries_per_phase?: number;
@@ -341,6 +343,8 @@ export function classifyPhaseVerdict(
   if (verdict === 'PASS') return 'advance';
 
   if (verdict === 'INCOMPLETE') {
+    if (input.verification_gap) return dependency_policy.propagate_to_downstream === false
+      ? 'defer_external_and_halt' : 'defer_external_and_continue_if_allowed';
     if (isDeferrableExternalBlock(blocking_class, failure_kind, dependency_policy)) {
       if (dependency_policy.propagate_to_downstream === false) {
         return 'defer_external_and_halt';

@@ -159,6 +159,9 @@ export interface DispositionCheck {
   id: string;
   status: string;
   severity?: string;
+  structured?: unknown;
+  failure_kind?: string;
+  blocking_class?: string;
 }
 
 export type CheckDisposition =
@@ -206,6 +209,29 @@ export function isBlockingCheck(
   table: readonly DispositionEntry[] = activeTable,
 ): boolean {
   return resolveCheckDisposition(check, table).action === 'block';
+}
+
+/** 只承接生产点明确分类的必需执行缺口；旧未分类 SKIP 仍由原检查与 verifier 处置。 */
+export function isRequiredCheckGap(check: DispositionCheck, table: readonly DispositionEntry[] = activeTable): boolean {
+  if (check.status !== 'SKIP' || check.severity !== 'BLOCKER') return false;
+  return requiresCheckConclusion(check, table);
+}
+
+function requiresCheckConclusion(check: { id?: string; structured?: unknown; failure_kind?: string; blocking_class?: string }, table: readonly DispositionEntry[] = activeTable): boolean {
+  if ((check.structured as { applicability?: unknown } | undefined)?.applicability === 'not_applicable') return false;
+  if (findDispositionEntry(check.id ?? '', table)?.protects === 'ledger_shape') return false;
+  return check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal'
+    || check.failure_kind === 'device_blocked' || check.blocking_class === 'externalBlocked'
+    || check.failure_kind === 'capability_missing';
+}
+
+export function isFrameworkExecutionGap(check: DispositionCheck): boolean {
+  return isRequiredCheckGap(check) && (check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal');
+}
+
+/** blocking_skips 保留旧的完整复核清单；仅明确分类的执行缺口参与新增的完成约束。 */
+export function requiredSummaryCheckGaps<T extends { id?: string; blocking_class?: string }>(summary: { blocking_skips?: readonly T[] } | null | undefined): T[] {
+  return (summary?.blocking_skips ?? []).filter(check => requiresCheckConclusion(check));
 }
 
 /** summary 的被披露失败清单一条（§4.3）。 */

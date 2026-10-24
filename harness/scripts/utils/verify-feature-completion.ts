@@ -28,6 +28,7 @@ import { validateExecutionScope, executionScopeFingerprint, executionCompletionP
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, applyScopeRevisions } from './goal-run-creation';
+import { requiredSummaryCheckGaps } from './check-disposition';
 import { readFeatureFrozenScope, featureEffectiveScope } from './feature-execution-scope';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
@@ -425,7 +426,14 @@ export function collectPhaseCompletionIssues(opts: CleanPassOptions): CleanPassI
   for (const phase of chain) {
     const v = summaryVerdict(projectRoot, feature, phase);
     if (v !== 'PASS') {
-      issues.push({ phase, condition: 'verdict_pass', detail: `summary verdict=${v ?? '缺失'}`, kind: 'needs_fix' });
+      issues.push({ phase, condition: v === 'INCOMPLETE' ? 'required_check_conclusion' : 'verdict_pass', detail: `summary verdict=${v ?? '缺失'}`, kind: 'needs_fix' });
+    }
+    const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, phase), 'summary.json');
+    if (fs.existsSync(summaryPath)) {
+      try {
+        const missing = requiredSummaryCheckGaps(JSON.parse(fs.readFileSync(summaryPath, 'utf8')));
+        if (missing.length) issues.push({ phase, condition: 'required_check_conclusion', detail: `必需检查尚无结论：${missing.map(check => check.id).join(', ')}`, kind: 'needs_fix' });
+      } catch { /* Unreadable summaries are reported by the existing verdict/schema checks. */ }
     }
   }
 

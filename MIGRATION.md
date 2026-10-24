@@ -1,5 +1,15 @@
 # Framework 升级与迁移说明
 
+## 3.1.0：产物契约、验证缺口与责任修订（7d9c2e41）
+
+用户 2026-10-23 裁决取代 07-16 P0-3 的无差别首触停机。适用 checker 抛异常表示该项未执行/结论未知：保留原必需性及 framework_bug/framework_internal/framework_blocked，以 SKIP 如实报告；必需证据未齐时阶段 INCOMPLETE/open，完成与发布不通过。独立且已授权的工作按真实依赖继续，依赖缺失结论的工作等待；真实产品 FAIL、框架发布件写保护、授权、秘密/不可逆动作及硬预算不变。宿主 Agent 不得改 framework 绕过；修后沿原恢复接口按影响复验，复用仍有效结果，不重置原请求义务或消耗。历史事故记录不改写。
+
+只有明确标注 framework_bug/framework_internal，或 device_blocked/externalBlocked/capability_missing 的未执行缺口，才按其必需性影响完成并沿既有框架或外部等待路径恢复。未分类的旧 BLOCKER SKIP 继续进入 `blocking_skips` 供 verifier 复核，不因 severity 或缺少新标签自动改成 FAIL、INCOMPLETE 或作者返修；旧 PASS 保持兼容。真实 FAIL 保留原责任，n/a 与已披露项保持原语义。
+
+use-cases 的 calls 兼容非空字符串与非空有序字符串列表，内部统一列表并保留全部项及重复；coordinator/ui/trigger 等仍是单值字符串。公共内容入口覆盖文件、supplied、蓝图片段与合并产物，无法无歧义整理的形状反馈原 owner；无需为了升级改写合法旧文件或重签旧哈希。
+
+spec/plan 在合法 Agent 调用准备窗口分别投影 acceptance 与 contracts/use-cases，保留兼容增量；冲突不覆盖，交原阶段或设计 owner。spec/plan 当前结构化检视中的必需验收问题经原 issue-verification、当前材料与真实责任核实派修/有据拒修，不新增 plan 问题文件，不把全部 MAJOR 建议升级。checks 新增可选 acceptance_ids/affected_files；旧合法报告缺字段时保留原发现并回原独立 verifier 补核，显式 acceptance_ids: [] 表示建议。Page 具名定位与 UT 可执行性分开，unit/both 业务义务不降成仅真机。
+
 coding 现在允许对本次实现直接引发的既有测试类型/import/数据/替身作有限兼容修补，有无独立 UT 均适用；既有用例定义和断言须经 `coding_existing_test_preserved` 原样保留，不得新增测试/断言或跳过。新增或改变测试仍归 UT；无法确认真实前置原件时交 UT 核验。旧误派测试字节可由真实 UT 沿晚于误写的有效 manifest 核验采纳，不要求再改一遍；新越权写入仍使其失效。返修保留原 facts 建立者、基线及合法历史源码写入，下游仅添本阶段 delta；真实重建仍回原建立者。
 
 coding 现在可按需产出 `coding/upstream-issues.md`，UT 继续使用 `ut/testability-audit.md`。缺席不新增必需产物或完成义务；有当前具体证据的上游提案通过原 verifier 逐条核实后，沿原候选/范围修订或设计 owner 链处理。编译/测试 FAIL 和未执行检查保留，关闭的 verifier 不自动启用。owner 可按目标引文或经独立核实的当前事实拒修，理由返回原阶段；旧 subject 不能重派，原身份与累计预算不变。旧产物无需补空文件。

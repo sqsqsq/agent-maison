@@ -7,7 +7,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
+import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
 import { stableStringify } from './phase-evidence-manifest';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath, validateProjectRelativePath } from './project-relative-path';
 import { decodeTextFile, SpecLoader } from './spec-loader';
@@ -153,6 +153,8 @@ interface ProviderResult {
   dependencies: ResolutionDependency[];
   detail?: string;
   value?: unknown;
+  /** Same parse only; never persisted or trusted independently of successful normalization. */
+  rawValue?: unknown;
   artifacts?: Record<string, unknown>;
 }
 
@@ -220,7 +222,13 @@ function resolveArtifact(
   }
   if (!modern) dependencies.splice(0, dependencies.length, ...dedupeDependencies(dependencies));
   const selected = dependencies.find((entry) => entry.exists);
-  if (!selected) return supplied ? { state: 'resolved', value: supplied.value, dependencies: dedupeDependencies([...dependencies, ...supplied.dependencies]), detail: 'resolved blueprint artifact' } : { state: 'absent', dependencies, detail: `${source.artifact} missing` };
+  if (!selected) {
+    if (!supplied) return { state: 'absent', dependencies, detail: `${source.artifact} missing` };
+    const parsed = resolveArtifactContent(source.artifact, supplied.value, { frameworkRoot });
+    return { state: parsed.issues.length ? 'invalid' : 'resolved', value: parsed.value,
+      dependencies: dedupeDependencies([...dependencies, ...supplied.dependencies]),
+      detail: parsed.issues.length ? JSON.stringify(parsed.issues) : 'resolved blueprint artifact' };
+  }
   if (selected.sha256 === null) {
     return { state: 'invalid', dependencies, detail: `${source.artifact} is not a readable file: ${selected.path}` };
   }
@@ -230,6 +238,7 @@ function resolveArtifact(
       let artifacts: Record<string, unknown> | undefined;
       let projectedValue: unknown;
       let value = /\.ya?ml$|\.json$/i.test(selected.path) ? YAML.parse(raw) : raw;
+      const rawValue = value;
       if (typeof value?.source === 'string' && /^derive\.blueprint-(acceptance|contracts):/.test(value.source)) {
         const sourceFeature = feature ?? (typeof value.feature === 'string' ? value.feature : undefined);
         if (sourceFeature === undefined) return { state: 'invalid', dependencies, detail: 'blueprint projection requires its explicit source subject' };
@@ -242,13 +251,6 @@ function resolveArtifact(
           detail: `${source.artifact === 'acceptance@1' ? 'spec' : 'plan'}: blueprint artifact source stale; return to responsibility phase` };
         artifacts = { ...projected.artifacts, [source.artifact]: value };
       }
-      const schema = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas', registered.schema), 'utf8'));
-      const supported = auditSchemaSupport(Object.fromEntries(Object.entries(schema).filter(([key]) => !key.startsWith('x-'))));
-      if (supported.length) throw new Error(`unsupported artifact schema: ${JSON.stringify(supported)}`);
-      const issues = validateLiteSchema(value, schema);
-      if (issues.length || value === undefined || value === null || value === '') {
-        return { state: 'invalid', dependencies, detail: JSON.stringify(issues.length ? issues : ['empty content']) };
-      }
       if (['acceptance@1', 'contracts@1', 'use-cases@1'].includes(source.artifact)) {
         if (feature === undefined && !subject) throw new Error('request subject required');
         const resolved: ResolvedPhaseInputs = {
@@ -259,11 +261,19 @@ function resolveArtifact(
         const parsed = feature === undefined ? loader.loadRequestArtifacts(resolved) : loader.loadFeatureSpec(feature, resolved);
         if (parsed.shape_issues?.length) return { state: 'invalid', dependencies, detail: parsed.shape_issues.join('; ') };
         value = source.artifact === 'acceptance@1' ? parsed.acceptance : source.artifact === 'contracts@1' ? parsed.contracts : parsed.useCases;
+      } else {
+        const parsed = resolveArtifactContent(source.artifact, value, { frameworkRoot });
+        if (parsed.issues.length) return { state: 'invalid', dependencies, detail: JSON.stringify(parsed.issues) };
+        value = parsed.value;
       }
+      if (value === undefined || value === null || value === '') return { state: 'invalid', dependencies, detail: 'empty content' };
       if (projectedValue && compareAuthoritativeContent(projectedValue, value).state !== 'aligned') return { state: 'invalid', dependencies, detail: 'blueprint authority content changed; return to responsibility phase' };
       if (artifacts) artifacts[source.artifact] = value;
-      return { state: 'resolved', dependencies, value, artifacts, detail: selected.path };
-    } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
+      return { state: 'resolved', dependencies, value, rawValue, artifacts, detail: selected.path };
+    } catch (error) {
+      if (error instanceof ArtifactSchemaError) throw error;
+      return { state: 'invalid', dependencies, detail: String(error) };
+    }
   }
   return { state: 'resolved', dependencies, detail: selected.path };
 }
@@ -614,6 +624,20 @@ function identityNeutralFingerprint(projectRoot: string, source: ContractInputSo
   return identityNeutralDigest(projectRoot, artifact, value, authorityReaders);
 }
 
+function artifactBindingMatches(options: CapabilityResolutionOptions, binding: InputBinding, value: unknown, rawValue?: unknown): boolean {
+  const matches = (candidate: unknown): boolean => fullFingerprint(candidate) === binding.content_fingerprint
+    || identityNeutralFingerprint(options.projectRoot, binding.source, candidate, options.authorityReaders) === binding.content_fingerprint;
+  if (matches(value)) return true;
+  if (binding.source.kind !== 'artifact' || binding.source.artifact !== 'use-cases@1') return false;
+  if (rawValue !== undefined && matches(rawValue)) return true;
+  type BoundUseCase = { ui_bindings?: Array<{ user_actions?: Array<{ calls: string[] | string }> }> };
+  const legacy = structuredClone(value) as BoundUseCase & { use_cases?: BoundUseCase[] };
+  for (const uc of [legacy, ...(legacy.use_cases ?? [])]) for (const ui of uc.ui_bindings ?? []) for (const action of ui.user_actions ?? []) {
+    if (Array.isArray(action.calls) && action.calls.length === 1) action.calls = action.calls[0];
+  }
+  return matches(legacy);
+}
+
 /**
  * Re-read a selected source using the same P1 parsers/providers and binding contract.
  * `legacyRoot`（plan b2d7f4e9 t4）：记录的绑定写于另一个工程根时，由调用方从同一份记录推出旧根，
@@ -650,8 +674,7 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   if (result.state !== 'resolved' || result.value === undefined
     || binding.dependencies.some(existenceDrift)
     || result.dependencies.some(dep => !boundSame(dep))
-    || (isSourceFileSet(binding.source) ? !sourceSetMatches : fullFingerprint(result.value) !== binding.content_fingerprint
-      && identityNeutralFingerprint(options.projectRoot, binding.source, result.value, options.authorityReaders) !== binding.content_fingerprint)) {
+    || (isSourceFileSet(binding.source) ? !sourceSetMatches : !artifactBindingMatches(options, binding, result.value, result.rawValue))) {
     throw new Error(`input binding stale; return to scope owner: ${result.detail ?? binding.input_id}`);
   }
   return result.value;
@@ -780,7 +803,8 @@ function resolveInput(
       if (expected && (isSourceFileSet(source)
         ? !sourceFileSetBindingMatches(options.projectRoot, expected, binding, result.value)
         : stableStringify(expected) !== stableStringify(binding)
-          && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding, full))) {
+          && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding,
+            artifactBindingMatches(options, expected, result.value, result.rawValue) ? expected.content_fingerprint : full))) {
         result = { ...result, state: 'invalid', detail: 'input binding stale; return to scope owner' };
         attempt.state = 'invalid'; attempt.detail = result.detail;
       } else {

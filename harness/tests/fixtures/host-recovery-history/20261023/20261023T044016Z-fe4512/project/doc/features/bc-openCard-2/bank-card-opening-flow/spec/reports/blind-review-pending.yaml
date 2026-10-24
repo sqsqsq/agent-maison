@@ -1,0 +1,42 @@
+schema_version: "1.0"
+feature: cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+generated_at: 2026-10-23T04:59:15.061Z
+note: 盲档（无视觉能力）下自动登记的原图 OCR 未覆盖文本清单——agent 无法辨认其中哪些是噪声（如 logo 被 OCR
+  误识别的乱码前缀）哪些是需要建模的真文案；required 项保持UNVERIFIED/capability defer，optional 项仅作
+  advisory，待有能力的 provider 用当前机器证据重评。
+entries:
+  - screen: bank_card_selection
+    text: 侨同意并阅读《云内付App一键绑卡用户授权协议)》、《招商银行信
+    y: 0.3538
+    confidence: 79
+    auto_disposition: unverifiable_blind
+    candidate_text: 一键绑卡用户授权协议
+  - screen: bank_card_selection
+    text: 用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信
+    y: 0.3774
+    confidence: 91
+    auto_disposition: unverifiable_blind
+    candidate_text: 授权云闪付获得您在本行银行卡号等信
+  - screen: otp_verification_sheet
+    text: 下袜世日-
+    y: 0.591
+    confidence: 12
+    auto_disposition: unverifiable_blind
+    candidate_text: 下袜世日
+  - screen: otp_verification_sheet
+    text: 一123四
+    y: 0.663
+    confidence: 76
+    auto_disposition: unverifiable_blind
+  - screen: otp_verification_sheet
+    text: 答二9。王着
+    y: 0.8941
+    confidence: 13
+    auto_disposition: unverifiable_blind
+    candidate_text: 答二
+  - screen: opening_result_success
+    text: 激活NFC支付
+    y: 0.8379
+    confidence: 94
+    auto_disposition: unverifiable_blind
+    candidate_text: 激活

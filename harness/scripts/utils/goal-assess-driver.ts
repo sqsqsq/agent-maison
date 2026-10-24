@@ -63,15 +63,10 @@ export function selectRunnerActionFromAssess(
 
   const recommendation = input.assessment.recommendation;
   if (recommendation.action === 'stop' || input.assessment.stop.fused) return 'halt';
+  if (recommendation.runner_action === 'advance' && input.observation.phase_outcome?.verdict === 'PASS') return 'advance';
+  if (recommendation.runner_action === 'defer_external_and_continue_if_allowed'
+    || recommendation.runner_action === 'defer_external_and_halt') return recommendation.runner_action;
   if (recommendation.action === 'resolve_deferred') {
-    // The phase-transition SSOT already selected whether downstream propagation
-    // is allowed. Preserve that exact action; the driver adds no content policy.
-    if (
-      recommendation.runner_action === 'defer_external_and_continue_if_allowed' ||
-      recommendation.runner_action === 'defer_external_and_halt'
-    ) {
-      return recommendation.runner_action;
-    }
     // 尚未到达的延迟阶段只前进：runner 按链序进入该阶段复跑（plan b7d2e9f4 §3.2）。
     if (targetRelation(recommendation, input.currentPhase, input.chain) === 'later') return 'advance';
     return 'halt';

@@ -1,0 +1,287 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-10-23T05:17:10.791Z",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "phase": "plan",
+  "inputs": [
+    {
+      "path": "01-Product/Phone/src/main/ets/pages/index.ets",
+      "role": "input",
+      "sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "role": "input",
+      "sha256": "0415c01bfcae5b62cce9f754965729515a5d6ea9f675ff1730bdeddc45376222",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "role": "input",
+      "sha256": "b5e92f1a6f3b4256747f9ae6d38face63a1420bf64616f14d3751c473f5f6ade",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/index.ets",
+      "role": "input",
+      "sha256": "8091328f669e0b71340b6b141a47ded704f62a31647ad7bab0ea60752f9338c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "role": "input",
+      "sha256": "5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "role": "input",
+      "sha256": "0c7ee06f6bf8e8a23fc0de0b566a4014b36f3816ab97cbeee2eb10031b7411c4",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "role": "input",
+      "sha256": "492ba2d6abcdfb25a43b032c3113b2a21ecbd25649a6e8cb3c295b8c1a82b6b8",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "role": "input",
+      "sha256": "f250072a31b64dcdb787da259c07651ba53b0067badf7031b1d650d370d81084",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "role": "input",
+      "sha256": "bc4e0d84fc66221345980f0e8f8fe8c7de42c21274e5a8431582e8b13a613164",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "role": "input",
+      "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "role": "input",
+      "sha256": "c3214a4e51402470f60adee645398dfc203926e0d042ec2d79d697175328c422",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "role": "input",
+      "sha256": "ca935a9057ceaa18f11d2e23f7505ca1c670cdbd4697538a4b270bb8899e8955",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets",
+      "role": "input",
+      "sha256": "27a003f80dee91bd5f8c84062da7c21900ded46ca76336b53b9cfdc99a436fa6",
+      "exists": true,
+      "owner_phase": "ut"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "role": "input",
+      "sha256": "1c81bfc6faa5cb81bc7bce2155e81db84be7bacae59dabcbda81e4aadb7ca366",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "role": "input",
+      "sha256": "3af42a0b6baa6895bb91a6d66817c9546db2ef605d1b7e96a861d9c349c3be2b",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "role": "input",
+      "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+      "exists": true,
+      "owner_phase": "coding"
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "role": "input",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "role": "input",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "role": "input",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "role": "input",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c",
+      "exists": true
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "role": "input",
+      "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml",
+      "role": "input",
+      "sha256": "d46260b73f3fe267f8652ed4c4daee09642844add4db880539924bb16ed9c02b",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md",
+      "role": "input",
+      "sha256": "c798d57f3b3810cb82cfd4942dfa5342f760b8ef43b486e90bfdbf52e6cf31f1",
+      "exists": true,
+      "facts_phase": "plan"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml",
+      "role": "both",
+      "sha256": "e30d65628e0869c950af47b0c14b3303f93054d0b2f4d33ab10a1fb057cc946c",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md",
+      "role": "both",
+      "sha256": "38737839afa2f8520b65fd48891ce4d803b5e0d677fda18356d2d79d60802b29",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/visual-parity.yaml",
+      "role": "both",
+      "sha256": "7faa1320d2f3aa08d1874245cb1b748f064bb20e4b5f6c3c5f95e7245cf87343",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/PRD.md",
+      "role": "input",
+      "sha256": null,
+      "exists": false
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/prd/PRD.md",
+      "role": "input",
+      "sha256": null,
+      "exists": false
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/prd/spec.md",
+      "role": "input",
+      "sha256": null,
+      "exists": false
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec.md",
+      "role": "input",
+      "sha256": null,
+      "exists": false
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/reports/fidelity-intent.json",
+      "role": "input",
+      "sha256": "4bc46ce774e4be82450e2bb85e1d6684f020f2dbae0fcc06b7e6943f30f664b9",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/spec.md",
+      "role": "input",
+      "sha256": "99955f414e056e67eee339eb49cec8d60f870369b88889447913f1d4bd078227",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml",
+      "role": "input",
+      "sha256": "02fda91fa537decafb5bc02c6e76fbb5576b06a659535eff57a138488190d2a0",
+      "exists": true
+    },
+    {
+      "path": "framework.config.json",
+      "role": "input",
+      "sha256": "94ba8ce5f0164e36f665469af5bd20b519b5b8dd4869c6deb722f2828c9c50da",
+      "exists": true
+    }
+  ],
+  "outputs": [
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml",
+      "role": "both",
+      "sha256": "e30d65628e0869c950af47b0c14b3303f93054d0b2f4d33ab10a1fb057cc946c",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md",
+      "role": "both",
+      "sha256": "38737839afa2f8520b65fd48891ce4d803b5e0d677fda18356d2d79d60802b29",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/script-report.json",
+      "role": "output",
+      "sha256": "5b56c13ba440e303c152985852053ee39e570a56c3def44f35bad94fa8e68322",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/summary.json",
+      "role": "output",
+      "sha256": "77fae44717211f60ef49dae96171881fb5168bb3aff2b9633b76eca4c7a9eecb",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/trace.json",
+      "role": "output",
+      "sha256": "9351855f91f45544e29f0857c7ee0e142f084ccfea1ad0a9c1c3413449563a4f",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/visual-parity.yaml",
+      "role": "both",
+      "sha256": "7faa1320d2f3aa08d1874245cb1b748f064bb20e4b5f6c3c5f95e7245cf87343",
+      "exists": true
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml",
+      "role": "output",
+      "sha256": "13214e59c92865b042ab81d264a8b89d90fe62ebbe449bbaf13f7a8faa03cbba",
+      "exists": true,
+      "identity_neutral": "ref-content@1"
+    }
+  ],
+  "environment": {
+    "framework_version": "3.1.0",
+    "profile": "hmos-app",
+    "gate_fingerprint": "3.1.0:874e45a17799",
+    "framework_config_sha256": "94ba8ce5f0164e36f665469af5bd20b519b5b8dd4869c6deb722f2828c9c50da",
+    "workflow_sha256": "1d65c4f3273b799cc5352c84839ca8b6333c26745d7b934e79841407c13c14e0",
+    "requirement_sha256": "44c07207d37659ede531768c11d7f55115f96d649c697e09bff408f117738504"
+  },
+  "receipt_sha256": null,
+  "aggregate_sha256": "f8020264aae376e410d05afd5f42092aafe56ef51f02cd0373e6f045d4dbbaca"
+}

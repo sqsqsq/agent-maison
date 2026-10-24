@@ -1,12 +1,10 @@
-$schema: "https://json-schema.org/draft/2020-12/schema"
-$id: "agentmaison://artifact/contracts@1"
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: agentmaison://artifact/contracts@1
 title: Feature implementation contracts
 x-artifact-id: contracts@1
 x-version: 1
-x-authority: "Compatibility identity; field-level checks remain in spec-loader and phase checkers."
-x-file-authorization: >
-  contracts.files is the sole authorization set. Every file-bearing field below is resolved in
-  memory at plan closure and MUST be a member of normalized contracts.files.
+x-authority: Compatibility identity; field-level checks remain in spec-loader and phase checkers.
+x-file-authorization: contracts.files lists predicted implementation paths; actual changes and public contracts are verified downstream.
 x-file-reference-fields:
   - modules[].har_index
   - modules[].builder
@@ -19,12 +17,14 @@ x-file-reference-fields:
   - resource_keys.<module>.<category>[].media
   - navigation.config_files[]
   - prd_to_code_traceability[].key_files[]
-x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
+x-blueprint-projection: Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported.
 type: object
 additionalProperties: true
 properties:
   components:
-    type: array
+    type:
+      - array
+      - "null"
     description: Existing component tree; asset_selection is the blueprint decision construction projection. Format SSOT is docs/concepts/component-assets.md.
     items:
       type: object
@@ -33,33 +33,342 @@ properties:
         asset_selection:
           type: object
           additionalProperties: false
-          required: [resolution]
+          required:
+            - resolution
           properties:
-            resolution: { enum: [reuse, configure, adapt, evolve, custom] }
-            component_ref: { type: string, minLength: 1 }
-            rationale: { type: string, minLength: 1 }
-            bindings: { type: object }
+            resolution:
+              enum:
+                - reuse
+                - configure
+                - adapt
+                - evolve
+                - custom
+            component_ref:
+              type: string
+              minLength: 1
+            rationale:
+              type: string
+              minLength: 1
+            bindings:
+              type: object
           description: Conditional required fields and ID validity are enforced by SpecLoader; absence is allowed until the index is enabled.
+        name:
+          type: string
+          minLength: 1
+        module:
+          type: string
+          minLength: 1
+        file:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          minLength: 1
+        state:
+          type:
+            - array
+            - "null"
+          items:
+            anyOf:
+              - type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                  type:
+                    type: string
+                    minLength: 1
+                  decorator:
+                    type: string
+                    minLength: 1
+                additionalProperties: true
+              - type: string
+        props:
+          type:
+            - array
+            - "null"
+          items:
+            anyOf:
+              - type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                  type:
+                    type: string
+                    minLength: 1
+                  decorator:
+                    type: string
+                    minLength: 1
+                additionalProperties: true
+              - type: string
+        events:
+          type:
+            - array
+            - "null"
+          items:
+            anyOf:
+              - type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                  description:
+                    type: string
+                additionalProperties: true
+              - type: string
+        children:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            minLength: 1
   change_unit:
     type: object
     description: ID-only construction projection bound to one canonical change-unit@1 ref; semantic completeness is enforced by phase checkers.
   state_management:
-    type: array
+    type:
+      - array
+      - "null"
     description: Sole Feature runtime-construction authority, including CU-bound runtime details when applicable.
+    items:
+      type: object
+      properties:
+        data:
+          type: string
+          minLength: 1
+        contract_refs:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            minLength: 1
+        ordered_steps:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            minLength: 1
+        lifecycle_triggers:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            minLength: 1
+        mutations:
+          type:
+            - array
+            - "null"
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        publications:
+          type:
+            - array
+            - "null"
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        subscriptions:
+          type:
+            - array
+            - "null"
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        consumers:
+          type:
+            - array
+            - "null"
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+      additionalProperties: true
   files:
     description: Predicted implementation paths, not a file authorization allowlist. Actual changes and public contracts are verified downstream.
-    type: array
-    items: { type: string, minLength: 1 }
+    type:
+      - array
+      - "null"
+    items:
+      type: string
+      minLength: 1
   conventions_applied:
-    type: array
+    type:
+      - array
+      - "null"
     description: Applicable project-convention ids and the files/directories where this Feature plans to honor them.
     items:
       type: object
       additionalProperties: false
-      required: [id, planned_locations]
+      required:
+        - id
+        - planned_locations
       properties:
-        id: { type: string, minLength: 1 }
+        id:
+          type: string
+          minLength: 1
         planned_locations:
           type: array
           minItems: 1
-          items: { type: string, minLength: 1 }
+          items:
+            type: string
+            minLength: 1
+  schema_version:
+    type: string
+    minLength: 1
+  feature:
+    type: string
+    minLength: 1
+  source:
+    type: string
+    minLength: 1
+  modules:
+    type:
+      - array
+      - "null"
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        layer:
+          type: string
+          minLength: 1
+        format:
+          type: string
+          minLength: 1
+        change_type:
+          type: string
+          minLength: 1
+        package_path:
+          type: string
+          minLength: 1
+        har_index:
+          type: string
+          minLength: 1
+        builder:
+          type: string
+          minLength: 1
+        export_file:
+          type: string
+          minLength: 1
+        export_files:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: true
+  data_models:
+    type:
+      - array
+      - "null"
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        file:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          minLength: 1
+        fields:
+          type:
+            - array
+            - "null"
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                minLength: 1
+              type:
+                type: string
+                minLength: 1
+              required:
+                type: boolean
+              description:
+                type: string
+            additionalProperties: true
+      additionalProperties: true
+  interfaces:
+    type:
+      - array
+      - "null"
+    items:
+      type: object
+      properties:
+        layer:
+          type: string
+          minLength: 1
+        file:
+          type: string
+          minLength: 1
+        class:
+          type: string
+          minLength: 1
+        methods:
+          type:
+            - array
+            - "null"
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                minLength: 1
+              params:
+                type:
+                  - array
+                  - "null"
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                    type:
+                      type: string
+                      minLength: 1
+                  additionalProperties: true
+              return:
+                type: string
+                minLength: 1
+              async:
+                type: boolean
+              description:
+                type: string
+            additionalProperties: true
+      additionalProperties: true
+  integration_points:
+    type:
+      - array
+      - "null"
+    items:
+      type: object
+      properties:
+        consumer_module:
+          type: string
+          minLength: 1
+        provider_module:
+          type: string
+          minLength: 1
+        entry_symbol:
+          type: string
+          minLength: 1
+        requires_modification:
+          type: boolean
+      additionalProperties: true

@@ -1,3 +1,4 @@
+import { resolveArtifactContent } from './artifact-content';
 /**
  * Testing trace gates — Hylyre run outcome evaluation, report↔trace reconciliation,
  * and UI entry coverage from use-cases.yaml ui_bindings.
@@ -557,14 +558,15 @@ export function buildUiEntryBindings(
   spec: UseCasesSpec | null,
   acPriorityMap?: Map<string, string>,
 ): UiEntryBinding[] {
-  if (!spec?.use_cases?.length) return [];
+  if (!spec) return [];
+  const parsed = resolveArtifactContent('use-cases@1', spec);
+  if (parsed.issues.length) throw new Error(parsed.issues.map(issue => `${issue.path}: ${issue.message}`).join('; '));
+  spec = parsed.value as UseCasesSpec;
   const out: UiEntryBinding[] = [];
   for (const uc of spec.use_cases) {
     for (const ub of uc.ui_bindings ?? []) {
       for (const action of ub.user_actions ?? []) {
-        const call = action.calls?.trim();
-        if (!call) continue;
-        out.push({
+        for (const call of action.calls ?? []) out.push({
           call,
           entryUi: ub.ui,
           useCaseId: uc.id,

@@ -66,6 +66,10 @@ function discoverProfileUnitSuites(): Array<{ id: string; modulePath: string }> 
  * 而它是唯一能抓"夹具手喂生产本不会给的东西"那类 bug 的测试，所以发布前必跑。
  */
 const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean }> = [
+  { id: 'artifact-content', modulePath: './unit/artifact-content.unit.test' },
+  { id: 'verification-gap', modulePath: './unit/verification-gap.unit.test' },
+  { id: 'verifier-semantic-handoff', modulePath: './unit/verifier-semantic-handoff.unit.test' },
+  { id: 'fe4512-semantic-recovery', modulePath: './unit/fe4512-semantic-recovery.unit.test', releaseOnly: true },
   { id: 'responsibility-host-replay', modulePath: './unit/responsibility-host-replay.unit.test' },
   { id: 'repair-responsibility', modulePath: './unit/repair-responsibility.unit.test' },
   { id: 'implementation-authority', modulePath: './unit/implementation-authority.unit.test' },

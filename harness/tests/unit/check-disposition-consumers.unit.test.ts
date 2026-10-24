@@ -318,8 +318,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const report = generateScriptReport('', 'testing', 'demo', root, [skip, aggAlone], FRAMEWORK_ROOT);
         const summary = writeRunSummaryBase(root, report, FRAMEWORK_ROOT);
         assert.strictEqual(summary.verdict, 'FAIL');
-        assert.deepStrictEqual(summary.blockers.map(b => b.id), ['testing_run_status']);
+        assert.deepStrictEqual(summary.blockers.map(check => check.id), ['testing_run_status']);
         assert.strictEqual(summary.blocker_count, 1);
+        assert.deepStrictEqual(summary.blocking_skips.map(check => check.id), ['p4_gate_not_run']);
         const failureKind = classifyFailureKind(summary);
         assert.strictEqual(failureKind, 'deterministic_gate_or_artifact_missing', `归因=${failureKind}`);
         const projection = buildCurrentAttemptFailureProjection({ decisionSummary: summary as never, failureKind, phase: 'testing', hasRuntimeFailureEvidence: false });

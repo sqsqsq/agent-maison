@@ -1,3 +1,4 @@
+import { executeCheck } from './utils/check-execution';
 import { resolveImplementationScope } from './utils/diff-scope';
 // ============================================================================
 // Plan 阶段脚本 Harness — check-plan.ts
@@ -542,7 +543,8 @@ export function resolveSectionApplicability(
   const contracts = ctx.featureSpec?.contracts as Record<string, unknown> | undefined;
   if (!contracts) return null; // 前提 1+2：真源不可信 → 落回原判定
   const shapeTainted = (ctx.featureSpec?.shape_issues ?? []).some(
-    issue => issue.includes('contracts.yaml') && issue.includes(`\`${collection}`),
+    issue => issue.includes('contracts.yaml') && (issue.includes(`\`${collection}`)
+      || new RegExp(`\\$\\.${collection}(?=\\[|\\.|:)`).test(issue)),
   );
   if (shapeTainted) return null; // 前提 3
 
@@ -1026,35 +1028,6 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : {}),
-    }];
-  }
-}
 
 const CONSTRAINT_CATEGORIES = new Set(['security', 'performance', 'dfx', 'nfr', 'privacy', 'compatibility']);
 
@@ -1203,26 +1176,26 @@ const checker: PhaseChecker = {
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
 
-    results.push(...safeRun(() => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
-    results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
-    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundPlanScope(ctx, design) ?? [], 'scope_declaration') : null;
+    results.push(...executeCheck(ctx, () => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
+    results.push(...executeCheck(ctx, () => checkRequiredChapters(ctx, design), 'required_chapters'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? executeCheck(ctx, () => checkChangeUnitBoundPlanScope(ctx, design) ?? [], 'scope_declaration') : null;
     if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id !== 'plan_to_architecture'));
-    else results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
-    results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
+    else results.push(...executeCheck(ctx, () => checkScopeDeclaration(ctx, design), 'scope_declaration'));
+    results.push(...executeCheck(ctx, () => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
     // visual-capability-truth S6（P1-F）：集成契约 vs scope 一致性（机器真源=integration_points）
-    results.push(...safeRun(() => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
-    if (!cuBoundScope) results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
-    results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
-    results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));
-    results.push(...safeRun(() => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
-    results.push(...safeRun(() => checkDataModelTyped(ctx, design), 'data_model_typed'));
-    results.push(...safeRun(() => checkInterfaceSignaturesComplete(ctx, design), 'interface_signatures_complete'));
-    results.push(...safeRun(() => checkComponentTreePerPage(ctx, design), 'component_tree_per_page'));
-    results.push(...safeRun(() => checkPrdMappingTable(ctx, design), 'spec_mapping_table'));
-    results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
-    results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
-    results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
-    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
+    results.push(...executeCheck(ctx, () => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
+    if (!cuBoundScope) results.push(...executeCheck(ctx, () => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
+    results.push(...executeCheck(ctx, () => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
+    results.push(...executeCheck(ctx, () => checkModuleChangeTable(ctx, design), 'module_change_table'));
+    results.push(...executeCheck(ctx, () => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
+    results.push(...executeCheck(ctx, () => checkDataModelTyped(ctx, design), 'data_model_typed'));
+    results.push(...executeCheck(ctx, () => checkInterfaceSignaturesComplete(ctx, design), 'interface_signatures_complete'));
+    results.push(...executeCheck(ctx, () => checkComponentTreePerPage(ctx, design), 'component_tree_per_page'));
+    results.push(...executeCheck(ctx, () => checkPrdMappingTable(ctx, design), 'spec_mapping_table'));
+    results.push(...executeCheck(ctx, () => checkStateManagementTable(ctx, design), 'state_management_table'));
+    results.push(...executeCheck(ctx, () => checkRouteDesignTable(ctx, design), 'route_design_table'));
+    results.push(...executeCheck(ctx, () => checkMetadataHeader(ctx, design), 'metadata_header'));
+    results.push(...executeCheck(ctx, () => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
 
     if (isPlanVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({
@@ -1234,7 +1207,7 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 plan.visual_parity`,
       });
     } else {
-      results.push(...safeRun(() => dispatchPlanVisualParity(ctx), 'visual_parity_coverage'));
+      results.push(...executeCheck(ctx, () => dispatchPlanVisualParity(ctx), 'visual_parity_coverage'));
     }
 
     results.push(
@@ -1243,14 +1216,14 @@ const checker: PhaseChecker = {
       ),
     );
 
-    results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P0', 'spec_p0_coverage'), 'spec_p0_coverage'));
-    results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P1', 'spec_p1_coverage'), 'spec_p1_coverage'));
-    results.push(...safeRun(() => checkMappingToFile(ctx, design), 'mapping_to_file'));
-    results.push(...safeRun(() => checkSpecConstraintTraceability(ctx, design), 'spec_constraint_traceability'));
+    results.push(...executeCheck(ctx, () => checkPrdCoverage(ctx, design, prd, 'P0', 'spec_p0_coverage'), 'spec_p0_coverage'));
+    results.push(...executeCheck(ctx, () => checkPrdCoverage(ctx, design, prd, 'P1', 'spec_p1_coverage'), 'spec_p1_coverage'));
+    results.push(...executeCheck(ctx, () => checkMappingToFile(ctx, design), 'mapping_to_file'));
+    results.push(...executeCheck(ctx, () => checkSpecConstraintTraceability(ctx, design), 'spec_constraint_traceability'));
     if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id === 'plan_to_architecture'));
-    else results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
+    else results.push(...executeCheck(ctx, () => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,

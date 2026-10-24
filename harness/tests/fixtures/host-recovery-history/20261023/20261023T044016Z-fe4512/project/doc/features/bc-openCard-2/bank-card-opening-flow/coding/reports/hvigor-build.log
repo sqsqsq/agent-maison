@@ -1,0 +1,68 @@
+$ "D:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" "D:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" --mode module -p product=default -p buildMode=debug --no-daemon --parallel --incremental --analyze=advanced assembleHap
+
+> hvigor [32mUP-TO-DATE :Phone:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@PreBuild...  [39m
+> hvigor [32mFinished :Phone:default@CreateModuleInfo... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GenerateMetadata...  [39m
+> hvigor [32mFinished :Phone:default@PreCheckSyscap... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GeneratePkgContextInfo...  [39m
+> hvigor [32mFinished :Phone:default@GeneratePkgSdkInfo... after 2 ms [39m
+> hvigor [32mFinished :Phone:default@ProcessIntegratedHsp... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@CreateHarBuildProfile...  [39m
+> hvigor [32mFinished :CommFunc:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@MergeProfile...  [39m
+> hvigor [32mFinished :Phone:default@SyscapTransform... after 8 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessRouterMap...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessShareConfig...  [39m
+> hvigor [32mFinished :Phone:default@ProcessStartupConfig... after 2 ms [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@CreateHarBuildProfile...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@CreateHarBuildProfile...  [39m
+> hvigor [32mFinished :CommFunc:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GenerateLoaderJson...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@CreateHarBuildProfile...  [39m
+> hvigor [32mFinished :CommFunc:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :CommUI:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CreateBuildProfile...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@ProcessLibs...  [39m
+> hvigor [32mFinished :CommUI:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :WalletMain:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@MakePackInfo...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessProfile...  [39m
+> hvigor [32mFinished :CommUI:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :WalletMain:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessResource...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@ProcessLibs...  [39m
+> hvigor [32mFinished :Phone:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CompileResource...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@DoNativeStrip...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :Phone:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CompileArkTS...  [39m
+> hvigor [32mFinished :Phone:default@BuildJS... after 2 ms [39m
+> hvigor [32mFinished :WalletMain:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :Phone:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@DoNativeStrip...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CacheNativeLibs...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GeneratePkgModuleJson...  [39m
+> hvigor [32mFinished :Phone:default@ProcessCompiledResources... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@PackageHap...  [39m
+> hvigor [32mFinished :Phone:default@PackingCheck... after 4 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@SignHap...  [39m
+> hvigor [32mFinished :Phone:default@CollectDebugSymbol... after 1 ms [39m
+> hvigor [32mFinished :Phone:assembleHap... after 1 ms [39m
+> hvigor [32mBUILD SUCCESSFUL in 1 s 356 ms [39m

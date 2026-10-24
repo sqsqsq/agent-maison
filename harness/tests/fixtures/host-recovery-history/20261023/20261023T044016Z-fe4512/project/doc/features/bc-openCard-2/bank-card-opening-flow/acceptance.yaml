@@ -1,0 +1,188 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93"
+
+criteria:
+  - id: AC-1
+    prd_function: F1
+    related_functions: [F1, F2]
+    priority: P0
+    description: "添加银行卡页和全部银行页点击任一银行均打开该银行的卡型选择半模态。"
+    testable: true
+    verification_steps: ["分别从两个入口点击同一银行", "核对银行名与 logo", "核对支持卡型与后续流程一致"]
+    expected_result: "不再提示暂不支持；半模态展示该银行支持卡型且只能单选。"
+    ut_layer: both
+    ut_focus: "两个入口调用同一 opening session 参数构造与卡型单选规则。"
+    device_focus: "两入口真机点击与半模态视觉、关闭和继续行为。"
+    checkpoint:
+      pre_screen: add_bank_card
+      action: { target_element_id: col_row_cmb }
+      post_screen: card_type_sheet
+      required_element_ids: [card_type_sheet_title, card_type_bank_row, debit_card_row, credit_card_row, card_type_continue_btn]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "之前点击任一银行点击后，提示暂不支持，本次需求改为拉起选择卡类型半模态页面。"
+      snippet_sha256: "c5e1166cbf6b17d91f3c640c8941fbd04ebf10c35ca3329ab62dca90dd8d84ba"
+
+  - id: AC-2
+    prd_function: F3
+    priority: P0
+    description: "具体卡片页按银行和卡型展示一至两张 mock 卡，界面只显示前四后四，后台保留完整卡号。"
+    testable: true
+    verification_steps: ["选择不同银行与卡型", "检查卡片数量和掩码", "检查传入验证码页的模型保留完整卡号"]
+    expected_result: "展示格式为前四加掩码加后四；业务对象仍持有完整卡号。"
+    ut_layer: both
+    ut_focus: "候选筛选和 maskCardNumber 边界。"
+    device_focus: "页面布局、单选和协议门禁。"
+    checkpoint:
+      pre_screen: card_type_sheet
+      action: { target_element_id: card_type_continue_btn }
+      post_screen: bank_card_selection
+      required_element_ids: [selection_nav_title, selection_hint, bank_card_candidate_1, selection_agreement, selection_next_btn]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "银行的选择具体卡片页面，展示该银行支持的银行卡信息，卡号只显示前四后四，但实际后台数据要按完整卡号处理。"
+      snippet_sha256: "4656ff7ac021e7869dd05b28deeb8117cbc93bf8ed200d9544b48fb184bde945"
+
+  - id: AC-3
+    prd_function: F4
+    priority: P0
+    description: "验证码半模态出现即触发一次 mock 发送，60 秒内不可重发，仅六位数字使下一步可用。"
+    testable: true
+    verification_steps: ["打开验证码弹层", "输入非法和合法字符", "推进倒计时至零并重发"]
+    expected_result: "手机号掩码来自账号 mock；倒计时、重发和按钮状态符合要求。"
+    ut_layer: both
+    ut_focus: "六位数字校验、倒计时状态机和重发门禁。"
+    device_focus: "数字键盘、弹层视觉和按钮启停。"
+    checkpoint:
+      pre_screen: bank_card_selection
+      action: { target_element_id: selection_next_btn }
+      post_screen: otp_verification_sheet
+      required_element_ids: [otp_sheet_title, otp_phone_hint, otp_input, otp_resend_action, otp_next_btn]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "输入验证码半模态页面，拉起后默认触发一次假的短信发送，之后右侧按钮变为倒计时，用户必须输入6位验证码才能点击下一步。"
+      snippet_sha256: "b90e431612171cdcdbad3b41bd936f75fd3d8cf42149b788dc4236fc4bfac64d"
+
+  - id: AC-4
+    prd_function: F5
+    priority: P0
+    description: "提交验证码后完整卡数据写入 RDB；无论成功或失败都携带完整卡号和结果进入结果页。"
+    testable: true
+    verification_steps: ["分别让 Repository 保存成功和失败", "读取数据库记录", "检查 OpeningResult 的完整卡号和结果"]
+    expected_result: "成功时数据库字段完整且卡号唯一；失败时无半写记录但结果页收到完整卡号与失败状态。"
+    ut_layer: both
+    ut_focus: "RDB 映射、幂等和失败结果。"
+    device_focus: "成功/失败结果页呈现与跨页参数。"
+    checkpoint:
+      pre_screen: otp_verification_sheet
+      action: { target_element_id: otp_next_btn }
+      post_screen: opening_result_success
+      required_element_ids: [result_status_icon, result_title, result_description, result_guide_illustration, result_finish_btn]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "无论写入成功还是失败，将本次添加的卡片卡号（全卡号）和开卡结果带着跳转到添加结果页。"
+      snippet_sha256: "397d06bf90202823855fe10b339d868f7017d13f0d0292dbc9b83480886cf52c"
+
+  - id: AC-5
+    prd_function: F6
+    priority: P0
+    description: "结果页无返回入口并拦截侧滑/系统返回，只能点击完成；完成后开卡过程页从栈中移除。"
+    testable: true
+    verification_steps: ["在结果页尝试系统返回与侧滑", "点击完成", "连续返回检查历史页已清除"]
+    expected_result: "返回动作不离开结果页；成功携带完整卡号回钱包首页，失败回最初添加卡片页，均不能再看到本轮过程页。"
+    navigation_resolution: "蓝图详细导航裁决将‘最初添加卡片页’绑定为 AddBankCardPage/添加银行卡页；不得绑定 AddCardEntryPage。"
+    ut_layer: device
+    ut_focus: "导航清栈计算可用纯函数覆盖。"
+    device_focus: "返回手势拦截、完成按钮和真实 NavPathStack。"
+    checkpoint:
+      pre_screen: opening_result_success
+      action: { target_element_id: result_finish_btn }
+      post_screen: wallet_home
+      required_element_ids: [home_root]
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "添加结果页是个全屏页面，没有左滑箭头，也禁止左滑事件。"
+      snippet_sha256: "490381c8b6b42efb77a3f56604b3468939e34dc8184cc5fd11a0cf049607b619"
+
+  - id: AC-6
+    prd_function: F7
+    priority: P1
+    description: "原有添加卡片、添加银行卡、全部银行、钱包首页导航链保持可用。"
+    testable: true
+    verification_steps: ["运行既有路由用例", "在真机往返添加卡片与全部银行页面"]
+    expected_result: "既有路由名称和页面返回语义不受新增流程破坏。"
+    ut_layer: both
+    ut_focus: "路由注册和旧入口回归。"
+    device_focus: "旧页面互相跳转与返回。"
+    requirement_ref:
+      source_path: doc/features/原始需求/1-2-银行卡/原始需求.md
+      snippet: "测试用例要包含老代码和本轮新开发代码的页面互相跳转功能，不能导致原有路由受损。"
+      snippet_sha256: "ac15e5291b666545510f25a924e0a4199a235258a04a34557d111026129edaf8"
+
+boundaries:
+  - id: BD-1
+    prd_exception: E1
+    scenario: "用户输入或选择不完整。"
+    description: "未选择卡型、卡片、未同意协议或验证码不是六位数字时不得继续。"
+    priority: P0
+    handling: "保持当前页面和输入，继续按钮置灰，不创建数据库记录。"
+    expected_behavior: "用户补齐合法输入后才可继续。"
+    affected_functions: [F2, F3, F4]
+    ut_layer: both
+    ut_focus: "卡型、卡片、协议与六位数字验证码的组合门禁。"
+    device_focus: "四个界面的按钮启停和中途取消行为。"
+
+  - id: BD-2
+    prd_exception: E2
+    scenario: "用户快速重复点击发送验证码。"
+    description: "倒计时期间重复点击发送不触发新发送；归零后仅一次点击重启 60 秒。"
+    priority: P0
+    handling: "倒计时状态为唯一门禁，忽略不可用期间点击。"
+    expected_behavior: "同一倒计时窗口只发生一次 mock 发送。"
+    affected_functions: [F4]
+    ut_layer: both
+    ut_focus: "60 秒倒计时状态机、重复点击忽略与归零重启。"
+    device_focus: "倒计时文案和重发按钮实际交互。"
+
+  - id: BD-3
+    prd_exception: E3
+    scenario: "数据库创建、查询或插入失败。"
+    description: "RDB 保存异常仍进入失败结果页且不泄漏完整卡号到日志或界面。"
+    priority: P0
+    handling: "回滚/不提交当前写入，生成失败 OpeningResult，日志只记错误类别。"
+    expected_behavior: "失败结果页可完成退出，数据库无损坏或半写记录。"
+    affected_functions: [F5, F6]
+    ut_layer: both
+    ut_focus: "RDB 初始化/写入异常映射、事务原子性与敏感数据日志检查。"
+    device_focus: "失败结果页和完成后返回添加银行卡页。"
+
+  - id: BD-4
+    prd_exception: E4
+    scenario: "用户中途取消卡型或验证码流程。"
+    description: "半模态关闭或页面返回在结果页之前只丢弃当前未提交选择，不写数据库。"
+    priority: P1
+    handling: "释放当前 opening session 的临时选择与计时器。"
+    expected_behavior: "返回原入口，重新进入时从初始状态开始。"
+    affected_functions: [F1, F2, F3, F4]
+    ut_layer: both
+    ut_focus: "Sheet 关闭与页面离开时的状态和 Timer 清理。"
+    device_focus: "中途关闭后重新进入的初始状态。"
+
+performance:
+  - id: NFR-1
+    metric: "交互响应"
+    threshold: "300"
+    unit: ms
+    description: "本地页面切换和按钮状态变化在普通真机上应即时可感，目标不超过 300ms；RDB 首次初始化除外但必须有进行中状态。"
+
+coverage_summary:
+  total_functions: 7
+  p0_functions: 6
+  p1_functions: 1
+  criteria_count: 6
+  boundaries_count: 4
+  performance_count: 1
+  functions_with_ac: [F1, F2, F3, F4, F5, F6, F7]
+  uncovered_functions: []
+  p0_p1_coverage: "7/7"
+  notes: "AC-1..AC-6、BD-1..BD-4 与 NFR-1 逐字段保持蓝图权威内容；checkpoint 与 requirement_ref 为 spec 视觉验收补充。"

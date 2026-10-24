@@ -178,6 +178,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         start_phase: 'plan', end_phase: prepared.scope.phase_chain.at(-1), chain_override: prepared.scope.phase_chain,
         execution_scope: prepared.scope, budget: { max_total_turns: 3 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }, { projectRoot: root, featuresDir: 'doc/features' });
       createGoalRun({ projectRoot: root, manifest, chain: prepared.scope.phase_chain });
+      assert(!fs.existsSync(contractFile), 'birth must not pre-seed contracts');
       let runId = manifest.run_id, reachedCoding = false, planCalls = 0;
       const boundary = () => resolvePhaseWriteBoundary({ projectRoot: root, frameworkRoot, feature, runId,
         phaseOrder: ['spec','plan','coding','review','ut','testing'], track: 'full', profileDir: path.join(frameworkRoot,'profiles/hmos-app'), productLayerDirs: ['01-Product','02-Feature','04-BusinessBase'] });
@@ -192,7 +193,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const outcome = await runGoalRuntimeChain(root, { frameworkRoot, featureId: feature, adapter: 'generic', resume: runId,
         onPlan: ctx => {
           runId = ctx.runId; planCalls++;
-          if (planCalls === 1) assert(!fs.existsSync(contractFile), 'birth must not pre-seed contracts');
+          if (planCalls === 1) assert(fs.existsSync(contractFile)
+            && String(YAML.parse(fs.readFileSync(contractFile, 'utf8')).source).startsWith('derive.blueprint-contracts:'),
+            'the legal plan preparation window supplies the deterministic contract before the author');
           assert.equal(resolvePhasePathOwnership(boundary(), path.relative(root, contractFile)).owner, 'plan');
           fs.writeFileSync(contractFile, planCalls === 1 ? YAML.stringify({ ...hostContracts, interfaces: [{ class: 'BankCardRepository', file: inputSource, methods: [{ name: 'open', params: [], return: 'any' }] }] }) : contractsRaw);
           fs.writeFileSync(featureFilePath(root, feature, 'use-cases.yaml'), useCasesRaw);
@@ -217,7 +220,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
           return { checks: [...checks, ...revision] };
         },
       });
-      assert(reachedCoding, JSON.stringify(outcome.events.filter(e => ['phase_halt','phase_verdict'].includes(String(e.type)))
+      assert(reachedCoding, JSON.stringify(outcome.events.filter(e => ['phase_halt','phase_verdict','run_end'].includes(String(e.type)))
         .map(e => ({ type: e.type, phase: e.phase, verdict: e.verdict, action: e.action, reason: e.reason, halt_reason: e.halt_reason }))));
       assert.equal(planCalls, 2, 'real invalid construction must retry the plan owner before publishing');
       assert(outcome.events.some(e => e.type === 'scope_revised' && (e.trigger as { phase?: string })?.phase === 'plan'));

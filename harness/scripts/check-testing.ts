@@ -1,3 +1,5 @@
+import { executeCheck } from './utils/check-execution';
+import { resolveArtifactContent } from './utils/artifact-content';
 import { DEVICE_SETUP_GUIDANCE, type DeviceSetupObservation } from './utils/device-unlock-helper';
 // ============================================================================
 // Testing 阶段脚本 Harness — check-testing.ts
@@ -244,7 +246,7 @@ import {
   buildInstallBlockingCheckDetails,
   writeInstallDiagJson,
 } from '../../profiles/hmos-app/harness/device-install-diag';
-import { isBlockingCheck } from './utils/check-disposition';
+import { isBlockingCheck, isRequiredCheckGap, isFrameworkExecutionGap } from './utils/check-disposition';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -1747,7 +1749,7 @@ function checkTestCaseToAcceptance(ctx: CheckContext, plan: string | null): Chec
   }];
 }
 
-function checkPlanToReportConsistency(ctx: CheckContext, plan: string | null, report: string | null): CheckResult[] {
+export function checkPlanToReportConsistency(ctx: CheckContext, plan: string | null, report: string | null): CheckResult[] {
   const id = 'plan_to_report_consistency';
   if (!plan || !report) {
     return [{
@@ -5174,7 +5176,7 @@ export function __testing_checkDeviceTestRunGateBeforeInstall(ctx: CheckContext)
   });
 }
 
-function checkReportTraceReconciliation(
+export function checkReportTraceReconciliation(
   ctx: CheckContext,
   report: string | null,
   pipeline: DeviceTestPipelineHolder,
@@ -5212,6 +5214,7 @@ function checkReportTraceReconciliation(
       severity: 'BLOCKER',
       status: 'SKIP',
       details: 'device_test.install 未 PASS，跳过 report↔trace 对账（无 Hylyre trace SSOT）。',
+      ...(pipeline.installExternallyBlocked ? { failure_kind: 'device_blocked', blocking_class: 'externalBlocked' } : {}),
     }];
   }
 
@@ -5466,15 +5469,7 @@ export function __testing_buildTestingRunStatusResult(plan: string | null, repor
 }
 
 function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
-  const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'use-cases.yaml');
-  if (!fs.existsSync(resolved.actualPath)) return null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const yaml = require('yaml') as { parse: (s: string) => unknown };
-    return yaml.parse(fs.readFileSync(resolved.actualPath, 'utf-8')) as UseCasesSpec;
-  } catch {
-    return null;
-  }
+  return ctx.featureSpec.useCases ?? null;
 }
 
 /**
@@ -5647,11 +5642,23 @@ function checkChannelEvidenceObligation(
   }];
 }
 
-function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
+export function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
   const id = 'ui_entry_coverage';
   const desc = ruleDesc(ctx, 'structure_checks', id);
 
-  const spec = loadUseCaseSpec(ctx);
+  const failure = (details: string, suggestion: string, repair_owner?: 'plan'): CheckResult => ({
+    id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'FAIL',
+    details, suggestion, ...(repair_owner ? { repair_owner } : {}),
+  });
+  const raw = loadUseCaseSpec(ctx);
+  const resolved = raw ? resolveArtifactContent('use-cases@1', raw, { mode: 'complete', frameworkRoot: ctx.frameworkRoot }) : null;
+  const issues = [...new Set([
+    ...(ctx.featureSpec.shape_issues ?? []).filter(issue => issue.includes('use-cases.yaml')),
+    ...(resolved?.issues ?? []).map(issue => `use-cases.yaml ${issue.path}: ${issue.message}`),
+  ])];
+  if (issues.length) return [failure(`use-cases.yaml 格式不可消费：\n${issues.join('\n')}`,
+    '交 plan 作者按字段路径修正真实 use-cases 输入后重跑；calls 例如 ["flow.selectBank"]，ui_bindings 每项保留 entry_ui / calls / linked_flow。', 'plan')];
+  const spec = resolved?.value as UseCasesSpec | undefined;
   if (!spec?.use_cases?.length) {
     return [{
       id,
@@ -5698,16 +5705,8 @@ function checkUiEntryCoverage(ctx: CheckContext): CheckResult[] {
   }
 
   if (cov.blockers.length > 0) {
-    results.push({
-      id,
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `P0 多 UI 入口缺派生覆盖：\n${truncateList(cov.blockers, 20)}`,
-      suggestion:
-        '按 ui_bindings 为每个 UI 入口各派生一条 Hylyre 用例（entry_ui 字段），确保同一业务调用（如 flow.selectBank）的每个入口至少执行一次。',
-    });
+    results.push(failure(`P0 多 UI 入口缺派生覆盖：\n${truncateList(cov.blockers, 20)}`,
+      '按 ui_bindings 为每个 UI 入口各派生一条 Hylyre 用例（entry_ui 字段），确保同一业务调用（如 flow.selectBank）的每个入口至少执行一次。'));
   }
 
   if (cov.majors.length > 0) {
@@ -5840,26 +5839,13 @@ export function projectDelegatedVisualProviderFailure(
 
   return {
     ...base,
+    severity: 'MINOR',
     details:
       `【delegated 视觉委托】非发布必需的 provider 本轮不可用：${reason}\n` +
       'provider-dependent 视觉证据保持 SKIP/UNVERIFIED advisory；确定性视觉红线仍继续执行。',
   };
 }
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    return fn();
-  } catch (err) {
-    return [{
-      id: checkId,
-      category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: `检查执行时发生错误：${(err as Error).message}`,
-    }];
-  }
-}
 
 function buildTestingRunStatusResult(
   plan: string | null,
@@ -5920,7 +5906,8 @@ function buildTestingRunStatusResult(
     category: 'structure',
     description: 'Testing 阶段脚本门禁总体状态',
     severity: externalOnly ? 'MINOR' : 'BLOCKER',
-    status: canClaimDone ? 'PASS' : externalOnly ? 'WARN' : 'FAIL',
+    status: canClaimDone ? 'PASS' : externalOnly ? 'WARN' : plan && report && blockerFails.length === 0 && blockerSkips.length > 0 && blockerSkips.every(check => isRequiredCheckGap(check)) ? 'SKIP' : 'FAIL',
+    ...(plan && report && blockerFails.length === 0 && blockerSkips.length > 0 && blockerSkips.every(isFrameworkExecutionGap) ? { failure_kind: 'framework_bug', blocking_class: 'framework_internal', actionability: 'framework_blocked' as const } : {}),
     details: lines.join('\n'),
     suggestion: canClaimDone
       ? '脚本门禁可进入 verifier + receipt 闭环；仍需确认真机测试证据与报告语义质量。'
@@ -6040,7 +6027,7 @@ const checker: PhaseChecker = {
     ];
 
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'testing', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,
@@ -6067,12 +6054,12 @@ const checker: PhaseChecker = {
     // Hylyre/device 动作之前解析一次。否则"缺列 / 缺值 / 非法值 / 同 TC 重复"这类计划
     // 契约错误会在烧掉一次真机 run 之后才被报出来，且期间只跑了合法子集，产出半份 trace。
     // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
-    results.push(...safeRun(() => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
-    results.push(...safeRun(() => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection'));
+    results.push(...executeCheck(ctx, () => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
+    results.push(...executeCheck(ctx, () => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection'));
     // R8：「TC 仅关联 unit 层 AC」同样是**计划契约错误**（这条 TC 不该存在于真机计划里），
     // 所以与通道声明并列前移到 build/install/device 之前裁决一次——跑完机再提示等于白烧一轮，
     // 而且 AI 会去改 UT / 改标 manual 绕路。分层结果只在这里算一次，后面不再重算。
-    const unitLayerAcResults = safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac');
+    const unitLayerAcResults = executeCheck(ctx, () => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac');
     results.push(...unitLayerAcResults);
     const unitOnlyTcBlocked = unitLayerAcResults.find(r => isBlockingCheck(r));
     const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
@@ -6116,25 +6103,25 @@ const checker: PhaseChecker = {
       // d9e4b7c1 T2：goal 正式 gate 的 evidence 统一写入（build→install→run 全部完成后，
       // 协调层单点写）。review P1：结果必须进 results——真实安装+run 已成功而 evidence
       // 写不出时是 BLOCKER（否则 collector 把缺文件当无信号，旧包结果可能假放行）。
-      results.push(...safeRun(
+      results.push(...executeCheck(ctx,
         () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
         'device_test_evidence_write',
       ));
     }
-    results.push(...safeRun(() => checkUiEntryCoverage(ctx), 'ui_entry_coverage'));
+    results.push(...executeCheck(ctx, () => checkUiEntryCoverage(ctx), 'ui_entry_coverage'));
 
     // --- Structure checks: Test Plan ---
-    results.push(...safeRun(() => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));
-    results.push(...safeRun(() => checkTestCaseTableFormat(ctx, plan), 'test_case_table_format'));
-    results.push(...safeRun(() => checkTestCasePriorityValues(ctx, plan), 'test_case_priority_values'));
+    results.push(...executeCheck(ctx, () => checkPlanRequiredChapters(ctx, plan), 'plan_required_chapters'));
+    results.push(...executeCheck(ctx, () => checkTestCaseTableFormat(ctx, plan), 'test_case_table_format'));
+    results.push(...executeCheck(ctx, () => checkTestCasePriorityValues(ctx, plan), 'test_case_priority_values'));
     // S6（visual-capability-truth P1-I）：TC DAG machine block 一致性
-    results.push(...safeRun(() => checkTestCaseFlowConsistency(ctx, plan), 'test_case_flow_consistency'));
-    results.push(...safeRun(() => checkTestEnvironmentDefined(ctx, plan), 'test_environment_defined'));
-    results.push(...safeRun(() => checkPassCriteriaDefined(ctx, plan), 'pass_criteria_defined'));
-    results.push(...safeRun(() => checkPlanMetadata(ctx, plan), 'plan_metadata_header'));
+    results.push(...executeCheck(ctx, () => checkTestCaseFlowConsistency(ctx, plan), 'test_case_flow_consistency'));
+    results.push(...executeCheck(ctx, () => checkTestEnvironmentDefined(ctx, plan), 'test_environment_defined'));
+    results.push(...executeCheck(ctx, () => checkPassCriteriaDefined(ctx, plan), 'pass_criteria_defined'));
+    results.push(...executeCheck(ctx, () => checkPlanMetadata(ctx, plan), 'plan_metadata_header'));
 
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
@@ -6147,12 +6134,12 @@ const checker: PhaseChecker = {
     );
 
     // --- Traceability checks ---
-    results.push(...safeRun(() => checkDeviceCaseNormalization(ctx), 'device_case_contract'));
-    results.push(...safeRun(() => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
-    results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
+    results.push(...executeCheck(ctx, () => checkDeviceCaseNormalization(ctx), 'device_case_contract'));
+    results.push(...executeCheck(ctx, () => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
+    results.push(...executeCheck(ctx, () => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
     // plan_references_unit_layer_ac 已在设备流水线之前裁决（见上），此处不重算。
-    results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
-    results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
+    results.push(...executeCheck(ctx, () => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
+    results.push(...executeCheck(ctx, () => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
 
     const visualStart = results.length;
     if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
@@ -6173,7 +6160,7 @@ const checker: PhaseChecker = {
         status: 'SKIP',
         details: 'report-only reconciliation 不触发视觉采集；仅保留既有视觉产物的确定性静态检查。',
       });
-      results.push(...safeRun(
+      results.push(...executeCheck(ctx,
         () => dispatchVisualDiffDeterministicOnly(ctx),
         'visual_diff_deterministic',
       ));
@@ -6206,12 +6193,12 @@ const checker: PhaseChecker = {
         // unusable 只抑制**依赖 provider 判定**的 pending/candidate 分支；与 provider
         // 无关的确定性红线（改判脚本物证 / json 结构损坏）照跑——复用既有 check id，
         // 不新增 id/状态/质量轴。
-        results.push(...safeRun(
+        results.push(...executeCheck(ctx,
           () => dispatchVisualDiffDeterministicOnly(ctx),
           'visual_diff_deterministic',
         ));
       } else {
-        results.push(...safeRun(() => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
+        results.push(...executeCheck(ctx, () => dispatchDeviceVisualDiff(ctx), 'visual_diff'));
         if (providerReview?.diagnosticPaths?.length) {
           const visual = results.find(check => check.id === 'visual_diff');
           if (visual) {
@@ -6245,27 +6232,27 @@ const checker: PhaseChecker = {
       ) ?? report;
     }
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
         'report_trace_reconciliation',
       ),
     );
-    results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
-    results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
-    results.push(...safeRun(() => checkPassRateCalculated(ctx, report, channelEvidenceBindings), 'pass_rate_calculated'));
-    results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
-    results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
-    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
-    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
-    results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
-    results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
+    results.push(...executeCheck(ctx, () => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
+    results.push(...executeCheck(ctx, () => checkExecutionResultTable(ctx, report), 'execution_result_table'));
+    results.push(...executeCheck(ctx, () => checkPassRateCalculated(ctx, report, channelEvidenceBindings), 'pass_rate_calculated'));
+    results.push(...executeCheck(ctx, () => checkDefectTableFormat(ctx, report), 'defect_table_format'));
+    results.push(...executeCheck(ctx, () => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
+    results.push(...executeCheck(ctx, () => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
+    results.push(...executeCheck(ctx, () => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
+    results.push(...executeCheck(ctx, () => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
+    results.push(...executeCheck(ctx, () => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
 
     // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---
-    results.push(...safeRun(() => checkReviewClosureAttestationGate(ctx), 'review_closure_attestation'));
+    results.push(...executeCheck(ctx, () => checkReviewClosureAttestationGate(ctx), 'review_closure_attestation'));
 
     // --- goal-fakepass-hardening t3：产品行为开关扫描（defense-in-depth）---
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => buildBehaviorSwitchCheckResult({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
         'product_behavior_switch_scan',
       ),
@@ -6273,7 +6260,7 @@ const checker: PhaseChecker = {
 
     // --- testing-stepresult-evidence：P0 acceptance StepResult 对账 + skip denominator ---
     results.push(
-      ...safeRun(() => {
+      ...executeCheck(ctx, () => {
         const reportsBaseP0 = path.join(receiptDirPath(ctx.projectRoot, ctx.feature, 'testing'), 'reports');
         const tracePath = resolveAuthoritativeHylyreTracePath(reportsBaseP0);
         const trace = tracePath ? parseHylyreTrace(tracePath) : null;
@@ -6324,7 +6311,7 @@ const checker: PhaseChecker = {
       deviceTestHapHolder.nativeArtifactBinding?.derived_plan_path ?? null,
     ));
     // 6.5b：证据义务必须晚于 visual 产出与 visual 门本身。
-    results.push(...safeRun(
+    results.push(...executeCheck(ctx,
       () => checkChannelEvidenceObligation(
         ctx,
         plan,

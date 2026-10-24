@@ -1,23 +1,136 @@
-$schema: "https://json-schema.org/draft/2020-12/schema"
-$id: "agentmaison://artifact/acceptance@1"
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: agentmaison://artifact/acceptance@1
 title: Feature acceptance criteria
 x-artifact-id: acceptance@1
 x-version: 1
-x-authority: "Compatibility shape; semantic and coverage truth remains check-acceptance.ts."
-x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
+x-authority: Compatibility shape; semantic and coverage truth remains check-acceptance.ts.
+x-blueprint-projection: Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported.
 type: object
-required: [criteria]
+required:
+  - criteria
 properties:
-  criteria: { type: array }
-  boundaries: { type: array }
-  performance:
+  criteria:
     type: array
     items:
       type: object
       properties:
-        ut_layer: { type: string, enum: [unit, device, both] }
-        ut_focus: { type: string }
-        device_focus: { type: string }
+        id:
+          type: string
+          minLength: 1
+        priority:
+          type: string
+        description:
+          type: string
+          minLength: 1
+        ut_layer:
+          type: string
+          enum:
+            - unit
+            - device
+            - both
+        ut_focus:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        device_focus:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        testable:
+          type: boolean
+        verification_steps:
+          type:
+            - array
+            - "null"
+          items:
+            type: string
+            minLength: 1
+        expected_result:
+          type: string
+        verification_method:
+          type: string
+      additionalProperties: true
+  boundaries:
+    type:
+      - array
+      - "null"
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        priority:
+          type: string
+        description:
+          type: string
+          minLength: 1
+        ut_layer:
+          type: string
+          enum:
+            - unit
+            - device
+            - both
+        ut_focus:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        device_focus:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        scenario:
+          type: string
+          minLength: 1
+        handling:
+          type: string
+          minLength: 1
+        expected_behavior:
+          type: string
+          minLength: 1
+      additionalProperties: true
+  performance:
+    type:
+      - array
+      - "null"
+    items:
+      type: object
+      properties:
+        ut_layer:
+          type: string
+          enum:
+            - unit
+            - device
+            - both
+        ut_focus:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        device_focus:
+          anyOf:
+            - type: string
+            - type: array
+              items:
+                type: string
       additionalProperties: true
   coverage_summary: {}
+  schema_version:
+    type: string
+    minLength: 1
+  feature:
+    type: string
+    minLength: 1
+  source:
+    type: string
+    minLength: 1
 additionalProperties: true

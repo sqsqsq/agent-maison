@@ -1,0 +1,44 @@
+{
+  "phase": "spec",
+  "stage": "reporting",
+  "timed_out": false,
+  "inspected_file_count": 16,
+  "inspected_files": [
+    "01-Product/Phone/src/main/ets/pages/index.ets",
+    "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+    "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+    "02-Feature/WalletMain/src/main/ets/index.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+    "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+    "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+    "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+    "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+    "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+    "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets",
+    "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+    "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+    "04-BusinessBase/AccountManager/src/main/ets/index.ets"
+  ],
+  "report_sections_done": [
+    "0. 术语映射表",
+    "1. 功能概述",
+    "Scope 声明",
+    "2. 目标用户与使用场景",
+    "3. 功能清单",
+    "4. 页面/界面描述",
+    "5. 业务流程图",
+    "6. 异常/边界场景处理",
+    "7. 非功能性需求",
+    "8. 验收标准"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/spec.md",
+      "sha256": "99955f414e056e67eee339eb49cec8d60f870369b88889447913f1d4bd078227",
+      "mtime_ms": 1792731412698.1423
+    }
+  ],
+  "derived_at": "2026-10-23T04:59:30.120Z"
+}

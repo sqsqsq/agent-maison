@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261023T044016Z-fe4512",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "status": "HALTED",
+  "phases": [
+    {
+      "phase": "spec",
+      "verdict": "PASS",
+      "summary_path": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness",
+      "retries": 0,
+      "agent_exit_code": 1,
+      "snapshot_files": {
+        "summary.json": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness/summary.json",
+        "script-report.json": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness/script-report.json",
+        "merged-report.md": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness/merged-report.md",
+        "trace.json": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness/trace.json",
+        "review-report.md": null,
+        "verifier.report.md": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/spec/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "3dda0da1336dbe085ecefb51d3f1564b907a162b71f962245cfe4a761f6dbb5c",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "plan",
+      "verdict": "PASS",
+      "summary_path": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness",
+      "retries": 0,
+      "agent_exit_code": 1,
+      "snapshot_files": {
+        "summary.json": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness/summary.json",
+        "script-report.json": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness/script-report.json",
+        "merged-report.md": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness/merged-report.md",
+        "trace.json": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness/trace.json",
+        "review-report.md": null,
+        "verifier.report.md": "doc/features/bc-openCard-2/bank-card-opening-flow/goal-runs/20261023T044016Z-fe4512/phases/plan/harness/verifier.report.md"
+      },
+      "verifier_evidence": {
+        "subject_id": "e4024fb9b8fc40341d54cfc3fce1b8a28c1a34ec5d77c38c89150f67c099a364",
+        "verdict": "PASS",
+        "blocker_count": 0
+      },
+      "advance_blocked": false
+    },
+    {
+      "phase": "coding",
+      "verdict": "FAIL",
+      "halted": true,
+      "summary_path": "doc/features/bc-openCard-2/bank-card-opening-flow/coding/reports/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/bank-card-opening-flow/coding/reports",
+      "retries": 0,
+      "agent_exit_code": 1,
+      "halt_reason": "framework_bug",
+      "halt_guidance": "【cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 · run 20261023T044016Z-fe4512 · coding】门禁脚本自身异常（[Harness 内部错误]，checker: named_business_handler）——这是 framework 缺陷，**不是 agent 产物的问题**。\n  首行栈：[Harness 内部错误] ua.calls.split is not a function\n\n处置：\n  1. 把该缺陷回灌 agent-maison 源仓修复并重新发布（附 harness 报告里的完整栈）；\n  2. 等不及发布需本地热修的：这是**真人/updater 的操作**。先停 run，由用户/CI 明确集成\n     已修复的发布件或在有权限的维护环境处理；宿主 Git add/stage/commit 不是 Maison 放行条件；\n  3. **不要**让 agent 继续修改自己的产物来绕过——崩溃发生在 checker 内部，产物怎么改都可能复现；\n     agent 也不得修改 framework 发布件。\n\n处置完后续跑：补上缺的输入后，重新发起同一请求（对 agent 说同一句话，或重跑同一条启动命令）：框架会重新接入本 run，条件是否解除仍由原来的检查判断，没解除就以原来的原因再停一次、不新建 run。有人在场时补好即可立即重发；无人值守时，本 run 停止后 5 分钟内重发会先保持停止（显式续跑命令也一样要等），过了这段冷却再发。\n  也可以显式执行（已填好）：npm --prefix framework/harness run goal -- --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 --resume 20261023T044016Z-fe4512 --force-resume",
+      "failure_kind_classified": "framework_bug",
+      "agent_duration_ms": 599524,
+      "agent_stderr_excerpt": "Reading prompt from stdin... 2026-10-23T05:17:20.365491Z WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/ 2026-10-23T05:17:20.365529Z WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/ 2026-10-23T05:17:20.390414Z WARN codex_core::shell_snapshot: Failed to create shell s…",
+      "harness_error_excerpt": "-elements.yaml） - result_ocr_uncertain_copy（ref_opening_result_success）「回中加」：OCR 低置信孤立文本，reviewer 观察判定为插画区域而非可靠产品文案；留待有视觉能力复核（来源 doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml） 有效范围已明确而审查意见相反：更正 review 报告，不派扩大范围的 coding 返修；实现违约由 coding 恢复契约。只有登记错误、定义缺口或目标需要改变时回原设计/spec 责任方。 合法延后按当前严格度披露债务与发布状态；不豁免真实功能、数据或关键交互缺陷。 ============================================================"
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-10-23T05:27:31.450Z",
+  "fidelity_routing": {
+    "inferred": "pixel_1to1",
+    "selected": "pixel_1to1",
+    "effective": "pixel_1to1",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "source": "requirement_self_declared",
+    "decision_id": "fe22ac30d19ab059"
+  }
+}

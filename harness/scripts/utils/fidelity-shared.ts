@@ -1,3 +1,4 @@
+import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
 // ============================================================================
 // fidelity-shared.ts — fidelity_target / asset_acquisition_mode / severity ratchet
 // ============================================================================
@@ -61,6 +62,7 @@ export interface RefElementEntry {
 export interface RefElementsDoc {
   schema_version?: string;
   elements: RefElementEntry[];
+  shape_issues?: string[];
 }
 
 export function parseFidelityTargetFromHandoffDoc(
@@ -1243,18 +1245,12 @@ export function assetManifestAbsPath(projectRoot: string, feature: string): stri
 export function loadRefElementsFile(absPath: string): RefElementsDoc | null {
   if (!fs.existsSync(absPath)) return null;
   try {
-    const doc = YAML.parse(fs.readFileSync(absPath, 'utf-8')) as RefElementsDoc;
-    if (!doc || typeof doc !== 'object' || !Array.isArray(doc.elements)) return null;
-    // plan c4e7a9b2 返修#3：读兼容——缺省/非法 disposition 按 implement（旧口径 `!== 'defer'` 的等价），
-    // 下游一律严格 `=== 'implement'`，旧条目不得因此静默移出分母。
-    return {
-      ...doc,
-      elements: doc.elements.map(e => (e && typeof e === 'object' && e.disposition !== 'defer' && e.disposition !== 'excluded'
-        ? { ...e, disposition: 'implement' as const }
-        : e)),
-    };
-  } catch {
-    return null;
+    const parsed = resolveArtifactContent('ref-elements@1', YAML.parse(fs.readFileSync(absPath, 'utf-8')));
+    return { ...(parsed.value as RefElementsDoc ?? { elements: [] }),
+      ...(parsed.issues.length ? { shape_issues: parsed.issues.map(issue => `${issue.path}: ${issue.message}`) } : {}) };
+  } catch (error) {
+    if (error instanceof ArtifactSchemaError) throw error;
+    return { elements: [], shape_issues: [`ref-elements YAML 解析失败：${String(error)}`] };
   }
 }
 

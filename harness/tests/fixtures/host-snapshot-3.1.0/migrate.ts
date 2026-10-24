@@ -119,7 +119,7 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string) {
   const failedPhase = [...probe.events].reverse().find(event => event.type === 'phase_verdict' && event.verdict !== 'PASS')?.phase;
   const failedReport = failedPhase ? featureFilePath(s.root, feature, `${failedPhase}/reports/script-report.json`) : '';
   const failureChecks = failedReport && fs.existsSync(failedReport)
-    ? JSON.parse(fs.readFileSync(failedReport, 'utf8')).checks.filter((check: { status: string }) => check.status === 'FAIL') : [];
+    ? JSON.parse(fs.readFileSync(failedReport, 'utf8')).checks.filter((check: { status: string; severity: string }) => check.status === 'FAIL' || check.status === 'SKIP' && check.severity === 'BLOCKER') : [];
   assert.equal(probe.exitCode, 0, JSON.stringify({ events: probe.events.slice(-5), checks: failureChecks }));
   assert(after.complete, JSON.stringify({ record: after.record, obligations: after.obligations.filter(o => o.status === 'uncovered') }));
   assert(after.record.state === 'ok' && after.record.run_id, '新完成必须仍可信并有 run 身份');

@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CheckContext, UseCasesSpec } from '../../../harness/scripts/utils/types';
-import { asArray } from '../../../harness/scripts/utils/shape-guards';
+import { resolveArtifactContent } from '../../../harness/scripts/utils/artifact-content';
 import type { NamedHandlerScanResult } from '../../../harness/scripts/utils/named-handler';
 import { deriveNamedHandlerSearchRoots } from '../../../harness/scripts/utils/ut-business-src-scope';
 
@@ -54,7 +54,10 @@ function readCode(file: string, cache: Map<string, string>): string {
 }
 
 export function scanNamedBusinessHandler(ctx: CheckContext): NamedHandlerScanResult {
-  const spec: UseCasesSpec | null = ctx.featureSpec.useCases ?? null;
+  const raw = ctx.featureSpec.useCases;
+  const parsed = raw ? resolveArtifactContent('use-cases@1', raw) : null;
+  if (parsed?.issues.length) return { skip: false, issues: parsed.issues.map(issue => `${issue.path}: ${issue.message}`) };
+  const spec = parsed?.value as UseCasesSpec | undefined;
   if (!spec) {
     return { skip: true, issues: [] };
   }
@@ -102,14 +105,14 @@ export function scanNamedBusinessHandler(ctx: CheckContext): NamedHandlerScanRes
   // P0-2 复审（cursor 阻断3）：嵌套集合同样是 agent 可写形状面——dict 形 ui_bindings/
   // user_actions 会在此 for..of 崩（根字段 use_cases 已由 spec-loader 归一，嵌套字段没有）。
   for (const uc of spec.use_cases ?? []) {
-    for (const ub of asArray<NonNullable<typeof uc.ui_bindings>[number]>(uc.ui_bindings)) {
-      for (const ua of asArray<NonNullable<typeof ub.user_actions>[number]>(ub.user_actions)) {
-        if (!ua.calls) continue;
-        const parts = ua.calls.split(/[.]/).filter(Boolean);
+    for (const ub of uc.ui_bindings ?? []) {
+      for (const ua of ub.user_actions ?? []) {
+        for (const call of ua.calls ?? []) {
+        const parts = call.split(/[.]/).filter(Boolean);
         const symbol = parts[parts.length - 1]?.replace(/\(.*$/, '').trim();
         if (!symbol) continue;
         if (!/^[A-Za-z_$][\w$]*$/.test(symbol)) {
-          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": calls="${ua.calls}" 不是合法命名函数符号`);
+          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": calls="${call}" 不是合法命名函数符号`);
           continue;
         }
         // 传统 `function xxx(...) { ... }`
@@ -154,7 +157,8 @@ export function scanNamedBusinessHandler(ctx: CheckContext): NamedHandlerScanRes
           reFieldFunc.test(f.content)
         );
         if (!found) {
-          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": 找不到命名函数 "${symbol}"（来自 calls="${ua.calls}"）`);
+          issues.push(`${uc.id} > ui_bindings[${ub.ui}] > "${ua.trigger}": 找不到命名函数 "${symbol}"（来自 calls="${call}"）`);
+        }
         }
       }
     }

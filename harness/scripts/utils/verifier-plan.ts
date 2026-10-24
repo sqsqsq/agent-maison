@@ -38,7 +38,7 @@
 import type { WorkflowSpec } from '../../workflow-loader';
 import type { EvidenceLevel, EvidencePolicy, FeatureTrack, RuntimeMode } from './runtime-policy';
 import { isCheckNotApplicable } from './types';
-import { isBlockingCheck } from './check-disposition';
+import { isBlockingCheck, isRequiredCheckGap } from './check-disposition';
 
 export type VerifierPlanMode = 'disabled' | 'enabled';
 
@@ -264,7 +264,7 @@ export function canProduceVerifierRequest(
   if (input.planMode !== 'enabled') {
     return NOT_ALLOWED('verifier plan 判 disabled：缺席即为零，不装配也不签发。');
   }
-  if (input.scriptVerdict === 'PASS') {
+  if (input.scriptVerdict === 'PASS' && !input.checks.some(check => isRequiredCheckGap(check))) {
     return { allowed: true, kind: 'normal', reason: '脚本 verdict=PASS：按原成功路径签发。', diagnosticCheckIds: [] };
   }
   if (input.scriptVerdict !== 'FAIL') {

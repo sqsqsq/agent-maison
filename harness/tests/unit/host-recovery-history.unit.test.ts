@@ -75,10 +75,10 @@ const cases: Array<{ name: string; run(): void }> = [
       assert.deepStrictEqual(effectiveScopeView({ birth: noDuty, events: [backtrack], workflow }).phase_chain, ['plan']);
       assert.deepStrictEqual(effectiveScopeView({ birth: noDuty, events: [backtrack, { type: 'phase_verdict', phase: 'plan', verdict: 'PASS', action: 'advance' }], workflow }).phase_chain, []);
   } },
-  { name: '21 run manifests including OOBE partial history preserve source hashes and scope revisions', run() {
+  { name: '22 run manifests including fe4512 and OOBE partial history preserve source hashes and scope revisions', run() {
     const sources = JSON.parse(fs.readFileSync(path.join(historyRoot, 'sources.json'), 'utf8'));
     for (const file of sources.files) assert.equal(createHash('sha256').update(fs.readFileSync(path.join(historyRoot, file.file))).digest('hex'), file.sha256, file.file);
-    assert.equal(sources.files.filter((f: { file: string }) => f.file.endsWith('/manifest.json')).length, 21);
+    assert.equal(sources.files.filter((f: { file: string }) => f.file.endsWith('/manifest.json')).length, 22);
     for (const group of ['20261016', 'r5', '20261019', '20261020', '20261022']) for (const name of fs.readdirSync(path.join(historyRoot, group))) {
       if (!fs.existsSync(path.join(historyRoot, group, name, 'manifest.json'))) continue;
       const { manifest, events } = readHostHistory(name, group);

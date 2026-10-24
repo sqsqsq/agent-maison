@@ -8,6 +8,16 @@ Skill contract 是 feature phase 的可执行输入声明。它定义产生的 a
 
 每个 feature Skill 在 `skills/feature/<skill>/contract.yaml` 中维护契约；`harness/scripts/utils/skill-contract.ts` 负责加载，`check-contract-consistency.ts` 负责静态一致性校验。新增或调整 phase 时，先调整 contract，再调整 checker 与 Skill 文档。
 
+## 内容读取与确定投影（7d9c2e41）
+
+`artifact-content.ts::resolveArtifactContent` 为同一纯内容入口：文件、supplied、蓝图片段与合并产物共享 schema 及规范值；来源、权限、冻结绑定与语义仍由原责任层处理。calls 接受非空字符串或非空字符串列表，内部为有序列表、保留重复；coordinator/ui/trigger 不接受数组猜测。片段免除派生身份，合并后校验完整性；不要求无意义空集合。
+
+runtime 在现有 preInvokeWriteSnap 后、解析/提示/Agent 前准备本阶段确定部分，spec 仅 acceptance，plan 仅 contracts/use-cases；机器写入和 Agent 写入共用原 phase_write_observed。相同内容零写入，兼容增量保留；内容冲突交原 producer/设计 owner，I/O/程序异常不伪装成漂移。普通 Feature/request 和缺少相应设计内容保持原能力适用性，dry-run/post-agent 收尾不物化。
+
+本批在 checks 项新增可选 `acceptance_ids`/`affected_files`；其余原 checks 和 issue-verification 字段复用。旧合法报告缺字段时保留原发现，回原独立 verifier 批量补核；建议显式用 `acceptance_ids: []`，不静默丢弃实质问题。
+
+spec/plan 的实质问题直接来自当前 verifier 的 `verification_result.checks`；明确验收 ID、真实目标与当前证据后，由同次独立 issue-verification 核实。报告不进入自身 material，证据按当前材料已登记的原文或 identity-neutral 摘要语义绑定；仅身份变化不误废弃已核问题，真实目标/预期变化仍失效，不另设摘要账本。原有拒修账本/goal brief 回送理由，历史确认不能覆盖未读的新理由。具名 Page 方法定位不等于 UT 可执行，真实 unit/both 义务仍须由实际入口与执行证据兑现。
+
 ## 输入与 capability
 
 一个 phase 的 `inputs` 只是输入目录：每项由稳定 `id` 和按顺序尝试的结构化 `sources` 组成。

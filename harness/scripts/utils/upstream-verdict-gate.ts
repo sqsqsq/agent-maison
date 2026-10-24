@@ -21,7 +21,7 @@ import { SUMMARY_ASSURANCE_SCHEMA_VERSIONS, validateSummaryV11 } from './quality
 import { scopeDependencyEdges, type ExecutionScope } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { repairResponsibilityContext, resolveRepairResponsibility, readRepairDependencyContext, type RepairResponsibilityContext } from './repair-responsibility';
-import { dropRedundantAggregates } from './check-disposition';
+import { dropRedundantAggregates, requiredSummaryCheckGaps } from './check-disposition';
 
 /** 回退链序（workflow SSOT 不可解析时的保守缺省——与 spec-driven full 轨一致） */
 export const FEATURE_PHASE_ORDER = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] as const;
@@ -174,6 +174,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
     const parsed = JSON.parse(fs.readFileSync(p, 'utf-8')) as {
       verdict?: unknown;
       blockers?: Array<{ id?: unknown }>;
+      blocking_skips?: Array<{ id?: string; blocking_class?: string }>;
       quality_axes?: Record<string, { applicable?: boolean; verdict?: string }>;
       ut_run_status?: { failure_code?: unknown };
     };
@@ -190,6 +191,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
         blockerIds = parsed.blockers.map((_, i) => `blocker#${i}`);
       }
     }
+    blockerIds.push(...requiredSummaryCheckGaps(parsed).map(check => check.id ?? 'required_check_gap'));
     // 切片二：1.1 多轴摘要（信息面）——裁决单点仍是 verdict（quality_axes 唯一解析器的投影产物），
     // 此处只透出"哪根轴不干净"帮助定位，不另做第二套判定。
     if (parsed.quality_axes && typeof parsed.quality_axes === 'object') {
@@ -283,6 +285,15 @@ export function upstreamPhaseDependencies(projectRoot: string, feature: string, 
     for (const edge of edges) if (edge.after === current && edge.before !== phase && !ancestors.has(edge.before)) { ancestors.add(edge.before); pending.push(edge.before); }
   }
   return [...new Set([...resolution.chain, ...ancestors])].filter(item => ancestors.has(item));
+}
+
+/** Use the same dependency closure as the gate before spending an Agent invocation. */
+export function nextIndependentPhase(
+  projectRoot: string, feature: string, candidates: readonly string[], pending: readonly string[], resolution: UpstreamChainResolution,
+): string | null {
+  if (resolution.degraded) return null;
+  return candidates.find(phase => !pending.includes(phase)
+    && !upstreamPhaseDependencies(projectRoot, feature, phase, resolution).some(before => pending.includes(before))) ?? null;
 }
 
 /** A failed producer may hand its test repair to the real test owner; product failures stay blocking. */

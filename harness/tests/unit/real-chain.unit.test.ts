@@ -935,7 +935,7 @@ export function writeTestPlan(p: RealChainProject): void {
  */
 function deriveHylyrePlanHint(p: RealChainProject): void {
   const r = spawnSync(process.execPath, [
-    path.join(p.harnessDir, 'node_modules', 'ts-node', 'dist', 'bin.js'),
+    require.resolve('ts-node/dist/bin.js'),
     '--transpile-only',
     path.join(p.harnessDir, 'scripts', 'derive-hylyre-plan-hint.ts'),
     '--feature', p.feature,
@@ -1591,7 +1591,7 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU�
 /** 公开入口 `goal-status` 在工程自己的框架根下子进程运行，返回 `feature_status=…` 行（生产 `assessFeature`）。 */
 export function goalStatusFeatureLine(project: { root: string; harnessDir: string }, feature: string): string {
   const r = spawnSync(process.execPath, [
-    path.join(project.harnessDir, 'node_modules', 'ts-node', 'dist', 'bin.js'), '--transpile-only',
+    require.resolve('ts-node/dist/bin.js'), '--transpile-only',
     path.join(project.harnessDir, 'scripts', 'goal-status.ts'), '--feature', feature, '--project-root', project.root,
   ], { cwd: project.harnessDir, encoding: 'utf-8' });
   return (r.stdout ?? '').split('\n').find(line => line.startsWith('feature_status=')) ?? `<no feature_status; exit=${r.status}> ${r.stderr ?? ''}`;
@@ -1707,7 +1707,7 @@ test('real-chain 正例：spec→testing 六阶段真实 harness 全链 PASS + c
 });
 
 function deliveryCli(p: RealChainProject, script: string, args: string[], nodeArgs: string[] = []) {
-  const result = spawnSync(process.execPath, [...nodeArgs, path.join(p.harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only', path.join(p.harnessDir, 'scripts', script), ...args],
+  const result = spawnSync(process.execPath, [...nodeArgs, require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(p.harnessDir, 'scripts', script), ...args],
     { cwd: p.harnessDir, encoding: 'utf8', env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(p.root, '.test-checkpoints') } });
   const stdout = result.stdout ?? '';
   let json: any;

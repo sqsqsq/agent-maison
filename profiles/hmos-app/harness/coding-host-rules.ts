@@ -143,6 +143,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
         severity: 'BLOCKER',
         status: 'SKIP',
         details: '当前合并后的 phase-rules 未声明 har_index_export，跳过。',
+        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }
@@ -186,6 +187,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
         severity: 'BLOCKER',
         status: 'SKIP',
         details: '无 HAR/HSP 库模块。',
+        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }
@@ -263,6 +265,17 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
     ];
   }
 
+  const newModules = contracts.modules.filter(m => m.change_type === 'new');
+  if (newModules.length === 0) {
+    return [{
+      id: 'module_config_registered', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'module_config_registered'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '无新增模块需要注册。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
+    }];
+  }
+
   const content = readFileIfExists(path.join(ctx.projectRoot, 'build-profile.json5'));
   if (!content) {
     return [
@@ -299,7 +312,6 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
     if (m.name) registeredNames.add(m.name);
   }
 
-  const newModules = contracts.modules.filter(m => m.change_type === 'new');
   const missing = newModules.filter(m => !registeredNames.has(m.name)).map(m => m.name);
 
   if (missing.length === 0) {
@@ -309,12 +321,8 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
         category: 'structure',
         description: ruleDesc(ctx, 'structure_checks', 'module_config_registered'),
         severity: 'BLOCKER',
-        status: newModules.length > 0 ? 'PASS' : 'SKIP',
-        details:
-          newModules.length > 0
-            ? `全部 ${newModules.length} 个新增模块已在 build-profile.json5 注册。`
-            : '无新增模块需要注册。',
-        ...(newModules.length > 0 ? {} : { structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }),
+        status: 'PASS',
+        details: `全部 ${newModules.length} 个新增模块已在 build-profile.json5 注册。`,
       },
     ];
   }

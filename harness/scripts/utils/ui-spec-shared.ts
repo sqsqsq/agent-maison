@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
 import { extractCodeBlocks } from './markdown-parser';
-import { shapeName, takeArray } from './shape-guards';
+import { resolveArtifactContent } from './artifact-content';
 import { featureFilePath, relFeatureFile } from '../../config';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../harness-runner.ts'));
@@ -225,48 +225,12 @@ export function loadUiSpecFileWithShapeIssues(
   } catch {
     return null;
   }
-  const shapeIssues: string[] = [];
-  const rec = doc as unknown as Record<string, unknown>;
-  rec.assets = takeArray(rec.assets, 'assets', shapeIssues);
-  rec.screens = takeArray(rec.screens, 'screens', shapeIssues);
-  if (rec.global_elements !== undefined) {
-    rec.global_elements = takeArray(rec.global_elements, 'global_elements', shapeIssues);
-  }
-  if (rec.tokens !== undefined && (rec.tokens === null || typeof rec.tokens !== 'object' || Array.isArray(rec.tokens))) {
-    shapeIssues.push(`tokens 应为映射（YAML map），实际是 ${shapeName(rec.tokens)}——最小合法样例：\`tokens: {}\``);
-    rec.tokens = {};
-  }
-  for (const g of doc.global_elements ?? []) {
-    if (!g || typeof g !== 'object') continue;
-    const gr = g as unknown as Record<string, unknown>;
-    gr.texts = takeArray(gr.texts, `global_elements[${String(gr.id ?? '?')}].texts`, shapeIssues);
-    gr.owner_screen_ids = takeArray(gr.owner_screen_ids, `global_elements[${String(gr.id ?? '?')}].owner_screen_ids`, shapeIssues);
-  }
-  for (const s of doc.screens) {
-    if (!s || typeof s !== 'object') continue;
-    const sr = s as unknown as Record<string, unknown>;
-    if (sr.must_have_elements !== undefined) {
-      sr.must_have_elements = takeArray(sr.must_have_elements, `screens[${String(sr.id ?? '?')}].must_have_elements`, shapeIssues);
-    }
-    normalizeComponentTreeShapes(s.root, `screens[${String(sr.id ?? '?')}].root`, shapeIssues);
-  }
-  return { doc, shapeIssues };
-}
-
-/** 组件树递归归一化：children 非数组真值 → [] + 留痕（walkComponentNodes 的 for..of 防崩）。 */
-function normalizeComponentTreeShapes(
-  node: UiSpecComponentNode | undefined,
-  label: string,
-  shapeIssues: string[],
-): void {
-  if (!node || typeof node !== 'object') return;
-  const nr = node as unknown as Record<string, unknown>;
-  if (nr.children !== undefined) {
-    nr.children = takeArray(nr.children, `${label}.children`, shapeIssues);
-  }
-  for (let i = 0; i < (node.children ?? []).length; i++) {
-    normalizeComponentTreeShapes(node.children![i], `${label}.children[${i}]`, shapeIssues);
-  }
+  const resolved = resolveArtifactContent('ui-spec@1', doc);
+  doc = resolved.value as UiSpecDoc;
+  doc.screens ??= [];
+  doc.assets ??= [];
+  doc.tokens ??= {};
+  return { doc, shapeIssues: resolved.issues.map(issue => `${issue.path}: ${issue.message}`) };
 }
 
 export function loadUiSpecFile(absPath: string): UiSpecDoc | null {

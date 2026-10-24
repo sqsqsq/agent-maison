@@ -882,14 +882,18 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     assert.deepStrictEqual(unit.projectionIssues.map(i => i.kind), ['acceptance', 'contracts']);
     assert(unit.projectionIssues.every(i => i.codes?.includes('authority_construction_content_incomplete') && i.detail === projected.detail));
   } },
-  { name: 'uncoded projection exception remains blocked with its actual detail and no invented shape code', run(f) {
+  { name: 'malformed field collection is diagnosed by the shared contract and remains blocked without rewriting authority', run(f) {
     update(f, bp => { asRecords(asRecord(target(bp, 'ledger-module').contracts)!.data_models)[0].fields = { malformed: true }; });
+    const before = fs.readFileSync(f.blueprintFile);
     const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
-    assert.equal(projected.state, 'invalid'); assert.deepStrictEqual(projected.codes, []); assert(projected.detail?.includes('not iterable'), projected.detail);
+    assert.equal(projected.state, 'invalid'); assert.deepStrictEqual(projected.codes, ['authority_projection_shape_invalid']);
+    assert(projected.detail?.includes('$.data_models[0].fields') && projected.detail.includes('实际 object'), projected.detail);
+    assert(!projected.detail?.includes('TypeError'), 'malformed artifact data must not become a checker exception');
     const ready = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint'); const unit = ready.perUnit.find(u => u.changeUnitId === 'ledger-refresh')!;
     assert(!ready.ready && unit.verdict === 'blocked', JSON.stringify(unit));
-    assert(!unit.issueIds.includes('authority_projection_shape_invalid'));
-    assert.deepStrictEqual(unit.projectionIssues, [{ kind: 'contracts', codes: [], detail: projected.detail }]);
+    assert(unit.issueIds.includes('authority_projection_shape_invalid'));
+    assert.deepStrictEqual(unit.projectionIssues, [{ kind: 'contracts', codes: ['authority_projection_shape_invalid'], detail: projected.detail }]);
+    assert(fs.readFileSync(f.blueprintFile).equals(before), 'diagnostics must preserve the malformed authority bytes');
   } },
   { name: 'default readiness checks canonical content while plan owns conflicting author use-cases', run(f) {
     const before = render(f); const source = loadBlueprintReviewSource(f.root, 'ledger-app-blueprint');

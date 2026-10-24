@@ -124,7 +124,7 @@ import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { NO_AUTHORITY, decide } from '../../scripts/utils/adjudication';
 import { reduceRunState } from '../../scripts/utils/run-state-reducer';
-import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
+import { buildScriptReport, generateScriptReport, resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
 import { resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { computeReplayChecks, seedReplay } from './test-report-writer.unit.test';
 import { AttendedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
@@ -707,6 +707,7 @@ export async function runGoalRuntimeChain(
       // plan 2f8a6d40：本轮真实 gate 的 CheckResult（PASS 出口交给真实 writer 用）。
       let specGateChecks: CheckResult[] | null = null;
       let passOverrideChecks: CheckResult[] | undefined;
+      let passOverrideWriterOptions: Parameters<typeof writeRunSummaryBase>[3];
       // plan 8d2b4f60 §6：真实 gate 在 runtime 内决定推进/重跑（不是事后补一次直调）。
       if (!failOverride && opts.realSpecFidelityGate && String(ph) === 'spec') {
         const specMdAbs = featureFilePath(pr, feat, 'spec/spec.md');
@@ -747,8 +748,9 @@ export async function runGoalRuntimeChain(
         specGateChecks = gateChecks;
         if (gateChecks.some(c => c.status === 'FAIL')) failOverride = { checks: gateChecks };
       }
-      if (failOverride && 'checks' in failOverride && !failOverride.checks.some(check => check.status === 'FAIL')) {
+      if (failOverride && 'checks' in failOverride && resolveVerdictFromChecks(failOverride.checks) === 'PASS') {
         passOverrideChecks = failOverride.checks;
+        passOverrideWriterOptions = failOverride.writerOptions;
         failOverride = null;
       }
       if (failOverride) {
@@ -775,26 +777,10 @@ export async function runGoalRuntimeChain(
               ...(Array.isArray(b.affected_files) ? { affected_files: b.affected_files as string[] } : {}),
             }));
         if ('checks' in failOverride) {
-          const scriptReport: ScriptReport = {
-            phase: String(ph) as Phase,
-            feature: feat,
-            timestamp: new Date().toISOString(),
-            project_root: pr,
-            assurance: 'full',
-            capability_resolutions: [],
-            capability_resolution_contract_fingerprint: null,
-            checks: rawChecks,
-            summary: {
-              total: rawChecks.length,
-              pass: rawChecks.filter(c => c.status === 'PASS').length,
-              fail: rawChecks.filter(c => c.status === 'FAIL').length,
-              warn: 0,
-              skip: 0,
-              blockers: rawChecks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER').length,
-              // 新设备场景保留生产 INCOMPLETE，不能由旧 fixture 的 FAIL 常量绕开 defer 路由。
-              verdict: rawChecks.some(c => c.device_setup) ? resolveVerdictFromChecks(rawChecks) : 'FAIL',
-            },
-          };
+          const scriptReport = opts.frameworkRoot
+            ? generateScriptReport(path.join(_fr, 'harness'), String(ph) as Phase, feat, pr, rawChecks, _fr)
+            : buildScriptReport(String(ph) as Phase, feat, pr, rawChecks);
+          scriptReport.assurance = 'full';
           // 生产 writer 落盘（真实 lattice/blockers/candidates 派生 + validateSummaryV11 +
           // atomicWriteJson）——不再手写 summary.json
           if (opts.frameworkRoot) fs.writeFileSync(path.join(failDir, 'script-report.json'), JSON.stringify(scriptReport));
@@ -892,24 +878,12 @@ export async function runGoalRuntimeChain(
           },
           ...(specGateChecks ?? []),
         ];
-        const passReport: ScriptReport = {
-          phase: String(ph) as Phase,
-          feature: feat,
-          timestamp: new Date().toISOString(),
-          project_root: pr,
-          assurance: 'full',
-          capability_resolutions: [],
-          capability_resolution_contract_fingerprint: null,
-          checks: passChecks,
-          summary: {
-            total: passChecks.length,
-            pass: passChecks.filter(c => c.status === 'PASS').length,
-            fail: 0, warn: 0, skip: 0, blockers: 0,
-            verdict: 'PASS',
-          },
-        };
-        if (opts.frameworkRoot) fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(passReport));
-        await inGateEnv(() => writeRunSummaryBase(pr, passReport, _fr));
+        const passReport = opts.frameworkRoot
+          ? generateScriptReport(path.join(_fr, 'harness'), String(ph) as Phase, feat, pr, passChecks, _fr)
+          : buildScriptReport(String(ph) as Phase, feat, pr, passChecks);
+        passReport.assurance = 'full';
+        const passSummary = await inGateEnv(() => writeRunSummaryBase(pr, passReport, _fr, passOverrideWriterOptions));
+        if (passSummary.verdict !== 'PASS') return { exitCode: 1, timedOut: false };
         writeManifestAndPointer();
         opts.afterHarnessPass?.({
           root: pr, phase: String(ph),
@@ -1980,7 +1954,11 @@ async function currentBudgetFixture() {
   let first: RunProbe;
   try {
     first = await runChain(cu.root, { ...common, freshBudget: { max_total_turns: 4 } });
-    assert(runEndStatus(first.events) === 'HALTED' && first.events.some(e => e.type === 'budget_turns'), '正式运行须在 plan/coding 完成后耗尽四次预算');
+    assert(runEndStatus(first.events) === 'HALTED' && first.events.some(e => e.type === 'budget_turns'),
+      '正式运行须在 plan/coding 完成后耗尽四次预算：' + JSON.stringify({ phases: first.invokedPhases,
+        events: first.events.filter(event => ['phase_halt', 'phase_verdict', 'run_end'].includes(String(event.type))).slice(-6),
+        summaries: Object.fromEntries(['plan', 'coding'].map(phase => { const file = featureFilePath(cu.root, cu.feature, `${phase}/reports/summary.json`);
+          return [phase, fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null]; })) }));
     assert(first.events.some(e => e.type === 'phase_verdict' && e.phase === 'coding' && e.verdict === 'PASS' && e.action === 'advance'), 'coding PASS 必须来自真实检查与闭环');
   }
   catch (error) { clearFrameworkConfigCache(); fs.rmSync(cu.root, { recursive: true, force: true }); throw error; }
@@ -2039,7 +2017,7 @@ test('6e2f9a10 t1: 正式 phase-only revalidate 产生 events PASS / summary FAI
     const sourceAbs = path.join(cu.root, CU_SOURCE);
     const sourceBytes = fs.readFileSync(sourceAbs);
     fs.unlinkSync(sourceAbs);
-    const revalidate = spawnSync(process.execPath, [path.join(cu.harnessDir, 'node_modules/ts-node/dist/bin.js'), '--transpile-only',
+    const revalidate = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only',
       path.join(cu.harnessDir, 'harness-runner.ts'), '--revalidate', '--feature', cu.feature, '--from', 'coding'], {
       cwd: cu.harnessDir, encoding: 'utf8', timeout: 120_000, env: { ...process.env,
         MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: 'coding' },
@@ -6473,7 +6451,8 @@ test('c3f8a2d7 t5 连续回放：testing FAIL（产品+provider 缺席）→ 回
     assert(goalRunIds(root).length === 1, `接回同一 run，不新建：${goalRunIds(root).join(',')}`);
     assert(!session2.some(e => JSON.stringify(e).includes('external_condition_ready')), '不声称 external_condition_ready');
     assert(session2.some(e => e.type === 'resume' && e.start_phase === 'testing'), `testing 须重新入队：${JSON.stringify(session2.filter(e => e.type === 'resume'))}`);
-    assert(second.invokedPhases.join(',') === 'testing', `恢复会话只重跑 testing：${second.invokedPhases.join(',')} ${JSON.stringify(gateRounds.slice(2))}`);
+    assert(second.harnessPhases.join(',') === 'testing' && second.invokedPhases.length === 0,
+      `恢复会话复用已完成作者，只重验 testing：${second.invokedPhases.join(',')} ${JSON.stringify(gateRounds.slice(2))}`);
     assert(gateRounds.length === 3 && gateRounds[2].provider === 'restored' && Object.keys(gateRounds[2].ids).length === 0,
       `恢复轮原 checker 重验通过：${JSON.stringify(gateRounds[2])}`);
     assertSealedComplete(ev2, '恢复后重发');

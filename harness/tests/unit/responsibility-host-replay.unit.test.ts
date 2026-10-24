@@ -308,9 +308,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     }
     const replayFramework = provisionFrameworkUnder(root).frameworkRoot;
     const specs = path.join(replayFramework, 'specs');
-    assert(fs.lstatSync(specs).isSymbolicLink());
-    fs.unlinkSync(specs);
-    fs.cpSync(path.join(frameworkRoot, 'specs'), specs, { recursive: true });
+    assert(!fs.lstatSync(specs).isSymbolicLink() && fs.realpathSync(specs) === specs, 'historical rules are adapted only in the isolated framework copy');
     const ruleFile = path.join(specs, 'phase-rules/spec-rules.yaml');
     fs.writeFileSync(ruleFile, recordedRules);
     assert.equal(computeGateFingerprint(replayFramework, 'spec'), evidence.manifest.environment.gate_fingerprint, 'copy the historical environment, never forge an evidence fingerprint');
@@ -344,6 +342,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     assert.equal(load(), undefined, 'a real rule change remains stale');
     assert(recomputePhaseEvidenceStaleness(root, feature, ['spec'], { frameworkRoot: replayFramework, runId })[0].changed_paths.includes('<environment:gate_fingerprint>'));
     assert(fs.readFileSync(copiedManifestPath).equals(manifestBefore), 'the copied historical manifest is never rewritten');
+    assert(fs.readFileSync(path.join(frameworkRoot, 'specs/phase-rules/spec-rules.yaml')).equals(currentRules), 'historical rule adaptation must not change source framework bytes');
   }) },
   { name: '179a73 verified CR-001 and formal coding gate agree on finite compatibility; real assertion work remains verification', run: () => withRecordedProject((root, _events, manifest) => {
     const savedRun = process.env.MAISON_GOAL_RUN_ID;
@@ -396,15 +395,16 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert(testFact?.basis.some(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.test-targets'), 'UT repair targets must remain test-target inputs rather than becoming production code inputs');
       const variant = provisionFrameworkUnder(root);
       const skills = path.join(variant.frameworkRoot, 'skills');
-      assert(fs.lstatSync(skills).isSymbolicLink());
-      fs.unlinkSync(skills);
-      fs.cpSync(path.join(frameworkRoot, 'skills'), skills, { recursive: true });
+      assert(!fs.lstatSync(skills).isSymbolicLink() && fs.realpathSync(skills) === skills, 'contract order is varied only in the isolated framework copy');
+      const sourceContractFile = path.join(frameworkRoot, 'skills/feature/business-ut/contract.yaml');
+      const sourceContractBefore = fs.readFileSync(sourceContractFile);
       const contractFile = path.join(skills, 'feature/business-ut/contract.yaml');
       const contract = YAML.parse(fs.readFileSync(contractFile, 'utf8'));
       contract.phases.ut.inputs.reverse();
       fs.writeFileSync(contractFile, YAML.stringify(contract));
       const reordered = scopeRevisionInputFromRepairCandidates(testCandidates, { projectRoot: root, frameworkRoot: variant.frameworkRoot, feature, runId });
       assert(reordered?.input.facts.find(fact => fact.id === 'unit-evidence:CR-UT')?.basis.some(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.test-targets'), 'declared input order must not turn a UT repair into a production code binding');
+      assert(fs.readFileSync(sourceContractFile).equals(sourceContractBefore), 'contract-order variation must not change source framework bytes');
     } finally {
       if (savedRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = savedRun;
       if (savedDiff === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = savedDiff;

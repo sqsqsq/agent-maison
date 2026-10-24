@@ -53,6 +53,7 @@ import {
 import type { EvidencePolicySnapshot } from './runtime-policy';
 import { writeReceiptProjection } from './receipt-scaffold';
 import type { HarnessRunSummary, Phase } from './types';
+import { requiredSummaryCheckGaps } from './check-disposition';
 
 export interface ClosureCommitV1 {
   schema_version: '1.0';
@@ -678,7 +679,7 @@ function finalizePhaseClosureUnlocked(
         `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
     );
   }
-  if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0) {
+  if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0 || requiredSummaryCheckGaps(current.parsed).length > 0) {
     throw new Error(
       `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`,
     );

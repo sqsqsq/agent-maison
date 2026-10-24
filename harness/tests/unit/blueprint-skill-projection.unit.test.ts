@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
@@ -91,6 +91,42 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: '7d9c2e41 staged preparation writes only the responsible outputs and preserves increments', run(f) {
+    for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
+    let invocation = 0;
+    const prepare = (phase: 'spec' | 'plan'): string[] => {
+      const started = performance.now(), cpu = process.cpuUsage();
+      const files = materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, undefined, phase);
+      console.log('[projection-preparation-measure]', JSON.stringify({ fixture: 'blueprint-design-inputs', invocation: ++invocation, phase,
+        wallMs: performance.now() - started, cpu: process.cpuUsage(cpu), writtenFiles: files.map(file => path.basename(file)) }));
+      return files;
+    };
+    const prepared = prepare('spec');
+    assert.deepEqual(prepared.map(file => path.basename(file)), ['acceptance.yaml']);
+    assert(!resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').exists);
+    assert(!resolveFeatureArtifact(f.root, f.feature, 'use-cases.yaml').exists);
+    assert.deepEqual(prepare('spec'), []);
+    const acceptance = resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath;
+    const original = fs.readFileSync(acceptance, 'utf8');
+    fs.appendFileSync(acceptance, '\nauthor_notes: keep me\n');
+    assert.deepEqual(prepare('spec'), []);
+    assert(fs.readFileSync(acceptance, 'utf8').endsWith('author_notes: keep me\n'));
+    const plan = prepare('plan');
+    assert.deepEqual(plan.map(file => path.basename(file)).sort(), ['contracts.yaml', 'use-cases.yaml']);
+    assert.equal(fs.readFileSync(acceptance, 'utf8'), original + '\nauthor_notes: keep me\n');
+    assert.deepEqual(prepare('plan'), []);
+  } },
+  { name: '7d9c2e41 preparation conflict preserves original bytes and identifies the producer', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const file = resolveFeatureArtifact(f.root, f.feature, 'acceptance.yaml').actualPath;
+    const altered = YAML.parse(fs.readFileSync(file, 'utf8')); altered.criteria[0].expected_result = 'conflicting requirement';
+    fs.writeFileSync(file, YAML.stringify(altered));
+    const before = fs.readFileSync(file);
+    assert.throws(() => materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot, undefined, 'spec'),
+      error => error instanceof BlueprintProjectionPreparationError && error.owner === 'spec' && error.reason === 'conflict');
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.deepEqual(materializeBlueprintSkillInputs(f.root, 'ordinary-feature', frameworkRoot, undefined, 'spec'), []);
+  } },
   { name: '8a6d3f21 references and predicted file expansion do not request design permission', run(f) {
     const original = planContracts(f);
     const context = (contracts: ContractsSpec) => ({ projectRoot: f.root, frameworkRoot, feature: f.feature, phase: 'plan', featureSpec: { contracts, useCases: deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').artifacts?.['use-cases@1'] }, phaseRule: {} } as CheckContext);
@@ -166,7 +202,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       assert.equal(JSON.stringify(contracts), before);
     }
   } },
-  { name: 'content rules: nested nulls survive the real loader and retain uncoded derive failures with blueprint WARN', run(f) {
+  { name: 'content rules: nested nulls produce shared shape diagnostics and repairable projection failures with blueprint WARN', run(f) {
     const original = fs.readFileSync(f.blueprintFile, 'utf8');
     const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
     for (const variant of ['field', 'method', 'parameter', 'performance'] as const) {
@@ -184,34 +220,29 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
       } else { acceptance.performance = [null]; pointer = 'performance[0]'; }
       const kind = variant === 'performance' ? 'acceptance' : 'contracts';
       const inputs = { context: { schema_version: '1.1' as const, subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase: '', values: {}, artifacts: { 'contracts@1': contracts, 'acceptance@1': acceptance } };
+      const beforeInputs = JSON.stringify(inputs.artifacts);
       const parsed = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature, inputs);
-      assert(!parsed.shape_issues?.length, `原loader不应清掉内层null：${JSON.stringify(parsed.shape_issues)}`);
-      const preserved = variant === 'field' ? parsed.contracts!.data_models![0]!.fields
-        : variant === 'method' ? parsed.contracts!.interfaces![0]!.methods
-        : variant === 'parameter' ? parsed.contracts!.interfaces![0]!.methods[0]!.params : parsed.acceptance!.performance;
-      assert.deepStrictEqual(preserved, [null], '反例绕过了真实loader或被归一清除');
-      const ctx = { projectRoot: f.root, feature: f.feature, featureSpec: parsed } as CheckContext;
-      const message = `Cannot read properties of null (reading '${variant === 'performance' ? 'id' : 'name'}')`;
-      assert.throws(() => kind === 'acceptance' ? checkAcceptanceContent(ctx) : checkTypedConstructionContent(ctx), { name: 'TypeError', message });
+      assert(parsed.shape_issues?.some(issue => issue.includes(pointer)), `${variant}未在真实loader输出具体shape问题：${JSON.stringify(parsed.shape_issues)}`);
+      assert.equal(JSON.stringify(inputs.artifacts), beforeInputs, 'loader不得原地改写输入片段');
       fs.writeFileSync(f.blueprintFile, YAML.stringify(bp)); f.bind();
       const before = fs.readFileSync(f.blueprintFile);
       const warnings = diagnoseBlueprintContent(bp);
       assert(warnings.some(issue => issue.path.endsWith(pointer) && issue.severity === 'WARN'), `${variant}蓝图诊断崩溃或漏报`);
       const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, kind);
-      assert.equal(projected.state, 'invalid'); assert.deepStrictEqual(projected.codes, []);
-      assert.equal(projected.detail, `TypeError: ${message}`);
+      assert.equal(projected.state, 'invalid'); assert(projected.codes?.includes('authority_projection_shape_invalid'));
+      assert(projected.detail?.includes(pointer), `${variant}派生丢失字段路径：${projected.detail}`);
       const readiness = deriveDesignPreparationReadiness(f.root, 'ledger-app-blueprint');
       const readyUnit = readiness.perUnit.find(item => item.changeUnitId === 'ledger-refresh')!;
       assert(!readiness.ready && readyUnit.verdict === 'blocked');
-      assert(readyUnit.projectionIssues.some(issue => issue.kind === kind && issue.codes?.length === 0 && issue.detail === projected.detail));
+      assert(readyUnit.projectionIssues.some(issue => issue.kind === kind && issue.codes?.includes('authority_projection_shape_invalid') && issue.detail === projected.detail));
       assert(fs.readFileSync(f.blueprintFile).equals(before), '诊断/derive改写了原canonical');
     }
-    // 原方法谓词与 some 会短路；不把尚未读取的后续 null 升为异常。
+    // 列表中后续的 null 也须进入共享形状诊断，不依赖下游 some 的短路次序。
     for (const method of [{ return: 'void', params: [null] }, { name: 'run', return: 'void', params: [{}, null] }]) {
       const contracts = { files: ['src/ledger/LedgerFeature.ets'], interfaces: [{ class: 'LedgerFeature', file: 'src/ledger/LedgerFeature.ets', methods: [method] }] };
       const parsed = new SpecLoader(f.root, undefined, undefined, frameworkRoot).loadFeatureSpec(f.feature,
         { context: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] }, phase: '', values: {}, artifacts: { 'contracts@1': contracts } });
-      assert.equal(checkTypedConstructionContent({ featureSpec: parsed } as CheckContext)[0]!.status, 'FAIL');
+      assert(parsed.shape_issues?.some(issue => issue.includes('params')), '嵌套null不应变成下游TypeError或被静默清掉');
     }
   } },
   { name: 'content rules: state shape WARN and original loader normalization agree and never mutate authority', run(f) {
@@ -580,4 +611,8 @@ async function runCases(selected: typeof cases): Promise<UnitCaseResult[]> {
 }
 
 export const runAll = (): Promise<UnitCaseResult[]> => runCases(cases);
+export const runSelectedCases = async (filter?: string) => {
+  const results = await runCases(cases.filter(item => filter === undefined || item.name.includes(filter)));
+  return { results, matchedCaseCount: results.length, executionTimings: [] };
+};
 export const runContentWarnCases = (): Promise<UnitCaseResult[]> => runCases(cases.filter(item => item.name.startsWith('content rules:')));

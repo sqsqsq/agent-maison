@@ -11,7 +11,7 @@ import {
   type DependencyPolicy,
   DEFAULT_DEPENDENCY_POLICY,
 } from './phase-transition-policy';
-import { AGGREGATE_RUN_STATUS_CHECK_IDS, resultBasisOwner } from './check-disposition';
+import { AGGREGATE_RUN_STATUS_CHECK_IDS, requiredSummaryCheckGaps, resultBasisOwner } from './check-disposition';
 import { digestDirectoryTree } from './product-source-snapshot';
 
 export type FailureKind =
@@ -408,6 +408,7 @@ export function filterSignatureBlockers(summary: GoalSummaryLike | null | undefi
 }
 
 export interface GoalSummaryLike {
+  blocking_skips?: Array<{ id?: string; blocking_class?: string }>;
   verdict?: string;
   blocking_class?: string;
   failure_kind?: string;
@@ -653,11 +654,9 @@ export function classifyFailureKind(
   if (hasDeferrableExternalBlocker(currentSummary, dependencyPolicy)) {
     return 'external_block';
   }
-  // P0-3 + plan 4e6fb3b6 §4：存在框架阻断类 blocker（门禁自身崩溃）→ 首触 halt 指向回灌源仓，
-  // 做法与工具链阻断聚合相同（存在即按该类处理）。混装时内容 blocker 留在 summary 清单里，
-  // 框架问题解除后下一轮照常按内容失败重试——此前"须全部是框架"会把混装落到 code_regression，
-  // 让 agent 对着修不了的 checker 崩溃空耗内容重试。
-  if (aggregateBlockerActionability(currentSummary).hasFramework) {
+  // 真正的框架 FAIL 保持原归因；明确的框架执行缺口只在没有真实 blocker 时归框架。
+  if (aggregateBlockerActionability(currentSummary).hasFramework || !(currentSummary?.blockers?.length)
+    && requiredSummaryCheckGaps(currentSummary).some(check => check.blocking_class === 'framework_internal')) {
     return 'framework_bug';
   }
   const ids = blockerIds(currentSummary);

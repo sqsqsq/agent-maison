@@ -46,6 +46,8 @@ import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './cap
 import { assessFeature as assessFeatureCompletion } from './feature-assessment';
 import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 import type { CapabilityResolution } from './capability-resolution';
+import { requiredSummaryCheckGaps } from './check-disposition';
+import { nextIndependentPhase } from './upstream-verdict-gate';
 
 export type AssessGapKind =
   | 'missing'
@@ -117,6 +119,8 @@ export interface ReconcileObservationV1 {
 }
 
 export interface AssessPhaseObservation {
+  /** Transient view of existing summary.blocking_skips; never a parallel persistent ledger. */
+  verification_gaps?: Array<{ id?: string; blocking_class?: string }>;
   phase: string;
   /**
    * 责任阶段统一路由（plan b6e4c9f2）：该 phase summary 的可信可修缺陷候选
@@ -208,7 +212,7 @@ export interface AssessRecommendation {
 /** plan c8e5b3f1 t2 review：持久化到 next.json / AssessResult.observed.phases 的 phase 观察类型——
  * 显式剔除内部诊断字段 blocked_capabilities（运行时已剥离，类型契约同步，避免 schema 1.0 落盘 shape
  * 与公开类型不一致）。 */
-export type PersistedAssessPhaseObservation = Omit<AssessPhaseObservation, 'blocked_capabilities'>;
+export type PersistedAssessPhaseObservation = Omit<AssessPhaseObservation, 'blocked_capabilities' | 'verification_gaps'>;
 
 export interface AssessResult {
   schema_version: '1.0';
@@ -519,7 +523,9 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     // plan a9d4e7c2 T3：assurance 闭环域 = 1.2 ∪ 1.3；把当代 1.3 判成 legacy 会让
     // 刚闭环的阶段整链退回 legacy_unverified。
     const legacy = !SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(schemaVersion));
-    const verdict = typeof summary.verdict === 'string' ? summary.verdict : null;
+    const verificationGaps = requiredSummaryCheckGaps(summary as { blocking_skips?: Array<{ id?: string; blocking_class?: string }> });
+    const verdict = summary.verdict === 'PASS' && verificationGaps.length ? 'INCOMPLETE'
+      : typeof summary.verdict === 'string' ? summary.verdict : null;
     const assurance = !legacy && typeof summary.assurance === 'string' && ['blocked', 'degraded', 'full'].includes(summary.assurance)
       ? summary.assurance
       : 'unknown';
@@ -568,6 +574,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       // 显式 device/external/completion deferred 仍保持 deferred。
       deferred: isDeferredSummary(summary) && !hasInputBlockedCapability(summary),
       blocked_capabilities: blockedCapabilityFactsFor(summary),
+      ...(verificationGaps.length ? { verification_gaps: verificationGaps } : {}),
       summary_fingerprint: fileHash(summaryPath),
       evidence_fingerprint: fileHash(evidencePath),
     };
@@ -900,6 +907,8 @@ function recommendationForObservation(
       phase: phaseOutcome.phase,
       failure_kind: phaseOutcome.failure_kind,
       blocking_class: phaseOutcome.blocking_class,
+      verification_gap: observation.phases.find(phase => phase.phase === phaseOutcome.phase)?.verification_gaps
+        ?.some(check => check.blocking_class === 'framework_internal'),
       dependency_policy: phaseOutcome.dependency_policy ?? {
         propagate_to_downstream: phaseOutcome.propagate_to_downstream,
       },
@@ -909,6 +918,24 @@ function recommendationForObservation(
         (observation.reconcile?.deterministic_defects?.length ?? 0) > 0,
     });
     if (decision.action !== null) {
+      if (decision.runner_action === 'defer_external_and_continue_if_allowed'
+        && observation.phases.find(phase => phase.phase === phaseOutcome.phase)?.verification_gaps
+          ?.some(check => check.blocking_class === 'framework_internal')) {
+        const context = observation.responsibility;
+        const pending = observation.phases.filter(phase => phase.deferred || phase.phase === phaseOutcome.phase).map(phase => phase.phase);
+        const next = context?.projectRoot && context.feature && context.workflow
+          ? nextIndependentPhase(context.projectRoot, context.feature,
+            gaps.filter(gap => !pending.includes(gap.phase)
+              && observation.phases.findIndex(phase => phase.phase === gap.phase) > observation.phases.findIndex(phase => phase.phase === phaseOutcome.phase)).map(gap => gap.phase), pending,
+            { chain: observation.phases.map(phase => phase.phase), degraded: false, workflow: context.workflow,
+              scope: observation.execution_scope, frameworkRoot: context.frameworkRoot }) : null;
+        if (next) return { action: 'run_phase', phase: next,
+          reason: `前置未完成义务保留；${next} 不依赖 ${pending.join(', ')}，继续独立职责`,
+          requires_driver_authorization: true, runner_action: decision.runner_action };
+        return { action: 'resolve_deferred', phase: phaseOutcome.phase,
+          reason: `缺少必需验证且没有可独立推进的职责；维护者恢复检查后重新发起同一请求，勿无变化重试`,
+          requires_driver_authorization: true, runner_action: 'defer_external_and_halt' };
+      }
       const targetPhase = decision.target === 'coding'
         ? observation.reconcile?.invalidatable_phases?.find((phase) => phase === 'coding') ?? null
         : decision.target === 'current'
@@ -922,6 +949,11 @@ function recommendationForObservation(
         runner_action: decision.runner_action,
       };
     }
+  }
+  if (!fused && phaseOutcome?.verdict === 'PASS' && gaps[0]?.kind === 'deferred') {
+    return { action: 'resolve_deferred', phase: gaps[0].phase,
+      reason: `当前职责完成；${gaps[0].phase} 的未完成义务保留，下一职责仍须通过真实依赖判断`,
+      requires_driver_authorization: true, runner_action: 'advance' };
   }
   return recommendationForGap(observation, gaps[0], fused);
 }
@@ -958,7 +990,7 @@ export function assessObservation(
       // plan c8e5b3f1 t2 review：blocked_capabilities 是**内部诊断数据**，供 gapsFromObservation
       // 丰富 failed gap.detail；持久化前剥离，不进入 AssessResult.observed.phases / next.json
       //（schema 仍 1.0，零 observed/schema 扩展）。
-      phases: observation.phases.map(({ blocked_capabilities: _bc, ...rest }) => rest),
+      phases: observation.phases.map(({ blocked_capabilities: _bc, verification_gaps: _vg, ...rest }) => rest),
       degradations: observation.degradations ?? [],
       pruned_propagations: observation.pruned_propagations ?? [],
     },

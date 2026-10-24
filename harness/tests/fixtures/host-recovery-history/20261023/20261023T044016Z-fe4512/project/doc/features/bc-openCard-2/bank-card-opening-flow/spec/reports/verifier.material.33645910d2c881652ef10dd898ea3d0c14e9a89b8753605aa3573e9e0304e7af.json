@@ -1,0 +1,166 @@
+{
+  "schema": "maison-verifier-material@1",
+  "input_bindings_sha256": "2fc515e171c03c287b7487a5962f07b7ae3ac76eb09bcc589182ffdde020bc21",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "phase": "spec",
+  "gate_fingerprint": "3.1.0:2a2e89318c9f",
+  "phase_rule_sha256": "f83cc766a2e38f7d6073c886956412747ff8bf30957118c9272815712d9d0326",
+  "template_sha256": "33bebd9900fc1b5b2e649e8813771672686f0e37254856d169181e31604e8dd7",
+  "lifecycle_sha256": "fe4f4964342d9874d63a281ec74b8af797d86355c02d13886d73ee28c1566d19",
+  "extension_sha256": "",
+  "goal_brief_sha256": "cb546beecf74497fe9ff55cac62d26d131a742c2dad99ab09ab5fa57acb83f9d",
+  "script_checks": [
+    "acceptance_content_complete=PASS/BLOCKER",
+    "acceptance_device_focus_present=PASS/BLOCKER",
+    "acceptance_flow_contract=SKIP/MINOR",
+    "acceptance_flow_structure=PASS/BLOCKER",
+    "acceptance_ut_layer_complete=PASS/BLOCKER",
+    "acceptance_yaml_present=PASS/BLOCKER",
+    "asset_acquisition=PASS/MAJOR",
+    "asset_manifest=PASS/BLOCKER",
+    "authoritative_content_aligned=PASS/BLOCKER",
+    "capability_spec_codebase=PASS/MINOR",
+    "capability_spec_existing_acceptance=PASS/MINOR",
+    "capability_spec_requirement=PASS/MINOR",
+    "capability_spec_visual_reference=PASS/MINOR",
+    "capture_completeness=PASS/BLOCKER",
+    "capture_completeness_external=WARN/MAJOR",
+    "design_scope_facts=PASS/MINOR",
+    "fidelity_capability_pregate=PASS/BLOCKER",
+    "fidelity_target_declared=PASS/MINOR",
+    "legacy_device_testing_todo_deprecated=PASS/MINOR",
+    "node_options_injection=PASS/BLOCKER",
+    "ui_spec_bbox_semantic=PASS/MINOR",
+    "ui_spec_fidelity_gate=WARN/MAJOR",
+    "ui_spec_structure=WARN/MAJOR",
+    "visual_handoff=PASS/BLOCKER",
+    "visual_handoff_denominator=PASS/MINOR"
+  ],
+  "files": [
+    {
+      "path": "01-Product/Phone/src/main/ets/pages/index.ets",
+      "sha256": "21b852d52466892915b81dbf64e79429c9de1074e8f50a3b3e504d04d9e2dba0"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+      "sha256": "0415c01bfcae5b62cce9f754965729515a5d6ea9f675ff1730bdeddc45376222"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+      "sha256": "b5e92f1a6f3b4256747f9ae6d38face63a1420bf64616f14d3751c473f5f6ade"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/index.ets",
+      "sha256": "8091328f669e0b71340b6b141a47ded704f62a31647ad7bab0ea60752f9338c4"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "sha256": "5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+      "sha256": "0c7ee06f6bf8e8a23fc0de0b566a4014b36f3816ab97cbeee2eb10031b7411c4"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+      "sha256": "492ba2d6abcdfb25a43b032c3113b2a21ecbd25649a6e8cb3c295b8c1a82b6b8"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+      "sha256": "f250072a31b64dcdb787da259c07651ba53b0067badf7031b1d650d370d81084"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+      "sha256": "bc4e0d84fc66221345980f0e8f8fe8c7de42c21274e5a8431582e8b13a613164"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+      "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+      "sha256": "c3214a4e51402470f60adee645398dfc203926e0d042ec2d79d697175328c422"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+      "sha256": "ca935a9057ceaa18f11d2e23f7505ca1c670cdbd4697538a4b270bb8899e8955"
+    },
+    {
+      "path": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets",
+      "sha256": "27a003f80dee91bd5f8c84062da7c21900ded46ca76336b53b9cfdc99a436fa6"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+      "sha256": "1c81bfc6faa5cb81bc7bce2155e81db84be7bacae59dabcbda81e4aadb7ca366"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+      "sha256": "3af42a0b6baa6895bb91a6d66817c9546db2ef605d1b7e96a861d9c349c3be2b"
+    },
+    {
+      "path": "04-BusinessBase/AccountManager/src/main/ets/index.ets",
+      "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml",
+      "sha256": "88d22111142c490977598dffd303264a41c4eabefd9e55e9304a9bb899392859"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/context/facts.md",
+      "sha256": "2531e9d897180fd76e5b3df89a1944b465e16cef3621b99216eba0c66f75eec1"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/asset-manifest.yaml",
+      "sha256": "50e1143244119cba3225a87f021ba2e45533a36d434d1dcd7ca4fcf4aa17ad83"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/ref-elements.yaml",
+      "sha256": "2c51e22f7c51f71940d036ce976708ce5a8eae74da6f5846b53f7717df884ff6"
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/spec/ui-spec.yaml",
+      "sha256": "02fda91fa537decafb5bc02c6e76fbb5576b06a659535eff57a138488190d2a0"
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/3-点击任意银行拉起添卡选卡半模态.jpg",
+      "sha256": "66d2652dc31d35c1c245e5ec05c3dd2892aefa0b2ef31c21af33ed3524c16f73"
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/4-点击信用卡或储蓄卡后拉起选卡页面.jpg",
+      "sha256": "7dfac78e3e30f2891264875b70800638435c15b1bbcd3f23590b6ef43d8bd4bc"
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/5-选中某张卡片后拉起短信验证.jpg",
+      "sha256": "554e707ee1093988df18b6fe9307fffe845fff4bf3ca18e3a6120f2c79238d13"
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg",
+      "sha256": "f300cece15317a45c128d107ee39bb5c5ec9bce8e839face458ff58fcf47206c"
+    },
+    {
+      "path": "doc/features/原始需求/1-2-银行卡/原始需求.md",
+      "sha256": "2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300"
+    },
+    {
+      "path": "doc/glossary.yaml",
+      "sha256": "4e4499a377aa79c8474d61c81b1ccaa71b721832e11637647fd851baf121724a"
+    },
+    {
+      "path": "doc/module-catalog.yaml",
+      "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7"
+    },
+    {
+      "path": "framework/docs/README.md",
+      "sha256": "bcc0f37122094080f7d310850ae980246e7bfce2880f190907300d2f3ed4dadc"
+    },
+    {
+      "path": "framework/profiles/hmos-app/skills/README.md",
+      "sha256": "9d9f95c4a0280fe19bb36c57a11533e94e0845f1080e4b1aac470c78eb4e177b"
+    },
+    {
+      "path": "framework/profiles/hmos-app/skills/spec/profile-addendum.md",
+      "sha256": "ea61fa4639876663a8aa3ddef5a3a32774b3aecf30ec0b30d1a4764df1443974"
+    }
+  ],
+  "material_sha256": "f86bd528600c652c19f7cbe7803d8ea03836849c8d46407f9a2febda17fe8c3e"
+}

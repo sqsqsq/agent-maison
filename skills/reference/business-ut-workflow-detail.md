@@ -61,7 +61,7 @@
 
 写入前自检：`it()` 名以 `[AC-]`或`[BRANCH-]` 开头，BD 用 `[AC-x][BD-y]` 组合（禁止单独 `[BD-1]`）；audit/mock-plan 已过 `validate:ut-artifact`。mock-plan 优先：Spy 类与 preset 行为须与其一致。
 
-**路径 A（有 use-cases.yaml）骨架**：直接调用 `ui_bindings.user_actions.calls` 声明的命名函数，不 new `@Component struct`：
+**路径 A（有 use-cases.yaml）骨架**：按动作及有序 calls 定位实际业务入口，不 new `@Component struct`。Page 命名方法只能证明 UI 事件可定位；unit/both 的倒计时、重发门禁等仍须经无需 UI runtime 的真实业务入口驱动，不能只测辅助函数。若原设计缺接缝，在既有 testability-audit 提出具体证据并交原 owner 核实，不自行降低验收：
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'
@@ -227,7 +227,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 
 ## 核心理念（v2.1）：UT 是既有代码的消费者，不驱动架构
 
-- 🟢 复杂 feature（有 `use-cases.yaml`）：按 `ui_bindings[].user_actions[].calls` 声明的**命名函数**直接调用；在 `data_boundaries` 处打桩；断言 state 序列 + 调用序列 + 持久化数据。
+- 🟢 复杂 feature（有 `use-cases.yaml`）：按 `ui_bindings[].user_actions[].calls` 的顺序定位并驱动真实业务入口；Page 方法不能仅凭命名扫描当作 UT 可调用证明；在 `data_boundaries` 处打桩；断言 state 序列 + 调用序列 + 持久化数据。
 - 🟢 简单 feature（无 `use-cases.yaml`）：按 `acceptance.yaml` + `dag.yaml`，直接针对 data 层函数/Repository/导出工具函数写 UT，不要硬凑 UseCase 架构。
 - 🔴 UI 层绝对禁入 UT：不 import profile addendum 声明的 UI/资源/页面运行时符号，harness BLOCKER 拦截。
 - 🔴 不要为了 UT 反过来改架构：业务嵌在 inline lambda 时反馈 coding 抽出命名方法，不要在 UT 里实例化 UI 组件。

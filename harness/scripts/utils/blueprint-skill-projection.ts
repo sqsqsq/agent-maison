@@ -30,7 +30,7 @@ import type { ResolutionDependency } from './capability-resolution';
 import { resolveCheckDisposition } from './check-disposition';
 import { identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
-import { resolveProbeFrameworkRoot } from '../../repo-layout';
+import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
 
 export type BlueprintProjectionKind = 'acceptance' | 'contracts';
 /** plan 9c3d7e1a §3：invalid 的结构化原因——取自 validateChangeUnit 的 issue code，不解析 detail 文本。 */
@@ -201,8 +201,8 @@ function recordedArtifactFingerprints(projectRoot: string, feature: string, arti
   return [...fingerprints];
 }
 
-export function recordedArtifactContentEquivalent(projectRoot: string, feature: string, artifact: string, file: string, next: unknown): boolean {
-  const parsed = new SpecLoader(projectRoot, undefined, undefined, resolveProbeFrameworkRoot(projectRoot, __dirname)).loadFeatureSpec(feature,
+export function recordedArtifactContentEquivalent(projectRoot: string, feature: string, artifact: string, file: string, next: unknown, frameworkRoot = path.resolve(__dirname, '../../..')): boolean {
+  const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature,
     { context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] }, phase: '', values: {}, artifacts: { [artifact]: next } });
   if (parsed.shape_issues?.length) return false;
   const value = artifact === 'contracts@1' ? parsed.contracts : artifact === 'acceptance@1' ? parsed.acceptance : parsed.useCases;
@@ -388,6 +388,7 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     if (!raw) return { ...absent, artifacts: normalized };
     return { state: 'resolved', dependencies, value: kind === 'acceptance' ? parsed.acceptance : parsed.contracts, artifacts: normalized };
   } catch (error) {
+    if (error instanceof ArtifactSchemaError) throw error;
     // 解析器错误（ChangeUnitResolutionError / ComponentBlueprintResolutionError / FeatureIdentityError）自带 code；未编码的抛错留空（分类默认 B2）。
     const thrown = (error as { code?: unknown }).code;
     if (error instanceof BlueprintContentError) locations = error.locations;
@@ -525,6 +526,12 @@ export function describeAuthoritativeDrift(drift: AuthoritativeContentDrift, kin
   return `手写${kind === 'acceptance' ? '验收' : '设计'}与当前设计权威不一致：${drift.items.map(driftLabel).join(', ')}`;
 }
 
+/** A recoverable preparation finding; filesystem/programming errors retain their original type. */
+export class BlueprintProjectionPreparationError extends Error {
+  constructor(readonly owner: 'spec' | 'plan' | 'external', readonly artifacts: string[],
+    readonly reason: 'conflict' | 'stale' | 'invalid', message: string) { super(message); }
+}
+
 /** 责任阶段门（spec → acceptance / plan → contracts）：BLOCKER `authoritative_content_aligned`。不适用时不出行。 */
 /** Read-only resources and already-authorized omissions remain plan work, not design changes. */
 export function designWriteSetExpansion(projectRoot: string, expected: ContractsSpec, actual: ContractsSpec): string[] {
@@ -555,18 +562,24 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
  * `refresh`（只由 CU 指针原位升版传入）：来源戳匹配且原完整 contracts 冻结绑定证明等价时才改身份；
  * 无安全刷新依据时复核依赖后保留整个 Feature，返回空写集，由阶段 owner 重建。写出中途失败仍回滚本次已写文件。
  */
-export function materializeBlueprintSkillInputs(projectRoot: string, feature: string, frameworkRoot: string, refresh?: ProjectionRefresh): string[] {
-  const acceptance = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance');
-  const contracts = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts');
+export function materializeBlueprintSkillInputs(projectRoot: string, feature: string, frameworkRoot: string, refresh?: ProjectionRefresh, phase?: 'spec' | 'plan'): string[] {
+  const acceptance = phase === 'plan' ? undefined : deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance');
+  const contracts = phase === 'spec' ? undefined : deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'contracts');
+  const projections = [acceptance, contracts].filter((result): result is BlueprintSkillProjection => !!result);
   const verifyDependencies = (): void => {
-    for (const dep of [...acceptance.dependencies, ...contracts.dependencies]) if (fs.existsSync(dep.path) !== dep.exists || (dep.exists && digest(dep.path) !== dep.sha256)) throw new Error('blueprint projection stale; return to design owner');
+    for (const dep of projections.flatMap(result => result.dependencies)) if (fs.existsSync(dep.path) !== dep.exists || (dep.exists && digest(dep.path) !== dep.sha256)) throw new BlueprintProjectionPreparationError('external', [dep.path], 'stale', 'blueprint projection stale; return to design owner');
   };
   const preserveStageFiles = (): string[] => { verifyDependencies(); return []; };
-  for (const result of [acceptance, contracts]) if (result.state !== 'resolved') {
+  for (const result of projections) if (result.state !== 'resolved') {
     if (refresh) return preserveStageFiles();
-    throw new Error(result.detail);
+    if (phase && result.state === 'absent') return preserveStageFiles();
+    throw new BlueprintProjectionPreparationError('external', [], 'invalid', result.detail ?? 'blueprint projection invalid');
   }
-  const artifacts = { ...contracts.artifacts, 'acceptance@1': acceptance.value };
+  const artifacts: Record<string, unknown> = {
+    ...(contracts?.artifacts?.['contracts@1'] ? { 'contracts@1': contracts.artifacts['contracts@1'] } : {}),
+    ...(contracts?.artifacts?.['use-cases@1'] ? { 'use-cases@1': contracts.artifacts['use-cases@1'] } : {}),
+    ...(acceptance ? { 'acceptance@1': acceptance.value } : {}),
+  };
   if (refresh) {
     const identity = parseChangeUnitFeatureId(feature);
     const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
@@ -575,9 +588,9 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
     const record = previous ? asRecord(YAML.parse(previous)) : undefined;
     const ref = asRecord(asRecord(record?.change_unit)?.change_unit_ref);
     const next = previous && ref?.artifact_sha256 === refresh.changeUnitSha
-      ? YAML.parse(repointProjectionText(previous, String(asRecord(contracts.value)?.source), asChangeUnitArtifact(loaded.changeUnit), loaded.artifactSha256, refresh))
+      ? YAML.parse(repointProjectionText(previous, String(asRecord(contracts?.value)?.source), asChangeUnitArtifact(loaded.changeUnit), loaded.artifactSha256, refresh))
       : undefined;
-    if (!next || !recordedArtifactContentEquivalent(projectRoot, feature, 'contracts@1', location.actualPath, next)) return preserveStageFiles();
+    if (!next || !recordedArtifactContentEquivalent(projectRoot, feature, 'contracts@1', location.actualPath, next, frameworkRoot)) return preserveStageFiles();
   }
   const names = BLUEPRINT_PROJECTION_FILES;
   const writes: Array<{ file: string; text: string; previous?: Buffer }> = [];
@@ -586,20 +599,21 @@ export function materializeBlueprintSkillInputs(projectRoot: string, feature: st
     if (location.exists) {
       const previous = fs.readFileSync(location.actualPath);
       const existing = YAML.parse(previous.toString('utf8'));
-      const normalized = artifact === 'use-cases@1' ? normalizeUseCasePortCalls(existing) : { value: existing, issues: [] };
+      const normalized = resolveArtifactContent(artifact, existing, { frameworkRoot });
       if (canonical(normalized.value) === canonical(value)) continue;
       if (!refresh) {
         if (!normalized.issues.length && compareAuthoritativeContent(value, normalized.value).state === 'aligned'
           && (!String(asRecord(existing)?.source ?? '').startsWith('derive.blueprint-') || asRecord(existing)?.source === asRecord(value)?.source)) continue;
-        throw new Error(`plan: 既有 ${names[artifact]} 与投影冲突，不覆盖人工决策`);
+        const owner = artifact === 'acceptance@1' ? 'spec' : 'plan';
+        throw new BlueprintProjectionPreparationError(owner, [location.actualPath], 'conflict', `${owner}: 既有 ${names[artifact]} 与投影冲突，不覆盖人工决策；由原 ${owner} owner 对照 authoritative_content_aligned 核对，设计内容有误则交设计 owner`);
       }
       if (!hasPreBumpStamp(artifact, existing, refresh)) return preserveStageFiles();
       const identity = parseChangeUnitFeatureId(feature);
       const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
       const nextText = repointProjectionText(previous.toString('utf8'), String(asRecord(value)?.source), asChangeUnitArtifact(loaded.changeUnit), loaded.artifactSha256, refresh);
-      const next = artifact === 'use-cases@1' ? normalizeUseCasePortCalls(YAML.parse(nextText)).value : YAML.parse(nextText);
+      const next = resolveArtifactContent(artifact, YAML.parse(nextText), { frameworkRoot }).value;
       const unchanged = canonical(next) === canonical(value)
-        || recordedArtifactContentEquivalent(projectRoot, feature, artifact, location.actualPath, next);
+        || recordedArtifactContentEquivalent(projectRoot, feature, artifact, location.actualPath, next, frameworkRoot);
       if (!unchanged || normalized.issues.length || compareAuthoritativeContent(value, next).state !== 'aligned') return preserveStageFiles();
       writes.push({ file: location.actualPath, text: nextText, previous });
     } else writes.push({ file: location.canonicalPath, text: YAML.stringify(value) });
