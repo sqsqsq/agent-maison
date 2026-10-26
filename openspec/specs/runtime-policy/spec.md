@@ -182,3 +182,19 @@ feature.yaml.execution_scope MUST 仅为运行前候选。完整 Feature 交付 
 > **Enforced by (planned P2/P5/P6/P7):** `harness/scripts/utils/runtime-policy.ts`、
 > `harness/scripts/utils/goal-manifest.ts`、`harness/scripts/goal-mode-entry.ts`、
 > `harness/scripts/utils/verify-feature-completion.ts`、`harness/scripts/check-testing.ts`。
+
+### Requirement: Business automation authority comes from one common entry input
+
+Task automation authority SHALL be a single explicit input: `authorization.autonomyAuthorized`. `goal-runner --detach`, `--resume … --detach` and the supervisor's same-form restart SHALL convert the user's unattended choice into that input at the launcher, pass the existing non-persistent `--authorize-autonomy` argument through to the detached child before `--detach` is stripped, and the session `--authorize-autonomy` SHALL produce the same value. Policy resolution MUST NOT infer authority from `runtimeOwnerKind`, executor mode, `--detached-child`, `manifest.unattended`, `approval_mode`, process owner or any agent ledger. The authorization input SHALL remain bounded by the original request scope, explicit prohibitions, required credentials/irreversible actions and hard budgets; it SHALL NOT upgrade a single-duty request into a complete delivery.
+
+#### Scenario: Detached child no longer guesses authority
+- **WHEN** a user launches `goal-runner --detach` (fresh) or the supervisor restarts `--resume <run> --detach`
+- **THEN** the parent converts the entry into the common authorization input and passes `--authorize-autonomy` to the child; restart and continuation SHALL NOT lose the original authority or reset accumulated budget
+
+#### Scenario: Transport markers alone do not authorize
+- **WHEN** only `--detached-child`, process owner, `manifest.unattended` or `approval_mode=never` is present with no entry conversion or explicit session authorization
+- **THEN** policy SHALL resolve `confirmation_required`; design changes/budget changes keep their original confirmation path
+
+#### Scenario: Both transports see the same waiting semantics
+- **WHEN** the same condition blocks a session-owned and a process-owned complete delivery
+- **THEN** both SHALL use the same probe, remaining budget and cutoff; returning a waiting item to the session SHALL change only transport/presentation, not the recovery decision or business disposition

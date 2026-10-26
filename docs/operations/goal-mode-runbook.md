@@ -336,6 +336,32 @@ closure（phase-evidence-manifest staleness + review attestation），manifest �
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 
+### 普通完成与发布资格（plan 6fd6c8c1）
+
+- 两者从**同一份当前处置**派生：普通完成只看 `repair / wait / verify` 类问题；
+  视觉/资源轴的**软降级**（UNVERIFIED/STALE/MISSING）和开放视觉债务是**披露**——
+  它们不撤销普通完成，但 release 仍 `BLOCKED`，轴也不会被改写成 PASS。
+- 真正必修仍阻断：blocker、明确 hard 视觉要求、T8 确定性 major、缺少必需文本、
+  真实断言失败、framework 能力缺口、证据过期/closure 不完整、已核实且仍适用的发现。
+- 历史原件、原有绑定与证据失效语义不变；不带 Phase 的“末尾只算 PARTIAL”不再作为出口，
+  末尾出现必需工作时回到同一责任决策继续。
+- 同一失败事实可被正式 gate 直接消费：同一 run/phase/attempt、同一执行键、冻结执行事实完整
+  时不再重复真机执行，FAIL/用例/步骤与候选保持一致；新 attempt、输入变化、`--force-device`
+  或原设备障碍解除仍会真跑。
+- 后台恢复不再只认 `phase_halt`：settled + `harness_end` + `phase_verdict(action=halt,
+  failure_kind=framework_bug)` 同样可以只补正式 gate（不新增作者轮）；会话报告绑定同一
+  request 时同样只补 gate。
+
+### 授权入口（plan 6fd6c8c1）
+
+- `goal-runner --detach`、`--resume … --detach` 以及 supervisor 的同式重启，会在启动入口把
+  用户选择归一成共同的 `authorization.autonomyAuthorized=true`，并通过既有的非持久
+  `--authorize-autonomy` 参数透传给被剥离了 `--detach` 的子进程。
+- 会话 `--authorize-autonomy` 是同一输入；没有该输入时（即使 manifest 有默认 unattended、
+  `approval_mode=never` 或进程 owner）仍需原确认。
+- 该授权仍受原请求范围、明确禁止、真实凭据/不可逆动作与硬预算约束；不会把单职责请求升级为
+  完整交付，也不会清空累计预算。
+
 ## Testing evidence 与报告重算（testing-stepresult-evidence-consumption）
 
 - testing 不得把旧 case 状态当作 `verification=passed`；无 `CaseResult.steps[]` 的未执行 case 保持 testing FAIL，不按 TC 名称或报告散文自动投 coding。只有既有 capability resolution 给出 provider 缺失的机器事实时，才走 capability defer。历史产物里的 `explicit_skip_tc_ids` 只作只读诊断，与「未执行」同等对待——不贡献 PASS、不产 coding candidate，新计划与派生器禁止写入。
@@ -674,3 +700,11 @@ npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
 返修诊断材料 `--repair-notes` 只在已有本阶段返修候选的窗口消费，不改变冻结起止或需求；无可执行候选时不能靠附加文字声称改道。按实际 phase_start/scope_revised 证明接续；同输入无进展保留原熔断，真实预算/授权/外部缺口准确回报。
 
 默认额度变更仍须原请求/单次明确授权及既有 --override-manifest，累计与用户硬上限不变。
+
+会话实际执行者的视觉金丝雀通过现有 `phase_execute_request` 交付，`purpose=vision_canary`；读取请求指定的随机题图，将请求规定的原始逐行答卷写入报告 `details`，由运行时使用共同判卷器核实。随机卷与答案材料只属于该调用目录，不构成新的运行状态或授权。
+
+两种运输保留金丝雀原有计量：探测占共享活跃时间，不占业务作者轮次；原截止与剩余墙钟约束照旧，重复控制命令复用本次已接收答卷，不重复开启同一探测。
+
+需要参考图验读证据时，能导出原生工具事件的执行者按请求指示保存本次 `agent-events.jsonl`，报告接收时冻结该材料。不能导出实际工具审计时保持未验证，不以自然语言“看过图片”或旧后台日志补证。会话身份本身不否定真实能力，也不证明能力已验证。
+
+复用阶段的旧发现不会因其他对象的 `scope_revised` 自动关闭。核实格式或当前证据不足时先交原独立 verifier；确认仍有效才交真实修改责任方。原验证方在当前材料中有效复核通过后，当前 recovery 指导消解，历史报告和事件保留。末尾发现必需工作仍回原阶段循环；必需完成原件生成失败时保留可恢复状态。

@@ -1,0 +1,59 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93"
+coordinator: BankCardOpeningService
+ui_bindings:
+  - ui: AddBankCardPage|AllBanksPage
+    role: opening_entry
+    user_actions:
+      - trigger: tap_bank
+        calls: [openCardTypeSheet]
+  - ui: BankCardSelectionPage
+    role: card_selection
+    user_actions:
+      - trigger: tap_next
+        calls: [openOtpVerificationSheet]
+  - ui: BankCardOpeningResultPage
+    role: opening_result
+    user_actions:
+      - trigger: tap_finish
+        calls: [finishOpeningFlow]
+
+use_cases:
+  - id: UC-1
+    name: 完成银行卡开卡
+    coordinator: BankCardOpeningService
+    ui_bindings:
+      - ui: AddBankCardPage|AllBanksPage
+        role: entry
+        user_actions:
+          - { trigger: tap_bank, calls: [openCardTypeSheet] }
+      - ui: BankCardSelectionPage
+        role: progress
+        user_actions:
+          - { trigger: tap_next, calls: [openOtpVerificationSheet] }
+      - ui: OtpVerificationSheet
+        role: dialog
+        user_actions:
+          - { trigger: submit_otp, calls: [saveSelectedCard] }
+      - ui: BankCardOpeningResultPage
+        role: result
+        user_actions:
+          - { trigger: tap_finish, calls: [finishOpeningFlow] }
+    data_boundaries:
+      - name: BankCardRepository
+        type: BankCardRepository
+        kind: storage
+        methods: [save, list]
+    state_model:
+      phases: [ENTRY, TYPE_SELECTED, CARD_SELECTED, OTP_ACTIVE, SAVING, RESULT]
+    branches:
+      - scenario: 成功保存银行卡
+        id: BR-SUCCESS
+        linked_acceptance: [AC-1, AC-2, AC-3, AC-4, AC-5]
+        expected_phase_seq: [ENTRY, TYPE_SELECTED, CARD_SELECTED, OTP_ACTIVE, SAVING, RESULT]
+        expected_port_calls: [BankRepository.getCards, OtpService.sendMockCode, BankCardRepository.save, OpeningNavigationService.finish]
+      - scenario: 保存银行卡失败
+        id: BR-FAILURE
+        linked_acceptance: [AC-4, AC-5, BD-3]
+        expected_phase_seq: [ENTRY, TYPE_SELECTED, CARD_SELECTED, OTP_ACTIVE, SAVING, RESULT]
+        expected_port_calls: [BankCardRepository.save, OpeningNavigationService.finish]

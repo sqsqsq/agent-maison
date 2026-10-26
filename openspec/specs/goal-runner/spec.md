@@ -2313,3 +2313,52 @@ Design author, independent questioning and verifier-format repair SHALL use the 
 #### Scenario: Design repair crosses commands
 - **WHEN** author, questioning and publication run across separate control commands
 - **THEN** they SHALL remain the same transaction with original authority/snapshot and accumulated budget, and only the existing publication/rebind transaction SHALL update canonical artifacts
+
+### Requirement: Completion and release project from one current disposition
+
+Every completion consumer SHALL read the current disposition resolved from one assembled fact set: that phase's summary verdict/schema/closure, current check results, required execution gaps, evidence freshness, review attestation, visual/resource debt and registered unresolved findings. Ordinary completion SHALL be blocked only by problems whose disposition is repair, wait or verify; a disclosed soft visual/resource residual SHALL NOT be re-turned into a required fix, SHALL keep the debt and release `BLOCKED`, and SHALL NOT fabricate a visual PASS. Release eligibility SHALL remain separate: any non-PASS required release axis, open debt, or disclosed residual keeps release blocked while ordinary completion may still hold. Historical originals, bindings and evidence invalidation remain unchanged; a completion record's chain SHALL be derived from the same effective scope that verification reconciles against.
+
+#### Scenario: Feature passes all stages with disclosed visual debt
+- **WHEN** all phases closed PASS while the visual axis is UNVERIFIED (soft degradation) and visual debt remains open
+- **THEN** ordinary Feature completion SHALL be generated and accepted by assess/next/CU consumers
+- **AND** release SHALL stay `BLOCKED` with the same debt and without changing the visual axis to PASS
+
+#### Scenario: A real hard failure survives disclosure
+- **WHEN** a blocker, hard visual requirement, deterministic T8 major, missing required text or real assertion failure is present
+- **THEN** the same disposition SHALL keep completion blocked, route repair to the real owner and require re-verification; a co-existing disclosed item SHALL NOT override it
+
+#### Scenario: A reused phase still carries a registered finding
+- **WHEN** resume/reuse would skip a passed phase whose verified finding remains current (or whose verification format needs completing)
+- **THEN** the existing candidate/responsibility path SHALL route the actual repair object to its legal owner; incomplete verification SHALL first return to the original independent verifier
+- **AND** an unrelated scope revision, modifier PASS, refusal or noop SHALL NOT close the finding; only current independent evidence about that object may close it while retaining history
+
+#### Scenario: Completion generation uses the verified chain
+- **WHEN** the effective scope records a phase as reused while the executing run's replay chain omits it
+- **THEN** the generated completion record SHALL carry the effective completion chain so record inspection and consumers agree
+
+### Requirement: Invocation facts and failures are consumed across both transports
+
+Validation-only eligibility SHALL derive from one shared judgment over real invocation facts: a valid process settlement (non-timeout, with `harness_end` for the same invoke) or an accepted session handoff report bound to its issue, plus absence of later execution, backtrack, invalidation or product verdict. A framework-bug or external-defer interruption projection SHALL count as the halt shape even without `phase_halt`; a normal FAIL SHALL NOT. Session and process wrappers SHALL only adapt which completion observation they supply, not decide business eligibility separately.
+
+Device/UT execution SHALL write the existing goal invocation identity. On a same run/phase/attempt, same execution key and complete frozen execution facts, a recorded product failure SHALL be consumed by the formal gate without re-executing the device; tool/environment failures, missing facts, new attempts, input changes, `--force-device` and cleared obstacles SHALL still execute for real. A failed outcome SHALL NEVER enter the success-reuse candidate set and SHALL NOT be rewritten as success.
+
+#### Scenario: Halted run lacks phase_halt
+- **WHEN** the author settled normally and the harness ran, but the halt was recorded only as `phase_verdict(action=halt, failure_kind=framework_bug)`
+- **THEN** resume SHALL derive validation-only eligibility and run the formal gate without a new author turn
+
+#### Scenario: Formal gate repeats an author self-check failure
+- **WHEN** the author's self-check already recorded a product failure for the same invocation and execution key with frozen artifacts
+- **THEN** the formal gate SHALL read that failure and produce the same FAIL/defects without another device execution
+
+#### Scenario: New input legitimately re-executes
+- **WHEN** attempt, source/test/package/target/config or explicit force changes, or a known device block is cleared
+- **THEN** the device SHALL execute again; the recorded failure SHALL NOT be consumed as current
+
+### Requirement: Terminal work and actual session capability remain executable
+
+The stage loop SHALL consume the same current disposition at its terminal boundary. Outstanding duties SHALL return to existing owner backtrack or condition recovery under the original scope and cumulative budget. The runner SHALL generate a required Feature completion original before sealing a successful run; generation failure SHALL retain recoverable work and SHALL NOT advertise Feature completion. Simulator or unknown targets SHALL enter existing device waiting when physical verification is required, and the shared readiness probe SHALL require positive physical evidence before rechecking the original gate.
+
+#### Scenario: Session executor supplies real vision evidence
+- **WHEN** an actual session executor can answer the vision canary and export native structured tool events
+- **THEN** the runtime SHALL issue the existing request with purpose `vision_canary`, grade the report's original answer with the common grader and cache, and freeze current invocation tool materials with its accepted report
+- **AND** reference signing SHALL consume these actual current materials; missing audit evidence SHALL remain unverified, and old process logs SHALL NOT be signed as session evidence

@@ -1,0 +1,26 @@
+{
+  "phase": "plan",
+  "stage": "unknown",
+  "timed_out": false,
+  "inspected_file_count": 0,
+  "inspected_files": [],
+  "report_sections_done": [
+    "Scope 声明与继承",
+    "1. 模块架构图",
+    "2. 目录/文件结构规划",
+    "3. 数据模型定义",
+    "4. 页面组件树",
+    "5. 状态管理方案",
+    "6. 服务层接口定义",
+    "7. 路由/导航设计",
+    "8. spec 功能映射表"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md",
+      "sha256": "38737839afa2f8520b65fd48891ce4d803b5e0d677fda18356d2d79d60802b29",
+      "mtime_ms": 1792731893687.2173
+    }
+  ],
+  "derived_at": "2026-10-23T05:16:59.302Z"
+}

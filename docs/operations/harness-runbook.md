@@ -186,6 +186,12 @@ doc/features/<feature>/
 - `blocking_skips`：`severity=BLOCKER` 但状态为 `SKIP` 的检查项（已确认不适用的除外），避免被 verdict PASS 掩盖。`blocking_warnings` 已停写：schema 保留该属性，旧 summary 带着它照常可读，新 summary 不再出现。
 - `verdict` / 退出码 / `blocker_count`：阶段结论只算一次（脚本阻断、报告合法性、质量轴与能力解析取更严一侧），控制台、合并报告与进程退出码都用它；`blockers` 与 `blocker_count` 是同一个有效阻断集合（聚合的运行状态项在源失败已列出时不重复计入）。
 - `disclosed_failures`：失败但按处置表只披露、不阻断的检查（账本与形状类，如 `schema_version_present`）；条数计入完成缺口，完成标签为 `COMPLETE_WITH_GAPS`。
+- **Feature 普通完成与发布资格分开读**（plan 6fd6c8c1）：普通完成只拒绝 `repair / wait / verify`
+  类当前问题；视觉/资源轴的软降级与开放债务是披露，保留 `release_readiness=BLOCKED` 与债务，
+  但不撤销普通完成、不重排作者阶段、不把轴改成 PASS。真实 hard 失败、能力/执行缺口、证据过期、
+  closure 不完整与已核实未处置发现仍阻断完成。`quality_axis_verified` 只在完成阻断时出现在
+  `collectCleanPassIssues`；披露项用 `collectDisclosedCompletionIssues`（展示结构，不含 `kind`，
+  不得喂给 `classifyCleanPassIssues`）。
 - `next_action`：给 agent / Stop hook 的下一步建议；同会话未闭环时，Stop hook 会把最近一次 `summary.json.next_action` 带入阻断文案。
 - `repair_candidates[].evidence_refs`：可选的只读 native 交接定位（trace_path/case_id/step_index，以及派生/失败边界路径）；
   `files`/`affected_files` 仍仅是修复目标。补证据不会改变 native 旧指纹、拒修或无进展判定；旧候选缺此字段仍可读。

@@ -219,6 +219,14 @@ export function loadFactsInvocationContext(options: {
   if (!context || !('run_id' in context.subject) || context.subject.feature !== options.feature || context.subject.run_id !== options.runId
     || typeof context.first_phase !== 'string' || !Array.isArray(context.source_paths)) return undefined;
   const admitted = structuredClone(context);
+  // 搬迁只改变当前读取位置，原事件、subject 和内容指纹保持原件。与范围依赖共用根推导。
+  const legacyRoot = inferLegacyProjectRoot(options.projectRoot, scope);
+  const currentSource = (file: string): string => validateProjectRelativePath(options.projectRoot,
+    path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, file, legacyRoot)).replace(/\\/g, '/'), 'invocation source');
+  admitted.source_paths = admitted.source_paths.map(currentSource);
+  if (admitted.source_owners) admitted.source_owners = Object.fromEntries(Object.entries(admitted.source_owners).map(([file, owner]) => [currentSource(file), owner]));
+  if (admitted.baseline) admitted.baseline.dependencies = admitted.baseline.dependencies.map(dependency => ({ ...dependency,
+    path: resolveDependencyPath(options.projectRoot, dependency.path, legacyRoot) }));
   const writes = events.slice(index + 1).filter(event => event.type === 'phase_write_observed' && event.invoke_id === events[index].invoke_id && event.phase === options.phase);
   if (!writes.length) return admitted;
   for (const event of writes) {
@@ -553,6 +561,7 @@ export function resolveCapabilityResolutionEntryInput(
             if (evidence || !currentResearch) {
               factsRebuildReason = `facts baseline stale: return to ${establishing} to establish current facts; changed sources: ${(fresh?.changed_paths ?? []).join(', ') || fresh?.verdict || 'missing'}`;
               if (options.phase !== establishing) throw new Error(factsRebuildReason);
+              factsContext.first_phase = establishing;
             }
           } else {
             const paths = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((p): p is string => typeof p === 'string') : [];
@@ -609,6 +618,7 @@ export function resolveCapabilityResolutionEntryInput(
           const original = parseContextExploration(fs.readFileSync(factsPath, 'utf8')).fm as Record<string, unknown>;
           const establishing = resolveFactsRebuildOwner({ ...options, goalRunId }, original, factsContext.first_phase);
           if (options.phase !== establishing) throw new Error(reason.startsWith('facts ') ? reason : `facts input invalid: ${reason}; return to ${establishing}`);
+          factsContext.first_phase = establishing;
           factsRebuildReason = establishing !== original.established_by
             ? `Audited successor: establish new-run facts from actual sources at the immutable birth owner ${establishing}; predecessor baseline could not be reused (${reason}).`
             : `Establish current facts from the actual source files: ${reason}`;

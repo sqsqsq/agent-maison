@@ -365,7 +365,8 @@ export function phaseInvocationStart(events: readonly GoalRunEvent[], phase: str
 export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
   let n = 0;
   for (const e of events) {
-    if (e.type === 'agent_invoke_start') n++;
+    // 金丝雀是一次能力探测，沿原契约只计共享活跃时间，不占业务作者轮次。
+    if (e.type === 'agent_invoke_start' && (e as { purpose?: string }).purpose !== 'vision_canary') n++;
     else if (e.type === 'agent_invoke') n++;
   }
   return n;
@@ -1584,4 +1585,117 @@ export function buildHalfPhaseRecoveryEvents(
       recovered: true,
     },
   ];
+}
+
+// ============================================================================
+// plan 6fd6c8c1 §4.2：两种运输**共同**的调用完成事实与验证优先资格
+// ----------------------------------------------------------------------------
+// 旧实现分两处：deriveHaltValidationOnlyEligibility 只看 phase_halt（后台），
+// sessionValidationOnlyEligibility 只看 handoff_report（会话）。fe4512 coding-i3 的停机和
+// 新收尾的会话报告因此会得出不同的恢复资格。这里归一为一条判据：
+//   1. 找到最新的**作者已完成**调用事实（进程 settled 或会话 handoff report）；
+//   2. 该事实之后不得有新的执行、回退、失效或**产品裁决**（PASS/FAIL 以外的停机投影除外）；
+//   3. 中断窗口（phase_halt WAITING 或 phase_verdict 的停机投影）只用于选择事实形状，
+//      由调用方决定是否要求（requireInterrupt）；运输差异只保留“进程要求 harness_end、
+//      会话要求 report 绑定同一 request”这两种完成观察适配。
+// 不保存第三份资格状态：输入是事件与可选产物谓词，输出仍是 {phase, invoke_id}。
+// ============================================================================
+
+export type InvocationTransport = 'process' | 'session';
+
+export interface InvocationCompletionFact {
+  phase: string;
+  invoke_id: string;
+  transport: InvocationTransport;
+  /** 事实在事件流中的下标（调用方只读；不持久化）。 */
+  index: number;
+}
+
+export interface ValidationOnlyOptions {
+  /** 是否必须有中断窗口（回复路径要求；会话报告消费不要求——pending report 本身即停等）。 */
+  requireInterrupt?: boolean;
+  /** 产物/写入事实在场谓词；缺省不额外要求（由正式 gate 复查）。 */
+  artifactsOk?: (fact: InvocationCompletionFact) => boolean;
+}
+
+/** 停机投影：不是“产品通过/失败”，而是“作者已完成、只差验证”的中断形状。 */
+export function isInterruptionVerdict(event: Record<string, unknown>): boolean {
+  if (event.type !== 'phase_verdict') return false;
+  // 普通 FAIL(action=halt) 是真实失败，不派生验证优先；只有框架自身故障/外部条件推迟才是中断投影。
+  if (event.failure_kind === 'framework_bug') return true;
+  return event.verdict === 'INCOMPLETE'
+    && (event.action === 'defer_external_and_continue_if_allowed' || event.action === 'defer_external_and_halt');
+}
+
+function phaseOf(event: Record<string, unknown>): string | null {
+  return typeof event.phase === 'string' && event.phase.length > 0 ? event.phase : null;
+}
+
+/**
+ * 统一入口。两运输共用同一份“最新事实 + 后来失效”判断；包装函数（goal-phase-runtime 的
+ * deriveHaltValidationOnlyEligibility、session-execution-handoff 的 sessionValidationOnlyEligibility）
+ * 只传 requireInterrupt，不再各自裁决业务资格。
+ */
+export function resolveValidationOnlyEligibility(
+  events: ReadonlyArray<Record<string, unknown>>,
+  opts: ValidationOnlyOptions = {},
+): { phase: string; invoke_id: string } | null {
+  let fact: InvocationCompletionFact | null = null;
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    const phase = phaseOf(event);
+    if (!phase) continue;
+    const invokeId = typeof event.invoke_id === 'string' && event.invoke_id.length > 0 ? event.invoke_id : null;
+    if (!invokeId || event.timed_out === true || event.kill_reason === 'agent_timeout') continue;
+    // 进程运输：settled 是完成观察；有 repair 请求时还须该请求的修复调用已完成。
+    if (event.type === 'agent_process_settled') {
+      const ownerRequest = [...events].reverse().find(row => row.type === 'phase_backtrack_requested');
+      if (ownerRequest?.to_phase === phase && !repairInvocationCompleted(events as never, phase, invokeId)) continue;
+      fact = { phase, invoke_id: invokeId, transport: 'process', index };
+      break;
+    }
+    // 会话运输：handoff report 是完成观察；必须绑定同一 request 的 phase_start。
+    if (event.type === 'agent_invoke_end' && event.handoff_report) {
+      if ((event as { chain_phase?: unknown }).chain_phase && (event as { chain_phase?: unknown }).chain_phase !== phase) continue;
+      if (event.status === 'waiting') continue;
+      const report = event.handoff_report as { request_sha256?: unknown };
+      if (typeof report?.request_sha256 !== 'string') continue;
+      const issued = events.slice(0, index).reverse().find(row => row.type === 'phase_start'
+        && (row.handoff_request as { sha256?: unknown } | undefined)?.sha256 === report.request_sha256);
+      if (!issued) continue;
+      fact = { phase, invoke_id: invokeId, transport: 'session', index };
+      break;
+    }
+  }
+  if (!fact) return null;
+  if (opts.artifactsOk && !opts.artifactsOk(fact)) return null;
+
+  const after = events.slice(fact.index + 1);
+  let interruptSeen = false;
+  for (const event of after) {
+    // 新回退窗口优先：任何 halt 之后的 backtrack 都把资格交给 applyInvalidationsToResume，
+    // 旧 settled 不得覆盖新窗口（review P1；会话与后台同判）。
+    if (event.type === 'phase_backtrack_requested') return null;
+    if (event.type === 'phase_invalidated' && phaseOf(event) === fact.phase) return null;
+    if (event.type === 'agent_invoke_start' && phaseOf(event) === fact.phase) return null;
+    if (phaseOf(event) !== fact.phase) continue;
+    if (event.type === 'agent_process_settled' || event.type === 'agent_invoke_end') return null;
+    if (isInterruptionVerdict(event)) { interruptSeen = true; continue; }
+    // 产品裁决（PASS/FAIL/其它 verdict）说明该阶段已经重新判定过，旧事实不再是“只差验证”。
+    if (event.type === 'phase_verdict') return null;
+    if (event.type === 'phase_halt' && event.run_disposition === 'WAITING') interruptSeen = true;
+  }
+  // 进程运输的完成观察还需 harness_end（agent 做到 harness 边界）；会话 report 自带该观察。
+  if (fact.transport === 'process') {
+    const harnessEnded = events.slice(fact.index + 1).some(event =>
+      event.type === 'harness_end' && phaseOf(event) === fact.phase && event.invoke_id === fact.invoke_id);
+    if (!harnessEnded) return null;
+  }
+  if (opts.requireInterrupt && !interruptSeen) {
+    // 新中断窗口（halt/verdict）之外，也接受旧 phase_halt WAITING 形状（后台普通停等）。
+    const halts = events.filter(event => event.type === 'phase_halt' && phaseOf(event) === fact!.phase
+      && event.run_disposition === 'WAITING');
+    if (!halts.length) return null;
+  }
+  return { phase: fact.phase, invoke_id: fact.invoke_id };
 }

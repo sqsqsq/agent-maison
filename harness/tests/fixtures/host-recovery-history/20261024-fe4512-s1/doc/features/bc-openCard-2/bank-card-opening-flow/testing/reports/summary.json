@@ -1,0 +1,746 @@
+{
+  "schema_version": "1.3",
+  "phase": "testing",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "verdict": "PASS",
+  "report_validity": "PASS",
+  "quality_axes": {
+    "functional": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "acceptance_content_complete",
+        "acceptance_device_focus_present",
+        "acceptance_to_test_case",
+        "acceptance_ut_layer_complete",
+        "acceptance_yaml_present",
+        "boundary_coverage",
+        "capability_testing_code_context",
+        "context_exploration_facts_phase_delta_present",
+        "defect_to_test_case",
+        "derived_selector_contract",
+        "device_case_contract",
+        "legacy_device_testing_todo_deprecated",
+        "negative_verdict_closure",
+        "node_options_injection",
+        "p0_identity_injection",
+        "pass_criteria_defined",
+        "plan_references_unit_layer_ac",
+        "plan_to_report_consistency",
+        "product_behavior_switch_scan",
+        "test_case_flow_consistency",
+        "test_case_priority_values",
+        "test_case_to_acceptance",
+        "test_environment_defined",
+        "test_plan_freshness_vs_acceptance",
+        "test_report_generated",
+        "testing_artifact_integrity",
+        "testing_case_execution_completeness",
+        "testing_channel_evidence_obligation",
+        "testing_execution_channel",
+        "testing_run_status",
+        "ui_entry_coverage",
+        "upstream_verdict_gate"
+      ],
+      "resolution": null
+    },
+    "visual": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "UNVERIFIED",
+      "blocking_class": "needs_fix",
+      "source_checks": [
+        "render_visibility_calibrate",
+        "runtime_mount_conformance",
+        "visual_debt_disclosure",
+        "visual_diff",
+        "visual_diff_capture",
+        "visual_feedback"
+      ],
+      "resolution": {
+        "class": "needs_fix",
+        "owner": "agent",
+        "retry_phase": "testing"
+      }
+    },
+    "asset": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "inherited:coding:debt:no-debt",
+        "inherited:coding:inventory:087df0ef82797c5e9b3393cbe0a79a55d30d1791d54ba4df704b5e12321e7bb0",
+        "inherited:coding:summary:44e67a803e4a4550"
+      ],
+      "resolution": null
+    },
+    "evidence": {
+      "applicable": true,
+      "required_for_release": true,
+      "verdict": "PASS",
+      "blocking_class": null,
+      "source_checks": [
+        "capability_testing_cases",
+        "capability_testing_design_context",
+        "device_test_build",
+        "device_test_evidence",
+        "device_test_install",
+        "device_test_run",
+        "hylyre_evidence_gate",
+        "hylyre_selector_runtime_gate",
+        "p0_coverage_integrity",
+        "p0_pass_rate_dual_metrics",
+        "p0_runtime_step_evidence",
+        "p0_runtime_step_evidence_boundary",
+        "p0_semantic_coverage_integrity",
+        "report_trace_reconciliation",
+        "review_closure_attestation"
+      ],
+      "resolution": null
+    }
+  },
+  "release_readiness": "BLOCKED",
+  "completion_status": "COMPLETE_WITH_P0_GAPS",
+  "blocker_count": 0,
+  "fail_count": 0,
+  "warn_count": 4,
+  "gate_fingerprint": "3.1.0:bbe9dbfe6b6b",
+  "asset_debt_revision": "no-debt",
+  "script_report": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/script-report.json",
+  "merged_report": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/merged-report.md",
+  "ai_prompt": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/ai-prompt.md",
+  "summary_json": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/summary.json",
+  "run_statuses": [
+    {
+      "id": "testing_run_status",
+      "status": "PASS",
+      "can_claim_done": true,
+      "details": "Testing 阶段状态面板：\n- 文档结构规则：PASS\n- 主应用打包：PASS\n- 真机装机：PASS\n- 当前是否可以宣称 testing 完成：是\ncan_claim_done: YES\ntest_plan: PRESENT\ntest_report: PRESENT\nblocker_fail_count: 0\nblocker_skip_count: 0\nblocking_warn_count: 0"
+    }
+  ],
+  "readiness_signals": [
+    {
+      "id": "visual_debt_disclosure",
+      "status": "unknown",
+      "message": "保留视觉差异/未验披露：card_type_status_bar, selection_status_bar, otp_status_bar, otp_system_numeric_keyboard, result_status_bar, result_ocr_uncertain_copy；阶段检查不构成设备视觉验真，release 仍 BLOCKED。"
+    },
+    {
+      "id": "semantic_not_reverified",
+      "status": "unknown",
+      "message": "verifier 沿用既往 PASS 闭环；当前材料的语义未重审（差异：script_report_checks、doc/features/bc-openCard-2/bank-card-opening-flow/testing/test-report.md）"
+    }
+  ],
+  "blocking_skips": [],
+  "blockers": [],
+  "disclosed_failures": [],
+  "next_action": "phase_closed_wait_user",
+  "closure_status": "closed",
+  "assurance": "full",
+  "capability_resolutions": [
+    {
+      "id": "capability_testing_cases",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "cases",
+          "state": "resolved",
+          "selected_source": "acceptance@1",
+          "selected_source_fingerprint": "d46260b73f3fe267f8652ed4c4daee09642844add4db880539924bb16ed9c02b",
+          "binding": {
+            "input_id": "cases",
+            "source": {
+              "kind": "artifact",
+              "artifact": "acceptance@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\acceptance.yaml",
+                "exists": true,
+                "sha256": "60ca0798a0abd9f71e718c642dabb6e1fc5ce0713ac2c333fc7ad58964d1b3d6",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml"
+            ],
+            "content_fingerprint": "d46260b73f3fe267f8652ed4c4daee09642844add4db880539924bb16ed9c02b"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "acceptance@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\acceptance.yaml",
+                  "exists": true,
+                  "sha256": "60ca0798a0abd9f71e718c642dabb6e1fc5ce0713ac2c333fc7ad58964d1b3d6",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "spec",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\acceptance.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_testing_code_context",
+      "axis": "functional",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "fail",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "tested_code",
+          "state": "resolved",
+          "selected_source": "derive.codebase",
+          "selected_source_fingerprint": "ef00b999011c756a17b4c7780bb32b32e022e4767a4457aecb53bad641a73447",
+          "binding": {
+            "input_id": "tested_code",
+            "source": {
+              "kind": "derive",
+              "provider_id": "derive.codebase"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\navigation\\WalletDestinationRegistry.ets",
+                "exists": true,
+                "sha256": "248d0e20be41280480b38d4a71fde6ba3996b2a4a7087393e89730a76165629f",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                "exists": true,
+                "sha256": "c3e17ad03316367064f60cab14d49481eaa5a2d551ba41bad24e6f1a16e6c8e5",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankCardCandidate.ets",
+                "exists": true,
+                "sha256": "238a6b9bebac812a23f666d32e6d6b69af1309c84a7056c302323309b5cc1f10",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankInfo.ets",
+                "exists": true,
+                "sha256": "44e0db74c0bac252e63a0da69af0aa986dec35c5132daf4be089ad50a3904992",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankOpeningCompletionContext.ets",
+                "exists": true,
+                "sha256": "619ba798be856082f337f52482d06ff7bf9b8f314febcbc33f01765e6e4f89ac",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\OpeningResult.ets",
+                "exists": true,
+                "sha256": "7aef81041f69bcee34c401167d41ef36fd4e8f956d138cfa446304afd3a0f625",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\StoredCard.ets",
+                "exists": true,
+                "sha256": "91f0e5ebc47d7524f4892824d72767feb0863ae429928aa98f2423c1afe7cf94",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankCardRepository.ets",
+                "exists": true,
+                "sha256": "e37016f70b00692092d863bcb5186c9d1e8bfe446f8d28c653b29a36fdf9ea78",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                "exists": true,
+                "sha256": "45e35adb9536871ae95b18228bed2871bc42d4be342a1c000ccd040880ef1e35",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\BankCardOpeningService.ets",
+                "exists": true,
+                "sha256": "8b022f1ee0020e880b1bb799f2beb914d2d60c33f0da9dde41c187f7200af41b",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\OpeningNavigationService.ets",
+                "exists": true,
+                "sha256": "c517e8551ee64be83792c9fb42370cd439f89bec4dfbffaec119ff9257bee088",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\OtpService.ets",
+                "exists": true,
+                "sha256": "bbe518fdc1bbd88e60b98a96eacc7fef4759028d7e232ba189097e593665319f",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\index.ets",
+                "exists": true,
+                "sha256": "7a854693ef4c516d125b47eeff71115a65641cd46d6ee0d5950cff308829992f",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\CardTypeSheet.ets",
+                "exists": true,
+                "sha256": "2fd3f5d09e53f7b4fac275c5b7f0a59d103d37bc0e577eb51a84d051a5a3e3a4",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\OtpVerificationSheet.ets",
+                "exists": true,
+                "sha256": "e0376d1aa4396c11d37c2cf2b412b2e38affc5b32edc3bafa5496ad1130664d3",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                "exists": true,
+                "sha256": "e2a1d6d06e959661848ae2b064c5fdb629481c1b2d409a85d22574b98d3ddba5",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AllBanksPage.ets",
+                "exists": true,
+                "sha256": "f822d14033e00d59c2b2c9987631e10d6fd3e1683a13d6728aded8a8ac13ea94",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardOpeningResultPage.ets",
+                "exists": true,
+                "sha256": "d9589422aca3f459574dc9a590f3df347cd29521fe25151a7eb2581102f0561e",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardSelectionPage.ets",
+                "exists": true,
+                "sha256": "5be74f8de46fa24b27f553a4d2bea52a4d64876cdd82b1e8e64fa6337606dfc4",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\HomeTabPage.ets",
+                "exists": true,
+                "sha256": "b51d01ec291ec7ac6bc22caa01a36a3dd0f58e6540845ab7e4dd10fcd4d21d75",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\shared\\constant\\BankConstants.ets",
+                "exists": true,
+                "sha256": "eae748f4a6f58e86682d60e7f8aab7e7965e49fd7dff54aa91ba3546cb642a0b",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\color.json",
+                "exists": true,
+                "sha256": "5216bc6304a96e40a42fe8d20bba3f608626f86d29fd896f52cbac6b9f1b11f4",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\float.json",
+                "exists": true,
+                "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\string.json",
+                "exists": true,
+                "sha256": "81643574376adafbfbe0ab2b276c267677bf1a4c24257278440c352079ee9394",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\media\\result_payment_guide_placeholder.png",
+                "exists": true,
+                "sha256": "e8155a66f7476b56e571d74b4774aa0e5c6a5ed57f24458227008e3d3fb65228",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\profile\\route_map.json",
+                "exists": true,
+                "sha256": "51eb86e3a1e902c622192477713d15020308585fe612378ba873ace5d5bc33db",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\data\\model\\UserProfile.ets",
+                "exists": true,
+                "sha256": "043b16cd29f489a03b8ae7b742df4974d48436845437064325e207d6a1ba8b55",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\domain\\service\\AccountService.ets",
+                "exists": true,
+                "sha256": "0e97cba80995bbafaf7bdbcfae6ef44f25079e1775e609a7fe530716018b84b6",
+                "role": "derive"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\index.ets",
+                "exists": true,
+                "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+                "role": "derive"
+              }
+            ],
+            "source_refs": [
+              "01-Product/Phone/src/main/ets/navigation/WalletDestinationRegistry.ets",
+              "01-Product/Phone/src/main/ets/pages/index.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/BankOpeningCompletionContext.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/OpeningResult.ets",
+              "02-Feature/WalletMain/src/main/ets/data/model/StoredCard.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+              "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/service/OpeningNavigationService.ets",
+              "02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets",
+              "02-Feature/WalletMain/src/main/ets/index.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+              "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+              "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+              "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+              "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+              "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+              "02-Feature/WalletMain/src/main/resources/base/media/result_payment_guide_placeholder.png",
+              "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+              "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+              "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+              "04-BusinessBase/AccountManager/src/main/ets/index.ets"
+            ],
+            "content_fingerprint": "ef00b999011c756a17b4c7780bb32b32e022e4767a4457aecb53bad641a73447"
+          },
+          "attempts": [
+            {
+              "kind": "derive",
+              "source": "derive.codebase",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\navigation\\WalletDestinationRegistry.ets",
+                  "exists": true,
+                  "sha256": "248d0e20be41280480b38d4a71fde6ba3996b2a4a7087393e89730a76165629f",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\src\\main\\ets\\pages\\index.ets",
+                  "exists": true,
+                  "sha256": "c3e17ad03316367064f60cab14d49481eaa5a2d551ba41bad24e6f1a16e6c8e5",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankCardCandidate.ets",
+                  "exists": true,
+                  "sha256": "238a6b9bebac812a23f666d32e6d6b69af1309c84a7056c302323309b5cc1f10",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankInfo.ets",
+                  "exists": true,
+                  "sha256": "44e0db74c0bac252e63a0da69af0aa986dec35c5132daf4be089ad50a3904992",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\BankOpeningCompletionContext.ets",
+                  "exists": true,
+                  "sha256": "619ba798be856082f337f52482d06ff7bf9b8f314febcbc33f01765e6e4f89ac",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\OpeningResult.ets",
+                  "exists": true,
+                  "sha256": "7aef81041f69bcee34c401167d41ef36fd4e8f956d138cfa446304afd3a0f625",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\model\\StoredCard.ets",
+                  "exists": true,
+                  "sha256": "91f0e5ebc47d7524f4892824d72767feb0863ae429928aa98f2423c1afe7cf94",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankCardRepository.ets",
+                  "exists": true,
+                  "sha256": "e37016f70b00692092d863bcb5186c9d1e8bfe446f8d28c653b29a36fdf9ea78",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\data\\repository\\BankRepository.ets",
+                  "exists": true,
+                  "sha256": "45e35adb9536871ae95b18228bed2871bc42d4be342a1c000ccd040880ef1e35",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\BankCardOpeningService.ets",
+                  "exists": true,
+                  "sha256": "8b022f1ee0020e880b1bb799f2beb914d2d60c33f0da9dde41c187f7200af41b",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\OpeningNavigationService.ets",
+                  "exists": true,
+                  "sha256": "c517e8551ee64be83792c9fb42370cd439f89bec4dfbffaec119ff9257bee088",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\domain\\service\\OtpService.ets",
+                  "exists": true,
+                  "sha256": "bbe518fdc1bbd88e60b98a96eacc7fef4759028d7e232ba189097e593665319f",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\index.ets",
+                  "exists": true,
+                  "sha256": "7a854693ef4c516d125b47eeff71115a65641cd46d6ee0d5950cff308829992f",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\CardTypeSheet.ets",
+                  "exists": true,
+                  "sha256": "2fd3f5d09e53f7b4fac275c5b7f0a59d103d37bc0e577eb51a84d051a5a3e3a4",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\components\\OtpVerificationSheet.ets",
+                  "exists": true,
+                  "sha256": "e0376d1aa4396c11d37c2cf2b412b2e38affc5b32edc3bafa5496ad1130664d3",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AddBankCardPage.ets",
+                  "exists": true,
+                  "sha256": "e2a1d6d06e959661848ae2b064c5fdb629481c1b2d409a85d22574b98d3ddba5",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\AllBanksPage.ets",
+                  "exists": true,
+                  "sha256": "f822d14033e00d59c2b2c9987631e10d6fd3e1683a13d6728aded8a8ac13ea94",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardOpeningResultPage.ets",
+                  "exists": true,
+                  "sha256": "d9589422aca3f459574dc9a590f3df347cd29521fe25151a7eb2581102f0561e",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\BankCardSelectionPage.ets",
+                  "exists": true,
+                  "sha256": "5be74f8de46fa24b27f553a4d2bea52a4d64876cdd82b1e8e64fa6337606dfc4",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\presentation\\pages\\HomeTabPage.ets",
+                  "exists": true,
+                  "sha256": "b51d01ec291ec7ac6bc22caa01a36a3dd0f58e6540845ab7e4dd10fcd4d21d75",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\ets\\shared\\constant\\BankConstants.ets",
+                  "exists": true,
+                  "sha256": "eae748f4a6f58e86682d60e7f8aab7e7965e49fd7dff54aa91ba3546cb642a0b",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\color.json",
+                  "exists": true,
+                  "sha256": "5216bc6304a96e40a42fe8d20bba3f608626f86d29fd896f52cbac6b9f1b11f4",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\float.json",
+                  "exists": true,
+                  "sha256": "691295c683cf1d199c7e0cf0ef04f9e0cc61005c6fb742202ace6cb488fd74fd",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\element\\string.json",
+                  "exists": true,
+                  "sha256": "81643574376adafbfbe0ab2b276c267677bf1a4c24257278440c352079ee9394",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\media\\result_payment_guide_placeholder.png",
+                  "exists": true,
+                  "sha256": "e8155a66f7476b56e571d74b4774aa0e5c6a5ed57f24458227008e3d3fb65228",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\02-Feature\\WalletMain\\src\\main\\resources\\base\\profile\\route_map.json",
+                  "exists": true,
+                  "sha256": "51eb86e3a1e902c622192477713d15020308585fe612378ba873ace5d5bc33db",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\data\\model\\UserProfile.ets",
+                  "exists": true,
+                  "sha256": "043b16cd29f489a03b8ae7b742df4974d48436845437064325e207d6a1ba8b55",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\domain\\service\\AccountService.ets",
+                  "exists": true,
+                  "sha256": "0e97cba80995bbafaf7bdbcfae6ef44f25079e1775e609a7fe530716018b84b6",
+                  "role": "derive"
+                },
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\04-BusinessBase\\AccountManager\\src\\main\\ets\\index.ets",
+                  "exists": true,
+                  "sha256": "4f41856f439aeb2b26f8e748ad39992dbc1dbb049608c503e7867804a4e95662",
+                  "role": "derive"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_testing_design_context",
+      "axis": "evidence",
+      "active": true,
+      "state": "resolved",
+      "on_missing": "prune",
+      "applicability_provider_id": "applicability.always",
+      "applicability_dependencies": [],
+      "inputs": [
+        {
+          "id": "contracts",
+          "state": "resolved",
+          "selected_source": "contracts@1",
+          "selected_source_fingerprint": "e30d65628e0869c950af47b0c14b3303f93054d0b2f4d33ab10a1fb057cc946c",
+          "binding": {
+            "input_id": "contracts",
+            "source": {
+              "kind": "artifact",
+              "artifact": "contracts@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\change-unit.yaml",
+                "exists": true,
+                "sha256": "27fa5f44fb3150337359eaa6d14244ddea742139c4325cf9dce106fdcf5be883",
+                "role": "artifact"
+              },
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml",
+                "exists": true,
+                "sha256": "6cff61240132f92e0fbdec8e3275229da40c59d032486d14f60472d022669c90",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml"
+            ],
+            "content_fingerprint": "e30d65628e0869c950af47b0c14b3303f93054d0b2f4d33ab10a1fb057cc946c"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "contracts@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml",
+                  "exists": true,
+                  "sha256": "6cff61240132f92e0fbdec8e3275229da40c59d032486d14f60472d022669c90",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\contracts.yaml"
+            }
+          ]
+        },
+        {
+          "id": "use_cases",
+          "state": "resolved",
+          "selected_source": "use-cases@1",
+          "selected_source_fingerprint": "13214e59c92865b042ab81d264a8b89d90fe62ebbe449bbaf13f7a8faa03cbba",
+          "binding": {
+            "input_id": "use_cases",
+            "source": {
+              "kind": "artifact",
+              "artifact": "use-cases@1"
+            },
+            "dependencies": [
+              {
+                "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\use-cases.yaml",
+                "exists": true,
+                "sha256": "4f66f56d5e50b61ed1a67b8587a4e4bfa95f11e47c54afa7f1b3eea738c38a9d",
+                "role": "artifact"
+              }
+            ],
+            "source_refs": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml"
+            ],
+            "content_fingerprint": "13214e59c92865b042ab81d264a8b89d90fe62ebbe449bbaf13f7a8faa03cbba"
+          },
+          "attempts": [
+            {
+              "kind": "artifact",
+              "source": "use-cases@1",
+              "state": "resolved",
+              "dependencies": [
+                {
+                  "path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\use-cases.yaml",
+                  "exists": true,
+                  "sha256": "4f66f56d5e50b61ed1a67b8587a4e4bfa95f11e47c54afa7f1b3eea738c38a9d",
+                  "role": "artifact"
+                }
+              ],
+              "upstream_producer": "plan",
+              "detail": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\use-cases.yaml"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "capability_resolution_contract_fingerprint": "4a58dc938b02f3120902bd2dd9a71c6b0c606528c37391d3a8d489c599a96930",
+  "generated_at": "2026-10-24T19:51:35.262Z",
+  "source_commit_sha": "9b37cce3281566e6d20f5071dc502866d976ebe3",
+  "worktree_digest": "ac5704004844452e",
+  "verifier_subject_id": "b48348366f6fa823e3ff31e354a42aa345ba66721aa68eb01c11b4eb2d62b188",
+  "verifier_request": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/verifier.request.b48348366f6fa823e3ff31e354a42aa345ba66721aa68eb01c11b4eb2d62b188.json",
+  "verifier_report": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/verifier.report.b48348366f6fa823e3ff31e354a42aa345ba66721aa68eb01c11b4eb2d62b188.md",
+  "run_id": "20261023T044016Z-fe4512",
+  "visual_round": {
+    "loop_id": "goal:20261023T044016Z-fe4512",
+    "attempt": "i25",
+    "decision": {
+      "fused": false
+    },
+    "row_hash": "ed3a2baba9549b4f",
+    "disposition": "duplicate"
+  },
+  "receipt_status": "passed",
+  "closure_commit": {
+    "schema_version": "1.0",
+    "committed_at": "2026-10-24T19:51:39.215Z",
+    "receipt_path": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/phase-completion-receipt.md",
+    "evidence_manifest_path": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/phase-evidence-manifest.json"
+  },
+  "verifier_closure": {
+    "mode": "completed_with_prior_review",
+    "reviewed_subject_id": "0239fd96ea0d20220adf3b07da4359e2bb1016ec955414eba1e03f1523fe8f1c",
+    "current_subject_id": "b48348366f6fa823e3ff31e354a42aa345ba66721aa68eb01c11b4eb2d62b188",
+    "current_material_not_reverified": [
+      "script_report_checks",
+      "doc/features/bc-openCard-2/bank-card-opening-flow/testing/test-report.md"
+    ]
+  }
+}

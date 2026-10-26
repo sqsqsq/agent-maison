@@ -1,0 +1,13 @@
+{
+  "name": "@aspect/WalletMain",
+  "version": "1.0.0",
+  "description": "钱包主功能",
+  "main": "src/main/ets/index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@aspect/AccountManager": "file:../../04-BusinessBase/AccountManager",
+    "@aspect/CommUI": "file:../../05-SystemBase/CommUI",
+    "@aspect/CommFunc": "file:../../05-SystemBase/CommFunc"
+  }
+}

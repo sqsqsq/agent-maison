@@ -505,6 +505,25 @@ export function runAll(): UnitCaseResult[] {
     assert(r === null, '无 settled 不派生');
   });
 
+  run('6fd6c8c1 S0：无 phase_halt、framework_bug 停机投影 + harness 边界 → 派生验证优先（同一判据，会话/后台共用）', () => {
+    const events = [
+      settledEv({}),
+      harnessEndEv({}),
+      { type: 'phase_verdict', phase: 'testing', invoke_id: 'testing-i4', verdict: 'FAIL', action: 'halt', run_disposition: 'WAITING', failure_kind: 'framework_bug' },
+      { type: 'run_end', status: 'HALTED', run_disposition: 'WAITING' },
+    ];
+    const r = deriveHaltValidationOnlyEligibility(events);
+    assert(!!r && r.phase === 'testing' && r.invoke_id === 'testing-i4', '非 phase_halt 形状也应派生');
+    const session = require('../../scripts/utils/session-execution-handoff').sessionValidationOnlyEligibility;
+    const reportEvents = [
+      { type: 'phase_start', phase: 'testing', handoff_request: { sha256: 'abc' } },
+      { type: 'agent_invoke_end', phase: 'testing', invoke_id: 's-i1', status: 'failed', handoff_report: { request_sha256: 'abc' } },
+    ];
+    assert(JSON.stringify(session(reportEvents)) === JSON.stringify({ phase: 'testing', invoke_id: 's-i1' }), '会话报告与后台共用同一资格判据');
+    assert(session([...reportEvents, { type: 'phase_verdict', phase: 'testing', verdict: 'FAIL', action: 'advance' }]) === null,
+      '会话路径同样不得把产品裁决当停机投影');
+  });
+
   // B07 D1（plan 6e4a2c8b）V6：宿主 i13 观测形状的决策重放——verdict PASS、
   // repair_candidates=[]（D1 之后 12 条 minor 不再物化）、visual_diff WARN 留台账、
   // backtracks_used=2。只断言 assess 不再请求第三次回退；不断言任何 run 终态（旧 TERMINAL 不改写）。

@@ -17,6 +17,7 @@ import {
   findDispositionEntry,
   isBlockingCheck,
   resolveCheckDisposition,
+  resolveCurrentDisposition,
   type DispositionEntry,
 } from '../../scripts/utils/check-disposition';
 import {
@@ -420,6 +421,84 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert.strictEqual(isBlockingCheck(check, ledger), false);
       assert.strictEqual(resolveCheckDisposition({ ...check, severity: 'MAJOR' }, ledger).action, 'none');
       assert.strictEqual(resolveCheckDisposition({ ...check, status: 'SKIP' }, ledger).action, 'none');
+    },
+  },
+  {
+    name: 'S0/S1 分离：软视觉残差披露不阻断普通完成，release 仍 BLOCKED；硬失败同时在场仍阻断',
+    run: () => {
+      const base = {
+        phase: 'testing', summaryPresent: true, verdict: 'PASS', schemaCurrent: true,
+        closureCommitted: true, lineage: 'fresh' as const,
+      };
+      const soft = resolveCurrentDisposition({
+        endpoint: 'feature-completion',
+        phases: [{
+          ...base,
+          axes: {
+            functional: { applicable: true, required_for_release: true, verdict: 'PASS' },
+            visual: { applicable: true, required_for_release: true, verdict: 'UNVERIFIED', resolution: { class: 'needs_fix', owner: 'agent' } },
+          },
+          openDebt: 2,
+        }],
+      });
+      assert.strictEqual(soft.completionEligible, true, '披露项不得阻断普通完成');
+      assert.strictEqual(soft.releaseReady, false, '披露项必须阻断发布');
+      assert(soft.disclosed.some(p => p.id === 'quality_axis_verified' && p.affects === 'release'), '视觉轴披露缺失');
+      assert(soft.disclosed.some(p => p.id === 'visual_debt_open'), '开放债务必须保留披露');
+
+      const hard = resolveCurrentDisposition({
+        endpoint: 'feature-completion',
+        phases: [{
+          ...base,
+          failingChecks: [{ id: 'p0_semantic_coverage_integrity', status: 'FAIL', severity: 'BLOCKER' }],
+          axes: { visual: { applicable: true, required_for_release: true, verdict: 'UNVERIFIED' } },
+        }],
+      });
+      assert.strictEqual(hard.completionEligible, false, '真实硬失败不得被同场披露覆盖');
+      assert(hard.completionBlocking.some(p => p.id === 'p0_semantic_coverage_integrity'));
+    },
+  },
+  {
+    name: '当前处置：框架执行缺口是等，过期证据是补验，已登记发现按责任归属阻断或披露',
+    run: () => {
+      const gap = resolveCurrentDisposition({
+        endpoint: 'feature-completion',
+        phases: [{
+          phase: 'testing', summaryPresent: true, verdict: 'INCOMPLETE', schemaCurrent: true, closureCommitted: true,
+          requiredGaps: [{ id: 'device_test_run', failure_kind: 'framework_bug' }],
+        }],
+      });
+      const waits = gap.completionBlocking.filter(p => p.id === 'required_check_conclusion');
+      assert(waits.length > 0 && waits.every(p => p.action === 'wait'), '框架缺口应等待而非产品失败');
+      assert(waits.some(p => p.owner === 'framework'), '框架缺口应点名 framework 责任方');
+
+      const stale = resolveCurrentDisposition({
+        endpoint: 'feature-completion',
+        phases: [{
+          phase: 'coding', summaryPresent: true, verdict: 'PASS', schemaCurrent: true, closureCommitted: true,
+          lineage: 'stale', lineageDetail: 'src/a.ets', lineagePropagatedFrom: 'plan',
+        }],
+      });
+      const lineage = stale.completionBlocking.find(p => p.id === 'lineage_fresh');
+      assert(lineage && lineage.action === 'verify' && lineage.propagated_from === 'plan', '过期证据应补验并保留传染来源');
+
+      const finding = resolveCurrentDisposition({
+        endpoint: 'feature-completion',
+        phases: [{
+          phase: 'plan', summaryPresent: true, verdict: 'PASS', schemaCurrent: true, closureCommitted: true,
+          openFindings: [{ id: 'reference_crosscheck', detail: '设计矛盾' }],
+        }],
+      });
+      assert.strictEqual(finding.completionEligible, false, '当前未处置发现必须阻断完成');
+      const closed = resolveCurrentDisposition({
+        endpoint: 'feature-completion',
+        phases: [{
+          phase: 'plan', summaryPresent: true, verdict: 'PASS', schemaCurrent: true, closureCommitted: true,
+          openFindings: [{ id: 'reference_crosscheck', detail: '已由后续设计修订解决', affects: 'release' }],
+        }],
+      });
+      assert.strictEqual(closed.completionEligible, true, '有据关闭只保留披露');
+      assert.strictEqual(closed.releaseReady, false);
     },
   },
 ];

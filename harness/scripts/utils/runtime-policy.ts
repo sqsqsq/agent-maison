@@ -461,10 +461,16 @@ export function parsePolicySnapshot(raw: unknown): PolicySnapshot | null {
 }
 /** Business authority is independent of process/session transport capabilities. */
 export function resolveTaskAutomationPolicy(input: {
-  fullDelivery: boolean; autonomyAuthorized?: boolean; detachedFullDelivery?: boolean;
+  fullDelivery: boolean; autonomyAuthorized?: boolean;
 }): { automaticDesignRepair: boolean; defaultBudgetChangeAuthorized: boolean; source: 'session_authorization' | 'detached_delivery' | 'confirmation_required' } {
-  const explicit = input.fullDelivery && input.autonomyAuthorized === true;
-  const legacy = input.fullDelivery && input.detachedFullDelivery === true;
-  return { automaticDesignRepair: explicit || legacy, defaultBudgetChangeAuthorized: explicit,
-    source: explicit ? 'session_authorization' : legacy ? 'detached_delivery' : 'confirmation_required' };
+  // plan 6fd6c8c1 §4.3.2：共同授权输入只有一个——入口把“用户选择无人值守”归一为
+  // autonomyAuthorized（后台 --detach 与会话 --authorize-autonomy 同一政策）。
+  // 运行模式/owner kind/manifest.unattended 不再参与合取；`detached_delivery` 仅保留为
+  // legacy 读取值（当前 writer 不再产生），不恢复旧推断。
+  const authorized = input.fullDelivery && input.autonomyAuthorized === true;
+  return {
+    automaticDesignRepair: authorized,
+    defaultBudgetChangeAuthorized: authorized,
+    source: authorized ? 'session_authorization' : 'confirmation_required',
+  };
 }

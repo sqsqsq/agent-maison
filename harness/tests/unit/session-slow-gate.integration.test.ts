@@ -8,6 +8,7 @@ import { prepareSessionCliProject } from '../utils/session-cli-project';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import type { SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import type { UnitCaseResult } from '../run-unit';
+import { startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const { instrumentSlowCompile, observeAndInterrupt } = require('../utils/session-cli-interruption.cjs') as {
   instrumentSlowCompile(root: string): void; observeAndInterrupt(root: string, evidence: string, timeoutMs: number): Promise<Record<string, unknown>>;
@@ -179,9 +180,9 @@ async function execute(): Promise<void> {
     const report = { status: 'PASS', root, final: step, native_gate_observations: native, external_kill: readJson(path.join(root, 'observations/external-kill.json')),
       event_counts: { coding_author: 1, accepted_coding_report: 1, coding_pass: 1, feature_completion: 1 },
       boundary: 'Author and verifier text are deterministic model substitutes. Original goal-mode-entry, harness CLI, tsc, node:test, report writers, gate process containment and finalizer run unchanged from the materialized production copy. No device.' };
-    write(SOURCE_ROOT, 'harness/reports/1804ac3b/session-slow-gate-result.json', JSON.stringify(report, null, 2) + '\n');
+    write(SOURCE_ROOT, 'harness/reports/6fd6c8c1/session-slow-gate-result.json', JSON.stringify(report, null, 2) + '\n');
   } catch (error) {
-    write(SOURCE_ROOT, 'harness/reports/1804ac3b/session-slow-gate-result.json', JSON.stringify({ status: 'FAIL', root, error: (error as Error).stack }, null, 2) + '\n');
+    write(SOURCE_ROOT, 'harness/reports/6fd6c8c1/session-slow-gate-result.json', JSON.stringify({ status: 'FAIL', root, error: (error as Error).stack }, null, 2) + '\n');
     throw new Error(`${(error as Error).stack}\nIsolated acceptance root: ${root}`);
   } finally {
     if (previousTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = previousTrust;
@@ -189,7 +190,13 @@ async function execute(): Promise<void> {
   }
 }
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
   const name = '1804 original CLI slow gate survives external reporter kill without overlapping gates, author replay or duplicate final completion';
-  try { await execute(); return [{ name, ok: true }]; } catch (error) { return [{ name, ok: false, error: (error as Error).stack }]; }
+  const results: UnitCaseResult[] = [], executionTimings: UnitExecutionTiming[] = [];
+  if (selector !== undefined && !name.includes(selector)) return { results, matchedCaseCount: 0, executionTimings };
+  const stop = startCaseTiming([name], executionTimings);
+  try { await execute(); results.push({ name, ok: true }); } catch (error) { results.push({ name, ok: false, error: (error as Error).stack }); }
+  finally { stop(); }
+  return { results, matchedCaseCount: 1, executionTimings };
 }
+export const runAll = async () => (await runSelectedCases()).results;

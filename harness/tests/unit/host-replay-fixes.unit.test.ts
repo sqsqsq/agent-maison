@@ -1055,9 +1055,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
+export function runAll(selector?: string): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
@@ -1068,6 +1069,8 @@ export function runAll(): UnitCaseResult[] {
   return results;
 }
 
+export function runSelectedCases(selector?: string) { return selectedUnitCases(runAll(selector), selector, []); }
+
 if (require.main === module) {
   const r = runAll();
   for (const x of r) {
@@ -1075,3 +1078,4 @@ if (require.main === module) {
   }
   process.exit(r.every(x => x.ok) ? 0 : 1);
 }
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';

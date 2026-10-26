@@ -1,0 +1,895 @@
+{
+  "schema_version": "hylyre-hypium-ui-dump-v1",
+  "source": "hypium.UiTree",
+  "tree": {
+    "attributes": {
+      "bounds": "[0,0][1320,2120]",
+      "clickable": "",
+      "id": "",
+      "key": "",
+      "scrollable": "",
+      "text": "",
+      "type": ""
+    },
+    "children": [
+      {
+        "attributes": {
+          "bounds": "[0,117][1320,2120]",
+          "clickable": "false",
+          "id": "",
+          "key": "",
+          "scrollable": "false",
+          "text": "",
+          "type": "root"
+        },
+        "children": [
+          {
+            "attributes": {
+              "bounds": "[0,117][1320,2120]",
+              "clickable": "false",
+              "id": "",
+              "key": "",
+              "scrollable": "false",
+              "text": "",
+              "type": "Navigation"
+            },
+            "children": [
+              {
+                "attributes": {
+                  "bounds": "[0,117][1320,2120]",
+                  "clickable": "false",
+                  "id": "",
+                  "key": "",
+                  "scrollable": "false",
+                  "text": "",
+                  "type": "NavigationContent"
+                },
+                "children": [
+                  {
+                    "attributes": {
+                      "bounds": "[0,117][1320,2120]",
+                      "clickable": "false",
+                      "id": "",
+                      "key": "",
+                      "scrollable": "false",
+                      "text": "",
+                      "type": "NavDestination"
+                    },
+                    "children": [
+                      {
+                        "attributes": {
+                          "bounds": "[0,117][1320,2120]",
+                          "clickable": "false",
+                          "id": "",
+                          "key": "",
+                          "scrollable": "false",
+                          "text": "",
+                          "type": "NavDestinationContent"
+                        },
+                        "children": [
+                          {
+                            "attributes": {
+                              "bounds": "[0,117][1320,2036]",
+                              "clickable": "false",
+                              "id": "opening_result_root",
+                              "key": "opening_result_root",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Column"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[0,405][1320,789]",
+                                  "clickable": "false",
+                                  "id": "result_state_group",
+                                  "key": "result_state_group",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Column"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[564,405][756,597]",
+                                      "clickable": "false",
+                                      "id": "result_status_icon",
+                                      "key": "result_status_icon",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "SymbolGlyph"
+                                    },
+                                    "children": []
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[528,639][792,716]",
+                                      "clickable": "false",
+                                      "id": "result_title",
+                                      "key": "result_title",
+                                      "scrollable": "false",
+                                      "text": "添卡成功",
+                                      "type": "Text"
+                                    },
+                                    "children": []
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[282,740][1039,789]",
+                                      "clickable": "false",
+                                      "id": "result_description",
+                                      "key": "result_description",
+                                      "scrollable": "false",
+                                      "text": "可用于实体店二维码支付和网上商城支付",
+                                      "type": "Text"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[277,861][1043,1494]",
+                                  "clickable": "false",
+                                  "id": "result_guide_illustration",
+                                  "key": "result_guide_illustration",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Image"
+                                },
+                                "children": []
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[0,1494][1320,1796]",
+                                  "clickable": "false",
+                                  "id": "",
+                                  "key": "",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Blank"
+                                },
+                                "children": []
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[79,1796][1241,1952]",
+                                  "clickable": "true",
+                                  "id": "result_finish_btn",
+                                  "key": "result_finish_btn",
+                                  "scrollable": "false",
+                                  "text": "完成",
+                                  "type": "Button"
+                                },
+                                "children": []
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "attributes": {
+          "bounds": "[0,0][1320,117]",
+          "clickable": "false",
+          "id": "session29",
+          "key": "session29",
+          "scrollable": "false",
+          "text": "",
+          "type": "WindowScene"
+        },
+        "children": [
+          {
+            "attributes": {
+              "bounds": "[0,0][1320,117]",
+              "clickable": "false",
+              "id": "StatusBarBox",
+              "key": "StatusBarBox",
+              "scrollable": "false",
+              "text": "",
+              "type": "__Common__"
+            },
+            "children": [
+              {
+                "attributes": {
+                  "bounds": "[0,0][1320,117]",
+                  "clickable": "false",
+                  "id": "",
+                  "key": "",
+                  "scrollable": "false",
+                  "text": "",
+                  "type": "Stack"
+                },
+                "children": [
+                  {
+                    "attributes": {
+                      "bounds": "[0,0][1320,117]",
+                      "clickable": "true",
+                      "id": "StatusBarBridgeView",
+                      "key": "StatusBarBridgeView",
+                      "scrollable": "false",
+                      "text": "",
+                      "type": "__Common__"
+                    },
+                    "children": [
+                      {
+                        "attributes": {
+                          "bounds": "[0,0][1320,117]",
+                          "clickable": "false",
+                          "id": "",
+                          "key": "",
+                          "scrollable": "false",
+                          "text": "",
+                          "type": "Stack"
+                        },
+                        "children": [
+                          {
+                            "attributes": {
+                              "bounds": "[56,22][1264,94]",
+                              "clickable": "false",
+                              "id": "status_bar_color_picker",
+                              "key": "status_bar_color_picker",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Row"
+                            },
+                            "children": []
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[0,0][1320,117]",
+                              "clickable": "false",
+                              "id": "StatusBarView",
+                              "key": "StatusBarView",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Stack"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[0,0][1320,117]",
+                                  "clickable": "false",
+                                  "id": "StatusBarBackground_Row_0",
+                                  "key": "StatusBarBackground_Row_0",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Row"
+                                },
+                                "children": []
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[56,22][1320,94]",
+                                  "clickable": "false",
+                                  "id": "sbg_left",
+                                  "key": "sbg_left",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Stack"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[56,22][1320,94]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "RelativeContainer"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[56,22][177,94]",
+                                          "clickable": "false",
+                                          "id": "StatusBarIconWrapper_status_bar_clock",
+                                          "key": "StatusBarIconWrapper_status_bar_clock",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Stack"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[56,22][177,94]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "03, :, 36",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[56,22][177,94]",
+                                                  "clickable": "false",
+                                                  "id": "ClockStatusView",
+                                                  "key": "ClockStatusView",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Flex"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[56,32][123,85]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[56,32][110,85]",
+                                                          "clickable": "false",
+                                                          "id": "TimeView_Text_timeText",
+                                                          "key": "TimeView_Text_timeText",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "TextClock"
+                                                        },
+                                                        "children": [
+                                                          {
+                                                            "attributes": {
+                                                              "bounds": "[56,32][110,85]",
+                                                              "clickable": "false",
+                                                              "id": "",
+                                                              "key": "",
+                                                              "scrollable": "false",
+                                                              "text": "03",
+                                                              "type": "Text"
+                                                            },
+                                                            "children": []
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[110,36][123,81]",
+                                                          "clickable": "false",
+                                                          "id": "TimeView_Text_timeText",
+                                                          "key": "TimeView_Text_timeText",
+                                                          "scrollable": "false",
+                                                          "text": ":",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[123,32][177,85]",
+                                                      "clickable": "false",
+                                                      "id": "TimeView_Text_timeText",
+                                                      "key": "TimeView_Text_timeText",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "TextClock"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[123,32][177,85]",
+                                                          "clickable": "false",
+                                                          "id": "",
+                                                          "key": "",
+                                                          "scrollable": "false",
+                                                          "text": "36",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[189,22][351,94]",
+                                          "clickable": "false",
+                                          "id": "PluginRootComponent_Stack_status_bar_notification_icon",
+                                          "key": "PluginRootComponent_Stack_status_bar_notification_icon",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Stack"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[189,22][351,94]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[189,37][231,79]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[189,37][231,79]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[189,37][231,79]",
+                                                          "clickable": "false",
+                                                          "id": "__100_20020093_com.huawei.hmos.ouc__20_StatusBarAppIcon",
+                                                          "key": "__100_20020093_com.huawei.hmos.ouc__20_StatusBarAppIcon",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "Image"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[243,37][285,79]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[243,37][285,79]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[243,37][285,79]",
+                                                          "clickable": "false",
+                                                          "id": "__100_20020020_com.huawei.hmos.hiviewcare_developerLog_65_StatusBarAppIcon",
+                                                          "key": "__100_20020020_com.huawei.hmos.hiviewcare_developerLog_65_StatusBarAppIcon",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "Image"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[297,37][339,79]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[297,37][339,79]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[297,37][339,79]",
+                                                          "clickable": "false",
+                                                          "id": "__0_1018___1_StatusBarAppIcon",
+                                                          "key": "__0_1018___1_StatusBarAppIcon",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "Image"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[0,22][1264,94]",
+                                  "clickable": "false",
+                                  "id": "sbg_right",
+                                  "key": "sbg_right",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "RelativeContainer"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[956,22][1010,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_performance",
+                                      "key": "StatusBarIconWrapper_status_bar_performance",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[962,22][1010,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[962,34][1010,82]",
+                                              "clickable": "false",
+                                              "id": "StatusBarIconItemPerformanceModeComponent_Image_icon",
+                                              "key": "StatusBarIconItemPerformanceModeComponent_Image_icon",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Image"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1010,22][1059,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_ring_mode",
+                                      "key": "StatusBarIconWrapper_status_bar_ring_mode",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1016,22][1059,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1016,34][1059,82]",
+                                              "clickable": "false",
+                                              "id": "ringmode-StatusBarIconItemRingModeComponent_Image_ringMode",
+                                              "key": "ringmode-StatusBarIconItemRingModeComponent_Image_ringMode",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1059,22][1128,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_wifi",
+                                      "key": "StatusBarIconWrapper_status_bar_wifi",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1065,22][1128,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Stack"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1065,34][1128,82]",
+                                              "clickable": "false",
+                                              "id": "WifiComponent-WifiIcon_Image_wifi_signal_category",
+                                              "key": "WifiComponent-WifiIcon_Image_wifi_signal_category",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1066,34][1128,82]",
+                                              "clickable": "false",
+                                              "id": "WifiComponent-WifiIcon_Image_wifi_signal_level",
+                                              "key": "WifiComponent-WifiIcon_Image_wifi_signal_level",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1068,34][1126,82]",
+                                              "clickable": "false",
+                                              "id": "WifiComponent-WifiIcon_Image_wifi_data_flow",
+                                              "key": "WifiComponent-WifiIcon_Image_wifi_data_flow",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1128,22][1174,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_signal",
+                                      "key": "StatusBarIconWrapper_status_bar_signal",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1134,22][1174,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1134,34][1174,82]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[1134,34][1174,82]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Stack"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1134,34][1174,82]",
+                                                      "clickable": "false",
+                                                      "id": "SignalComponent-SignalIcon_Image_cellularImage",
+                                                      "key": "SignalComponent-SignalIcon_Image_cellularImage",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1174,22][1264,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_battery",
+                                      "key": "StatusBarIconWrapper_status_bar_battery",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1180,22][1264,94]",
+                                          "clickable": "false",
+                                          "id": "BatteryComponent-batteryIcon_Image_batteryIcon",
+                                          "key": "BatteryComponent-batteryIcon_Image_batteryIcon",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1180,34][1264,82]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Stack"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[1180,34][1264,82]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Stack"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1180,34][1264,82]",
+                                                      "clickable": "false",
+                                                      "id": "BatteryComponent-batteryIcon_Image_batteryBorder",
+                                                      "key": "BatteryComponent-batteryIcon_Image_batteryBorder",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1198,39][1238,78]",
+                                                      "clickable": "false",
+                                                      "id": "BatteryComponent-batteryIcon_Text_batterySoc",
+                                                      "key": "BatteryComponent-batteryIcon_Text_batterySoc",
+                                                      "scrollable": "false",
+                                                      "text": "80",
+                                                      "type": "Text"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[618,16][702,100]",
+                              "clickable": "false",
+                              "id": "StatusBarView_LiveCapsuleListContainer",
+                              "key": "StatusBarView_LiveCapsuleListContainer",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Stack"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[618,16][702,100]",
+                                  "clickable": "false",
+                                  "id": "[Live]LiveCapsuleListView",
+                                  "key": "[Live]LiveCapsuleListView",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Stack"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[450,0][870,117]",
+                                      "clickable": "true",
+                                      "id": "LiveMetaBallBaseVm",
+                                      "key": "LiveMetaBallBaseVm",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "metaballNode"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "_hylyre_hints": {
+    "scrollable_containers": [],
+    "scrollable_container_count": 0
+  }
+}

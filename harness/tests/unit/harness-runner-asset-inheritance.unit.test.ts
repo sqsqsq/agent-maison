@@ -163,7 +163,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       applyVisualDebtPipeline(root, minimalReport('testing', root, checks), testing);
       assertEq(testing.quality_axes.visual.verdict, 'UNVERIFIED', 'testing 期压 UNVERIFIED');
       assertEq(testing.quality_axes.visual.blocking_class, 'needs_fix', 'needs_fix');
-      assertEq(testing.quality_axes.visual.resolution?.retry_phase, 'testing', 'retry_phase=testing');
+      assertEq(testing.quality_axes.visual.resolution?.retry_phase, null, '债务只保留披露与 release 影响，不再派 testing 返修');
       assertEq(testing.release_readiness, 'BLOCKED', 'testing 期 release BLOCKED');
     }),
   },

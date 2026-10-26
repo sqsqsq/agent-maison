@@ -50,6 +50,7 @@ import {
   readSummary,
   dumpPhase,
   publishVerifier,
+  publishRequestedVerifier,
   writeSpecMaterials,
   writePlanMaterials,
   writeCodingMaterials,
@@ -260,6 +261,7 @@ test('RC-1 plan 起步：待创建预测不拖垮绑定，未实现的预测位�
   /** plan 跑的那一刻盘上既有源码的字节——coding 随后会改写它，事后再读取就对不上了。 */
   let planTimeSourceSha: string | null = null;
   const probe = await runGoalRuntimeChain(project.root, {
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
     realHarness: true,
@@ -490,6 +492,7 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
 
 test('RC-3 UT 在链上真写测试：coding 不 stale；上游源码带施工归属且豁免只给 coding', withProject(async (project, birthChain) => {
   const probe = await runGoalRuntimeChain(project.root, {
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
     realHarness: true,
@@ -606,6 +609,7 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
   const gatedPhases: string[] = [];
   try {
     const probe = await runGoalRuntimeChain(project.root, {
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,
@@ -907,6 +911,7 @@ function assertPlanFailedOnRc8Target(p: RealChainProject): void {
 
 test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续下一轮', withProject(async (project, birthChain) => {
   const probe = await runGoalRuntimeChain(project.root, {
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
     realHarness: true,
@@ -935,6 +940,7 @@ test('RC-8a 同签名重复失败但相关文件真修改：不停机，继续�
 
 test('RC-8b 同签名重复失败且只改无关文件：走既有 no-progress 停机并说清理由', withProject(async (project, birthChain) => {
   const probe = await runGoalRuntimeChain(project.root, {
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
     realHarness: true,
@@ -998,6 +1004,7 @@ async function rc8cPlanDeltaDisclosed(mode: 'missing' | 'empty', id: string): Pr
   {
     await withProject(async (project, birthChain) => {
       const probe = await runGoalRuntimeChain(project.root, {
+        onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
         frameworkRoot: project.frameworkRoot,
         featureId: project.feature,
         realHarness: true,
@@ -1065,6 +1072,7 @@ export async function rc9TestingBacktrackThroughCoding(): Promise<void> {
     let utSummaryMtimeBeforeTesting: number | undefined;
     const utSummaryAbs = path.join(featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot), 'summary.json');
     const probe = await runGoalRuntimeChain(project.root, {
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,
@@ -1311,6 +1319,7 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
     let utAtBacktrack: (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null = null;
     let skipsAtBacktrack: string[] = [];
     const probe = await runGoalRuntimeChain(project.root, {
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,

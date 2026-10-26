@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "pythonPath": "D:\\1.code\\SimulatedWalletForHmos\\.hylyre\\venv\\Scripts\\python.exe",
+  "hylyreVersion": "0.5.1",
+  "manifestVersion": "0.5.1",
+  "installed_version": "0.5.1",
+  "manifest_version": "0.5.1",
+  "version_consistent": true,
+  "versionConsistent": true,
+  "source": "venv_existing",
+  "doctorOk": true,
+  "vendorSyncReason": "aligned",
+  "vendor_artifact_kind": "source",
+  "installFingerprint": {
+    "manifest_version": "0.5.1",
+    "artifact_kind": "source",
+    "artifact_sha256": "7cb9c540e655706acfd24604ac7e696dc71fcda0f823d232bcbe242be34dad21",
+    "installed_at": "2026-09-02T09:33:53.247Z"
+  },
+  "bootstrap_elapsed_ms": null,
+  "bootstrap_was_resumed": null,
+  "hypium_workdir": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\.hypium-workdir",
+  "errors": []
+}

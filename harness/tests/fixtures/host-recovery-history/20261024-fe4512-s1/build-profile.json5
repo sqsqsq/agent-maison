@@ -1,0 +1,72 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "C:/Users/shengqsq/SimWallet.p12",
+          "storePassword": "0000001EFA2321B4F92DA4C36C29054283AFB2A02F5F5B7CB8463DAA7EBDACC4D1CA93B69F6D88B7DFD44F226846",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001E0AC2A4ED1A09C33FD6393652ED827A2D9F0144517A7AE86CF740404A7E51D0B97C1343E427818A70BCEF",
+          "signAlg": "SHA256withECDSA",
+          "profile": "C:/Users/shengqsq/Area51-simWalletDebug.p7b",
+          "certpath": "C:/Users/shengqsq/Area51-simWallet.cer"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.0.2(22)",
+        "compatibleSdkVersion": "6.0.1(21)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "CommFunc",
+      "srcPath": "./05-SystemBase/CommFunc"
+    },
+    {
+      "name": "CommUI",
+      "srcPath": "./05-SystemBase/CommUI"
+    },
+    {
+      "name": "AccountManager",
+      "srcPath": "./04-BusinessBase/AccountManager"
+    },
+    {
+      "name": "WalletMain",
+      "srcPath": "./02-Feature/WalletMain"
+    },
+    {
+      "name": "Phone",
+      "srcPath": "./01-Product/Phone",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

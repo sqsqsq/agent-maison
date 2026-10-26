@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "execution_key": "00771bc9b5a05477c2d703f8034ab91e945eabfcac60a04c9cbf0cbf5b8ac440",
+  "inputs": {
+    "hap_sha256_full": "2d16708b29729f4fc23e63ed68454fe374ea2d8165d447272afc7d2e4d08a38c",
+    "derived_plan_sha256": "29f830e27ee893f48bc46ebb845de1bcab279272b37d2280e8abf48d862bd219",
+    "device": "3UJ0225321000395",
+    "display_env": "/bin/sh: wm: inaccessible or not found",
+    "reset_mode": "cold_restart",
+    "hylyre_version": "0.5.1",
+    "manifest_version": "0.5.1",
+    "profile": "hmos-app",
+    "tool_config_sha256": "402eabcaa6f091a2702e271925931901bca8316330274f712b10c0f00a597562",
+    "flags": [
+      "--skip-assert-expected"
+    ]
+  },
+  "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T173648Z-721\\hylyre\\trace.json",
+  "run_started_at": "2026-10-24T17:37:37.535Z",
+  "outcome": "failed",
+  "trace_sha256": "101ac449677afb80ae015d0b75a449fe03e9b898009f80c5733f39a5ab978f93",
+  "timing_complete": true,
+  "frozen_files": [
+    "frozen.device-test-timing.json",
+    "frozen.device-test-run.meta.json"
+  ]
+}

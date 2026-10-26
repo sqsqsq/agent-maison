@@ -1,0 +1,60 @@
+{
+  "exit_code": 1,
+  "ok": true,
+  "command": "D:\\1.code\\SimulatedWalletForHmos\\.hylyre\\venv\\Scripts\\python.exe -m hylyre run --plan D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\test-plan.hylyre.md --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 --report-out D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\test-report.md --trace-out D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\trace.json --skip-assert-expected --device-sn 3UJ0225321000395 --failure-dir D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\failures",
+  "report_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\test-report.md",
+  "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\trace.json",
+  "log_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\device-test-run.log",
+  "bundleName": "com.example.simulatedwallet",
+  "hypium_page_name": "PhoneAbility",
+  "main_ability_source": "override",
+  "app_meta_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\app-snapshot-cache\\com.example.simulatedwallet\\app-meta.json",
+  "run_mode": "plan",
+  "steps_file_path": null,
+  "aa_start_preflight": true,
+  "aa_start_ok": true,
+  "omit_bundle_for_hylyre": true,
+  "cold_restart": true,
+  "cold_restart_attempted": true,
+  "cold_restart_ok": true,
+  "last_step_index": null,
+  "ui_reset_hint": null,
+  "deviceSn": "3UJ0225321000395",
+  "hypium_workdir": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\.hypium-workdir",
+  "run_started_at": "2026-10-24T17:47:59.169Z",
+  "run_ended_at": "2026-10-24T17:51:13.898Z",
+  "run_duration_ms": 194729,
+  "ran_at": "2026-10-24T17:51:13.898Z",
+  "artifact_binding": {
+    "test_plan_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\test-plan.md",
+    "test_plan_sha256": "c7bec927496e5f03aedde4b1728fa8eeda3552b795253132ab9acc46effb9b3c",
+    "derived_plan_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\test-plan.hylyre.md",
+    "derived_plan_sha256": "2fe7964a6174f4f42b997e73661ebc812035267a3bcad6471a5ebd9b60fb898b",
+    "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\trace.json",
+    "trace_sha256": "c216c865cde2ef7bae299c5176a749b0368d87e7a1a81c68da1f6d6bd6c89170"
+  },
+  "failure_dir": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T174757Z-893\\hylyre\\failures",
+  "hylyre_page_save": {
+    "attempted": true,
+    "exit_code": 0,
+    "duration_ms": 9869,
+    "log_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\hylyre-page-save.log",
+    "names": [
+      {
+        "name": "home",
+        "exit_code": 0,
+        "duration_ms": 9869
+      }
+    ]
+  },
+  "trace_summary": {
+    "outcome": "failed",
+    "cases_count": 9,
+    "failed_count": 8,
+    "blocked_count": 0,
+    "skipped_count": 0
+  },
+  "run_failure_kind": null,
+  "run_out_tail": "3:50:54 pid=788 hypium_dump_ui uitree.refresh_ms=501.5\r\n2026-10-24T13:50:54 pid=788 augment_ui_dump_payload walk_ms=0.4\r\n2026-10-24T13:50:54 pid=788 hypium_dump_ui uitree.refresh_ms=514.4\r\n2026-10-24T13:50:55 pid=788 augment_ui_dump_payload walk_ms=0.6\r\n2026-10-24T13:50:57 pid=788 hypium_dump_ui uitree.refresh_ms=1188.4\r\n2026-10-24T13:50:57 pid=788 augment_ui_dump_payload walk_ms=0.3\r\n2026-10-24T13:50:57 pid=788 hypium_dump_ui uitree.refresh_ms=722.4\r\n2026-10-24T13:50:57 pid=788 augment_ui_dump_payload walk_ms=0.3\r\n2026-10-24T13:50:58 pid=788 hypium_dump_ui uitree.refresh_ms=698.2\r\n2026-10-24T13:50:58 pid=788 augment_ui_dump_payload walk_ms=0.3\r\n2026-10-24T13:51:00 pid=788 hypium_dump_ui uitree.refresh_ms=779.3\r\n2026-10-24T13:51:00 pid=788 augment_ui_dump_payload walk_ms=0.3\r\n2026-10-24T13:51:00 pid=788 hypium_dump_ui uitree.refresh_ms=697.5\r\n2026-10-24T13:51:00 pid=788 augment_ui_dump_payload walk_ms=0.7\r\nverify_report failed: 结论 outcome mismatch: report 'failed', expected 'partial'\r\n",
+  "errors": []
+}

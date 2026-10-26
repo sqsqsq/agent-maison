@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "execution_key": "1be4518152eeaaf1d32593c4ce46d7281f6085ea2e074b3be874e7f475506934",
+  "inputs": {
+    "hap_sha256_full": "8bfe63abe27000e7202f3d17ae36dab32f3f6cf14cadffaf12c4d8cdc155efaa",
+    "derived_plan_sha256": "986ce8fb3e2bc9314c9b6f35cd4af7196ff8057b41824958a4aa27467c45934d",
+    "device": "3UJ0225321000395",
+    "display_env": "/bin/sh: wm: inaccessible or not found",
+    "reset_mode": "n/a",
+    "hylyre_version": null,
+    "manifest_version": null,
+    "profile": "hmos-app",
+    "tool_config_sha256": "9298d60d9ce07fb4d1dcf09f9bc12abd31db711968ff5259bfb6ca202090be1e",
+    "flags": []
+  },
+  "trace_path": "",
+  "run_started_at": "2026-10-24T19:29:07.673Z",
+  "outcome": "success",
+  "trace_sha256": null,
+  "timing_complete": true,
+  "frozen_files": [
+    "frozen.ut-result.Phone.json",
+    "frozen.hdc-test.Phone.log",
+    "frozen.ut-result.WalletMain.json",
+    "frozen.hdc-test.WalletMain.log"
+  ],
+  "goal_invocation": {
+    "run_id": "20261023T044016Z-fe4512",
+    "phase": "ut",
+    "attempt_id": "i24"
+  }
+}

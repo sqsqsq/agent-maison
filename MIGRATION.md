@@ -1,5 +1,41 @@
 # Framework 升级与迁移说明
 
+## 3.1.0 完成与发布分立、调用事实与共同授权（plan 6fd6c8c1）
+
+**行为变化（消费者可见）**：
+
+- **普通完成不再被可披露的发布残差撤销。** 视觉/资源轴的软降级（UNVERIFIED/STALE/MISSING）
+  与开放视觉债务按披露处理：Feature 完成、`assessFeature.complete`、CU `VALID` 与接续判断
+  可以成立；`release_readiness` 仍为 `BLOCKED`，债务保留，轴不会被改写成 PASS。真正必修
+  （blocker、明确 hard 视觉、T8 确定性 major、缺少必需文本、真实断言失败、能力/执行缺口、
+  证据过期、closure 不完整、已核实且仍适用的发现）继续阻断普通完成。旧的“所有
+  `required_for_release` 轴非 PASS 一律挡普通完成”不再成立。
+- **run 终态不再用“末尾只算 PARTIAL”作出口。** 全链通过且只剩披露项时，run 收在
+  `CHAIN_SLICE_COMPLETED` 并生成正式完成原件；完成原件链条与实际有效范围一致。
+- **恢复优先资格不再只认 `phase_halt`。** settled + `harness_end` +
+  `phase_verdict(action=halt, failure_kind=framework_bug)` 同样表示“作者已完成、只差验证”，
+  恢复只补正式 gate，不新增作者轮；会话报告与后台调用使用同一判据。
+- **同调用失败不再重复真机执行。** UT/testing 记录现成的 `goal_invocation` 三元组；同一
+  run/phase/attempt、同一执行键、冻结执行事实完整的产品失败会被正式 gate 直接消费，
+  FAIL/用例/步骤与候选保持一致。新 attempt、输入变化、`--force-device` 或原设备障碍解除
+  仍真跑；成功复用语义不变。
+- **后台 `--detach` 的无人值守授权归一。** 首次与 `--resume … --detach`（含 supervisor
+  同式重启）在启动入口转换成共同授权输入，并通过既有非持久 `--authorize-autonomy`
+  透传给子进程；`--detached-child`、进程 owner、`manifest.unattended`、`approval_mode=never`
+  本身不授权。会话 `--authorize-autonomy` 与后台使用同一政策、同一等待条件与截止。
+- **设备 testing 先等满足本次真机要求。** Goal 的设备 testing 在实际执行前等待满足需求的
+  真机能力；未满足时保留等待与原调用预算，条件解除后沿原 run 继续。非设备请求仍按自己的
+  能力要求执行，不因此增加真机要求。
+- **前台完整交付的设计修订授权必须明确。** 未带 `--authorize-autonomy` 的前台/会话调用，
+  不再从默认 `manifest.unattended`、进程 owner 或 `approval_mode=never` 推断静默改设计授权；
+  原需求内需要设计修订时，仍交设计责任方确认，不会静默发布设计修订。
+
+**消费者需要做什么**：一般无需迁移。若外部工具/脚本直接读取旧假设（以
+`release_readiness=BLOCKED` 推断 Feature 未完成、以 `run_end=PARTIAL` 推断完成不可签发、
+或自行把 `quality_axis_verified` 当普通完成必修），应改为读取完成原件 /
+`assessFeature`（Feature 完成）与 `release_readiness`/债务（发布资格）两个结论。
+历史原件与事件不改写；旧 plan/verifier 材料继续按既有证据/责任规则处理。
+
 ## 3.1.0 会话交接与存量完整交付
 
 公开常驻 stdin 协议及 `--drive-round` 方案退役。旧活跃 stdin 调用不能热换协议：先以旧发布件收尾或按原机制安全停放，再从同一请求及已验证记录迁入。旧无 run 未完成范围由既有 prepare-run 出生/转交入口正式交给 run，保留有效成果和原件，不新建并行施工；旧 completion 原件只读，不补历史事件，不再产生新的无 run/manual_fallback 完整交付。

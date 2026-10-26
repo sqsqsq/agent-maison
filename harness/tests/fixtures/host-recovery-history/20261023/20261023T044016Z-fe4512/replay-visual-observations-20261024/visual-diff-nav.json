@@ -1,0 +1,202 @@
+{
+  "schema_version": "2.0",
+  "screens": {
+    "card_type_sheet__overlay__card_type_overlay_root": {
+      "steps": [
+        { "stop_app": { "bundle": "com.example.simulatedwallet" } },
+        { "start_app": { "bundle": "com.example.simulatedwallet", "page_name": "PhoneAbility" } },
+        { "touch": { "by_text": "添加管理卡片", "match": "exact" } },
+        { "wait_for": { "by_id": "cp_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "cp_add_card_btn" } },
+        { "wait_for": { "by_id": "ac_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "ac_bank_card_row" } },
+        { "wait_for": { "by_id": "col_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "col_row_cmb" } },
+        { "wait_for": { "by_id": "card_type_sheet_title", "timeout": 10 } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } }
+      ],
+      "identity": {
+        "all_of": [
+          { "id": "card_type_sheet_title" },
+          { "id": "card_type_bank_row" },
+          { "id": "card_type_sheet_close" }
+        ],
+        "none_of": [
+          { "id": "bank_card_selection_root" },
+          { "id": "opening_result_root" }
+        ]
+      }
+    },
+    "card_type_sheet__overlay__card_type_sheet_panel": {
+      "steps": [
+        { "stop_app": { "bundle": "com.example.simulatedwallet" } },
+        { "start_app": { "bundle": "com.example.simulatedwallet", "page_name": "PhoneAbility" } },
+        { "touch": { "by_text": "添加管理卡片", "match": "exact" } },
+        { "wait_for": { "by_id": "cp_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "cp_add_card_btn" } },
+        { "wait_for": { "by_id": "ac_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "ac_bank_card_row" } },
+        { "wait_for": { "by_id": "col_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "col_row_cmb" } },
+        { "wait_for": { "by_id": "card_type_sheet_panel", "timeout": 10 } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } }
+      ],
+      "identity": {
+        "all_of": [
+          { "id": "card_type_sheet_panel" },
+          { "id": "card_type_sheet_title" },
+          { "id": "card_type_bank_row" }
+        ],
+        "none_of": [
+          { "id": "bank_card_selection_root" },
+          { "id": "opening_result_root" }
+        ]
+      }
+    },
+    "bank_card_selection": {
+      "steps": [
+        { "stop_app": { "bundle": "com.example.simulatedwallet" } },
+        { "start_app": { "bundle": "com.example.simulatedwallet", "page_name": "PhoneAbility" } },
+        { "touch": { "by_text": "添加管理卡片", "match": "exact" } },
+        { "wait_for": { "by_id": "cp_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "cp_add_card_btn" } },
+        { "wait_for": { "by_id": "ac_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "ac_bank_card_row" } },
+        { "wait_for": { "by_id": "col_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "col_row_cmb" } },
+        { "wait_for": { "by_id": "card_type_sheet_title", "timeout": 10 } },
+        { "touch": { "by_id": "debit_card_row" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "card_type_continue_btn" } },
+        { "wait_for": { "by_id": "bank_card_selection_root", "timeout": 10 } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } }
+      ],
+      "identity": {
+        "all_of": [
+          { "id": "bank_card_selection_root" },
+          { "id": "selection_nav_title" },
+          { "id": "selection_hint" }
+        ],
+        "none_of": [
+          { "id": "card_type_sheet_title" },
+          { "id": "otp_sheet_title" },
+          { "id": "opening_result_root" }
+        ]
+      }
+    },
+    "otp_verification_sheet__overlay__otp_overlay_root": {
+      "steps": [
+        { "stop_app": { "bundle": "com.example.simulatedwallet" } },
+        { "start_app": { "bundle": "com.example.simulatedwallet", "page_name": "PhoneAbility" } },
+        { "touch": { "by_text": "添加管理卡片", "match": "exact" } },
+        { "wait_for": { "by_id": "cp_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "cp_add_card_btn" } },
+        { "wait_for": { "by_id": "ac_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "ac_bank_card_row" } },
+        { "wait_for": { "by_id": "col_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "col_row_cmb" } },
+        { "wait_for": { "by_id": "card_type_sheet_title", "timeout": 10 } },
+        { "touch": { "by_id": "debit_card_row" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "card_type_continue_btn" } },
+        { "wait_for": { "by_id": "bank_card_selection_root", "timeout": 10 } },
+        { "touch": { "by_id": "bank_card_candidate_1" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "selection_agreement_check" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "selection_next_btn" } },
+        { "wait_for": { "by_id": "otp_sheet_title", "timeout": 10 } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } }
+      ],
+      "identity": {
+        "all_of": [
+          { "id": "otp_sheet_title" },
+          { "id": "otp_phone_hint" },
+          { "id": "otp_input" }
+        ],
+        "none_of": [
+          { "id": "card_type_sheet_title" },
+          { "id": "opening_result_root" }
+        ]
+      }
+    },
+    "otp_verification_sheet__overlay__otp_sheet_panel": {
+      "steps": [
+        { "stop_app": { "bundle": "com.example.simulatedwallet" } },
+        { "start_app": { "bundle": "com.example.simulatedwallet", "page_name": "PhoneAbility" } },
+        { "touch": { "by_text": "添加管理卡片", "match": "exact" } },
+        { "wait_for": { "by_id": "cp_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "cp_add_card_btn" } },
+        { "wait_for": { "by_id": "ac_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "ac_bank_card_row" } },
+        { "wait_for": { "by_id": "col_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "col_row_cmb" } },
+        { "wait_for": { "by_id": "card_type_sheet_title", "timeout": 10 } },
+        { "touch": { "by_id": "debit_card_row" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "card_type_continue_btn" } },
+        { "wait_for": { "by_id": "bank_card_selection_root", "timeout": 10 } },
+        { "touch": { "by_id": "bank_card_candidate_1" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "selection_agreement_check" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "selection_next_btn" } },
+        { "wait_for": { "by_id": "otp_sheet_panel", "timeout": 10 } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } }
+      ],
+      "identity": {
+        "all_of": [
+          { "id": "otp_sheet_panel" },
+          { "id": "otp_sheet_title" },
+          { "id": "otp_phone_hint" }
+        ],
+        "none_of": [
+          { "id": "card_type_sheet_title" },
+          { "id": "opening_result_root" }
+        ]
+      }
+    },
+    "opening_result_success": {
+      "steps": [
+        { "stop_app": { "bundle": "com.example.simulatedwallet" } },
+        { "start_app": { "bundle": "com.example.simulatedwallet", "page_name": "PhoneAbility" } },
+        { "touch": { "by_text": "添加管理卡片", "match": "exact" } },
+        { "wait_for": { "by_id": "cp_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "cp_add_card_btn" } },
+        { "wait_for": { "by_id": "ac_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "ac_bank_card_row" } },
+        { "wait_for": { "by_id": "col_page_title", "timeout": 10 } },
+        { "touch": { "by_id": "col_row_cmb" } },
+        { "wait_for": { "by_id": "card_type_sheet_title", "timeout": 10 } },
+        { "touch": { "by_id": "debit_card_row" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "card_type_continue_btn" } },
+        { "wait_for": { "by_id": "bank_card_selection_root", "timeout": 10 } },
+        { "touch": { "by_id": "bank_card_candidate_1" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "selection_agreement_check" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "touch": { "by_id": "selection_next_btn" } },
+        { "wait_for": { "by_id": "otp_sheet_title", "timeout": 10 } },
+        { "input": { "by_id": "otp_input", "text": "123456" } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } },
+        { "back": {} },
+        { "wait_for": { "by_id": "otp_sheet_title", "timeout": 10 } },
+        { "touch": { "by_id": "otp_next_btn" } },
+        { "wait_for": { "by_id": "opening_result_root", "timeout": 20 } },
+        { "wait_idle": { "idle_time": 0.7, "timeout": 10 } }
+      ],
+      "identity": {
+        "all_of": [
+          { "id": "opening_result_root" },
+          { "id": "result_title" },
+          { "id": "result_finish_btn" }
+        ],
+        "none_of": [
+          { "id": "selection_nav_title" },
+          { "id": "otp_sheet_title" }
+        ]
+      }
+    }
+  }
+}

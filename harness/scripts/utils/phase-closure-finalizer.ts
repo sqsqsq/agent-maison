@@ -53,7 +53,8 @@ import {
 import type { EvidencePolicySnapshot } from './runtime-policy';
 import { writeReceiptProjection } from './receipt-scaffold';
 import type { HarnessRunSummary, Phase } from './types';
-import { requiredSummaryCheckGaps } from './check-disposition';
+import { resolveCurrentDisposition, type DispositionCheck } from './check-disposition';
+import { readCurrentDispositionInput, readPhaseChecks } from './verify-feature-completion';
 
 export interface ClosureCommitV1 {
   schema_version: '1.0';
@@ -679,9 +680,26 @@ function finalizePhaseClosureUnlocked(
         `请重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT} assurance 后再闭环`,
     );
   }
-  if (current.parsed.verdict !== 'PASS' || current.parsed.blocker_count !== 0 || requiredSummaryCheckGaps(current.parsed).length > 0) {
+  const scriptPath = path.join(reportsDir, 'script-report.json');
+  let currentChecks: DispositionCheck[] = [];
+  try {
+    if (fs.existsSync(scriptPath)) {
+      JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+      currentChecks = readPhaseChecks(opts.projectRoot, opts.feature, String(opts.phase), current.parsed);
+    }
+  } catch (error) { throw new Error(`script-report.json 不可读取：${(error as Error).message}`); }
+  const closureDisposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: opts.projectRoot,
+    frameworkRoot: opts.frameworkRoot, feature: opts.feature, chain: [String(opts.phase)], runId: opts.goalRunId,
+    currentResults: [{ phase: String(opts.phase), summary: current.parsed, checks: currentChecks }] }));
+  // 本事务正在发布的 closure/manifest/attestation 不能倒过来要求自己已发布；
+  // 完整summary形状仍由原gate负责，closure不重复前移；跨职责发现保留给共同恢复链。
+  const publicationFacts = new Set(['closure_commit_present', 'lineage_fresh', 'attestation_present', 'quality_axes_valid']);
+  const unresolved = closureDisposition.completionBlocking.filter(problem => problem.phase === String(opts.phase)
+    && !publicationFacts.has(problem.id) && !problem.id.startsWith('open_finding:'));
+  if (unresolved.length || current.parsed.blocker_count !== 0) {
     throw new Error(
-      `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`,
+      `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`
+        + (unresolved.length ? `；${unresolved.map(problem => `${problem.id}: ${problem.detail}`).join('；')}` : ''),
     );
   }
   if (!current.parsed.assurance) {

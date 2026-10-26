@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.1",
+  "goal_run_id": "20261023T044016Z-fe4512",
+  "attempt_id": "i25",
+  "device_target": {
+    "serial": "3UJ0225321000395",
+    "target_kind": "physical",
+    "session_id": "testing-i25"
+  },
+  "hap_sha256_full": "b991e757c69c08cdbe3853bcc1a356bc43c2942d79d06ed3ec23241e6b86da2a",
+  "install_executed": true,
+  "install_ok": true,
+  "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T194450Z-003\\hylyre\\trace.json",
+  "run_failure_kind": null,
+  "written_at": "2026-10-24T19:51:01.324Z",
+  "cases": [],
+  "artifact_binding": {
+    "test_plan_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\test-plan.md",
+    "test_plan_sha256": "4a8821289695b0ca50a83a9db234090bd3c9f2515c2601a29c60b15840aa8c0c",
+    "derived_plan_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T194450Z-003\\hylyre\\test-plan.hylyre.md",
+    "derived_plan_sha256": "e971520c5507fbd544eed52938541bcbccd55c54e2ad7d015b83b285a7a759ac",
+    "trace_path": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T194450Z-003\\hylyre\\trace.json",
+    "trace_sha256": "c9b11e8f64a89f9fc3bd278d97d21dc8be87e25010cb7120da6fb3830e5e1d93"
+  },
+  "install_reused": false,
+  "reused_by_execution_key": true,
+  "execution_key": "8a959857d4bf360ab8e4e13adec345b66833b01ef7d3358bfdf10755440d9398",
+  "reused_run_dir": "doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/20261024T194450Z-003/hylyre"
+}

@@ -1,0 +1,29 @@
+{
+  "reused": true,
+  "resolvedProduct": "default",
+  "resolvedBuildMode": "debug",
+  "hapPath": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\build\\default\\outputs\\default\\Phone-default-signed.hap",
+  "hapMtimeMs": 1792870261498.6257,
+  "hapBuiltAt": "2026-10-24T19:31:01.498Z",
+  "inputsMaxMtimeMs": 1792870255764.1006,
+  "reuseReason": "HAP 不早于业务源码且 product/buildMode 一致，复用已有包",
+  "hvigorExecuted": false,
+  "hvigorExitCode": 0,
+  "hvigorDurationMs": 0,
+  "staleSuspect": false,
+  "staleSuspectUnsignedPath": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\build\\default\\outputs\\default\\Phone-default-unsigned.hap",
+  "staleSuspectNote": null,
+  "scannedDirs": [
+    "01-Product/Phone/build/default/outputs/default"
+  ],
+  "candidateCount": 1,
+  "productSelection": {
+    "product": "default",
+    "source": "confirmed_env",
+    "candidates": [
+      "default"
+    ],
+    "purpose": "device_test"
+  },
+  "timestamp": "2026-10-24T19:50:57.147Z"
+}

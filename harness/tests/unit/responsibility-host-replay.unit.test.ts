@@ -8,7 +8,7 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, loadFrameworkConfig } from '../../config';
 import { checkFactsArtifact, factsBaselineFingerprint, findPhaseDeltaSection, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { parseContextExploration } from '../../scripts/utils/context-exploration';
-import { loadCompletedFactsBaseline, loadFactsInvocationContext } from '../../scripts/utils/capability-resolution-entry-input';
+import { loadCompletedFactsBaseline, loadFactsInvocationContext, resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { createObservedSourceHashReader, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import { compareExistingTestPreservation } from '../../scripts/utils/repair-responsibility';
 import { checkCodingExistingTestPreserved } from '../../scripts/check-coding';
@@ -20,7 +20,7 @@ import type { CheckContext } from '../../scripts/utils/types';
 import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
 import { copyTree } from '../fixtures/host-snapshot-3.1.0/generate';
 import { provisionRealChainProject, provisionFrameworkUnder, scaffoldRealChainHost, git, writeHostFile, REAL_CHAIN_REQUIREMENT } from '../utils/real-chain-host';
-import { writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan, publishVerifier, readSummary, dumpPhase } from './real-chain.unit.test';
+import { writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan, publishVerifier, publishRequestedVerifier, readSummary, dumpPhase } from './real-chain.unit.test';
 import { runGateHarness } from './real-chain-seams.unit.test';
 import { runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
@@ -95,19 +95,30 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
     let adoptionPreservedBytes = false;
     let returningOwnerGateChecked = false;
     const adoptionViews: unknown[] = [];
-    const research = (ctx: { runId: string; goalAttemptId?: string; phase: string }): FactsInvocationContext | undefined => {
-      const admitted = loadFactsInvocationContext({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, phase: ctx.phase, runId: ctx.runId, attemptId: ctx.goalAttemptId });
-      if (admitted) researchSnapshotFacts(project.root, featureFilePath(project.root, project.feature, 'context/facts.md'), ctx.phase, admitted);
+    const admission = (ctx: { runId: string; goalAttemptId?: string; phase: string }): FactsInvocationContext | undefined =>
+      resolveCapabilityResolutionEntryInput({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+        featuresDir: loadFrameworkConfig(project.root).paths.features_dir, phase: ctx.phase, goalRunId: ctx.runId, goalAttemptId: ctx.goalAttemptId }).factsContext;
+    const authorMaterials = (ctx: { runId: string; goalAttemptId?: string; phase: string }, write: () => void, admitted = admission(ctx)): FactsInvocationContext | undefined => {
+      const facts = featureFilePath(project.root, project.feature, 'context/facts.md');
+      const baseline = admitted?.baseline && fs.existsSync(facts) ? fs.readFileSync(facts) : undefined;
+      write();
+      // 通用seed会写静态facts；真实模型保留已准入基线，只追加本阶段读到的当前事实。
+      if (baseline) fs.writeFileSync(facts, baseline);
+      if (admitted) researchSnapshotFacts(project.root, facts, ctx.phase, admitted);
       return admitted;
     };
     const probe = await runGoalRuntimeChain(project.root, {
       frameworkRoot: project.frameworkRoot, featureId: project.feature, realHarness: true, adapter: 'codex',
       freshStartPhase: birth[0] as 'spec', freshEndPhase: birth.at(-1), freshRequirement: REAL_CHAIN_REQUIREMENT,
-      onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-      onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); research(ctx); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
+      onSpec: ctx => {
+        project.runId = ctx.runId;
+        authorMaterials(ctx, () => writeSpecMaterials(project));
+        if (ctx.attempt > 1) publishVerifier(project, 'spec');
+      },
+      onPlan: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writePlanMaterials(project)); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
       onCoding: ctx => {
         project.runId = ctx.runId;
-        const entry = loadFactsInvocationContext({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, phase: 'coding', runId: ctx.runId, attemptId: ctx.goalAttemptId });
+        const entry = admission(ctx);
         if (entry?.baseline) baselines.push(entry.baseline.fingerprint);
         const events = loadAuthoritativeEvents(featureFilePath(project.root, project.feature, `goal-runs/${ctx.runId}/events.jsonl`));
         if (adoptNonCompatibility && events.some(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS' && event.action !== 'advance' && event.action !== 'retry')) {
@@ -121,17 +132,18 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
           returningOwnerGateChecked = true;
         }
         const repair = events.some(event => event.type === 'phase_backtrack_requested' && (event as { candidates?: Array<{ id: string }> }).candidates?.some(candidate => candidate.id === 'CR-001'));
-        writeCodingMaterials(project);
-        writeHostFile(project.root, `${project.modulePath}/src/main/ets/data/model/BankInfo.ets`, fs.readFileSync(path.join(recorded, 'project', bankInfo), 'utf8'));
-        if (repair) { writeHostFile(project.root, adaptedSpy, repaired); fixed = true; }
+        authorMaterials(ctx, () => {
+          writeCodingMaterials(project);
+          writeHostFile(project.root, `${project.modulePath}/src/main/ets/data/model/BankInfo.ets`, fs.readFileSync(path.join(recorded, 'project', bankInfo), 'utf8'));
+          if (repair) { writeHostFile(project.root, adaptedSpy, repaired); fixed = true; }
+        }, entry);
         const currentFacts = featureFilePath(project.root, project.feature, 'context/facts.md');
-        if (entry) researchSnapshotFacts(project.root, currentFacts, 'coding', entry);
         fs.appendFileSync(currentFacts, `\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| ${project.modulePath}/src/main/ets/data/model/BankInfo.ets | 原接口新增必填 supportedCardTypes | 旧 typed fixture 必须兼容 |\n`);
         if (ctx.attempt > 1) publishVerifier(project, 'coding');
       },
       onReview: ctx => {
-        project.runId = ctx.runId; writeReviewMaterials(project);
-        const admitted = research(ctx);
+        project.runId = ctx.runId;
+        const admitted = authorMaterials(ctx, () => writeReviewMaterials(project));
         const file = featureFilePath(project.root, project.feature, 'review/review-report.md');
         if (admitted) fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## 2. 审查维度', admitted.source_paths.map(source => `- ${source}`).join('\n') + '\n\n## 2. 审查维度'));
         if (!fixed) {
@@ -154,8 +166,7 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
         const upstream = () => readUpstreamPhaseView(project.root, project.feature, 'coding', 'ut', ctx.runId, project.frameworkRoot);
         const viewBefore = adoptNonCompatibility ? upstream() : undefined;
         const beforeUt = fs.readFileSync(path.join(project.root, adaptedSpy));
-        writeUtMaterials(project);
-        research(ctx);
+        authorMaterials(ctx, () => writeUtMaterials(project));
         adoptionPreservedBytes = beforeUt.equals(fs.readFileSync(path.join(project.root, adaptedSpy)));
         if (adoptNonCompatibility) {
           const summary = JSON.parse(fs.readFileSync(featureFilePath(project.root, project.feature, 'coding/reports/summary.json'), 'utf8'));
@@ -165,9 +176,12 @@ async function replayCR001Runtime(adoptNonCompatibility = false): Promise<void> 
             candidates: summary.repair_candidates, scope_revision_input: script.checks.flatMap((check: { scope_revision_input?: unknown }) => check.scope_revision_input ? [check.scope_revision_input] : []), revisionNow: revision });
           fs.writeFileSync(path.join(frameworkRoot, 'harness/reports/c2f7a91e/ut-adoption-state.json'), JSON.stringify(adoptionViews, null, 2) + '\n');
         }
-        if (ctx.attempt > 1) publishVerifier(project, 'ut');
+        // UT采纳必须真实执行当前字节并完成当前独立核实；第一次调用也不能等下次作者补报告。
+        runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', { HARNESS_HDC_TARGET: 'fake-device', MAISON_DEVICE_TARGET_KIND: 'physical' }, 'agent');
+        publishVerifier(project, 'ut');
       },
-      onTesting: ctx => { project.runId = ctx.runId; writeTestPlan(project); research(ctx); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
+      onTesting: ctx => { project.runId = ctx.runId; authorMaterials(ctx, () => writeTestPlan(project)); if (ctx.attempt > 1) publishVerifier(project, 'testing'); },
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     });
     const failure = ['coding', 'review', 'ut', 'testing'].map(phase => dumpPhase(project, phase)).join('\n');
     if (adoptNonCompatibility) {

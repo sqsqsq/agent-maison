@@ -1,0 +1,230 @@
+{
+  "schema_version": "1.0",
+  "injected": [
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-1",
+      "element_id": "card_type_bank_row",
+      "kind": "wait_for",
+      "index": 10
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-1",
+      "element_id": "debit_card_row",
+      "kind": "wait_for",
+      "index": 11
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-1",
+      "element_id": "credit_card_row",
+      "kind": "wait_for",
+      "index": 12
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-1",
+      "element_id": "card_type_continue_btn",
+      "kind": "wait_for",
+      "index": 13
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-2",
+      "element_id": "selection_nav_title",
+      "kind": "wait_for",
+      "index": 17
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-2",
+      "element_id": "selection_hint",
+      "kind": "wait_for",
+      "index": 18
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-2",
+      "element_id": "bank_card_candidate_1",
+      "kind": "wait_for",
+      "index": 19
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-2",
+      "element_id": "selection_agreement",
+      "kind": "wait_for",
+      "index": 20
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-2",
+      "element_id": "selection_next_btn",
+      "kind": "wait_for",
+      "index": 21
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-3",
+      "element_id": "otp_phone_hint",
+      "kind": "wait_for",
+      "index": 29
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-3",
+      "element_id": "otp_input",
+      "kind": "wait_for",
+      "index": 30
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-3",
+      "element_id": "otp_resend_action",
+      "kind": "wait_for",
+      "index": 31
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-3",
+      "element_id": "otp_next_btn",
+      "kind": "wait_for",
+      "index": 32
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-4",
+      "element_id": "result_status_icon",
+      "kind": "wait_for",
+      "index": 36
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-4",
+      "element_id": "result_title",
+      "kind": "wait_for",
+      "index": 37
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-4",
+      "element_id": "result_description",
+      "kind": "wait_for",
+      "index": 38
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-4",
+      "element_id": "result_guide_illustration",
+      "kind": "wait_for",
+      "index": 39
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-4",
+      "element_id": "result_finish_btn",
+      "kind": "wait_for",
+      "index": 40
+    },
+    {
+      "tc_id": "TC-001",
+      "ac_id": "AC-5",
+      "element_id": "home_root",
+      "kind": "wait_for",
+      "index": 43
+    },
+    {
+      "tc_id": "TC-002",
+      "ac_id": "AC-1",
+      "element_id": "card_type_continue_btn",
+      "kind": "wait_for",
+      "index": 23
+    },
+    {
+      "tc_id": "TC-004",
+      "ac_id": "AC-2",
+      "element_id": "selection_nav_title",
+      "kind": "wait_for",
+      "index": 13
+    },
+    {
+      "tc_id": "TC-004",
+      "ac_id": "AC-2",
+      "element_id": "selection_hint",
+      "kind": "wait_for",
+      "index": 14
+    },
+    {
+      "tc_id": "TC-004",
+      "ac_id": "AC-2",
+      "element_id": "bank_card_candidate_1",
+      "kind": "wait_for",
+      "index": 15
+    },
+    {
+      "tc_id": "TC-004",
+      "ac_id": "AC-2",
+      "element_id": "selection_agreement",
+      "kind": "wait_for",
+      "index": 16
+    },
+    {
+      "tc_id": "TC-004",
+      "ac_id": "AC-2",
+      "element_id": "selection_next_btn",
+      "kind": "wait_for",
+      "index": 17
+    },
+    {
+      "tc_id": "TC-005",
+      "ac_id": "AC-3",
+      "element_id": "otp_input",
+      "kind": "wait_for",
+      "index": 21
+    },
+    {
+      "tc_id": "TC-005",
+      "ac_id": "AC-3",
+      "element_id": "otp_resend_action",
+      "kind": "wait_for",
+      "index": 22
+    },
+    {
+      "tc_id": "TC-005",
+      "ac_id": "AC-3",
+      "element_id": "otp_next_btn",
+      "kind": "wait_for",
+      "index": 23
+    },
+    {
+      "tc_id": "TC-006",
+      "ac_id": "AC-3",
+      "element_id": "otp_phone_hint",
+      "kind": "wait_for",
+      "index": 20
+    },
+    {
+      "tc_id": "TC-006",
+      "ac_id": "AC-3",
+      "element_id": "otp_input",
+      "kind": "wait_for",
+      "index": 21
+    },
+    {
+      "tc_id": "TC-006",
+      "ac_id": "AC-3",
+      "element_id": "otp_next_btn",
+      "kind": "wait_for",
+      "index": 23
+    },
+    {
+      "tc_id": "TC-008",
+      "ac_id": "AC-5",
+      "element_id": "home_root",
+      "kind": "wait_for",
+      "index": 27
+    }
+  ],
+  "gaps": []
+}

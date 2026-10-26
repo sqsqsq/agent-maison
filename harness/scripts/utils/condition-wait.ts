@@ -40,7 +40,7 @@ export function runConditionProbe(
     probe === 'credential_state_ready' ||
     probe === 'adapter_capability_ready'
   ) {
-    const result = probeDeviceReadiness(projectRoot, probe as ReadinessProbeName);
+    const result = probeDeviceReadiness(projectRoot, probe as ReadinessProbeName, phase === 'testing');
     return { ready: result.ready, reason: result.reason };
   }
   if (probe === 'capability_preflight_ready') {

@@ -45,7 +45,7 @@ import { discoverOhosTestArtifacts, resolveExecutionDeviceIdentity } from './hdc
 import {
   computeExecutionKey,
   decideReuse,
-  listExecutionKeyRuns,
+  findSameInvocationFailure,
   freezeRunArtifacts,
   restoreFrozenRunArtifacts,
   sha256Text,
@@ -988,24 +988,29 @@ function sameInvocationUtFailure(
   reportsBase: string, key: string, artifacts: ReturnType<typeof utFrozenRunArtifacts>,
   invocation: NonNullable<import('./execution-key').ExecutionKeyRecord['goal_invocation']>, serial: string,
 ): import('./execution-key').ExecutionKeyRunView | null {
-  const latest = listExecutionKeyRuns(reportsBase, 'ut')[0];
-  const r = latest?.record, identity = r?.goal_invocation;
-  if (!latest || r?.outcome !== 'failed' || r.execution_key !== key || !identity ||
-      identity.run_id !== invocation.run_id || identity.phase !== invocation.phase || identity.attempt_id !== invocation.attempt_id) return null;
-  if (!artifacts.every(f => r.frozen_files?.includes(f.frozen) && fs.existsSync(path.join(latest.runDir, f.frozen)))) return null;
-  try {
-    const results = artifacts.filter(f => f.top.startsWith('ut-result.')).map(f => JSON.parse(fs.readFileSync(path.join(latest.runDir, f.frozen), 'utf8')) as HvigorRunResult);
-    if (!results.length || results.every(utModuleRoundSucceeded)) return null;
-    // 当前观察先于旧 FAIL：已解除、锁屏遮挡或无法观测时，都不宣称原引导仍存在。
-    const setupBlocked = results.some(x => x.onDeviceFailureEvidence?.runDiagnosis?.systemSetup || x.onDeviceFailureEvidence?.installDiagnosis?.systemSetup);
-    const lockBlocked = results.some(x => [x.onDeviceFailureEvidence?.runDiagnosis?.kind, x.onDeviceFailureEvidence?.installDiagnosis?.kind].includes('device_locked'));
-    if (setupBlocked || lockBlocked) {
-      const snapshot = require('./device-recovery-bridge').observeDeviceSnapshot(serial);
-      if (setupBlocked && !snapshot?.systemSetup) return null;
-      if (lockBlocked && snapshot?.locked !== true) return null;
-    }
-    return latest;
-  } catch { return null; }
+  // plan 6fd6c8c1 §4.2：身份/执行键/冻结件判据与 testing 共用 execution-key 的共同 reader；
+  // 这里只保留 UT 自己的结果格式与环境复查（产品语义不猜）。
+  return findSameInvocationFailure(reportsBase, key, invocation, {
+    leg: 'ut',
+    artifacts,
+    usable: latest => {
+      const r = latest.record;
+      try {
+        const results = artifacts.filter(f => f.top.startsWith('ut-result.'))
+          .map(f => JSON.parse(fs.readFileSync(path.join(latest.runDir, f.frozen), 'utf8')) as HvigorRunResult);
+        if (!results.length || results.every(utModuleRoundSucceeded)) return false;
+        // 当前观察先于旧 FAIL：已解除、锁屏遮挡或无法观测时，都不宣称原引导仍存在。
+        const setupBlocked = results.some(x => x.onDeviceFailureEvidence?.runDiagnosis?.systemSetup || x.onDeviceFailureEvidence?.installDiagnosis?.systemSetup);
+        const lockBlocked = results.some(x => [x.onDeviceFailureEvidence?.runDiagnosis?.kind, x.onDeviceFailureEvidence?.installDiagnosis?.kind].includes('device_locked'));
+        if (setupBlocked || lockBlocked) {
+          const snapshot = require('./device-recovery-bridge').observeDeviceSnapshot(serial);
+          if (setupBlocked && !snapshot?.systemSetup) return false;
+          if (lockBlocked && snapshot?.locked !== true) return false;
+        }
+        return Boolean(r.goal_invocation);
+      } catch { return false; }
+    },
+  });
 }
 
 export function checkUtHvigorTest(

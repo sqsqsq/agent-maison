@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "primary_evidence_source": "dag_ephemeral",
+  "sources": {
+    "dag_archived": [],
+    "dag_ephemeral": [
+      "doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/bank_card_opening_success.dag.yaml",
+      "doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/flow-dag/bank_card_opening_failure.dag.yaml"
+    ],
+    "ac_coverage": ["doc/features/bc-openCard-2/bank-card-opening-flow/ut/reports/ac-coverage.json"],
+    "ut_tags": [
+      "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets",
+      "01-Product/Phone/src/ohosTest/ets/test/WalletDestinationRegistry.test.ets"
+    ]
+  },
+  "mappings": [
+    { "scope_id": "AC-1", "scope_kind": "acceptance_criterion", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "AC-2", "scope_kind": "acceptance_criterion", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "AC-3", "scope_kind": "acceptance_criterion", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "AC-4", "scope_kind": "acceptance_criterion", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "AC-6", "scope_kind": "acceptance_criterion", "evidence_source": "ut_tags", "evidence_ref": "01-Product/Phone/src/ohosTest/ets/test/WalletDestinationRegistry.test.ets" },
+    { "scope_id": "BD-1", "scope_kind": "boundary", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "BD-2", "scope_kind": "boundary", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "BD-3", "scope_kind": "boundary", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" },
+    { "scope_id": "BD-4", "scope_kind": "boundary", "evidence_source": "ut_tags", "evidence_ref": "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets" }
+  ],
+  "skip_reason": null
+}

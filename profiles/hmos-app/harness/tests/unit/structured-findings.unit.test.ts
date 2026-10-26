@@ -9,6 +9,9 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createHash } from 'crypto';
+import { clearFrameworkConfigCache } from '../../../../../harness/config';
+import type { CheckContext } from '../../../../../harness/scripts/utils/types';
 import { captureVisualDiff, CAPTURE_NOT_RUN_ELIGIBILITY, resolveLayoutDumpPath } from '../../visual-diff-capture';
 import { evaluateVisualRound } from '../../../../../harness/scripts/utils/visual-rounds-ledger';
 import type { UiSpecDoc } from '../../../../../harness/scripts/utils/ui-spec-shared';
@@ -26,6 +29,10 @@ import {
   defaultClassForSignal,
   computeScreensHash,
   LOOP_ACTIONABLE_HIT_IDS,
+  checkVisualDiff,
+  effectiveScreens,
+  hashScreenshotFile,
+  type VisualDiffStructuredPayload,
   type VisualDiffScreenEntry,
 } from '../../visual-diff-check';
 import type { UiSpecScreen } from '../../../../../harness/scripts/utils/ui-spec-shared';
@@ -98,6 +105,104 @@ test('t8_findings_carry_finding_id_and_elements', () => {
   const res2 = collectLayoutOracleForScreen({ screenId: 'card', screen, dump: dump! });
   const hard2 = res2.findings.find(f => f.signal === 'A1_forbidden_overlap');
   assert.strictEqual(hard!.finding_id, hard2!.finding_id);
+});
+
+test('t8_current_surface_qualification_is_shared_by_effective_view_and_candidates', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t8-current-'));
+  try {
+    const featureRoot = path.join(root, 'doc/features/demo');
+    const shots = path.join(featureRoot, 'device-testing/device-screenshots');
+    fs.mkdirSync(shots, { recursive: true });
+    fs.mkdirSync(path.join(featureRoot, 'spec'), { recursive: true });
+    fs.mkdirSync(path.join(featureRoot, 'testing/reports'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'skills'));
+    fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_profile: { name: 'hmos-app' }, paths: { features_dir: 'doc/features' } }));
+    fs.writeFileSync(path.join(root, 'app.hap'), 'actual-hap');
+    fs.writeFileSync(path.join(featureRoot, 'testing/reports/device-test-install.meta.json'), JSON.stringify({ hapPath: 'app.hap' }));
+    fs.writeFileSync(path.join(featureRoot, 'spec/ui-spec.yaml'), JSON.stringify({ schema_version: '1.0', screens: [{
+      id: 'card', priority: 'P0', root: { type: 'navigation_frame', order: 0, children: [
+        { id: 'close', type: 'action_button', order: 0 }, { id: 'bank_surface', type: 'content_display', order: 1 },
+      ] },
+    }], tokens: {}, assets: [] }));
+    const shotRel = 'doc/features/demo/device-testing/device-screenshots/shot-card.png';
+    fs.writeFileSync(path.join(root, shotRel), 'frozen-shot-bytes');
+    const finding = { screen_id: 'card', finding_id: '0123456789abcdef', signal: 'A1_protected_region', tier: 'advisory' as const, elements: ['bank_surface', 'close'], bbox: [0.1, 0.1, 0.3, 0.2] as [number, number, number, number] };
+    const screen = { screen_id: 'card', verdict: 'fail', screenshot_path: shotRel,
+      screenshot_hash: hashScreenshotFile(path.join(root, shotRel)), evaluated_screenshot_hash: hashScreenshotFile(path.join(root, shotRel)),
+      evaluated_build_fingerprint: createHash('sha256').update('actual-hap').digest('hex').slice(0, 12),
+      must_fix: ['old cross-surface finding', 'provider style'], reverse_missing: [], defects: [
+        { class: 'overlap', element: 'bank_surface', severity: 'major', note: 'old T8 transcription', must_fix_refs: [0], source: { producer: 'T8', finding_id: finding.finding_id, signal: finding.signal } },
+        { class: 'shape_mismatch', element: 'close', severity: 'major', note: 'style residual', must_fix_refs: [1], source: { producer: 'visual_provider', invoke_id: 'provider' } },
+      ] } as VisualDiffScreenEntry;
+    const raw = JSON.stringify({ schema_version: '1.1', screens: [screen] });
+    fs.writeFileSync(path.join(shots, 'visual-diff.json'), raw);
+    const scope = { refElements: null, uiSpecIds: new Set(['bank_surface', 'close']) };
+    const view = effectiveScreens({ screens: [screen] }, scope, [finding]);
+    assert.strictEqual(view.screens[0].defects?.length, 1, 'current native applicability removes only old T8 transcription');
+    assert.strictEqual(view.screens[0].defects?.[0].source?.producer, 'visual_provider');
+    assert.deepStrictEqual(view.screens[0].must_fix, ['provider style']);
+    const { collectActionableDefects } = require('../../../../../harness/scripts/goal-phase-runtime') as typeof import('../../../../../harness/scripts/goal-phase-runtime');
+    const cross = collectActionableDefects(root, 'demo', 'run', undefined, new Set(['card']), [finding]);
+    assert.strictEqual(cross.defects.length, 0, 'soft provider residual does not resurrect old A1 candidate');
+    const hard = { ...finding, tier: 'hard' as const };
+    const native = collectActionableDefects(root, 'demo', 'run', undefined, new Set(), [hard]);
+    assert.ok(native.defects.some(defect => defect.fingerprint?.includes(`|T8#${finding.finding_id}`)), 'same current native hard finding still routes repair');
+    const minor = { ...screen, defects: [ { ...screen.defects![0], severity: 'minor' as const } ], must_fix: ['incorrectly minor'] };
+    const corrected = effectiveScreens({ screens: [minor] }, scope, [hard]);
+    assert.strictEqual(corrected.screens[0].defects![0].severity, 'major', 'author minor cannot erase current hard qualification');
+    assert.strictEqual(fs.readFileSync(path.join(shots, 'visual-diff.json'), 'utf8'), raw, 'raw author document is never rewritten');
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('t8_bound_hard_defect_blocks_soft_contract_and_reuse_without_fuse_eligibility', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-t8-reuse-'));
+  try {
+    const featureRoot = path.join(root, 'doc/features/demo');
+    const shots = path.join(featureRoot, 'device-testing/device-screenshots');
+    fs.mkdirSync(shots, { recursive: true });
+    fs.mkdirSync(path.join(featureRoot, 'spec'), { recursive: true });
+    fs.mkdirSync(path.join(featureRoot, 'testing/reports'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'skills'));
+    fs.writeFileSync(path.join(root, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_profile: { name: 'hmos-app' }, paths: { features_dir: 'doc/features' } }));
+    fs.writeFileSync(path.join(root, 'app.hap'), 'actual-hap');
+    fs.writeFileSync(path.join(featureRoot, 'testing/reports/device-test-install.meta.json'), JSON.stringify({ hapPath: 'app.hap' }));
+    fs.writeFileSync(path.join(featureRoot, 'spec/spec.md'), '```yaml\nui_change: new_or_changed\n```\n');
+    fs.writeFileSync(path.join(featureRoot, 'device-testing/visual-diff.md'), '# Actual report\n');
+    fs.writeFileSync(path.join(featureRoot, 'spec/ui-spec.yaml'), JSON.stringify({ schema_version: '1.0', screens: [{
+      id: 'card', priority: 'P0', forbidden_overlap: [['close', 'bank_surface']], root: { type: 'navigation_frame', order: 0, children: [
+        { id: 'close', type: 'action_button', order: 0 }, { id: 'bank_surface', type: 'content_display', order: 1 },
+      ] },
+    }], tokens: {}, assets: [] }));
+    const shotRel = 'doc/features/demo/device-testing/device-screenshots/shot-card.png';
+    fs.writeFileSync(path.join(root, shotRel), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X+1cAAAAASUVORK5CYII=', 'base64'));
+    const rawDump = { schema_version: 'hylyre-hypium-ui-dump-v1', tree: { attributes: { bounds: '[0,0][1000,2000]', type: 'Screen' }, children: [
+      { attributes: { bounds: '[0,100][1000,2000]', type: 'root' }, children: [
+      { attributes: { bounds: '[100,200][400,400]', id: 'close', type: 'Button', clickable: 'true' } },
+      { attributes: { bounds: '[300,300][700,600]', id: 'bank_surface', type: 'Image', clickable: 'true' } },
+    ] } ] } };
+    fs.writeFileSync(path.join(shots, 'layout-card.json'), JSON.stringify(rawDump));
+    const shotHash = hashScreenshotFile(path.join(root, shotRel));
+    const build = createHash('sha256').update('actual-hap').digest('hex').slice(0, 12);
+    fs.writeFileSync(path.join(shots, 'visual-diff.json'), JSON.stringify({ schema_version: '1.1', screens: [{
+      screen_id: 'card', ref_id: 'card', verdict: 'pass', screenshot_path: shotRel, screenshot_hash: shotHash, evaluated_screenshot_hash: shotHash,
+      evaluated_build_fingerprint: build, layout_dump_status: 'captured', must_fix: [], defects: [], reverse_missing: [],
+    }] }));
+    for (const fidelityTarget of ['semantic', 'pixel_1to1'] as const) {
+      const result = checkVisualDiff({ phase: 'testing', feature: 'demo', projectRoot: root,
+        frameworkRoot: path.resolve(__dirname, '../../../../..'), phaseRule: { structure_checks: { visual_diff: { description: 'visual diff' } } },
+        featureSpec: { feature: 'demo' }, fidelityTarget, acceptanceStrictness: 'best_effort',
+        visualFuseEligibility: CAPTURE_NOT_RUN_ELIGIBILITY,
+      } as unknown as CheckContext).find(check => check.id === 'visual_diff')!;
+      const payload = result.structured as VisualDiffStructuredPayload;
+      assert.strictEqual(result.status, 'FAIL', `${fidelityTarget} cannot soften qualified T8 hard`);
+      assert.strictEqual(result.severity, 'BLOCKER', result.details);
+      assert.ok(payload.t8_findings.some(finding => finding.signal === 'A1_forbidden_overlap' && finding.tier === 'hard'));
+      assert.strictEqual(payload.actionable_residual, true, 'reuse does not erase product repair qualification');
+      assert.strictEqual(payload.fingerprintable, false, 'reuse is still ineligible for comparing capture progress');
+      assert.strictEqual(payload.channel_evidence_usable, false);
+      assert.strictEqual(payload.evidence_block_owner, 'coding');
+    }
+  } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('iou_and_signal_class_mapping', () => {

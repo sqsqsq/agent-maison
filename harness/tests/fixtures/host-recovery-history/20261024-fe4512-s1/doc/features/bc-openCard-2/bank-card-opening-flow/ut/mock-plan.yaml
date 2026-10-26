@@ -1,0 +1,55 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93"
+imports:
+  - { symbol: BankCardCandidate, from: "02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets" }
+  - { symbol: StoredCard, from: "02-Feature/WalletMain/src/main/ets/data/model/StoredCard.ets" }
+spies:
+  - target_class: BankRepository
+    target_file: 02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets
+    base_strategy: subclass
+    strategy: spy
+    spy_fields:
+      - { name: callLog, type: "string[]", default: "[]" }
+      - { name: cards, type: "BankCardCandidate[]", default: "[]" }
+    methods:
+      - name: getCards
+        params: [{ name: bankCode, type_text: string }, { name: cardType, type_text: BankCardType }]
+        return_type: { text: "Promise<BankCardCandidate[]>" }
+        presets:
+          - id: cards_for_selected_bank
+            returns: { ts_expr: "this.cards as BankCardCandidate[]" }
+  - target_class: BankCardRepository
+    target_file: 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets
+    base_strategy: subclass
+    strategy: spy
+    spy_fields:
+      - { name: callLog, type: "string[]", default: "[]" }
+      - { name: savedCards, type: "StoredCard[]", default: "[]" }
+    methods:
+      - name: save
+        params: [{ name: card, type_text: StoredCard }]
+        return_type: { text: "Promise<StoredCard>" }
+        presets:
+          - id: save_success
+            returns: { ts_expr: "params[0] as StoredCard" }
+          - id: save_failure
+            throws: { ts_expr: "new Error('mock save failed')" }
+      - name: list
+        params: []
+        return_type: { text: "Promise<StoredCard[]>" }
+        presets:
+          - id: list_empty
+            returns: { ts_expr: "[] as StoredCard[]" }
+  - target_class: OtpService
+    target_file: 02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets
+    base_strategy: subclass
+    strategy: spy
+    spy_fields:
+      - { name: callLog, type: "string[]", default: "[]" }
+    methods:
+      - name: sendMockCode
+        params: [{ name: mobile, type_text: string }]
+        return_type: { text: "Promise<void>" }
+        presets:
+          - id: otp_send_success
+            returns: { ts_expr: "undefined as void" }

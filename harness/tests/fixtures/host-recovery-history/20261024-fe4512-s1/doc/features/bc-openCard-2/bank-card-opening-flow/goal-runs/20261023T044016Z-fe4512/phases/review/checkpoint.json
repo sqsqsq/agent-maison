@@ -1,0 +1,59 @@
+{
+  "phase": "review",
+  "stage": "reporting",
+  "timed_out": false,
+  "inspected_file_count": 29,
+  "inspected_files": [
+    "02-Feature/WalletMain/src/main/ets/data/model/BankInfo.ets",
+    "02-Feature/WalletMain/src/main/ets/data/model/BankCardCandidate.ets",
+    "02-Feature/WalletMain/src/main/ets/data/model/StoredCard.ets",
+    "02-Feature/WalletMain/src/main/ets/data/model/OpeningResult.ets",
+    "02-Feature/WalletMain/src/main/ets/data/model/BankOpeningCompletionContext.ets",
+    "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+    "02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+    "02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets",
+    "02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets",
+    "02-Feature/WalletMain/src/main/ets/domain/service/OpeningNavigationService.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardSelectionPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/BankCardOpeningResultPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/components/CardTypeSheet.ets",
+    "02-Feature/WalletMain/src/main/ets/presentation/components/OtpVerificationSheet.ets",
+    "02-Feature/WalletMain/src/main/ets/shared/constant/BankConstants.ets",
+    "02-Feature/WalletMain/src/main/ets/index.ets",
+    "02-Feature/WalletMain/src/main/resources/base/profile/route_map.json",
+    "02-Feature/WalletMain/src/main/resources/base/element/string.json",
+    "02-Feature/WalletMain/src/main/resources/base/element/color.json",
+    "02-Feature/WalletMain/src/main/resources/base/element/float.json",
+    "02-Feature/WalletMain/src/main/resources/base/media/result_payment_guide_placeholder.png",
+    "04-BusinessBase/AccountManager/src/main/ets/data/model/UserProfile.ets",
+    "04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets",
+    "04-BusinessBase/AccountManager/src/main/ets/index.ets",
+    "01-Product/Phone/src/main/ets/pages/index.ets",
+    "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets"
+  ],
+  "report_sections_done": [
+    "一、审查范围",
+    "二、审查方法",
+    "三、问题清单",
+    "四、问题统计",
+    "五、修复建议摘要",
+    "六、视觉保真",
+    "七、结论"
+  ],
+  "artifacts": [
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/review/review-report.md",
+      "sha256": "d4941a7275b7a522d00c27648e4c016b0d02d9579125e3c9da38ae1bd07ec8a4",
+      "mtime_ms": 1792869705355.0378
+    },
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/review/context-exploration.md",
+      "sha256": "27ffe31774fbce1ad30b4229a0a6ce0952fd8ef37eac2b713aa539926ceff125",
+      "mtime_ms": 1792869705356.065
+    }
+  ],
+  "derived_at": "2026-10-24T19:24:33.620Z"
+}

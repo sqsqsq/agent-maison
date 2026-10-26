@@ -32,7 +32,8 @@ import {
   RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
-import { collectDisclosedFailures, dropRedundantAggregates, isBlockingCheck, isRequiredCheckGap, resolveCheckDisposition } from './check-disposition';
+import { collectDisclosedFailures, dropRedundantAggregates, isBlockingCheck, isRequiredCheckGap, resolveCurrentDisposition } from './check-disposition';
+import { readCurrentDispositionInput } from './verify-feature-completion';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
 import { collectBlockedCapabilityFacts } from './capability-resolution';
 import type { CapabilityResolutionReport } from './capability-resolution';
@@ -166,7 +167,9 @@ export function generateScriptReport(
 export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
   const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
   const summary = { ...computeSummary(finalized), disclosed_failures: collectDisclosedFailures(finalized) };
-  if (finalized.some(check => (check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose') || isRequiredCheckGap(check))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: ctx.projectRoot,
+    request: ctx.request, checks: finalized, summary }));
+  if (!disposition.completionEligible) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
   const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
     requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
     timestamp: new Date().toISOString(), project_root: ctx.projectRoot };

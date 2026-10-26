@@ -1,0 +1,8007 @@
+{
+  "schema_version": "0.4-p0",
+  "result_protocol": "hylyre.step-outcome/1",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "phase": "testing",
+  "outcome": "failed",
+  "model_backend": "none",
+  "tool_calls": [
+    {
+      "case": "TC-001",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 10,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 11,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 13,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 14,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 16,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 17,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 20,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 22,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 23,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 24,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 25,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 26,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 27,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 28,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 29,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 30,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 31,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 32,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 33,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 34,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 35,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 36,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 37,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 38,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 39,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 40,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 41,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-001",
+      "index": 42,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 10,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 11,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 13,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 14,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 16,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 17,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 19,
+      "kind": "scroll_to",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 20,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 22,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 24,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 25,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 26,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-002",
+      "index": 27,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 12,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 14,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 15,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 16,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-003",
+      "index": 17,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 13,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 14,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 15,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 17,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 20,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 22,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 24,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 25,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-004",
+      "index": 26,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 14,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 17,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 20,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 22,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 24,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 25,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 26,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 27,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 28,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 29,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-005",
+      "index": 30,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 14,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 17,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 18,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 20,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 22,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 24,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 25,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 26,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-006",
+      "index": 27,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 14,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 17,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 18,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 19,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 20,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 22,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-007",
+      "index": 24,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 10,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 14,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 17,
+      "kind": "input",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 18,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 19,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 20,
+      "kind": "back",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 21,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 22,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 23,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 24,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 25,
+      "kind": "wait_gone",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-008",
+      "index": 26,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 0,
+      "kind": "stop_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 1,
+      "kind": "start_app",
+      "role": "action",
+      "outcome": {
+        "status": "passed"
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 2,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "failed",
+        "failure": {
+          "domain": "selector",
+          "code": "selector.not_found"
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 3,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 4,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 5,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 6,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 7,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 8,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 9,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 10,
+      "kind": "scroll_to",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 11,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 12,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 13,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 14,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 15,
+      "kind": "touch",
+      "role": "action",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 16,
+      "kind": "wait_for",
+      "role": "assertion",
+      "outcome": {
+        "status": "blocked",
+        "cause": {
+          "type": "prior_step",
+          "step_index": 2
+        }
+      }
+    },
+    {
+      "case": "TC-009",
+      "index": 17,
+      "kind": "expected_check",
+      "role": "assertion",
+      "outcome": {
+        "status": "skipped",
+        "reason": {
+          "type": "policy",
+          "code": "expected_check.disabled_by_flag"
+        }
+      }
+    }
+  ],
+  "retries": 0,
+  "artifacts": {
+    "plan": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/testing/reports/20261024T173648Z-721/hylyre/test-plan.hylyre.md",
+    "use_fakes": false
+  },
+  "cases": [
+    {
+      "id": "TC-001",
+      "name": "添加银行卡入口完成成功开卡",
+      "priority": "P0",
+      "ac_ref": "AC-1 / AC-2 / AC-3 / AC-4 / AC-5 / BD-1",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 39 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 8672.807,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1139.139,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 643.936,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-001-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-001-step-2.png",
+              "sha256": "cb48bfce9732c2440b56ea9230482bf8ba1c6c99d3b4f811d4ef3d05d4038343",
+              "bytes": 123568
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 27,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 28,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 29,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 30,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 31,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 32,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 33,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 34,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 35,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 36,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 37,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 38,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 39,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 40,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 41,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 42,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-002",
+      "name": "全部银行入口复用卡型 Sheet",
+      "priority": "P0",
+      "ac_ref": "AC-1 / AC-6",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 24 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 683.406,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1140.276,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 451.479,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-002-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-002-step-2.png",
+              "sha256": "b500c7fe3386f7c7990a7a449ac99d8c5a72770b94ca6b810db762112a076f62",
+              "bytes": 123580
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "scroll_to",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 27,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-003",
+      "name": "卡型 Sheet 取消后重入复位",
+      "priority": "P0",
+      "ac_ref": "BD-1 / BD-4",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 14 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 684.951,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1173.526,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 448.508,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-003-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-003-step-2.png",
+              "sha256": "9428535f95b9b980ca78244c4bc85e0e4bdf28943020429f8141597e75de256f",
+              "bytes": 123464
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-004",
+      "name": "候选卡掩码与协议组合门禁",
+      "priority": "P0",
+      "ac_ref": "AC-2 / BD-1",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 23 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 695.194,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1152.836,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 470.868,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-004-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-004-step-2.png",
+              "sha256": "b6894572d9e481dca4fa1d3c605b84e3b35a036a0d8384db9485f0d50b9d19bb",
+              "bytes": 123476
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-005",
+      "name": "OTP 自动发送与六位数字门禁",
+      "priority": "P0",
+      "ac_ref": "AC-3 / BD-1",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 27 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 666.442,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1137.159,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 435.754,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-005-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-005-step-2.png",
+              "sha256": "b6894572d9e481dca4fa1d3c605b84e3b35a036a0d8384db9485f0d50b9d19bb",
+              "bytes": 123476
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 27,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 28,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 29,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 30,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-006",
+      "name": "OTP 倒计时归零与重发",
+      "priority": "P0",
+      "ac_ref": "AC-3 / BD-2",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 24 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 680.921,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1156.193,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 450.707,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-006-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-006-step-2.png",
+              "sha256": "cb48bfce9732c2440b56ea9230482bf8ba1c6c99d3b4f811d4ef3d05d4038343",
+              "bytes": 123568
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 27,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-007",
+      "name": "OTP 关闭后重新进入清空瞬态",
+      "priority": "P0",
+      "ac_ref": "BD-4",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 21 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 666.377,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1152.08,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 449.661,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-007-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-007-step-2.png",
+              "sha256": "eadcb574e9eb6c2d21c581e2873f2780043f0b2068951a0872ae3009b511683e",
+              "bytes": 123498
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-008",
+      "name": "结果页返回拦截与完成清栈",
+      "priority": "P0",
+      "ac_ref": "AC-5",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 23 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 666.797,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1136.174,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 475.073,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-008-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-008-step-2.png",
+              "sha256": "cb48bfce9732c2440b56ea9230482bf8ba1c6c99d3b4f811d4ef3d05d4038343",
+              "bytes": 123568
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "input",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 18,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 19,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 20,
+          "kind": "back",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 21,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 22,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 23,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 24,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 25,
+          "kind": "wait_gone",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 26,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    },
+    {
+      "id": "TC-009",
+      "name": "旧路由往返回归",
+      "priority": "P1",
+      "ac_ref": "AC-6",
+      "status": "失败",
+      "notes": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}; expected check disabled by flag; step 2 is the root outcome; 14 later step(s) were not executed",
+      "execution": "aborted",
+      "verification": "failed",
+      "evidence": "complete",
+      "expected_check_mode": "disabled_by_flag",
+      "steps": [
+        {
+          "index": 0,
+          "kind": "stop_app",
+          "role": "action",
+          "duration_ms": 653.755,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "stop_app",
+              "performed": true,
+              "facts": {
+                "bundle_stopped": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 1,
+          "kind": "start_app",
+          "role": "action",
+          "duration_ms": 1155.207,
+          "device_session": true,
+          "outcome": {
+            "status": "passed",
+            "observation": {
+              "kind": "action",
+              "operation": "start_app",
+              "performed": true,
+              "facts": {
+                "bundle_started": true
+              }
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 2,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 479.674,
+          "device_session": true,
+          "outcome": {
+            "status": "failed",
+            "failure": {
+              "domain": "selector",
+              "code": "selector.not_found",
+              "facts": {
+                "resolver_code": "selector_not_found"
+              }
+            }
+          },
+          "selector": {
+            "request": {
+              "kind": "by_text",
+              "value": "添加管理卡片",
+              "match": "exact",
+              "constraints": {}
+            },
+            "resolution": {
+              "state": "not_found",
+              "candidate_count": 0,
+              "selected": null,
+              "candidates": []
+            }
+          },
+          "artifacts": [
+            {
+              "kind": "ui_dump",
+              "path": "failures/TC-009-step-2.json",
+              "sha256": "a48714dcb02d2d968bb9855bb429aa1ce90cfe0e0ca3d19e3eba37f45d95dedf",
+              "bytes": 283121
+            },
+            {
+              "kind": "screenshot",
+              "path": "failures/TC-009-step-2.png",
+              "sha256": "b6894572d9e481dca4fa1d3c605b84e3b35a036a0d8384db9485f0d50b9d19bb",
+              "bytes": 123476
+            }
+          ],
+          "diagnostic": "no matching UI target for action predicate {[REDACTED], 'match': 'exact'}",
+          "extensions": {}
+        },
+        {
+          "index": 3,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 4,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 5,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 6,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 7,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 8,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 9,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 10,
+          "kind": "scroll_to",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 11,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 12,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 13,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 14,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 15,
+          "kind": "touch",
+          "role": "action",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 16,
+          "kind": "wait_for",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "blocked",
+            "cause": {
+              "type": "prior_step",
+              "step_index": 2
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": null,
+          "extensions": {}
+        },
+        {
+          "index": 17,
+          "kind": "expected_check",
+          "role": "assertion",
+          "duration_ms": 0.0,
+          "device_session": false,
+          "outcome": {
+            "status": "skipped",
+            "reason": {
+              "type": "policy",
+              "code": "expected_check.disabled_by_flag"
+            }
+          },
+          "selector": null,
+          "artifacts": [],
+          "diagnostic": "expected check disabled by flag",
+          "extensions": {}
+        }
+      ]
+    }
+  ],
+  "environment": {
+    "hylyre_version": "0.5.1",
+    "hypium_version": "6.1.0.210",
+    "trace_schema_version": "0.4-p0",
+    "result_protocol": "hylyre.step-outcome/1",
+    "selector_engine": "mixed",
+    "ui_driver": "HypiumDriver"
+  }
+}

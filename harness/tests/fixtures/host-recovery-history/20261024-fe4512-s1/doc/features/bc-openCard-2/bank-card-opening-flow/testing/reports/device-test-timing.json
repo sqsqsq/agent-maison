@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "generated_at": "2026-10-24T19:48:27.839Z",
+  "pipeline": {
+    "build_ms": 0,
+    "build_reused": true,
+    "install_ms": 0,
+    "install_reused": true,
+    "hylyre_run_ms": 215999,
+    "page_save_ms": 6574,
+    "total_harness_ms": null,
+    "hap_built_at": "2026-10-24T19:31:01.498Z"
+  },
+  "cases": [
+    {
+      "id": "TC-001",
+      "duration_ms": 25366,
+      "step_count": 47
+    },
+    {
+      "id": "TC-002",
+      "duration_ms": 24754,
+      "step_count": 26
+    },
+    {
+      "id": "TC-003",
+      "duration_ms": 9483,
+      "step_count": 27
+    },
+    {
+      "id": "TC-004",
+      "duration_ms": 11117,
+      "step_count": 27
+    },
+    {
+      "id": "TC-005",
+      "duration_ms": 16166,
+      "step_count": 34
+    },
+    {
+      "id": "TC-006",
+      "duration_ms": 72256,
+      "step_count": 28
+    },
+    {
+      "id": "TC-007",
+      "duration_ms": 17348,
+      "step_count": 36
+    },
+    {
+      "id": "TC-008",
+      "duration_ms": 17031,
+      "step_count": 33
+    },
+    {
+      "id": "TC-009",
+      "duration_ms": 15225,
+      "step_count": 18
+    }
+  ]
+}

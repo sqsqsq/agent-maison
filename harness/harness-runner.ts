@@ -1993,11 +1993,13 @@ export function applyVisualDebtPipeline(
     // plan a3f7c1d9 D3(d)：压轴只在 testing（release point）——上游阶段的 visual 轴只反映
     // 本阶段检查，否则回退重跑的 coding 会被 testing 遗留债务污染快照；账本写入仍每阶段执行。
     if (report.phase === 'testing' && open > 0 && visual.applicable && visual.verdict === 'PASS') {
+      // plan 6fd6c8c1 §4.1：债务只保留**发布影响**与披露——不把债务数量无差别改写成
+      // “agent 返修 testing”（retry_phase=null）。真实硬失败仍由源检查的 FAIL 走原门禁。
       lattice.quality_axes.visual = {
         ...visual,
         verdict: 'UNVERIFIED',
         blocking_class: 'needs_fix',
-        resolution: { class: 'needs_fix', owner: 'agent', retry_phase: 'testing' },
+        resolution: { class: 'needs_fix', owner: 'agent', retry_phase: null },
       };
     }
     // 债务影响 release/completion 投影（advance 投影不含 visual UNVERIFIED，等价性不破）

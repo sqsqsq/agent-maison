@@ -282,8 +282,13 @@ export interface EffectiveVisualView {
 export function effectiveScreens(
   rep: { screens: readonly VisualDiffScreenEntry[] },
   scope: RepairAuthorityScope,
+  currentT8Findings?: readonly (Pick<LayoutFinding, 'finding_id' | 'signal' | 'tier'> & {
+    screen_id: string; elements?: readonly string[]; bbox?: LayoutFinding['bbox'];
+  })[],
 ): EffectiveVisualView {
   const view: EffectiveVisualView = { screens: [], excluded: [], scopeUnclear: [] };
+  const inapplicable = new Set((currentT8Findings ?? []).filter(finding => finding.tier === 'advisory'
+    && (finding.signal === 'A1_protected_region' || finding.signal === 'A1_forbidden_overlap')).map(finding => finding.finding_id));
   const note = (screenId: string, id: string, kind: 'excluded' | 'scope_unclear'): void => {
     if (kind === 'scope_unclear') {
       view.scopeUnclear.push({ screen_id: screenId, ref_element: id });
@@ -293,9 +298,36 @@ export function effectiveScreens(
       ?.requirement_quote;
     view.excluded.push({ screen_id: screenId, ref_element: id, ...(quote ? { requirement_quote: quote } : {}) });
   };
-  for (const s of rep.screens) {
+  for (const raw of rep.screens) {
+    // 当前机器硬发现的资格不依赖作者是否正确转录；原件仍由转录门单独核对。
+    const hard = (currentT8Findings ?? []).filter(finding => finding.screen_id === raw.screen_id && finding.tier === 'hard');
+    let s = raw;
+    if (hard.length) {
+      const defects = [...(raw.defects ?? [])];
+      const mustFix = [...(raw.must_fix ?? [])];
+      for (const finding of hard) {
+        const index = defects.findIndex(defect => t8FindingIdOf(defect.source) === finding.finding_id);
+        const existing = index >= 0 ? defects[index] : undefined;
+        const refs = (existing?.must_fix_refs ?? []).filter(ref => ref >= 0 && ref < mustFix.length);
+        if (!refs.length) refs.push(mustFix.push(`T8 ${finding.signal}：修复 ${finding.elements?.join('、') ?? finding.finding_id} 的布局不变量违反`) - 1);
+        const defect: VisualDiffDefect = {
+          ...existing,
+          class: existing?.class ?? defaultClassForSignal(finding.signal),
+          element: existing?.element ?? finding.elements?.[0],
+          ...(finding.bbox ? { bbox: finding.bbox } : {}),
+          severity: existing?.severity === 'blocker' ? 'blocker' : 'major',
+          note: existing?.note || mustFix[refs[0]],
+          must_fix_refs: refs,
+          source: { producer: 'T8', finding_id: finding.finding_id, signal: finding.signal },
+        };
+        if (index >= 0) defects[index] = defect;
+        else defects.push(defect);
+      }
+      s = { ...raw, defects, must_fix: mustFix, verdict: 'fail' };
+    }
     const defects = Array.isArray(s?.defects) ? s.defects : [];
     const verdicts = defects.map(d => defectRepairAuthority(d, scope));
+    const notApplicable = defects.map(d => inapplicable.has(t8FindingIdOf(d.source) ?? ''));
     const reverseMissing = Array.isArray(s?.reverse_missing) ? s.reverse_missing : null;
     const reverseScope = (r: unknown) => {
       if (typeof r !== 'string') return 'registered';
@@ -303,7 +335,7 @@ export function effectiveScreens(
       return rs === 'unregistered' && !hasDeclarationSource(scope) ? 'registered' : rs;
     };
     const reverseKept = reverseMissing?.filter(r => reverseScope(r) === 'registered') ?? null;
-    const defectsDropped = verdicts.some(v => v === 'excluded' || v === 'scope_unclear');
+    const defectsDropped = notApplicable.some(Boolean) || verdicts.some(v => v === 'excluded' || v === 'scope_unclear');
     const residual = visualResidualDisposition(s);
     if (!defectsDropped && reverseKept?.length === reverseMissing?.length && !residual) {
       view.screens.push(s);
@@ -318,9 +350,9 @@ export function effectiveScreens(
     const droppedRefs = new Set<number>();
     defects.forEach((d, i) => {
       const refs = Array.isArray(d?.must_fix_refs) ? d.must_fix_refs : [];
-      if (verdicts[i] === 'excluded' || verdicts[i] === 'scope_unclear') {
+      if (notApplicable[i] || verdicts[i] === 'excluded' || verdicts[i] === 'scope_unclear') {
         refs.forEach(r => droppedRefs.add(r));
-        note(s.screen_id, authorityElementOf(d, scope), verdicts[i] as 'excluded' | 'scope_unclear');
+        if (!notApplicable[i]) note(s.screen_id, authorityElementOf(d, scope), verdicts[i] as 'excluded' | 'scope_unclear');
         return;
       }
       refs.forEach(r => keptRefs.add(r));
@@ -1627,7 +1659,104 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // G0：非 fatal 的 schema 问题（缺图 / 非法 ref_id 等）转 finding 追加，绝不掩盖下方实质门禁。
   // plan c4e7a9b2 A2：产品真值类消费者（fail 屏 / must_fix / 降级 / blockingDefectPass /
   // productTruthIntact / actionable residual）一律读授权过滤后的有效视图；其余门禁仍读原始观察。
-  const authorityView = effectiveScreens(rep, loadRepairAuthorityScope(ctx.projectRoot, ctx.feature));
+  const p0Ids = collectP0VisualTargetIds(uiDoc);
+  const pixel1to1 = isHardPixelContract(ctx);
+  const currentBuildFp = resolveCurrentBuildFingerprint(ctx.projectRoot, ctx.feature, ctx.phase);
+  const referenceNotes: string[] = [];
+  const t8Findings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
+  const t8UnstableFindings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
+  const hardLines: string[] = [];
+  const warnLines: string[] = [];
+  const unstableLines: string[] = [];
+  const dumpMissing: string[] = [];
+  if (uiDoc) {
+    const uiScreensById = new Map((uiDoc.screens ?? []).map(s => [s.id, s] as const));
+    // S6（e9c4a7f3 s6-locator-calibrate）：nav 触达 / region attest **按屏隔离**，
+    // 交互类型启发式仅 nav 缺失时回退——循环外预收集，避免每屏重复扫 nav/报告
+    const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
+    const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
+    const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
+    const p0Set = new Set(p0Ids.map(canonicalOverlayBase));
+    for (const s of rep.screens) {
+      if (s.verdict === 'skipped') continue;
+      const uiScreen = uiScreensById.get(s.screen_id) ?? uiScreensById.get(canonicalOverlayBase(s.screen_id));
+      if (!uiScreen) continue;
+      const layoutResolved = resolveLayoutDumpPath(reportDir, s.screen_id);
+      if (layoutResolved.status === 'conflict') {
+        // t2b（plan c6d8f2b4）：raw 与 slug 两套文件名并存，无法判别归属——fail-closed，
+        // 不得无优先级双查（可能读到旧文件）。与"损坏/被删"区分开：这是命名问题。
+        dumpMissing.push(
+          `${s.screen_id}（布局 dump 命名冲突：layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json 与 ` +
+            `layout-${s.screen_id}.json 并存——疑似新旧寻址口径混写，须清理/统一后重采）`,
+        );
+        continue;
+      }
+      const layoutAbs = layoutResolved.status === 'missing' ? '' : layoutResolved.abs;
+      const dump = layoutAbs ? loadLayoutDumpFile(layoutAbs) : null;
+      if (!dump) {
+        // rev7（codex P1）：status=captured 却解析不出=文件事后被删/损坏/schema 不符——
+        // 任何屏都不许静默跳过（声称有证据而证据不可用，比"没采"更可疑）。
+        if (s.layout_dump_status === 'captured' || s.layout_dump_status === 'unstable') {
+          dumpMissing.push(
+            `${s.screen_id}（声称已采集但 ${layoutResolved.status === 'legacy' ? `legacy 命名 ${layoutResolved.rel}` : `layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json`} 缺失/不可解析——文件被删或损坏，须重采）`,
+          );
+        } else if (pixel1to1 && p0Set.has(canonicalOverlayBase(s.screen_id))) {
+          dumpMissing.push(`${s.screen_id}（${s.layout_dump_status ?? '未采集'}）`);
+        }
+        continue;
+      }
+      const res = collectLayoutOracleForScreen({
+        screenId: s.screen_id,
+        screen: uiScreen,
+        dump,
+        // S6（e9c4a7f3 s6-locator-calibrate）：T8 分母与 coding 侧同一收窄口径（按屏上下文）
+        locatorCtx: {
+          identityIds: collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature),
+          navStepIds: navStepIdsByScreen.get(s.screen_id),
+          attestRegions: attestByScreen.get(s.screen_id),
+          interactiveFallbackEnabled,
+        },
+      });
+      // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
+      // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
+      // 消息明示证据不足）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
+      if (s.layout_dump_status === 'unstable') {
+        for (const f of res.findings) {
+          if (f.tier === 'advisory') continue;
+          t8UnstableFindings.push({ screen_id: s.screen_id, finding: f });
+          unstableLines.push(
+            `${s.screen_id}[${f.signal}#${f.finding_id}·${f.tier}→unstable]${f.bbox ? ` bbox=${JSON.stringify(f.bbox)}` : ''}: ${f.note}`,
+          );
+        }
+        continue;
+      }
+      const currentBinding = !!currentBuildFp && s.evaluated_build_fingerprint === currentBuildFp
+        && typeof s.evaluated_screenshot_hash === 'string' && typeof s.screenshot_path === 'string'
+        && hashScreenshotFile(path.resolve(ctx.projectRoot, s.screenshot_path)) === s.evaluated_screenshot_hash
+        && s.evaluation_invalidated !== true
+        && !isStaleVisualDiffVerdict(s, ctx.projectRoot, { currentBuildFingerprint: currentBuildFp });
+      if (!currentBinding) {
+        if (res.findings.some(finding => finding.tier !== 'advisory')) warnLines.push(`${s.screen_id}: T8截图/build绑定尚未核实，保留观察，须按当前输入复验`);
+        continue;
+      }
+      if (res.bClassSkipped) {
+        warnLines.push(
+          `${s.screen_id}: locator 覆盖率 ${(res.coverage * 100).toFixed(0)}% < ${LOCATOR_COVERAGE_THRESHOLD * 100}%，` +
+          `B 类断言 SKIP（不带病判定）——coding 为声明元素设 .id(<element_id>) 可修复`,
+        );
+      }
+      for (const f of res.findings) {
+        t8Findings.push({ screen_id: s.screen_id, finding: f });
+        const line = `${s.screen_id}[${f.signal}#${f.finding_id}]${f.bbox ? ` bbox=${JSON.stringify(f.bbox)}` : ''}: ${f.note}`;
+        if (f.tier === 'hard') hardLines.push(line);
+        else if (f.tier === 'warn') warnLines.push(line);
+        else referenceNotes.push(`[T8 advisory] ${line}`);
+      }
+    }
+  }
+
+  const authorityView = effectiveScreens(rep, loadRepairAuthorityScope(ctx.projectRoot, ctx.feature),
+    t8Findings.map(row => ({ ...row.finding, screen_id: row.screen_id })));
   const effScreens = authorityView.screens;
   const mustFix = effScreens.flatMap(s => s.must_fix ?? []);
   const failScreens = effScreens.filter(s => s.verdict === 'fail');
@@ -1741,13 +1870,11 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   const comparableScreens = rep.screens.filter(s => !viewportIncompatible.has(s.screen_id));
 
   // --- P0 覆盖：ui-spec 的 P0 屏必须出现且 verdict 非 skipped/pending ---
-  const p0Ids = collectP0VisualTargetIds(uiDoc);
   const p0Uncovered = p0Ids.filter(id => {
     const entry = resolveP0Entry(id);
     return !entry || entry.verdict === 'skipped' || entry.verdict === 'pending';
   });
 
-  const pixel1to1 = isHardPixelContract(ctx);
   // plan 6644ea45 §4.1：soft 档自报残差屏——不否决证据、不进 must_fix / blockingDefectPass 命中，另行披露。
   // 按 screen_id 保守汇总：解析器接受重复 ID，同 ID 任一记录不满足四条件则整个 ID 不降级
   //（否则合格记录会替同名 fail/blocker 记录豁免证据否决与回修候选）。
@@ -1771,7 +1898,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
 
   const missingEvalHashScreens = rep.screens.filter(s => isMissingEvaluatedScreenshotHash(s));
   // P0-9a：当前构建指纹现算自实际安装 hap（不可算=null → 指纹校验不启用，退回文件级）。
-  const currentBuildFp = resolveCurrentBuildFingerprint(ctx.projectRoot, ctx.feature, ctx.phase);
   const staleScreens = rep.screens.filter(s =>
     isStaleVisualDiffVerdict(s, ctx.projectRoot, { currentBuildFingerprint: currentBuildFp }),
   );
@@ -1817,7 +1943,6 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
     rep.degraded ? 'degraded' : '',
   ].filter(Boolean).join('；');
   /** P1-C：不参与判定的参考注记（score_floor reference_only 等），只随 details 展示 */
-  const referenceNotes: string[] = [];
   if (viewportIncompatible.size > 0) {
     referenceNotes.push(`[reference_viewport] 参考图与视口尺寸不兼容、已从全部内容比对剔除：${[...viewportIncompatible.values()].join('；')}`);
   }
@@ -2622,87 +2747,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 确定性 hard 命中与 P1-C 同语义：VL pass 不可推翻、禁止弃判。
   // t0（f7a3d9c2）：findings 同时以结构化形态收集（finding_id/elements/bbox），供
   // t2 transcription audit 与结构化 payload 消费——hit line 只是人读投影。
-  const t8Findings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
-  const t8UnstableFindings: Array<{ screen_id: string; finding: LayoutFinding }> = [];
   if (uiDoc) {
-    const uiScreensById = new Map((uiDoc.screens ?? []).map(s => [s.id, s] as const));
-    // S6（e9c4a7f3 s6-locator-calibrate）：nav 触达 / region attest **按屏隔离**，
-    // 交互类型启发式仅 nav 缺失时回退——循环外预收集，避免每屏重复扫 nav/报告
-    const navStepIdsByScreen = collectNavStepTargetIdsByScreen(ctx.projectRoot, ctx.feature);
-    const attestByScreen = collectRegionAttestElementIdsByScreen(ctx.projectRoot, ctx.feature);
-    const interactiveFallbackEnabled = !navConfigExists(ctx.projectRoot, ctx.feature);
-    const hardLines: string[] = [];
-    const warnLines: string[] = [];
-    const unstableLines: string[] = [];
-    const dumpMissing: string[] = [];
-    const p0Set = new Set(p0Ids.map(canonicalOverlayBase));
-    for (const s of rep.screens) {
-      if (s.verdict === 'skipped') continue;
-      const uiScreen = uiScreensById.get(s.screen_id) ?? uiScreensById.get(canonicalOverlayBase(s.screen_id));
-      if (!uiScreen) continue;
-      const layoutResolved = resolveLayoutDumpPath(reportDir, s.screen_id);
-      if (layoutResolved.status === 'conflict') {
-        // t2b（plan c6d8f2b4）：raw 与 slug 两套文件名并存，无法判别归属——fail-closed，
-        // 不得无优先级双查（可能读到旧文件）。与"损坏/被删"区分开：这是命名问题。
-        dumpMissing.push(
-          `${s.screen_id}（布局 dump 命名冲突：layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json 与 ` +
-            `layout-${s.screen_id}.json 并存——疑似新旧寻址口径混写，须清理/统一后重采）`,
-        );
-        continue;
-      }
-      const layoutAbs = layoutResolved.status === 'missing' ? '' : layoutResolved.abs;
-      const dump = layoutAbs ? loadLayoutDumpFile(layoutAbs) : null;
-      if (!dump) {
-        // rev7（codex P1）：status=captured 却解析不出=文件事后被删/损坏/schema 不符——
-        // 任何屏都不许静默跳过（声称有证据而证据不可用，比"没采"更可疑）。
-        if (s.layout_dump_status === 'captured' || s.layout_dump_status === 'unstable') {
-          dumpMissing.push(
-            `${s.screen_id}（声称已采集但 ${layoutResolved.status === 'legacy' ? `legacy 命名 ${layoutResolved.rel}` : `layout-${sanitizeVisualDiffScreenSlug(s.screen_id) ?? '?'}.json`} 缺失/不可解析——文件被删或损坏，须重采）`,
-          );
-        } else if (pixel1to1 && p0Set.has(canonicalOverlayBase(s.screen_id))) {
-          dumpMissing.push(`${s.screen_id}（${s.layout_dump_status ?? '未采集'}）`);
-        }
-        continue;
-      }
-      const res = collectLayoutOracleForScreen({
-        screenId: s.screen_id,
-        screen: uiScreen,
-        dump,
-        // S6（e9c4a7f3 s6-locator-calibrate）：T8 分母与 coding 侧同一收窄口径（按屏上下文）
-        locatorCtx: {
-          identityIds: collectNavIdentityIdMembers(ctx.projectRoot, ctx.feature),
-          navStepIds: navStepIdsByScreen.get(s.screen_id),
-          attestRegions: attestByScreen.get(s.screen_id),
-          interactiveFallbackEnabled,
-        },
-      });
-      // t4b（f7a3d9c2）：unstable 屏（静稳采样重试耗尽，图/树可能非同状态）——T8 命中全体
-      // 降档走独立 id（capability degradation：不进 candidate-blocking、免 t2 转录、T2 批量
-      // 消息明示证据不足）。A/B/C 不豁免 A 类——过渡态下 A 类同样瞬时误报（rev3 codex/claude）。
-      if (s.layout_dump_status === 'unstable') {
-        for (const f of res.findings) {
-          if (f.tier === 'advisory') continue;
-          t8UnstableFindings.push({ screen_id: s.screen_id, finding: f });
-          unstableLines.push(
-            `${s.screen_id}[${f.signal}#${f.finding_id}·${f.tier}→unstable]${f.bbox ? ` bbox=${JSON.stringify(f.bbox)}` : ''}: ${f.note}`,
-          );
-        }
-        continue;
-      }
-      if (res.bClassSkipped) {
-        warnLines.push(
-          `${s.screen_id}: locator 覆盖率 ${(res.coverage * 100).toFixed(0)}% < ${LOCATOR_COVERAGE_THRESHOLD * 100}%，` +
-          `B 类断言 SKIP（不带病判定）——coding 为声明元素设 .id(<element_id>) 可修复`,
-        );
-      }
-      for (const f of res.findings) {
-        t8Findings.push({ screen_id: s.screen_id, finding: f });
-        const line = `${s.screen_id}[${f.signal}#${f.finding_id}]${f.bbox ? ` bbox=${JSON.stringify(f.bbox)}` : ''}: ${f.note}`;
-        if (f.tier === 'hard') hardLines.push(line);
-        else if (f.tier === 'warn') warnLines.push(line);
-        else referenceNotes.push(`[T8 advisory] ${line}`);
-      }
-    }
     if (unstableLines.length > 0) {
       pushVisualDiffHit(hits, {
         id: 'visual_diff_layout_invariants_unstable',
@@ -2715,16 +2760,14 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
       });
     }
     if (hardLines.length > 0) {
-      const ratchet = pixel1to1
-        ? fidelityRatchetFailOrWarn(ctx, false)
-        : { severity: 'MAJOR' as const, status: 'WARN' as const };
       pushVisualDiffHit(hits, {
         id: 'visual_diff_layout_invariants',
-        severity: ratchet.severity,
-        status: ratchet.status,
+        severity: 'BLOCKER',
+        status: 'FAIL',
         line:
           `【T8 布局不变量违反（运行时布局树确定性证据，VL pass 不可推翻、禁止弃判）】` +
           hardLines.slice(0, 6).join(' | ') + (hardLines.length > 6 ? ` …共 ${hardLines.length} 处` : ''),
+        suggestion: '当前 build、截图与布局绑定有效：按列出的 screen 和元素交 coding 修复真实布局，再由 testing 对修复后的当前构建复验；不得通过更换视觉档位、复用旧图或降低转录严重度视为解决。',
       });
     }
     if (warnLines.length > 0) {
@@ -3147,13 +3190,12 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // 但 actionable 仍会被 `visual_diff` FAIL 经既有白名单置真，与"只有内容残差进
   // actionable"的语义和报告真话不一致（账本行会记一个不存在的"可行动残差"）。
   const actionableResidual =
-    pixel1to1 &&
-    !fuseIneligible &&
-    hasActionableVisualResidual(
+    hardLines.length > 0 || (pixel1to1 &&
+    !fuseIneligible && hasActionableVisualResidual(
       effScreens,
       hits.map(h => ({ id: h.id, status: h.status })),
       contentActionableMissing,
-    );
+    ));
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() || null;
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() || null;
   // review-fix（cursor I-1）：交互态 loop_id 带「采集世代」=ui-spec 内容指纹——spec 变更
@@ -3307,7 +3349,7 @@ function checkVisualDiffCore(ctx: CheckContext): CheckResult[] {
   // plan e7a2c4f1 §3.4（G28）：三个合取项拆成具名值，既是判据本身，也是责任归属的唯一依据。
   // plan 6644ea45 §4.1：降级屏（soft 档自报非 blocker 残差）不否决；fail、blocker、确定性信号照旧否决。
   const productTruthIntact =
-    !effScreens.some(screen =>
+    hardLines.length === 0 && !effScreens.some(screen =>
       !downgradedIds.has(screen.screen_id) &&
       (screen.verdict === 'fail' || (screen.must_fix?.length ?? 0) > 0)) &&
     blockingDefectPass.length === 0 &&

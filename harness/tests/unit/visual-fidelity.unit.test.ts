@@ -3729,7 +3729,7 @@ function executeCases(selector?: string): UnitCaseResult[] {
 
   // B07 D2（plan 6e4a2c8b）V3：T8 hard 命中（A1_forbidden_overlap）被一条 severity=minor、
   // finding_id 对上的 defect"消账" → visual_diff_finding_transcription 出"hard 命中被降级"；
-  // hard 合同 FAIL 且 fingerprintable=false；best_effort 沿既有 ratchet WARN；改 major → hit 消失。
+  // 当前绑定的 hard 不受 best_effort 软化；改 major 仅消除转录缺口，真实几何缺陷仍拦。
   run('b07_v3_t8_hard_finding_transcribed_as_minor_is_intercepted', () => {
     if (!isJimpAvailable()) return;
     const root = mkProject();
@@ -3741,6 +3741,13 @@ function executeCases(selector?: string): UnitCaseResult[] {
       const shot = path.join(dir, 'shot-home.png');
       writeMinimalRedPng(shot, 10, 10);
       const h = hashScreenshotFile(shot);
+      const hap = path.join(root, 'app.hap');
+      fs.writeFileSync(hap, 'current-t8-build');
+      fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
+      const reports = path.join(root, 'doc/features/bank-card/testing/reports');
+      fs.mkdirSync(reports, { recursive: true });
+      fs.writeFileSync(path.join(reports, 'device-test-install.meta.json'), JSON.stringify({ hapPath: hap }));
+      const fp = require('../../../profiles/hmos-app/harness/build-fingerprint').computeHapBuildFingerprint(hap);
       fs.writeFileSync(
         uiSpecAbsPath(root, 'bank-card'),
         JSON.stringify({
@@ -3777,7 +3784,7 @@ function executeCases(selector?: string): UnitCaseResult[] {
           screens: [{
             screen_id: 'home', verdict: 'fail',
             screenshot_path: 'doc/features/bank-card/device-testing/device-screenshots/shot-home.png',
-            ref_id: 'home', evaluated_screenshot_hash: h, screenshot_hash: h,
+            ref_id: 'home', evaluated_screenshot_hash: h, screenshot_hash: h, evaluated_build_fingerprint: fp,
             layout_dump_status: 'captured',
             must_fix: ['修复重叠'], reverse_missing: [],
             defects: [{
@@ -3808,11 +3815,11 @@ function executeCases(selector?: string): UnitCaseResult[] {
       if (/【t2 发现未落账】/.test(hd)) throw new Error('finding_id 已对上，不得再报"发现未落账"');
       if ((hard[0] as { status?: string }).status !== 'FAIL') throw new Error(`hard 合同须 FAIL：${(hard[0] as { status?: string }).status}`);
       if (fingerprintable(hard) !== false) throw new Error(`降级消账的轮次不得可指纹：${String(fingerprintable(hard))}`);
-      // ③ best_effort：同一 hit 沿既有 ratchet 只 WARN（不新增全局硬门禁）
+      // ③ best_effort：转录提醒可降档，当前真实hard本身仍FAIL。
       const soft = checkVisualDiff(softCtx());
       const sd = details(soft);
       if (!/【t2 hard 命中被降级】/.test(sd)) throw new Error(`best_effort 仍须提示降级：${sd.slice(0, 600)}`);
-      if ((soft[0] as { status?: string }).status === 'FAIL') throw new Error(`best_effort 下不得因本条 FAIL：${sd.slice(0, 600)}`);
+      if ((soft[0] as { status?: string }).status !== 'FAIL' || !/【T8 布局不变量违反/.test(sd)) throw new Error(`best_effort 不得软化真实hard：${sd.slice(0, 600)}`);
       // ④ 同发现改 major → 该 hit 消失，且轮次恢复可指纹（对照，证明 ② 的 false 来自本条）
       writeDiff('major', findingId);
       const fixed = checkVisualDiff(hardCtx());

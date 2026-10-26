@@ -1,0 +1,10 @@
+{
+  "kind": "clear",
+  "details": "设备与版本预检通过（或无阻塞性版本冲突）。设备 versionCode 未解析（bm dump 报 0，按 unknown 处理，不参与降级比较）。",
+  "bundleName": "com.example.simulatedwallet",
+  "candidateVersionCode": 1000000,
+  "deviceVersionCode": null,
+  "downgradeDetected": false,
+  "hdcPresent": true,
+  "deviceAvailable": true
+}

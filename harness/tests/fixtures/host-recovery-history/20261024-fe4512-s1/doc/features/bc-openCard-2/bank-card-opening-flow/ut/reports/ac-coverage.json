@@ -1,0 +1,118 @@
+{
+  "schema_version": "1.0",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "generated_at": "2026-10-24T17:27:17.686Z",
+  "harness_phase": "ut",
+  "criteria": [
+    {
+      "id": "AC-1",
+      "kind": "criterion",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-1][BD-1] opening session enforces each continue gate"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "kind": "criterion",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-2] card candidates are filtered while only the rendered number is masked"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "kind": "criterion",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-3][BD-2] OTP starts once, blocks resend, resets at zero and accepts six digits"
+      ]
+    },
+    {
+      "id": "AC-4",
+      "kind": "criterion",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-4] completion context exposes the full number once and then clears it",
+        "[AC-4] repository commits all stored fields and treats a repeated number as success",
+        "[BRANCH-BR-SUCCESS][AC-4] coordinated flow loads candidates, verifies OTP and saves successfully",
+        "[BRANCH-BR-FAILURE][AC-4][BD-3] coordinated flow reaches a failed result when persistence throws",
+        "[AC-4] save success returns the full card number and persisted payload",
+        "[AC-4][BD-3] save failure preserves the full number in a failed result",
+        "[AC-4][BD-3] insert failure rolls back, rechecks idempotency and leaves no half write"
+      ]
+    },
+    {
+      "id": "AC-6",
+      "kind": "criterion",
+      "ut_layer": "both",
+      "priority": "P1",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-6] existing and bank-opening destinations remain registered together",
+        "[AC-6] an abandoned completion payload is cleared before route recovery"
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "BD-1",
+      "kind": "boundary",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-G3][BD-1] 数据源返回空数组时列表/药丸/分组三处可见性派生量均为 0",
+        "[AC-1][BD-1] opening session enforces each continue gate"
+      ]
+    },
+    {
+      "id": "BD-2",
+      "kind": "boundary",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[AC-G3][BD-2] 取数异常可 await 可 catch，吞掉后降级为空态且无未捕获 rejection",
+        "[AC-3][BD-2] OTP starts once, blocks resend, resets at zero and accepts six digits"
+      ]
+    },
+    {
+      "id": "BD-3",
+      "kind": "boundary",
+      "ut_layer": "both",
+      "priority": "P0",
+      "ut_covered": true,
+      "it_tags": [
+        "[BRANCH-BR-FAILURE][AC-4][BD-3] coordinated flow reaches a failed result when persistence throws",
+        "[AC-4][BD-3] save failure preserves the full number in a failed result",
+        "[AC-4][BD-3] insert failure rolls back, rechecks idempotency and leaves no half write"
+      ]
+    },
+    {
+      "id": "BD-4",
+      "kind": "boundary",
+      "ut_layer": "both",
+      "priority": "P1",
+      "ut_covered": true,
+      "it_tags": [
+        "[BD-4] 导航栈未挂载时取栈抛出，被 try/catch 吞掉后不外抛且调用方状态不变",
+        "[BD-4] cancelling sheet state clears selection, OTP and timers without persistence",
+        "[BD-4] reset discards the active session and permits a clean restart"
+      ]
+    }
+  ],
+  "summary": {
+    "unit_scope_total": 9,
+    "unit_covered": 9,
+    "device_delegated": 1
+  }
+}

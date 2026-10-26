@@ -7,7 +7,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { synthesizeTestChainProfile, type RealChainProject } from './real-chain-host';
 import { withProject } from '../unit/rule-convergence.unit.test';
 import { runGoalRuntimeChain } from '../unit/goal-runner-testing-integrity.unit.test';
-import { publishVerifier } from '../unit/real-chain.unit.test';
+import { publishVerifier, publishRequestedVerifier } from '../unit/real-chain.unit.test';
 import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
@@ -200,6 +200,8 @@ export async function rc10HostRuleCombination(record: '20261019' | '20261020' = 
         facts(ctx); proof(ctx);
       },
       onOutOfChain: ctx => {
+        if (publishRequestedVerifier(project, ctx)) return;
+        assert(ctx.phase.startsWith('design-repair-'), `unexpected model purpose: ${ctx.phase}`);
         const draft = /草稿文件[^：\n]*：(.+)$/m.exec(ctx.prompt)?.[1]?.trim(); assert(draft);
         if (design) {
           ownerReceived ||= ctx.prompt.includes(upstreamId);

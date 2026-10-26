@@ -1,5 +1,6 @@
 // 1804ac3b release-only: identical Node inputs, real checkers/ownership/finalizers.
-// Only author/verifier models and the explicitly injected native-I/O exception are substitutes.
+// Authors/verifiers are deterministic program substitutes, never actual Claude/Codex CLI calls.
+// Real model acceptance uses tests/utils/session-cli-project.ts and session-cli-interruption.cjs.
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -132,7 +133,10 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     if (phase === 'ut' && current.verdict === 'FAIL') failedInputs.push(sha(read(root, SOURCE)) + ':' + sha(read(root, TEST)));
     if (current.verifier_subject_id) {
       modelVerifier(root, phase, current, upstreamVerification);
-      if (current.verdict === 'PASS') invoke('--sync-closure');
+      if (current.verdict === 'PASS') {
+        const synced = invoke('--sync-closure');
+        assert.equal(synced.status, 0, `${phase} real sync-closure failed: ${synced.error?.message ?? ''}\n${synced.stdout}\n${synced.stderr}`);
+      }
     }
     return checked.status ?? 1;
   };

@@ -1,0 +1,8 @@
+{
+  "src": [
+    "presentation/pages/HomeTabPage",
+    "presentation/pages/MineTabPage",
+    "presentation/pages/CardPackPage",
+    "presentation/pages/AddCardEntryPage"
+  ]
+}

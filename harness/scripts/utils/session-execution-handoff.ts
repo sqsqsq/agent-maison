@@ -3,7 +3,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import type { PhaseExecutionContext } from './goal-phase-executor';
 import { assertFencedOwner, readRunControl, setSessionExecutionLease, type RunFenceToken } from './goal-run-control';
-import { loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
+import { loadEventsJsonlStrict, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges,
   type PhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from './phase-write-boundary';
 import { parseCredentialRef } from './device-credential-store';
@@ -149,26 +149,21 @@ export function undeliveredSessionInvocation(events: readonly GoalRunEvent[]): G
       || later.type === 'phase_start' && !!later.handoff_request)));
 }
 
-export function issueSessionExecution(input: {
+export interface PhaseExecutionRequestMaterialInput {
   context: PhaseExecutionContext; invokeId: string; chainPhase?: string; purpose?: string;
+  issuedAt: string;
   timeoutMs: number; gateTimeoutMs: number; cleanupReserveMs: number;
   preSnapshot: PhaseInvocationSnapshot | null; writeBoundary: PhaseWriteBoundaryResolution | null;
   snapshotOptions?: Parameters<typeof capturePhaseInvocationSnapshot>[1];
-  emit: (event: Record<string, unknown>) => void;
-}): IssuedSessionExecution {
+}
+
+/** 两运输共用的调用原件；保存材料本身不签发session权限、不写lease或事件。 */
+export function writePhaseExecutionRequestMaterial(input: PhaseExecutionRequestMaterialInput): { request: SessionExecutionRequest; reference: HandoffReference } {
   const { context } = input;
-  assertFencedOwner(context.runDir, context.owner, 'session_issue');
-  const current = readSessionExecution(context.runDir);
-  if (current && !acceptedSessionReport(context.runDir, current)) throw new Error('[session-handoff] an execution request is already outstanding');
-  const start = [...sessionEvents(context.runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === input.invokeId);
-  if (!start?.ts) throw new Error('[session-handoff] invocation has not been started');
-  const deadlineMs = Date.parse(start.ts) + input.timeoutMs;
-  setSessionExecutionLease(context.runDir, context.owner, deadlineMs);
   let request: SessionExecutionRequest = {
-    type: 'phase_execute_request', context: { ...context, childEnv: handoffEnvironment(context),
-      instruction: `${context.instruction ?? ''}\n执行本次命令时同时传递 context.childEnv 中的冻结标识（run/attempt、设备目标、provider 与合法 opaque 凭据引用）；不要改读当前默认目标，不读取或打印凭据值。` }, invoke_id: input.invokeId,
+    type: 'phase_execute_request', context: { ...context, childEnv: handoffEnvironment(context) }, invoke_id: input.invokeId,
     chain_phase: input.chainPhase ?? context.phase, ...(input.purpose ? { purpose: input.purpose } : {}),
-    issued_at: start.ts, deadline: new Date(deadlineMs).toISOString(),
+    issued_at: input.issuedAt, deadline: new Date(Date.parse(input.issuedAt) + input.timeoutMs).toISOString(),
     gate_timeout_ms: input.gateTimeoutMs, cleanup_reserve_ms: input.cleanupReserveMs,
     pre_snapshot: input.preSnapshot, write_boundary: input.writeBoundary,
     ...(input.snapshotOptions ? { snapshot_options: input.snapshotOptions } : {}),
@@ -181,6 +176,21 @@ export function issueSessionExecution(input: {
     request = original;
   }
   const reference = immutableJson(context.runDir, file, request);
+  return { request, reference };
+}
+
+export function issueSessionExecution(input: Omit<PhaseExecutionRequestMaterialInput, 'issuedAt'> & {
+  emit: (event: Record<string, unknown>) => void;
+}): IssuedSessionExecution {
+  const { context } = input;
+  assertFencedOwner(context.runDir, context.owner, 'session_issue');
+  const current = readSessionExecution(context.runDir);
+  if (current && !acceptedSessionReport(context.runDir, current)) throw new Error('[session-handoff] an execution request is already outstanding');
+  const start = [...sessionEvents(context.runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === input.invokeId);
+  if (!start?.ts) throw new Error('[session-handoff] invocation has not been started');
+  setSessionExecutionLease(context.runDir, context.owner, Date.parse(start.ts) + input.timeoutMs);
+  const { request, reference } = writePhaseExecutionRequestMaterial({ ...input, issuedAt: start.ts, context: { ...context,
+    instruction: `${context.instruction ?? ''}\n执行本次命令时同时传递 context.childEnv 中的冻结标识（run/attempt、设备目标、provider 与合法 opaque 凭据引用）；不要改读当前默认目标，不读取或打印凭据值。\n实际执行者若能导出原生结构化工具事件，将本次调用的原始事件流保存到 ${path.join(context.runDir, 'phases', context.phase, input.invokeId, 'agent-events.jsonl')}；只接受实际工具事件，不从自然语言说明构造记录。没有可导出的审计材料时如实保持未验证。` } });
   const event: GoalRunEvent = { type: 'phase_start', phase: context.phase, driver: 'session', attempt_id: context.attemptId,
     invoke_id: input.invokeId, owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, handoff_request: reference };
   input.emit({ ...event });
@@ -275,6 +285,15 @@ export function acceptSessionExecution(input: {
   }) : null;
   const file = reportArchivePath(runDir, issued);
   const draftOutputs: Record<string, string> = saved?.material.draft_outputs ?? {};
+  const toolEvents = inside(runDir, path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'));
+  const acceptedToolEvents = inside(runDir, path.join(runDir, path.dirname(issued.reference.path), `accepted-agent-events-e${token.epoch}.jsonl`));
+  if (!saved && fs.existsSync(toolEvents) && fs.statSync(toolEvents).mtimeMs >= Date.parse(issued.request.issued_at)) {
+    const bytes = fs.readFileSync(toolEvents);
+    draftOutputs['agent-events.jsonl'] = bytes.toString('base64');
+    if (fs.existsSync(acceptedToolEvents)) {
+      if (!fs.readFileSync(acceptedToolEvents).equals(bytes)) throw new Error('[session-handoff] conflicting tool audit material');
+    } else fs.writeFileSync(acceptedToolEvents, bytes, { flag: 'wx' });
+  }
   if (!saved && (issued.request.purpose === 'author' || issued.request.purpose === 'questioning')) {
     for (const name of ['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json']) {
       const draft = path.join(runDir, 'design-repair', name);
@@ -311,21 +330,24 @@ export function acceptSessionExecution(input: {
   return { duplicate: false, timedOut };
 }
 
-/** New session completion source; legacy process completion requirements stay intact. */
+/**
+ * New session completion source; legacy process completion requirements stay intact.
+ * plan 6fd6c8c1 §4.2：业务资格与后台路径共用 `resolveValidationOnlyEligibility`；
+ * 这里只声明“会话报告本身即停等形状”，不再单独决定谁能复用。
+ */
 export function sessionValidationOnlyEligibility(events: readonly GoalRunEvent[]): { phase: string; invoke_id: string } | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.type !== 'agent_invoke_end' || !event.handoff_report || !event.phase || !event.invoke_id) continue;
-    if ((event as Record<string, unknown>).chain_phase && (event as Record<string, unknown>).chain_phase !== event.phase) continue;
-    if (event.timed_out || event.kill_reason === 'agent_timeout' || event.status === 'waiting') return null;
-    if (events.slice(i + 1).some(later => later.phase === event.phase && ['agent_invoke_start', 'phase_verdict', 'phase_invalidated'].includes(later.type ?? '')
-      || later.type === 'phase_backtrack_requested' && Array.isArray((later as Record<string, unknown>).invalidated_phases)
-        && ((later as Record<string, unknown>).invalidated_phases as unknown[]).includes(event.phase))) return null;
-    const issue = events.slice(0, i).reverse().find(row => row.type === 'phase_start' && row.handoff_request?.sha256 === event.handoff_report!.request_sha256);
-    if (!issue?.handoff_request) return null;
-    return { phase: event.phase, invoke_id: event.invoke_id };
-  }
-  return null;
+  return resolveValidationOnlyEligibility(events as ReadonlyArray<Record<string, unknown>>, { requireInterrupt: false });
 }
 
 export function sessionRequestFence(issued: IssuedSessionExecution): RunFenceToken { return issued.request.context.owner; }
+
+/** 当前报告已接收并冻结的真实工具流；不读 phase 共享目录里上一次后台的日志。 */
+export function sessionToolEventsLogPath(runDir: string, issued: IssuedSessionExecution): string | null {
+  const accepted = acceptedSessionReport(runDir, issued);
+  if (!accepted?.event.handoff_report) return null;
+  const material = readHandoffMaterial<SessionReportMaterial>(runDir, accepted.event.handoff_report);
+  const bytes = material.draft_outputs?.['agent-events.jsonl'];
+  if (!bytes) return null;
+  const file = inside(runDir, path.join(runDir, path.dirname(issued.reference.path), `accepted-agent-events-e${issued.request.context.owner.epoch}.jsonl`));
+  return fs.existsSync(file) && fs.readFileSync(file).equals(Buffer.from(bytes, 'base64')) ? file : null;
+}

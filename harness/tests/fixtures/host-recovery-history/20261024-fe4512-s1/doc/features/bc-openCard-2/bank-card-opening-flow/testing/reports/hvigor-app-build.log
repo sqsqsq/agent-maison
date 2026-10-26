@@ -1,0 +1,227 @@
+$ "D:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" "D:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" --mode module -p product=default -p buildMode=debug --no-daemon --parallel --incremental --analyze=advanced assembleHap
+
+> hvigor [32mUP-TO-DATE :Phone:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@PreBuild...  [39m
+> hvigor [32mFinished :Phone:default@CreateModuleInfo... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GenerateMetadata...  [39m
+> hvigor [32mFinished :Phone:default@PreCheckSyscap... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GeneratePkgContextInfo...  [39m
+> hvigor [32mFinished :Phone:default@GeneratePkgSdkInfo... after 2 ms [39m
+> hvigor [32mFinished :Phone:default@ProcessIntegratedHsp... after 1 ms [39m
+> hvigor [32mFinished :CommFunc:default@CreateHarBuildProfile... after 1 ms [39m
+> hvigor [32mFinished :CommFunc:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@MergeProfile...  [39m
+> hvigor [32mFinished :Phone:default@SyscapTransform... after 8 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessRouterMap...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessShareConfig...  [39m
+> hvigor [32mFinished :Phone:default@ProcessStartupConfig... after 2 ms [39m
+> hvigor [32mFinished :CommUI:default@CreateHarBuildProfile... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@CreateHarBuildProfile... after 1 ms [39m
+> hvigor [32mFinished :CommFunc:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GenerateLoaderJson...  [39m
+> hvigor [32mFinished :WalletMain:default@CreateHarBuildProfile... after 1 ms [39m
+> hvigor [32mFinished :CommFunc:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :CommUI:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CreateBuildProfile...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@ProcessLibs...  [39m
+> hvigor [32mFinished :CommUI:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :WalletMain:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@MakePackInfo...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessProfile...  [39m
+> hvigor [32mFinished :CommUI:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :WalletMain:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessResource...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@ProcessLibs...  [39m
+> hvigor [32mFinished :Phone:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CompileResource...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@DoNativeStrip...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :Phone:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mFinished :Phone:default@BuildJS... after 2 ms [39m
+> hvigor [32mFinished :WalletMain:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :Phone:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@DoNativeStrip...  [39m
+> hvigor [32mUP-TO-DATE :Phone:default@CacheNativeLibs...  [39m
+> hvigor [33mWARN: [33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/05-SystemBase/CommUI/src/main/ets/presentation/components/ToastUtil.ets:5:18
+ 'showToast' has been deprecated.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/PromoSwiper.ets:12:15
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/ServiceGridSwiper.ets:21:15
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets:66:17
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets:108:16
+ 'key' can only be used for testing directories 
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets:21:21
+ 'Has' has been deprecated.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets:24:21
+ 'Has' has been deprecated.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets:27:21
+ 'Has' has been deprecated.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets:44:12
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets:49:15
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/CardCategoryList.ets:44:19
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/presentation/components/CardCategoryList.ets:49:15
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:52:51
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:53:11
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:59:5
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:64:5
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:69:5
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:74:56
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:79:12
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:84:7
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:100:11
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:105:56
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:110:12
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:115:16
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:118:7
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:124:19
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:125:17
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:126:17
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:127:21
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:128:16
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:129:25
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:130:33
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[33mWARN: [33m[33mArkTS:WARN File: D:/1.code/SimulatedWalletForHmos/02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets:131:27
+ Function may throw exceptions. Special handling is required.
+[39m[39m
+[39m
+> hvigor [33mWARN: Child:'2e489cf3-98e5-432e-a4aa-2f2c9e503c6c' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'05df73cc-7fbf-4674-b89d-f947d9195fc4' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'43972788-3708-421b-873b-5a05e2a52c79' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'2b1348b1-7113-40f3-a190-c32104acebb0' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'50afce67-f191-4e1c-ad0b-abe8f50d9c94' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'26e4975a-6967-4249-95e6-12e5a655cd6b' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'a38541ed-bf79-437a-8046-f5ffd134dd26' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'82a43800-50c8-4718-92d7-8a501a527769' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'0a4855e6-e2c6-4239-bdb2-2bc04dcaaf8c' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'326e5c5e-8d8e-4324-bb76-45e3f29cd8b4' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'a8193a17-6c94-4e85-9739-eb6a7759bf13' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'d3e6a68a-5637-4a14-8c3d-ba33804abe30' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'0913833e-2e7c-43bf-b2f1-8f6a0a8a778e' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'82fd0c6f-0d2f-4869-9d7a-8239a29d5ae6' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'eb3f67e2-ba3c-4e33-8bdf-e62e52ae7de8' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'3aaa907b-2e48-4820-ba42-6fbaa65dd5eb' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'ca288e47-50a0-47d1-b66b-493bb3ecb2ef' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'3108ccb2-15ae-4939-9665-aacce94c839f' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'bcd40cf3-689b-4bb1-8eec-74e43eaddbd0' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'40a8986b-3b64-463e-9741-8d38db8a99b2' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'6ed33239-1534-4c38-862e-99fe134d9527' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'c4fda703-3ebe-40c4-8405-ab181ff26c36' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'b66ca6ca-7431-4440-aa2d-13b6e71b5137' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'9fb44ce1-0ba7-4e47-959e-a96c36303d77' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'6df8088d-576e-4c87-9212-17a3f84fad53' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'8a510f50-c342-4ee2-b9b5-880f148a4e74' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'8676d13e-618d-41bf-b92c-8e55e7b9d678' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'6d3bbc38-f3c6-4387-a987-d7ea0d9df06b' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'06bfd532-4ab6-48b5-9f7b-e2d255718dad' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'d78747f0-3579-48c1-ba80-c79c62483d1a' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'a41e1e31-60a1-4fa4-907b-d4a29bda5f44' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'6cd10ed2-dc3b-43e0-b9cb-20e21ec53da0' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'7ac3bd57-260b-49c4-9866-7ab8a0c82d2e' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'960d37e1-91e3-44a7-a205-93ab9434eee6' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'439c2e99-987f-46b9-819a-24e60c1d900a' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'fdcd13da-75ba-4a63-810d-ffc9d331a08e' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'a5e6f685-bd49-4d09-8f69-8b5239fba9ba' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'ac1e7429-c13b-4ed7-a759-112b31bd4b44' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'87d1f7b4-75d5-48af-a449-72a8c776b03a' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'21217b7e-8408-4a06-ba9e-2adfc583abeb' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'89b54c9d-178b-49d3-89c3-3301106f7e14' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'fa23f658-efc8-4993-b5ca-51da5077faae' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'b81c3a4a-3f23-41db-b83a-45b13b798d2b' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'f94f7842-1f14-4e46-a312-d4ce2a747459' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'eef3be70-aa54-4dda-a976-25f94b48a579' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'0a982deb-fa20-44da-9fde-fb8239a82051' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'bded887e-f33d-4ef7-9ed7-7f2da3e388ee' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'f82d4e3f-17af-45a6-b647-fcfd9fdb35bb' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'51810628-70f2-4e78-aa99-6ff70839dafd' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'64b527cd-1d20-4574-aa63-52329f1f5d2d' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'09583c13-c805-46a1-9a73-9aed08780c03' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'29a0e406-d2b4-426c-9e9b-3eb83f36787a' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'e881cb12-e195-493c-8d2e-0a702ddf76a8' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'098cb318-1fca-4f58-9762-f11d1f1c05ad' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'f7d789a2-17fb-4551-a04c-80511b559bd8' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'aa81de3b-47d2-496f-b516-c4c447fa3696' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'2fb94e1a-de0a-4ced-9cda-5cdb1242ab2f' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'22eda933-b369-4b3d-a046-f4f10530a1d8' is not of type DurationEvent.[39m
+> hvigor [33mWARN: Child:'69241617-710c-4926-8b93-51f10e5512df' is not of type DurationEvent.[39m
+> hvigor [32mFinished :Phone:default@CompileArkTS... after 2 s 613 ms [39m
+> hvigor [32mUP-TO-DATE :Phone:default@GeneratePkgModuleJson...  [39m
+> hvigor [32mFinished :Phone:default@ProcessCompiledResources... after 1 ms [39m
+> hvigor [32mFinished :Phone:default@PackageHap... after 263 ms [39m
+> hvigor [32mFinished :Phone:default@PackingCheck... after 4 ms [39m
+> hvigor [32mFinished :Phone:default@SignHap... after 1 s 99 ms [39m
+> hvigor [32mFinished :Phone:default@CollectDebugSymbol... after 1 ms [39m
+> hvigor [32mFinished :Phone:assembleHap... after 1 ms [39m
+> hvigor [32mBUILD SUCCESSFUL in 7 s 66 ms [39m

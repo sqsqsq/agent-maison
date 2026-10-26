@@ -2,6 +2,7 @@ import { writeRunSummaryBase } from '../../harness-runner';
 import { checkUtUnsupportedTargetsHandled, checkUtTestabilityAuditPresent, inspectTestabilityAudit } from '../../scripts/check-ut';
 import { UT_REAL_ASSERTION_CHECK } from './repair-candidates.unit.test';
 import { renderResultBlock } from '../utils/verifier-evidence-fixture';
+import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
 import assert from 'assert';
 import { readRepairDependencyContext, repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
 import * as fs from 'fs';
@@ -72,7 +73,7 @@ import { codingBasePath } from '../../scripts/utils/pass-snapshot';
 import { recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import * as os from 'os';
 import type { AcceptanceSpec, CheckContext, CheckResult } from '../../scripts/utils/types';
-import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
+import { resolveExecutionScope, validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, hasNoTestingObligation, findSubtractedRequiredObligations, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from '../../scripts/utils/execution-scope';
 import { applyScopeRevisions, resolveRunBaseline, revokedPhasesByRevision, eventsWithScopeRevocations } from '../../scripts/utils/goal-run-creation';
 import { applyInvalidationsToResume, deriveHaltValidationOnlyEligibility } from '../../scripts/goal-phase-runtime';
 import { isClosureOnlyRetryPending, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
@@ -599,6 +600,11 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     let injected = false;
     let designGap = false;
     let codingRegression = false;
+    const regressionReply = (phase: string): string => {
+      const fence = String.fromCharCode(96).repeat(3);
+      return phase === 'review' ? `${fence}issue-verification\n- issue: CR-CODING\n  verdict: confirmed\n  evidence: ${path.basename(codeFile)} | 补齐新验收所需实现\n${fence}\n`
+        : '| id | status |\n|---|---|\n| end_to_end_driving | PASS |\n| business_assertion_value | PASS |\n';
+    };
     let revisionsApplied = 0;
     let detachedStarted = false;
     let recoveryMarker: string | undefined;
@@ -641,10 +647,13 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
           return { checks: [...checkUtTestabilityAuditPresent(ctx, audit), ...checkUtUnsupportedTargetsHandled(ctx, audit)] };
         }
 
-        if (continuousCoding && !codingRegression && ((specGap && designGap && phase === 'review') || (utDesignGap && designGap && phase === 'ut') || (continuousCoding === 'request' && phase === 'ut'))) {
-          const current = loadEffectiveExecutionScope(root, feature, 'p2-attended')!;
-          assert(!current.phase_chain.includes('coding'), '本例必须真实覆盖 fresh coding 出链');
-          codingRegression = true;
+        if (continuousCoding && !fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression')
+          && ((specGap && designGap && phase === 'review') || (utDesignGap && designGap && phase === 'ut') || (continuousCoding === 'request' && phase === 'ut'))) {
+          if (!codingRegression) {
+            const current = loadEffectiveExecutionScope(root, feature, 'p2-attended')!;
+            assert(!current.phase_chain.includes('coding'), '本例必须真实覆盖 fresh coding 出链');
+            codingRegression = true;
+          }
           const checks: CheckResult[] = phase === 'review' ? [
             { id: 'conclusion_with_verdict', category: 'structure', description: 'report valid', severity: 'BLOCKER', status: 'PASS', details: '报告合法' },
             { id: 'negative_verdict_closure', category: 'structure', description: 'functional regression', severity: 'BLOCKER', status: 'FAIL', details: '功能缺陷仍未修复' },
@@ -659,10 +668,7 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
             checks, summary: { total: checks.length, pass: checks.length - 1, fail: 1, warn: 0, skip: 0, blockers: 1, verdict: 'FAIL' } } as import('../../scripts/utils/types').ScriptReport;
           fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report));
           const summary = writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan });
-          const fence = String.fromCharCode(96).repeat(3);
-          const body = phase === 'review' ? `${fence}issue-verification\n- issue: CR-CODING\n  verdict: confirmed\n  evidence: ${path.basename(codeFile)} | 补齐新验收所需实现\n${fence}\n`
-            : '| id | status |\n|---|---|\n| end_to_end_driving | PASS |\n| business_assertion_value | PASS |\n';
-          fs.writeFileSync(path.join(root, summary.verifier_report!), body + renderResultBlock(summary.verifier_subject_id!, 'PASS', 0));
+          fs.writeFileSync(path.join(root, summary.verifier_report!), regressionReply(phase) + renderResultBlock(summary.verifier_subject_id!, 'PASS', 0));
           if (phase === 'review') {
             const responsibility = repairResponsibilityContext({ projectRoot: root, frameworkRoot, feature, runId: 'p2-attended', currentPhase: phase });
             const targets = resolveRepairResponsibility({ ...responsibility, target: { files: [codeRel] } });
@@ -761,6 +767,14 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
         if (invalidOutput) { fs.writeFileSync(contractsFile, 'files: [ {broken\n'); return; }
         fs.writeFileSync(contractsFile, YAML.stringify({ ...YAML.parse(contractsAtBirth.toString('utf8')), files: [codeRel] }));
       },
+      onOutOfChain: continuousCoding ? ctx => {
+        const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+        assert(request && request.feature === feature && ['review', 'ut'].includes(request.phase), '模型只响应实际当前返修核实request');
+        const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, `${request.phase}/reports/summary.json`), 'utf8'));
+        assert.equal(summary.verifier_subject_id, request.subject_id, '不得回答旧subject');
+        fs.readFileSync(path.resolve(root, request.prompt_path), 'utf8');
+        fs.writeFileSync(path.resolve(root, summary.verifier_report), regressionReply(request.phase) + renderResultBlock(request.subject_id, 'PASS', 0));
+      } : undefined,
       onSpec: () => {
         if (mode === 'ut-l3-spec') {
           const file = featureFilePath(root, feature, 'acceptance.yaml');
@@ -899,7 +913,18 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
         return;
       }
       assert.equal(probe.exitCode, 0, JSON.stringify(events.slice(-5)));
-      assert(codingRegression && fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression'), 'coding 责任方没有真实修复');
+      assert(codingRegression && fs.readFileSync(codeFile, 'utf8').includes('repairedOwnerRegression'), 'coding 责任方没有真实修复：' + JSON.stringify({
+        codingRegression,
+        verdicts: events.filter(event => event.type === 'phase_verdict').map(event => ({ phase: event.phase, invoke_id: event.invoke_id,
+          verdict: event.verdict, action: event.action, recommendation: event.assess_recommendation })),
+        revisions: events.filter(event => event.type === 'scope_revised').map(event => ({ trigger: event.trigger,
+          chain: (event.execution_scope as ExecutionScope).phase_chain,
+          implementation: (event.execution_scope as ExecutionScope).obligations.filter(fact => fact.kind === 'implementation') })),
+        ut: ['summary.json', 'script-report.json'].map(name => {
+          const file = featureFilePath(root, feature, `ut/reports/${name}`);
+          return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+        }),
+      }));
       assert.equal(events.filter(event => event.type === 'run_created').length, 1, '连续恢复建了另一个 run');
       const revisions = events.filter(event => event.type === 'scope_revised');
       assert.equal(revisions.length, 2, 'only owner repair and later coding repair need revisions; a valid phase PASS is not another scope write');
@@ -909,7 +934,14 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
       assert.equal(invokes.filter(event => event.phase === 'coding').length, 3, 'upstream repair and later real coding defect each require one valid new coding PASS');
       assert.equal(invokes.filter(event => event.phase === 'review').length, 3, 'each changed implementation is reviewed once');
       assert.equal(invokes.filter(event => event.phase === 'ut').length, specGap ? 1 : 3, '责任修复后必须复验 UT');
-      assert.deepStrictEqual(invokes.map(event => Number(/-i(\d+)$/.exec(String(event.invoke_id))?.[1])), invokes.map((_, index) => index + 1), '调用序号不连续');
+      assert.equal(new Set(invokes.map(event => event.invoke_id)).size, invokes.length, '每次实际调用ID必须唯一');
+      invokes.forEach((event, index) => {
+        if ((event as { purpose?: string }).purpose === 'verifier_format_repair') {
+          const format = /^(.+)-verifier-format-repair-(i\d+)$/.exec(String(event.invoke_id));
+          assert(format && (event as { chain_phase?: string }).chain_phase === format[1], '格式纠错必须保留原phase/attempt身份');
+          assert(invokes.slice(0, index).some(owner => owner.phase === format[1] && owner.invoke_id === `${format[1]}-${format[2]}`), '格式纠错必须引用已经实际派发的原调用');
+        } else assert.equal(Number(/-i(\d+)$/.exec(String(event.invoke_id))?.[1]), index + 1, '普通作者调用序号必须包含此前核实调用的全局消耗');
+      });
       assert.equal(resolveResumedBudget(events).totalTurns, invokes.length, '连续修订清了预算');
       assert.equal(events.filter(event => event.type === 'run_end').at(-1)?.status, 'CHAIN_SLICE_COMPLETED', '连续路径未完成');
       const manifest = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'goal-runs/p2-attended/manifest.json'), 'utf8'));

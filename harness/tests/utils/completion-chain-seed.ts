@@ -170,7 +170,8 @@ export function writeRunEvents(
   const manifestPath = featureFilePath(projectRoot, feature, path.join('goal-runs', runId, 'manifest.json'));
   if (!fs.existsSync(manifestPath)) {
     // requirement 留空：feature 级 intent 拼接对空 requirement 零贡献
-    fs.writeFileSync(manifestPath, JSON.stringify({ schema_version: '1.0', feature, run_id: runId }), 'utf-8');
+    fs.writeFileSync(manifestPath, JSON.stringify({ schema_version: '1.0', feature, run_id: runId,
+      report_dir: path.relative(projectRoot, path.dirname(manifestPath)).replace(/\\/g, '/') }), 'utf-8');
   }
 }
 

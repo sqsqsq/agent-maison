@@ -1,0 +1,14 @@
+{
+  "name": "phone",
+  "version": "1.0.0",
+  "description": "Please describe the basic information.",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "@aspect/WalletMain": "file:../../02-Feature/WalletMain",
+    "@aspect/AccountManager": "file:../../04-BusinessBase/AccountManager",
+    "@aspect/CommUI": "file:../../05-SystemBase/CommUI",
+    "@aspect/CommFunc": "file:../../05-SystemBase/CommFunc"
+  }
+}

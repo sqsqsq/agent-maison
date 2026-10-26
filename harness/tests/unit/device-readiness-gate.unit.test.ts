@@ -555,7 +555,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }
   });
 
-  await run(results, 'T3#2 真机解锁失败 + 模拟器降级成功 → **不得**记成模拟器上的 succeeded', async () => {
+  await run(results, 'T3#2 真机解锁失败后模拟器保持等待与真实失败审计；physical 恢复由原门复查', async () => {
     // 事故形态（codex 三轮 P1 的"伴生错误"）：READY 分支此前用
     // `notes.find(n => n.startsWith('unlock:'))` 反推事件，成败**硬编码** succeeded、
     // serial 取**最终 target**。于是这一幕会产出一条凭空捏造的成功记录，
@@ -579,16 +579,28 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       },
       emitEvent: event => events.push(event),
     });
-    assert(decision.outcome === undefined, `降级后应放行：${JSON.stringify(decision.outcome)}`);
+    assertEq(decision.outcome?.halt_reason, 'device_not_ready', '需要真机的 testing 不能由模拟器降级放行');
+    assertEq(decision.outcome?.blocking_class, 'externalBlocked', '继续等待真实外部条件');
+    assertEq(decision.outcome?.failure_kind, 'device_blocked', '保留设备条件归因');
+    assertEq(decision.env, undefined, '等待时不向执行者注入模拟器目标');
     const unlockEvents = events.filter(e => e.type === 'device_unlock_attempt');
     assertEq(unlockEvents.length, 1, `解锁只尝试过一次，事件也只该有一条：${JSON.stringify(events)}`);
     assertEq(unlockEvents[0].outcome, 'failed', '真机没解开就是 failed——降级成功不改变这个事实');
     assertEq(unlockEvents[0].serial, 'phone-1', 'serial 须是**被尝试解锁的那台**，不是降级后的目标');
     assertEq(unlockEvents[0].failure_kind, 'layout_unsupported', '结构化归因须原样落到事件上');
-    assert(
-      events.some(e => e.type === 'device_ready' && e.serial === 'emu-9'),
-      `device_ready 仍应是降级后的模拟器：${JSON.stringify(events)}`,
-    );
+    assert(!events.some(e => e.type === 'device_ready'), '模拟器不能冒充本次需要的真机就绪');
+    const recovered = await runDeviceReadinessGate({
+      phase: 'testing', retries: 0, sessionId: 'fallback-truth',
+      input: { configuredSerial: 'phone-1', credentialRef: 'opaque-ref', emulatorFallback: 'existing', deps: {
+        listTargets: () => ['phone-1'], isLocked: () => false, wake: () => {}, knownEmulatorSerials: () => [], attestPhysical: () => true,
+        unlockWithCredential: () => { throw new Error('已解锁目标不应再次尝试凭据'); },
+      } }, emitEvent: event => events.push(event),
+    });
+    assertEq(recovered.outcome, undefined, 'physical 条件解除后原设备门应放行');
+    assertEq(recovered.target?.targetKind, 'physical', '须有正面真机事实');
+    assertEq(recovered.env?.HARNESS_HDC_TARGET, 'phone-1', '仅注入复查后的真机目标');
+    assertEq(events.filter(event => event.type === 'device_unlock_attempt').length, 1, '恢复不篡改或伪造原解锁事件');
+    assert(events.some(event => event.type === 'device_ready' && event.serial === 'phone-1'), '真机复查后才记录就绪');
   });
 
   await run(results, 'T3#2 归因贯通到 phase_halt：BLOCKED 时带 unlock_failure_kind（消费方不解析文案）', async () => {

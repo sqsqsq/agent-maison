@@ -716,6 +716,7 @@ export function writeGoalReport(
   } catch { /* ignore */ }
   const runState = reduceRunState(axesEvents);
   if (runState.recovery) report.recovery = runState.recovery;
+  else delete report.recovery;
   fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + '\n', 'utf-8');
   const mustReviewItems = collectMustReviewFromAssumptions(
     projectRoot,

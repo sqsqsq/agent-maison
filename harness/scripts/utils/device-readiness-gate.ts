@@ -560,7 +560,12 @@ export async function runDeviceReadinessGate(opts: {
   input: DeviceReadinessInput;
   emitEvent: (event: Record<string, unknown>) => void;
 }): Promise<DeviceGateDecision> {
-  const res = await ensureDeviceReady(opts.input);
+  let res = await ensureDeviceReady(opts.input);
+  if (res.state === 'READY' && capsTestingConclusion(opts.phase, res.target.targetKind)) {
+    res = { state: 'BLOCKED', reason: `本次 ${opts.phase} 需要真机结论；${res.target.serial} 为 ${res.target.targetKind}，接入并正面确认 physical 目标后由原设备门复查。`,
+      notes: res.notes, ...(res.unlockAttempt ? { unlockAttempt: res.unlockAttempt } : {}),
+      ...(res.managed ? { orphanManaged: res.managed, orphanSerial: res.target.serial } : {}) };
+  }
 
   // t6：解锁尝试的**审计投影**——安全 SSOT 是机器级 Credential Manager 锁存
   //（device-credential-store），goal events 只作可回溯记录，**不参与放行判定**。

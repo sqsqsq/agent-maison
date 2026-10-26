@@ -1,0 +1,12 @@
+{
+  "float": [
+    {
+      "name": "comm_list_item_height",
+      "value": "56vp"
+    },
+    {
+      "name": "comm_icon_size",
+      "value": "24vp"
+    }
+  ]
+}

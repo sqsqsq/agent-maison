@@ -1,0 +1,67 @@
+schema_version: "1.0"
+feature: cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93
+entries:
+  - node_id: card_type_overlay_root
+    declaration: bg_color=color.overlay_dim
+    implemented_by: AddBankCardPage|AllBanksPage.bindSheet
+    how: 系统 bindSheet 提供遮罩层，面板由入口页本地状态控制。
+  - node_id: card_type_background_page
+    declaration: bg_color=color.page_bg
+    implemented_by: AddBankCardPage|AllBanksPage
+    how: 原入口页继续以 color_page_bg 渲染为 Sheet 背景上下文。
+  - node_id: card_type_sheet_panel
+    declaration: bg_color=color.sheet_bg
+    implemented_by: CardTypeSheet
+    how: 根 Column 使用 color_page_bg，并通过 card_type_sheet_panel id 定位。
+  - node_id: card_type_bank_card
+    declaration: bg_color=color.surface
+    implemented_by: CardTypeSheet
+    how: 银行与卡型列表容器使用 color_card_bg。
+  - node_id: card_type_bank_row
+    declaration: layout_group=card_type_rows
+    implemented_by: CardTypeSheet
+    how: 银行行与卡型行位于同一 Column，统一左右内边距。
+  - node_id: debit_card_row
+    declaration: layout_group=card_type_rows
+    implemented_by: CardTypeSheet.cardTypeRow
+    how: 储蓄卡行复用统一 52vp 行构建器。
+  - node_id: credit_card_row
+    declaration: layout_group=card_type_rows
+    implemented_by: CardTypeSheet.cardTypeRow
+    how: 信用卡行复用统一 52vp 行构建器。
+  - node_id: bank_card_selection_root
+    declaration: bg_color=color.page_bg
+    implemented_by: BankCardSelectionPage
+    how: 页面根 Column 使用 color_page_bg。
+  - node_id: selection_card_container
+    declaration: bg_color=color.surface
+    implemented_by: BankCardSelectionPage
+    how: 候选卡 Column 使用 color_card_bg。
+  - node_id: bank_card_candidate_1
+    declaration: layout_group=bank_card_candidates
+    implemented_by: BankCardSelectionPage
+    how: 所有候选卡由同一 ForEach Row 模板渲染。
+  - node_id: otp_overlay_root
+    declaration: bg_color=color.overlay_dim
+    implemented_by: BankCardSelectionPage.bindSheet
+    how: 系统 bindSheet 提供遮罩层，关闭后清理 OTP 临时态。
+  - node_id: otp_sheet_panel
+    declaration: bg_color=color.sheet_bg
+    implemented_by: OtpVerificationSheet
+    how: 根 Column 使用 color_page_bg。
+  - node_id: otp_code_row
+    declaration: bg_color=color.surface
+    implemented_by: OtpVerificationSheet
+    how: 验证码输入与重发按钮共用 color_card_bg Row。
+  - node_id: otp_input
+    declaration: layout_group=otp_code_row
+    implemented_by: OtpVerificationSheet
+    how: TextInput 位于 otp_code_row 左侧并占剩余宽度。
+  - node_id: otp_resend_action
+    declaration: layout_group=otp_code_row
+    implemented_by: OtpVerificationSheet
+    how: 重发按钮位于 otp_code_row 右侧且宽度为 30%。
+  - node_id: opening_result_root
+    declaration: bg_color=color.page_bg
+    implemented_by: BankCardOpeningResultPage
+    how: 结果页根 Column 使用 color_page_bg。

@@ -16,7 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
-import { clearFrameworkConfigCache, featureFilePath, relFeaturesDir } from '../../config';
+import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { designRepairAttempted, runUnattendedDesignRepair } from '../../scripts/utils/design-repair-unattended';
 import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
@@ -26,7 +26,9 @@ import {
 } from '../../scripts/utils/change-unit-design-preparation';
 import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit, pointerStaleCandidate } from '../../scripts/utils/change-unit-path';
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
-import { checkAuthoritativeContentAligned, classifyDesignAuthorityCodes, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { checkAuthoritativeContentAligned, classifyDesignAuthorityCodes, compareAuthoritativeContent, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
+import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
 import { blockerIssues, validateComponentBlueprint, validateComponentBlueprintUpstream } from '../../scripts/utils/component-blueprint-validator';
@@ -679,7 +681,7 @@ interface RepairAdapterLog { prompts: Record<string, string[]>; lockedDuringAuth
  *  · 质询方：默认按必答范围产出完整质询结果——内容取 canonical 里原有的质询项、换成质询方标识；`questioning` 可改写（不可用、无结果……）。
  * 编写调用进行中顺带记下：两层锁是否都在、attempted 是否已落盘（"落盘成功后才派发"的直接证据）。
  */
-function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
+export function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
   author?: (doc: Ev, draft: string) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>;
   questioning?: (doc: Ev, draft: string) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>;
   /** 编写方对被写坏节点的改法；缺省仅还原原值，不顺带改变设计事实。 */
@@ -690,6 +692,42 @@ function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
     log,
     onOutOfChain: async ctx => {
       (log.prompts[ctx.phase] ??= []).push(ctx.prompt);
+      if (ctx.phase.endsWith('-verifier-format-repair')) {
+        const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+        assert(request, `补核实必须携带现成的当前 request；actual_phase=${ctx.phase}`);
+        assert.equal(ctx.phase, request.phase + '-verifier-format-repair', '运输 phase 必须与真实 request 一致');
+        const reportsDir = featurePhaseReportsDir(s.root, request.feature, request.phase, s.frameworkRoot);
+        const summary = readJson<Ev>(path.join(reportsDir, 'summary.json'));
+        assert.equal(summary.verifier_subject_id, request.subject_id, '模型回复不得签旧 subject');
+        const promptPath = path.resolve(s.root, request.prompt_path);
+        assert(promptPath.startsWith(path.resolve(s.root) + path.sep), '只读当前工程的实际核实材料');
+        fs.readFileSync(promptPath, 'utf8');
+        const kind = request.phase === 'spec' ? 'acceptance' : 'contracts';
+        const projected = deriveBlueprintSkillInput(s.root, request.feature, s.frameworkRoot, kind);
+        const actual = readDoc(featureFilePath(s.root, request.feature, kind + '.yaml'));
+        const drift = projected.state === 'resolved' ? compareAuthoritativeContent(projected.value, actual) : null;
+        const aligned = drift?.state === 'aligned';
+        if (['coding', 'review', 'ut', 'testing'].includes(request.phase) && aligned) {
+          const code = (actual.files ?? []).filter((file: unknown): file is string => typeof file === 'string' && /\.(?:ets|ts)$/.test(file));
+          assert(code.length > 0, '独立模型不能批准没有当前源码的实现材料');
+          for (const file of code) {
+            const absolute = path.resolve(s.root, file);
+            assert(absolute.startsWith(path.resolve(s.root) + path.sep), '只读请求内的实际源码');
+            assert(fs.readFileSync(absolute).length > 0, '独立模型不能批准尚未实现的空源码');
+          }
+        }
+        const detail = aligned ? '独立模型替身已读取当前 request 与真实作者文件；内容与当前已发布蓝图投影一致。'
+          : `当前权威/作者材料尚不一致：${projected.detail ?? JSON.stringify(drift)}`;
+        const acceptance = kind === 'acceptance' ? actual : readDoc(featureFilePath(s.root, request.feature, 'acceptance.yaml'));
+        const body = '```yaml\n' + YAML.stringify({ verification_result: { phase: request.phase, feature: request.feature,
+          checks: [{ id: 'authoritative_content_aligned', status: aligned ? 'PASS' : 'FAIL', severity: 'BLOCKER', details: detail,
+            ...(!aligned ? { acceptance_ids: Array.isArray(acceptance.criteria) ? acceptance.criteria.map((row: Ev) => row.id) : [], affected_files: [path.relative(s.root, blueprintFile(s)).replace(/\\/g, '/')] } : {}) }],
+          summary: { pass: aligned ? 1 : 0, fail: aligned ? 0 : 1, blockers: aligned ? 0 : 1, verdict: aligned ? 'PASS' : 'FAIL' } } }) + '```\n'
+          + (aligned ? '' : '```issue-verification\n' + YAML.stringify([{ issue: 'authoritative_content_aligned', verdict: 'confirmed', repair_owner: 'external', evidence: detail }]) + '```\n');
+        publishFixtureVerifierEvidence({ projectRoot: s.root, reportsDir, feature: request.feature, phase: request.phase,
+          subjectId: request.subject_id, skipSummaryPatch: true, verdict: aligned ? 'PASS' : 'FAIL', blockerCount: aligned ? 0 : 1, reportText: body });
+        return;
+      }
       const draft = draftPathOf(ctx.prompt);
       const doc = readDoc(draft);
       if (ctx.phase === 'design-repair-author') {
@@ -715,12 +753,13 @@ function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
   };
 }
 
-interface S16Born { feature: string; completed?: string; runId: string; events: Ev[]; requirement: string; request: { start: string; end: string }; saved: Ev; baseRevision: number; chain: string[]; error?: string }
+interface S16Born { feature: string; completed?: string; runId: string; events: Ev[]; requirement: string; request: { start: string; end: string }; saved: Ev; baseRevision: number; chain: string[]; error?: string; parentArgs?: string[]; childArgs?: string[] }
 /**
  * S16 从 fresh CU 的坏设计请求入场；祖先事件场景先真实停在 B1/HALTED，再公开起后继。
  * spec 首轮从同需求 fixture 新建作者验收草稿与事实，内容修复后的重试按当前 provider 写正式阶段产物。
  */
-async function s16Born(s: Snapshot, opts: {
+export async function s16Born(s: Snapshot, opts: {
+  entry?: 'detach';
   /** false = 不写预授权；其它值原样写进 design_repair.unattended_b1（缺省布尔 true）。 */
   preauth?: unknown; corrupt?: (node: Ev) => void; adapter?: Parameters<typeof repairAdapter>[2]; extra?: Record<string, unknown>;
   /** 真实 B1/HALTED 首 run 为事件与累计预算祖先，不伪称完成。 */
@@ -779,6 +818,7 @@ async function s16Born(s: Snapshot, opts: {
     ...opts.extra,
   };
   let error: string | undefined;
+  let transportArgs: { parentArgs?: string[]; childArgs?: string[] } = {};
   let expectedRunId: string | undefined;
   if (ancestor) {
     const next = await supersede(s, feature, ancestor, chain, hooks);
@@ -786,10 +826,12 @@ async function s16Born(s: Snapshot, opts: {
     expectedRunId = next.successor;
     error = next.error;
   } else {
-    const run = await runGoalRuntimeChain(s.root, {
+    const run = await (opts.entry ? requestVia.bind(null, opts.entry) : runGoalRuntimeChain)(s.root, {
       frameworkRoot: s.frameworkRoot, featureId: feature, adapter: 'codex',
       freshRequirement: freshRequest.requirement, freshStartPhase: chain[0], freshEndPhase: chain[chain.length - 1], ...hooks,
     });
+    if ('parentArgs' in run && Array.isArray(run.parentArgs)) transportArgs.parentArgs = run.parentArgs;
+    if ('childArgs' in run && Array.isArray(run.childArgs)) transportArgs.childArgs = run.childArgs;
     if (run.exitCode !== 0) error = `runner exit ${run.exitCode}`;
   }
   const born = runIds(s.root, feature).filter(id => !before.has(id));
@@ -797,7 +839,8 @@ async function s16Born(s: Snapshot, opts: {
   else if (!opts.allowSuccessors) assert.strictEqual(born.length, 1, `fresh 请求只应出生一个 run：exit=${error ?? 0} ${JSON.stringify(born)}`);
   const current = born[born.length - 1];
   return { feature, runId: current, events: born.flatMap(id => eventsOf(s, feature, id)), requirement: freshRequest.requirement,
-    request: { start: chain[0], end: chain[chain.length - 1] }, saved: saved!, baseRevision, chain, log: adapter.log, ...(error ? { error } : {}) };
+    request: { start: chain[0], end: chain[chain.length - 1] }, saved: saved!, baseRevision, chain, log: adapter.log,
+    ...(transportArgs.parentArgs ? { parentArgs: transportArgs.parentArgs } : {}), ...(transportArgs.childArgs ? { childArgs: transportArgs.childArgs } : {}), ...(error ? { error } : {}) };
 }
 /** Child-only physical crash: canonical rename succeeds, no published event can be written. */
 export async function __nonresidentDesignPublicationFaultWorker(metadataFile: string): Promise<void> {

@@ -1,0 +1,960 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261023T044016Z-fe4512",
+  "attempt_id": "i25",
+  "image_hashes": [
+    "7dfac78e3e30f289",
+    "92146d4a0f7a8fd8",
+    "66d2652dc31d35c1",
+    "a8c6fbd6dfdd4211",
+    "66d2652dc31d35c1",
+    "a8c6fbd6dfdd4211",
+    "554e707ee1093988",
+    "816f3ef6a35d464b",
+    "554e707ee1093988",
+    "00593a382330b007",
+    "f300cece15317a45",
+    "b5648836883058c0"
+  ],
+  "screens": [
+    {
+      "screen_id": "bank_card_selection",
+      "reference_image_hash": "7dfac78e3e30f289",
+      "evaluated_screenshot_hash": "92146d4a0f7a8fd8",
+      "must_fix": [
+        "Reduce candidate-row logo and card-number sizes to the reference proportions while retaining the permitted two-card dataset.",
+        "Match the agreement control's rounded-square shape and align it with the first text line; retain the current checked or unchecked state.",
+        "Restore the reference agreement text size, indentation and blue styling for agreement names using static text spans.",
+        "Match the next button's reference width and corner radius, and give its disabled background and label sufficient visible contrast.",
+        "Reduce the selection hint's text size to the reference proportion."
+      ],
+      "defects": [
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "bank_card_candidate_1",
+          "bbox": [
+            0.073,
+            0.24,
+            0.44,
+            0.051
+          ],
+          "note": "The first candidate's bank logo is visibly larger than the reference, approximately 96 versus 70 pixels at comparable image widths; its number text is also larger. This changes row proportions. Two candidates and different mock card numbers are permitted and are not defects.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "shape_mismatch",
+          "severity": "minor",
+          "element": "selection_agreement_check",
+          "bbox": [
+            0.049,
+            0.412,
+            0.05,
+            0.031
+          ],
+          "note": "The agreement control is a circular outline instead of the reference's rounded-square checkbox and sits below the first text line. Its unchecked state alone does not establish a defect.",
+          "must_fix_refs": [
+            1
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "selection_agreement",
+          "bbox": [
+            0.123,
+            0.406,
+            0.832,
+            0.066
+          ],
+          "note": "The agreement is entirely gray, with larger text and a greater left indentation than the reference. The reference distinguishes agreement names in blue. Text remains readable; clickable rich text is not required.",
+          "must_fix_refs": [
+            2
+          ]
+        },
+        {
+          "class": "shape_mismatch",
+          "severity": "major",
+          "element": "selection_next_btn",
+          "bbox": [
+            0.36,
+            0.502,
+            0.28,
+            0.069
+          ],
+          "note": "The next button has a narrower, more pill-shaped silhouette than the reference's rounded rectangle. Its almost-white label and pale background also make the action difficult to identify. Disabled behavior is appropriate for the visibly unselected state; enabling it is not requested.",
+          "must_fix_refs": [
+            3
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "selection_hint",
+          "bbox": [
+            0.039,
+            0.182,
+            0.354,
+            0.023
+          ],
+          "note": "The hint is visibly larger and extends farther horizontally than the same reference sentence, changing the intended secondary-text hierarchy without preventing reading.",
+          "must_fix_refs": [
+            4
+          ]
+        }
+      ],
+      "region_attest": [
+        {
+          "region": "selection_back_btn",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "selection_nav_title",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "selection_hint",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "selection_card_container",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "bank_card_candidate_1",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "selection_agreement_check",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "selection_agreement",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "selection_next_btn",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        }
+      ]
+    },
+    {
+      "screen_id": "card_type_sheet__overlay__card_type_overlay_root",
+      "reference_image_hash": "66d2652dc31d35c1",
+      "evaluated_screenshot_hash": "a8c6fbd6dfdd4211",
+      "must_fix": [
+        "Increase the card-type sheet height so its top matches the reference proportion, moving the header and contents upward while preserving bottom clearance.",
+        "Reduce the bank-row logo to the reference's small inset icon treatment and restore the divider below the bank row.",
+        "Restore the divider between the debit and credit rows.",
+        "Restore the reference separation between authorization text, agreement text and the bottom action; keep the introductory agreement phrase dark and only agreement names blue.",
+        "Give the disabled continue button a clearly visible background and label, and match the reference button width and bottom spacing.",
+        "Match the background search field's reference height, vertical position and rounded capsule shape."
+      ],
+      "defects": [
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "card_type_sheet_panel",
+          "bbox": [
+            0,
+            0.453,
+            1,
+            0.547
+          ],
+          "note": "The sheet begins around 45% of screen height versus 39% in the reference. This shifts its header and card list downward and leaves the continue action close to the bottom gesture area. All content is visible here; the screenshot does not establish that the action is unreachable.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_sheet_title",
+          "bbox": [
+            0.036,
+            0.488,
+            0.228,
+            0.032
+          ],
+          "note": "The title is approximately 6% of screen height lower than the reference as part of the shortened sheet, changing the specified header placement.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_sheet_close",
+          "bbox": [
+            0.879,
+            0.479,
+            0.087,
+            0.053
+          ],
+          "note": "The close control follows the sheet's downward displacement and is slightly smaller than the reference circle. It remains visible and recognizable.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "card_type_bank_row",
+          "bbox": [
+            0.063,
+            0.567,
+            0.873,
+            0.077
+          ],
+          "note": "The bank logo is roughly 96 pixels wide instead of the reference's approximately 68-pixel inset icon. The thin divider beneath the bank heading is absent, weakening separation between bank identity and selectable card types.",
+          "must_fix_refs": [
+            1
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "debit_card_row",
+          "bbox": [
+            0.063,
+            0.644,
+            0.872,
+            0.068
+          ],
+          "note": "The reference divider below the debit option is absent. The two options remain distinguishable by their labels and controls. The unselected debit state is not treated as evidence of incorrect behavior.",
+          "must_fix_refs": [
+            2
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "credit_card_row",
+          "bbox": [
+            0.063,
+            0.712,
+            0.872,
+            0.069
+          ],
+          "note": "The credit row lacks the reference's upper dividing line, making the white option group appear less structured.",
+          "must_fix_refs": [
+            2
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_authorization_copy",
+          "bbox": [
+            0.036,
+            0.8,
+            0.925,
+            0.045
+          ],
+          "note": "The authorization copy is shifted downward with the sheet, while the following agreement is packed closer beneath it than in the reference. The copy remains readable.",
+          "must_fix_refs": [
+            0,
+            3
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_agreement_copy",
+          "bbox": [
+            0.036,
+            0.86,
+            0.749,
+            0.027
+          ],
+          "note": "The entire agreement line, including '我已阅读', is blue, whereas the reference keeps that introductory phrase dark. Its spacing from the authorization paragraph is also reduced. Static text styling is sufficient.",
+          "must_fix_refs": [
+            3
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "card_type_continue_btn",
+          "bbox": [
+            0.264,
+            0.912,
+            0.476,
+            0.066
+          ],
+          "note": "The continue action is almost indistinguishable from the sheet because both its label and background are extremely pale. It is also narrower and lower than the reference. The lack of a selected card type can justify disabling it, but does not explain the poor visual discoverability.",
+          "must_fix_refs": [
+            4
+          ]
+        },
+        {
+          "class": "shape_mismatch",
+          "severity": "minor",
+          "element": "background_search_bank",
+          "bbox": [
+            0.036,
+            0.213,
+            0.928,
+            0.065
+          ],
+          "note": "The background search field starts higher, is taller and has less capsule-like corners than the reference. It remains readable under the overlay.",
+          "must_fix_refs": [
+            5
+          ]
+        }
+      ],
+      "region_attest": [
+        {
+          "region": "background_add_bank_title",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "background_add_bank_subtitles",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "background_search_bank",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "background_bank_row",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_sheet_title",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_sheet_close",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_sheet_panel",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_bank_row",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "debit_card_row",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "credit_card_row",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_authorization_copy",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_agreement_copy",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_continue_btn",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        }
+      ]
+    },
+    {
+      "screen_id": "card_type_sheet__overlay__card_type_sheet_panel",
+      "reference_image_hash": "66d2652dc31d35c1",
+      "evaluated_screenshot_hash": "a8c6fbd6dfdd4211",
+      "must_fix": [
+        "Increase the card-type sheet height to match the reference's top position and restore header and content placement.",
+        "Reduce the bank logo to the reference's small inset icon treatment and restore the divider beneath the bank heading.",
+        "Restore the divider between the debit and credit options.",
+        "Restore the reference paragraph spacing and render '我已阅读' dark while keeping agreement names blue.",
+        "Restore a clearly visible disabled continue button with the reference width and bottom clearance.",
+        "Match the background search field's reference height, vertical position and capsule shape."
+      ],
+      "defects": [
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "card_type_sheet_panel",
+          "bbox": [
+            0,
+            0.453,
+            1,
+            0.547
+          ],
+          "note": "The panel starts around 45% of screen height rather than the reference's 39%, shortening the sheet and pushing its contents toward the bottom. Visibility is preserved; unreachable controls cannot be inferred from this image.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_sheet_title",
+          "bbox": [
+            0.036,
+            0.488,
+            0.228,
+            0.032
+          ],
+          "note": "The sheet title is displaced downward by approximately 6% of screen height relative to the reference.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_sheet_close",
+          "bbox": [
+            0.879,
+            0.479,
+            0.087,
+            0.053
+          ],
+          "note": "The close circle is slightly smaller and lower than the reference control, following the shifted sheet header. Its meaning remains clear.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "card_type_bank_row",
+          "bbox": [
+            0.063,
+            0.567,
+            0.873,
+            0.077
+          ],
+          "note": "The oversized bank logo replaces the reference's smaller inset icon treatment, and the bank heading has no lower divider. This changes the visual hierarchy of the option card.",
+          "must_fix_refs": [
+            1
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "debit_card_row",
+          "bbox": [
+            0.063,
+            0.644,
+            0.872,
+            0.068
+          ],
+          "note": "The debit row has no lower separator, unlike the reference. Its unchecked state is a capture-state difference, not proof that selection is broken.",
+          "must_fix_refs": [
+            2
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "credit_card_row",
+          "bbox": [
+            0.063,
+            0.712,
+            0.872,
+            0.069
+          ],
+          "note": "The credit option lacks the reference's upper separator, reducing visual separation between the two choices.",
+          "must_fix_refs": [
+            2
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_authorization_copy",
+          "bbox": [
+            0.036,
+            0.8,
+            0.925,
+            0.045
+          ],
+          "note": "The authorization paragraph is lower than the reference and has substantially less space before the agreement line. It remains readable.",
+          "must_fix_refs": [
+            0,
+            3
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "card_type_agreement_copy",
+          "bbox": [
+            0.036,
+            0.86,
+            0.749,
+            0.027
+          ],
+          "note": "The introductory phrase '我已阅读' is blue along with the agreement names, rather than dark as in the reference. The preceding paragraph gap is also reduced.",
+          "must_fix_refs": [
+            3
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "card_type_continue_btn",
+          "bbox": [
+            0.264,
+            0.912,
+            0.476,
+            0.066
+          ],
+          "note": "The nearly white label on an extremely pale background makes the continue action difficult to locate. The button is narrower and closer to the gesture area than the reference. Disabling it while no option is selected is not itself a defect.",
+          "must_fix_refs": [
+            4
+          ]
+        },
+        {
+          "class": "shape_mismatch",
+          "severity": "minor",
+          "element": "background_search_bank",
+          "bbox": [
+            0.036,
+            0.213,
+            0.928,
+            0.065
+          ],
+          "note": "The background search field is taller, higher and less capsule-shaped than its reference counterpart. This is a local visual difference under the overlay.",
+          "must_fix_refs": [
+            5
+          ]
+        }
+      ],
+      "region_attest": [
+        {
+          "region": "background_add_bank_title",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "background_add_bank_subtitles",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "background_search_bank",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "background_bank_row",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_sheet_title",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_sheet_close",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_sheet_panel",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_bank_row",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "debit_card_row",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "credit_card_row",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_authorization_copy",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_agreement_copy",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "card_type_continue_btn",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        }
+      ]
+    },
+    {
+      "screen_id": "otp_verification_sheet__overlay__otp_overlay_root",
+      "reference_image_hash": "554e707ee1093988",
+      "evaluated_screenshot_hash": "816f3ef6a35d464b",
+      "must_fix": [
+        "Match the reference instruction and phone text size and horizontal inset; emphasize the phone number separately.",
+        "Restore the input placeholder's reference wording and horizontal inset.",
+        "Restore the next button's visible muted-blue disabled fill, white label and reference horizontal margins."
+      ],
+      "defects": [
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "otp_instruction",
+          "bbox": [
+            0.036,
+            0.71,
+            0.585,
+            0.058
+          ],
+          "note": "The instruction starts at roughly 4% of screen width rather than the reference's 7% and uses smaller text. This changes the content hierarchy and wrapping. The panel's lower absolute position coincides with the absent keyboard; this image alone does not prove faulty keyboard avoidance or focus behavior.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "otp_phone_hint",
+          "bbox": [
+            0.036,
+            0.741,
+            0.195,
+            0.027
+          ],
+          "note": "The phone number is smaller and lacks the reference's bold emphasis. The same masked number is visible and understandable.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "otp_input",
+          "bbox": [
+            0.036,
+            0.789,
+            0.928,
+            0.085
+          ],
+          "note": "The placeholder reads '输入短信验证码' instead of the reference's '请输入短信验证码' and starts farther inside the field. No cursor is visible, but a static image cannot establish whether focusing the input works.",
+          "must_fix_refs": [
+            1
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "otp_next_btn",
+          "bbox": [
+            0.06,
+            0.906,
+            0.879,
+            0.069
+          ],
+          "note": "The disabled next button is almost the sheet background color with a pale-blue label, rather than the reference's distinct muted-blue fill and white label. Its larger side margins also reduce its width. The empty code correctly supports a disabled state; the defect is visual discoverability.",
+          "must_fix_refs": [
+            2
+          ]
+        }
+      ],
+      "region_attest": [
+        {
+          "region": "otp_sheet_title",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_sheet_close",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_sheet_panel",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_instruction",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_phone_hint",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_input",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_resend_action",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_next_btn",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        }
+      ]
+    },
+    {
+      "screen_id": "otp_verification_sheet__overlay__otp_sheet_panel",
+      "reference_image_hash": "554e707ee1093988",
+      "evaluated_screenshot_hash": "00593a382330b007",
+      "must_fix": [
+        "Match the reference instruction and phone text size and horizontal inset, including bold emphasis on the phone number.",
+        "Restore the input placeholder's reference wording and horizontal inset.",
+        "Use the reference's visible muted-blue disabled button fill, white label and horizontal margins."
+      ],
+      "defects": [
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "otp_instruction",
+          "bbox": [
+            0.036,
+            0.71,
+            0.585,
+            0.058
+          ],
+          "note": "The instruction has smaller text and approximately half the reference's horizontal inset. It remains readable. The keyboard is absent in this capture, so the panel's absolute vertical displacement is not independently classified as a layout defect.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "otp_phone_hint",
+          "bbox": [
+            0.036,
+            0.741,
+            0.195,
+            0.027
+          ],
+          "note": "The masked phone number lacks the reference's bold emphasis and is smaller. Its content matches the reference.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "otp_input",
+          "bbox": [
+            0.036,
+            0.789,
+            0.928,
+            0.085
+          ],
+          "note": "The placeholder omits the initial '请' and has more left padding than the reference. The screenshot provides no evidence about input validation or whether tapping opens the keyboard.",
+          "must_fix_refs": [
+            1
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "otp_next_btn",
+          "bbox": [
+            0.06,
+            0.906,
+            0.879,
+            0.069
+          ],
+          "note": "The disabled action blends into the sheet because its fill is nearly white and its label pale blue. The reference uses a clearly bounded muted-blue button with white text and smaller side margins. No request to enable the empty-code action is implied.",
+          "must_fix_refs": [
+            2
+          ]
+        }
+      ],
+      "region_attest": [
+        {
+          "region": "otp_sheet_title",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_sheet_close",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_sheet_panel",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_instruction",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_phone_hint",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_input",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_resend_action",
+          "verdict": "no_diff",
+          "method": "vl_screening"
+        },
+        {
+          "region": "otp_next_btn",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        }
+      ]
+    },
+    {
+      "screen_id": "opening_result_success",
+      "reference_image_hash": "f300cece15317a45",
+      "evaluated_screenshot_hash": "b5648836883058c0",
+      "must_fix": [
+        "Move the success icon and accompanying text upward to the reference proportions; reduce the icon and title sizes and match the reference green.",
+        "Replace the generic card-holder illustration with a roughly similar phone-and-payment-code guide illustration.",
+        "Match the finish button's reference neutral-gray fill, height, corner radius and horizontal margins, without adding the excluded NFC panel."
+      ],
+      "defects": [
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "result_status_icon",
+          "bbox": [
+            0.433,
+            0.194,
+            0.135,
+            0.085
+          ],
+          "note": "The success icon is lower, larger and a more saturated green than the reference: its top is around 19.5% of screen height instead of 14.6%. Success remains immediately understandable.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "result_title",
+          "bbox": [
+            0.397,
+            0.299,
+            0.206,
+            0.036
+          ],
+          "note": "The title is visibly larger and lower than the reference, following the displaced icon. The success wording matches.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "minor",
+          "element": "result_description",
+          "bbox": [
+            0.212,
+            0.348,
+            0.577,
+            0.024
+          ],
+          "note": "The description is around 5% of screen height lower than in the reference, shifting the success summary toward the illustration. Its wording remains readable and matches.",
+          "must_fix_refs": [
+            0
+          ]
+        },
+        {
+          "class": "other",
+          "severity": "major",
+          "element": "result_guide_illustration",
+          "bbox": [
+            0.234,
+            0.405,
+            0.534,
+            0.301
+          ],
+          "note": "A large gray card-holder image replaces the reference's hand holding a phone with a payment QR code. Although an approximate illustration is allowed, this image omits the phone/code payment guidance and conveys a different subject.",
+          "must_fix_refs": [
+            1
+          ]
+        },
+        {
+          "class": "shape_mismatch",
+          "severity": "minor",
+          "element": "result_finish_btn",
+          "bbox": [
+            0.06,
+            0.846,
+            0.881,
+            0.078
+          ],
+          "note": "The finish button is taller, narrower and pale blue instead of the reference's shallow neutral-gray capsule. It remains clearly labeled and visible. The absent NFC panel is explicitly excluded and requires no restoration.",
+          "must_fix_refs": [
+            2
+          ]
+        }
+      ],
+      "region_attest": [
+        {
+          "region": "result_status_icon",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "result_title",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "result_description",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "result_guide_illustration",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        },
+        {
+          "region": "result_finish_btn",
+          "verdict": "diff_logged",
+          "method": "vl_screening"
+        }
+      ]
+    }
+  ]
+}

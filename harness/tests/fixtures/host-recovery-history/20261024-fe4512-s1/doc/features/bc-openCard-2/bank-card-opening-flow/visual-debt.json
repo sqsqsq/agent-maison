@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "entries": [
+    {
+      "id": "debt:visual_diff:bank_card_selection",
+      "source_check_id": "visual_diff",
+      "severity": "MAJOR",
+      "summary": "设备视觉对照未产出/未达（屏 bank_card_selection，按档位降级的自报残差）",
+      "status": "open",
+      "resolution_class": "needs_fix",
+      "screen_id": "bank_card_selection"
+    },
+    {
+      "id": "debt:visual_diff:card_type_sheet__overlay__card_type_overlay_root",
+      "source_check_id": "visual_diff",
+      "severity": "MAJOR",
+      "summary": "设备视觉对照未产出/未达（屏 card_type_sheet__overlay__card_type_overlay_root，按档位降级的自报残差）",
+      "status": "open",
+      "resolution_class": "needs_fix",
+      "screen_id": "card_type_sheet__overlay__card_type_overlay_root"
+    },
+    {
+      "id": "debt:visual_diff:card_type_sheet__overlay__card_type_sheet_panel",
+      "source_check_id": "visual_diff",
+      "severity": "MAJOR",
+      "summary": "设备视觉对照未产出/未达（屏 card_type_sheet__overlay__card_type_sheet_panel，按档位降级的自报残差）",
+      "status": "open",
+      "resolution_class": "needs_fix",
+      "screen_id": "card_type_sheet__overlay__card_type_sheet_panel"
+    },
+    {
+      "id": "debt:visual_diff:otp_verification_sheet__overlay__otp_overlay_root",
+      "source_check_id": "visual_diff",
+      "severity": "MAJOR",
+      "summary": "设备视觉对照未产出/未达（屏 otp_verification_sheet__overlay__otp_overlay_root，按档位降级的自报残差）",
+      "status": "open",
+      "resolution_class": "needs_fix",
+      "screen_id": "otp_verification_sheet__overlay__otp_overlay_root"
+    },
+    {
+      "id": "debt:visual_diff:otp_verification_sheet__overlay__otp_sheet_panel",
+      "source_check_id": "visual_diff",
+      "severity": "MAJOR",
+      "summary": "设备视觉对照未产出/未达（屏 otp_verification_sheet__overlay__otp_sheet_panel，按档位降级的自报残差）",
+      "status": "open",
+      "resolution_class": "needs_fix",
+      "screen_id": "otp_verification_sheet__overlay__otp_sheet_panel"
+    },
+    {
+      "id": "debt:visual_diff:opening_result_success",
+      "source_check_id": "visual_diff",
+      "severity": "MAJOR",
+      "summary": "设备视觉对照未产出/未达（屏 opening_result_success，按档位降级的自报残差）",
+      "status": "open",
+      "resolution_class": "needs_fix",
+      "screen_id": "opening_result_success"
+    },
+    {
+      "id": "debt:visual_diff",
+      "source_check_id": "visual_diff",
+      "severity": "BLOCKER",
+      "summary": "设备视觉对照未产出/未达",
+      "status": "closed",
+      "resolution_class": "needs_fix"
+    }
+  ]
+}

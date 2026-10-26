@@ -1,0 +1,3 @@
+$ "D:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" "D:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" --stop-daemon
+
+> hvigor [32mStopped 0 daemon in total.[39m

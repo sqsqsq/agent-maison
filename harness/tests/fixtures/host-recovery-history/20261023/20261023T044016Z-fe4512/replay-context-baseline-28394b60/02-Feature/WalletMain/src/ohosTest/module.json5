@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "walletmain_test",
+    "type": "feature",
+    "deviceTypes": [
+      "phone"
+    ],
+    "deliveryWithInstall": false
+  }
+}

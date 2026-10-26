@@ -1,6 +1,7 @@
-import { phaseInvocationStart } from './goal-runner-phase';
+import { phaseInvocationStart, repairInvocationCompleted, foldBudgetLineage } from './goal-runner-phase';
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
-import { readRepairDependencyContext } from './repair-responsibility';
+import { readRepairDependencyContext, resolveRepairResponsibility } from './repair-responsibility';
+import type { WorkflowSpec } from '../../workflow-loader';
 // ============================================================================
 // verify-feature-completion.ts — feature 完成凭证：生成与唯一验证入口
 // （goal-fakepass-hardening t8；openspec goal-runner delta）
@@ -25,11 +26,11 @@ import { readRepairDependencyContext } from './repair-responsibility';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, scopeProofHistory, acceptsDefinitionInputProof, type ExecutionScope } from './execution-scope';
+import { validateExecutionScope, executionScopeFingerprint, executionCompletionPhases, isExecutionSourceBasis, isEffectivePhasePass, scopeProofHistory, acceptsDefinitionInputProof, type ExecutionScope } from './execution-scope';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, applyScopeRevisions } from './goal-run-creation';
-import { requiredSummaryCheckGaps } from './check-disposition';
+import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, eventsWithScopeRevocations, applyScopeRevisions } from './goal-run-creation';
+import { requiredSummaryCheckGaps, isRequiredCheckGap, resolveCurrentDisposition, phaseCompletionProblems, type CurrentDisposition, type CurrentDispositionInput, type CurrentDispositionAxisFact, type DispositionCheck } from './check-disposition';
 import { readFeatureFrozenScope, featureEffectiveScope } from './feature-execution-scope';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
@@ -259,18 +260,12 @@ export interface CleanPassIssue {
   condition: string;
   detail: string;
   kind: CleanPassIssueKind;
+  /** 合法修改/验证方（来自同一处置；展示消费者用它说明下一步，不另派一单）。 */
+  owner?: string;
+  action?: import('./check-disposition').CurrentProblemAction;
+  source_phase?: string;
   /** lineage_fresh 且只是沿链传染（本阶段自身证据未核）：assessFeature 据此改为逐阶段直查，不把传染当本阶段结果失效。 */
   propagated_from?: string;
-}
-
-function summaryVerdict(projectRoot: string, feature: string, phase: string): string | null {
-  const p = path.join(receiptDirPath(projectRoot, feature, phase), 'reports', 'summary.json');
-  if (!fs.existsSync(p)) return null;
-  try {
-    return (JSON.parse(fs.readFileSync(p, 'utf-8')) as { verdict?: string }).verdict ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** ①b 消费面：schema_version + quality_axes（1.1 多轴；读取失败按 legacy 处理） */
@@ -278,26 +273,43 @@ function readSummaryLattice(
   projectRoot: string,
   feature: string,
   phase: string,
+  currentSummary?: unknown,
 ): {
   exists: boolean;
   schemaVersion: string | null;
   axes: Record<string, {
     applicable?: boolean;
     verdict?: string;
-    resolution?: { class?: string; owner?: string } | null;
+    required_for_release?: boolean;
+    resolution?: { class?: string; owner?: string; retry_phase?: string } | null;
+    source_checks?: readonly string[];
   }> | null;
   releaseReadiness: string | null;
   completionStatus: string | null;
+  verdict: string | null;
+  reportValidity: string | null;
+  closureClosed: boolean;
+  closureCommitted: boolean;
+  closureCommittedAt: string | null;
   raw: unknown;
 } {
   const p = path.join(receiptDirPath(projectRoot, feature, phase), 'reports', 'summary.json');
-  if (!fs.existsSync(p)) return { exists: false, schemaVersion: null, axes: null, releaseReadiness: null, completionStatus: null, raw: null };
+  if (currentSummary === undefined && !fs.existsSync(p)) {
+    return {
+      exists: false, schemaVersion: null, axes: null, releaseReadiness: null, completionStatus: null,
+      verdict: null, reportValidity: null, closureClosed: false, closureCommitted: false, closureCommittedAt: null, raw: null,
+    };
+  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8')) as {
+    const parsed = (currentSummary ?? JSON.parse(fs.readFileSync(p, 'utf-8'))) as {
       schema_version?: string;
-      quality_axes?: Record<string, { applicable?: boolean; verdict?: string; resolution?: { class?: string; owner?: string } | null }>;
+      quality_axes?: Record<string, { applicable?: boolean; verdict?: string; required_for_release?: boolean; resolution?: { class?: string; owner?: string; retry_phase?: string } | null; source_checks?: readonly string[] }>;
       release_readiness?: string;
       completion_status?: string;
+      verdict?: string;
+      report_validity?: string;
+      closure_status?: string;
+      closure_commit?: { schema_version?: unknown; committed_at?: unknown };
     };
     return {
       exists: true,
@@ -305,16 +317,28 @@ function readSummaryLattice(
       axes: parsed.quality_axes ?? null,
       releaseReadiness: typeof parsed.release_readiness === 'string' ? parsed.release_readiness : null,
       completionStatus: typeof parsed.completion_status === 'string' ? parsed.completion_status : null,
+      verdict: typeof parsed.verdict === 'string' ? parsed.verdict : null,
+      reportValidity: typeof parsed.report_validity === 'string' ? parsed.report_validity : null,
+      closureClosed: parsed.closure_status === 'closed',
+      closureCommitted: parsed.closure_commit?.schema_version === '1.0',
+      closureCommittedAt: typeof parsed.closure_commit?.committed_at === 'string' ? parsed.closure_commit.committed_at : null,
       raw: parsed as unknown,
     };
   } catch {
-    return { exists: true, schemaVersion: null, axes: null, releaseReadiness: null, completionStatus: null, raw: null };
+    return {
+      exists: true, schemaVersion: null, axes: null, releaseReadiness: null, completionStatus: null,
+      verdict: null, reportValidity: null, closureClosed: false, closureCommitted: false, closureCommittedAt: null, raw: null,
+    };
   }
 }
 
 export interface CleanPassOptions {
   authorityReaders?: IdentityNeutralDigestReaders;
   executionScope?: ExecutionScope;
+  workflow?: WorkflowSpec;
+  endpoint?: 'feature-completion' | 'request';
+  /** 本轮生产中的完整原始结果，覆盖同一阶段的旧盘上材料。 */
+  currentResults?: ReadonlyArray<{ phase: string; summary: unknown; checks: readonly DispositionCheck[] }>;
   projectRoot: string;
   feature: string;
   chain: string[];
@@ -343,33 +367,24 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
     if (JSON.stringify(chain) !== JSON.stringify(executionCompletionPhases(opts.executionScope))) issues.push({ phase: chain[0] ?? 'scope', condition: 'execution_scope', detail: '完成链与冻结范围失配', kind: 'needs_fix' });
   }
 
-  // ⓪ plan e7c2a4d8 T1d（v22 P1）：曾启动却缺 manifest 的 corrupt run 在场 → 完成
-  //    判定 fail-closed（不得静默把权威改选到其他 run）。
-  for (const c of classifyGoalRunsDir(featureFilePath(projectRoot, feature, 'goal-runs')).corruptRuns) {
-    issues.push({
-      phase: chain[0] ?? 'spec',
-      condition: 'goal_run_identity_intact',
-      detail: `goal-run ${c.runId} 损坏：${c.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`,
-      kind: 'needs_fix',
-    });
-  }
+  // ⓪ 损坏 goal-run 与 ④ 档位钳制都已收进同一输入组装/处置（readCurrentDispositionInput /
+  // resolveCurrentDisposition），这里不再各判一次，避免同一事实出现两条结论。
 
-  issues.push(...collectPhaseCompletionIssues(opts));
+  issues.push(...resolveCompletionDisposition(opts).completionBlocking.map(completionIssue));
 
   // ②/③ legacy must_review/waiver artifacts are audit-only and never affect completion.
-
-  // ④ 档位钳制说明当前能力不能满足冻结目标；正常路径应更早 capability-defer。
-  if (opts.fidelityCapped) {
-    issues.push({
-      phase: '*', condition: 'no_fidelity_cap',
-      detail: '强意图下当前能力被钳制；换 provider/version 后重跑，或以 correction/successor 输入改变需求',
-      kind: 'needs_fix',
-    });
-  }
 
   // ⑦ legacy flow_contract receipt 已退役；结构化 flow/checkpoint 机器证据仍由当前门禁验证，
   // receipt 与 signer identity 均不能成为 clean-pass 输入。
 
+
+  return issues;
+}
+
+/** 当前适用的机器运行证据，同一组装入口提供给 scope/assess/完成消费者。 */
+function readRuntimeCompletionIssues(opts: CleanPassOptions): CleanPassIssue[] {
+  const { projectRoot, feature, chain } = opts;
+  const issues: CleanPassIssue[] = [];
   // ⑧ P0 runtime fidelity: only machine observations in the existing
   // Hylyre trace + device-test-evidence artifact can satisfy this obligation.
   // The legacy runtime_fidelity_attestation receipt is intentionally inert.
@@ -379,7 +394,8 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
       try {
         const { readScopeAcceptance } = require('./feature-track') as typeof import('./feature-track');
         const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
-        suppliedAcceptance = readScopeAcceptance(projectRoot, { facts: opts.executionScope.obligations }, { feature, frameworkRoot: opts.frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot })?.value ?? null;
+        suppliedAcceptance = readScopeAcceptance(projectRoot, { facts: opts.executionScope.obligations }, { feature,
+          frameworkRoot: opts.frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, authorityReaders: opts.authorityReaders })?.value ?? null;
       } catch (error) { issues.push({ phase: 'testing', condition: 'acceptance_binding', detail: String(error), kind: 'needs_fix' }); suppliedAcceptance = null; }
     }
     const doc = loadAcceptanceFlowsDoc(projectRoot, feature, suppliedAcceptance);
@@ -399,18 +415,25 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
           kind: 'needs_fix',
         });
       }
-      const runtimeIssue = runtimeFidelityEvidenceIssue(
+      const inputIssue = runtimeFidelityEvidenceIssue(
         projectRoot,
         feature,
         expectedRunId,
         expectedAttemptId,
+        false,
       );
+      const unpublished = opts.currentResults?.some(result => result.phase === 'testing');
+      const runtimeIssue = inputIssue ?? (unpublished ? null : runtimeFidelityEvidenceIssue(
+        projectRoot, feature, expectedRunId, expectedAttemptId,
+      ));
       if (runtimeIssue) {
       issues.push({
         phase: 'testing',
         condition: 'runtime_step_evidence',
         detail: `P0 runtime fidelity 机器证据无效：${runtimeIssue}`,
         kind: 'needs_fix',
+        action: inputIssue ? 'repair' : 'verify',
+        owner: 'testing',
       });
       }
     }
@@ -419,141 +442,386 @@ export function collectCleanPassIssues(opts: CleanPassOptions): CleanPassIssue[]
   return issues;
 }
 
-/** The same phase proof qualification serves reuse, dispatch and final completion. */
-export function collectPhaseCompletionIssues(opts: CleanPassOptions): CleanPassIssue[] {
-  const { projectRoot, feature, chain } = opts;
-  const issues: CleanPassIssue[] = [];
-  // ① verdict PASS（needs_fix：FAIL 须修复/重跑，非人工确认）
-  for (const phase of chain) {
-    const v = summaryVerdict(projectRoot, feature, phase);
-    if (v !== 'PASS') {
-      issues.push({ phase, condition: v === 'INCOMPLETE' ? 'required_check_conclusion' : 'verdict_pass', detail: `summary verdict=${v ?? '缺失'}`, kind: 'needs_fix' });
+/**
+ * 旧 verifier 的具体发现缺当前核实材料时，保留发现并交原验证方补核实。
+ * 范围修订、时间先后或其他对象的 PASS 都不能证明这条发现已经解决。
+ */
+function readDiagnosticFindings(
+  projectRoot: string,
+  feature: string,
+  phase: string,
+  frameworkRoot: string | undefined,
+  subjectId: string | null,
+  runId: string | undefined,
+): Array<{ id: string; detail: string }> {
+  if (!subjectId || (phase !== 'spec' && phase !== 'plan')) return [];
+  try {
+    const { readPhaseRepairIssues, parseIssueVerificationBlock } = require('./repair-candidates') as typeof import('./repair-candidates');
+    const bound = readPhaseRepairIssues(projectRoot, feature, phase, { subjectId, frameworkRoot, runId });
+    if (!bound) return [];
+    const out: Array<{ id: string; detail: string }> = [];
+    for (const diagnostic of bound.diagnostics ?? []) {
+      // 诊断以 `<finding id>：` 开头 = 读到了具体发现但缺核实格式；其余是表格/路径级说明。
+      const match = /^([A-Za-z][A-Za-z0-9_.-]{2,})：/.exec(diagnostic);
+      if (match) out.push({ id: match[1], detail: diagnostic.slice(match[0].length).trim() || diagnostic });
     }
-    const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, phase), 'summary.json');
-    if (fs.existsSync(summaryPath)) {
+    const verification = parseIssueVerificationBlock(bound.reportText);
+    for (const row of bound.rows) {
+      if (verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'refuted') {
+        out.push({ id: row.id, detail: `具体现实发现须由当前subject核实：${row.summary}` });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** 已登记的未处置实质发现：summary.repair_candidates（当前候选）与 issue-verification 设计发现。 */
+function readRegisteredFindings(summary: unknown, responsibility: import('./repair-responsibility').RepairResponsibilityContext): Array<{ id: string; owner?: string; detail: string; item_fingerprint?: string; verificationRequired?: boolean }> {
+  const s = (summary ?? {}) as { repair_candidates?: unknown; blockers?: unknown };
+  const out: Array<{ id: string; owner?: string; detail: string; item_fingerprint?: string; verificationRequired?: boolean }> = [];
+  if (Array.isArray(s.repair_candidates)) {
+    for (const item of s.repair_candidates) {
+      const row = item as import('./repair-candidates').RepairCandidate;
+      if (typeof row?.id !== 'string') continue;
+      const owner = resolveRepairResponsibility({ ...responsibility, target: { files: row.files, category: row.category, summary: row.summary } }).owner;
+      out.push({
+        id: row.id,
+        ...(owner ? { owner } : {}),
+        ...(typeof row.item_fingerprint === 'string' ? { item_fingerprint: row.item_fingerprint } : {}),
+        detail: typeof row.summary === 'string' ? row.summary : row.id,
+      });
+    }
+  }
+  if (Array.isArray(s.blockers)) {
+    for (const item of s.blockers) {
+      const row = item as { id?: unknown; source?: unknown; details_excerpt?: unknown; affected_files?: string[]; repair_owner?: string };
+      if (row?.source !== 'issue-verification' || typeof row.id !== 'string') continue;
+      const owner = resolveRepairResponsibility({ ...responsibility, target: { files: row.affected_files, owner: row.repair_owner } }).owner;
+      out.push({ id: row.id, ...(owner ? { owner } : {}), detail: String(row.details_excerpt ?? row.id).slice(0, 500) });
+    }
+  }
+  const seen = new Set<string>();
+  return out.filter(item => (seen.has(item.id) ? false : (seen.add(item.id), true)));
+}
+
+export function readPhaseChecks(projectRoot: string, feature: string, phase: string, summary?: unknown): DispositionCheck[] {
+  // featurePhaseReportsDir 已返回 `<phase>/reports`（summary.json 也直接用这个目录）。
+  const p = path.join(featurePhaseReportsDir(projectRoot, feature, phase), 'script-report.json');
+  try {
+    const declared = (summary as { script_report?: unknown } | null)?.script_report;
+    const linked = typeof declared === 'string' && path.resolve(projectRoot, declared) === path.resolve(p);
+    const manifest = linked ? null : loadPhaseEvidenceManifest(projectRoot, feature, phase);
+    const summaryPath = path.join(path.dirname(p), 'summary.json');
+    const bound = manifest?.integrityOk && [p, summaryPath].every(file => manifest.manifest.outputs.some(entry =>
+      path.resolve(projectRoot, entry.path) === path.resolve(file) && entry.sha256 === sha256File(file)));
+    // 原始结果须属于这份summary或同一已冻结证据快照；不把目录里另一轮的报告并进来。
+    if (!linked && !bound) return [];
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8')) as { checks?: unknown };
+    return Array.isArray(raw.checks)
+      ? raw.checks.filter((check): check is DispositionCheck => !!check && typeof (check as { id?: unknown }).id === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * plan 6fd6c8c1 §4.1 **唯一输入组装处**：把本阶段当前适用事实读成同一集合——
+ * summary（裁决/轴/闭环）、检查结果、必需缺口、证据新鲜度、review attestation、债务与已登记发现。
+ * 不派修、不判终态；不反向调用 assess / scope view 再求一次结论。事实变化后调用方重新组装。
+ */
+export interface CurrentRequestDispositionOptions {
+  endpoint: 'request';
+  projectRoot: string;
+  request: import('./capability-resolution-entry-input').PreparedRequest;
+  checks?: readonly DispositionCheck[];
+  summary?: { verdict?: string };
+}
+
+export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequestDispositionOptions): CurrentDispositionInput {
+  if ('request' in opts) {
+    let checks = opts.checks;
+    let summary = opts.summary;
+    if (checks === undefined) {
       try {
-        const missing = requiredSummaryCheckGaps(JSON.parse(fs.readFileSync(summaryPath, 'utf8')));
-        if (missing.length) issues.push({ phase, condition: 'required_check_conclusion', detail: `必需检查尚无结论：${missing.map(check => check.id).join(', ')}`, kind: 'needs_fix' });
-      } catch { /* Unreadable summaries are reported by the existing verdict/schema checks. */ }
+        const report = JSON.parse(fs.readFileSync(path.join(opts.request.reportDir, 'script-report.json'), 'utf8')) as {
+          request_sha256?: string; targets?: import('./capability-resolution-entry-input').PreparedRequest['bindings']; checks?: DispositionCheck[]; summary?: { verdict?: string };
+        };
+        if (report.request_sha256 === opts.request.request_sha256 && JSON.stringify(report.targets) === JSON.stringify(opts.request.bindings) && Array.isArray(report.checks)) {
+          checks = report.checks; summary = report.summary;
+        }
+      } catch { /* 无当前请求结果就是待验证，不回读无关Feature材料。 */ }
     }
+    return { endpoint: 'request', phases: [{ phase: opts.request.phase, summaryPresent: !!summary,
+      verdict: summary?.verdict ?? null, schemaCurrent: false, closureCommitted: false,
+      requiredGaps: (checks ?? []).filter(check => isRequiredCheckGap(check)), failingChecks: (checks ?? []).filter(check => check.status === 'FAIL') }],
+      ...(checks === undefined ? { additionalProblems: [{ phase: opts.request.phase, id: 'verdict_pass', action: 'verify' as const,
+        affects: 'completion' as const, severity: 'BLOCKER' as const, detail: `当前专项请求 ${opts.request.request_sha256} 尚无结果` }] } : {}) };
   }
-
-  // ①b summary schema 1.1（blind-visual-hardening d1：legacy 1.0 不作 completion 干净依据——
-  //    历史假 PASS 不得重入新状态机；须当前 gate_fingerprint 下重跑该阶段）+
-  //    多轴负面裁决消费：visual/asset 等轴 legacy UNVERIFIED(needs_human) → 重投影为 needs_fix；
-  //    轴 FAIL 已由 ① 的 verdict 投影覆盖，此处不重复计。
-  for (const phase of chain) {
-    const s = readSummaryLattice(projectRoot, feature, phase);
-    if (!s.exists) continue; // 缺 summary 由 ① 报"缺失"
-    // plan a9d4e7c2 T3：当代 = 1.2 ∪ 1.3（1.3 只把 verifier 字段条件化，assurance
-    // 与 closure_commit 契约不变）——把 1.3 判成 legacy 会让刚闭环的 feature 判不完成。
-    if (!SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schemaVersion))) {
-      issues.push({
-        phase,
-        condition: 'summary_schema_current',
-        detail: `summary schema_version=${s.schemaVersion ?? '缺失'}（legacy 1.0 不作 completion 干净依据，须在当前 gate_fingerprint 下重跑本阶段）`,
-        kind: 'needs_fix',
-      });
-      continue;
-    }
-    // codex 实施 review P0-3 + 三轮 P1-4：1.1 完整契约唯一权威校验（四字段+轴不变量）——
-    // 手搓裸/半 summary 不得干净放行。
-    const v11Errors = validateSummaryV11(s.raw);
-    if (v11Errors.length > 0) {
-      issues.push({
-        phase,
-        condition: 'quality_axes_valid',
-        detail: `summary 1.1 契约违反（${v11Errors.slice(0, 3).join('；')}）——非 harness 生成或已被篡改，须重跑本阶段`,
-        kind: 'needs_fix',
-      });
-      continue;
-    }
-    const closureCommit = (s.raw as { closure_commit?: { schema_version?: unknown } }).closure_commit;
-    if (closureCommit?.schema_version !== '1.0') {
-      issues.push({
-        phase,
-        condition: 'closure_commit_present',
-        detail: `summary ${s.schemaVersion} 缺少 closure_commit@1.0；该 PASS 尚未完成 receipt/manifest/state 的原子闭环提交`,
-        kind: 'needs_fix',
-      });
-      continue;
-    }
-    // codex 三轮 P0-2：消费面统一规则——任一 required_for_release 轴非 PASS 都不得干净完成：
-    // legacy needs_human 也重投影为 needs_fix；旧人签状态不能维持人工等待或完成。
-    for (const [axisId, axis] of Object.entries(s.axes ?? {})) {
-      if (!axis || axis.applicable !== true) continue;
-      if ((axis as { required_for_release?: boolean }).required_for_release === false) continue;
-      if (axis.verdict === 'PASS' || axis.verdict === 'NOT_APPLICABLE') continue;
-      const cls = axis.resolution?.class;
-      issues.push({
-        phase,
-        condition: 'quality_axis_verified',
-        detail: `${axisId} 轴 ${axis.verdict}（resolution=${cls ?? '缺失'}${axis.resolution?.owner ? `/${axis.resolution.owner}` : ''}）`,
-        kind: 'needs_fix',
-      });
-    }
-    // 投影一致性独立校验（防 release_readiness/completion_status 被单独篡改成 READY/COMPLETE）：
-    // 存在非 PASS 必需轴时 release_readiness 必须 BLOCKED；DEBT_PIPELINE_ERROR 一律 needs_fix。
-    const anyRequiredNotPass = Object.values(s.axes ?? {}).some(
-      a => a && a.applicable === true &&
-        (a as { required_for_release?: boolean }).required_for_release !== false &&
-        a.verdict !== 'PASS' && a.verdict !== 'NOT_APPLICABLE',
-    );
-    if (anyRequiredNotPass && s.releaseReadiness === 'READY') {
-      issues.push({
-        phase,
-        condition: 'release_projection_consistent',
-        detail: `release_readiness=READY 与非 PASS 必需轴矛盾（投影被篡改/派生缺陷）`,
-        kind: 'needs_fix',
-      });
-    }
-    if (s.completionStatus === 'DEBT_PIPELINE_ERROR') {
-      issues.push({
-        phase,
-        condition: 'debt_pipeline_healthy',
-        detail: '视觉债务管线故障（DEBT_PIPELINE_ERROR）——治理链自身失败不得干净完成，修复环境后重跑',
-        kind: 'needs_fix',
-      });
-    }
+  const { projectRoot, feature, chain } = opts;
+  const staleness = chain.length
+    ? recomputePhaseEvidenceStaleness(projectRoot, feature, chain, {
+        currentRequirementSha: opts.currentRequirementSha,
+        frameworkRoot: opts.frameworkRoot,
+        runId: opts.runId,
+        authorityReaders: opts.authorityReaders,
+        pendingOwnerPhase: opts.pendingOwnerPhase,
+      })
+    : [];
+  let openDebt = 0;
+  try {
+    const { loadVisualDebtEx, countBlockingDebt } = require('./visual-debt') as typeof import('./visual-debt');
+    const debt = loadVisualDebtEx(projectRoot, feature);
+    if (debt.state === 'valid') openDebt = countBlockingDebt(debt.doc).open;
+  } catch {
+    /* 账本损坏由既有 DEBT_PIPELINE_ERROR 投影处理，不在这里另加重判据 */
   }
-
-  // ⑤ 血缘一致（needs_fix：stale/tampered/missing 须重跑闭环）——含 requirement 血缘比对
-  for (const r of recomputePhaseEvidenceStaleness(projectRoot, feature, chain, {
-    currentRequirementSha: opts.currentRequirementSha,
-    frameworkRoot: opts.frameworkRoot,
-    runId: opts.runId,
-    authorityReaders: opts.authorityReaders,
-    pendingOwnerPhase: opts.pendingOwnerPhase,
-  })) {
-    if (r.verdict !== 'fresh') {
-      issues.push({
-        phase: r.phase,
-        condition: 'lineage_fresh',
-        detail: r.verdict === 'missing'
-          ? '缺 phase-evidence-manifest（旧版产物/未闭环）'
-          : `closure 后证据变更：${r.changed_paths.join(', ') || `传染自 ${r.propagated_from}`}`,
-        kind: 'needs_fix',
-        ...(r.propagated_from ? { propagated_from: r.propagated_from } : {}),
+  const responsibility = { projectRoot, feature, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'),
+    runId: opts.runId, workflow: opts.workflow, executionScope: opts.executionScope, authorityReaders: opts.authorityReaders };
+  const runEvents = opts.runId ? loadAuthoritativeRunEvents(projectRoot, feature, opts.runId) : [];
+  const predecessor = opts.runId ? loadGoalManifestFromRun(projectRoot, opts.runId, { feature }).successor_of : undefined;
+  const lineage = foldBudgetLineage({ projectRoot, feature, featuresDir: relFeaturesDir(projectRoot),
+    seedTargets: predecessor ? [predecessor] : [], currentEvents: runEvents });
+  const repairEvents = lineage.budgetFoldEvents;
+  const runtimeIssues = readRuntimeCompletionIssues(opts);
+  let effectiveEvents: typeof repairEvents | undefined;
+  const handbacks = new Map<string, boolean>();
+  const ownerAwaitingSourceVerification = (source: string, owner: string | undefined): boolean => {
+    if (!owner || owner === source || opts.currentResults?.some(result => result.phase === source)) return false;
+    const key = `${source}:${owner}`;
+    if (handbacks.has(key)) return handbacks.get(key)!;
+    handbacks.set(key, false);
+    if (!effectiveEvents) {
+      const revocations = new Map<typeof repairEvents[number], typeof repairEvents>();
+      for (const run of [...lineage.ancestorRuns, ...(opts.runId ? [{ run_id: opts.runId, events: runEvents }] : [])]) {
+        const birth = loadFrozenExecutionScope(projectRoot, feature, run.run_id);
+        const workflow = opts.workflow ?? (birth ? (require('../../workflow-loader') as typeof import('../../workflow-loader'))
+          .resolveWorkflowSpec(projectRoot, { frameworkRoot: responsibility.frameworkRoot }) : undefined);
+        const projected = eventsWithScopeRevocations(birth, run.events, birth && workflow
+          ? readRepairDependencyContext(projectRoot, feature, workflow, birth, responsibility.frameworkRoot) : {});
+        const originals = new Set(run.events);
+        let previous: typeof repairEvents[number] | undefined;
+        for (const event of projected) {
+          if (originals.has(event)) previous = event;
+          else if (previous) revocations.set(previous, [...revocations.get(previous) ?? [], event]);
+        }
+      }
+      // 每个run的修订只验自己的birth；撤销仍插在原事件之后，沿既有血缘物理顺序消费。
+      effectiveEvents = repairEvents.flatMap(event => [event, ...revocations.get(event) ?? []]);
+    }
+    const history = effectiveEvents;
+    // 开始/返回一次验证不等于已经重判；本轮原始结果由currentResults消费，既存结论由fresh verdict锚定。
+    const sourceAt = history.map(event => event.phase === source && event.type === 'phase_verdict' && event.stale_summary !== true).lastIndexOf(true);
+    if (sourceAt < 0) return false;
+    const revokedAt = history.map(event => event.type === 'phase_invalidated' && event.phase === owner
+      || event.type === 'phase_backtrack_requested' && (event.to_phase === owner
+        || (event as { invalidated_phases?: string[] }).invalidated_phases?.includes(owner))).lastIndexOf(true);
+    const boundary = Math.max(sourceAt, revokedAt);
+    const window = history.slice(boundary + 1);
+    const completed = window.some((event, index) => event.phase === owner
+      && ['agent_invoke_end', 'agent_process_settled', 'phase_verdict'].includes(event.type ?? '')
+      && repairInvocationCompleted(window.slice(0, index + 1), owner, event.invoke_id));
+    if (!completed) return false;
+    const current = opts.currentResults?.find(result => result.phase === owner);
+    const summary = readSummaryLattice(projectRoot, feature, owner, current?.summary);
+    if (summary.verdict !== 'PASS' || runtimeIssues.some(issue => issue.phase === owner)) return false;
+    if (current) {
+      const raw = summary.raw as { blocking_skips?: Array<{ id?: string; blocking_class?: string }> };
+      const direct = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: owner, verdict: summary.verdict,
+        schemaCurrent: SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(summary.schemaVersion)), summaryErrors: validateSummaryV11(summary.raw),
+        closureCommitted: true, axes: summary.axes ?? {}, releaseReadiness: summary.releaseReadiness, completionStatus: summary.completionStatus,
+        requiredGaps: [...requiredSummaryCheckGaps(raw), ...current.checks.filter(check => isRequiredCheckGap(check))],
+        failingChecks: current.checks.filter(check => check.status === 'FAIL') }] });
+      if (direct.completionBlocking.length) return false;
+      const subject = (summary.raw as { verifier_subject_id?: string }).verifier_subject_id;
+      if (subject) {
+        const verifier = require('./verifier-evidence') as typeof import('./verifier-evidence');
+        const evidence = verifier.loadVerifierEvidenceForSubject(projectRoot, feature, owner, subject, { frameworkRoot: opts.frameworkRoot });
+        if ((!evidence.ok || evidence.evidence.verdict !== 'PASS')
+          && !verifier.deriveVerifierClosureRecord(projectRoot, feature, owner, opts.frameworkRoot)) return false;
+      }
+    } else {
+      const passAt = history.map(event => event.phase === owner && isEffectivePhasePass(event)).lastIndexOf(true);
+      if (passAt <= boundary || !summary.closureCommitted) return false;
+      const fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [owner], { frameworkRoot: opts.frameworkRoot,
+        runId: opts.runId, authorityReaders: opts.authorityReaders })[0];
+      if (fresh?.verdict !== 'fresh') return false;
+    }
+    handbacks.set(key, true);
+    return true;
+  };
+  // 来源阶段与修改责任不是同一维度。先读全部适用来源，再按当前终点选择其责任事实。
+  const sources = [...new Set([...chain, ...(opts.executionScope ? executionCompletionPhases(opts.executionScope) : []),
+    ...(opts.workflow?.artifacts.map(artifact => artifact.id) ?? [])])];
+  const findings = sources.flatMap(source => {
+    const current = opts.currentResults?.find(result => result.phase === source);
+    const summary = readSummaryLattice(projectRoot, feature, source, current?.summary);
+    const subject = (summary.raw as { verifier_subject_id?: string } | null)?.verifier_subject_id ?? null;
+    const registered = readRegisteredFindings(summary.raw, { ...responsibility, currentPhase: source });
+    if (!current) for (const finding of registered) {
+      if (ownerAwaitingSourceVerification(source, finding.owner)) {
+        // 修改职责已交回，缺陷仍开放；下一步是原验证方复核，不是再给同一修改方派一轮。
+        finding.owner = source; finding.verificationRequired = true;
+      }
+    }
+    if (registered.length && !current) {
+      const freshness = recomputePhaseEvidenceStaleness(projectRoot, feature, [source], {
+        frameworkRoot: opts.frameworkRoot, runId: opts.runId, authorityReaders: opts.authorityReaders, pendingOwnerPhase: opts.pendingOwnerPhase,
+      })[0];
+      // 修改对象已变化时先交原验证方核实；旧候选不能绕过复验反复派同一修改方。
+      if (freshness?.verdict === 'stale' || freshness?.verdict === 'tampered') for (const finding of registered) {
+        finding.owner = source;
+        finding.verificationRequired = true;
+      }
+    }
+    const diagnostics = readDiagnosticFindings(projectRoot, feature, source, opts.frameworkRoot, subject, opts.runId)
+      .filter(finding => !registered.some(row => row.id === finding.id || row.id === `${source}:${finding.id}`))
+      .map(finding => ({ ...finding, owner: source, verificationRequired: true }));
+    const storedClosure = (summary.raw as { verifier_closure?: { mode?: string; reviewed_subject_id?: string; current_subject_id?: string; current_material_not_reverified?: string[] } } | null)?.verifier_closure;
+    const closure = storedClosure ?? (subject && (source === 'spec' || source === 'plan')
+      ? (require('./verifier-evidence') as typeof import('./verifier-evidence')).deriveVerifierClosureRecord(projectRoot, feature, source, opts.frameworkRoot) : null);
+    if (closure?.mode === 'completed_with_prior_review' && closure.current_subject_id === subject && closure.reviewed_subject_id && closure.current_material_not_reverified?.length) {
+      const { readPhaseRepairIssues, verifiedPhaseRepairIssues } = require('./repair-candidates') as typeof import('./repair-candidates');
+      const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const priorIssues = readPhaseRepairIssues(projectRoot, feature, source, { subjectId: closure.reviewed_subject_id, frameworkRoot: opts.frameworkRoot, runId: opts.runId });
+      const priorText = loadVerifierReportTextOrNull(projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, subjectId: closure.reviewed_subject_id });
+      for (const row of verifiedPhaseRepairIssues({ phaseIssues: priorIssues, verifierReportText: priorText })) diagnostics.push({
+        id: row.id, detail: `原独立发现尚未核对当前新增材料：${row.summary}`, owner: source, verificationRequired: true,
       });
+      diagnostics.push(...readDiagnosticFindings(projectRoot, feature, source, opts.frameworkRoot, closure.reviewed_subject_id, opts.runId)
+        .map(finding => ({ ...finding, owner: source, verificationRequired: true })));
     }
-  }
-
-  // ⑥ review attestation（needs_fix：基线缺失须回跑 review 闭环）
-  //
-  // plan 1741b6f2 T3：**基线存在时的普通源码漂移不在这里裁决**。同一批事实已由责任
-  // checker 判过一次——`ut_no_src_mutation` / `review_closure_attestation` 按
-  // classifyDriftRisk 分级为 WARN 并列出所需的一次复核（plan 07a41ec6 T8），披露则经
-  // 本轮 summary 的 `post_review_source_drift_unreviewed` readiness signal。在此重算一遍
-  // 会把那条"可继续、披露未复核"的结论压成 needs_fix：run 各阶段全过却收在 PARTIAL、
-  // 退出码 2、且不生成完成凭证——那不是披露，是第三次阻断。
-  // 基线**缺失**仍判 needs_fix：那是"没有任何证据"，与"有证据且已分级"不同族。
-  if (chain.includes('review')) {
-    if (!loadReviewClosureAttestation(projectRoot, feature)) {
-      issues.push({ phase: 'review', condition: 'attestation_present', detail: '缺 review-closure-attestation.json', kind: 'needs_fix' });
+    const seen = new Set<string>();
+    return [...registered, ...diagnostics].filter(finding => {
+      if (seen.has(finding.id)) return false;
+      seen.add(finding.id);
+      return chain.includes(source) || !!finding.owner && chain.includes(finding.owner);
+    }).map(finding => ({ ...finding, source_phase: source }));
+  });
+  const phases = chain.map(phase => {
+    const current = opts.currentResults?.find(result => result.phase === phase);
+    const s = readSummaryLattice(projectRoot, feature, phase, current?.summary);
+    // 链式传播只是上游缺口的提示，不是本阶段证据已经失效；直接绑定仍由原reader逐项核实。
+    const observedLineage = staleness.find(row => row.phase === phase);
+    const lineage = observedLineage?.propagated_from ? recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], {
+      currentRequirementSha: opts.currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: opts.runId,
+      authorityReaders: opts.authorityReaders, pendingOwnerPhase: opts.pendingOwnerPhase,
+    })[0] : observedLineage;
+    const schemaCurrent = SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schemaVersion));
+    const raw = (s.raw ?? {}) as { blocking_skips?: Array<{ id?: string; blocking_class?: string }> };
+    const phaseChecks = (current?.checks ?? readPhaseChecks(projectRoot, feature, phase, s.raw)).map(check => {
+      if (check.status !== 'FAIL') return check;
+      const repair = resolveRepairResponsibility({ ...responsibility, currentPhase: phase,
+        target: { files: check.affected_files, owner: check.repair_owner } });
+      let owner = repair.owner ?? check.repair_owner;
+      if (owner && owner !== phase && repair.category) {
+        const candidates = (s.raw as { repair_candidates?: import('./repair-candidates').RepairCandidate[] } | null)?.repair_candidates ?? [];
+        const delegated = candidates.some(candidate => resolveRepairResponsibility({ ...responsibility, currentPhase: phase,
+          target: { files: candidate.files, category: candidate.category, summary: candidate.summary } }).owner === owner
+          && (candidate.id === check.id || check.affected_files?.some(file => candidate.files.some(candidateFile =>
+            path.resolve(projectRoot, file) === path.resolve(projectRoot, candidateFile)))));
+        // 责任披露不是跨阶段派修资格；沿既有候选生产者决定能否交给该修改方。
+        if (!delegated) owner = phase;
+      }
+      return ownerAwaitingSourceVerification(phase, owner)
+        ? { ...check, repair_owner: phase, verificationRequired: true } : owner ? { ...check, repair_owner: owner } : check;
+    });
+    const openFindings = findings.filter(finding => finding.source_phase === phase
+      || !chain.includes(finding.source_phase) && finding.owner === phase);
+    const axes: Record<string, CurrentDispositionAxisFact> = structuredClone(s.axes ?? {});
+    if (!current) for (const axis of Object.values(axes)) {
+      const owner = axis.resolution?.retry_phase;
+      if (!axis.source_checks?.some(check => check.startsWith('stale_inheritance:')) || !ownerAwaitingSourceVerification(phase, owner)) continue;
+      // 只交回原检查，不关闭旧发现；本次当前检查再次发现失败时仍回真实修改方。
+      axis.verificationRequired = true;
+      axis.resolution = { ...axis.resolution, owner: phase, retry_phase: phase };
     }
-  }
+    const latestPhaseFact = [...runEvents].reverse().find(event => event.phase === phase
+      && ['phase_halt', 'phase_verdict', 'agent_invoke_start', 'device_ready'].includes(event.type ?? '')) as
+      (Record<string, unknown> | undefined);
+    if (!current && latestPhaseFact?.type === 'phase_halt' && latestPhaseFact.run_disposition === 'WAITING'
+      && latestPhaseFact.run_wait_kind === 'external' && typeof latestPhaseFact.probe === 'string') {
+      // invoke前的原设备/能力门还未产summary；现有权威等待事实不能被“缺summary”改成作者返修。
+      return { phase, summaryPresent: false, verdict: 'INCOMPLETE', schemaCurrent: false, closureCommitted: false,
+        requiredGaps: [{ id: latestPhaseFact.probe, blocking_class: 'externalBlocked' }], failingChecks: [], axes: {},
+        lineage: null, attestationPresent: null, openFindings, ...(phase === 'testing' ? { openDebt } : {}) };
+    }
+    return {
+      phase,
+      summaryPresent: s.exists,
+      verdict: s.verdict,
+      schemaCurrent,
+      summaryErrors: schemaCurrent ? validateSummaryV11(s.raw) : [],
+      closureCommitted: s.closureCommitted,
+      requiredGaps: s.exists ? [...requiredSummaryCheckGaps(raw),
+        ...phaseChecks.filter(check => isRequiredCheckGap(check))] : [],
+      failingChecks: phaseChecks.filter(check => check.status === 'FAIL'),
+      axes,
+      releaseReadiness: s.releaseReadiness,
+      completionStatus: s.completionStatus,
+      lineage: lineage ? lineage.verdict : null,
+      ...(lineage && lineage.changed_paths.length
+        ? { lineageDetail: lineage.changed_paths.join(', ') + (lineage.propagated_from ? `（传染自 ${lineage.propagated_from}）` : '') }
+        : {}),
+      ...(lineage?.propagated_from ? { lineagePropagatedFrom: lineage.propagated_from } : {}),
+      attestationPresent: chain.includes('review') && phase === 'review' ? !!loadReviewClosureAttestation(projectRoot, feature) : null,
+      ...(phase === 'testing' ? { openDebt } : {}),
+      openFindings,
+    };
+  });
+  const corruptRuns = classifyGoalRunsDir(featureFilePath(projectRoot, feature, 'goal-runs')).corruptRuns
+    .map(run => ({ runId: run.runId, reason: run.reason }));
+  return {
+    endpoint: opts.endpoint ?? 'feature-completion',
+    phases,
+    additionalProblems: runtimeIssues.map(issue => ({ phase: issue.phase, id: issue.condition, detail: issue.detail,
+      action: issue.action ?? 'verify' as const, affects: 'completion' as const, severity: 'BLOCKER' as const, owner: issue.owner ?? issue.phase })),
+    ...(opts.fidelityCapped ? { fidelityCapped: true } : {}),
+    ...(corruptRuns.length ? { corruptRuns } : {}),
+  };
+}
 
-  return issues;
+/** 同一次评估的处置（纯判定）：完成/发布/披露都从这个结果投影。 */
+export function resolveCompletionDisposition(opts: CleanPassOptions): CurrentDisposition {
+  return resolveCurrentDisposition(readCurrentDispositionInput(opts));
+}
+
+/**
+ * 普通完成只消费**阻断完成**的当前问题；披露项不进这里——否则会把可披露残差重新变成必修，
+ * 让 run 收在 PARTIAL。发布资格继续由 summary 的 release_readiness/轴投影表达（仍 BLOCKED）。
+ */
+export function collectPhaseCompletionIssues(opts: CleanPassOptions): CleanPassIssue[] {
+  return phaseCompletionProblems(resolveCompletionDisposition(opts), opts.chain).map(completionIssue);
+}
+
+function completionIssue(problem: import('./check-disposition').CurrentDispositionProblem): CleanPassIssue {
+  return {
+    phase: problem.phase,
+    condition: problem.id,
+    detail: problem.detail,
+    kind: 'needs_fix' as const,
+    ...(problem.owner ? { owner: problem.owner } : {}),
+    action: problem.action,
+    ...(problem.source_phase ? { source_phase: problem.source_phase } : {}),
+    ...(problem.propagated_from ? { propagated_from: problem.propagated_from } : {}),
+  };
+}
+
+/** 披露项：普通完成不阻断、发布仍 BLOCKED（展示/报告消费；不伪造 PASS，也不得进 classify）。 */
+export interface CompletionDisclosure {
+  phase: string;
+  condition: string;
+  detail: string;
+}
+
+export function collectDisclosedCompletionIssues(opts: CleanPassOptions): CompletionDisclosure[] {
+  return resolveCompletionDisposition(opts).releaseBlocking.map(problem => ({
+    phase: problem.phase,
+    condition: problem.id,
+    detail: problem.detail,
+  }));
 }
 
 export function runtimeFidelityEvidenceIssue(
@@ -561,6 +829,7 @@ export function runtimeFidelityEvidenceIssue(
   feature: string,
   expectedGoalRunId: string | null,
   expectedAttemptId: string | null,
+  requirePhaseManifestBinding = true,
 ): string | null {
   const evidencePath = deviceTestEvidencePath(
     path.join(receiptDirPath(projectRoot, feature, 'testing'), 'reports'),
@@ -594,7 +863,7 @@ export function runtimeFidelityEvidenceIssue(
   switch (dispatch.kind) {
     case 'v1':
       if (!doc.artifact_binding) return 'native trace 在场但缺 artifact_binding';
-      return phaseManifestBindsRuntimeArtifacts(projectRoot, feature, doc);
+      return requirePhaseManifestBinding ? phaseManifestBindsRuntimeArtifacts(projectRoot, feature, doc) : null;
     case 'legacy_unsupported':
       // 过渡：legacy trace 只在 doc 带 runtime_fidelity 时走原 legacy 校验（逐字不变）。
       if (!doc.runtime_fidelity) return '既无 native v1 trace 也无 legacy runtime_fidelity';
@@ -604,7 +873,7 @@ export function runtimeFidelityEvidenceIssue(
         doc,
         expectedGoalRunId,
         expectedAttemptId,
-        requirePhaseManifestBinding: true,
+        requirePhaseManifestBinding,
       });
     default:
       // 不可判别/混装：即使 doc 带 runtime_fidelity 也不回落 legacy（产出方自身不自洽）。
@@ -716,7 +985,10 @@ export function generateFeatureCompletion(opts: GenerateCompletionOptions): {
   const carrier = resolveEffectiveScopeSource(opts.projectRoot, opts.feature, runId);
   const scope = carrier?.scope;
   if (!scope && opts.executionScope) throw new Error('[feature-completion] 调用期候选不能替代真实出生范围');
-  if (scope) opts = { ...opts, executionScope: scope };
+  // 完成链从**同一有效范围**派生：调用方传的是本轮 replay 链（可能因某次修订把阶段移入
+  // reused_phases 而少一段），而消费侧 inspectCompletionRecord 按 executionCompletionPhases
+  // 对账。两处必须同一事实，否则会生成一份自己就判 INVALID 的完成原件。
+  if (scope) opts = { ...opts, executionScope: scope, chain: executionCompletionPhases(scope) };
   const completionGate = shouldGenerateFeatureCompletion(scope, {
     ...opts,
     runId,

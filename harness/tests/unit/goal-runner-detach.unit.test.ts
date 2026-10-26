@@ -118,6 +118,25 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
+    name: '6fd6c8c1: 父入口把无人值守选择转成共同授权输入并透传（--detached-child 本身不授权）',
+    run: () => {
+      const fresh = buildDetachedChildArgv(['--feature', 'bc', '--detach'], 'R1', { resume: false });
+      assert(fresh.filter(a => a === '--authorize-autonomy').length === 1, fresh.join(' '));
+      assert(fresh.includes('--detached-child'), fresh.join(' '));
+      const resume = buildDetachedChildArgv(['--resume', 'R1', '--detach', '--authorize-autonomy'], 'R1', { resume: true });
+      assert(resume.filter(a => a === '--authorize-autonomy').length === 1, '已显式授权不得重复注入');
+      const plain = buildDetachedChildArgv(['--feature', 'bc'], 'R1', { resume: false });
+      assert(!plain.includes('--detach'), plain.join(' '));
+      const policy = require('../../scripts/utils/runtime-policy').resolveTaskAutomationPolicy as (
+        input: { fullDelivery: boolean; autonomyAuthorized?: boolean },
+      ) => { automaticDesignRepair: boolean; source: string };
+      assert(policy({ fullDelivery: true }).automaticDesignRepair === false, '无共同授权时不得自动化设计修订');
+      const authorized = policy({ fullDelivery: true, autonomyAuthorized: true });
+      assert(authorized.automaticDesignRepair === true && authorized.source === 'session_authorization', '共同授权输入生效');
+      assert(policy({ fullDelivery: false, autonomyAuthorized: true }).automaticDesignRepair === false, '授权不把单职责请求升级为完整交付');
+    },
+  },
+  {
     name: 'P2-T9 detach startup handshake distinguishes early exit, ready, terminal, and alive timeout',
     run: async () => {
       const script = `

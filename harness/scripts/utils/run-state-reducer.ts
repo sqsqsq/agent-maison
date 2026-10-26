@@ -149,15 +149,20 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
         ...(typeof ev.backtracks_used === 'number' ? { backtracks_used: ev.backtracks_used } : {}),
         ...(typeof ev.backtracks_limit === 'number' ? { backtracks_limit: ev.backtracks_limit } : {}),
       };
-    } else if (type === 'phase_halt' && typeof ev.recovery_reason === 'string') {
+    } else if (type === 'phase_verdict' && recovery?.current_phase === ev.phase
+      && ev.verdict === 'PASS' && ev.action === 'advance' && ev.stale_summary === false
+      && !ev.advance_blocked && !ev.agent_failed) {
+      // 只有原发现阶段的当前正式复核通过才闭合派修；修改方 PASS、noop、拒修均不算。
+      recovery = undefined;
+    } else if (type === 'phase_halt' && (typeof ev.recovery_reason === 'string' || typeof ev.halt_reason === 'string')) {
       recovery = {
-        reason: ev.recovery_reason,
+        reason: String(ev.recovery_reason ?? ev.halt_reason),
         ...(typeof ev.phase === 'string' ? { current_phase: ev.phase } : {}),
         ...(typeof ev.owner_phase === 'string'
           ? { owner_phase: ev.owner_phase, target_phase: ev.owner_phase }
           : typeof ev.target_phase === 'string' ? { target_phase: ev.target_phase } : {}),
         action: 'halt',
-        changed_paths: recovery?.changed_paths ?? [],
+        changed_paths: [],
         ...(typeof ev.fingerprint === 'string'
           ? { fingerprint: ev.fingerprint }
           : typeof ev.round_fingerprint === 'string' ? { fingerprint: ev.round_fingerprint } : {}),

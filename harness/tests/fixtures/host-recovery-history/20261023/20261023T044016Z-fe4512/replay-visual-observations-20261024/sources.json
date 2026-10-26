@@ -1,0 +1,415 @@
+{
+  "description": "Read-only whole existing screenshot/layout observation corpus; no source visual verdict, summary, receipt, completion or events replayed",
+  "captured_at": "2026-10-25T15:57:34.033Z",
+  "files": [
+    {
+      "file": "visual-diff-nav.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\visual-diff-nav.json",
+      "source_sha256": "ea2195a7b7499fe02811d2038818f317c0bc8a887b7ff28db3b31a9fd8e63e90",
+      "sha256": "ea2195a7b7499fe02811d2038818f317c0bc8a887b7ff28db3b31a9fd8e63e90",
+      "normalization": "none",
+      "bytes": 9332
+    },
+    {
+      "file": "device-screenshots/layout-bank_card_selection.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\layout-bank_card_selection.json",
+      "source_sha256": "a732ad5452b1630616462813375bca06759c662e274a4f028e74f672ac12c9bd",
+      "sha256": "aaf302e643f5dcc7abccce8ddda11bb109ced5b3abcc98abaf227033e4bb6990",
+      "normalization": "CRLF->LF only",
+      "bytes": 56282
+    },
+    {
+      "file": "device-screenshots/layout-card_type_sheet_overlay_card_type_overlay_root.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\layout-card_type_sheet_overlay_card_type_overlay_root.json",
+      "source_sha256": "815c0b12a378786f048766b214122c811ea6be0210ba2b56d632e96b30c11a2d",
+      "sha256": "365420d54565b01c75acadfce62d7ec8b1d8b57190f0acb07af5572c5c913459",
+      "normalization": "CRLF->LF only",
+      "bytes": 109219
+    },
+    {
+      "file": "device-screenshots/layout-card_type_sheet_overlay_card_type_sheet_panel.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\layout-card_type_sheet_overlay_card_type_sheet_panel.json",
+      "source_sha256": "815c0b12a378786f048766b214122c811ea6be0210ba2b56d632e96b30c11a2d",
+      "sha256": "365420d54565b01c75acadfce62d7ec8b1d8b57190f0acb07af5572c5c913459",
+      "normalization": "CRLF->LF only",
+      "bytes": 109219
+    },
+    {
+      "file": "device-screenshots/layout-opening_result_success.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\layout-opening_result_success.json",
+      "source_sha256": "18ae3cbcd41d62e7364326c904b3e79e7c200259afb42dd0d62919e231909509",
+      "sha256": "b1d5937519326dee91bff627a419b3c20f110ef248372004bb59c5bb122cdf81",
+      "normalization": "CRLF->LF only",
+      "bytes": 48762
+    },
+    {
+      "file": "device-screenshots/layout-otp_verification_sheet_overlay_otp_overlay_root.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\layout-otp_verification_sheet_overlay_otp_overlay_root.json",
+      "source_sha256": "8841bc95e3bb12dc36e97d775148210f4ee932d72b3401dedacb3be009f0fce2",
+      "sha256": "bd97e8242ca7b66940a3293f35421050b0a67b353d5a00b14e11d785a371a8cc",
+      "normalization": "CRLF->LF only",
+      "bytes": 64224
+    },
+    {
+      "file": "device-screenshots/layout-otp_verification_sheet_overlay_otp_sheet_panel.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\layout-otp_verification_sheet_overlay_otp_sheet_panel.json",
+      "source_sha256": "ea9d532757bb6124a02dfd172dbd2797d4fd6003f3014bfabd474c007653e5bd",
+      "sha256": "9da8204904f4da1bced5a2759b2067fc9d308aed4afc64a17e8aafd6b24f1337",
+      "normalization": "CRLF->LF only",
+      "bytes": 64224
+    },
+    {
+      "file": "device-screenshots/shot-bank_card_selection.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\shot-bank_card_selection.png",
+      "source_sha256": "92146d4a0f7a8fd8a6e80211fddb843e8a0a7c994beff7ee958ddceeb1321163",
+      "sha256": "92146d4a0f7a8fd8a6e80211fddb843e8a0a7c994beff7ee958ddceeb1321163",
+      "normalization": "none",
+      "bytes": 104667
+    },
+    {
+      "file": "device-screenshots/shot-card_type_sheet_overlay_card_type_overlay_root.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\shot-card_type_sheet_overlay_card_type_overlay_root.png",
+      "source_sha256": "a8c6fbd6dfdd42118a1a0f070361aa00f2b77842472ec8350f7706a1a44e5f32",
+      "sha256": "a8c6fbd6dfdd42118a1a0f070361aa00f2b77842472ec8350f7706a1a44e5f32",
+      "normalization": "none",
+      "bytes": 133325
+    },
+    {
+      "file": "device-screenshots/shot-card_type_sheet_overlay_card_type_sheet_panel.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\shot-card_type_sheet_overlay_card_type_sheet_panel.png",
+      "source_sha256": "a8c6fbd6dfdd42118a1a0f070361aa00f2b77842472ec8350f7706a1a44e5f32",
+      "sha256": "a8c6fbd6dfdd42118a1a0f070361aa00f2b77842472ec8350f7706a1a44e5f32",
+      "normalization": "none",
+      "bytes": 133325
+    },
+    {
+      "file": "device-screenshots/shot-opening_result_success.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\shot-opening_result_success.png",
+      "source_sha256": "b5648836883058c076f92c8895b204aaf11a02911a2e1e4338b553b1ae9c96a5",
+      "sha256": "b5648836883058c076f92c8895b204aaf11a02911a2e1e4338b553b1ae9c96a5",
+      "normalization": "none",
+      "bytes": 75153
+    },
+    {
+      "file": "device-screenshots/shot-otp_verification_sheet_overlay_otp_overlay_root.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\shot-otp_verification_sheet_overlay_otp_overlay_root.png",
+      "source_sha256": "816f3ef6a35d464bb7934d291583d359c437017fe868c1660c14bbbe4a953f9d",
+      "sha256": "816f3ef6a35d464bb7934d291583d359c437017fe868c1660c14bbbe4a953f9d",
+      "normalization": "none",
+      "bytes": 133547
+    },
+    {
+      "file": "device-screenshots/shot-otp_verification_sheet_overlay_otp_sheet_panel.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\shot-otp_verification_sheet_overlay_otp_sheet_panel.png",
+      "source_sha256": "00593a382330b007f40328ba87b55e6dcacb9407c7206c37b4ca71b74f8c8154",
+      "sha256": "00593a382330b007f40328ba87b55e6dcacb9407c7206c37b4ca71b74f8c8154",
+      "normalization": "none",
+      "bytes": 133420
+    },
+    {
+      "file": "device-screenshots/_identity/layout-bank_card_selection.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_identity\\layout-bank_card_selection.json",
+      "source_sha256": "a732ad5452b1630616462813375bca06759c662e274a4f028e74f672ac12c9bd",
+      "sha256": "aaf302e643f5dcc7abccce8ddda11bb109ced5b3abcc98abaf227033e4bb6990",
+      "normalization": "CRLF->LF only",
+      "bytes": 56282
+    },
+    {
+      "file": "device-screenshots/_identity/layout-card_type_sheet_overlay_card_type_overlay_root.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_identity\\layout-card_type_sheet_overlay_card_type_overlay_root.json",
+      "source_sha256": "d5a5d0c1851fbf0838f1d9a1720883968451420275ca6d2147694f282811b28f",
+      "sha256": "5a7a757851ce097271f820328f2b2a891d8e3332d9bfb85bdf527a9787448b43",
+      "normalization": "CRLF->LF only",
+      "bytes": 109219
+    },
+    {
+      "file": "device-screenshots/_identity/layout-card_type_sheet_overlay_card_type_sheet_panel.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_identity\\layout-card_type_sheet_overlay_card_type_sheet_panel.json",
+      "source_sha256": "815c0b12a378786f048766b214122c811ea6be0210ba2b56d632e96b30c11a2d",
+      "sha256": "365420d54565b01c75acadfce62d7ec8b1d8b57190f0acb07af5572c5c913459",
+      "normalization": "CRLF->LF only",
+      "bytes": 109219
+    },
+    {
+      "file": "device-screenshots/_identity/layout-opening_result_success.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_identity\\layout-opening_result_success.json",
+      "source_sha256": "27405704215c84c50cfe44798867bb37e672cea540b74d8aeb3019dc1684a544",
+      "sha256": "98155a8bf634fb8001e3213ba42e2cbdfbc7f6c9d3946a50c67bfb49db294450",
+      "normalization": "CRLF->LF only",
+      "bytes": 48762
+    },
+    {
+      "file": "device-screenshots/_identity/layout-otp_verification_sheet_overlay_otp_overlay_root.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_identity\\layout-otp_verification_sheet_overlay_otp_overlay_root.json",
+      "source_sha256": "fae94d69ae90f546552ade024ff109e1e9a0a27a4d7df239f976610cc56f3534",
+      "sha256": "817a48a8579694c6e8fac277ab6eb334b8b38f30163e91dd2cc801ac0f774820",
+      "normalization": "CRLF->LF only",
+      "bytes": 64228
+    },
+    {
+      "file": "device-screenshots/_identity/layout-otp_verification_sheet_overlay_otp_sheet_panel.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_identity\\layout-otp_verification_sheet_overlay_otp_sheet_panel.json",
+      "source_sha256": "eadbfce698c157b65f9c274e4ea1c78b97e7934d4ddd057072e7af31c19f5030",
+      "sha256": "745ccbf6a38bb0e26b0949d828bc4d944f42ec1b811a3aabb573472f323cf764",
+      "normalization": "CRLF->LF only",
+      "bytes": 64228
+    },
+    {
+      "file": "device-screenshots/_quiescence/bank_card_selection.records.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\bank_card_selection.records.json",
+      "source_sha256": "2bc3c676dbe1451587171e617cf79fdd3a7efadd60fd5930376e08f201baf1c0",
+      "sha256": "2bc3c676dbe1451587171e617cf79fdd3a7efadd60fd5930376e08f201baf1c0",
+      "normalization": "none",
+      "bytes": 679
+    },
+    {
+      "file": "device-screenshots/_quiescence/card_type_sheet_overlay_card_type_overlay_root.records.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\card_type_sheet_overlay_card_type_overlay_root.records.json",
+      "source_sha256": "0122c8d496d537199c8513e61afdc5d3ccd42cfa6165a10fc8e896eb305ca94e",
+      "sha256": "0122c8d496d537199c8513e61afdc5d3ccd42cfa6165a10fc8e896eb305ca94e",
+      "normalization": "none",
+      "bytes": 679
+    },
+    {
+      "file": "device-screenshots/_quiescence/card_type_sheet_overlay_card_type_sheet_panel.records.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\card_type_sheet_overlay_card_type_sheet_panel.records.json",
+      "source_sha256": "6767be7dcd13fb448db939012b943a01fb52d5cd63d39cd1ec9d13c97dfa4da7",
+      "sha256": "6767be7dcd13fb448db939012b943a01fb52d5cd63d39cd1ec9d13c97dfa4da7",
+      "normalization": "none",
+      "bytes": 679
+    },
+    {
+      "file": "device-screenshots/_quiescence/layout-bank_card_selection.probe.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\layout-bank_card_selection.probe.json",
+      "source_sha256": "a732ad5452b1630616462813375bca06759c662e274a4f028e74f672ac12c9bd",
+      "sha256": "aaf302e643f5dcc7abccce8ddda11bb109ced5b3abcc98abaf227033e4bb6990",
+      "normalization": "CRLF->LF only",
+      "bytes": 56282
+    },
+    {
+      "file": "device-screenshots/_quiescence/layout-card_type_sheet_overlay_card_type_overlay_root.probe.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\layout-card_type_sheet_overlay_card_type_overlay_root.probe.json",
+      "source_sha256": "d5a5d0c1851fbf0838f1d9a1720883968451420275ca6d2147694f282811b28f",
+      "sha256": "5a7a757851ce097271f820328f2b2a891d8e3332d9bfb85bdf527a9787448b43",
+      "normalization": "CRLF->LF only",
+      "bytes": 109219
+    },
+    {
+      "file": "device-screenshots/_quiescence/layout-card_type_sheet_overlay_card_type_sheet_panel.probe.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\layout-card_type_sheet_overlay_card_type_sheet_panel.probe.json",
+      "source_sha256": "815c0b12a378786f048766b214122c811ea6be0210ba2b56d632e96b30c11a2d",
+      "sha256": "365420d54565b01c75acadfce62d7ec8b1d8b57190f0acb07af5572c5c913459",
+      "normalization": "CRLF->LF only",
+      "bytes": 109219
+    },
+    {
+      "file": "device-screenshots/_quiescence/layout-opening_result_success.probe.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\layout-opening_result_success.probe.json",
+      "source_sha256": "18ae3cbcd41d62e7364326c904b3e79e7c200259afb42dd0d62919e231909509",
+      "sha256": "b1d5937519326dee91bff627a419b3c20f110ef248372004bb59c5bb122cdf81",
+      "normalization": "CRLF->LF only",
+      "bytes": 48762
+    },
+    {
+      "file": "device-screenshots/_quiescence/layout-otp_verification_sheet_overlay_otp_overlay_root.probe.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\layout-otp_verification_sheet_overlay_otp_overlay_root.probe.json",
+      "source_sha256": "8841bc95e3bb12dc36e97d775148210f4ee932d72b3401dedacb3be009f0fce2",
+      "sha256": "bd97e8242ca7b66940a3293f35421050b0a67b353d5a00b14e11d785a371a8cc",
+      "normalization": "CRLF->LF only",
+      "bytes": 64224
+    },
+    {
+      "file": "device-screenshots/_quiescence/layout-otp_verification_sheet_overlay_otp_sheet_panel.probe.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\layout-otp_verification_sheet_overlay_otp_sheet_panel.probe.json",
+      "source_sha256": "ea9d532757bb6124a02dfd172dbd2797d4fd6003f3014bfabd474c007653e5bd",
+      "sha256": "9da8204904f4da1bced5a2759b2067fc9d308aed4afc64a17e8aafd6b24f1337",
+      "normalization": "CRLF->LF only",
+      "bytes": 64224
+    },
+    {
+      "file": "device-screenshots/_quiescence/opening_result_success.records.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\opening_result_success.records.json",
+      "source_sha256": "2246f84ecb28a6d7b2cdaf1114724ad17d4e595260c65034f95c62f3d03f9c50",
+      "sha256": "2246f84ecb28a6d7b2cdaf1114724ad17d4e595260c65034f95c62f3d03f9c50",
+      "normalization": "none",
+      "bytes": 679
+    },
+    {
+      "file": "device-screenshots/_quiescence/otp_verification_sheet_overlay_otp_overlay_root.records.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\otp_verification_sheet_overlay_otp_overlay_root.records.json",
+      "source_sha256": "758f4a97b624069a54a444f2ddae2430224c421c76cbcd7080ceef5f2c390e9e",
+      "sha256": "758f4a97b624069a54a444f2ddae2430224c421c76cbcd7080ceef5f2c390e9e",
+      "normalization": "none",
+      "bytes": 1925
+    },
+    {
+      "file": "device-screenshots/_quiescence/otp_verification_sheet_overlay_otp_sheet_panel.records.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\otp_verification_sheet_overlay_otp_sheet_panel.records.json",
+      "source_sha256": "1f8328c7902adfee23f3588f85380c1b4a931f9e4c762fc4575eeeabdee5af75",
+      "sha256": "1f8328c7902adfee23f3588f85380c1b4a931f9e4c762fc4575eeeabdee5af75",
+      "normalization": "none",
+      "bytes": 1925
+    },
+    {
+      "file": "device-screenshots/_quiescence/shot-bank_card_selection.probe.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\shot-bank_card_selection.probe.png",
+      "source_sha256": "13197b43a5766301d8d837e6f21f7c4c242628146949abb9260cf34b671a9d53",
+      "sha256": "13197b43a5766301d8d837e6f21f7c4c242628146949abb9260cf34b671a9d53",
+      "normalization": "none",
+      "bytes": 104618
+    },
+    {
+      "file": "device-screenshots/_quiescence/shot-card_type_sheet_overlay_card_type_overlay_root.probe.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\shot-card_type_sheet_overlay_card_type_overlay_root.probe.png",
+      "source_sha256": "c089f3e0aa48eb08a89048346296908f065c3d20fc7e95db36e6d94eae53d333",
+      "sha256": "c089f3e0aa48eb08a89048346296908f065c3d20fc7e95db36e6d94eae53d333",
+      "normalization": "none",
+      "bytes": 133458
+    },
+    {
+      "file": "device-screenshots/_quiescence/shot-card_type_sheet_overlay_card_type_sheet_panel.probe.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\shot-card_type_sheet_overlay_card_type_sheet_panel.probe.png",
+      "source_sha256": "a8c6fbd6dfdd42118a1a0f070361aa00f2b77842472ec8350f7706a1a44e5f32",
+      "sha256": "a8c6fbd6dfdd42118a1a0f070361aa00f2b77842472ec8350f7706a1a44e5f32",
+      "normalization": "none",
+      "bytes": 133325
+    },
+    {
+      "file": "device-screenshots/_quiescence/shot-opening_result_success.probe.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\shot-opening_result_success.probe.png",
+      "source_sha256": "1e126a91bb4272cab3d47524191082b8f799fddeb8ad4a33102df75159c532d6",
+      "sha256": "1e126a91bb4272cab3d47524191082b8f799fddeb8ad4a33102df75159c532d6",
+      "normalization": "none",
+      "bytes": 75152
+    },
+    {
+      "file": "device-screenshots/_quiescence/shot-otp_verification_sheet_overlay_otp_overlay_root.probe.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\shot-otp_verification_sheet_overlay_otp_overlay_root.probe.png",
+      "source_sha256": "816f3ef6a35d464bb7934d291583d359c437017fe868c1660c14bbbe4a953f9d",
+      "sha256": "816f3ef6a35d464bb7934d291583d359c437017fe868c1660c14bbbe4a953f9d",
+      "normalization": "none",
+      "bytes": 133547
+    },
+    {
+      "file": "device-screenshots/_quiescence/shot-otp_verification_sheet_overlay_otp_sheet_panel.probe.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_quiescence\\shot-otp_verification_sheet_overlay_otp_sheet_panel.probe.png",
+      "source_sha256": "7f50028f4e2f8dbdd8f4fdaeaa68cb311fa710214ce91819513c41ac19cd4d83",
+      "sha256": "7f50028f4e2f8dbdd8f4fdaeaa68cb311fa710214ce91819513c41ac19cd4d83",
+      "normalization": "none",
+      "bytes": 133443
+    },
+    {
+      "file": "device-screenshots/_render-visibility/region-bank_card_selection-0.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_render-visibility\\region-bank_card_selection-0.png",
+      "source_sha256": "81c9cee8b290f69b6998491fdd83ce68172755d640343b4504e5b88d46a859c8",
+      "sha256": "81c9cee8b290f69b6998491fdd83ce68172755d640343b4504e5b88d46a859c8",
+      "normalization": "none",
+      "bytes": 17572
+    },
+    {
+      "file": "device-screenshots/_render-visibility/region-bank_card_selection-1.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_render-visibility\\region-bank_card_selection-1.png",
+      "source_sha256": "b8dab17b5e361538dac2497536c7340ff5c5851c3c5626eb9b45cdc2ad4afd84",
+      "sha256": "b8dab17b5e361538dac2497536c7340ff5c5851c3c5626eb9b45cdc2ad4afd84",
+      "normalization": "none",
+      "bytes": 17817
+    },
+    {
+      "file": "device-screenshots/_render-visibility/region-card_type_sheet_overlay_card_type_sheet_panel-0.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_render-visibility\\region-card_type_sheet_overlay_card_type_sheet_panel-0.png",
+      "source_sha256": "4446a69d404361b21381798119eb0d287dd5b5aa2d3ed1a26b96e1c015e14a2b",
+      "sha256": "4446a69d404361b21381798119eb0d287dd5b5aa2d3ed1a26b96e1c015e14a2b",
+      "normalization": "none",
+      "bytes": 18003
+    },
+    {
+      "file": "device-screenshots/_render-visibility/region-opening_result_success-0.png",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\device-screenshots\\_render-visibility\\region-opening_result_success-0.png",
+      "source_sha256": "2a7aae0fd4e832c8b3b1de6f825f530b901dd7bc0f74515fc8c111d5065e8a07",
+      "sha256": "2a7aae0fd4e832c8b3b1de6f825f530b901dd7bc0f74515fc8c111d5065e8a07",
+      "normalization": "none",
+      "bytes": 38610
+    }
+  ],
+  "visual_residual_reference": {
+    "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/bank-card-opening-flow/device-testing/device-screenshots/visual-diff.json",
+    "sha256": "ba6947ae84afdc2d429ad6e99df4d190de6e63d49a9bc335114d888e137c0b21",
+    "screens": [
+      {
+        "screen_id": "bank_card_selection",
+        "capture_error": null,
+        "verdict": "warn",
+        "must_fix": [
+          "Reduce candidate-row logo and card-number sizes to the reference proportions while retaining the permitted two-card dataset.",
+          "Match the agreement control's rounded-square shape and align it with the first text line; retain the current checked or unchecked state.",
+          "Restore the reference agreement text size, indentation and blue styling for agreement names using static text spans.",
+          "Match the next button's reference width and corner radius, and give its disabled background and label sufficient visible contrast.",
+          "Reduce the selection hint's text size to the reference proportion."
+        ]
+      },
+      {
+        "screen_id": "card_type_sheet__overlay__card_type_overlay_root",
+        "capture_error": null,
+        "verdict": "warn",
+        "must_fix": [
+          "Increase the card-type sheet height so its top matches the reference proportion, moving the header and contents upward while preserving bottom clearance.",
+          "Reduce the bank-row logo to the reference's small inset icon treatment and restore the divider below the bank row.",
+          "Restore the divider between the debit and credit rows.",
+          "Restore the reference separation between authorization text, agreement text and the bottom action; keep the introductory agreement phrase dark and only agreement names blue.",
+          "Give the disabled continue button a clearly visible background and label, and match the reference button width and bottom spacing.",
+          "Match the background search field's reference height, vertical position and rounded capsule shape."
+        ]
+      },
+      {
+        "screen_id": "card_type_sheet__overlay__card_type_sheet_panel",
+        "capture_error": null,
+        "verdict": "warn",
+        "must_fix": [
+          "Increase the card-type sheet height to match the reference's top position and restore header and content placement.",
+          "Reduce the bank logo to the reference's small inset icon treatment and restore the divider beneath the bank heading.",
+          "Restore the divider between the debit and credit options.",
+          "Restore the reference paragraph spacing and render '我已阅读' dark while keeping agreement names blue.",
+          "Restore a clearly visible disabled continue button with the reference width and bottom clearance.",
+          "Match the background search field's reference height, vertical position and capsule shape."
+        ]
+      },
+      {
+        "screen_id": "otp_verification_sheet__overlay__otp_overlay_root",
+        "capture_error": null,
+        "verdict": "warn",
+        "must_fix": [
+          "Match the reference instruction and phone text size and horizontal inset; emphasize the phone number separately.",
+          "Restore the input placeholder's reference wording and horizontal inset.",
+          "Restore the next button's visible muted-blue disabled fill, white label and reference horizontal margins."
+        ]
+      },
+      {
+        "screen_id": "otp_verification_sheet__overlay__otp_sheet_panel",
+        "capture_error": null,
+        "verdict": "warn",
+        "must_fix": [
+          "Match the reference instruction and phone text size and horizontal inset, including bold emphasis on the phone number.",
+          "Restore the input placeholder's reference wording and horizontal inset.",
+          "Use the reference's visible muted-blue disabled button fill, white label and horizontal margins."
+        ]
+      },
+      {
+        "screen_id": "opening_result_success",
+        "capture_error": null,
+        "verdict": "warn",
+        "must_fix": [
+          "Move the success icon and accompanying text upward to the reference proportions; reduce the icon and title sizes and match the reference green.",
+          "Replace the generic card-holder illustration with a roughly similar phone-and-payment-code guide illustration.",
+          "Match the finish button's reference neutral-gray fill, height, corner radius and horizontal margins, without adding the excluded NFC panel."
+        ]
+      }
+    ],
+    "applied_as_current_machine_verdict": false
+  },
+  "visual_author_observations": {
+    "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\device-testing\\reports\\visual-review\\review-20261023T044016Z-fe4512-i25-6-e5ab5f3b-8b63-4120-bb32-1142f366fc34\\agent-output.log",
+    "source_sha256": "bf17ebde692b624e7a68116821a5a6d42edb4c0231cdf8f4c430b783b499b577",
+    "extraction": "Final original Codex agent_message JSON body; never replay invocation event/receipt or source machine verdict",
+    "body_sha256": "e6c57a7a05b3ea3f03322e363766283da7c8ecb630de9e203fd3cbff42fabfa3"
+  }
+}

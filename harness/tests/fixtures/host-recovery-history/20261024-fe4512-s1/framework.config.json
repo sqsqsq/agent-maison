@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.1",
+  "project_name": "SimulatedWalletForHmos",
+  "project_profile": {
+    "name": "hmos-app",
+    "sub_variant": "app"
+  },
+  "materialized_adapters": [
+    "chrys",
+    "claude",
+    "codeagent",
+    "codex",
+    "cursor",
+    "deepseek-harness",
+    "generic",
+    "opencode"
+  ],
+  "architecture": {
+    "outer_layers": [
+      {
+        "id": "01-Product",
+        "can_depend_on": [
+          "02-Feature",
+          "03-CommonBusiness",
+          "04-BusinessBase",
+          "05-SystemBase"
+        ],
+        "intra_layer_deps": "dag"
+      },
+      {
+        "id": "02-Feature",
+        "can_depend_on": [
+          "03-CommonBusiness",
+          "04-BusinessBase",
+          "05-SystemBase"
+        ],
+        "intra_layer_deps": "dag"
+      },
+      {
+        "id": "03-CommonBusiness",
+        "can_depend_on": [
+          "04-BusinessBase",
+          "05-SystemBase"
+        ],
+        "intra_layer_deps": "dag"
+      },
+      {
+        "id": "04-BusinessBase",
+        "can_depend_on": [
+          "05-SystemBase"
+        ],
+        "intra_layer_deps": "dag"
+      },
+      {
+        "id": "05-SystemBase",
+        "can_depend_on": [],
+        "intra_layer_deps": "sublayer",
+        "sublayers": [
+          {
+            "id": "CommUI",
+            "members_pattern_or_list": [
+              "CommUI"
+            ],
+            "can_depend_on_sublayers": [
+              "CommFunc"
+            ]
+          },
+          {
+            "id": "CommFunc",
+            "members_pattern_or_list": [
+              "CommFunc"
+            ],
+            "can_depend_on_sublayers": []
+          }
+        ]
+      }
+    ],
+    "module_inner_layers": [
+      "shared",
+      "data",
+      "domain",
+      "presentation"
+    ],
+    "inner_dependency_direction": "upward",
+    "cross_module_exports_file": "index.ets"
+  },
+  "paths": {
+    "features_dir": "doc/features",
+    "module_catalog": "doc/module-catalog.yaml",
+    "glossary": "doc/glossary.yaml",
+    "glossary_seed": "doc/glossary-seed.txt",
+    "architecture_md": "doc/architecture.md",
+    "state_file": "framework/harness/state/.current-phase.json",
+    "receipt_dir_pattern": "doc/features/<feature>/<phase>",
+    "reports_dir_pattern": "doc/features/<feature>/<phase>/reports",
+    "docs_committed": false,
+    "extension_dir": "doc/extensions",
+    "module_graphs_dir": "<module>/code-graph.yaml",
+    "agent_bundle_root": ".agents",
+    "agent_bundle_skill_mode": "bridge"
+  },
+  "toolchain": {
+    "hvigor": {
+      "daemon": true,
+      "parallel": true,
+      "incremental": true,
+      "analyze": "advanced"
+    }
+  },
+  "state_machine": {
+    "grace_period_minutes": 5,
+    "ttl_hours": 12,
+    "max_consecutive_blocks": 3,
+    "schema_version": "1.1"
+  },
+  "spec": {
+    "visual_handoff_enforcement": "reachable",
+    "ui_spec_enforcement": "reachable"
+  },
+  "coding": {
+    "visual_parity_enforcement": "warn"
+  },
+  "active_workflow": "obligation-driven",
+  "lifecycle_hooks_enabled": true,
+  "tools": {
+    "hylyre": {
+      "vendor_dir": "framework/profiles/hmos-app/vendor/hylyre",
+      "venv_dir": ".hylyre/venv",
+      "app_snapshot_cache_dir": "doc/app-snapshot-cache",
+      "pypi_extra_index_url": "https://mirrors.tools.huawei.com/pypi/simple",
+      "auto_install": true,
+      "doctor_first_run": true,
+      "cold_restart_before_run": true,
+      "hypium_page_name": "PhoneAbility"
+    }
+  }
+}

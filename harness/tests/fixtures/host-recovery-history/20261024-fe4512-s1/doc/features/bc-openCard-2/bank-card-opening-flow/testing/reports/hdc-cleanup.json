@@ -1,0 +1,13 @@
+{
+  "ts": "2026-10-24T19:51:24.644Z",
+  "used": true,
+  "attempted": false,
+  "ok": true,
+  "exit_code": null,
+  "error": null,
+  "policy": {
+    "shouldKill": false,
+    "source": "dev_default"
+  },
+  "skipped_reason": "policy_disabled"
+}

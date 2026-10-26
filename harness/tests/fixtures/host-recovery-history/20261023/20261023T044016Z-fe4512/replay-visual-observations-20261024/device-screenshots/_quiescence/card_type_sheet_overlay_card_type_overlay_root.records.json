@@ -1,0 +1,22 @@
+{
+  "stable": true,
+  "attempts": 1,
+  "records": [
+    {
+      "attempt": 1,
+      "at": "2026-10-24T19:37:10.496Z",
+      "shot1_full_hash": "c089f3e0aa48eb08",
+      "shot2_full_hash": "a8c6fbd6dfdd4211",
+      "shot1_crop_hash": "6eff6648d3ff6222",
+      "shot2_crop_hash": "6eff6648d3ff6222",
+      "layout1_signature": "407ab636f1b0e084",
+      "layout2_signature": "407ab636f1b0e084",
+      "approot1_identity": "root:[0,117,1320,2120]|screen:[0,0,1320,2120]",
+      "approot2_identity": "root:[0,117,1320,2120]|screen:[0,0,1320,2120]",
+      "image_stable": true,
+      "layout_stable": true,
+      "approot_stable": true,
+      "image_criterion": "app_crop"
+    }
+  ]
+}

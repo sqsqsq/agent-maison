@@ -1,0 +1,15 @@
+{
+  "phase": "testing",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "started_at": "2026-10-24T17:35:35.299Z",
+  "start_commit": "9b37cce3281566e6d20f5071dc502866d976ebe3",
+  "usage": {
+    "input_tokens": 23762504,
+    "output_tokens": 54815,
+    "tool_tokens": null,
+    "requests": null,
+    "cost_estimate": null,
+    "capture_method": "stdout_json",
+    "confidence": "measured"
+  }
+}

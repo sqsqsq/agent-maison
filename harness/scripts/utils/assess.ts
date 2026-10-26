@@ -46,7 +46,8 @@ import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './cap
 import { assessFeature as assessFeatureCompletion } from './feature-assessment';
 import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 import type { CapabilityResolution } from './capability-resolution';
-import { requiredSummaryCheckGaps } from './check-disposition';
+import { requiredSummaryCheckGaps, type CurrentDisposition } from './check-disposition';
+import { resolveCompletionDisposition } from './verify-feature-completion';
 import { nextIndependentPhase } from './upstream-verdict-gate';
 
 export type AssessGapKind =
@@ -162,6 +163,8 @@ export interface AssessPrunedPropagation {
   source: string;
 }
 export interface AssessObservation {
+  /** 同次事实组装的内部结果，持久投影只保存既有 gaps/recommendation。 */
+  currentDisposition?: CurrentDisposition;
   /** Existing authority evaluated once for this action; never persisted by the result projection. */
   responsibility?: RepairResponsibilityContext;
   execution_scope?: ExecutionScope;
@@ -536,7 +539,10 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       : assurance === 'blocked' || assurance === 'degraded' || assurance === 'full'
         ? assuranceSatisfies(assurance as Assurance, requiredAssurance as MinimumAssurance)
         : false;
-    const stalenessEntry = staleness.get(phase);
+    const propagated = staleness.get(phase);
+    const stalenessEntry = propagated?.propagated_from ? recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [phase], {
+      frameworkRoot, runId: options.runId, authorityReaders: options.authorityReaders,
+    })[0] : propagated;
     const evidenceVerdict = stalenessEntry?.verdict;
     // codex 定点（宿主 run 6cb1da 归因两连猜错的根治）：stale 的具体 changed_paths 不再
     // 在投影层丢弃——"非 fresh"四个字逼着读者猜根因。
@@ -640,10 +646,17 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     degradations,
     pruned_propagations: prunedPropagations,
   });
+  const producingPhase = options.reconcile?.current_summary_fresh === true ? options.reconcile.phase_outcome?.phase : undefined;
+  const producingSummary = producingPhase ? currentSummaries.get(producingPhase) : undefined;
+  const producingReport = producingPhase ? readJson(path.join(featurePhaseReportsDir(options.projectRoot, options.feature, producingPhase, frameworkRoot), 'script-report.json')) : null;
+  const currentResults = producingPhase && producingSummary && producingReport && producingReport !== 'corrupt' && Array.isArray(producingReport.checks)
+    ? [{ phase: producingPhase, summary: producingSummary, checks: producingReport.checks as import('./check-disposition').DispositionCheck[] }] : undefined;
 
   return {
     schema_version: '1.0',
     feature: options.feature,
+    currentDisposition: resolveCompletionDisposition({ projectRoot: options.projectRoot, feature: options.feature, chain: phases,
+      frameworkRoot, runId: options.runId, executionScope: scope ?? undefined, workflow, authorityReaders: options.authorityReaders, currentResults }),
     responsibility: repairResponsibilityContext({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: options.runId,
       workflow, executionScope: scope ?? undefined, currentPhase: options.reconcile?.phase_outcome?.phase, authorityReaders: options.authorityReaders }),
     ...(scope ? { execution_scope: scope } : {}),
@@ -769,6 +782,17 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
       });
     }
   }
+  // 所有完成消费者消费同一处置；来源阶段只是证据出处，队列恢复真实修改/验证责任。
+  for (const problem of observation.currentDisposition?.completionBlocking ?? []) {
+    const phase = problem.owner && phaseOrder.has(problem.owner) ? problem.owner : problem.phase;
+    if (!phaseOrder.has(phase) || gaps.some(gap => gap.phase === phase)) continue;
+    const kind: AssessGapKind = problem.action === 'wait' ? 'deferred'
+      : problem.id === 'closure_commit_present' ? 'unclosed'
+      : problem.id === 'lineage_fresh' ? 'stale'
+      : problem.id === 'summary_schema_current' ? 'legacy_unverified' : 'failed';
+    gaps.push({ phase, kind, detail: `${problem.id}: ${problem.detail}` });
+  }
+  gaps.sort((a, b) => (phaseOrder.get(a.phase) ?? Infinity) - (phaseOrder.get(b.phase) ?? Infinity));
   return gaps;
 }
 
@@ -854,9 +878,10 @@ function recommendationForObservation(
     const currentPhase = reconcile?.phase_outcome?.phase;
     // 候选唯一真源=phase summary（assess 直读，不经 reconcile 复制）——goal 的 detached
     // runner、in-session/batch driver、manual 渲染因此共用同一事实与同一裁决。
-    const candidates = currentPhase && reconcile?.current_summary_fresh !== false
-      ? observation.phases.find((p) => p.phase === currentPhase)?.repair_candidates ?? []
-      : [];
+    const candidates = observation.phases.flatMap(phase =>
+      phase.phase === currentPhase && reconcile?.current_summary_fresh === false ? [] : (phase.repair_candidates ?? []).filter(candidate =>
+        !observation.currentDisposition || observation.currentDisposition.completionBlocking.some(problem =>
+          problem.phase === phase.phase && problem.id === `open_finding:${candidate.id}` && problem.action === 'repair')));
     if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
       const chainPhases = observation.phases.map((p) => p.phase);
       const responsibilities = candidates.map(candidate => resolveRepairResponsibility({ ...observation.responsibility, currentPhase,
@@ -869,7 +894,8 @@ function recommendationForObservation(
       )[0] ?? null;
       const reason =
         `repair_candidates: ${candidates.map((c) => `${c.id}(${c.category})`).join(', ')}`;
-      if (upstream === null) {
+      const currentOwnerOnly = responsibilities.every(result => result.owner === currentPhase && result.action === 'current');
+      if (upstream === null && !currentOwnerOnly) {
         return {
           action: 'stop',
           phase: null,
@@ -878,13 +904,15 @@ function recommendationForObservation(
           runner_action: 'backtrack_to_phase',
         };
       }
-      return {
+      if (upstream !== null) return {
         action: 'rerun_phase',
         phase: upstream,
         reason,
         requires_driver_authorization: true,
         runner_action: 'backtrack_to_phase',
       };
+      // 原回修职责已经在执行：候选仍开放，沿当前调用的完成/失败与原重试预算继续，
+      // 不把“无需跨阶段回退”误译成“责任目标不存在”。
     }
     // 【deterministic_defects → backtrack_to_coding 旧裁决链已删除 · 责任阶段统一路由】
     // 缺陷路由唯一入口=上面的 repair_candidates 分支（唯一真源=phase summary）。
@@ -892,6 +920,13 @@ function recommendationForObservation(
     // 「summary 写不进去就悄悄走旧路」的绕过口（codex 二轮冻结项①）。
   }
   const phaseOutcome = observation.reconcile?.phase_outcome;
+  // 当前阶段 PASS 不能吞掉已复用阶段的新发现；沿同一 gap/backtrack 通路处理。
+  if (!fused && phaseOutcome?.verdict === 'PASS' && gaps.length) {
+    const currentIndex = observation.phases.findIndex(phase => phase.phase === phaseOutcome.phase);
+    const pending = gaps.find(gap => (gap.kind !== 'deferred' || gap.phase === phaseOutcome.phase)
+      && observation.phases.findIndex(phase => phase.phase === gap.phase) <= currentIndex);
+    if (pending) return recommendationForGap(observation, pending, false);
+  }
   if (!fused && phaseOutcome && observation.reconcile?.current_summary_fresh !== false) {
     const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
     const currentObservation = observation.phases.find(phase => phase.phase === phaseOutcome.phase);

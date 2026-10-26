@@ -1019,7 +1019,7 @@ cases.push({
 });
 
 cases.push({
-  name: '三轮 P0-2：completion 统一规则——needs_fix UNVERIFIED 轴也拦（needs_fix）；READY 与非 PASS 轴矛盾 → 篡改拦截；DEBT_PIPELINE_ERROR 拦',
+  name: '6fd6c8c1：软视觉轴（needs_fix UNVERIFIED）走披露不拦普通完成；READY 与非 PASS 轴矛盾、DEBT_PIPELINE_ERROR 仍拦',
   run: async () => withTmpProject(async root => {
     const p = path.join(receiptDirPath(root, 'demo', 'testing'), 'reports', 'summary.json');
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -1043,10 +1043,11 @@ cases.push({
         asset: na, evidence: na,
       },
     }), 'utf-8');
-    const { collectCleanPassIssues } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
+    const { collectCleanPassIssues, collectDisclosedCompletionIssues } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
     const issues = collectCleanPassIssues({ projectRoot: root, feature: 'demo', chain: ['testing'] });
-    const axisHit = issues.find(i => i.condition === 'quality_axis_verified');
-    assertTrue(axisHit !== undefined && axisHit.kind === 'needs_fix', 'needs_fix UNVERIFIED 轴须拦且归 needs_fix');
+    assertTrue(!issues.some(i => i.condition === 'quality_axis_verified'), '软视觉轴不得再阻断普通完成');
+    assertTrue(collectDisclosedCompletionIssues({ projectRoot: root, feature: 'demo', chain: ['testing'] })
+      .some(i => i.condition === 'quality_axis_verified'), '披露投影必须保留该轴');
     assertTrue(issues.some(i => i.condition === 'release_projection_consistent'), 'READY 矛盾须拦');
     assertTrue(issues.some(i => i.condition === 'debt_pipeline_healthy'), '管线故障态须拦');
   }),

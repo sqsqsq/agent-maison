@@ -131,6 +131,8 @@ export function runAll(): UnitCaseResult[] {
       assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding')?.rows.length, 0);
     })],
     ['a retired design check ID cannot hide a different current verified design finding', () => withProject(root => {
+      // The minimal fixture has no skill contracts; let the probe use the complete framework checkout.
+      fs.rmSync(path.join(root, 'framework', 'workflows'), { recursive: true });
       const authority = 'doc/features/bp/blueprint/component-blueprint.yaml';
       writeFile(path.join(root, authority), 'current design authority with a remaining contract conflict\n');
       writeIssues(root, 'coding', issue(authority, '`build.log:1`', 'CURRENT-002'));

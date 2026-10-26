@@ -1,0 +1,22 @@
+{
+  "phase": "ut",
+  "stage": "reporting",
+  "timed_out": false,
+  "inspected_file_count": 5,
+  "inspected_files": [
+    "02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets",
+    "02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets",
+    "02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets",
+    "02-Feature/WalletMain/src/main/ets/data/repository/BankRepository.ets",
+    "02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets"
+  ],
+  "report_sections_done": [],
+  "artifacts": [
+    {
+      "path": "doc/features/bc-openCard-2/bank-card-opening-flow/ut/context-exploration.md",
+      "sha256": "8278de5b6b0bf65874a5fd96e13ce2520146e706bde3cd0b88f258a8c66ed297",
+      "mtime_ms": 1792866330567.6245
+    }
+  ],
+  "derived_at": "2026-10-24T19:29:19.983Z"
+}

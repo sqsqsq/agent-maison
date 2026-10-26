@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0",
+  "kind": "assess@1",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "workflow": "obligation-driven",
+  "track": "full",
+  "goal_end": "testing",
+  "authorization_context": {
+    "mode": "goal_mode"
+  },
+  "observed_fingerprint": "b3c7fad98119325ea97451edb5271b80726c81e6f4c53199a60483d31b55d4f1",
+  "fingerprints": {
+    "workflow": "41f6b2baab85ec890f8ef9182ab0f70050269b57c4adde437c7e7798dd27ca94",
+    "track": "a804d6ab5b827a0002416b2e8c8825a11b16cee39c2e231a6e1126f793625ce0",
+    "goal": "f2c39c6e17cd95f2aa5837168b55de2ef92a0d953895fb55d9d303ba0f659528",
+    "run_attempt": "642d322aae4f59412682ff19c6200719dc7461efc293d7a582edabff00c6c7ee",
+    "summaries": "afdcbb9ad9b0b577313bdfcb6972988832d5dd4d233b31a6f3ac71122e3e680b",
+    "evidence": "ef389cb1b37d1bb338399665b8e5898ffbf03abde1a569b2d38c0bb6dec9b45b",
+    "reconcile": "64257716f301094a979e36c1a5f3ca6ff06833e7163d763fa0d47f09213b20df",
+    "observed": "b3c7fad98119325ea97451edb5271b80726c81e6f4c53199a60483d31b55d4f1"
+  },
+  "observed": {
+    "phases": [
+      {
+        "phase": "spec",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "6d4305c1e6711520cf884459c80a5cc5805b8a2f1b74f1e47e889df6238957ef",
+        "evidence_fingerprint": "87f96e2ee4d858e10d6e4da35f7769513e37d7eb473dacc071f3cf9ba5b3c023"
+      },
+      {
+        "phase": "plan",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "77fae44717211f60ef49dae96171881fb5168bb3aff2b9633b76eca4c7a9eecb",
+        "evidence_fingerprint": "78be0a39fb79d10aaba99d8b7568fbd255a6d0308830a091a71901bcd7d703a9"
+      },
+      {
+        "phase": "coding",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "44e67a803e4a455042257364a4443770e36b788eee85cf74790df68e0bdb780c",
+        "evidence_fingerprint": "8eb496077ecd0bf4cbc736b8ad84c652bca402b023c46eb620a4fb56b4c172a7"
+      },
+      {
+        "phase": "review",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "7ca793f354a790917b5cec23e6f87d1d18dcb4a2acd7f9fee0dd2ce685e9eb17",
+        "evidence_fingerprint": "72488ca474499ba0041488f186f25a1df8a107e717c4e43b1cb0abb4009b71f5"
+      },
+      {
+        "phase": "ut",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "4a8efa9cc3e345172a31cfd833a945eda64985a0bd2913f881569fa398bd0c20",
+        "evidence_fingerprint": "8d1b050b651ab3082ebaf219a3bc7e4469e489f57c5a2044583705477bd9df92"
+      },
+      {
+        "phase": "testing",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "ed363d5567a7fe851c87b2a249bbeaf64fa1dc89693667900ea8adc6e736b0f3",
+        "evidence_fingerprint": "b915da0c976d92d7ee54fff0893a261f55598af7035237b294042128969b92a4"
+      }
+    ],
+    "degradations": [],
+    "pruned_propagations": []
+  },
+  "gaps": [],
+  "recommendation": {
+    "action": "validate_feature_completion",
+    "phase": null,
+    "reason": "链切片无剩余 gap；仍须执行 feature completion validation",
+    "requires_driver_authorization": true
+  },
+  "alternatives": [],
+  "stop": {
+    "fused": false,
+    "reason": null
+  },
+  "run_status_candidate": "CHAIN_SLICE_COMPLETED",
+  "feature_completion": "REQUIRES_VALIDATION",
+  "projection_fingerprint": "062d3a114b58f49965c0ace8d916675ade22597faea3842b335d8ede472b4e83"
+}

@@ -402,6 +402,10 @@ export async function runVisionCanaryProbe(input: {
   resolvedBinary?: ResolvedHeadlessBinary | null;
   /** plan 4e6fb3b6 §6.3：单次允许时长——调用方取固定 120 秒与剩余墙钟预算的较小者；缺省 120 秒。 */
   timeoutMs?: number;
+  /** 实际执行者的请求运输；使用同一随机卷、判卷与缓存，不探测另一个CLI。 */
+  executePrompt?: (prompt: string, answerKey: import('./vision-canary').CanaryAnswerKey, imagePath: string) => ReturnType<typeof invokeAgentHeadless>;
+  /** 非驻留运输待报告时保留本次调用材料。 */
+  retainMaterials?: () => boolean;
 }): Promise<{
   ran: boolean;
   outcome?: VisionCanaryProbeOutcome;
@@ -435,7 +439,7 @@ export async function runVisionCanaryProbe(input: {
       FEATURE: manifest.feature,
       PHASE: manifest.start_phase,
     };
-    const plan = resolveHeadlessInvokePlan(
+    const plan = input.executePrompt ? null : resolveHeadlessInvokePlan(
       adapter,
       cap.capability,
       manifest.unattended,
@@ -444,7 +448,7 @@ export async function runVisionCanaryProbe(input: {
       manifest.adapter_model_pin?.value,
       input.resolvedBinary,
     );
-    const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, {
+    const invoke = input.executePrompt ? await input.executePrompt(prompt, answerKey, imagePath) : await (input.invokeFn ?? invokeAgentHeadless)(plan!, projectRoot, {
       timeoutMs: input.timeoutMs ?? VISION_CANARY_TIMEOUT_MS,
     });
     // plan d7f3a9c4 t4：硬失败分类在写盘判卷**之前**——child spawn race 与 CLI/config 参数
@@ -453,7 +457,7 @@ export async function runVisionCanaryProbe(input: {
     // "无有效 stdout" 复用 parseCanaryAnswer（传 answerKey）——CLI banner 等非答卷不压签名。
     // plan e6b3f8d2 t1：信封方言按 adapter 解析——claude 家族看 tool_event_provenance，
     // codex 自 `--json` 接入后恒为 JSONL（不做投影会把作答判成没作答）。
-    const canaryEnvelope = resolveCanaryStdoutEnvelope(adapter, cap.capability.tool_event_provenance);
+    const canaryEnvelope = input.executePrompt ? 'none' : resolveCanaryStdoutEnvelope(adapter, cap.capability.tool_event_provenance);
     const canaryStructuredStdout = canaryEnvelope !== 'none';
     const hardCli = resolveCanaryHardCliFailure(invoke, {
       answerKey,
@@ -521,7 +525,7 @@ export async function runVisionCanaryProbe(input: {
     // b7e4d2a9 Todo4：成功/失败/无效答卷三态都删随机卷 PNG；删除失败只警告不 HALT，
     // 不落事件不建清理账本——hard-kill 最坏残留当前 run 下一个固定文件。
     try {
-      fs.rmSync(imagePath, { force: true });
+      if (!input.retainMaterials?.()) fs.rmSync(imagePath, { force: true });
     } catch (rmErr) {
       console.warn(`[vision-canary] preflight 随机卷清理失败（不阻断）：${(rmErr as Error).message}`);
     }

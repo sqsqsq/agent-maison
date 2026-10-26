@@ -14,6 +14,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import type { UnitCaseResult } from '../run-unit';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import { prepareGoalModeRun, runGoalModeHostBridge } from '../../scripts/goal-mode-entry';
 import type { InSessionPhaseRequestContext } from '../../scripts/utils/goal-in-session-driver';
 import { casAcquireRunOwner, readRunControl } from '../../scripts/utils/goal-run-control';
@@ -797,19 +798,25 @@ ${rv.stdout}`);
   },
 ];
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runSelectedCases(selector?: string) {
   const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   for (const c of cases) {
+    const name = `e2e-spec-requirement-closure: ${c.name}`;
+    if (!matchesUnitCase(name, selector)) continue;
+    const finish = startCaseTiming([name], timings);
     try {
       await c.run();
-      results.push({ name: `e2e-spec-requirement-closure: ${c.name}`, ok: true });
+      results.push({ name, ok: true });
     } catch (err) {
       results.push({
-        name: `e2e-spec-requirement-closure: ${c.name}`,
+        name,
         ok: false,
         error: (err as Error).stack ?? (err as Error).message,
       });
-    }
+    } finally { finish(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

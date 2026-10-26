@@ -204,6 +204,36 @@ cases.push({
 });
 
 cases.push({
+  name: 'A1 interaction surface：背景与原生弹层投影不作hard，同弹层真实侵入仍hard',
+  fn: () => {
+    const screen = mkScreen({
+      id: 'surface',
+      root: uiNode({ type: 'navigation_frame', order: 0, children: [
+        uiNode({ type: 'content_display', order: 1, id: 'protected' }),
+        uiNode({ type: 'action_button', order: 2, id: 'action' }),
+      ] }),
+      protected_region: ['protected'], forbidden_overlap: [['protected', 'action']],
+    });
+    const protectedNode = () => node('[48,961][1272,1129]', { id: 'protected' });
+    const actionNode = () => node('[1164,1016][1272,1124]', { id: 'action', clickable: 'true' });
+    const cross = runOracle(screen, mkDump([
+      node('[0,117][1320,2120]', { type: 'NavDestination' }, [protectedNode()]),
+      node('[0,962][1320,2120]', { type: 'SheetPage' }, [actionNode()]),
+    ]));
+    for (const signal of ['A1_protected_region', 'A1_forbidden_overlap']) {
+      assert(cross.findings.some(f => f.signal === signal && f.tier === 'advisory'), `${signal} 跨surface仅披露`);
+      assert(!cross.findings.some(f => f.signal === signal && f.tier === 'hard'), `${signal} 跨surface不误报hard`);
+    }
+    const same = runOracle(screen, mkDump([
+      node('[0,962][1320,2120]', { type: 'SheetPage' }, [protectedNode(), actionNode()]),
+    ]));
+    for (const signal of ['A1_protected_region', 'A1_forbidden_overlap']) {
+      assert(same.findings.some(f => f.signal === signal && f.tier === 'hard'), `${signal} 同surface仍hard`);
+    }
+  },
+});
+
+cases.push({
   name: 'A2 越界 hard；A3 close 默认规则仅 advisory（校准 D5 前不硬 gate）',
   fn: () => {
     const screen = mkScreen({

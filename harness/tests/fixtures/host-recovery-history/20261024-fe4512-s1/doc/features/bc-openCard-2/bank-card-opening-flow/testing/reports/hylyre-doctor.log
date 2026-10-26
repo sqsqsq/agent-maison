@@ -1,0 +1,3 @@
+--- hylyre ensure 2026-10-24T19:50:59.138Z feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 ---
+venv python 目标: D:\1.code\SimulatedWalletForHmos\.hylyre\venv\Scripts\python.exe
+utf8-roundtrip: PASS — round-trip 一致（4 条中文 predicate 全链字节保真）

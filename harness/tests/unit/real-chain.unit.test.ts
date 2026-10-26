@@ -35,6 +35,8 @@ import {
 import { runGoalRuntimeChain, requestVia, claudeReadEventLine, writeAgentEvents } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
+import { parseResultBlock, RESULT_BLOCK_OPEN, RESULT_BLOCK_CLOSE, verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
 import * as YAML from 'yaml';
 import { fixture as seedChangeUnitBlueprint } from './blueprint-skill-projection.unit.test';
 import { rewriteBlueprint } from './change-unit-progression.unit.test';
@@ -125,6 +127,30 @@ export function publishVerifier(p: RealChainProject, phase: string): void {
     reportText: `# verifier — ${p.feature} / ${phase}\n\n语义一致性复核通过。\n`,
     skipSummaryPatch: true,
   });
+}
+
+/** Model boundary: consume the newly issued request and write only its verifier reply. */
+export function publishRequestedVerifier(p: RealChainProject, ctx: { phase: string; prompt: string; runId: string }): boolean {
+  if (!ctx.phase.endsWith('-verifier-format-repair')) return false;
+  const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+  assert(request && request.feature === p.feature && ctx.phase === request.phase + '-verifier-format-repair', 'model must consume the actual current verifier request');
+  const summary = readSummary(p, request!.phase);
+  assert(summary?.verifier_subject_id === request!.subject_id, 'model must not answer a historical subject');
+  const promptPath = path.resolve(p.root, request!.prompt_path);
+  assert(promptPath.startsWith(path.resolve(p.root) + path.sep), 'model reads only this isolated project');
+  fs.readFileSync(promptPath, 'utf8');
+  p.runId = ctx.runId;
+  const reportsDir = path.dirname(path.join(p.root, request!.prompt_path));
+  const reportPath = path.join(reportsDir, verifierReportMdFilename(request!.subject_id));
+  if (fs.existsSync(reportPath)) {
+    const text = fs.readFileSync(reportPath, 'utf8');
+    const result = parseResultBlock(text);
+    assert(result, 'existing model reply must keep its actual terminal result');
+    publishFixtureVerifierEvidence({ projectRoot: p.root, reportsDir, feature: p.feature, phase: request!.phase,
+      subjectId: request!.subject_id, skipSummaryPatch: true, verdict: result!.verdict, blockerCount: result!.blocker_count,
+      reportText: text.slice(0, text.indexOf(RESULT_BLOCK_OPEN)) + text.slice(text.indexOf(RESULT_BLOCK_CLOSE) + RESULT_BLOCK_CLOSE.length) });
+  } else publishVerifier(p, request!.phase);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1390,6 +1416,7 @@ export function writeCuUtMaterials(p: RealChainProject): void {
 /** 平铺 `demo-card` 六阶段链（正例用例与快照生成器共用）。 */
 export function runDemoCardChain(project: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
   return runGoalRuntimeChain(project.root, {
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: project.frameworkRoot,
     featureId: project.feature,
     realHarness: true,
@@ -1410,6 +1437,7 @@ export function runDemoCardChain(project: RealChainProject, birthChain: string[]
 
 export function runCuBoundChain(cu: RealChainProject, birthChain: string[]): ReturnType<typeof runGoalRuntimeChain> {
   return runGoalRuntimeChain(cu.root, {
+    onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
     frameworkRoot: cu.frameworkRoot,
     featureId: cu.feature,
     realHarness: true,
@@ -1445,7 +1473,9 @@ test('4f combined 新 CU UI unknown→spec 调研物化→coding/review→L3 返
     const before = fs.readFileSync(path.join(cu.root, REAL_CHAIN_SOURCE));
     git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'combined UI definition baseline']);
     let needsSeam = false; let repaired = false; let enteredTesting = false;
-    const probe = await runGoalRuntimeChain(cu.root, { frameworkRoot: cu.frameworkRoot, featureId: cu.feature,
+    const probe = await runGoalRuntimeChain(cu.root, {
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
+      frameworkRoot: cu.frameworkRoot, featureId: cu.feature,
       realHarness: true, adapter: 'claude', freshRequirement: requirement,
       freshStartPhase: prepared.scope.phase_chain[0] as 'spec', freshEndPhase: prepared.scope.phase_chain.at(-1),
       onSpec: ctx => {
@@ -1540,7 +1570,9 @@ for (const oldCu of [false, true]) test(`66457a08 real entry: ${oldCu ? 'old CU�
     assert(birth[0] === (oldCu ? 'plan' : 'spec'), prepare.stdout);
     assert(!fs.existsSync(path.join(cu.root, `${cuRel(cu)}/spec/reports/fidelity-intent.json`)), 'prepare must not write fidelity');
     git(cu.root, ['add', '-A']); git(cu.root, ['commit', '-qm', 'selection handoff baseline']);
-    const probe = await runGoalRuntimeChain(cu.root, { frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'claude', realHarness: true,
+    const probe = await runGoalRuntimeChain(cu.root, {
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
+      frameworkRoot: cu.frameworkRoot, featureId: cu.feature, adapter: 'claude', realHarness: true,
       freshStartPhase: birth[0] as 'spec' | 'plan', freshEndPhase: birth.at(-1), omitRequirement: true, launchArgs: ['--requirement-file', 'doc/selection-request.md'],
       freshManifestContent: YAML.stringify({ feature: cu.feature, requirement, requirement_source_files: ['doc/selection-request.md'],
         budget: { max_total_turns: 4 }, unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 } }),
@@ -1964,6 +1996,7 @@ fs.unlinkSync = (file, ...args) => {
     const cu = { ...p, feature, module: 'ledger', modulePath: 'src/ledger' };
     const phases: string[] = prepared.json.phase_chain;
     const probe = await requestVia('detach', p.root, { frameworkRoot: p.frameworkRoot, featureId: feature, realHarness: true,
+      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
       freshStartPhase: phases[0] as 'spec', freshEndPhase: phases.at(-1), freshRequirement: CU_REQUIREMENT, omitRequirement: true, launchArgs: scopeStep.parameters.requirement_arguments,
       freshBudget: { max_total_turns: 2 },
       onSpec: ctx => { cu.runId = ctx.runId; writeCuSpecMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'spec'); },

@@ -1,0 +1,864 @@
+{
+  "description": "Only context files absent from preserved S0, read from its exact original Git baseline; no S1 implementation or machine verdicts",
+  "original_baseline_commit": "28394b60d2d017c70c18aa01449469e0d04bf107",
+  "host_root": "D:/1.code/SimulatedWalletForHmos",
+  "captured_at": "2026-10-25T13:45:35.312Z",
+  "files": [
+    {
+      "object_sha1": "e2713a2779c5a3e0eb879efe6115455592caeea5",
+      "bytes": 55,
+      "file": "01-Product/Phone/.gitignore",
+      "sha256": "c4868dbab8112ec2283b23448ad795702a967bb55229333ab317cbeb8c3ad690",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/.gitignore"
+    },
+    {
+      "object_sha1": "32c0fdd780b252a219129a204e1e80c5700469cd",
+      "bytes": 508,
+      "file": "01-Product/Phone/build-profile.json5",
+      "sha256": "7727b3a9bf7e522930cb1ec259c0bd26c948d09d37d0d724aab23f5f499a4004",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/build-profile.json5",
+      "source_sha256": "165c5e02e368cfae38401dbfc371a106ab3f5a8a1ed05078625c0f1c573476dc",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "b0e3a1ab98a91bc918d6404b2413111a5011f14a",
+      "bytes": 227,
+      "file": "01-Product/Phone/hvigorfile.ts",
+      "sha256": "67cc02aa9ccf2f3a2c58e7fee4b6e3a00ffb6128c11f76b7fec5f00ad2d63581",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/hvigorfile.ts"
+    },
+    {
+      "object_sha1": "1e7e54e150fd2e5cd28ead313ec6a97977b917e0",
+      "bytes": 1002,
+      "file": "01-Product/Phone/obfuscation-rules.txt",
+      "sha256": "1c127360e10209c7fe0a43e3edf9504c34ad33a75882904254d4acc2b33b6cc5",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/obfuscation-rules.txt"
+    },
+    {
+      "object_sha1": "682a85767c4bb02d149c6b94db30300a1c0f4e9a",
+      "bytes": 429,
+      "file": "01-Product/Phone/oh-package.json5",
+      "sha256": "d21620f7ab37b76e6dbf71718334dbb9544f34dfa8124187ab822ca74ed5d776",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/oh-package.json5"
+    },
+    {
+      "object_sha1": "472b431c2884bad5b81df03a11dca0124d7a91c8",
+      "bytes": 2169,
+      "file": "01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets",
+      "sha256": "f8de83c4589f8dee3b7f553dac004882362a92ba327e547ed7884f83157149fe",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/ets/phoneability/PhoneAbility.ets"
+    },
+    {
+      "object_sha1": "ab6c7c0082942d9246d0f1dfe0aaa7d949191ae9",
+      "bytes": 507,
+      "file": "01-Product/Phone/src/main/ets/phonebackupability/PhoneBackupAbility.ets",
+      "sha256": "bb874f03e2b7d72dc2f70130b82d542d11c2636b3bf1611b36162b08fefac865",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/ets/phonebackupability/PhoneBackupAbility.ets"
+    },
+    {
+      "object_sha1": "3c63f358e4dac0e7b686031f1325b7285e00ce16",
+      "bytes": 1262,
+      "file": "01-Product/Phone/src/main/module.json5",
+      "sha256": "105a4a8bf227d24b66e0ad71cf35f786454e2e21691542430f29e16c7d3165a4",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/module.json5"
+    },
+    {
+      "object_sha1": "02a6116363ac638d2e01a9efcdc3858d4fd460db",
+      "bytes": 307,
+      "file": "01-Product/Phone/src/main/resources/base/element/color.json",
+      "sha256": "668a140e8d93b22d97ea715beb11a9b8f90970f6887564afc925dc6f70030e44",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/base/element/color.json"
+    },
+    {
+      "object_sha1": "33ea22304f9b1485b5f22d811023701b5d4e35b6",
+      "bytes": 92,
+      "file": "01-Product/Phone/src/main/resources/base/element/float.json",
+      "sha256": "8db02f7a08f7b7b73d6eb95b09a6643463d10258b757901e70f255de0a2c83ef",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/base/element/float.json"
+    },
+    {
+      "object_sha1": "edaf06e7da14c20b88be20ea6beb5b8165bc1ec4",
+      "bytes": 383,
+      "file": "01-Product/Phone/src/main/resources/base/element/string.json",
+      "sha256": "0e0f98db90b65a46d7ad38cb1a3336d14cc2b4a07d68ea215794e75f382ccbd0",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/base/element/string.json"
+    },
+    {
+      "object_sha1": "f4f8fea1cb9ca829259447ac00b09e12517825c8",
+      "bytes": 5474,
+      "file": "01-Product/Phone/src/main/resources/base/media/phone_icon.png",
+      "sha256": "d1167fcd311bc5ca773d73b9edbfcf3427dd4c2de9054ce102df564e1141bfe5",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/base/media/phone_icon.png"
+    },
+    {
+      "object_sha1": "78f40ae7c494d71e2482278f359ec790ca73471a",
+      "bytes": 34,
+      "file": "01-Product/Phone/src/main/resources/base/profile/backup_config.json",
+      "sha256": "467a97321341fba6872a6c79a25d89b16eded554c94dae3d4a2faa0d99e59358",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/base/profile/backup_config.json"
+    },
+    {
+      "object_sha1": "feec276e105eeb8d621c20aaf838f318b0a94150",
+      "bytes": 37,
+      "file": "01-Product/Phone/src/main/resources/base/profile/main_pages.json",
+      "sha256": "ed151c09ec9351c32a3a7652342b01457c6ef3ef5ea2821a3385b94a78b29685",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/base/profile/main_pages.json"
+    },
+    {
+      "object_sha1": "79b11c2747aec33e710fd3a7b2b3c94dd9965499",
+      "bytes": 98,
+      "file": "01-Product/Phone/src/main/resources/dark/element/color.json",
+      "sha256": "f26f3f1e47165ae79ebe6f295a3e12593f01e90079d03fc7ff61e47ce0b366a6",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/dark/element/color.json"
+    },
+    {
+      "object_sha1": "1c3f0957a6507df9470936fca013f011be91568b",
+      "bytes": 243,
+      "file": "01-Product/Phone/src/main/resources/zh_CN/element/string.json",
+      "sha256": "aa5d136026bdca6189c40fd060453930a6d67a573e507d989bd386df3f7dc7ba",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/main/resources/zh_CN/element/string.json"
+    },
+    {
+      "object_sha1": "7a73a41bfdf76d6f793007240d80983a52f15f97",
+      "bytes": 3,
+      "file": "01-Product/Phone/src/mock/mock-config.json5",
+      "sha256": "8eb95bcbc154530931e15fc418c8b1fe991095671409552099ea1aa596999ede",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/mock/mock-config.json5"
+    },
+    {
+      "object_sha1": "85c78f67579d6e31b5f5aeea463e216b9b141048",
+      "bytes": 1734,
+      "file": "01-Product/Phone/src/ohosTest/ets/test/Ability.test.ets",
+      "sha256": "8600c6681413e2ee3283671c6a67c2bb1421726559163aca8596ff17d2a389d6",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/ohosTest/ets/test/Ability.test.ets"
+    },
+    {
+      "object_sha1": "794c7dc4ed66bd98fa3865e07922906e2fcef545",
+      "bytes": 99,
+      "file": "01-Product/Phone/src/ohosTest/ets/test/List.test.ets",
+      "sha256": "c2300b6cb78c4e2469e72ce7d0d79f5207bc5004f14cdac0bbf859da248dad15",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/ohosTest/ets/test/List.test.ets"
+    },
+    {
+      "object_sha1": "150e13274ded112071b4e50c0b4a627b2455248e",
+      "bytes": 176,
+      "file": "01-Product/Phone/src/ohosTest/module.json5",
+      "sha256": "f0d97f3be8ea23fc7fa86786390d082766504eb15b8f63e7c49e7dfce20800d1",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/ohosTest/module.json5",
+      "source_sha256": "37924ea2cce2bc27347f47ecd3a86c433f0d3879eb5ab6c5d7be9ab92140f097",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "bb5b5c3731e283dd507c847560ee59bde477bbc7",
+      "bytes": 105,
+      "file": "01-Product/Phone/src/test/List.test.ets",
+      "sha256": "268e4980ef2fdfe0c7ff6a19402bc214ab90f25807998098d2513cc50e9dd86b",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/test/List.test.ets"
+    },
+    {
+      "object_sha1": "165fc1615ee8618b4cb6a622f144a9a707eee99f",
+      "bytes": 1624,
+      "file": "01-Product/Phone/src/test/LocalUnit.test.ets",
+      "sha256": "ab72e1fa03e7c61ec51a52fe56fd366f66aa1a4415e18c7953daf5be14f488b7",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:01-Product/Phone/src/test/LocalUnit.test.ets"
+    },
+    {
+      "object_sha1": "96b81d4fc0b51905f7779f9ff4ebfc5d6d75fd60",
+      "bytes": 144,
+      "file": "02-Feature/WalletMain/build-profile.json5",
+      "sha256": "a06f7e430293c22c626ed34c0f7c5d7baf0a9446cf5b1b70fec9333622c37842",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/build-profile.json5",
+      "source_sha256": "3abc910a7ad190110bd63c175e61f61f7731fe46cda0fb10f37386f701d1f19c",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "8132322e7bf37d4f0c49e29600f203557092ca98",
+      "bytes": 107,
+      "file": "02-Feature/WalletMain/hvigorfile.ts",
+      "sha256": "7ec951258192e7cc9eed2296da8ac7b927a0b90b2f6edef70358d515bfe71a1e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/hvigorfile.ts"
+    },
+    {
+      "object_sha1": "393094cc4e1dfe23bb013b6bd243fd99401063ec",
+      "bytes": 261,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/BankGroup.ets",
+      "sha256": "0f3628778f1cff0d616c48f83a7b0b053cbbe8f3e91bec5ac4ea066b222e488f",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/BankGroup.ets"
+    },
+    {
+      "object_sha1": "14127225484d0e6fe7205634408bd9d92b8b5557",
+      "bytes": 131,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/CardCategory.ets",
+      "sha256": "5ae6ec349030a64eb84a2952359026d8350351a39dd32333fb6fe5050fd0ec95",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/CardCategory.ets"
+    },
+    {
+      "object_sha1": "caed90ca7706261d764ef4ac589b44ab2544f3fd",
+      "bytes": 103,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/FinanceEntry.ets",
+      "sha256": "4f8f226911f221454e024d5a46fdb67411b4491f6a02be9e12db08686c47b0ee",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/FinanceEntry.ets"
+    },
+    {
+      "object_sha1": "a84d1ee7c76a2a483cc7cc3dee09a7794fb2856f",
+      "bytes": 114,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/HomeCardState.ets",
+      "sha256": "a4345502457596c47903462dc5fddbcf108cdf992406b34e14220c1ce43047f0",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/HomeCardState.ets"
+    },
+    {
+      "object_sha1": "abeb0eed4d6b95fb6f13460843e512c1c63812ce",
+      "bytes": 132,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/MessageInfo.ets",
+      "sha256": "58b0472eaeabd06cbab736a84bd7c62f7382966aff1e0b8bc1f0fabdf434bcb4",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/MessageInfo.ets"
+    },
+    {
+      "object_sha1": "d54bbcab1a2ca4ec37e237a9c5ed04d1c705990a",
+      "bytes": 108,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/PromoInfo.ets",
+      "sha256": "98751a1628e35f6e79061098f76639223a948120d883a7950581b3abaaa32831",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/PromoInfo.ets"
+    },
+    {
+      "object_sha1": "86225ed6a50880db1f033f037859b7e10d36ed5e",
+      "bytes": 144,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/ServiceEntry.ets",
+      "sha256": "1f019c847f40e0c762500dced3de73bb5603e63afbd10cf80bb104ea9c87e5fc",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/ServiceEntry.ets"
+    },
+    {
+      "object_sha1": "6f666d66ebefaaf28b4090c803e2312810ca0d07",
+      "bytes": 82,
+      "file": "02-Feature/WalletMain/src/main/ets/data/model/SettingEntry.ets",
+      "sha256": "287ef6ee289f1843cf30609417c25b0e9e838c56e80a483c6cce422197b5784e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/model/SettingEntry.ets"
+    },
+    {
+      "object_sha1": "ea927b86932418bb09b7c797b510a4aec4929984",
+      "bytes": 1477,
+      "file": "02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets",
+      "sha256": "d08fb4becfca94e7dd68523c31d6a5801edc8259340ee76eeb1f4d80ed9ab417",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets"
+    },
+    {
+      "object_sha1": "316b209e9f4a5f50d35504d990fe8d90c5d39f8c",
+      "bytes": 2796,
+      "file": "02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets",
+      "sha256": "7b42aec326501312c8ca091b8ac7d53fe246193ede33c429d4660a205099d4df",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets"
+    },
+    {
+      "object_sha1": "194312c674b5cf4d2be74f4fccd620e25b796130",
+      "bytes": 800,
+      "file": "02-Feature/WalletMain/src/main/ets/data/repository/MineRepository.ets",
+      "sha256": "cb9578623ec05dccfe4de26626fb39da5f12dfbd93e672165cabe30df8cd1e84",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/data/repository/MineRepository.ets"
+    },
+    {
+      "object_sha1": "9273c8e007a53afea3045588d85d72d6d887b9b6",
+      "bytes": 2492,
+      "file": "02-Feature/WalletMain/src/main/ets/domain/service/BankGroupService.ets",
+      "sha256": "4395b997b6e08fa3186a53ec68091d28d9630a740f82c0332b9f4a8453d70d76",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/domain/service/BankGroupService.ets"
+    },
+    {
+      "object_sha1": "ecb3607c968c9ba59738de1b6a48f6373e0ce526",
+      "bytes": 1146,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/AccountCard.ets",
+      "sha256": "e3271489389de7b5238f71f5716c8f567f87ecd38b90047d21e0a73a534ce884",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/AccountCard.ets"
+    },
+    {
+      "object_sha1": "830419ced60e24fccd0b016ab93652b1fca16f37",
+      "bytes": 1454,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/AccountConfirmDialog.ets",
+      "sha256": "bd3e5d4ea91c7985c0622831b3535b5a94d5ce24d38c88002f0a136585d1a33b",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/AccountConfirmDialog.ets"
+    },
+    {
+      "object_sha1": "8f44c28ad495369f6ab1e13321fc002ecc78be51",
+      "bytes": 452,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/AddCardParityAnchors.ets",
+      "sha256": "9b3aa65abcc67512b885abef456c4fa5ccc71dfea3329543eb6c20578fdd8ecd",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/AddCardParityAnchors.ets"
+    },
+    {
+      "object_sha1": "b27206c822739ff9f9b6fa2c0c796cc572746cbf",
+      "bytes": 394,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/AddManageCardsButton.ets",
+      "sha256": "63d3d5fbd8ad8fd56b6e997d9f9bfdfefa749f5590d2a8d4dc56466cdb4c9295",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/AddManageCardsButton.ets"
+    },
+    {
+      "object_sha1": "b417bcd74fa742873bcc049bd2a705a9d68cb921",
+      "bytes": 2865,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/BankListRow.ets",
+      "sha256": "1d0ef69162ef330ba04f6a8f329f537bfab9ac19aa5c673f8c9beb40693b8733",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/BankListRow.ets"
+    },
+    {
+      "object_sha1": "6f35ad8594b5d098325a56323c385edb9250f4a6",
+      "bytes": 4200,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/CardCategoryList.ets",
+      "sha256": "327feee21757fe45aba70ecfcc85a4047fdc4eb1566e07a3b4762c12b92e7853",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/CardCategoryList.ets"
+    },
+    {
+      "object_sha1": "9619978da1433d7ca3085ef2e12514138e439ce8",
+      "bytes": 1480,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/CardGuideSection.ets",
+      "sha256": "ab7e66e868b9f779e3e408d5a29326fff924fe555573f99d31a6e1c15c5fbee4",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/CardGuideSection.ets"
+    },
+    {
+      "object_sha1": "70047d5877db4fd0f4224117be4cd6eea4be2057",
+      "bytes": 3694,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/CardStackSection.ets",
+      "sha256": "36c0230bfb8c80a7a86e2c991ad0973e060d9e4fe2f4b4395a47132fe5a273dc",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/CardStackSection.ets"
+    },
+    {
+      "object_sha1": "756c042ffbf98a172c39d7a47f9f797c3f9c4907",
+      "bytes": 1330,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/HomeTabBottomTab.ets",
+      "sha256": "e71598760183c8253d1fb18f540ea82f93a8fa53ce3dc9a6afcb607cf860b93f",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/HomeTabBottomTab.ets"
+    },
+    {
+      "object_sha1": "6a4cc414789c7590a6c706c434bec1bf1a07bec1",
+      "bytes": 680,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/HomeTabHeader.ets",
+      "sha256": "d0607cd529cb4bd3811873a65ed42ee4a3910c7b22ac4e47cd1536a9c2e661d6",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/HomeTabHeader.ets"
+    },
+    {
+      "object_sha1": "f4b990968104b79eeffc89966763f2d4d9d9685a",
+      "bytes": 1170,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/ManageNonLocalSheet.ets",
+      "sha256": "ecd9eae66eca211102d1a388e05a4c72ba2f980d6bfd4cd9ca76cf9ff43b4374",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/ManageNonLocalSheet.ets"
+    },
+    {
+      "object_sha1": "535d7966eb5ce4b7fc4ea444814fc0536d2cb748",
+      "bytes": 1789,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/MessageCenterRow.ets",
+      "sha256": "9ff00a55e590b472a98e6858a1e8c7a61333786a9e401c9c9818841c633196cf",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/MessageCenterRow.ets"
+    },
+    {
+      "object_sha1": "ad88eb1a32786b1f3a21b0912f2cbb9b444dfd7f",
+      "bytes": 961,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/MineTabBottomTab.ets",
+      "sha256": "3ca89e0417cde6e68eb274762007b26ba29d359460b10e1894c0392b4fc2f89c",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/MineTabBottomTab.ets"
+    },
+    {
+      "object_sha1": "2c818d90c6bbf2fd8e79ac516f5e1caad9279235",
+      "bytes": 3318,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/PromoSwiper.ets",
+      "sha256": "7bbbe87f98927ac18e80160ab10e081aabd51ae00de57e2d73038a8dfe266716",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/PromoSwiper.ets"
+    },
+    {
+      "object_sha1": "a9a3a6be0364468063b8ac441da0a27fc7115f4a",
+      "bytes": 2684,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/components/ServiceGridSwiper.ets",
+      "sha256": "4bd99c12332188d490d9744b793d91bf3b16db0fb52d38597ff8472b1405701e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/components/ServiceGridSwiper.ets"
+    },
+    {
+      "object_sha1": "0b86d15c55c34ace089172aefeea230c7a6dc593",
+      "bytes": 3407,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets",
+      "sha256": "b06696e280d9aac073ab7fc546bc7eb4d6cfa324119aed3cfa19792923598e9a",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets"
+    },
+    {
+      "object_sha1": "6e06a396f1c67a1a65b2e657311bb68c2cdf07bc",
+      "bytes": 4634,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets",
+      "sha256": "3326dedfc930f8aba0d2874d7c5ac305994e23f1420f1a4ab537a83cddb31c68",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets"
+    },
+    {
+      "object_sha1": "a9e8d9ea6f47c080781085498d7095c8aa948e2c",
+      "bytes": 6593,
+      "file": "02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets",
+      "sha256": "a2c83893ce0dde879bbe55e7209022edadb1e42e99c251eaaf3079bd48d5843e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets"
+    },
+    {
+      "object_sha1": "572b4fa2deae06478245944000b76596df2b40da",
+      "bytes": 672,
+      "file": "02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets",
+      "sha256": "ff8ebf75b06ee1b753eb134b74962ab9436bd8a18408252b627d460237b9af5e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/shared/HomeLaunchBridge.ets"
+    },
+    {
+      "object_sha1": "b6e7beaa4a204d7dbd6cd47c8f41a9896ecd42c6",
+      "bytes": 533,
+      "file": "02-Feature/WalletMain/src/main/ets/shared/components/CardImageBanner.ets",
+      "sha256": "26ffbf27c9fa0f9aaa8dccb9e9cb4a99a6fd1db7321b1c8e574c0f5a1549bd02",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/shared/components/CardImageBanner.ets"
+    },
+    {
+      "object_sha1": "f05e1b62770848f98c356062f6cf4281920f584e",
+      "bytes": 483,
+      "file": "02-Feature/WalletMain/src/main/ets/shared/constant/HomeConstants.ets",
+      "sha256": "9a6007b987554e83f6504dcd0b8f6fd7327dd03fd36b296526a00fb799f3d16b",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/ets/shared/constant/HomeConstants.ets"
+    },
+    {
+      "object_sha1": "5ee94dafc1d26407a13445c39a8f9d99a8306aeb",
+      "bytes": 150,
+      "file": "02-Feature/WalletMain/src/main/module.json5",
+      "sha256": "2c6ef520936e4295902004a602219b9c63e8b62effa1979902eae42a42cb13c2",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/module.json5",
+      "source_sha256": "e53bd64e9ac975940e6ba578379d296c4e7188aa4393e6ccd38e4fe708e3acf1",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "da624a93cff9c661242b7ea9081da0919b1762fb",
+      "bytes": 12080,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_abc.png",
+      "sha256": "ee06340c47c0d707b89a11bb8fa2139933fab91fa5883857acd67039e4ba2c3d",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_abc.png"
+    },
+    {
+      "object_sha1": "1487764632d30aaece4b85ced5e43eed895a6408",
+      "bytes": 11500,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bobj.png",
+      "sha256": "4586e2a8c459eda92a244be954827e8deff40d5de9890f4bd1508e7aeb8754cb",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bobj.png"
+    },
+    {
+      "object_sha1": "0c165e44cc9518c6e8ac79bc0134e6891a443a7d",
+      "bytes": 9998,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_boc.png",
+      "sha256": "dca8861ec605d45145b548dd41931412344d4a0fdfb93926ce5c9a0c04a80162",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_boc.png"
+    },
+    {
+      "object_sha1": "30264adae8f83b14efd538a775cd89b3e830c517",
+      "bytes": 7240,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bocom.png",
+      "sha256": "a64681facad79b4bf1132e31dfb93d167d5e69cd1600aa3e1e6ad6e8fba3c1ea",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bocom.png"
+    },
+    {
+      "object_sha1": "e8a07bb1863556e0905e6ba91bdd2d42cfd48ad2",
+      "bytes": 13443,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bogz.png",
+      "sha256": "aaf9859e389bb4bab5b4db02614c52544af62fd1aa0ead2c809d798ca38ee943",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bogz.png"
+    },
+    {
+      "object_sha1": "f840bc43dacc143c498652e3291de63a57ffcbdb",
+      "bytes": 15371,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonb.png",
+      "sha256": "19fb58e1a122ca11591993c5cc5ee53dffee04b4db1b4edfa2e6b025bed6a276",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonb.png"
+    },
+    {
+      "object_sha1": "bb1e323a77026b19434b80a82248799741a26359",
+      "bytes": 11481,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonj.png",
+      "sha256": "bc4be595042e9991ead7e0dd3ac20f23ca35b6631a8a4db20c89c7fcc77642c2",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bonj.png"
+    },
+    {
+      "object_sha1": "81cbfff512dc23c82bba51dccf228e3679cdba7b",
+      "bytes": 7959,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bosh.png",
+      "sha256": "b2257c784148190368d08e98c1691a3485527390e4088cd848a5245623fa27d7",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_bosh.png"
+    },
+    {
+      "object_sha1": "14667be961597562590458e43dfec5e600344aa2",
+      "bytes": 9346,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ccb.png",
+      "sha256": "06f671e2e5175fde7c85eb341d6366717b22243c0238813a07d22da03fd1ee85",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ccb.png"
+    },
+    {
+      "object_sha1": "e31539756a4c70a139ff43ed0d2ef88158642a88",
+      "bytes": 4954,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ceb.png",
+      "sha256": "05809ba161e313d905f6be1dd026b4c241f0461d843f5760aeba25016aa37f75",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_ceb.png"
+    },
+    {
+      "object_sha1": "2474ba001e58ba6b31e40b61469e51525370051b",
+      "bytes": 7119,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cgb.png",
+      "sha256": "ae8b83d3d22476a9d1d0222b20403e6444935b20a5b1d03d0ac57bae7090f808",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cgb.png"
+    },
+    {
+      "object_sha1": "82949bfe20a5db658c5f5ef548d704208e8b912b",
+      "bytes": 8719,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cib.png",
+      "sha256": "2aeb710ee8958fd33e79f021cb37028e75d476e284ce4f338306b2ab1dbb9a86",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cib.png"
+    },
+    {
+      "object_sha1": "dbbb6941a5d258a3168334fb2f4c8f5c06c63b00",
+      "bytes": 13265,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_citic.png",
+      "sha256": "7b314c3185980f7d35896939414ea523d5063c696f009b7f35830a901d42517e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_citic.png"
+    },
+    {
+      "object_sha1": "51dde80de563c53c2e1daecca27d5beff9f672c3",
+      "bytes": 14140,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png",
+      "sha256": "7edccfcc0ca89fb093490d116953a45ae38c5aaf97bbb7a6fde26b368ac3ba7b",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png"
+    },
+    {
+      "object_sha1": "cb5549d7eaec14d6e9206ae830db28e2abfd8a97",
+      "bytes": 11799,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmbc.png",
+      "sha256": "e4c0204ef83f98f6401673bc33e7ebc96bd6e85ed3f05cfc9a44e73c6510f737",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmbc.png"
+    },
+    {
+      "object_sha1": "c656a103f5c93a00a87d5ff3be46b1088f632e7a",
+      "bytes": 6093,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_hxb.png",
+      "sha256": "6aff523b227b5d8e70666c7c6b7833c663a6d413b32f46d4b4064a9d2fe47f1e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_hxb.png"
+    },
+    {
+      "object_sha1": "32c7ac01a840281a343ed0213aeaa5f016528671",
+      "bytes": 11189,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_icbc.png",
+      "sha256": "ebee713d2491f30a76ef22a823deeed76b1e2414aec29b64a3209f92ec5f117c",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_icbc.png"
+    },
+    {
+      "object_sha1": "b518607db847265054ce9c85ac5b5725ae2321f1",
+      "bytes": 13550,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_pab.png",
+      "sha256": "09da1f35ec6d14c7c9719a54740cc0d4952c017f9710044505de10ecc6a18b4a",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_pab.png"
+    },
+    {
+      "object_sha1": "d50665b2e0213cb861b8c30a8a519fb7420dd782",
+      "bytes": 8765,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_psbc.png",
+      "sha256": "2d1a39991e1ef158535ecaa546f76d7ffeeb163baf94829a291d78904b586f96",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_psbc.png"
+    },
+    {
+      "object_sha1": "5d71a77058e6a65bd3bc53963ba741b3fcd3021c",
+      "bytes": 6340,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/bank_logo_spdb.png",
+      "sha256": "0ae17a2bf2478451fd9bf99b5a0e562157f27361c3a6746665799e5795505505",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/bank_logo_spdb.png"
+    },
+    {
+      "object_sha1": "1b3d8acd745d5d4660af34facc8ba8d14c40f110",
+      "bytes": 53009,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/card_pack_intro_illustration.png",
+      "sha256": "f410f9d430342b528f4a0549d69c2b5c8d32fcc323e00dd22750a3aeb2c0de3f",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/card_pack_intro_illustration.png"
+    },
+    {
+      "object_sha1": "5c3903e4687b9aa97d60a3f4b99f6388592ffbe2",
+      "bytes": 14656,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/empty_wallet_illustration.png",
+      "sha256": "e8155a66f7476b56e571d74b4774aa0e5c6a5ed57f24458227008e3d3fb65228",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/empty_wallet_illustration.png"
+    },
+    {
+      "object_sha1": "209daa1acdc9236d422614eba2b5691157df8471",
+      "bytes": 1386,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/huawei_card_logo.png",
+      "sha256": "fb49e516b1b2ec62c03ca2d2fec674731aec80bf9915977239f5c340f8075bc6",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/huawei_card_logo.png"
+    },
+    {
+      "object_sha1": "7d1f6a2f2576b6ca9226fccebc7f441c285b291d",
+      "bytes": 216071,
+      "file": "02-Feature/WalletMain/src/main/resources/base/media/promo_marketing_illustration.png",
+      "sha256": "f3424eb556abfb465b9bd1b931e093de92078c6750d0caf1f531553fa8f0682d",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/media/promo_marketing_illustration.png"
+    },
+    {
+      "object_sha1": "e323c204c30b67eae4f4c111e506f34d626219c9",
+      "bytes": 176,
+      "file": "02-Feature/WalletMain/src/main/resources/base/profile/main_pages.json",
+      "sha256": "c0a1eff8a7e425058b9039cdc8892ee810e12b03f395811e77784d945cbbc22d",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/main/resources/base/profile/main_pages.json"
+    },
+    {
+      "object_sha1": "ac9120377ea915ba2ffa953a27d0fa751822b566",
+      "bytes": 194,
+      "file": "02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets",
+      "sha256": "488be81966d4b1be6d82888e5ac4a4e1059fe7208ce3173b0e2f25522f06cc68",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/ohosTest/ets/test/List.test.ets"
+    },
+    {
+      "object_sha1": "8215de5f420128383bffc0d75c3033d975e437d7",
+      "bytes": 2463,
+      "file": "02-Feature/WalletMain/src/ohosTest/ets/test/home_page_ut.test.ets",
+      "sha256": "492977637d3920f4c5b641c6cf29ac757aefd3452a46200e93e2e46f26250e7a",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/ohosTest/ets/test/home_page_ut.test.ets"
+    },
+    {
+      "object_sha1": "2a79bf668381987cbb400303b56bad34b1d01a7c",
+      "bytes": 1466,
+      "file": "02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets",
+      "sha256": "b4e2708c7ade963f2f1abba9ca4b8393173e140ce33dce068647b11657e36081",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/ohosTest/ets/test/spy/SpyBankRepository.ets"
+    },
+    {
+      "object_sha1": "ec3d234d8c8032e3b227fac1ad51999c777aa5b2",
+      "bytes": 151,
+      "file": "02-Feature/WalletMain/src/ohosTest/module.json5",
+      "sha256": "150aadc644257b28d4ccf799e7d7fcc53387fbbb60d579fef71d7b288e6fd491",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:02-Feature/WalletMain/src/ohosTest/module.json5",
+      "source_sha256": "9133df492185824c15c45188a5ef7e2bd699cd4e77d1b8dcadde2d6a1fc7fa83",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "1d2a8e300102c43a0cdc5f01b0525b7c29888ff5",
+      "bytes": 106,
+      "file": "04-BusinessBase/AccountManager/build-profile.json5",
+      "sha256": "46d1b87a9913197745942b7aad13d81bf029e71fd07436ed5cf5bfbbb15d01eb",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/build-profile.json5",
+      "source_sha256": "ac634bb741b80be16f82ae73a89e9cf89ae78911c24d04bcf4c51f535d7746be",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "8132322e7bf37d4f0c49e29600f203557092ca98",
+      "bytes": 107,
+      "file": "04-BusinessBase/AccountManager/hvigorfile.ts",
+      "sha256": "7ec951258192e7cc9eed2296da8ac7b927a0b90b2f6edef70358d515bfe71a1e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/hvigorfile.ts"
+    },
+    {
+      "object_sha1": "809f81ce8d589cd08f8c9a8b74bd2c7ee5ba98a5",
+      "bytes": 258,
+      "file": "04-BusinessBase/AccountManager/oh-package.json5",
+      "sha256": "675fccb48129e7082c0ced0925ac747c7dd8bdabbed8cc725a7eee4fb9b2ab59",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/oh-package.json5",
+      "source_sha256": "3a5b28fc46f096f9f61d9d1a58581f50ea51a9c9269407471e0be28d3f990642",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "13081e2fa8ebc864a6d592a79d3397d72b10be2d",
+      "bytes": 151,
+      "file": "04-BusinessBase/AccountManager/src/main/ets/data/model/LoginState.ets",
+      "sha256": "4fc10adb0c4388a5bc92bea4f3a5670a0e07ff1bb04a5a58a09a46689fbf2060",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/src/main/ets/data/model/LoginState.ets"
+    },
+    {
+      "object_sha1": "dc2d6ff9297e3def02ad150d537134ae717e2407",
+      "bytes": 254,
+      "file": "04-BusinessBase/AccountManager/src/main/ets/shared/constant/AccountConstants.ets",
+      "sha256": "be8186356421e4c6b586fbe2536bb20b6c05065adbe0688f495b4de571e67284",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/src/main/ets/shared/constant/AccountConstants.ets"
+    },
+    {
+      "object_sha1": "60b9ebb507a30e45a8691a2d6500d0dcce9159c7",
+      "bytes": 154,
+      "file": "04-BusinessBase/AccountManager/src/main/module.json5",
+      "sha256": "923c754caa6f337ae566734af8e1a0f3272893cd66a5371cabdf48096d7b78cb",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/src/main/module.json5",
+      "source_sha256": "db1476a429e00690c2f64d8790d829bc223448f26562405ba469ae25cdb992d7",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "3584d3679ae0f06a22efec7c1b57558e6fc8c56c",
+      "bytes": 166,
+      "file": "04-BusinessBase/AccountManager/src/main/resources/base/element/string.json",
+      "sha256": "7a2ec34ed1b7fbfd62cfe014a0a4a7ff74b17c14dfe48e899307b6a3d2f5ce22",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:04-BusinessBase/AccountManager/src/main/resources/base/element/string.json"
+    },
+    {
+      "object_sha1": "1d2a8e300102c43a0cdc5f01b0525b7c29888ff5",
+      "bytes": 106,
+      "file": "05-SystemBase/CommFunc/build-profile.json5",
+      "sha256": "46d1b87a9913197745942b7aad13d81bf029e71fd07436ed5cf5bfbbb15d01eb",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/build-profile.json5",
+      "source_sha256": "ac634bb741b80be16f82ae73a89e9cf89ae78911c24d04bcf4c51f535d7746be",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "8132322e7bf37d4f0c49e29600f203557092ca98",
+      "bytes": 107,
+      "file": "05-SystemBase/CommFunc/hvigorfile.ts",
+      "sha256": "7ec951258192e7cc9eed2296da8ac7b927a0b90b2f6edef70358d515bfe71a1e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/hvigorfile.ts"
+    },
+    {
+      "object_sha1": "1086a63d836a4b451b51e19d2cb67e508dd7f7e3",
+      "bytes": 195,
+      "file": "05-SystemBase/CommFunc/oh-package.json5",
+      "sha256": "8e0036bb993671939a09f0586033068aee3a4d3b81d5e14fec08742ba97286fa",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/oh-package.json5",
+      "source_sha256": "67783ebafcf0d7df83031802c3bdbf32cf7e0e955108fd0a651b617e3aa13606",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "7e4eb4fa05a828b6c067f9bca383c5bd455ed7b5",
+      "bytes": 169,
+      "file": "05-SystemBase/CommFunc/src/main/ets/index.ets",
+      "sha256": "6b30cf2f7b003b169cce8c71e4935d2c584d79bb7e8aca7dd4b03e310b854df6",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/src/main/ets/index.ets"
+    },
+    {
+      "object_sha1": "7bb9b009e1920ffe79474ce6f8b89939f3299ea3",
+      "bytes": 348,
+      "file": "05-SystemBase/CommFunc/src/main/ets/shared/log/Logger.ets",
+      "sha256": "0ccf2b7b029f7e3fb1f3ec5e638162ace2b5a6d48c08c2ccc36891287f45698d",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/src/main/ets/shared/log/Logger.ets"
+    },
+    {
+      "object_sha1": "f292e45cebe58e3dedc72a2e18703aaa70768cc4",
+      "bytes": 744,
+      "file": "05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets",
+      "sha256": "3e731b4d3835e22aaa076763b826eaf32fa732cac92a5894f36d8f659df80714",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/src/main/ets/shared/navigation/NavPathContext.ets"
+    },
+    {
+      "object_sha1": "fabfde5a8c281a34b057e89aa3bd88c93fb5a6d8",
+      "bytes": 484,
+      "file": "05-SystemBase/CommFunc/src/main/ets/shared/utils/MaskUtil.ets",
+      "sha256": "558cc9e5fd0a3cbf3afb5818447d6e9e22192dfe1bcdde0acbdd74e179d997d9",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/src/main/ets/shared/utils/MaskUtil.ets"
+    },
+    {
+      "object_sha1": "b7731cfea6e0654ffa4384e2ad09a3a8e32e98ab",
+      "bytes": 148,
+      "file": "05-SystemBase/CommFunc/src/main/module.json5",
+      "sha256": "6e45b8ea212d02d6df64557f4d31f936a50eba8c0291d5a4df6d84484cae6b0a",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/src/main/module.json5",
+      "source_sha256": "2360c6585506fcafe4212438741d801ae7fd1fa1af5c76ff8c8232ea5b8483eb",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "3fd6eeb2e14527d40d0da6885ac4e6ce4ea234ce",
+      "bytes": 89,
+      "file": "05-SystemBase/CommFunc/src/main/resources/base/element/string.json",
+      "sha256": "8fd72fe4474c3402458be8a4d0c7e258bac151dfbcb49cf0f414a525b2441368",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommFunc/src/main/resources/base/element/string.json"
+    },
+    {
+      "object_sha1": "1d2a8e300102c43a0cdc5f01b0525b7c29888ff5",
+      "bytes": 106,
+      "file": "05-SystemBase/CommUI/build-profile.json5",
+      "sha256": "46d1b87a9913197745942b7aad13d81bf029e71fd07436ed5cf5bfbbb15d01eb",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/build-profile.json5",
+      "source_sha256": "ac634bb741b80be16f82ae73a89e9cf89ae78911c24d04bcf4c51f535d7746be",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "8132322e7bf37d4f0c49e29600f203557092ca98",
+      "bytes": 107,
+      "file": "05-SystemBase/CommUI/hvigorfile.ts",
+      "sha256": "7ec951258192e7cc9eed2296da8ac7b927a0b90b2f6edef70358d515bfe71a1e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/hvigorfile.ts"
+    },
+    {
+      "object_sha1": "506c4564611f9d1572367081e6eccd2ee44545b8",
+      "bytes": 237,
+      "file": "05-SystemBase/CommUI/oh-package.json5",
+      "sha256": "c0233d5bfaa983143b1b80cd513d8c8633efe912461ecc72911da171f7be1c2e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/oh-package.json5",
+      "source_sha256": "b1822d58170d24be4f0d85ca0a19c1e5171330b39c4431305847a80ae0883dba",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "b497f169a8980d1d16691d2892a20d0c31d78df4",
+      "bytes": 268,
+      "file": "05-SystemBase/CommUI/src/main/ets/index.ets",
+      "sha256": "cb8a257e0a2639f163053a62357ffb89a4c18fe90187d0e33a15ebfbde7bf84f",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/ets/index.ets"
+    },
+    {
+      "object_sha1": "061efbd5061adfc56f3b6998adc3082b57613284",
+      "bytes": 777,
+      "file": "05-SystemBase/CommUI/src/main/ets/presentation/components/ActionListItem.ets",
+      "sha256": "4bc6399ca67f965d6736d38b63fdb6b077e572f3066b5ba2380a1c5c6245045f",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/ets/presentation/components/ActionListItem.ets"
+    },
+    {
+      "object_sha1": "df87a63f3c3a635d59d8848fd21330eb50c7e4d3",
+      "bytes": 312,
+      "file": "05-SystemBase/CommUI/src/main/ets/presentation/components/SectionCard.ets",
+      "sha256": "5476b33b3e55ec1d5e9b39c7ab7e363ab3aa6b5635da6408d804b970638738a6",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/ets/presentation/components/SectionCard.ets"
+    },
+    {
+      "object_sha1": "1a9f8ab2fc354b4ad33fd12464ad0ae11d038859",
+      "bytes": 241,
+      "file": "05-SystemBase/CommUI/src/main/ets/presentation/components/ToastUtil.ets",
+      "sha256": "11478f7ab773531a9432bbecccede4851dc488ce93e8ba432bdcc3c5a022dc6e",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/ets/presentation/components/ToastUtil.ets"
+    },
+    {
+      "object_sha1": "25bcce730ec336c0a3dc899477c594c452ddab0e",
+      "bytes": 200,
+      "file": "05-SystemBase/CommUI/src/main/ets/shared/theme/CommColors.ets",
+      "sha256": "330f1fc4ae946535b0b9ccbeaaf18f235981c889aa2d40540c6c05973ad3e5da",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/ets/shared/theme/CommColors.ets"
+    },
+    {
+      "object_sha1": "6ea8b6a59f2b264da4e5b5a6f624450eacfa7a5b",
+      "bytes": 146,
+      "file": "05-SystemBase/CommUI/src/main/module.json5",
+      "sha256": "951ded3dc048d0f32134355023962958f2cee82390a7be789fa7de326186835d",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/module.json5",
+      "source_sha256": "ed44eb341256cb80cda9b59ccd94751c79573856ffea673134ffe5373df24823",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "9c904aaf98c8cd0e780088445d85e6a770c22e57",
+      "bytes": 456,
+      "file": "05-SystemBase/CommUI/src/main/resources/base/element/color.json",
+      "sha256": "5d96c3728e1e9f3f7f38cc6a8d0b59ad0e30799f84b19cc38cd513a2c77e598c",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/resources/base/element/color.json"
+    },
+    {
+      "object_sha1": "e73e5297bf09ce7620f83adbb40402c93a33fd32",
+      "bytes": 161,
+      "file": "05-SystemBase/CommUI/src/main/resources/base/element/float.json",
+      "sha256": "801f345c49fd946e5713d27869ce8105b8b57deda47141651c5b2701e86b8fc5",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/resources/base/element/float.json"
+    },
+    {
+      "object_sha1": "c8900700bc1ed037ee739aad9ebb1c96a84cddcf",
+      "bytes": 87,
+      "file": "05-SystemBase/CommUI/src/main/resources/base/element/string.json",
+      "sha256": "baef5f827a83b67ed5b85d6bb0630be85e1d851676964081b47a16f37a81ded1",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:05-SystemBase/CommUI/src/main/resources/base/element/string.json"
+    },
+    {
+      "object_sha1": "3bef3ceb0edcd55bc18974e70a974a6c139686f2",
+      "bytes": 214,
+      "file": "AppScope/app.json5",
+      "sha256": "e26f1764a800c1e662284b3738b5d4277bf29d168d6713b2dbad0ab401c7b232",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:AppScope/app.json5",
+      "source_sha256": "c5d966f00c43d7859a690ec9991adcf0f4e7445494c11f01ab11326f62d3bef9",
+      "normalization": "CRLF->LF only"
+    },
+    {
+      "object_sha1": "b0ffacea0db83187700e524b86e3692991cf027e",
+      "bytes": 93,
+      "file": "AppScope/resources/base/element/string.json",
+      "sha256": "2844296a4280e43e8f25984d8e604ad4d2a4636bee069b8f342ef65f0953758a",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:AppScope/resources/base/element/string.json"
+    },
+    {
+      "object_sha1": "f4f8fea1cb9ca829259447ac00b09e12517825c8",
+      "bytes": 5474,
+      "file": "AppScope/resources/base/media/phone_icon.png",
+      "sha256": "d1167fcd311bc5ca773d73b9edbfcf3427dd4c2de9054ce102df564e1141bfe5",
+      "source": "git:D:/1.code/SimulatedWalletForHmos@28394b60d2d017c70c18aa01449469e0d04bf107:AppScope/resources/base/media/phone_icon.png"
+    }
+  ]
+}

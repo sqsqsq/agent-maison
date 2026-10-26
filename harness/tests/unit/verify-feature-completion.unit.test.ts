@@ -22,7 +22,9 @@ import {
   generateFeatureCompletion,
   hasPendingHumanReview,
   resolvePhaseRunIds,
+  readCurrentDispositionInput,
 } from '../../scripts/utils/verify-feature-completion';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import {
   seedCleanCompletionChain,
   writeFeatureArtifact,
@@ -379,6 +381,39 @@ const cases: Case[] = [
       generate(root, { chain: CHAIN_T, phaseRunIds: runIds, phaseAttempts: attempts });
       const v = verify(root, { expectedChain: CHAIN_T });
       assert.strictEqual(v.verdict, 'VALID', v.reasons.join('；'));
+    },
+  },
+  {
+    name: 'current gate facts do not demand the previous completion manifest to bind new runtime evidence, while completion still requires it',
+    run: () => {
+      const root = mkProject();
+      seedCleanChain(root, { chain: CHAIN_T, invocations: true,
+        beforeClosure: r => { writeArtifact(r, 'acceptance.yaml', P0_ACCEPTANCE); writeNativeRuntimeEvidence(r); } });
+      const reports = path.join(receiptDirPath(root, FEATURE, 'testing'), 'reports');
+      const evidenceFile = path.join(reports, 'device-test-evidence.json');
+      const evidence = JSON.parse(fs.readFileSync(evidenceFile, 'utf8'));
+      const nextTrace = path.join(reports, 'new-runtime-trace.json');
+      fs.copyFileSync(evidence.trace_path, nextTrace); evidence.trace_path = nextTrace;
+      fs.writeFileSync(evidenceFile, JSON.stringify(evidence));
+      const summary = JSON.parse(fs.readFileSync(path.join(reports, 'summary.json'), 'utf8'));
+      assert(summary.closure_commit, '前提：旧closed summary/commit仍在场');
+      const checks = [{ id: 'current_native_run', status: 'PASS', severity: 'BLOCKER' }];
+      const current = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, feature: FEATURE, chain: CHAIN_T,
+        currentResults: [{ phase: 'testing', summary, checks }] }));
+      assert(!current.completionBlocking.some(problem => problem.id === 'runtime_step_evidence'));
+      const gap = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, feature: FEATURE, chain: CHAIN_T,
+        currentResults: [{ phase: 'testing', summary, checks: [...checks,
+          { id: 'required_native_execution', status: 'SKIP', severity: 'BLOCKER', failure_kind: 'framework_bug' }] }] }));
+      assert(gap.completionBlocking.some(problem => problem.id === 'required_check_conclusion'));
+      const bindingGap = collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).find(issue => issue.condition === 'runtime_step_evidence');
+      assert(bindingGap, '完成时仍须发布本轮运行产物绑定');
+      assert.equal(bindingGap.action, 'verify', '真实运行输入已有，只须重建框架索引');
+      fs.rmSync(evidenceFile);
+      const missingInput = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, feature: FEATURE, chain: CHAIN_T,
+        currentResults: [{ phase: 'testing', summary, checks }] })).completionBlocking.find(problem => problem.id === 'runtime_step_evidence');
+      assert(missingInput, '当前gate缺原始运行证据不能伪装成尚待发布manifest');
+      assert.equal(missingInput.action, 'repair');
+      assert.equal(missingInput.owner, 'testing');
     },
   },
   {

@@ -320,7 +320,7 @@ test('跨 run / 跨 adapter 不继承：run 或 adapter 不同即从零重算', 
   }
 });
 
-test('V5①②/V6 结构性不可达三判据：非 goal / attended(owner.kind=session) / adapter 无解析器', () => {
+test('V5①②/V6 非 goal 和无解析器仍不可达；会话缺当前工具审计为 not_yet', () => {
   const { root, refDir } = mkRefsHost();
   const runId = 'run-unreach';
   try {
@@ -369,7 +369,7 @@ test('V5①②/V6 结构性不可达三判据：非 goal / attended(owner.kind=s
       const ok = chain();
       assert.strictEqual(ok.ok, true, JSON.stringify(ok.failures));
 
-      // ② attended：run-control owner.kind=session（唯一可靠机内信号）
+      // ② 会话实际可读图；旧后台回执不能代替当前请求已接收的工具审计。
       fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({
         schema: 'run-control@1', run_id: runId, current_epoch: 1,
         owner: {
@@ -380,8 +380,8 @@ test('V5①②/V6 结构性不可达三判据：非 goal / attended(owner.kind=s
       }), 'utf-8');
       const attended = chain();
       assert.strictEqual(attended.ok, false);
-      assert.strictEqual(severestVlFailureKind(attended.failureKinds), 'unreachable', JSON.stringify(attended.failures));
-      assert.ok(attended.failures.some(f => /attended/.test(f)), JSON.stringify(attended.failures));
+      assert.strictEqual(severestVlFailureKind(attended.failureKinds), 'not_yet', JSON.stringify(attended.failures));
+      assert.ok(attended.failures.some(f => /当前会话请求已接收的实际工具审计/.test(f)), JSON.stringify(attended.failures));
       // process owner → 按 detached 处理（读不到/非法同理）
       fs.writeFileSync(path.join(runDir, 'run-control.json'), JSON.stringify({
         schema: 'run-control@1', run_id: runId, current_epoch: 1,

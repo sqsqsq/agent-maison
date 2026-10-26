@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "execution_key": "8a959857d4bf360ab8e4e13adec345b66833b01ef7d3358bfdf10755440d9398",
+  "generated_at": "2026-10-24T19:51:24.323Z",
+  "runs": [
+    {
+      "run_dir": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\testing\\reports\\20261024T194450Z-003\\hylyre",
+      "outcome": "success"
+    }
+  ],
+  "min_rounds_for_verdict": 2,
+  "rows": [
+    {
+      "tc_id": "TC-001",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-002",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-003",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-004",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-005",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-006",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-007",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-008",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    },
+    {
+      "tc_id": "TC-009",
+      "rounds": 1,
+      "consistent": 1,
+      "first_divergent_step": null,
+      "outcomes": [
+        "通过"
+      ]
+    }
+  ]
+}

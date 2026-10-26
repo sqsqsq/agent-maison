@@ -1372,11 +1372,35 @@ const projectionCases: TestCase[] = [
       const src = stripComments(
         fs.readFileSync(path.join(SCRIPTS_DIR, 'utils', 'run-state-reducer.ts'), 'utf8'),
       );
-      assert(!/halt_reason/.test(src), 'reducer 读了 halt_reason —— 那是第二张分类表的入口');
+      const classifiesReason = (text: string): boolean => /\bhalt_reason\b/.test(text
+        .replace(/typeof\s+ev\.halt_reason\s*===\s*['"]string['"]/g, 'true')
+        .replace(/\breason:\s*String\(ev\.recovery_reason\s*\?\?\s*ev\.halt_reason\)/g, 'reason: projectedReason'));
+      assert(!classifiesReason(src), 'reducer 只能检查原因字段类型并原值投影到 recovery.reason，不得按原因判类');
+      for (const forbidden of [
+        "if (ev.halt_reason === 'device_not_ready') return 'WAITING';",
+        'switch (ev.halt_reason) { default: break; }',
+        'const disposition = table[ev.halt_reason];',
+        'lookupIncident(ev.halt_reason);',
+        'decide({ incident: ev.halt_reason });',
+      ]) assert(classifiesReason(forbidden), `禁分类守卫漏掉了：${forbidden}`);
       assert(
         !/lookupIncident|INCIDENT_REGISTRY|\bdecide\s*\(/.test(src),
         'reducer 不得直接调用裁决内核，只折叠已落盘投影',
       );
+    },
+  },
+  {
+    name: 'reducer 原值投影 halt_reason：同一原因的不同权威 disposition 不被重新分类',
+    run: () => {
+      for (const reason of ['device_not_ready', 'unauthorized_source_mutation', 'unregistered_reason']) {
+        for (const disposition of ['RESUME_READY', 'RECOVERY_PENDING', 'WAITING', 'TERMINAL'] as const) {
+          const state = reduceRunState([{ type: 'run_start' }, { type: 'phase_halt', phase: 'testing',
+            halt_reason: reason, run_disposition: disposition,
+            ...(disposition === 'WAITING' ? { run_wait_kind: 'external' } : {}) }]);
+          assert(state.run_disposition === disposition, `${reason} 不得覆盖已落盘 ${disposition}`);
+          assert(state.recovery?.reason === reason, '展示保留真实原因原值');
+        }
+      }
     },
   },
   // ==========================================================================

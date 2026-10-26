@@ -1,0 +1,9 @@
+{
+  "name": "@aspect/CommFunc",
+  "version": "1.0.0",
+  "description": "系统功能封装",
+  "main": "src/main/ets/index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

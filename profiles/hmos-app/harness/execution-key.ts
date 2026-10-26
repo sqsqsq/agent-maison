@@ -285,6 +285,47 @@ export function decideReuse(
   return { reusable: latest, reason: `最近同键 run ${latest.dirStamp} 成功、证据完整（执行事实与派生副本均已冻结）` };
 }
 
+// ---------------------------------------------------------------- 同调用失败事实
+
+export interface SameInvocationFailureOptions {
+  leg?: ExecutionKeyLeg;
+  artifacts?: ReadonlyArray<FrozenArtifactSpec>;
+  /**
+   * 各 leg 用既有 reader 验证原执行结果与已知环境障碍是否仍适用。
+   * 工具失败与产品断言失败保留各自事实，本函数不猜产品语义。
+   */
+  usable?: (view: ExecutionKeyRunView) => boolean;
+}
+
+/**
+ * plan 6fd6c8c1 §4.2：**失败事实消费**——最新一条同键记录若属于同一 run/phase/attempt、
+ * 冻结执行事实完整且仍适用，则原 gate 继续读它的 trace/结果与候选，不重复真机执行。
+ * 与 decideReuse 分离：outcome=failed 永远不是成功候选，也不重建 run.ok=true。
+ * 身份三元组沿用现成 goal_invocation 字段，不造新身份；无 Goal 身份的轻量请求不命中。
+ */
+export function findSameInvocationFailure(
+  reportsBase: string,
+  executionKey: string,
+  invocation: NonNullable<ExecutionKeyRecord['goal_invocation']>,
+  opts: SameInvocationFailureOptions = {},
+): ExecutionKeyRunView | null {
+  const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
+  const latest = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')[0];
+  const record = latest?.record;
+  const identity = record?.goal_invocation;
+  if (!latest || !record || record.execution_key !== executionKey || !identity) return null;
+  if (record.outcome === 'success' || record.outcome === 'started') return null;
+  if (identity.run_id !== invocation.run_id || identity.phase !== invocation.phase
+    || identity.attempt_id !== invocation.attempt_id) return null;
+  const frozen = record.frozen_files ?? [];
+  if (record.trace_path && !fs.existsSync(record.trace_path)) return null;
+  const complete = artifacts.filter(f => f.group === 'execution')
+    .every(f => frozen.includes(f.frozen) && fs.existsSync(path.join(latest.runDir, f.frozen)));
+  if (!complete) return null;
+  if (opts.usable && !opts.usable(latest)) return null;
+  return latest;
+}
+
 // ---------------------------------------------------------------- 稳定性
 
 export interface StabilityRow {

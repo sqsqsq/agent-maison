@@ -324,6 +324,13 @@ function isKinPair(a: LocatedElement, b: LocatedElement): boolean {
   return isAncestorOf(a.node, b) || isAncestorOf(b.node, a);
 }
 
+/** 原生弹层/页面各自接收交互；背景节点的屏幕投影不侵入前景surface。 */
+function interactionSurface(node: LayoutNode, ancestors: readonly LayoutNode[]): LayoutNode {
+  return [...ancestors, node].reverse().find(current => current.type === 'SheetPage' || current.type === 'Dialog'
+    || current.type === 'Popup' || current.type === 'Menu' || current.type === 'NavDestination' || current.type === 'Page')
+    ?? ancestors[0] ?? node;
+}
+
 export interface LayoutOracleScreenInput {
   screenId: string;
   screen: UiSpecScreen;
@@ -392,12 +399,14 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
     }
     if (!isKinPair(a, b) && rectsIntersect(a.node!.bounds!, b.node!.bounds!)) {
       const u = unionRect(a.node!.bounds!, b.node!.bounds!);
+      const sameSurface = interactionSurface(a.node!, a.ancestors ?? []) === interactionSurface(b.node!, b.ancestors ?? []);
       emit(
-        'hard',
+        sameSurface ? 'hard' : 'advisory',
         'A1_forbidden_overlap',
         [ea, eb],
         normBBox(u, dump.appRect),
-        `声明禁止重叠的 [${ea}] 与 [${eb}] 运行时 bounds 相交（${ea}=${JSON.stringify(a.node!.bounds)}，${eb}=${JSON.stringify(b.node!.bounds)}）——调整布局使二者不相交`,
+        sameSurface ? `声明禁止重叠的 [${ea}] 与 [${eb}] 运行时 bounds 相交（${ea}=${JSON.stringify(a.node!.bounds)}，${eb}=${JSON.stringify(b.node!.bounds)}）——调整布局使二者不相交`
+          : `[${ea}] 与 [${eb}] 仅在不同原生交互surface投影相交，不构成A1侵入`,
       );
     }
   }
@@ -421,13 +430,15 @@ export function collectLayoutOracleForScreen(input: LayoutOracleScreenInput): La
       if (kin) continue;
       if (rectsIntersect(c.node.bounds!, p.node!.bounds!)) {
         const label = c.node.id || c.node.text || c.node.type;
+        const sameSurface = interactionSurface(p.node!, p.ancestors ?? []) === interactionSurface(c.node, c.ancestors);
         emit(
-          'hard',
+          sameSurface ? 'hard' : 'advisory',
           'A1_protected_region',
           // 入侵者是运行时节点（非声明元素）——elements 记保护区 id + 入侵者最佳标识
           [prot, label].filter(Boolean),
           normBBox(unionRect(c.node.bounds!, p.node!.bounds!), dump.appRect),
-          `保护区 [${prot}] 被可交互控件「${label}」侵入（${JSON.stringify(c.node.bounds)}）——移出保护区或调整布局`,
+          sameSurface ? `保护区 [${prot}] 被可交互控件「${label}」侵入（${JSON.stringify(c.node.bounds)}）——移出保护区或调整布局`
+            : `保护区 [${prot}] 与「${label}」仅在不同原生交互surface投影相交，不构成A1侵入（${JSON.stringify(c.node.bounds)}）`,
         );
       }
     }

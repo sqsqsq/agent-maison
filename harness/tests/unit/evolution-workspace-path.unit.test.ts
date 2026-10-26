@@ -80,7 +80,7 @@ const SECOND_BLUEPRINT_ID = 'ledger-app-blueprint-v2';
 const COMPONENT_ID = 'ledger';
 const UNIT_IDS = ['ledger-consumer', 'ledger-recovery', 'ledger-refresh', 'ledger-summary'];
 
-function test(name: string, body: () => void): UnitCaseResult {
+function executeCase(name: string, body: () => void): UnitCaseResult {
   try {
     body();
     return { name, ok: true };
@@ -93,7 +93,7 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-async function asyncTest(name: string, body: () => Promise<void>): Promise<UnitCaseResult> {
+async function executeAsyncCase(name: string, body: () => Promise<void>): Promise<UnitCaseResult> {
   try {
     await body();
     return { name, ok: true };
@@ -257,8 +257,10 @@ function withCompleteProject(
   }
 }
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+export async function runAll(selector?: string): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
+  const test = (name: string, body: () => void) => matchesUnitCase(name, selector) ? executeCase(name, body) : { name, ok: true };
+  const asyncTest = (name: string, body: () => Promise<void>) => matchesUnitCase(name, selector) ? executeAsyncCase(name, body) : Promise.resolve({ name, ok: true });
   const temp = buildWorkspaceProject();
   try {
     results.push(test('生产入口 1：resolveChangeUnitRef 在新布局下零 BLOCKER 且 binding=matched', () => {
@@ -960,5 +962,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }
   }));
 
-  return results;
+  return results.filter(result => matchesUnitCase(result.name, selector));
 }
+
+export async function runSelectedCases(selector?: string) { return selectedUnitCases(await runAll(selector), selector, []); }
+import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';

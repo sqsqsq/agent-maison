@@ -1,0 +1,74 @@
+[meta] bundle=com.example.simulatedwallet module=phone_test runner=/ets/testrunner/OpenHarmonyTestRunner timeoutMs=60000
+[hap] D:\1.code\SimulatedWalletForHmos\01-Product\Phone\build\default\outputs\ohosTest\Phone-ohosTest-signed.hap
+[device] hdcPresent=true available=true targets=3UJ0225321000395
+[device-ready/ut-install] 设备未锁屏
+$ hdc install -r D:\1.code\SimulatedWalletForHmos\01-Product\Phone\build\default\outputs\ohosTest\Phone-ohosTest-signed.hap
+[Info]App install path:D:\1.code\SimulatedWalletForHmos\01-Product\Phone\build\default\outputs\ohosTest\Phone-ohosTest-signed.hap msg:install bundle successfully. 
+AppMod finish
+
+
+$ hdc shell aa test -b com.example.simulatedwallet -m phone_test -s unittest /ets/testrunner/OpenHarmonyTestRunner -w 60000
+start ability successfully.
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=ActsAbilityTest
+
+
+OHOS_REPORT_STATUS: class=ActsAbilityTest
+OHOS_REPORT_STATUS: current=1
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=2
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=assertContain
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=ActsAbilityTest
+OHOS_REPORT_STATUS: current=1
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=2
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=assertContain
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=ActsAbilityTest
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=wallet destination registry
+
+
+OHOS_REPORT_STATUS: class=wallet destination registry
+OHOS_REPORT_STATUS: current=2
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=2
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-6] existing and bank-opening destinations remain registered together
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=wallet destination registry
+OHOS_REPORT_STATUS: current=2
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=2
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-6] existing and bank-opening destinations remain registered together
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=wallet destination registry
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_RESULT: stream=Tests run: 2, Failure: 0, Error: 0, Pass: 2, Ignore: 0
+OHOS_REPORT_CODE: 0
+OHOS_REPORT_STATUS: taskconsuming=2
+
+TestFinished-ResultCode: 0
+TestFinished-ResultMsg: your test finished!!!
+user test finished.
+

@@ -17,6 +17,7 @@ import {
 } from './phase-transition-policy';
 import { isValidFidelityTarget } from './fidelity-shared';
 import type { ProviderRef } from './types';
+import { relFeaturesDir } from '../../config';
 
 export interface GoalBudget {
   max_retries_per_phase?: number;
@@ -1192,7 +1193,7 @@ export function loadGoalManifestFromRun(
       `[goal-manifest] --resume run_id 非法（dry-run 无 resume 语义，run_id 不得以 . 开头或含分隔符）: ${runId}`,
     );
   }
-  const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
+  const featuresDir = opts.featuresDir ?? relFeaturesDir(projectRoot);
   const abs = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json');
   if (!fs.existsSync(abs)) {
     throw new Error(`[goal-manifest] 未找到 run manifest: ${abs}`);

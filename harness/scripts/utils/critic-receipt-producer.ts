@@ -29,6 +29,7 @@ import { featureDir, loadFrameworkConfig } from '../../config';
 import { resolveEffectiveVisionContext } from './effective-vision-context';
 import { resolveRequirementReferenceImages } from './fidelity-shared';
 import { readRunControl } from './goal-run-control';
+import { sessionExecutionForInvoke, sessionToolEventsLogPath } from './session-execution-handoff';
 
 
 export interface RunnerAttestation {
@@ -324,9 +325,6 @@ export function verifyVlSigningChain(args: {
   if (!runAdapter) return fail('unreachable', '运行 adapter 身份不可得（manifest/config 均无）——链不可校验');
 
   // ① 执行形态可达性（D5/D7）：attended 不产本 invoke 的工具事件、adapter 无解析器即无逐图审计。
-  if (isAttendedRun(args.projectRoot, args.feature, runId)) {
-    return fail('unreachable', 'attended 执行形态无本次 invocation 的逐图 Read 审计（run-control owner.kind=session，runner 不审计遗留日志）——vl_multimodal 结构性不可达');
-  }
   if (!hasImageReadParser(runAdapter)) {
     return fail('unreachable', `adapter=${runAdapter} 无注册的结构化事件解析器（tool_event_provenance != structured_events）——逐图 Read 审计不可得，vl_multimodal 结构性不可达`);
   }
@@ -412,6 +410,14 @@ export function verifyVlSigningChain(args: {
     }
     currentRefs.push({ path: abs, sha256: hash });
     const entry = refsReceipt.refs.find(r => path.resolve(r.path) === abs);
+    if (entry?.read && isAttendedRun(args.projectRoot, args.feature, runId)) {
+      const runDir = path.join(featureDir(args.projectRoot, args.feature), 'goal-runs', runId);
+      const issued = entry.read_at_invoke ? sessionExecutionForInvoke(runDir, entry.read_at_invoke) : null;
+      const log = issued ? sessionToolEventsLogPath(runDir, issued) : null;
+      if (!log || !IMAGE_READ_PARSERS[runAdapter](fs.readFileSync(log, 'utf8')).some(file => normalizeRefPath(path.resolve(args.projectRoot, file)) === normalizeRefPath(abs))) {
+        push('not_yet', `参考图 ${path.basename(abs)} 没有当前会话请求已接收的实际工具审计；不采信旧后台日志`);
+      }
+    }
     if (!entry) push('mismatch', `refs 回执未覆盖当前参考图 ${path.basename(abs)}（回执与当前 spec 的 refs 集不一致）`);
     else if (entry.read !== true) push('mismatch', `参考图 ${path.basename(abs)} 无验读事件（read=false）`);
     else if (entry.hash !== hash) push('mismatch', `参考图 ${path.basename(abs)} hash 失配（签发后文件已变/回执伪造）`);

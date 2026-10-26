@@ -1,5 +1,6 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { readRepairDependencyContext } from './repair-responsibility';
+import { phaseCompletionProblems } from './check-disposition';
 import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
@@ -319,7 +320,10 @@ export function collectResolvedScopeFacts(
 ): ResolvedScopeFacts {
   const { projectRoot, feature, frameworkRoot } = ctx;
   // plan b2d7f4e9 t4：候选/有效范围里的记录依赖可能写于另一个工程根，读侧按同一份记录推出的旧根重定位。
-  const legacyRoot = inferLegacyProjectRoot(projectRoot, input);
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, input) ?? (ctx.currentRunId ? (() => {
+    const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    return inferLegacyProjectRoot(projectRoot, loadFrozenExecutionScope(projectRoot, feature, ctx.currentRunId));
+  })() : undefined);
   const relDep = (dep: { path: string }): string => relPosix(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot));
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { loadFidelityIntentSsotState, resolveUiRelevanceForRun, dereferenceRequirementDocs, resolveFidelityRoutingDecision, computeRequirementShaFromText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
@@ -439,6 +443,10 @@ export function collectResolvedScopeFacts(
       // Phase evidence reuse: reuse the completion-side checker so the freeze-time and the
       // verify-time rules are literally the same function.
       const probe = { ...structuredClone(fact), owner_phase: ref.phase, satisfied_by: [ref] };
+      // 单义务探针可能只剩源码路径，不能再从它自己猜旧工程根；继承本次完整输入已核出的根。
+      for (const binding of probe.basis) for (const dependency of binding.dependencies) {
+        dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
+      }
       const issues = executionScopeEvidenceIssues(projectRoot, feature, {
         schema_version: '1.0', completion_target: input.request.completion_target, requested_results: [...input.request.requested_results],
         obligations: [probe], phase_chain: [], reused_phases: [], unresolved: [], policy_fingerprint: '0'.repeat(64),
@@ -450,7 +458,7 @@ export function collectResolvedScopeFacts(
 }
 
 /** Re-read the selected acceptance source through P1; never scan history or write artifacts. */
-export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionScopeInput, 'facts'>, context: { feature: string; frameworkRoot: string }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
+export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionScopeInput, 'facts'>, context: { feature: string; frameworkRoot: string; authorityReaders?: IdentityNeutralDigestReaders }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
   const bindings = input.facts.flatMap(fact => fact.basis);
   const binding = bindings.find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1')
     ?? bindings.find(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.blueprint-acceptance');
@@ -850,6 +858,7 @@ export function featureScopePhaseHealth(
 export function resolveCurrentScopeView(input: {
   projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
   currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string; authorityReaders?: IdentityNeutralDigestReaders;
+  currentResults?: import('./verify-feature-completion').CleanPassOptions['currentResults'];
 }): ExecutionScope {
   const { projectRoot, frameworkRoot, feature } = input;
   const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
@@ -870,9 +879,12 @@ export function resolveCurrentScopeView(input: {
   const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase)]);
   for (const phase of candidates) {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
-    const { collectPhaseCompletionIssues } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-    const fresh = evidence?.integrityOk && collectPhaseCompletionIssues({ projectRoot, feature, chain: [phase],
-      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders }).length === 0;
+    const { resolveCompletionDisposition } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+    const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: [phase], workflow: input.workflow, executionScope: input.previous,
+      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+    // 新发现交真实责任方处理；它不等于来源阶段的证明字节已经过期。
+    const fresh = evidence?.integrityOk && !phaseCompletionProblems(disposition, [phase]).some(problem =>
+      !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === phase);
     if (!fresh) { stale.add(phase); continue; }
     const after = history.invalidatedAt.get(phase);
     const eligible = input.currentRunId ? history.passed.has(phase) : !after || Date.parse(evidence!.manifest.generated_at) > Date.parse(after);
@@ -899,6 +911,7 @@ export function resolveScopeRevisionProposal(input: {
   currentPhase?: string;
   currentRunId?: string;
   requirement?: string;
+  currentResults?: import('./verify-feature-completion').CleanPassOptions['currentResults'];
 }): { scope: ExecutionScope; input: ExecutionScopeInput } | null {
   if (input.proposals.length > 1) throw new Error('[execution-scope] multiple revision proposals');
   if (!input.proposals.length) return null;
@@ -908,6 +921,18 @@ export function resolveScopeRevisionProposal(input: {
   const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
   const featureRecord = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
   const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) : featureRecord?.execution_scope;
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, previous) ?? inferLegacyProjectRoot(projectRoot, birth);
+  const rebaseBinding = (binding: InputBinding): void => {
+    for (const dependency of binding.dependencies) dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
+  };
+  // 只重定位本次提案副本；原事件与旧证明保留，以下仍逐条核验当前实际内容和证据。
+  for (const fact of proposal.facts) {
+    fact.basis.forEach(rebaseBinding);
+    for (const proof of fact.satisfied_by ?? []) if ('input_id' in proof) rebaseBinding(proof);
+  }
+  for (const binding of proposal.request.impact?.basis ?? []) rebaseBinding(binding);
+  const priorImpact = previous.request_impact ? structuredClone(previous.request_impact) : undefined;
+  for (const binding of priorImpact?.basis ?? []) rebaseBinding(binding);
   const history = input.currentRunId ? loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId) : featureRecord?.revisions ?? [];
   const lastRevision = birth ? loadScopeRevisions(history, birth).at(-1) : undefined;
   proposal.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
@@ -948,8 +973,8 @@ export function resolveScopeRevisionProposal(input: {
   if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
   if (proposal.request.impact === undefined) proposal.request.impact = previous.request_impact;
   const impactInherited = proposal.request.impact === undefined
-    || (previous.request_impact !== undefined
-      && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(previous.request_impact));
+    || (priorImpact !== undefined
+      && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(priorImpact));
   if (!impactInherited && !(proposal.request.impact?.basis ?? []).some(binding => !previous.obligations.some(obligation => obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))
     && !(previous.request_impact?.basis ?? []).some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))) {
     throw new Error('[execution-scope] impact correction requires its own new sourced basis');

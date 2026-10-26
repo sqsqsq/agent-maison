@@ -116,7 +116,8 @@ const cases: Array<{ name: string; run: () => void }> = [
           if (completed) {
             seedCleanCompletionChain({ projectRoot: root, feature, chain });
             const runDirAbs = path.join(root, 'doc/features', feature, 'goal-runs/RUN1');
-            fs.writeFileSync(path.join(runDirAbs, 'manifest.json'), JSON.stringify({ schema_version: '1.1', feature, run_id: 'RUN1', phase_chain: chain }));
+            fs.writeFileSync(path.join(runDirAbs, 'manifest.json'), JSON.stringify({ schema_version: '1.1', feature, run_id: 'RUN1',
+              report_dir: path.relative(root, runDirAbs).replace(/\\/g, '/'), phase_chain: chain }));
             generateFeatureCompletion({ projectRoot: root, feature, chain, workflowTrack: track, runId: 'RUN1', runDirAbs, phaseRunIds: {} });
             const result = inspectCompletionRecord({ projectRoot: root, feature, expectedTrack: track, expectedChain: chain, frameworkRoot: FRAMEWORK_ROOT });
             eq(result.verdict, 'VALID', JSON.stringify(result.reasons));

@@ -446,6 +446,7 @@
     },
     "profiles/hmos-app/harness/visual-diff-check.ts": {
       "literal_ids": [
+        "visual_diff_layout_invariants",
         "visual_diff_no_progress_fuse",
         "visual_diff_tamper_artifact",
         "visual_diff_uncertain_evidence"

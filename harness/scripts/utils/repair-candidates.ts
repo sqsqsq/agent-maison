@@ -308,7 +308,7 @@ export function readVerifierSemanticIssues(projectRoot: string, feature: string,
     const entry = resolveCapabilityResolutionEntryInput({ purpose: 'design-authority-probe', frameworkRoot, projectRoot, feature, phase,
       featuresDir: relFeaturesDir(projectRoot), ...(runId ? { goalRunId: runId } : {}) });
     inputs = resolveCapabilityInputs({ purpose: 'design-authority-probe', frameworkRoot, projectRoot, feature, phase,
-      track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)), ...entry }).inputs;
+      track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)), ...(runId ? { goalRunId: runId } : {}), ...entry }).inputs;
   }
   const acceptance = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, inputs).acceptance;
   if (!acceptance) return null;
@@ -420,9 +420,10 @@ export function readPhaseRepairIssues(projectRoot: string, feature: string, phas
     const evidenceFiles = new Map<string, string>();
     const parsed = openReviewIssues(reportText);
     const diagnostics: string[] = [];
-    const frameworkRoot = path.resolve(__dirname, '../../..');
-    let context: RepairResponsibilityContext | undefined;
-    const authority = (): RepairResponsibilityContext => context ??= repairResponsibilityContext({ projectRoot, frameworkRoot, feature, runId: process.env.MAISON_GOAL_RUN_ID?.trim() });
+    const frameworkRoot = context?.frameworkRoot ?? path.resolve(__dirname, '../../..');
+    let responsibilityContext: RepairResponsibilityContext | undefined;
+    const authority = (): RepairResponsibilityContext => responsibilityContext ??= repairResponsibilityContext({ projectRoot, frameworkRoot, feature,
+      runId: context?.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim() });
     {
       const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
       const verification = parseIssueVerificationBlock(loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }) ?? '');

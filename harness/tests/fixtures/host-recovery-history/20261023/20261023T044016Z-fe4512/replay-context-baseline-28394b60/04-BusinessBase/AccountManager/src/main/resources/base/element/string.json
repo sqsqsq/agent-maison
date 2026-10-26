@@ -1,0 +1,12 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "AccountManager"
+    },
+    {
+      "name": "not_logged_in",
+      "value": "未登录"
+    }
+  ]
+}

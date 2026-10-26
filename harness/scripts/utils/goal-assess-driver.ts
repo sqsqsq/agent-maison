@@ -49,7 +49,11 @@ export function selectRunnerActionFromAssess(
     return guard;
   }
   if (guard === 'retry' && (
-    input.observation.phase_outcome?.verdict === 'PASS' ||
+    (input.observation.phase_outcome?.verdict === 'PASS'
+      && !(input.assessment.recommendation.runner_action === 'backtrack_to_phase'
+        && input.assessment.recommendation.phase !== input.currentPhase
+        && input.observation.invalidatable_phases?.includes(input.assessment.recommendation.phase ?? '')
+        && input.chain.includes(input.assessment.recommendation.phase ?? ''))) ||
     input.observation.signals?.timed_out === true ||
     input.observation.signals?.api_disconnected === true ||
     (input.observation.phase_outcome?.blocking_class === 'externalBlocked' &&

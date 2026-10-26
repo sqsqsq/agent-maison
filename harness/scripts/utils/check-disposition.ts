@@ -47,6 +47,9 @@ export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
   { match: { id: 'coding_existing_test_preserved' }, protects: 'product_truth',
     basis: 'c2f7a91e §5.3.1；179a73 兼容修补需保留旧用例和断言',
     consequence: 'coding 可通过删改测试或新增跳过掩盖回归；无法确认原件时不得授有限写权' },
+  { match: { id: 'visual_diff_layout_invariants' }, protects: 'product_truth',
+    basis: '6fd6c8c1 §2：S0原生布局A1适用性回放；既有T8命中在当前绑定、同交互surface下为确定性硬缺陷，soft档与复用不改变产品资格',
+    consequence: '真实重叠或越界会仅因视觉档位/本轮未重采而降为WARN，已知坏产品可被普通完成；既有visual_diff聚合与coding返修须继续阻断' },
   { match: { id: 'structure_declaration_ledger' }, protects: 'ledger_shape',
     basis: '8a6d3f21：结构登记不构成产品结构缺失的证明',
     consequence: '台账缺项或定位过时须修正/披露；实际结构、交互和视觉仍由原独立验证判定' },
@@ -165,6 +168,10 @@ export interface DispositionCheck {
   structured?: unknown;
   failure_kind?: string;
   blocking_class?: string;
+  repair_owner?: string;
+  affected_files?: readonly string[];
+  /** 仅组装期：修改职责有效完成后，原检查仍须按当前对象复验。 */
+  verificationRequired?: boolean;
 }
 
 export type CheckDisposition =
@@ -235,6 +242,295 @@ export function isFrameworkExecutionGap(check: DispositionCheck): boolean {
 /** blocking_skips 保留旧的完整复核清单；仅明确分类的执行缺口参与新增的完成约束。 */
 export function requiredSummaryCheckGaps<T extends { id?: string; blocking_class?: string }>(summary: { blocking_skips?: readonly T[] } | null | undefined): T[] {
   return (summary?.blocking_skips ?? []).filter(check => requiresCheckConclusion(check));
+}
+
+// ---------------------------------------------------------------------------
+// plan 6fd6c8c1 §4.1：同一实际问题只有一个当前处置（内存事实，零 I/O）
+// ---------------------------------------------------------------------------
+// 输入是**已经读好的**当前事实（summary/verifier/债务/能力/新鲜度/责任结果），本函数只汇合，
+// 不读写文件、不持有历史、不 import runtime。普通完成与发布资格从同一批处置投影：
+//   · completionBlocking —— 不解决就不能宣称本次请求完成（修 / 等 / 补验）；
+//   · releaseBlocking    —— 普通任务可以完成，但发布仍 BLOCKED（披露的软降级/债务）；
+//   · disclosed          —— completionBlocking 与 releaseBlocking 中 action='disclose' 的部分。
+// 修/等/披露/补验是**处置含义**，不新增四种持久状态；消费者只能按自己的合法终点投影。
+
+export type CurrentProblemAction = 'repair' | 'wait' | 'verify' | 'disclose';
+export type CurrentProblemAffects = 'completion' | 'release';
+
+export interface CurrentDispositionAxisFact {
+  applicable?: boolean;
+  required_for_release?: boolean;
+  verdict?: string;
+  resolution?: { class?: string; owner?: string; retry_phase?: string } | null;
+  source_checks?: readonly string[];
+  /** 修改方已有当前闭环，原来源检查尚须重验；仅组装期事实，不写回summary。 */
+  verificationRequired?: boolean;
+}
+
+export interface CurrentDispositionPhaseFact {
+  phase: string;
+  /** 阶段 summary 是否在场（缺失只报 verdict_pass，不再重复报 schema/closure）。 */
+  summaryPresent?: boolean;
+  /** 阶段 summary 的最终裁决（PASS / FAIL / INCOMPLETE；缺失为 null）。 */
+  verdict: string | null;
+  /** summary schema 是否属于当前可作完成依据的代际。 */
+  schemaCurrent: boolean;
+  /** summary 1.1 契约违反（非空即记录/证据不可信）。 */
+  summaryErrors?: readonly string[];
+  /** summary 已带合法 closure_commit（闭环提交）。 */
+  closureCommitted: boolean;
+  /** 已分类的必需执行缺口（既有 requiredSummaryCheckGaps 的输出）。 */
+  requiredGaps?: ReadonlyArray<{ id?: string; failure_kind?: string; blocking_class?: string }>;
+  /** 本轮 FAIL 的检查（状态/严重度/结构化字段；判定仍走 resolveCheckDisposition）。 */
+  failingChecks?: ReadonlyArray<DispositionCheck & { details?: string }>;
+  /** summary 的质量轴。 */
+  axes?: Readonly<Record<string, CurrentDispositionAxisFact>>;
+  /** summary 的发布投影（用于防单独篡改：READY 与真实非 PASS 轴矛盾）。 */
+  releaseReadiness?: string | null;
+  /** summary 的完成标签（DEBT_PIPELINE_ERROR = 债务治理链自身失败）。 */
+  completionStatus?: string | null;
+  /** 证据新鲜度（fresh / missing / stale / tampered；null=不适用）。 */
+  lineage?: 'fresh' | 'missing' | 'stale' | 'tampered' | null;
+  lineageDetail?: string;
+  /** 沿链传染的来源阶段（本阶段自身证据未核）。 */
+  lineagePropagatedFrom?: string;
+  /** review 闭环 attestation 是否在场（null=不适用）。 */
+  attestationPresent?: boolean | null;
+  /** 视觉/资源债务开放条数（只在 testing 投影 release 影响）。 */
+  openDebt?: number;
+  /** 已核实且仍未处置、归属于本阶段的发现（原候选/责任链输出，不是原始问题表行）。 */
+  openFindings?: ReadonlyArray<{ id: string; detail: string; owner?: string; source_phase?: string; verificationRequired?: boolean; affects?: CurrentProblemAffects }>;
+}
+
+export interface CurrentDispositionInput {
+  endpoint: 'feature-completion' | 'request';
+  phases: readonly CurrentDispositionPhaseFact[];
+  /** 已有机器证据 reader 的适用性/身份诊断；同样由公共处置投影。 */
+  additionalProblems?: readonly CurrentDispositionProblem[];
+  /** 档位钳制（强意图下能力被封顶）。 */
+  fidelityCapped?: boolean;
+  /** 损坏的 goal-run（身份不可信）。 */
+  corruptRuns?: ReadonlyArray<{ runId: string; reason: string }>;
+}
+
+export interface CurrentDispositionProblem {
+  phase: string;
+  /** 复用既有 condition 名（verdict_pass / quality_axis_verified / …），不新增第二套标签。 */
+  id: string;
+  action: CurrentProblemAction;
+  affects: CurrentProblemAffects;
+  severity: 'BLOCKER' | 'MAJOR' | 'MINOR';
+  detail: string;
+  /** 合法修改/验证方（有则给出；展示消费者可用它说明下一步，不多派一单）。 */
+  owner?: string;
+  /** 发现所在的原验证阶段；owner 可以是另一修改职责。 */
+  source_phase?: string;
+  /** 证据缺口只是沿链传染时的来源阶段。 */
+  propagated_from?: string;
+}
+
+export interface CurrentDisposition {
+  problems: CurrentDispositionProblem[];
+  /** 不解决就不能完成本次请求。 */
+  completionBlocking: CurrentDispositionProblem[];
+  /** 不解决就不能发布，但可以普通完成。 */
+  releaseBlocking: CurrentDispositionProblem[];
+  /** 允许披露、既不阻断普通完成也不伪造 PASS 的残差。 */
+  disclosed: CurrentDispositionProblem[];
+  completionEligible: boolean;
+  releaseReady: boolean;
+  reasons: string[];
+}
+
+/** 阶段资格/队列只消费具体职责；全局完成问题留给 Feature/终点消费者。 */
+export function phaseCompletionProblems(disposition: CurrentDisposition, phases: readonly string[]): CurrentDispositionProblem[] {
+  return disposition.completionBlocking.filter(problem => problem.phase !== '*'
+    && (phases.includes(problem.phase) || !!problem.owner && phases.includes(problem.owner)));
+}
+
+const VISUAL_AXES = new Set(['visual', 'asset']);
+
+/**
+ * 唯一处置汇合点（纯函数）。规则只做既有语义的**用途区分**：
+ *   · 产品真值/结果依据类失败是修；框架/能力/外部执行缺口是等；证据过期/缺失是补验；
+ *   · 视觉/资源轴的软降级（UNVERIFIED/STALE/MISSING）与开放债务是披露：普通完成不因它被撤销，
+ *     发布仍 BLOCKED，不伪造 PASS；轴的 FAIL 仍按真实失败处理；
+ *   · 必需检查因框架异常未完成、closure/身份/新鲜度/生成链故障仍是 completion 阻断。
+ */
+export function resolveCurrentDisposition(input: CurrentDispositionInput): CurrentDisposition {
+  const problems: CurrentDispositionProblem[] = [];
+  const push = (problem: CurrentDispositionProblem): void => { problems.push(problem); };
+  for (const problem of input.additionalProblems ?? []) push(problem);
+
+  for (const phase of input.phases) {
+    const phaseName = phase.phase;
+    const summaryPresent = phase.summaryPresent !== false;
+    const factStart = problems.length;
+    const publicationProblems: CurrentDispositionProblem[] = [];
+    const pushPublication = (problem: CurrentDispositionProblem): void => { publicationProblems.push(problem); };
+    if (input.endpoint !== 'request' && summaryPresent && !phase.schemaCurrent) {
+      pushPublication({
+        phase: phaseName, id: 'summary_schema_current', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+        detail: 'summary schema 非当代（legacy 1.0 不作完成依据，须在当前 gate 指纹下重跑本阶段）',
+      });
+    }
+    for (const error of input.endpoint !== 'request' && summaryPresent ? phase.summaryErrors ?? [] : []) {
+      pushPublication({ phase: phaseName, id: 'quality_axes_valid', action: 'verify', affects: 'completion', severity: 'BLOCKER', detail: error });
+    }
+    if (input.endpoint !== 'request' && summaryPresent && !phase.closureCommitted) {
+      pushPublication({
+        phase: phaseName, id: 'closure_commit_present', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+        detail: '未完成 receipt/manifest/state 的原子闭环提交',
+      });
+    }
+    for (const gap of phase.requiredGaps ?? []) {
+      push({
+        phase: phaseName, id: 'required_check_conclusion', action: 'wait', affects: 'completion', severity: 'BLOCKER',
+        detail: `必需检查尚无结论：${gap.id ?? 'unknown'}`,
+        ...(gap.failure_kind === 'framework_bug' || gap.blocking_class === 'framework_internal' ? { owner: 'framework' } : {}),
+      });
+    }
+    for (const check of phase.failingChecks ?? []) {
+      // 已登记候选保留了同一个原始检查的依据与负责方；不再追加无owner的聚合副本。
+      if (phase.openFindings?.some(finding => finding.affects !== 'release'
+        && (finding.id === check.id || finding.id === `${phaseName}:${check.id}`))) continue;
+      const disposition = resolveCheckDisposition(check);
+      if (disposition.action === 'none') {
+        // 专项请求的原契约：任意非披露FAIL都未完成本职责，不能套Feature的严重度豁免。
+        if (input.endpoint === 'request' && check.status === 'FAIL') push({ phase: phaseName, id: check.id,
+          action: 'repair', affects: 'completion', severity: check.severity === 'MINOR' ? 'MINOR' : 'MAJOR',
+          detail: `请求检查失败：${check.id}`, ...(check.repair_owner ? { owner: check.repair_owner } : {}) });
+        continue;
+      }
+      const protects = disposition.action === 'disclose' ? disposition.entry.protects : disposition.entry?.protects ?? 'result_basis';
+      if (disposition.action === 'disclose') {
+        push({
+          phase: phaseName, id: check.id, action: 'disclose', affects: 'release', severity: 'MAJOR',
+          detail: `已披露失败（${protects}）：${(check.details ?? '').slice(0, 200)}`,
+        });
+        continue;
+      }
+      push({
+        phase: phaseName,
+        id: check.id,
+        action: protects === 'capability_gap' || check.failure_kind === 'device_blocked' || check.blocking_class === 'externalBlocked' ? 'wait'
+          : check.verificationRequired || check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal' ? 'verify' : 'repair',
+        affects: 'completion',
+        severity: 'BLOCKER',
+        detail: `阻断检查失败：${check.id}${check.failure_kind ? `（failure_kind=${check.failure_kind}）` : ''}`,
+        ...(check.repair_owner ? { owner: check.repair_owner } : protects === 'capability_gap' ? { owner: 'external' } : {}),
+      });
+    }
+    for (const [axisId, axis] of Object.entries(phase.axes ?? {})) {
+      if (!axis.applicable || !axis.required_for_release) continue;
+      if (axis.verdict === 'PASS' || axis.verdict === 'NOT_APPLICABLE') continue;
+      const staleInheritance = axis.source_checks?.some(check => check.startsWith('stale_inheritance:'));
+      const softVisual = VISUAL_AXES.has(axisId) && axis.verdict !== 'FAIL' && !staleInheritance;
+      if (softVisual) {
+        // 可披露残差：不撤销普通完成，不伪造视觉 PASS；债务与 release 限制保留。
+        push({
+          phase: phaseName, id: 'quality_axis_verified', action: 'disclose', affects: 'release', severity: 'MAJOR',
+          detail: `${axisId} 轴 ${axis.verdict}（resolution=${axis.resolution?.class ?? '缺失'}）——披露，release 仍 BLOCKED`,
+          ...(axis.resolution?.owner ? { owner: axis.resolution.owner } : {}),
+        });
+        continue;
+      }
+      push({
+        phase: phaseName,
+        id: 'quality_axis_verified',
+        action: axis.resolution?.class === 'external_dependency' ? 'wait' : staleInheritance && !axis.verificationRequired ? 'repair' : 'verify',
+        affects: 'completion',
+        severity: 'BLOCKER',
+        detail: `${axisId} 轴 ${axis.verdict}（resolution=${axis.resolution?.class ?? '缺失'}）`,
+        ...(axis.resolution?.retry_phase || axis.resolution?.owner ? { owner: axis.resolution.retry_phase ?? axis.resolution.owner } : {}),
+      });
+    }
+    // 投影一致性（防独立篡改）：存在必需的非 PASS 轴却写 release_readiness=READY → 派生缺陷，
+    // 普通完成与发布都不成立；披露不豁免这条确定性校验。
+    const anyRequiredNegative = Object.values(phase.axes ?? {}).some(axis =>
+      axis.applicable && axis.required_for_release
+      && axis.verdict !== 'PASS' && axis.verdict !== 'NOT_APPLICABLE');
+    if (anyRequiredNegative && phase.releaseReadiness === 'READY') {
+      push({
+        phase: phaseName, id: 'release_projection_consistent', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+        detail: 'release_readiness=READY 与非 PASS 必需轴矛盾（投影被篡改/派生缺陷）',
+      });
+    }
+    if (phase.completionStatus === 'DEBT_PIPELINE_ERROR') {
+      push({
+        phase: phaseName, id: 'debt_pipeline_healthy', action: 'verify', owner: 'framework', affects: 'completion', severity: 'BLOCKER',
+        detail: '视觉债务管线故障（DEBT_PIPELINE_ERROR）——治理链自身失败不得干净完成，修复环境后重跑',
+      });
+    }
+    if (phase.lineage && phase.lineage !== 'fresh') {
+      pushPublication({
+        phase: phaseName, id: 'lineage_fresh', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+        detail: phase.lineage === 'missing'
+          ? '缺 phase-evidence-manifest（旧版产物/未闭环）'
+          : `closure 后证据变更：${phase.lineageDetail ?? phase.lineage}`,
+        ...(phase.lineagePropagatedFrom ? { propagated_from: phase.lineagePropagatedFrom } : {}),
+      });
+    }
+    if (phase.attestationPresent === false) {
+      pushPublication({
+        phase: phaseName, id: 'attestation_present', action: 'verify', affects: 'completion', severity: 'BLOCKER',
+        detail: '缺 review-closure-attestation.json',
+      });
+    }
+    if ((phase.openDebt ?? 0) > 0) {
+      push({
+        phase: phaseName, id: 'visual_debt_open', action: 'disclose', affects: 'release', severity: 'MAJOR',
+        detail: `${phase.openDebt} 条视觉/资源债务未清偿——披露并保留 release BLOCKED，不据此重排作者阶段`,
+      });
+    }
+    for (const finding of phase.openFindings ?? []) {
+      // 原 PASS 是阶段执行事实，不代表其中所有发现已解决；已核实且仍开放 → 交真实责任方。
+      const disclose = finding.affects === 'release';
+      push({
+        phase: finding.source_phase ?? phaseName,
+        id: `open_finding:${finding.id}`,
+        action: disclose ? 'disclose' : finding.verificationRequired ? 'verify' : 'repair',
+        affects: disclose ? 'release' : 'completion',
+        severity: disclose ? 'MAJOR' : 'BLOCKER',
+        detail: `${finding.verificationRequired ? '发现尚待当前独立核实' : '已核实发现仍未处置'}：${finding.id}：${finding.detail}`,
+        ...(finding.owner ? { owner: finding.owner } : {}),
+        source_phase: finding.source_phase ?? phaseName,
+      });
+    }
+    // verdict只是上述当前事实的聚合；已有具体负面依据时不再制造一个丢owner/等待条件的任务。
+    if (phase.verdict !== 'PASS' && (input.endpoint !== 'request' || summaryPresent)
+      && !problems.slice(factStart).some(problem => problem.affects === 'completion')) {
+      push({ phase: phaseName, id: phase.verdict === 'INCOMPLETE' ? 'required_check_conclusion' : 'verdict_pass',
+        action: phase.verdict === 'INCOMPLETE' ? 'wait' : 'repair', affects: 'completion', severity: 'BLOCKER',
+        detail: `summary verdict=${phase.verdict ?? '缺失'}` });
+    }
+    problems.push(...publicationProblems);
+  }
+
+  if (input.fidelityCapped) {
+    push({
+      phase: '*', id: 'no_fidelity_cap', action: 'repair', affects: 'completion', severity: 'BLOCKER',
+      detail: '强意图下当前能力被钳制；换 provider/version 后重跑，或以 correction/successor 输入改变需求',
+    });
+  }
+  for (const corrupt of input.corruptRuns ?? []) {
+    push({
+      phase: '*', id: 'goal_run_identity_intact', action: 'repair', affects: 'completion', severity: 'BLOCKER',
+      detail: `goal-run ${corrupt.runId} 损坏：${corrupt.reason}——人工核查该目录（恢复 manifest 或确认废弃）后重验`,
+    });
+  }
+
+  const completionBlocking = problems.filter(problem => problem.affects === 'completion');
+  const releaseBlocking = problems.filter(problem => problem.affects === 'release');
+  return {
+    problems,
+    completionBlocking,
+    releaseBlocking,
+    disclosed: problems.filter(problem => problem.action === 'disclose'),
+    completionEligible: completionBlocking.length === 0,
+    releaseReady: problems.length === 0,
+    reasons: [...completionBlocking, ...releaseBlocking].map(problem => `[${problem.phase}] ${problem.id}: ${problem.detail}`),
+  };
 }
 
 /** summary 的被披露失败清单一条（§4.3）。 */

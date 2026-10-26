@@ -1,0 +1,1914 @@
+{
+  "schema_version": "hylyre-hypium-ui-dump-v1",
+  "source": "hypium.UiTree",
+  "tree": {
+    "attributes": {
+      "bounds": "[0,0][1320,2120]",
+      "clickable": "",
+      "id": "",
+      "key": "",
+      "scrollable": "",
+      "text": "",
+      "type": ""
+    },
+    "children": [
+      {
+        "attributes": {
+          "bounds": "[0,117][1320,2120]",
+          "clickable": "false",
+          "id": "",
+          "key": "",
+          "scrollable": "false",
+          "text": "",
+          "type": "root"
+        },
+        "children": [
+          {
+            "attributes": {
+              "bounds": "[0,117][1320,2120]",
+              "clickable": "false",
+              "id": "",
+              "key": "",
+              "scrollable": "false",
+              "text": "",
+              "type": "Navigation"
+            },
+            "children": [
+              {
+                "attributes": {
+                  "bounds": "[0,117][1320,2120]",
+                  "clickable": "false",
+                  "id": "",
+                  "key": "",
+                  "scrollable": "false",
+                  "text": "",
+                  "type": "NavigationContent"
+                },
+                "children": [
+                  {
+                    "attributes": {
+                      "bounds": "[0,117][1320,2120]",
+                      "clickable": "false",
+                      "id": "",
+                      "key": "",
+                      "scrollable": "false",
+                      "text": "",
+                      "type": "NavDestination"
+                    },
+                    "children": [
+                      {
+                        "attributes": {
+                          "bounds": "[0,117][1320,2120]",
+                          "clickable": "false",
+                          "id": "",
+                          "key": "",
+                          "scrollable": "false",
+                          "text": "",
+                          "type": "NavDestinationContent"
+                        },
+                        "children": [
+                          {
+                            "attributes": {
+                              "bounds": "[0,117][1320,2036]",
+                              "clickable": "false",
+                              "id": "",
+                              "key": "",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Stack"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[0,117][1320,2036]",
+                                  "clickable": "false",
+                                  "id": "col_root",
+                                  "key": "col_root",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Column"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[48,117][1272,261]",
+                                      "clickable": "false",
+                                      "id": "col_nav_bar",
+                                      "key": "col_nav_bar",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Row"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[48,135][156,243]",
+                                          "clickable": "true",
+                                          "id": "col_back_btn",
+                                          "key": "col_back_btn",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[87,159][117,219]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[192,154][492,224]",
+                                          "clickable": "false",
+                                          "id": "col_page_title",
+                                          "key": "col_page_title",
+                                          "scrollable": "false",
+                                          "text": "添加银行卡",
+                                          "type": "Text"
+                                        },
+                                        "children": []
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[48,369][1272,418]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Row"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[84,369][337,418]",
+                                          "clickable": "false",
+                                          "id": "col_subtitle_left",
+                                          "key": "col_subtitle_left",
+                                          "scrollable": "false",
+                                          "text": "免输卡号添卡",
+                                          "type": "Text"
+                                        },
+                                        "children": []
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[337,369][931,418]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Blank"
+                                        },
+                                        "children": []
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[931,369][1236,418]",
+                                          "clickable": "false",
+                                          "id": "col_subtitle_right",
+                                          "key": "col_subtitle_right",
+                                          "scrollable": "false",
+                                          "text": "支持 100 家银行",
+                                          "type": "Text"
+                                        },
+                                        "children": []
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[48,454][1272,586]",
+                                      "clickable": "false",
+                                      "id": "background_search_bank",
+                                      "key": "background_search_bank",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Row"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[84,493][138,547]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "SymbolGlyph"
+                                        },
+                                        "children": []
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[162,496][331,545]",
+                                          "clickable": "false",
+                                          "id": "col_search_placeholder",
+                                          "key": "col_search_placeholder",
+                                          "scrollable": "false",
+                                          "text": "搜索银行",
+                                          "type": "Text"
+                                        },
+                                        "children": []
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[331,454][1114,586]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Blank"
+                                        },
+                                        "children": []
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1114,490][1115,550]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Divider"
+                                        },
+                                        "children": []
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1151,496][1236,545]",
+                                          "clickable": "false",
+                                          "id": "col_search_action",
+                                          "key": "col_search_action",
+                                          "scrollable": "false",
+                                          "text": "搜索",
+                                          "type": "Text"
+                                        },
+                                        "children": []
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[48,622][1272,2036]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Column"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[48,622][1272,1842]",
+                                          "clickable": "false",
+                                          "id": "col_bank_card",
+                                          "key": "col_bank_card",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Column"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[48,622][1272,792]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Column"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[48,622][1272,790]",
+                                                  "clickable": "true",
+                                                  "id": "col_row_cmb",
+                                                  "key": "col_row_cmb",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[96,655][198,757]",
+                                                      "clickable": "false",
+                                                      "id": "col_logo_cmb",
+                                                      "key": "col_logo_cmb",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Image"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[234,678][1199,734]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Column"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,678][427,734]",
+                                                          "clickable": "false",
+                                                          "id": "col_name_cmb",
+                                                          "key": "col_name_cmb",
+                                                          "scrollable": "false",
+                                                          "text": "招商银行",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1199,682][1224,730]",
+                                                      "clickable": "false",
+                                                      "id": "col_chevron_cmb",
+                                                      "key": "col_chevron_cmb",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[204,790][1224,792]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Divider"
+                                                },
+                                                "children": []
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[48,792][1272,962]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Column"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[48,792][1272,960]",
+                                                  "clickable": "true",
+                                                  "id": "col_row_icbc",
+                                                  "key": "col_row_icbc",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[96,825][198,927]",
+                                                      "clickable": "false",
+                                                      "id": "col_logo_icbc",
+                                                      "key": "col_logo_icbc",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Image"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[234,848][1199,904]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Column"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,848][427,904]",
+                                                          "clickable": "false",
+                                                          "id": "col_name_icbc",
+                                                          "key": "col_name_icbc",
+                                                          "scrollable": "false",
+                                                          "text": "工商银行",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1199,852][1224,900]",
+                                                      "clickable": "false",
+                                                      "id": "col_chevron_icbc",
+                                                      "key": "col_chevron_icbc",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[204,960][1224,962]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Divider"
+                                                },
+                                                "children": []
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[48,961][1272,1131]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Column"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[48,961][1272,1129]",
+                                                  "clickable": "true",
+                                                  "id": "col_row_citic",
+                                                  "key": "col_row_citic",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[96,994][198,1096]",
+                                                      "clickable": "false",
+                                                      "id": "col_logo_citic",
+                                                      "key": "col_logo_citic",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Image"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[234,1017][1199,1073]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Column"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,1017][427,1073]",
+                                                          "clickable": "false",
+                                                          "id": "col_name_citic",
+                                                          "key": "col_name_citic",
+                                                          "scrollable": "false",
+                                                          "text": "中信银行",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1199,1021][1224,1069]",
+                                                      "clickable": "false",
+                                                      "id": "col_chevron_citic",
+                                                      "key": "col_chevron_citic",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[204,1129][1224,1131]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Divider"
+                                                },
+                                                "children": []
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[48,1131][1272,1301]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Column"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[48,1131][1272,1299]",
+                                                  "clickable": "true",
+                                                  "id": "col_row_hxb",
+                                                  "key": "col_row_hxb",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[96,1164][198,1266]",
+                                                      "clickable": "false",
+                                                      "id": "col_logo_hxb",
+                                                      "key": "col_logo_hxb",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Image"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[234,1161][1199,1270]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Column"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,1161][427,1217]",
+                                                          "clickable": "false",
+                                                          "id": "col_name_hxb",
+                                                          "key": "col_name_hxb",
+                                                          "scrollable": "false",
+                                                          "text": "华夏银行",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      },
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,1223][479,1270]",
+                                                          "clickable": "false",
+                                                          "id": "col_badge_hxb",
+                                                          "key": "col_badge_hxb",
+                                                          "scrollable": "false",
+                                                          "text": "首绑送12元券包",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1199,1191][1224,1239]",
+                                                      "clickable": "false",
+                                                      "id": "col_chevron_hxb",
+                                                      "key": "col_chevron_hxb",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[204,1299][1224,1301]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Divider"
+                                                },
+                                                "children": []
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[48,1300][1272,1470]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Column"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[48,1300][1272,1468]",
+                                                  "clickable": "true",
+                                                  "id": "col_row_ccb",
+                                                  "key": "col_row_ccb",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[96,1333][198,1435]",
+                                                      "clickable": "false",
+                                                      "id": "col_logo_ccb",
+                                                      "key": "col_logo_ccb",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Image"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[234,1356][1199,1412]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Column"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,1356][427,1412]",
+                                                          "clickable": "false",
+                                                          "id": "col_name_ccb",
+                                                          "key": "col_name_ccb",
+                                                          "scrollable": "false",
+                                                          "text": "建设银行",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1199,1360][1224,1408]",
+                                                      "clickable": "false",
+                                                      "id": "col_chevron_ccb",
+                                                      "key": "col_chevron_ccb",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[204,1468][1224,1470]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Divider"
+                                                },
+                                                "children": []
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[48,1470][1272,1638]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Column"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[48,1470][1272,1638]",
+                                                  "clickable": "true",
+                                                  "id": "col_row_abc",
+                                                  "key": "col_row_abc",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[96,1503][198,1605]",
+                                                      "clickable": "false",
+                                                      "id": "col_logo_abc",
+                                                      "key": "col_logo_abc",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Image"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[234,1526][1199,1582]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Column"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[234,1526][427,1582]",
+                                                          "clickable": "false",
+                                                          "id": "col_name_abc",
+                                                          "key": "col_name_abc",
+                                                          "scrollable": "false",
+                                                          "text": "农业银行",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1199,1530][1224,1578]",
+                                                      "clickable": "false",
+                                                      "id": "col_chevron_abc",
+                                                      "key": "col_chevron_abc",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[341,1710][979,1806]",
+                                              "clickable": "true",
+                                              "id": "col_more_pill",
+                                              "key": "col_more_pill",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[377,1725][443,1791]",
+                                                  "clickable": "false",
+                                                  "id": "col_pill_icon_bocom",
+                                                  "key": "col_pill_icon_bocom",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Image"
+                                                },
+                                                "children": []
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[461,1725][527,1791]",
+                                                  "clickable": "false",
+                                                  "id": "col_pill_icon_psbc",
+                                                  "key": "col_pill_icon_psbc",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Image"
+                                                },
+                                                "children": []
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[545,1725][611,1791]",
+                                                  "clickable": "false",
+                                                  "id": "col_pill_icon_spdb",
+                                                  "key": "col_pill_icon_spdb",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Image"
+                                                },
+                                                "children": []
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[629,1725][695,1791]",
+                                                  "clickable": "false",
+                                                  "id": "col_pill_icon_cmbc",
+                                                  "key": "col_pill_icon_cmbc",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Image"
+                                                },
+                                                "children": []
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[713,1725][779,1791]",
+                                                  "clickable": "false",
+                                                  "id": "col_pill_icon_pab",
+                                                  "key": "col_pill_icon_pab",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Image"
+                                                },
+                                                "children": []
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[803,1734][888,1783]",
+                                                  "clickable": "false",
+                                                  "id": "col_more_text",
+                                                  "key": "col_more_text",
+                                                  "scrollable": "false",
+                                                  "text": "更多",
+                                                  "type": "Text"
+                                                },
+                                                "children": []
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[900,1737][943,1779]",
+                                                  "clickable": "false",
+                                                  "id": "col_more_chevron",
+                                                  "key": "col_more_chevron",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "SymbolGlyph"
+                                                },
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "attributes": {
+              "bounds": "[0,117][1320,2120]",
+              "clickable": "true",
+              "id": "",
+              "key": "",
+              "scrollable": "false",
+              "text": "",
+              "type": "SheetWrapper"
+            },
+            "children": [
+              {
+                "attributes": {
+                  "bounds": "[0,962][1320,2120]",
+                  "clickable": "true",
+                  "id": "",
+                  "key": "",
+                  "scrollable": "false",
+                  "text": "",
+                  "type": "SheetPage"
+                },
+                "children": [
+                  {
+                    "attributes": {
+                      "bounds": "[48,961][1272,962]",
+                      "clickable": "false",
+                      "id": "",
+                      "key": "",
+                      "scrollable": "false",
+                      "text": "",
+                      "type": "Column"
+                    },
+                    "children": []
+                  },
+                  {
+                    "attributes": {
+                      "bounds": "[0,962][1320,2120]",
+                      "clickable": "false",
+                      "id": "",
+                      "key": "",
+                      "scrollable": "false",
+                      "text": "",
+                      "type": "Scroll"
+                    },
+                    "children": [
+                      {
+                        "attributes": {
+                          "bounds": "[0,962][1320,2120]",
+                          "clickable": "false",
+                          "id": "card_type_sheet_panel",
+                          "key": "card_type_sheet_panel",
+                          "scrollable": "false",
+                          "text": "",
+                          "type": "Column"
+                        },
+                        "children": [
+                          {
+                            "attributes": {
+                              "bounds": "[48,1016][1272,1124]",
+                              "clickable": "false",
+                              "id": "",
+                              "key": "",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Row"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[48,1035][1164,1105]",
+                                  "clickable": "false",
+                                  "id": "card_type_sheet_title",
+                                  "key": "card_type_sheet_title",
+                                  "scrollable": "false",
+                                  "text": "选择卡类型",
+                                  "type": "Text"
+                                },
+                                "children": []
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[1164,1016][1272,1124]",
+                                  "clickable": "true",
+                                  "id": "card_type_sheet_close",
+                                  "key": "card_type_sheet_close",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Row"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1191,1043][1245,1097]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "SymbolGlyph"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[48,1178][1272,1658]",
+                              "clickable": "false",
+                              "id": "card_type_bank_card",
+                              "key": "card_type_bank_card",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Column"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[48,1178][1272,1346]",
+                                  "clickable": "false",
+                                  "id": "card_type_bank_row",
+                                  "key": "card_type_bank_row",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Row"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[96,1211][198,1313]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Image"
+                                    },
+                                    "children": []
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[234,1234][427,1290]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "招商银行",
+                                      "type": "Text"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[48,1346][1272,1502]",
+                                  "clickable": "true",
+                                  "id": "debit_card_row",
+                                  "key": "debit_card_row",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Row"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[96,1396][1158,1452]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "储蓄卡",
+                                      "type": "Text"
+                                    },
+                                    "children": []
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1158,1391][1224,1457]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "SymbolGlyph"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[48,1502][1272,1658]",
+                                  "clickable": "true",
+                                  "id": "credit_card_row",
+                                  "key": "credit_card_row",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Row"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[96,1552][1158,1608]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "信用卡",
+                                      "type": "Text"
+                                    },
+                                    "children": []
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1158,1547][1224,1613]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "SymbolGlyph"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[48,1700][1272,1792]",
+                              "clickable": "false",
+                              "id": "card_type_authorization_copy",
+                              "key": "card_type_authorization_copy",
+                              "scrollable": "false",
+                              "text": "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。",
+                              "type": "Text"
+                            },
+                            "children": []
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[48,1828][1272,1874]",
+                              "clickable": "false",
+                              "id": "card_type_agreement_copy",
+                              "key": "card_type_agreement_copy",
+                              "scrollable": "false",
+                              "text": "我已阅读快捷支付服务协议、银联无卡自助消费授权协议",
+                              "type": "Text"
+                            },
+                            "children": []
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[354,1934][966,2072]",
+                              "clickable": "false",
+                              "id": "card_type_continue_btn",
+                              "key": "card_type_continue_btn",
+                              "scrollable": "false",
+                              "text": "同意并继续",
+                              "type": "Button"
+                            },
+                            "children": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "attributes": {
+          "bounds": "[0,0][1320,117]",
+          "clickable": "false",
+          "id": "session29",
+          "key": "session29",
+          "scrollable": "false",
+          "text": "",
+          "type": "WindowScene"
+        },
+        "children": [
+          {
+            "attributes": {
+              "bounds": "[0,0][1320,117]",
+              "clickable": "false",
+              "id": "StatusBarBox",
+              "key": "StatusBarBox",
+              "scrollable": "false",
+              "text": "",
+              "type": "__Common__"
+            },
+            "children": [
+              {
+                "attributes": {
+                  "bounds": "[0,0][1320,117]",
+                  "clickable": "false",
+                  "id": "",
+                  "key": "",
+                  "scrollable": "false",
+                  "text": "",
+                  "type": "Stack"
+                },
+                "children": [
+                  {
+                    "attributes": {
+                      "bounds": "[0,0][1320,117]",
+                      "clickable": "true",
+                      "id": "StatusBarBridgeView",
+                      "key": "StatusBarBridgeView",
+                      "scrollable": "false",
+                      "text": "",
+                      "type": "__Common__"
+                    },
+                    "children": [
+                      {
+                        "attributes": {
+                          "bounds": "[0,0][1320,117]",
+                          "clickable": "false",
+                          "id": "",
+                          "key": "",
+                          "scrollable": "false",
+                          "text": "",
+                          "type": "Stack"
+                        },
+                        "children": [
+                          {
+                            "attributes": {
+                              "bounds": "[56,22][1264,94]",
+                              "clickable": "false",
+                              "id": "status_bar_color_picker",
+                              "key": "status_bar_color_picker",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Row"
+                            },
+                            "children": []
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[0,0][1320,117]",
+                              "clickable": "false",
+                              "id": "StatusBarView",
+                              "key": "StatusBarView",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Stack"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[0,0][1320,117]",
+                                  "clickable": "false",
+                                  "id": "StatusBarBackground_Row_0",
+                                  "key": "StatusBarBackground_Row_0",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Row"
+                                },
+                                "children": []
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[56,22][1320,94]",
+                                  "clickable": "false",
+                                  "id": "sbg_left",
+                                  "key": "sbg_left",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Stack"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[56,22][1320,94]",
+                                      "clickable": "false",
+                                      "id": "",
+                                      "key": "",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "RelativeContainer"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[56,22][177,94]",
+                                          "clickable": "false",
+                                          "id": "StatusBarIconWrapper_status_bar_clock",
+                                          "key": "StatusBarIconWrapper_status_bar_clock",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Stack"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[56,22][177,94]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "03, :, 37",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[56,22][177,94]",
+                                                  "clickable": "false",
+                                                  "id": "ClockStatusView",
+                                                  "key": "ClockStatusView",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Flex"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[56,32][123,85]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[56,32][110,85]",
+                                                          "clickable": "false",
+                                                          "id": "TimeView_Text_timeText",
+                                                          "key": "TimeView_Text_timeText",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "TextClock"
+                                                        },
+                                                        "children": [
+                                                          {
+                                                            "attributes": {
+                                                              "bounds": "[56,32][110,85]",
+                                                              "clickable": "false",
+                                                              "id": "",
+                                                              "key": "",
+                                                              "scrollable": "false",
+                                                              "text": "03",
+                                                              "type": "Text"
+                                                            },
+                                                            "children": []
+                                                          }
+                                                        ]
+                                                      },
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[110,36][123,81]",
+                                                          "clickable": "false",
+                                                          "id": "TimeView_Text_timeText",
+                                                          "key": "TimeView_Text_timeText",
+                                                          "scrollable": "false",
+                                                          "text": ":",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[123,32][177,85]",
+                                                      "clickable": "false",
+                                                      "id": "TimeView_Text_timeText",
+                                                      "key": "TimeView_Text_timeText",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "TextClock"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[123,32][177,85]",
+                                                          "clickable": "false",
+                                                          "id": "",
+                                                          "key": "",
+                                                          "scrollable": "false",
+                                                          "text": "37",
+                                                          "type": "Text"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "attributes": {
+                                          "bounds": "[189,22][351,94]",
+                                          "clickable": "false",
+                                          "id": "PluginRootComponent_Stack_status_bar_notification_icon",
+                                          "key": "PluginRootComponent_Stack_status_bar_notification_icon",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Stack"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[189,22][351,94]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[189,37][231,79]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[189,37][231,79]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[189,37][231,79]",
+                                                          "clickable": "false",
+                                                          "id": "__100_20020093_com.huawei.hmos.ouc__20_StatusBarAppIcon",
+                                                          "key": "__100_20020093_com.huawei.hmos.ouc__20_StatusBarAppIcon",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "Image"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[243,37][285,79]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[243,37][285,79]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[243,37][285,79]",
+                                                          "clickable": "false",
+                                                          "id": "__100_20020020_com.huawei.hmos.hiviewcare_developerLog_65_StatusBarAppIcon",
+                                                          "key": "__100_20020020_com.huawei.hmos.hiviewcare_developerLog_65_StatusBarAppIcon",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "Image"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[297,37][339,79]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Row"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[297,37][339,79]",
+                                                      "clickable": "false",
+                                                      "id": "",
+                                                      "key": "",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "Row"
+                                                    },
+                                                    "children": [
+                                                      {
+                                                        "attributes": {
+                                                          "bounds": "[297,37][339,79]",
+                                                          "clickable": "false",
+                                                          "id": "__0_1018___1_StatusBarAppIcon",
+                                                          "key": "__0_1018___1_StatusBarAppIcon",
+                                                          "scrollable": "false",
+                                                          "text": "",
+                                                          "type": "Image"
+                                                        },
+                                                        "children": []
+                                                      }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "bounds": "[0,22][1264,94]",
+                                  "clickable": "false",
+                                  "id": "sbg_right",
+                                  "key": "sbg_right",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "RelativeContainer"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[956,22][1010,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_performance",
+                                      "key": "StatusBarIconWrapper_status_bar_performance",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[962,22][1010,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[962,34][1010,82]",
+                                              "clickable": "false",
+                                              "id": "StatusBarIconItemPerformanceModeComponent_Image_icon",
+                                              "key": "StatusBarIconItemPerformanceModeComponent_Image_icon",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Image"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1010,22][1059,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_ring_mode",
+                                      "key": "StatusBarIconWrapper_status_bar_ring_mode",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1016,22][1059,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1016,34][1059,82]",
+                                              "clickable": "false",
+                                              "id": "ringmode-StatusBarIconItemRingModeComponent_Image_ringMode",
+                                              "key": "ringmode-StatusBarIconItemRingModeComponent_Image_ringMode",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1059,22][1128,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_wifi",
+                                      "key": "StatusBarIconWrapper_status_bar_wifi",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1065,22][1128,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Stack"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1065,34][1128,82]",
+                                              "clickable": "false",
+                                              "id": "WifiComponent-WifiIcon_Image_wifi_signal_category",
+                                              "key": "WifiComponent-WifiIcon_Image_wifi_signal_category",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1066,34][1128,82]",
+                                              "clickable": "false",
+                                              "id": "WifiComponent-WifiIcon_Image_wifi_signal_level",
+                                              "key": "WifiComponent-WifiIcon_Image_wifi_signal_level",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          },
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1068,34][1126,82]",
+                                              "clickable": "false",
+                                              "id": "WifiComponent-WifiIcon_Image_wifi_data_flow",
+                                              "key": "WifiComponent-WifiIcon_Image_wifi_data_flow",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "SymbolGlyph"
+                                            },
+                                            "children": []
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1128,22][1174,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_signal",
+                                      "key": "StatusBarIconWrapper_status_bar_signal",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1134,22][1174,94]",
+                                          "clickable": "false",
+                                          "id": "",
+                                          "key": "",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1134,34][1174,82]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Row"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[1134,34][1174,82]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Stack"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1134,34][1174,82]",
+                                                      "clickable": "false",
+                                                      "id": "SignalComponent-SignalIcon_Image_cellularImage",
+                                                      "key": "SignalComponent-SignalIcon_Image_cellularImage",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "attributes": {
+                                      "bounds": "[1174,22][1264,94]",
+                                      "clickable": "false",
+                                      "id": "StatusBarIconWrapper_status_bar_battery",
+                                      "key": "StatusBarIconWrapper_status_bar_battery",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "Stack"
+                                    },
+                                    "children": [
+                                      {
+                                        "attributes": {
+                                          "bounds": "[1180,22][1264,94]",
+                                          "clickable": "false",
+                                          "id": "BatteryComponent-batteryIcon_Image_batteryIcon",
+                                          "key": "BatteryComponent-batteryIcon_Image_batteryIcon",
+                                          "scrollable": "false",
+                                          "text": "",
+                                          "type": "Row"
+                                        },
+                                        "children": [
+                                          {
+                                            "attributes": {
+                                              "bounds": "[1180,34][1264,82]",
+                                              "clickable": "false",
+                                              "id": "",
+                                              "key": "",
+                                              "scrollable": "false",
+                                              "text": "",
+                                              "type": "Stack"
+                                            },
+                                            "children": [
+                                              {
+                                                "attributes": {
+                                                  "bounds": "[1180,34][1264,82]",
+                                                  "clickable": "false",
+                                                  "id": "",
+                                                  "key": "",
+                                                  "scrollable": "false",
+                                                  "text": "",
+                                                  "type": "Stack"
+                                                },
+                                                "children": [
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1180,34][1264,82]",
+                                                      "clickable": "false",
+                                                      "id": "BatteryComponent-batteryIcon_Image_batteryBorder",
+                                                      "key": "BatteryComponent-batteryIcon_Image_batteryBorder",
+                                                      "scrollable": "false",
+                                                      "text": "",
+                                                      "type": "SymbolGlyph"
+                                                    },
+                                                    "children": []
+                                                  },
+                                                  {
+                                                    "attributes": {
+                                                      "bounds": "[1198,39][1238,78]",
+                                                      "clickable": "false",
+                                                      "id": "BatteryComponent-batteryIcon_Text_batterySoc",
+                                                      "key": "BatteryComponent-batteryIcon_Text_batterySoc",
+                                                      "scrollable": "false",
+                                                      "text": "79",
+                                                      "type": "Text"
+                                                    },
+                                                    "children": []
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "attributes": {
+                              "bounds": "[618,16][702,100]",
+                              "clickable": "false",
+                              "id": "StatusBarView_LiveCapsuleListContainer",
+                              "key": "StatusBarView_LiveCapsuleListContainer",
+                              "scrollable": "false",
+                              "text": "",
+                              "type": "Stack"
+                            },
+                            "children": [
+                              {
+                                "attributes": {
+                                  "bounds": "[618,16][702,100]",
+                                  "clickable": "false",
+                                  "id": "[Live]LiveCapsuleListView",
+                                  "key": "[Live]LiveCapsuleListView",
+                                  "scrollable": "false",
+                                  "text": "",
+                                  "type": "Stack"
+                                },
+                                "children": [
+                                  {
+                                    "attributes": {
+                                      "bounds": "[450,0][870,117]",
+                                      "clickable": "true",
+                                      "id": "LiveMetaBallBaseVm",
+                                      "key": "LiveMetaBallBaseVm",
+                                      "scrollable": "false",
+                                      "text": "",
+                                      "type": "metaballNode"
+                                    },
+                                    "children": []
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "_hylyre_hints": {
+    "scrollable_containers": [],
+    "scrollable_container_count": 0
+  }
+}

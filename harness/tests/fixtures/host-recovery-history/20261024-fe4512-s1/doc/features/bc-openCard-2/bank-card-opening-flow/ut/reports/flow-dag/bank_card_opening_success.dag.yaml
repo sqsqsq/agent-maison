@@ -1,0 +1,47 @@
+flow_id: bank_card_opening_success
+flow_name: 银行卡开卡成功
+module: WalletMain
+version: "1.0"
+flow_type: usecase_driven
+use_case: UC-1
+branches: [BR-SUCCESS]
+linked_acceptance: [AC-1, AC-2, AC-3, AC-4]
+linked_boundaries: [BD-1, BD-2, BD-4]
+entry_point:
+  module: WalletMain
+  file: 02-Feature/WalletMain/src/main/ets/domain/service/BankCardOpeningService.ets
+  function: saveCandidate
+nodes:
+  - id: start
+    type: user_trigger
+    description: 提交已完成门禁的开卡候选
+    trigger: { event: saveCandidate, simulated_value: candidate, from_branch: BR-SUCCESS }
+    next: [saving]
+  - id: saving
+    type: state_transition
+    description: 进入保存阶段
+    transition: { from_phase: OTP_ACTIVE, to_phase: SAVING, field_updates: {} }
+    next: [save]
+  - id: save
+    type: port_call_local
+    description: 原子保存完整卡数据
+    source: { file: 02-Feature/WalletMain/src/main/ets/data/repository/BankCardRepository.ets, function: save, class: BankCardRepository }
+    boundary: { name: BankCardRepository, type: BankCardRepository, method: save }
+    stub_strategy: mock_response
+    spy_preset: save_success
+    next: [result]
+  - id: result
+    type: state_transition
+    description: 进入成功结果阶段
+    transition: { from_phase: SAVING, to_phase: RESULT, field_updates: { success: true } }
+    next: [assert]
+  - id: assert
+    type: assertion
+    description: 成功结果保留完整卡号且只调用一次保存
+    linked_branch: BR-SUCCESS
+    linked_acceptance: [AC-1, AC-2, AC-3, AC-4]
+    assertions:
+      - { type: state_check, target: result.success, expected: "true" }
+      - { type: data_check, target: result.fullCardNumber, expected: "6225888888881234" }
+      - { type: port_call_log, target: repository.callLog, expected: "['save']" }
+    next: []

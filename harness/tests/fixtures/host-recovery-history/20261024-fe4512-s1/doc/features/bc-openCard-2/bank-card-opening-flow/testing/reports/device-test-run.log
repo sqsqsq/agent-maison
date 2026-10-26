@@ -1,0 +1,931 @@
+--- hylyre run 2026-10-24T19:44:50.006Z feature=cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 ---
+hypium 工作目录（cwd）: D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\.hypium-workdir（tmp_hypium 将落在其下，不写入工程根）
+$ hdc -t 3UJ0225321000395 shell aa force-stop com.example.simulatedwallet
+force stop process successfully.
+[device-ready/testing-run] 设备未锁屏
+$ hdc -t 3UJ0225321000395 shell aa start -a PhoneAbility -b com.example.simulatedwallet
+start ability successfully.
+
+$ D:\1.code\SimulatedWalletForHmos\.hylyre\venv\Scripts\python.exe -m hylyre run --plan D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\20261024T194450Z-003\hylyre\test-plan.hylyre.md --feature cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93 --report-out D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\20261024T194450Z-003\hylyre\test-report.md --trace-out D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\20261024T194450Z-003\hylyre\trace.json --skip-assert-expected --device-sn 3UJ0225321000395 --failure-dir D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\20261024T194450Z-003\hylyre\failures
+hypium cwd: D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\.hypium-workdir（禁止工程根；tmp_hypium 应落在其下）
+hdc prewarm: exe=hdc isolated_cwd=C:\Users\shengqsq\AppData\Local\Temp\maison-hdc prewarmed=true warm_error=-
+[2026-10-24 15:44:52,872] [53796] [Analysis] [WARNING] [tracker dependency is not ok]
+[2026-10-24 15:44:52,873] [53796] [EnvPool] [INFO] [Report path: D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\.hypium-workdir\reports\2026-10-24-15-44-52]
+[2026-10-24 15:44:52,874] [53796] [EnvPool] [INFO] [Load Managers ...]
+[2026-10-24 15:44:52,874] [53796] [EnvPool] [INFO] [Env pool running in cache mode.]
+[2026-10-24 15:44:52,874] [53796] [EnvPool] [INFO] [Prepare to init pool]
+[2026-10-24 15:44:52,875] [53796] [EnvPool] [INFO] [Pool is prepared]
+[2026-10-24 15:44:52,875] [53796] [EnvPool] [INFO] [Get device by selector]
+[2026-10-24 15:44:52,875] [53796] [EnvPool] [INFO] [Apply device in pool]
+[2026-10-24 15:44:53,370] [17280] [Hdc] [INFO] [3UJ0225321000395		USB	Connected	localhost
+]
+[2026-10-24 15:44:53,881] [53796] [EnvPool] [INFO] [Do matches, device:[state:Available, sn:3UJ0225321000395, label:phone], selection option:[device sn:['3UJ0225321000395'], label:phone]]
+[2026-10-24 15:44:53,883] [53796] [EnvPool] [INFO] [Device 3UJ0225321000395: extend value: {}]
+[2026-10-24 15:44:54,305] [53796] [Device] [INFO] [7.0.0.1]
+[2026-10-24 15:44:54,529] [53796] [Device] [INFO] [Init ui proxy by unix socket.]
+[2026-10-24 15:44:54,530] [53796] [DeviceUIProxy] [INFO] [Check uitest running status.]
+[2026-10-24 15:44:54,635] [53796] [DeviceUIProxy] [INFO] [Finish check uitest running status. Uitest pid: None]
+[2026-10-24 15:44:54,635] [53796] [Device] [INFO] [uitest version: 7.0.0.1. Using 1.2.2 agent version]
+[2026-10-24 15:44:54,746] [53796] [Device] [INFO] [UITEST_AGENT_LIBRARY@v0.0.0#1.2.2
+]
+[2026-10-24 15:44:54,746] [53796] [Device] [INFO] [local agent version 1.2.2, device agent version 1.2.2]
+[2026-10-24 15:44:54,822] [53796] [Device] [INFO] [Device agent is up to date!]
+[2026-10-24 15:44:57,347] [53796] [DeviceUIProxy] [INFO] [Harmony ui rpc start success!!!!]
+[2026-10-24 15:44:59,448] [53796] [DeviceUIProxy] [INFO] [tcp forward port: 9978 for 3UJ0225321000395]
+[2026-10-24 15:45:00,137] [53796] [Device] [INFO] [hypium base version: 6.1.0.210]
+[2026-10-24 15:45:00,138] [53796] [DeviceTest] [INFO] [init DeccVariable cur case object]
+[2026-10-24 15:45:00,138] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:45:00,842] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.704s</div>]
+[2026-10-24 15:45:00,842] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:45:02,004] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.162s</div>]
+[2026-10-24 15:45:02,701] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:02,924] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.222s</div>]
+[2026-10-24 15:45:02,925] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:45:02,958] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.034s</div>]
+[2026-10-24 15:45:02,959] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:45:03,007] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.048s</div>]
+[2026-10-24 15:45:03,007] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:03,270] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.263s</div>]
+[2026-10-24 15:45:03,271] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:45:03,306] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.035s</div>]
+[2026-10-24 15:45:03,307] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:45:03,352] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.045s</div>]
+[2026-10-24 15:45:03,353] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:03,630] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.277s</div>]
+[2026-10-24 15:45:03,631] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:45:05,220] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.589s</div>]
+[2026-10-24 15:45:05,220] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:45:05,327] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.107s</div>]
+[2026-10-24 15:45:05,328] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:05,702] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.374s</div>]
+[2026-10-24 15:45:05,703] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:06,707] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.005s</div>]
+[2026-10-24 15:45:06,708] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0)</div>]
+[2026-10-24 15:45:06,775] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0) cost: 0.067s</div>]
+[2026-10-24 15:45:06,776] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:06,859] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0) cost: 0.083s</div>]
+[2026-10-24 15:45:06,864] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:06,943] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0) cost: 0.079s</div>]
+[2026-10-24 15:45:06,944] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0)</div>]
+[2026-10-24 15:45:07,028] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0) cost: 0.084s</div>]
+[2026-10-24 15:45:07,028] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row'))</div>]
+[2026-10-24 15:45:07,130] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row')) cost: 0.101s</div>]
+[2026-10-24 15:45:07,130] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:07,522] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.391s</div>]
+[2026-10-24 15:45:07,522] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:07,626] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:45:07,627] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn'))</div>]
+[2026-10-24 15:45:07,703] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn')) cost: 0.076s</div>]
+[2026-10-24 15:45:07,704] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:07,997] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.293s</div>]
+[2026-10-24 15:45:07,998] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_nav_title'), 10.0)</div>]
+[2026-10-24 15:45:08,042] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_nav_title'), 10.0) cost: 0.044s</div>]
+[2026-10-24 15:45:08,043] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_hint'), 10.0)</div>]
+[2026-10-24 15:45:08,080] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_hint'), 10.0) cost: 0.036s</div>]
+[2026-10-24 15:45:08,081] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_candidate_1'), 10.0)</div>]
+[2026-10-24 15:45:08,116] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_candidate_1'), 10.0) cost: 0.035s</div>]
+[2026-10-24 15:45:08,117] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_agreement'), 10.0)</div>]
+[2026-10-24 15:45:08,160] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_agreement'), 10.0) cost: 0.043s</div>]
+[2026-10-24 15:45:08,160] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_next_btn'), 10.0)</div>]
+[2026-10-24 15:45:08,204] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_next_btn'), 10.0) cost: 0.043s</div>]
+[2026-10-24 15:45:08,204] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0)</div>]
+[2026-10-24 15:45:08,244] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0) cost: 0.04s</div>]
+[2026-10-24 15:45:08,247] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1'))</div>]
+[2026-10-24 15:45:08,307] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1')) cost: 0.06s</div>]
+[2026-10-24 15:45:08,308] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:08,587] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.279s</div>]
+[2026-10-24 15:45:08,588] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:09,193] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.605s</div>]
+[2026-10-24 15:45:09,194] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check'))</div>]
+[2026-10-24 15:45:09,606] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check')) cost: 0.412s</div>]
+[2026-10-24 15:45:09,606] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:09,973] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.366s</div>]
+[2026-10-24 15:45:09,973] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:10,077] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:45:10,078] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:45:10,145] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.067s</div>]
+[2026-10-24 15:45:10,145] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:10,428] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.282s</div>]
+[2026-10-24 15:45:10,429] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:11,434] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.005s</div>]
+[2026-10-24 15:45:11,435] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0)</div>]
+[2026-10-24 15:45:11,515] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0) cost: 0.08s</div>]
+[2026-10-24 15:45:11,515] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0)</div>]
+[2026-10-24 15:45:11,608] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0) cost: 0.092s</div>]
+[2026-10-24 15:45:11,608] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0)</div>]
+[2026-10-24 15:45:11,694] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0) cost: 0.085s</div>]
+[2026-10-24 15:45:11,694] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0)</div>]
+[2026-10-24 15:45:11,767] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0) cost: 0.073s</div>]
+[2026-10-24 15:45:11,768] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input'))</div>]
+[2026-10-24 15:45:11,883] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input')) cost: 0.115s</div>]
+[2026-10-24 15:45:11,883] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#35, 123456, None)</div>]
+[2026-10-24 15:45:13,604] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#35, 123456, None) cost: 1.72s</div>]
+[2026-10-24 15:45:13,609] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:13,712] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:45:13,713] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395)</div>]
+[2026-10-24 15:45:13,846] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395) cost: 0.132s</div>]
+[2026-10-24 15:45:13,846] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:15,515] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.669s</div>]
+[2026-10-24 15:45:15,516] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_next_btn'))</div>]
+[2026-10-24 15:45:15,626] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_next_btn')) cost: 0.109s</div>]
+[2026-10-24 15:45:15,626] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('otp_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:15,980] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('otp_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.354s</div>]
+[2026-10-24 15:45:15,981] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_status_icon'), 10.0)</div>]
+[2026-10-24 15:45:16,022] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_status_icon'), 10.0) cost: 0.041s</div>]
+[2026-10-24 15:45:16,023] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_title'), 10.0)</div>]
+[2026-10-24 15:45:16,060] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_title'), 10.0) cost: 0.037s</div>]
+[2026-10-24 15:45:16,061] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_description'), 10.0)</div>]
+[2026-10-24 15:45:16,105] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_description'), 10.0) cost: 0.044s</div>]
+[2026-10-24 15:45:16,105] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_guide_illustration'), 10.0)</div>]
+[2026-10-24 15:45:16,146] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_guide_illustration'), 10.0) cost: 0.041s</div>]
+[2026-10-24 15:45:16,147] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_finish_btn'), 10.0)</div>]
+[2026-10-24 15:45:16,187] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('result_finish_btn'), 10.0) cost: 0.04s</div>]
+[2026-10-24 15:45:16,188] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 20.0)</div>]
+[2026-10-24 15:45:16,230] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 20.0) cost: 0.041s</div>]
+[2026-10-24 15:45:16,230] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('result_finish_btn'))</div>]
+[2026-10-24 15:45:16,287] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('result_finish_btn')) cost: 0.056s</div>]
+[2026-10-24 15:45:16,287] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('result_finish_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:16,576] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('result_finish_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.289s</div>]
+[2026-10-24 15:45:16,580] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('home_root'), 10.0)</div>]
+[2026-10-24 15:45:17,554] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('home_root'), 10.0) cost: 0.973s</div>]
+[2026-10-24 15:45:17,555] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:45:18,309] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.754s</div>]
+[2026-10-24 15:45:18,310] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:45:19,451] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.141s</div>]
+[2026-10-24 15:45:19,887] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:20,099] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.212s</div>]
+[2026-10-24 15:45:20,100] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:45:20,129] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.028s</div>]
+[2026-10-24 15:45:20,129] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:45:20,171] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.042s</div>]
+[2026-10-24 15:45:20,171] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:20,431] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.26s</div>]
+[2026-10-24 15:45:20,432] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:45:20,469] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.036s</div>]
+[2026-10-24 15:45:20,470] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:45:20,519] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.049s</div>]
+[2026-10-24 15:45:20,520] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:20,789] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.269s</div>]
+[2026-10-24 15:45:20,790] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:45:22,352] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.562s</div>]
+[2026-10-24 15:45:22,353] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:45:22,424] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.071s</div>]
+[2026-10-24 15:45:22,425] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:22,726] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.301s</div>]
+[2026-10-24 15:45:22,727] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:23,741] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.013s</div>]
+[2026-10-24 15:45:23,742] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_sheet_close'))</div>]
+[2026-10-24 15:45:23,846] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_sheet_close')) cost: 0.103s</div>]
+[2026-10-24 15:45:23,846] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_sheet_close'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:24,188] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_sheet_close'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.342s</div>]
+[2026-10-24 15:45:24,189] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:24,272] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 0.082s</div>]
+[2026-10-24 15:45:24,273] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:24,377] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:45:24,378] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_more_pill'))</div>]
+[2026-10-24 15:45:24,433] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_more_pill')) cost: 0.056s</div>]
+[2026-10-24 15:45:24,434] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_more_pill'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:24,720] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_more_pill'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.286s</div>]
+[2026-10-24 15:45:24,721] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('exp_page_title'), 10.0)</div>]
+[2026-10-24 15:45:24,774] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('exp_page_title'), 10.0) cost: 0.052s</div>]
+[2026-10-24 15:45:25,854] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) ui_adaptive</div></div>]
+[2026-10-24 15:45:26,466] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) cost: 0.612s</div>]
+[2026-10-24 15:45:29,344] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) ui_adaptive</div></div>]
+[2026-10-24 15:45:29,985] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) cost: 0.641s</div>]
+[2026-10-24 15:45:31,811] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('exp_view_all_banks_btn'))</div>]
+[2026-10-24 15:45:31,939] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('exp_view_all_banks_btn')) cost: 0.128s</div>]
+[2026-10-24 15:45:31,940] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('exp_view_all_banks_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:32,344] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('exp_view_all_banks_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.404s</div>]
+[2026-10-24 15:45:32,345] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ab_page_title'), 10.0)</div>]
+[2026-10-24 15:45:32,397] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ab_page_title'), 10.0) cost: 0.052s</div>]
+[2026-10-24 15:45:33,481] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).id('ab_group_list'), None, None, 0.3, None) ui_adaptive</div></div>]
+[2026-10-24 15:45:34,494] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).id('ab_group_list'), None, None, 0.3, None) cost: 1.013s</div>]
+[2026-10-24 15:45:37,449] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).id('ab_group_list'), None, None, 0.3, None) ui_adaptive</div></div>]
+[2026-10-24 15:45:38,118] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).id('ab_group_list'), None, None, 0.3, None) cost: 0.669s</div>]
+[2026-10-24 15:45:40,383] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ab_row_cmb'))</div>]
+[2026-10-24 15:45:40,493] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ab_row_cmb')) cost: 0.111s</div>]
+[2026-10-24 15:45:40,494] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ab_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:40,875] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ab_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.381s</div>]
+[2026-10-24 15:45:40,876] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:41,886] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.01s</div>]
+[2026-10-24 15:45:41,886] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0)</div>]
+[2026-10-24 15:45:41,994] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0) cost: 0.108s</div>]
+[2026-10-24 15:45:41,995] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:42,094] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0) cost: 0.098s</div>]
+[2026-10-24 15:45:42,095] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:42,199] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0) cost: 0.105s</div>]
+[2026-10-24 15:45:42,200] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0)</div>]
+[2026-10-24 15:45:42,310] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0) cost: 0.11s</div>]
+[2026-10-24 15:45:42,311] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:45:43,024] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.713s</div>]
+[2026-10-24 15:45:43,025] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:45:44,163] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.139s</div>]
+[2026-10-24 15:45:44,612] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:44,827] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.215s</div>]
+[2026-10-24 15:45:44,828] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:45:44,854] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.025s</div>]
+[2026-10-24 15:45:44,854] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:45:44,893] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.038s</div>]
+[2026-10-24 15:45:44,893] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:45,156] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.263s</div>]
+[2026-10-24 15:45:45,162] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:45:45,192] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.03s</div>]
+[2026-10-24 15:45:45,193] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:45:45,233] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.04s</div>]
+[2026-10-24 15:45:45,234] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:45,502] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.268s</div>]
+[2026-10-24 15:45:45,502] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:45:47,069] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.567s</div>]
+[2026-10-24 15:45:47,070] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:45:47,128] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.058s</div>]
+[2026-10-24 15:45:47,129] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:47,439] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.31s</div>]
+[2026-10-24 15:45:47,440] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:48,459] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.02s</div>]
+[2026-10-24 15:45:48,460] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0)</div>]
+[2026-10-24 15:45:48,532] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0) cost: 0.071s</div>]
+[2026-10-24 15:45:48,533] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:48,620] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0) cost: 0.087s</div>]
+[2026-10-24 15:45:48,621] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:48,698] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0) cost: 0.077s</div>]
+[2026-10-24 15:45:48,699] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0)</div>]
+[2026-10-24 15:45:48,779] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0) cost: 0.08s</div>]
+[2026-10-24 15:45:48,780] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('credit_card_row'))</div>]
+[2026-10-24 15:45:48,897] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('credit_card_row')) cost: 0.116s</div>]
+[2026-10-24 15:45:48,900] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('credit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:49,275] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('credit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.374s</div>]
+[2026-10-24 15:45:49,276] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:49,380] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.105s</div>]
+[2026-10-24 15:45:49,381] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_sheet_close'))</div>]
+[2026-10-24 15:45:49,453] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_sheet_close')) cost: 0.072s</div>]
+[2026-10-24 15:45:49,453] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_sheet_close'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:49,744] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_sheet_close'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.29s</div>]
+[2026-10-24 15:45:49,745] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:49,820] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 0.075s</div>]
+[2026-10-24 15:45:49,821] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:49,924] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:45:49,925] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:45:49,992] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.067s</div>]
+[2026-10-24 15:45:49,993] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:50,270] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.277s</div>]
+[2026-10-24 15:45:50,271] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:51,322] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.051s</div>]
+[2026-10-24 15:45:51,323] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0)</div>]
+[2026-10-24 15:45:51,405] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_bank_row'), 10.0) cost: 0.082s</div>]
+[2026-10-24 15:45:51,406] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:51,500] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('debit_card_row'), 10.0) cost: 0.094s</div>]
+[2026-10-24 15:45:51,500] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0)</div>]
+[2026-10-24 15:45:51,578] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('credit_card_row'), 10.0) cost: 0.078s</div>]
+[2026-10-24 15:45:51,579] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0)</div>]
+[2026-10-24 15:45:51,653] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_continue_btn'), 10.0) cost: 0.074s</div>]
+[2026-10-24 15:45:51,653] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('bank_card_selection_root'), 2.0)</div>]
+[2026-10-24 15:45:51,795] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('bank_card_selection_root'), 2.0) cost: 0.141s</div>]
+[2026-10-24 15:45:51,796] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:45:52,541] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.744s</div>]
+[2026-10-24 15:45:52,541] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:45:53,705] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.163s</div>]
+[2026-10-24 15:45:54,173] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:54,389] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.216s</div>]
+[2026-10-24 15:45:54,390] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:45:54,422] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.031s</div>]
+[2026-10-24 15:45:54,424] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:45:54,467] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.043s</div>]
+[2026-10-24 15:45:54,468] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:54,735] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.267s</div>]
+[2026-10-24 15:45:54,736] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:45:54,776] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.039s</div>]
+[2026-10-24 15:45:54,777] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:45:54,825] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.048s</div>]
+[2026-10-24 15:45:54,825] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:55,094] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.268s</div>]
+[2026-10-24 15:45:55,094] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:45:56,655] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.56s</div>]
+[2026-10-24 15:45:56,655] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:45:56,723] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.067s</div>]
+[2026-10-24 15:45:56,723] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:57,068] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.345s</div>]
+[2026-10-24 15:45:57,069] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:45:58,091] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.022s</div>]
+[2026-10-24 15:45:58,092] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('credit_card_row'))</div>]
+[2026-10-24 15:45:58,211] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('credit_card_row')) cost: 0.12s</div>]
+[2026-10-24 15:45:58,212] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('credit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:58,594] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('credit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.382s</div>]
+[2026-10-24 15:45:58,595] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:45:58,700] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.105s</div>]
+[2026-10-24 15:45:58,700] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn'))</div>]
+[2026-10-24 15:45:58,770] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn')) cost: 0.069s</div>]
+[2026-10-24 15:45:58,771] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:45:59,065] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.294s</div>]
+[2026-10-24 15:45:59,066] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_nav_title'), 10.0)</div>]
+[2026-10-24 15:45:59,108] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_nav_title'), 10.0) cost: 0.041s</div>]
+[2026-10-24 15:45:59,108] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_hint'), 10.0)</div>]
+[2026-10-24 15:45:59,148] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_hint'), 10.0) cost: 0.04s</div>]
+[2026-10-24 15:45:59,149] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_candidate_1'), 10.0)</div>]
+[2026-10-24 15:45:59,191] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_candidate_1'), 10.0) cost: 0.042s</div>]
+[2026-10-24 15:45:59,192] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_agreement'), 10.0)</div>]
+[2026-10-24 15:45:59,234] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_agreement'), 10.0) cost: 0.042s</div>]
+[2026-10-24 15:45:59,234] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_next_btn'), 10.0)</div>]
+[2026-10-24 15:45:59,274] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('selection_next_btn'), 10.0) cost: 0.039s</div>]
+[2026-10-24 15:45:59,274] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0)</div>]
+[2026-10-24 15:45:59,316] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0) cost: 0.042s</div>]
+[2026-10-24 15:45:59,838] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1'))</div>]
+[2026-10-24 15:46:00,631] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1')) cost: 0.794s</div>]
+[2026-10-24 15:46:00,632] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:00,987] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.355s</div>]
+[2026-10-24 15:46:00,988] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:01,093] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.105s</div>]
+[2026-10-24 15:46:01,094] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check'))</div>]
+[2026-10-24 15:46:01,154] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check')) cost: 0.06s</div>]
+[2026-10-24 15:46:01,154] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:01,436] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.281s</div>]
+[2026-10-24 15:46:01,436] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:01,541] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:46:01,541] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:46:01,604] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.063s</div>]
+[2026-10-24 15:46:01,605] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:01,898] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.293s</div>]
+[2026-10-24 15:46:01,899] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:46:02,914] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.016s</div>]
+[2026-10-24 15:46:02,915] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:46:03,647] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.732s</div>]
+[2026-10-24 15:46:03,647] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:46:04,803] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.155s</div>]
+[2026-10-24 15:46:05,277] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:05,492] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.215s</div>]
+[2026-10-24 15:46:05,493] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:46:05,521] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.028s</div>]
+[2026-10-24 15:46:05,521] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:46:05,559] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.038s</div>]
+[2026-10-24 15:46:05,560] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:05,817] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.257s</div>]
+[2026-10-24 15:46:05,818] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:46:05,856] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.037s</div>]
+[2026-10-24 15:46:05,856] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:46:05,899] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.043s</div>]
+[2026-10-24 15:46:05,899] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:06,170] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.27s</div>]
+[2026-10-24 15:46:06,170] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:46:07,744] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.574s</div>]
+[2026-10-24 15:46:07,745] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:46:07,807] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.062s</div>]
+[2026-10-24 15:46:07,807] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:08,145] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.337s</div>]
+[2026-10-24 15:46:08,146] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:46:09,156] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.01s</div>]
+[2026-10-24 15:46:09,157] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row'))</div>]
+[2026-10-24 15:46:09,270] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row')) cost: 0.113s</div>]
+[2026-10-24 15:46:09,274] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:09,651] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.377s</div>]
+[2026-10-24 15:46:09,652] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:09,757] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:46:09,757] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn'))</div>]
+[2026-10-24 15:46:09,825] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn')) cost: 0.068s</div>]
+[2026-10-24 15:46:09,826] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:10,125] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.298s</div>]
+[2026-10-24 15:46:10,126] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0)</div>]
+[2026-10-24 15:46:10,163] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0) cost: 0.038s</div>]
+[2026-10-24 15:46:10,164] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1'))</div>]
+[2026-10-24 15:46:10,226] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1')) cost: 0.062s</div>]
+[2026-10-24 15:46:10,226] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:10,515] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.288s</div>]
+[2026-10-24 15:46:10,515] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:10,619] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:46:10,620] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check'))</div>]
+[2026-10-24 15:46:11,731] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check')) cost: 1.111s</div>]
+[2026-10-24 15:46:11,731] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:12,108] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.376s</div>]
+[2026-10-24 15:46:12,109] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:12,213] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.105s</div>]
+[2026-10-24 15:46:12,214] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:46:12,276] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.061s</div>]
+[2026-10-24 15:46:12,276] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:12,558] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.281s</div>]
+[2026-10-24 15:46:12,559] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:46:13,577] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.017s</div>]
+[2026-10-24 15:46:13,578] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0)</div>]
+[2026-10-24 15:46:13,656] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0) cost: 0.078s</div>]
+[2026-10-24 15:46:13,657] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0)</div>]
+[2026-10-24 15:46:13,738] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0) cost: 0.081s</div>]
+[2026-10-24 15:46:13,742] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0)</div>]
+[2026-10-24 15:46:13,820] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0) cost: 0.077s</div>]
+[2026-10-24 15:46:13,820] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0)</div>]
+[2026-10-24 15:46:13,896] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0) cost: 0.076s</div>]
+[2026-10-24 15:46:14,586] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input'))</div>]
+[2026-10-24 15:46:14,704] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input')) cost: 0.118s</div>]
+[2026-10-24 15:46:14,704] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#155, 12345, None)</div>]
+[2026-10-24 15:46:16,266] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#155, 12345, None) cost: 1.561s</div>]
+[2026-10-24 15:46:16,266] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:16,369] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.102s</div>]
+[2026-10-24 15:46:16,690] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:16,792] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.102s</div>]
+[2026-10-24 15:46:16,793] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395)</div>]
+[2026-10-24 15:46:16,911] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395) cost: 0.117s</div>]
+[2026-10-24 15:46:16,912] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:46:18,548] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.636s</div>]
+[2026-10-24 15:46:18,549] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_next_btn'))</div>]
+[2026-10-24 15:46:18,674] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_next_btn')) cost: 0.124s</div>]
+[2026-10-24 15:46:18,675] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('otp_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:19,043] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('otp_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.368s</div>]
+[2026-10-24 15:46:19,044] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 20.0)</div>]
+[2026-10-24 15:46:19,084] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 20.0) cost: 0.04s</div>]
+[2026-10-24 15:46:19,085] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:46:19,752] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.667s</div>]
+[2026-10-24 15:46:19,753] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:46:20,933] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.18s</div>]
+[2026-10-24 15:46:21,383] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:21,596] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.214s</div>]
+[2026-10-24 15:46:21,598] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:46:21,632] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.035s</div>]
+[2026-10-24 15:46:21,633] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:46:21,675] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.041s</div>]
+[2026-10-24 15:46:21,675] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:21,932] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.257s</div>]
+[2026-10-24 15:46:21,933] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:46:21,966] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.032s</div>]
+[2026-10-24 15:46:21,969] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:46:22,007] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.038s</div>]
+[2026-10-24 15:46:22,008] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:22,274] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.266s</div>]
+[2026-10-24 15:46:22,275] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:46:23,833] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.558s</div>]
+[2026-10-24 15:46:23,834] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:46:23,906] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.071s</div>]
+[2026-10-24 15:46:23,906] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:24,225] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.319s</div>]
+[2026-10-24 15:46:24,226] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:46:25,231] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.004s</div>]
+[2026-10-24 15:46:25,232] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row'))</div>]
+[2026-10-24 15:46:25,351] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row')) cost: 0.119s</div>]
+[2026-10-24 15:46:25,351] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:25,727] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.376s</div>]
+[2026-10-24 15:46:25,728] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:25,832] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:46:25,832] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn'))</div>]
+[2026-10-24 15:46:25,900] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn')) cost: 0.067s</div>]
+[2026-10-24 15:46:25,900] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:26,194] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.294s</div>]
+[2026-10-24 15:46:26,195] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0)</div>]
+[2026-10-24 15:46:26,242] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0) cost: 0.046s</div>]
+[2026-10-24 15:46:26,243] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1'))</div>]
+[2026-10-24 15:46:26,290] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1')) cost: 0.047s</div>]
+[2026-10-24 15:46:26,291] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:26,571] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.28s</div>]
+[2026-10-24 15:46:26,575] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:26,678] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:46:26,678] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check'))</div>]
+[2026-10-24 15:46:26,730] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check')) cost: 0.052s</div>]
+[2026-10-24 15:46:26,731] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:28,065] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 1.334s</div>]
+[2026-10-24 15:46:28,066] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:46:28,171] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.105s</div>]
+[2026-10-24 15:46:28,172] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:46:28,211] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.04s</div>]
+[2026-10-24 15:46:28,212] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:46:28,498] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.287s</div>]
+[2026-10-24 15:46:28,499] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:46:29,505] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.006s</div>]
+[2026-10-24 15:46:29,506] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0)</div>]
+[2026-10-24 15:46:29,574] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0) cost: 0.068s</div>]
+[2026-10-24 15:46:29,574] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0)</div>]
+[2026-10-24 15:46:29,646] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0) cost: 0.072s</div>]
+[2026-10-24 15:46:29,647] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0)</div>]
+[2026-10-24 15:46:29,720] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0) cost: 0.073s</div>]
+[2026-10-24 15:46:29,720] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0)</div>]
+[2026-10-24 15:46:29,792] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0) cost: 0.071s</div>]
+[2026-10-24 15:47:30,612] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1073, 1763), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:30,841] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1073, 1763), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.229s</div>]
+[2026-10-24 15:47:31,343] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:47:32,005] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.661s</div>]
+[2026-10-24 15:47:32,006] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:47:33,213] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.207s</div>]
+[2026-10-24 15:47:33,664] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:33,878] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.214s</div>]
+[2026-10-24 15:47:33,879] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:47:33,914] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.035s</div>]
+[2026-10-24 15:47:33,914] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:47:33,961] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.046s</div>]
+[2026-10-24 15:47:33,961] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:34,224] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.262s</div>]
+[2026-10-24 15:47:34,230] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:47:34,265] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.035s</div>]
+[2026-10-24 15:47:34,266] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:47:34,317] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.05s</div>]
+[2026-10-24 15:47:34,317] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:34,584] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.267s</div>]
+[2026-10-24 15:47:34,585] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:47:36,158] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.573s</div>]
+[2026-10-24 15:47:36,158] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:47:36,212] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.053s</div>]
+[2026-10-24 15:47:36,212] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:36,536] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.323s</div>]
+[2026-10-24 15:47:36,536] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:47:37,550] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.013s</div>]
+[2026-10-24 15:47:37,551] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row'))</div>]
+[2026-10-24 15:47:37,656] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row')) cost: 0.105s</div>]
+[2026-10-24 15:47:37,657] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:37,997] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.34s</div>]
+[2026-10-24 15:47:37,998] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:38,104] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.105s</div>]
+[2026-10-24 15:47:38,104] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn'))</div>]
+[2026-10-24 15:47:38,164] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn')) cost: 0.059s</div>]
+[2026-10-24 15:47:38,165] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:38,460] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.295s</div>]
+[2026-10-24 15:47:38,461] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0)</div>]
+[2026-10-24 15:47:38,499] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0) cost: 0.037s</div>]
+[2026-10-24 15:47:38,499] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1'))</div>]
+[2026-10-24 15:47:38,557] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1')) cost: 0.057s</div>]
+[2026-10-24 15:47:38,560] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:38,846] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.286s</div>]
+[2026-10-24 15:47:38,846] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:38,951] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:47:38,951] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check'))</div>]
+[2026-10-24 15:47:40,079] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check')) cost: 1.128s</div>]
+[2026-10-24 15:47:40,080] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:40,444] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.364s</div>]
+[2026-10-24 15:47:40,445] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:40,549] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:47:40,550] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:47:40,616] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.065s</div>]
+[2026-10-24 15:47:40,616] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:40,904] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.287s</div>]
+[2026-10-24 15:47:40,904] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:47:41,907] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.002s</div>]
+[2026-10-24 15:47:41,907] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0)</div>]
+[2026-10-24 15:47:41,970] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0) cost: 0.062s</div>]
+[2026-10-24 15:47:41,971] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0)</div>]
+[2026-10-24 15:47:42,059] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0) cost: 0.088s</div>]
+[2026-10-24 15:47:42,059] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0)</div>]
+[2026-10-24 15:47:42,137] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0) cost: 0.078s</div>]
+[2026-10-24 15:47:42,138] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0)</div>]
+[2026-10-24 15:47:42,218] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0) cost: 0.08s</div>]
+[2026-10-24 15:47:42,219] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input'))</div>]
+[2026-10-24 15:47:42,334] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input')) cost: 0.115s</div>]
+[2026-10-24 15:47:42,334] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#212, 123456, None)</div>]
+[2026-10-24 15:47:43,962] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#212, 123456, None) cost: 1.627s</div>]
+[2026-10-24 15:47:43,963] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_sheet_close'))</div>]
+[2026-10-24 15:47:44,101] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_sheet_close')) cost: 0.138s</div>]
+[2026-10-24 15:47:44,105] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('otp_sheet_close'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:44,496] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('otp_sheet_close'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.391s</div>]
+[2026-10-24 15:47:44,497] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:47:46,140] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.643s</div>]
+[2026-10-24 15:47:46,140] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:46,245] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:47:46,245] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:47:46,366] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.121s</div>]
+[2026-10-24 15:47:46,367] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:46,733] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.365s</div>]
+[2026-10-24 15:47:46,734] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:47:47,715] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 0.981s</div>]
+[2026-10-24 15:47:47,716] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0)</div>]
+[2026-10-24 15:47:47,798] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_phone_hint'), 10.0) cost: 0.082s</div>]
+[2026-10-24 15:47:47,799] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0)</div>]
+[2026-10-24 15:47:47,881] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_input'), 10.0) cost: 0.082s</div>]
+[2026-10-24 15:47:47,882] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0)</div>]
+[2026-10-24 15:47:47,952] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_resend_action'), 10.0) cost: 0.071s</div>]
+[2026-10-24 15:47:47,953] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0)</div>]
+[2026-10-24 15:47:48,038] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_next_btn'), 10.0) cost: 0.085s</div>]
+[2026-10-24 15:47:48,694] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:47:49,445] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.75s</div>]
+[2026-10-24 15:47:49,446] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:47:50,611] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.165s</div>]
+[2026-10-24 15:47:51,079] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:51,291] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.212s</div>]
+[2026-10-24 15:47:51,292] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:47:51,323] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.03s</div>]
+[2026-10-24 15:47:51,323] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:47:51,366] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.043s</div>]
+[2026-10-24 15:47:51,367] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:51,624] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.257s</div>]
+[2026-10-24 15:47:51,630] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:47:51,660] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.03s</div>]
+[2026-10-24 15:47:51,661] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:47:51,698] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.037s</div>]
+[2026-10-24 15:47:51,698] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:51,996] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.297s</div>]
+[2026-10-24 15:47:51,996] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:47:53,551] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.555s</div>]
+[2026-10-24 15:47:53,552] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb'))</div>]
+[2026-10-24 15:47:53,622] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_row_cmb')) cost: 0.07s</div>]
+[2026-10-24 15:47:53,623] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:53,932] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_row_cmb'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.31s</div>]
+[2026-10-24 15:47:53,933] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0)</div>]
+[2026-10-24 15:47:54,942] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('card_type_sheet_title'), 10.0) cost: 1.009s</div>]
+[2026-10-24 15:47:54,942] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row'))</div>]
+[2026-10-24 15:47:55,052] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('debit_card_row')) cost: 0.109s</div>]
+[2026-10-24 15:47:55,052] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:55,432] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('debit_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.38s</div>]
+[2026-10-24 15:47:55,433] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:55,538] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:47:55,538] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn'))</div>]
+[2026-10-24 15:47:55,611] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('card_type_continue_btn')) cost: 0.072s</div>]
+[2026-10-24 15:47:55,612] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:55,904] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('card_type_continue_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.292s</div>]
+[2026-10-24 15:47:55,905] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0)</div>]
+[2026-10-24 15:47:55,942] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('bank_card_selection_root'), 10.0) cost: 0.037s</div>]
+[2026-10-24 15:47:55,943] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1'))</div>]
+[2026-10-24 15:47:55,999] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('bank_card_candidate_1')) cost: 0.056s</div>]
+[2026-10-24 15:47:56,001] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:56,281] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('bank_card_candidate_1'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.279s</div>]
+[2026-10-24 15:47:56,282] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:56,385] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:47:56,386] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check'))</div>]
+[2026-10-24 15:47:56,432] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_agreement_check')) cost: 0.045s</div>]
+[2026-10-24 15:47:56,433] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:57,787] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_agreement_check'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 1.354s</div>]
+[2026-10-24 15:47:57,788] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:47:57,892] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.104s</div>]
+[2026-10-24 15:47:57,892] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn'))</div>]
+[2026-10-24 15:47:57,958] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('selection_next_btn')) cost: 0.065s</div>]
+[2026-10-24 15:47:57,958] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:47:58,248] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('selection_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.29s</div>]
+[2026-10-24 15:47:58,249] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:47:59,259] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.009s</div>]
+[2026-10-24 15:47:59,259] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input'))</div>]
+[2026-10-24 15:47:59,367] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_input')) cost: 0.108s</div>]
+[2026-10-24 15:47:59,368] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#244, 654321, None)</div>]
+[2026-10-24 15:48:00,982] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.input_text(3UJ0225321000395, Component#244, 654321, None) cost: 1.614s</div>]
+[2026-10-24 15:48:00,982] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0)</div>]
+[2026-10-24 15:48:01,085] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_idle(3UJ0225321000395, 0.7, 10.0) cost: 0.103s</div>]
+[2026-10-24 15:48:01,085] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395)</div>]
+[2026-10-24 15:48:01,196] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395) cost: 0.111s</div>]
+[2026-10-24 15:48:01,197] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0)</div>]
+[2026-10-24 15:48:02,857] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('otp_sheet_title'), 10.0) cost: 1.66s</div>]
+[2026-10-24 15:48:02,858] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_next_btn'))</div>]
+[2026-10-24 15:48:02,969] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('otp_next_btn')) cost: 0.111s</div>]
+[2026-10-24 15:48:02,970] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('otp_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:03,358] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('otp_next_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.388s</div>]
+[2026-10-24 15:48:03,359] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 20.0)</div>]
+[2026-10-24 15:48:03,404] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 20.0) cost: 0.045s</div>]
+[2026-10-24 15:48:03,405] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395)</div>]
+[2026-10-24 15:48:03,516] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.press_back(3UJ0225321000395) cost: 0.112s</div>]
+[2026-10-24 15:48:03,517] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 10.0)</div>]
+[2026-10-24 15:48:03,563] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('opening_result_root'), 10.0) cost: 0.045s</div>]
+[2026-10-24 15:48:03,566] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('result_finish_btn'))</div>]
+[2026-10-24 15:48:03,625] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('result_finish_btn')) cost: 0.059s</div>]
+[2026-10-24 15:48:03,626] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('result_finish_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:03,908] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('result_finish_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.282s</div>]
+[2026-10-24 15:48:03,909] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('home_root'), 10.0)</div>]
+[2026-10-24 15:48:04,947] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('home_root'), 10.0) cost: 1.038s</div>]
+[2026-10-24 15:48:05,619] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('opening_result_root'), 10.0)</div>]
+[2026-10-24 15:48:05,728] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component_disappear(3UJ0225321000395, BY.id('opening_result_root'), 10.0) cost: 0.109s</div>]
+[2026-10-24 15:48:05,728] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5)</div>]
+[2026-10-24 15:48:06,484] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.stop_app(3UJ0225321000395, com.example.simulatedwallet, 0.5) cost: 0.756s</div>]
+[2026-10-24 15:48:06,485] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0)</div>]
+[2026-10-24 15:48:07,654] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.start_app(3UJ0225321000395, com.example.simulatedwallet, PhoneAbility, , 1.0) cost: 1.169s</div>]
+[2026-10-24 15:48:08,122] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:08,335] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, (1021, 925), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.213s</div>]
+[2026-10-24 15:48:08,336] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0)</div>]
+[2026-10-24 15:48:08,378] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('cp_page_title'), 10.0) cost: 0.042s</div>]
+[2026-10-24 15:48:08,379] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn'))</div>]
+[2026-10-24 15:48:08,419] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('cp_add_card_btn')) cost: 0.04s</div>]
+[2026-10-24 15:48:08,419] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:08,683] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('cp_add_card_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.264s</div>]
+[2026-10-24 15:48:08,684] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:48:08,721] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.037s</div>]
+[2026-10-24 15:48:08,722] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row'))</div>]
+[2026-10-24 15:48:08,771] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ac_bank_card_row')) cost: 0.049s</div>]
+[2026-10-24 15:48:08,772] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:09,049] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ac_bank_card_row'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.277s</div>]
+[2026-10-24 15:48:09,050] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0)</div>]
+[2026-10-24 15:48:10,612] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('col_page_title'), 10.0) cost: 1.562s</div>]
+[2026-10-24 15:48:10,613] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_more_pill'))</div>]
+[2026-10-24 15:48:10,671] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('col_more_pill')) cost: 0.059s</div>]
+[2026-10-24 15:48:10,672] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('col_more_pill'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:11,031] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('col_more_pill'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.359s</div>]
+[2026-10-24 15:48:11,037] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('exp_page_title'), 10.0)</div>]
+[2026-10-24 15:48:11,086] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('exp_page_title'), 10.0) cost: 0.049s</div>]
+[2026-10-24 15:48:12,067] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) ui_adaptive</div></div>]
+[2026-10-24 15:48:12,703] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) cost: 0.635s</div>]
+[2026-10-24 15:48:15,570] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) ui_adaptive</div></div>]
+[2026-10-24 15:48:16,226] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.swipe(3UJ0225321000395, UP, 60, BY.scrollable(True).type('List'), None, None, 0.3, None) cost: 0.655s</div>]
+[2026-10-24 15:48:18,033] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('exp_view_all_banks_btn'))</div>]
+[2026-10-24 15:48:18,179] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('exp_view_all_banks_btn')) cost: 0.146s</div>]
+[2026-10-24 15:48:18,180] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('exp_view_all_banks_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:18,588] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('exp_view_all_banks_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.408s</div>]
+[2026-10-24 15:48:18,589] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ab_page_title'), 10.0)</div>]
+[2026-10-24 15:48:18,643] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ab_page_title'), 10.0) cost: 0.053s</div>]
+[2026-10-24 15:48:18,643] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ab_back_btn'))</div>]
+[2026-10-24 15:48:18,715] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('ab_back_btn')) cost: 0.072s</div>]
+[2026-10-24 15:48:18,716] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('ab_back_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:19,014] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('ab_back_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 0.298s</div>]
+[2026-10-24 15:48:19,015] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('exp_page_title'), 10.0)</div>]
+[2026-10-24 15:48:19,069] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('exp_page_title'), 10.0) cost: 0.055s</div>]
+[2026-10-24 15:48:19,070] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('exp_back_btn'))</div>]
+[2026-10-24 15:48:19,147] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.find_all_components(3UJ0225321000395, BY.id('exp_back_btn')) cost: 0.077s</div>]
+[2026-10-24 15:48:19,148] [53796] [DeviceTest] [INFO] [<div class='aw3-container'><div class='aw3' id='rainbowText'>uidriver.touch(3UJ0225321000395, BY.id('exp_back_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) ui_adaptive</div></div>]
+[2026-10-24 15:48:20,905] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.touch(3UJ0225321000395, BY.id('exp_back_btn'), mode=normal, scroll_target=None, wait_time=0.1, offset=None) cost: 1.757s</div>]
+[2026-10-24 15:48:20,911] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0)</div>]
+[2026-10-24 15:48:20,954] [53796] [DeviceTest] [INFO] [<div class='aw'>uidriver.wait_for_component(3UJ0225321000395, BY.id('ac_page_title'), 10.0) cost: 0.043s</div>]
+Wrote D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\20261024T194450Z-003\hylyre\test-report.md and D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\20261024T194450Z-003\hylyre\trace.json
+2026-10-24T15:45:02 pid=54040 hypium_dump_ui uitree.refresh_ms=693.8
+2026-10-24T15:45:02 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:19 pid=54040 hypium_dump_ui uitree.refresh_ms=432.9
+2026-10-24T15:45:19 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:25 pid=54040 hypium_dump_ui uitree.refresh_ms=516.7
+2026-10-24T15:45:25 pid=54040 augment_ui_dump_payload walk_ms=0.7
+2026-10-24T15:45:25 pid=54040 hypium_dump_ui uitree.refresh_ms=558.7
+2026-10-24T15:45:25 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:27 pid=54040 hypium_dump_ui uitree.refresh_ms=1109.0
+2026-10-24T15:45:27 pid=54040 augment_ui_dump_payload walk_ms=0.7
+2026-10-24T15:45:28 pid=54040 hypium_dump_ui uitree.refresh_ms=811.4
+2026-10-24T15:45:28 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:45:29 pid=54040 hypium_dump_ui uitree.refresh_ms=743.3
+2026-10-24T15:45:29 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:31 pid=54040 hypium_dump_ui uitree.refresh_ms=909.3
+2026-10-24T15:45:31 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:31 pid=54040 hypium_dump_ui uitree.refresh_ms=696.9
+2026-10-24T15:45:31 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:32 pid=54040 hypium_dump_ui uitree.refresh_ms=534.2
+2026-10-24T15:45:32 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:45:33 pid=54040 hypium_dump_ui uitree.refresh_ms=545.0
+2026-10-24T15:45:33 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:35 pid=54040 hypium_dump_ui uitree.refresh_ms=1156.3
+2026-10-24T15:45:35 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:45:36 pid=54040 hypium_dump_ui uitree.refresh_ms=716.5
+2026-10-24T15:45:36 pid=54040 augment_ui_dump_payload walk_ms=0.7
+2026-10-24T15:45:37 pid=54040 hypium_dump_ui uitree.refresh_ms=871.8
+2026-10-24T15:45:37 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:39 pid=54040 hypium_dump_ui uitree.refresh_ms=1272.9
+2026-10-24T15:45:39 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:40 pid=54040 hypium_dump_ui uitree.refresh_ms=778.8
+2026-10-24T15:45:40 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:45:44 pid=54040 hypium_dump_ui uitree.refresh_ms=445.8
+2026-10-24T15:45:44 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:45:54 pid=54040 hypium_dump_ui uitree.refresh_ms=466.2
+2026-10-24T15:45:54 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:45:59 pid=54040 hypium_dump_ui uitree.refresh_ms=518.3
+2026-10-24T15:45:59 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:05 pid=54040 hypium_dump_ui uitree.refresh_ms=471.1
+2026-10-24T15:46:05 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:14 pid=54040 hypium_dump_ui uitree.refresh_ms=685.9
+2026-10-24T15:46:14 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:46:21 pid=54040 hypium_dump_ui uitree.refresh_ms=447.3
+2026-10-24T15:46:21 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:30 pid=54040 hypium_dump_ui uitree.refresh_ms=651.4
+2026-10-24T15:46:30 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:31 pid=54040 hypium_dump_ui uitree.refresh_ms=675.3
+2026-10-24T15:46:31 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:32 pid=54040 hypium_dump_ui uitree.refresh_ms=738.6
+2026-10-24T15:46:32 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:33 pid=54040 hypium_dump_ui uitree.refresh_ms=753.3
+2026-10-24T15:46:33 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:35 pid=54040 hypium_dump_ui uitree.refresh_ms=750.0
+2026-10-24T15:46:35 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:36 pid=54040 hypium_dump_ui uitree.refresh_ms=778.7
+2026-10-24T15:46:36 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:37 pid=54040 hypium_dump_ui uitree.refresh_ms=686.3
+2026-10-24T15:46:37 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:38 pid=54040 hypium_dump_ui uitree.refresh_ms=691.7
+2026-10-24T15:46:38 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:39 pid=54040 hypium_dump_ui uitree.refresh_ms=778.2
+2026-10-24T15:46:39 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:40 pid=54040 hypium_dump_ui uitree.refresh_ms=739.3
+2026-10-24T15:46:40 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:41 pid=54040 hypium_dump_ui uitree.refresh_ms=654.3
+2026-10-24T15:46:41 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:42 pid=54040 hypium_dump_ui uitree.refresh_ms=664.8
+2026-10-24T15:46:42 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:43 pid=54040 hypium_dump_ui uitree.refresh_ms=705.4
+2026-10-24T15:46:43 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:45 pid=54040 hypium_dump_ui uitree.refresh_ms=702.9
+2026-10-24T15:46:45 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:46 pid=54040 hypium_dump_ui uitree.refresh_ms=675.8
+2026-10-24T15:46:46 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:46:47 pid=54040 hypium_dump_ui uitree.refresh_ms=749.8
+2026-10-24T15:46:47 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:48 pid=54040 hypium_dump_ui uitree.refresh_ms=765.1
+2026-10-24T15:46:48 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:49 pid=54040 hypium_dump_ui uitree.refresh_ms=702.6
+2026-10-24T15:46:49 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:50 pid=54040 hypium_dump_ui uitree.refresh_ms=705.7
+2026-10-24T15:46:50 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:51 pid=54040 hypium_dump_ui uitree.refresh_ms=751.6
+2026-10-24T15:46:51 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:52 pid=54040 hypium_dump_ui uitree.refresh_ms=673.6
+2026-10-24T15:46:52 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:54 pid=54040 hypium_dump_ui uitree.refresh_ms=768.2
+2026-10-24T15:46:54 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:55 pid=54040 hypium_dump_ui uitree.refresh_ms=687.5
+2026-10-24T15:46:55 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:56 pid=54040 hypium_dump_ui uitree.refresh_ms=674.0
+2026-10-24T15:46:56 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:57 pid=54040 hypium_dump_ui uitree.refresh_ms=672.5
+2026-10-24T15:46:57 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:46:58 pid=54040 hypium_dump_ui uitree.refresh_ms=750.0
+2026-10-24T15:46:58 pid=54040 augment_ui_dump_payload walk_ms=0.5
+2026-10-24T15:46:59 pid=54040 hypium_dump_ui uitree.refresh_ms=672.4
+2026-10-24T15:46:59 pid=54040 augment_ui_dump_payload walk_ms=0.5
+2026-10-24T15:47:00 pid=54040 hypium_dump_ui uitree.refresh_ms=706.3
+2026-10-24T15:47:00 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:01 pid=54040 hypium_dump_ui uitree.refresh_ms=686.6
+2026-10-24T15:47:01 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:02 pid=54040 hypium_dump_ui uitree.refresh_ms=762.7
+2026-10-24T15:47:02 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:04 pid=54040 hypium_dump_ui uitree.refresh_ms=688.6
+2026-10-24T15:47:04 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:05 pid=54040 hypium_dump_ui uitree.refresh_ms=704.8
+2026-10-24T15:47:05 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:06 pid=54040 hypium_dump_ui uitree.refresh_ms=715.1
+2026-10-24T15:47:06 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:07 pid=54040 hypium_dump_ui uitree.refresh_ms=744.4
+2026-10-24T15:47:07 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:08 pid=54040 hypium_dump_ui uitree.refresh_ms=696.3
+2026-10-24T15:47:08 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:09 pid=54040 hypium_dump_ui uitree.refresh_ms=750.7
+2026-10-24T15:47:09 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:10 pid=54040 hypium_dump_ui uitree.refresh_ms=734.1
+2026-10-24T15:47:10 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:11 pid=54040 hypium_dump_ui uitree.refresh_ms=733.7
+2026-10-24T15:47:11 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:13 pid=54040 hypium_dump_ui uitree.refresh_ms=755.2
+2026-10-24T15:47:13 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:47:14 pid=54040 hypium_dump_ui uitree.refresh_ms=779.4
+2026-10-24T15:47:14 pid=54040 augment_ui_dump_payload walk_ms=0.5
+2026-10-24T15:47:15 pid=54040 hypium_dump_ui uitree.refresh_ms=643.3
+2026-10-24T15:47:15 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:16 pid=54040 hypium_dump_ui uitree.refresh_ms=688.7
+2026-10-24T15:47:16 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:17 pid=54040 hypium_dump_ui uitree.refresh_ms=671.8
+2026-10-24T15:47:17 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:18 pid=54040 hypium_dump_ui uitree.refresh_ms=712.3
+2026-10-24T15:47:18 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:47:19 pid=54040 hypium_dump_ui uitree.refresh_ms=689.1
+2026-10-24T15:47:19 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:20 pid=54040 hypium_dump_ui uitree.refresh_ms=692.2
+2026-10-24T15:47:20 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:22 pid=54040 hypium_dump_ui uitree.refresh_ms=765.2
+2026-10-24T15:47:22 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:47:23 pid=54040 hypium_dump_ui uitree.refresh_ms=764.0
+2026-10-24T15:47:23 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:24 pid=54040 hypium_dump_ui uitree.refresh_ms=678.0
+2026-10-24T15:47:24 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:25 pid=54040 hypium_dump_ui uitree.refresh_ms=700.7
+2026-10-24T15:47:25 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:26 pid=54040 hypium_dump_ui uitree.refresh_ms=640.0
+2026-10-24T15:47:26 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:27 pid=54040 hypium_dump_ui uitree.refresh_ms=766.8
+2026-10-24T15:47:27 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:28 pid=54040 hypium_dump_ui uitree.refresh_ms=780.4
+2026-10-24T15:47:28 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:47:29 pid=54040 hypium_dump_ui uitree.refresh_ms=752.0
+2026-10-24T15:47:29 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:30 pid=54040 hypium_dump_ui uitree.refresh_ms=664.4
+2026-10-24T15:47:30 pid=54040 augment_ui_dump_payload walk_ms=0.5
+2026-10-24T15:47:31 pid=54040 hypium_dump_ui uitree.refresh_ms=499.1
+2026-10-24T15:47:31 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:33 pid=54040 hypium_dump_ui uitree.refresh_ms=448.0
+2026-10-24T15:47:33 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:48 pid=54040 hypium_dump_ui uitree.refresh_ms=653.6
+2026-10-24T15:47:48 pid=54040 augment_ui_dump_payload walk_ms=0.2
+2026-10-24T15:47:51 pid=54040 hypium_dump_ui uitree.refresh_ms=465.6
+2026-10-24T15:47:51 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:48:05 pid=54040 hypium_dump_ui uitree.refresh_ms=667.9
+2026-10-24T15:48:05 pid=54040 augment_ui_dump_payload walk_ms=0.5
+2026-10-24T15:48:08 pid=54040 hypium_dump_ui uitree.refresh_ms=464.1
+2026-10-24T15:48:08 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:48:11 pid=54040 hypium_dump_ui uitree.refresh_ms=478.5
+2026-10-24T15:48:11 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:48:12 pid=54040 hypium_dump_ui uitree.refresh_ms=498.9
+2026-10-24T15:48:12 pid=54040 augment_ui_dump_payload walk_ms=0.3
+2026-10-24T15:48:14 pid=54040 hypium_dump_ui uitree.refresh_ms=1170.4
+2026-10-24T15:48:14 pid=54040 augment_ui_dump_payload walk_ms=0.5
+2026-10-24T15:48:14 pid=54040 hypium_dump_ui uitree.refresh_ms=762.0
+2026-10-24T15:48:14 pid=54040 augment_ui_dump_payload walk_ms=0.7
+2026-10-24T15:48:15 pid=54040 hypium_dump_ui uitree.refresh_ms=729.5
+2026-10-24T15:48:15 pid=54040 augment_ui_dump_payload walk_ms=0.4
+2026-10-24T15:48:17 pid=54040 hypium_dump_ui uitree.refresh_ms=891.1
+2026-10-24T15:48:17 pid=54040 augment_ui_dump_payload walk_ms=0.6
+2026-10-24T15:48:18 pid=54040 hypium_dump_ui uitree.refresh_ms=701.1
+2026-10-24T15:48:18 pid=54040 augment_ui_dump_payload walk_ms=0.3
+
+$ D:\1.code\SimulatedWalletForHmos\.hylyre\venv\Scripts\python.exe -m hylyre app page save com.example.simulatedwallet home --ability PhoneAbility --device-sn 3UJ0225321000395
+hypium cwd: D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\.hypium-workdir（禁止工程根；tmp_hypium 应落在其下）
+hdc prewarm: exe=hdc isolated_cwd=C:\Users\shengqsq\AppData\Local\Temp\maison-hdc prewarmed=true warm_error=-
+[2026-10-24 15:48:22,287] [30372] [Analysis] [WARNING] [tracker dependency is not ok]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Report path: D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\.hypium-workdir\reports\2026-10-24-15-48-22]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Load Managers ...]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Env pool running in cache mode.]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Prepare to init pool]
+[2026-10-24 15:48:22,290] [30372] [EnvPool] [INFO] [Pool is prepared]
+[2026-10-24 15:48:22,290] [30372] [EnvPool] [INFO] [Get device by selector]
+[2026-10-24 15:48:22,290] [30372] [EnvPool] [INFO] [Apply device in pool]
+[2026-10-24 15:48:22,747] [9028] [Hdc] [INFO] [3UJ0225321000395		USB	Connected	localhost
+]
+[2026-10-24 15:48:23,302] [30372] [EnvPool] [INFO] [Do matches, device:[state:Available, sn:3UJ0225321000395, label:phone], selection option:[device sn:['3UJ0225321000395'], label:phone]]
+[2026-10-24 15:48:23,303] [30372] [EnvPool] [INFO] [Device 3UJ0225321000395: extend value: {}]
+[2026-10-24 15:48:23,864] [30372] [Device] [INFO] [7.0.0.1]
+[2026-10-24 15:48:24,208] [30372] [Device] [INFO] [Init ui proxy by unix socket.]
+[2026-10-24 15:48:24,208] [30372] [DeviceUIProxy] [INFO] [Check uitest running status.]
+[2026-10-24 15:48:24,366] [30372] [DeviceUIProxy] [INFO] [Finish check uitest running status. Uitest pid: 34474]
+[2026-10-24 15:48:24,366] [30372] [Device] [INFO] [uitest version: 7.0.0.1. Using 1.2.2 agent version]
+[2026-10-24 15:48:24,505] [30372] [Device] [INFO] [UITEST_AGENT_LIBRARY@v0.0.0#1.2.2
+]
+[2026-10-24 15:48:24,505] [30372] [Device] [INFO] [local agent version 1.2.2, device agent version 1.2.2]
+[2026-10-24 15:48:24,628] [30372] [Device] [INFO] [Device agent is up to date!]
+[2026-10-24 15:48:24,779] [30372] [DeviceUIProxy] [INFO] [Harmony ui rpc already start!!!!]
+[2026-10-24 15:48:26,868] [30372] [DeviceUIProxy] [INFO] [tcp forward port: 9987 for 3UJ0225321000395]
+[2026-10-24 15:48:26,944] [30372] [Device] [INFO] [hypium base version: 6.1.0.210]
+D:\1.code\SimulatedWalletForHmos\doc\app-snapshot-cache\com.example.simulatedwallet\pages\home.json
+2026-10-24T15:48:27 pid=53516 hypium_dump_ui uitree.refresh_ms=722.3
+2026-10-24T15:48:27 pid=53516 augment_ui_dump_payload walk_ms=0.3
+hylyre app page save name=home 成功

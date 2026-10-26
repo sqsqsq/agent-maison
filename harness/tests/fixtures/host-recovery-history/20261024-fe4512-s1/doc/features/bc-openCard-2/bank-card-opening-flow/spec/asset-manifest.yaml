@@ -1,0 +1,51 @@
+schema_version: "1.0"
+fidelity_target: pixel_1to1
+asset_acquisition_mode: approximate
+
+sources:
+  - id: existing_wallet_media
+    kind: repo_assets
+    path: 02-Feature/WalletMain/src/main/resources/base/media
+    verified: unverified
+    note: "用途由 BankRepository 的资源引用确认；本执行者未视觉核对外观。"
+  - id: result_reference
+    kind: screenshot
+    path: doc/features/原始需求/1-2-银行卡/6-短信验证完成后结果页.jpg
+    verified: unverified
+    note: "仅作权威参考；盲档禁止自行 crop。"
+
+assets:
+  - key: bank_logo_cmb
+    acquisition: repo_ref
+    role: brand_logo
+    resolved_path: 02-Feature/WalletMain/src/main/resources/base/media/bank_logo_cmb.png
+    source_ref: existing_wallet_media
+    placeholder: false
+    target_resource_key: bank_logo_cmb
+    release_blocking: false
+    note: "现有 BankRepository 已将其绑定到招商银行。"
+
+  - key: result_payment_guide
+    acquisition: placeholder
+    role: illustration
+    source_ref: result_reference
+    placeholder: true
+    placeholder_kind: illustration_frame
+    target_resource_key: result_payment_guide
+    release_blocking: true
+    rationale: "参考图中的手持手机二维码插画没有独立可信素材；无直接视觉能力时不裁剪、不生成仿制图。"
+    clearance_required:
+      - source_verified
+      - binding_verified
+      - render_verified
+
+placeholders:
+  - result_payment_guide
+
+visual_debt:
+  - id: VD-1
+    severity: major
+    asset_key: result_payment_guide
+    description: "结果页支付引导插画当前仅有可见语义占位。"
+    phase_effect: "不阻断 best_effort 阶段推进，但阻断发布，直到真实素材落位并重新进行 delegated visual review。"
+

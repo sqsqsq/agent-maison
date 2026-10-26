@@ -1,0 +1,559 @@
+[meta] bundle=com.example.simulatedwallet module=walletmain_test runner=/ets/testrunner/OpenHarmonyTestRunner timeoutMs=60000
+[hap] D:\1.code\SimulatedWalletForHmos\02-Feature\WalletMain\build\default\outputs\ohosTest\WalletMain-ohosTest-signed.hap
+[device] hdcPresent=true available=true targets=3UJ0225321000395
+[device-ready/ut-install] 设备未锁屏
+$ hdc install -r D:\1.code\SimulatedWalletForHmos\02-Feature\WalletMain\build\default\outputs\ohosTest\WalletMain-ohosTest-signed.hap
+[Info]App install path:D:\1.code\SimulatedWalletForHmos\02-Feature\WalletMain\build\default\outputs\ohosTest\WalletMain-ohosTest-signed.hap msg:install bundle successfully. 
+AppMod finish
+
+
+$ hdc shell aa test -b com.example.simulatedwallet -m walletmain_test -s unittest /ets/testrunner/OpenHarmonyTestRunner -w 60000
+start ability successfully.
+
+OHOS_REPORT_SUM: 5
+OHOS_REPORT_STATUS: class=homepage repositories
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=1
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2] HomeRepository 有卡标记驱动展示态
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=1
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2] HomeRepository 有卡标记驱动展示态
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=2
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-16][BD-5] CardRepository 非本机卡计数为 0
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=2
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-16][BD-5] CardRepository 非本机卡计数为 0
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=3
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-18][BD-1] Repository 离线仍返回本地 mock
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=3
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-18][BD-1] Repository 离线仍返回本地 mock
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=4
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2][BD-2] 无本地卡时 hasLocalCards 为 false
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=4
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2][BD-2] 无本地卡时 hasLocalCards 为 false
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=5
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2] HomeRepository 有卡态消息含未读点
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: current=5
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2] HomeRepository 有卡态消息含未读点
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=homepage repositories
+OHOS_REPORT_STATUS: suiteconsuming=3
+
+
+OHOS_REPORT_SUM: 3
+OHOS_REPORT_STATUS: class=bank card opening flow
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: current=6
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BRANCH-BR-SUCCESS][AC-1][BD-1] opening session enforces each continue gate
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: current=6
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BRANCH-BR-SUCCESS][AC-1][BD-1] opening session enforces each continue gate
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: current=7
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-2] card candidates are filtered while only the rendered number is masked
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: current=7
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stack=    at AssertException @ohos/hypium (oh_modules/.ohpm/@ohos+hypium@1.0.25/oh_modules/@ohos/hypium/src/main/service.js:75:9)
+    at anonymous @ohos/hypium (oh_modules/.ohpm/@ohos+hypium@1.0.25/oh_modules/@ohos/hypium/src/main/service.js:1149:37)
+    at anonymous @aspect/WalletMain (02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets:62:59)
+OHOS_REPORT_STATUS: stream=Error in [AC-2] card candidates are filtered while only the rendered number is masked, expect 6222 **** **** 0011 equals 6225 **** **** 1234
+OHOS_REPORT_STATUS: test=[AC-2] card candidates are filtered while only the rendered number is masked
+OHOS_REPORT_STATUS_CODE: -2
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: current=8
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-3][BD-2] OTP starts once, blocks resend, resets at zero and accepts six digits
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: current=8
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-3][BD-2] OTP starts once, blocks resend, resets at zero and accepts six digits
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card opening flow
+OHOS_REPORT_STATUS: suiteconsuming=3
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=bank card state owners
+
+
+OHOS_REPORT_STATUS: class=bank card state owners
+OHOS_REPORT_STATUS: current=9
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-4] cancelling sheet state clears selection, OTP and timers without persistence
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card state owners
+OHOS_REPORT_STATUS: current=9
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-4] cancelling sheet state clears selection, OTP and timers without persistence
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card state owners
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=bank card result consumers
+
+
+OHOS_REPORT_STATUS: class=bank card result consumers
+OHOS_REPORT_STATUS: current=10
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-4] completion context exposes the full number once and then clears it
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card result consumers
+OHOS_REPORT_STATUS: current=10
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-4] completion context exposes the full number once and then clears it
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=bank card result consumers
+OHOS_REPORT_STATUS: suiteconsuming=0
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=bank card persistence contract
+
+
+OHOS_REPORT_STATUS: class=bank card persistence contract
+OHOS_REPORT_STATUS: current=11
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-4] repository commits all stored fields and treats a repeated number as success
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card persistence contract
+OHOS_REPORT_STATUS: current=11
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-4] repository commits all stored fields and treats a repeated number as success
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card persistence contract
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=opening navigation recovery state
+
+
+OHOS_REPORT_STATUS: class=opening navigation recovery state
+OHOS_REPORT_STATUS: current=12
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-6] an abandoned completion payload is cleared before route recovery
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=opening navigation recovery state
+OHOS_REPORT_STATUS: current=12
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-6] an abandoned completion payload is cleared before route recovery
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=opening navigation recovery state
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_SUM: 2
+OHOS_REPORT_STATUS: class=bank card opening completion
+
+
+OHOS_REPORT_STATUS: class=bank card opening completion
+OHOS_REPORT_STATUS: current=13
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BRANCH-BR-SUCCESS][AC-4] save success returns the full card number and persisted payload
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card opening completion
+OHOS_REPORT_STATUS: current=13
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BRANCH-BR-SUCCESS][AC-4] save success returns the full card number and persisted payload
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=bank card opening completion
+OHOS_REPORT_STATUS: current=14
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BRANCH-BR-FAILURE][AC-4][BD-3] save failure preserves the full number in a failed result
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card opening completion
+OHOS_REPORT_STATUS: current=14
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BRANCH-BR-FAILURE][AC-4][BD-3] save failure preserves the full number in a failed result
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card opening completion
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=bank card RDB atomicity
+
+
+OHOS_REPORT_STATUS: class=bank card RDB atomicity
+OHOS_REPORT_STATUS: current=15
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-4][BD-3] insert failure rolls back, rechecks idempotency and leaves no half write
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank card RDB atomicity
+OHOS_REPORT_STATUS: current=15
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-4][BD-3] insert failure rolls back, rechecks idempotency and leaves no half write
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank card RDB atomicity
+OHOS_REPORT_STATUS: suiteconsuming=1
+
+
+OHOS_REPORT_SUM: 1
+OHOS_REPORT_STATUS: class=opening cleanup
+
+
+OHOS_REPORT_STATUS: class=opening cleanup
+OHOS_REPORT_STATUS: current=16
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-4] reset discards the active session and permits a clean restart
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=opening cleanup
+OHOS_REPORT_STATUS: current=16
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-4] reset discards the active session and permits a clean restart
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=opening cleanup
+OHOS_REPORT_STATUS: suiteconsuming=0
+
+
+OHOS_REPORT_SUM: 8
+OHOS_REPORT_STATUS: class=bank open card unit
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=17
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-14] 银行数据源返回 20 条完整记录且顺序与展开态参考图一致
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=17
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-14] 银行数据源返回 20 条完整记录且顺序与展开态参考图一致
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=18
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-16] 拼音分组产出 11 块、字母升序且块内按全拼升序
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=18
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-16] 拼音分组产出 11 块、字母升序且块内按全拼升序
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=19
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-16][BD-7] 字母索引集合由分组结果派生，逐一相等且不含空分块字母
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=19
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-16][BD-7] 字母索引集合由分组结果派生，逐一相等且不含空分块字母
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=20
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-G3][BD-1] 数据源返回空数组时列表/药丸/分组三处可见性派生量均为 0
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=20
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-G3][BD-1] 数据源返回空数组时列表/药丸/分组三处可见性派生量均为 0
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=21
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-G3][BD-2] 取数异常可 await 可 catch，吞掉后降级为空态且无未捕获 rejection
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=21
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-G3][BD-2] 取数异常可 await 可 catch，吞掉后降级为空态且无未捕获 rejection
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=22
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-4] 导航栈未挂载时取栈抛出，被 try/catch 吞掉后不外抛且调用方状态不变
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=22
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-4] 导航栈未挂载时取栈抛出，被 try/catch 吞掉后不外抛且调用方状态不变
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=23
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-5] logo 为空图位时行模型仍完整返回名称与点击载荷
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=23
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[BD-5] logo 为空图位时行模型仍完整返回名称与点击载荷
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=24
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-14][BD-6] 数据源不读持久化介质，两次独立调用返回等价结果
+OHOS_REPORT_STATUS_CODE: 1
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: current=24
+OHOS_REPORT_STATUS: id=JS
+OHOS_REPORT_STATUS: numtests=24
+OHOS_REPORT_STATUS: stream=
+OHOS_REPORT_STATUS: test=[AC-14][BD-6] 数据源不读持久化介质，两次独立调用返回等价结果
+OHOS_REPORT_STATUS_CODE: 0
+OHOS_REPORT_STATUS: consuming=0
+
+
+OHOS_REPORT_STATUS: class=bank open card unit
+OHOS_REPORT_STATUS: suiteconsuming=4
+
+
+OHOS_REPORT_RESULT: stream=Tests run: 24, Failure: 1, Error: 0, Pass: 23, Ignore: 0
+OHOS_REPORT_CODE: -1
+OHOS_REPORT_STATUS: taskconsuming=15
+
+TestFinished-ResultCode: 0
+TestFinished-ResultMsg: your test finished!!!
+user test finished.
+

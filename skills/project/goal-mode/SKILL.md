@@ -68,6 +68,12 @@ Goal 已在合法作者窗口按阶段机器准备蓝图投影，执行者直接
 
 遇到 human-only recommendation 时不得启动 phase：有人在场立即询问；无人值守写入等待项并安全停放。`DEFERRED` / `PARTIAL` 不得宣称完成。
 
+汇报完成/发布时必须分开两个结论（plan 6fd6c8c1）：Feature 完成只按完成原件 /
+`assessFeature.complete`；可用视觉/资源残差披露而 release 仍 `BLOCKED`，不得把
+`PARTIAL` 当完成，也不得把 `BLOCKED` 说成 Feature 未完成。同一任务不因有人在场或后台
+而改变质量判断、责任分派和恢复；后台 `--detach`（含 `--resume … --detach` 与 supervisor
+重启）在入口已把无人值守选择转成共同授权，不需要用户再补后台全权参数。
+
 ## 不可绕过的边界
 
 - driver 只做授权、失效事务、预算与运行控制；不得重写 `assess` 的跨阶段建议。

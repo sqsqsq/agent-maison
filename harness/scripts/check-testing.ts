@@ -107,7 +107,9 @@ import { writeGeneratedTestReport } from '../../profiles/hmos-app/harness/test-r
 import {
   computeExecutionKey,
   decideReuse,
+  findSameInvocationFailure,
   listExecutionKeyRuns,
+  FROZEN_RUN_ARTIFACTS,
   freezeRunArtifacts,
   restoreFrozenRunArtifacts,
   refreshStabilityForNewestRun,
@@ -3332,7 +3334,7 @@ export function writeDeviceTestEvidenceIfEligible(
     install_reused: holder.installReused === true,
     reused_by_execution_key: holder.deviceRunReused === true,
     ...(holder.executionKey ? { execution_key: holder.executionKey } : {}),
-    ...(holder.deviceRunReused === true && holder.reusedRunDir ? { reused_run_dir: holder.reusedRunDir } : {}),
+    ...(holder.reusedRunDir ? { reused_run_dir: holder.reusedRunDir } : {}),
   };
   // 至此：pipeline 已完成已知装机与 run——evidence proposal 必须组装，任何失败都是 BLOCKER
   const fail = (details: string): CheckResult[] => [{
@@ -4524,6 +4526,13 @@ function checkDeviceTestRunGate(
       flags: ['--skip-assert-expected', ...(coldRestartEnv ? [`HARNESS_DEVICE_TEST_COLD_RESTART=${coldRestartEnv}`] : [])],
     };
     const executionKey = computeExecutionKey(executionKeyInputs);
+    // plan 6fd6c8c1 §4.2：testing 记录沿用现成 goal_invocation 三元组（不造新身份），
+    // 同一 run/phase/attempt 的失败事实才能在正式 gate 被消费而不是重跑设备。
+    const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
+    const goalAttemptId = process.env.MAISON_GOAL_ATTEMPT?.trim();
+    const goalAttemptPhase = process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim();
+    const goalInvocation = goalRunId && goalAttemptId && goalAttemptPhase === ctx.phase
+      ? { run_id: goalRunId, phase: goalAttemptPhase, attempt_id: goalAttemptId } : undefined;
     const reuse = ctx.forceDevice
       ? { reusable: null, reason: '--force-device：用户要求真跑' }
       : !executionKeyInputs.device
@@ -4536,89 +4545,134 @@ function checkDeviceTestRunGate(
     if (reusable && !adoptFrozenRunArtifactsForReuse(ctx, reusable, Boolean(reuse.evidenceRebuildRequired))) {
       reusable = null;
     }
+    // 失败结果保留 runner 原始事实；已知设备障碍先复查，解除后必须重新执行。
+    let frozenFailure: HylyreRunResult | null = null;
+    let failedInvocation = !ctx.forceDevice && goalInvocation && executionKeyInputs.device
+      ? findSameInvocationFailure(reportsBase, executionKey, goalInvocation, {
+          leg: 'hylyre',
+          artifacts: FROZEN_RUN_ARTIFACTS,
+          usable: view => {
+            const trace = parseHylyreTraceForReuse(view.record.trace_path);
+            const meta = readJsonRecord(path.join(view.runDir, 'frozen.device-test-run.meta.json')).value;
+            if (!trace || !meta || typeof meta.ok !== 'boolean'
+              || (meta.exit_code !== null && typeof meta.exit_code !== 'number')
+              || typeof meta.command !== 'string' || typeof meta.trace_path !== 'string'
+              || path.resolve(meta.trace_path) !== path.resolve(view.record.trace_path)
+              || !Array.isArray(meta.errors)
+              || !meta.errors.every(error => error && typeof error.message === 'string')) return false;
+            if (trace.device_setup || meta.device_setup || trace.run_failure_kind === 'device_locked') {
+              const snapshot = require('../../profiles/hmos-app/harness/device-recovery-bridge').observeDeviceSnapshot(executionKeyInputs.device);
+              if ((trace.device_setup || meta.device_setup) && !snapshot?.systemSetup) return false;
+              if (trace.run_failure_kind === 'device_locked' && snapshot?.locked !== true) return false;
+            }
+            frozenFailure = {
+              executed: meta.executed !== false,
+              ok: meta.ok,
+              exitCode: meta.exit_code as number | null,
+              command: meta.command,
+              reportPath: typeof meta.report_path === 'string' ? meta.report_path : null,
+              tracePath: view.record.trace_path,
+              trace,
+              logPath: typeof meta.log_path === 'string' ? meta.log_path : '',
+              errors: meta.errors as HylyreRunResult['errors'],
+            };
+            return true;
+          },
+        })
+      : null;
+    if (failedInvocation && !adoptFrozenRunArtifactsForReuse(ctx, failedInvocation,
+      ((frozenFailure as HylyreRunResult | null)?.trace?.cases ?? []).length > 0
+        && (!failedInvocation.record.timing_complete || !fs.existsSync(path.join(failedInvocation.runDir, 'frozen.device-test-timing.json'))))) {
+      failedInvocation = null;
+    }
     let hylyreOutDir: string;
     let runPlanPath: string;
     let derivedPlanSha256AtStart: string | null;
     let run: HylyreRunResult;
-    if (reusable) {
-      hylyreOutDir = reusable.runDir;
+    if (reusable || failedInvocation) {
+      const adopted = reusable ?? failedInvocation!;
+      hylyreOutDir = adopted.runDir;
       runPlanPath = path.join(hylyreOutDir, 'test-plan.hylyre.md');
       derivedPlanSha256AtStart = sha256File(runPlanPath);
-      run = {
-        executed: false,
+      run = failedInvocation ? frozenFailure! : {
+        executed: true,
         exitCode: 0,
         ok: true,
-        command: `(reused_by_execution_key ${executionKey.slice(0, 16)} ← ${reusable.dirStamp})`,
+        command: `(reused_by_execution_key ${executionKey.slice(0, 16)} ← ${adopted.dirStamp})`,
         reportPath: path.join(hylyreOutDir, 'test-report.md'),
-        tracePath: reusable.record.trace_path,
-        trace: parseHylyreTraceForReuse(reusable.record.trace_path),
+        tracePath: adopted.record.trace_path,
+        trace: parseHylyreTraceForReuse(adopted.record.trace_path),
         logPath: '',
         errors: [],
       };
       // 冻结件回填（含派生统计重建）已在 adoptFrozenRunArtifactsForReuse 里做过，**每轮只一次**：
       // 再 restore 一次会把重建好的 timing 覆盖回不完整的冻结副本（codex review 第 1 轮 #4）。
     } else {
-    const freshRun = prepareFreshHylyreRunDir({
-      reportsBase,
-      sourceHylyrePlanAbsPath: path.resolve(derivedPath),
-    });
-    if (!freshRun.ok) {
-      return [
-        {
-          id,
-          category: 'structure',
-          description: desc,
-          severity: 'BLOCKER',
-          status: 'FAIL',
-          details: `无法为本轮执行准备全新目录（run-directory-freshness）：${freshRun.error}`,
-          suggestion: '勿复用/覆盖旧 timestamp 目录；清理冲突目录或等待下一轮新目录后重试。',
-        },
-      ];
-    }
-    hylyreOutDir = freshRun.runDir;
-    runPlanPath = freshRun.hylyrePlanAbsPath;
-    // plan 07a41ec6 T3：P0 身份断言注入只作用于 run 副本（源派生计划字节不变）；注入清单落盘供审计。
-    // 注入在计算 derivedPlanSha256AtStart 之前完成，trace/binding 一律绑定注入后的副本。
-    const injection = injectionPreview;
-    if (injection.changed) fs.writeFileSync(runPlanPath, injection.content, 'utf-8');
-    fs.writeFileSync(
-      path.join(hylyreOutDir, 'checkpoint-injection.json'),
-      JSON.stringify({ schema_version: '1.0', injected: injection.injected, gaps: injection.gaps }, null, 2),
-      'utf-8',
-    );
-    derivedPlanSha256AtStart = sha256File(runPlanPath);
-    const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
-    fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
+      const freshRun = prepareFreshHylyreRunDir({
+        reportsBase,
+        sourceHylyrePlanAbsPath: path.resolve(derivedPath),
+      });
+      if (!freshRun.ok) {
+        return [
+          {
+            id,
+            category: 'structure',
+            description: desc,
+            severity: 'BLOCKER',
+            status: 'FAIL',
+            details: `无法为本轮执行准备全新目录（run-directory-freshness）：${freshRun.error}`,
+            suggestion: '勿复用/覆盖旧 timestamp 目录；清理冲突目录或等待下一轮新目录后重试。',
+          },
+        ];
+      }
+      hylyreOutDir = freshRun.runDir;
+      runPlanPath = freshRun.hylyrePlanAbsPath;
+      // plan 07a41ec6 T3：P0 身份断言注入只作用于 run 副本（源派生计划字节不变）；注入清单落盘供审计。
+      // 注入在计算 derivedPlanSha256AtStart 之前完成，trace/binding 一律绑定注入后的副本。
+      const injection = injectionPreview;
+      if (injection.changed) fs.writeFileSync(runPlanPath, injection.content, 'utf-8');
+      fs.writeFileSync(
+        path.join(hylyreOutDir, 'checkpoint-injection.json'),
+        JSON.stringify({ schema_version: '1.0', injected: injection.injected, gaps: injection.gaps }, null, 2),
+        'utf-8',
+      );
+      derivedPlanSha256AtStart = sha256File(runPlanPath);
+      const appSnapshotCacheAbs = path.resolve(ctx.projectRoot, hylyreCfg.app_snapshot_cache_dir);
+      fs.mkdirSync(appSnapshotCacheAbs, { recursive: true });
 
-    run = dispatchDeviceTestRun(ctx, {
-      projectRoot: ctx.projectRoot,
-      harnessRoot: TESTING_HARNESS_ROOT,
-      frameworkRoot: ctx.frameworkRoot,
-      feature: ctx.feature,
-      phase: ctx.phase,
-      pythonPath: ready.pythonPath,
-      derivedPlanPath: runPlanPath,
-      topPlanPath: topPath,
-      reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
-      traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
-      bundleName,
-      // 同一 resolved page 传给 run：lint 放行的前奏身份 == 预启实际使用的 ability（未解析时交给 run 自己的 bm dump 层）
-      hypiumPageName: resetIdentity.identity?.page_name ?? null,
-      deviceSn: process.env.HARNESS_HDC_TARGET,
-      skipAssertExpected: true,
-      coldRestart,
-      appSnapshotCacheAbs,
-    }) as HylyreRunResult;
+      run = dispatchDeviceTestRun(ctx, {
+        projectRoot: ctx.projectRoot,
+        harnessRoot: TESTING_HARNESS_ROOT,
+        frameworkRoot: ctx.frameworkRoot,
+        feature: ctx.feature,
+        phase: ctx.phase,
+        pythonPath: ready.pythonPath,
+        derivedPlanPath: runPlanPath,
+        topPlanPath: topPath,
+        reportOutPath: path.resolve(path.join(hylyreOutDir, 'test-report.md')),
+        traceOutPath: path.resolve(path.join(hylyreOutDir, 'trace.json')),
+        bundleName,
+        // 同一 resolved page 传给 run：lint 放行的前奏身份 == 预启实际使用的 ability（未解析时交给 run 自己的 bm dump 层）
+        hypiumPageName: resetIdentity.identity?.page_name ?? null,
+        deviceSn: process.env.HARNESS_HDC_TARGET,
+        skipAssertExpected: true,
+        coldRestart,
+        appSnapshotCacheAbs,
+      }) as HylyreRunResult;
+
+    }
 
     const systemSetup = require('../../profiles/hmos-app/harness/providers/device-test-run').observeSetupForUnexecutedTrace(run.trace) as DeviceSetupObservation | undefined;
-    if (!run.ok || systemSetup) {
+    if (!run.executed || !run.ok || systemSetup) {
       // plan 07a41ec6 T6：失败轮同样落执行键记录——同键更晚失败不得复用更早成功
-      try {
+      if (!reusable && !failedInvocation) try {
+        const frozenFiles = freezeRunArtifacts(reportsBase, hylyreOutDir);
         writeExecutionKeyRecord(hylyreOutDir, {
           schema_version: '1.0', execution_key: executionKey, inputs: executionKeyInputs,
           trace_path: run.tracePath ?? path.join(hylyreOutDir, 'trace.json'),
           run_started_at: new Date().toISOString(), outcome: run.trace?.outcome ?? 'runner_failed',
-          trace_sha256: run.tracePath ? sha256File(run.tracePath) : null, timing_complete: false,
+          trace_sha256: run.tracePath ? sha256File(run.tracePath) : null, timing_complete: false, frozen_files: frozenFiles,
+          ...(goalInvocation ? { goal_invocation: goalInvocation } : {}),
         });
       } catch { /* 记录失败不改变门禁 */ }
       // P1（三轮 review）：**设备锁屏且恢复失败是外部阻断，不是工具链问题**。
@@ -4651,34 +4705,36 @@ function checkDeviceTestRunGate(
     }
 
 
-    try {
-      const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
-      const timingDoc = collectDeviceTestTimings({
-        projectRoot: ctx.projectRoot,
-        feature: ctx.feature,
-        reportsDir,
-        hylyreTracePath: run.tracePath,
-      });
-      writeDeviceTestTimingJson(reportsDir, timingDoc);
-    } catch {
-      /* timing 汇总失败不阻断 run 门禁 */
-    }
-    // plan 07a41ec6 T6：本轮执行键记录（同键复用与稳定性统计的唯一依据）
-    try {
-      const reportsDirForFreeze = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
-      const frozenFiles = freezeRunArtifacts(reportsDirForFreeze, hylyreOutDir);
-      const timingRaw = readJsonRecord(path.join(reportsDirForFreeze, 'device-test-timing.json')).value;
-      const timingCases = Array.isArray(timingRaw?.cases) ? (timingRaw!.cases as unknown[]).length : 0;
-      writeExecutionKeyRecord(hylyreOutDir, {
-        schema_version: '1.0', execution_key: executionKey, inputs: executionKeyInputs,
-        trace_path: run.tracePath ?? path.join(hylyreOutDir, 'trace.json'),
-        run_started_at: new Date().toISOString(), outcome: run.trace?.outcome ?? 'unknown',
-        trace_sha256: run.tracePath ? sha256File(run.tracePath) : null,
-        timing_complete: timingCases >= (run.trace?.cases ?? []).length,
-        frozen_files: frozenFiles,
-      });
-    } catch { /* 记录失败不改变门禁 */ }
-    } // plan 07a41ec6 T6：end !reusable
+    if (!reusable && !failedInvocation) {
+      try {
+        const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+        const timingDoc = collectDeviceTestTimings({
+          projectRoot: ctx.projectRoot,
+          feature: ctx.feature,
+          reportsDir,
+          hylyreTracePath: run.tracePath,
+        });
+        writeDeviceTestTimingJson(reportsDir, timingDoc);
+      } catch {
+        /* timing 汇总失败不阻断 run 门禁 */
+      }
+      // plan 07a41ec6 T6：本轮执行键记录（同键复用与稳定性统计的唯一依据）
+      try {
+        const reportsDirForFreeze = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+        const frozenFiles = freezeRunArtifacts(reportsDirForFreeze, hylyreOutDir);
+        const timingRaw = readJsonRecord(path.join(reportsDirForFreeze, 'device-test-timing.json')).value;
+        const timingCases = Array.isArray(timingRaw?.cases) ? (timingRaw!.cases as unknown[]).length : 0;
+        writeExecutionKeyRecord(hylyreOutDir, {
+          schema_version: '1.0', execution_key: executionKey, inputs: executionKeyInputs,
+          trace_path: run.tracePath ?? path.join(hylyreOutDir, 'trace.json'),
+          run_started_at: new Date().toISOString(), outcome: run.trace?.outcome ?? 'unknown',
+          trace_sha256: run.tracePath ? sha256File(run.tracePath) : null,
+          timing_complete: timingCases >= (run.trace?.cases ?? []).length,
+          frozen_files: frozenFiles,
+          ...(goalInvocation ? { goal_invocation: goalInvocation } : {}),
+        });
+      } catch { /* 记录失败不改变门禁 */ }
+    } // 仅新执行写入冻结事实；消费不改变原失败时间与执行记录。
     const summary = run.trace
       ? `outcome=${run.trace.outcome}, cases=${(run.trace.cases ?? []).length}`
       : '无 trace.json';
@@ -4689,7 +4745,9 @@ function checkDeviceTestRunGate(
     // B08 D1：复用态事实进 holder（evidence 写出与采信按执行键身份，不再按本轮时间窗）
     hapHolder.deviceRunReused = Boolean(reusable);
     hapHolder.executionKey = executionKey;
-    hapHolder.reusedRunDir = reusable ? path.relative(ctx.projectRoot, reusable.runDir).replace(/\\/g, '/') : null;
+    hapHolder.reusedRunDir = reusable
+      ? path.relative(ctx.projectRoot, reusable.runDir).replace(/\\/g, '/')
+      : failedInvocation ? path.relative(ctx.projectRoot, failedInvocation.runDir).replace(/\\/g, '/') : null;
 
     const outcomeEval = evaluateHylyreRunOutcome(run.trace);
     let evidenceGate: HylyreEvidenceGateResult | null = null;
@@ -4803,13 +4861,18 @@ function checkDeviceTestRunGate(
           execution_key: executionKey,
           reused_by_execution_key: Boolean(reusable),
           ...(reusable ? { reused_run_dir: path.relative(ctx.projectRoot, reusable.runDir).replace(/\\/g, '/') } : {}),
-          reuse_reason: reuse.reason,
+          ...(failedInvocation ? { reused_run_dir: path.relative(ctx.projectRoot, failedInvocation.runDir).replace(/\\/g, '/') } : {}),
+          reuse_reason: failedInvocation
+            ? `同调用失败事实消费（${executionKey.slice(0, 16)} ← ${failedInvocation.dirStamp}；不重复真机执行）`
+            : reuse.reason,
         },
         details: [
           reusable
             ? `真机执行复用：device_run=reused_by_execution_key（${reuse.reason}；同键无需重新操作设备，--force-device 可强制真跑）`
-            : `真机自动化执行完成：exit=${run.exitCode}, ${summary}`,
-          `execution_key：${executionKey}（${reusable ? '复用' : '本轮'}；决策：${reuse.reason}）`,
+            : failedInvocation
+              ? `真机执行失败事实消费：同 run/phase/attempt、同执行键的失败 trace 直接交本轮检查与候选生成（未重复操作设备，--force-device 可强制真跑）`
+              : `真机自动化执行完成：exit=${run.exitCode}, ${summary}`,
+          `execution_key：${executionKey}（${reusable ? '复用' : failedInvocation ? '同调用失败' : '本轮'}；决策：${reuse.reason}）`,
           `报告：${run.reportPath}`,
           `trace：${run.tracePath}`,
           ...(runGatePass
@@ -4903,7 +4966,7 @@ function checkDeviceTestRunGate(
         });
       }
     }
-    if (run.ok && !reusable) captureIfUiChanged(run.logPath);
+    if (run.ok && !reusable && !failedInvocation) captureIfUiChanged(run.logPath);
 
     const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     const pollutionHit = loadTestingRootPollutionMeta(reportsDir);

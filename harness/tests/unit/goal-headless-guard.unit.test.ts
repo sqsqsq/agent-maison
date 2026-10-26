@@ -606,6 +606,19 @@ export function runAll(): UnitCaseResult[] {
         assert(clean.hasEvidence === false, 'PASS+无 blocker+无 runtime 事实不得算失败事实');
         assert(clean.failureKindForEvent === undefined, 'PASS 无失败事实轮不得写 failure_kind_classified');
         assert(clean.blockerSignature === '', 'PASS 无失败事实轮不得合成 blocker signature');
+        const inputGap = buildCurrentAttemptFailureProjection({ decisionSummary: passNoBlockers,
+          failureKind: 'deterministic_gate_or_artifact_missing', phase: 'testing', hasRuntimeFailureEvidence: false,
+          currentProblems: [{ phase: 'testing', id: 'runtime_step_evidence', action: 'repair', affects: 'completion',
+            severity: 'BLOCKER', owner: 'testing', detail: '原始执行产物未交付' }] });
+        assert(inputGap.blockerSignature === 'runtime_step_evidence', '真实当前缺口进入原签名，不能因raw PASS变空');
+        assert(inputGap.failureKindForEvent === 'deterministic_gate_or_artifact_missing', '缺执行产物不标为产品代码回归');
+        assert(passNoBlockers.verdict === 'PASS' && passNoBlockers.blockers.length === 0, '原始门禁结论不得被改写');
+        const missing = { 'device-test-evidence.json': { exists: false, contentHash: '' } };
+        const restored = { 'device-test-evidence.json': { exists: true, contentHash: 'actual-new-input' } };
+        assert(shouldHaltNoProgress({ failureKind: 'deterministic_gate_or_artifact_missing', priorBlockerSignature: inputGap.blockerSignature,
+          currentBlockerSignature: inputGap.blockerSignature, priorArtifactSnapshot: missing, currentArtifactSnapshot: missing }), '同缺口同输入使用既有无进展出口');
+        assert(!shouldHaltNoProgress({ failureKind: 'deterministic_gate_or_artifact_missing', priorBlockerSignature: inputGap.blockerSignature,
+          currentBlockerSignature: inputGap.blockerSignature, priorArtifactSnapshot: missing, currentArtifactSnapshot: restored }), '真实输入补齐仍允许原恢复通路继续');
         // ② 同① 但有 runtime 失败事实（超时/agent 失败/非零退出/closure 错误/可信缺陷任一）
         const runtimeFact = buildCurrentAttemptFailureProjection({
           decisionSummary: passNoBlockers,

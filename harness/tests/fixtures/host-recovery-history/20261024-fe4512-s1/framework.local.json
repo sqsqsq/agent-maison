@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "agent_adapter": "codex",
+  "toolchain": {
+    "devEcoStudio": {
+      "installPath": "D:/Program Files/Huawei/DevEco Studio"
+    },
+    "probe": {
+      "last_attempt": {
+        "summary": "$ \"D:\\Program Files\\Huawei\\DevEco Studio\\tools\\node\\node.exe\" \"D:\\Program Files\\Huawei\\DevEco Studio\\tools\\hvigor\\bin\\hvigorw.js\" --mode module -p module=WalletMain@ohosTest -p isOhosTest=true -p product=default -p buildMode=test genOnDeviceTestHap --no-daemon --parallel --incremental --analyze=nor…",
+        "observed_at": "2026-10-24T16:48:53.550Z"
+      },
+      "project_compile": {
+        "status": "verified",
+        "failure_code": null,
+        "evidence": [],
+        "invocation_fingerprint": "084d3dad110642de",
+        "config_digest": "581f433fed67d16b",
+        "observed_at": "2026-10-24T19:31:01.664Z",
+        "expires_at": "2026-10-31T19:31:01.664Z",
+        "integrity": "f72394c21db9535a"
+      },
+      "binary": {
+        "hvigor_bin": "D:\\Program Files\\Huawei\\DevEco Studio\\tools\\hvigor\\bin\\hvigorw.bat",
+        "observed_at": "2026-10-22T11:31:11.928Z"
+      },
+      "cli_starts": {
+        "ok": false,
+        "observed_at": "2026-10-22T11:31:11.928Z"
+      }
+    }
+  },
+  "vision": {
+    "canary": {
+      "adapter": "codex",
+      "verdict": "tool_read",
+      "probed_at": "2026-09-20T10:00:53.912Z",
+      "reason": "几何/颜色题 4/4 全对——真视觉实锤",
+      "probed_via": "goal",
+      "probe_version": 2,
+      "model": "unknown",
+      "probe_context": "goal_preflight",
+      "run_id": "20260920T100035Z-f829b8"
+    },
+    "visual_provider": {
+      "adapter": "codex",
+      "model": "gpt-6.1-sol"
+    }
+  },
+  "device": {
+    "unlock": {
+      "mode": "credential",
+      "credential_ref": "maison/device/3UJ0225321000395/v2"
+    },
+    "target_serial": "3UJ0225321000395"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "kind": "maison_verifier_request",
+  "subject_id": "f2b4ae390cfb133d947669c30b41176f2c9da3a54be2db3f0516c7ef71d30bd2",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "phase": "coding",
+  "prompt_path": "doc/features/bc-openCard-2/bank-card-opening-flow/coding/reports/ai-prompt.md",
+  "prompt_sha256": "5ad2137bd17a021ddfbe329e73ad98c492a229739ca73cd0bc17c82502c819c3",
+  "material_sha256": "369ae160500901e2cce404fc59cceaf7d2b518391eff034d25a27e7108b27fc2",
+  "gate_fingerprint": "3.1.0:1bf0abf6c620",
+  "source_commit_sha": "9b37cce3281566e6d20f5071dc502866d976ebe3",
+  "worktree_digest": "a7eba59e7c6c66b3"
+}

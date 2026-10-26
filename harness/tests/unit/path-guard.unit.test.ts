@@ -9,6 +9,7 @@ export interface UnitCaseResult {
 
 const HARNESS_ROOT = path.resolve(__dirname, '..', '..');
 const REPO_ROOT = path.resolve(HARNESS_ROOT, '..');
+const releaseExcludes = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'release-excludes.json'), 'utf8')) as { excludeGlobs: string[] };
 
 const FORBIDDEN = [
   /path\.join\s*\(\s*projectRoot\s*,\s*['"]framework['"]/,
@@ -28,6 +29,8 @@ const EXCLUDE_FILE_NAMES = new Set([
 ]);
 
 function shouldScan(file: string): boolean {
+  const relative = path.relative(REPO_ROOT, file).replace(/\\/g, '/');
+  if (releaseExcludes.excludeGlobs.includes('harness/reports/**') && relative.startsWith('harness/reports/')) return false;
   const base = path.basename(file);
   if (EXCLUDE_FILE_NAMES.has(base)) return false;
   if (file.includes(`${path.sep}tests${path.sep}`)) return false;
@@ -56,6 +59,10 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'no hardcoded path.join(projectRoot, framework, ...) in harness/profiles harness',
     run: () => {
+      if (shouldScan(path.join(HARNESS_ROOT, 'reports', 'diagnostic.ts'))
+        || !shouldScan(path.join(HARNESS_ROOT, 'scripts', 'goal-phase-runtime.ts'))) {
+        throw new Error('Guard must exclude release-omitted reports while still checking actual harness runtime');
+      }
       const files: string[] = [];
       for (const root of SCAN_ROOTS) {
         collectTsFiles(root, files);

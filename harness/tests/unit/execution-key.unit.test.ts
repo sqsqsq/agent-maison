@@ -10,6 +10,7 @@ import {
   buildStabilityReport,
   computeExecutionKey,
   decideReuse,
+  findSameInvocationFailure,
   listExecutionKeyRuns,
   restoreFrozenRunArtifacts,
   utFrozenRunArtifacts,
@@ -286,6 +287,46 @@ const cases: Array<{ name: string; run: () => void }> = [
           null,
           '上一轮遗留的 started 必须挡住更早的成功（不得洗绿）',
         );
+      } finally {
+        fs.rmSync(base, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '6fd6c8c1 同调用失败事实：同键同身份+冻结执行事实才可消费；成功/别身份/缺冻结件都不命中',
+    run: () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'same-invocation-'));
+      try {
+        const key = computeExecutionKey(BASE_INPUTS);
+        const invocation = { run_id: 'run-1', phase: 'testing', attempt_id: 'i19' };
+        const runDir = path.join(base, '20261024T173648Z-721', 'hylyre');
+        fs.mkdirSync(runDir, { recursive: true });
+        for (const f of FROZEN_RUN_ARTIFACTS) fs.writeFileSync(path.join(runDir, f.frozen), '{}', 'utf-8');
+        fs.writeFileSync(path.join(runDir, 'trace.json'), JSON.stringify({ outcome: 'failed', cases: [] }), 'utf-8');
+        writeExecutionKeyRecord(runDir, {
+          schema_version: '1.0', execution_key: key, inputs: BASE_INPUTS,
+          trace_path: path.join(runDir, 'trace.json'), run_started_at: '2026-10-24T17:36:48.000Z',
+          outcome: 'failed', trace_sha256: null, timing_complete: true,
+          frozen_files: FROZEN_RUN_ARTIFACTS.map(f => f.frozen), goal_invocation: invocation,
+        });
+        assert(findSameInvocationFailure(base, key, invocation) !== null, '同调用失败必须命中');
+        assert.strictEqual(findSameInvocationFailure(base, key, { ...invocation, attempt_id: 'i15' }), null, '不同 attempt 不得消费');
+        assert.strictEqual(findSameInvocationFailure(base, computeExecutionKey({ ...BASE_INPUTS, hap_sha256_full: 'd'.repeat(64) }), invocation), null,
+          '执行键变化必须真跑');
+        assert.strictEqual(findSameInvocationFailure(base, key, { ...invocation, phase: 'ut' }), null, '不同阶段不得消费');
+        // 成功记录不是失败事实；缺失冻结件也不是可消费事实。
+        writeExecutionKeyRecord(runDir, {
+          schema_version: '1.0', execution_key: key, inputs: BASE_INPUTS, trace_path: path.join(runDir, 'trace.json'),
+          run_started_at: '2026-10-24T17:36:48.000Z', outcome: 'success', trace_sha256: null,
+          timing_complete: true, frozen_files: FROZEN_RUN_ARTIFACTS.map(f => f.frozen), goal_invocation: invocation,
+        });
+        assert.strictEqual(findSameInvocationFailure(base, key, invocation), null, 'outcome=success 不得进入失败消费');
+        writeExecutionKeyRecord(runDir, {
+          schema_version: '1.0', execution_key: key, inputs: BASE_INPUTS, trace_path: path.join(runDir, 'trace.json'),
+          run_started_at: '2026-10-24T17:36:48.000Z', outcome: 'failed', trace_sha256: null,
+          timing_complete: false, frozen_files: [], goal_invocation: invocation,
+        });
+        assert.strictEqual(findSameInvocationFailure(base, key, invocation), null, '缺冻结执行事实不得消费');
       } finally {
         fs.rmSync(base, { recursive: true, force: true });
       }

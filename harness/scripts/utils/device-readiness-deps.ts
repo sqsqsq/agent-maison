@@ -18,6 +18,7 @@ import { loadLocalConfig } from './framework-local-config';
 import {
   defaultProcessProbe,
   reclaimManagedDevice,
+  classifyTargetKind,
   spawnManagedDevice,
   type ManagedProcessIdentity,
 } from './device-session';
@@ -879,6 +880,7 @@ function credentialIsReady(ref: string | null, serial?: string): boolean {
 export function probeDeviceReadiness(
   projectRoot: string,
   probe: ReadinessProbeName = 'device_readiness',
+  requirePhysical = false,
 ): DeviceReadinessProbeResult {
   const input = buildDeviceReadinessInput(projectRoot);
   const targets = input.deps.listTargets().map(s => s.trim()).filter(Boolean);
@@ -897,7 +899,7 @@ export function probeDeviceReadiness(
           keypad: [],
           cooldown: { state: 'ambiguous' as const, ruleId: 'snapshot_unavailable' },
         });
-  return evaluateDeviceReadinessProbe(
+  const result = evaluateDeviceReadinessProbe(
     {
       configuredSerial: configured,
       targets,
@@ -906,4 +908,9 @@ export function probeDeviceReadiness(
     },
     probe,
   );
+  if (result.ready && requirePhysical && selectedSerial && classifyTargetKind({ serial: selectedSerial,
+    knownEmulatorSerials: input.deps.knownEmulatorSerials?.() ?? [], physicalAttested: input.deps.attestPhysical?.(selectedSerial) }) !== 'physical') {
+    return { ...result, ready: false, reason: '当前目标没有 physical 正面证据；仍需真机条件' };
+  }
+  return result;
 }

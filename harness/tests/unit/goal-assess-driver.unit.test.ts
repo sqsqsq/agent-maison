@@ -16,6 +16,8 @@ import {
 import { checkGoalReconcileBoundarySource } from '../../scripts/utils/goal-reconcile-boundary';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import type { PhaseVerdictAction } from '../../scripts/utils/phase-transition-policy';
+import { deriveSummaryVerdictLattice } from '../../scripts/utils/quality-axes';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -293,9 +295,17 @@ const cases: TestCase[] = [
         for (const phase of chain) {
           const reports = path.join(featureDir, phase, 'reports');
           fs.mkdirSync(reports, { recursive: true });
+          const lattice = deriveSummaryVerdictLattice(phase === 'testing' ? [
+            { id: 'testing_failure_routing_TC-004_s11', severity: 'BLOCKER', status: 'FAIL' },
+            { id: 'visual_diff', severity: 'BLOCKER', status: 'FAIL', blocking_class: 'externalBlocked', failure_kind: 'capability_missing' },
+          ] : [{ id: `${phase}_artifact_exists`, severity: 'BLOCKER', status: 'PASS' }],
+          { phase, visualApplicable: phase === 'testing', assetApplicable: false });
+          const reportContract = { report_validity: lattice.report_validity, release_readiness: lattice.release_readiness,
+            completion_status: lattice.completion_status, quality_axes: lattice.quality_axes,
+            assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null };
           fs.writeFileSync(path.join(reports, 'summary.json'), JSON.stringify(phase === 'testing'
             ? {
-                schema_version: '1.2', phase, feature: 'demo', verdict: 'FAIL', closure_status: 'open',
+                ...reportContract, schema_version: '1.2', phase, feature: 'demo', verdict: 'FAIL', closure_status: 'open',
                 blockers: [
                   { id: 'testing_failure_routing_TC-004_s11', status: 'FAIL' },
                   { id: 'visual_diff', status: 'FAIL', blocking_class: 'externalBlocked', failure_kind: 'capability_missing' },
@@ -305,7 +315,7 @@ const cases: TestCase[] = [
                   { id: 'testing_failure_routing_TC-005_s11', category: 'coding', item_fingerprint: 'c'.repeat(64) },
                 ],
               }
-            : { schema_version: '1.2', phase, feature: 'demo', verdict: 'PASS', closure_status: 'closed' }), 'utf-8');
+            : { ...reportContract, schema_version: '1.2', phase, feature: 'demo', verdict: 'PASS', closure_status: 'closed' }), 'utf-8');
         }
         const observed = observeFeatureState({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'demo', goalEnd: 'testing' });
         const testing = observed.phases.find((p) => p.phase === 'testing');
@@ -316,10 +326,15 @@ const cases: TestCase[] = [
           budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 1 },
           invalidatable_phases: ['coding', 'review', 'ut'],
         });
-        // 上游 PASS 阶段的闭环提交与 evidence 新鲜度不是本例对象：直接视为已闭环。
+        // 本单元从“coding→review→ut 已闭环，testing 旧 FAIL 待复跑”开始；磁盘只用于读出
+        // testing 的 failed/deferred/candidates，不伪造上游正式完成原件。两种投影共用这组 unit facts。
+        const currentPhases = observed.phases.map((p) => (p.phase === 'testing' ? p : { ...p, closure: 'closed' as const }));
         const assessed = assessObservation({
           ...observed,
-          phases: observed.phases.map((p) => (p.phase === 'testing' ? p : { ...p, closure: 'closed' as const })),
+          phases: currentPhases,
+          currentDisposition: resolveCurrentDisposition({ endpoint: 'feature-completion', phases: currentPhases.map(p => ({
+            phase: p.phase, verdict: p.verdict, schemaCurrent: p.summary_state === 'current', closureCommitted: p.closure === 'closed',
+          })) }),
           reconcile,
         }, { mode: 'goal_mode' });
         assert(assessed.gaps[0]?.phase === 'testing' && assessed.gaps[0]?.kind === 'failed', JSON.stringify(assessed.gaps));

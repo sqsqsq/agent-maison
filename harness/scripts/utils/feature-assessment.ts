@@ -184,7 +184,8 @@ export function assessFeature(projectRoot: string, feature: string, opts: Assess
 
   const obligations = [...rows.values()].map(row => {
     const list = findings.get(row.id);
-    return list ? { ...row, status: 'uncovered' as const, class: list[0].class, reason: list.map(item => item.detail).join('；') } : row;
+    return list ? { ...row, status: 'uncovered' as const, class: list.some(item => item.class === 'result') ? 'result' as const : list[0].class,
+      reason: list.map(item => item.detail).join('；') } : row;
   });
   const blocking = [
     ...classifyGoalRunsDir(featureFilePath(projectRoot, feature, 'goal-runs')).corruptRuns

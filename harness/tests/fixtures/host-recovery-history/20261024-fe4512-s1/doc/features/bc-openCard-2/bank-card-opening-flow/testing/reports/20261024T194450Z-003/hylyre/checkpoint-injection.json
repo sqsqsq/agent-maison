@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.0",
+  "injected": [
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "card_type_bank_row",
+      "kind": "wait_for",
+      "index": 21
+    },
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "debit_card_row",
+      "kind": "wait_for",
+      "index": 22
+    },
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "credit_card_row",
+      "kind": "wait_for",
+      "index": 23
+    },
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "card_type_bank_row",
+      "kind": "wait_for",
+      "index": 10
+    },
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "debit_card_row",
+      "kind": "wait_for",
+      "index": 11
+    },
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "credit_card_row",
+      "kind": "wait_for",
+      "index": 12
+    },
+    {
+      "tc_id": "TC-003",
+      "ac_id": "AC-1",
+      "element_id": "card_type_continue_btn",
+      "kind": "wait_for",
+      "index": 13
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_phone_hint",
+      "kind": "wait_for",
+      "index": 30
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_resend_action",
+      "kind": "wait_for",
+      "index": 32
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_next_btn",
+      "kind": "wait_for",
+      "index": 33
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_phone_hint",
+      "kind": "wait_for",
+      "index": 20
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_input",
+      "kind": "wait_for",
+      "index": 21
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_resend_action",
+      "kind": "wait_for",
+      "index": 22
+    },
+    {
+      "tc_id": "TC-007",
+      "ac_id": "AC-3",
+      "element_id": "otp_next_btn",
+      "kind": "wait_for",
+      "index": 23
+    }
+  ],
+  "gaps": []
+}

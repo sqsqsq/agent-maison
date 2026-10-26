@@ -1,0 +1,60 @@
+$ "D:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" "D:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" --mode module -p module=WalletMain@ohosTest -p isOhosTest=true -p product=default -p buildMode=test genOnDeviceTestHap --no-daemon --parallel --incremental --analyze=normal
+
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@PreBuild...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@PreBuild...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@CreateHarModuleInfo... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@GenerateMetadata...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@PreCheckSyscap... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@GenerateOhosTestTemplate...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@GeneratePkgContextInfo...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@GeneratePkgSdkInfo... after 2 ms [39m
+> hvigor [32mFinished :WalletMain:ohosTest@ProcessIntegratedHsp... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@CreateHarBuildProfile...  [39m
+> hvigor [32mFinished :CommFunc:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@MergeProfile...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@SyscapTransform... after 1 ms [39m
+> hvigor [32mFinished :WalletMain:ohosTest@ProcessRouterMap... after 2 ms [39m
+> hvigor [32mFinished :WalletMain:ohosTest@ProcessShareConfig... after 1 ms [39m
+> hvigor [32mFinished :WalletMain:ohosTest@ProcessStartupConfig... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@CreateHarBuildProfile...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@CreateHarBuildProfile...  [39m
+> hvigor [32mFinished :CommFunc:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@GenerateLoaderJson...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@CreateBuildProfile...  [39m
+> hvigor [32mFinished :CommFunc:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :CommUI:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@MergeProfile...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@ProcessLibs...  [39m
+> hvigor [32mFinished :CommUI:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@MakePackInfo...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@ProcessProfile...  [39m
+> hvigor [32mUP-TO-DATE :CommFunc:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@ConfigureCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@ProcessResource...  [39m
+> hvigor [32mFinished :CommUI:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :AccountManager:default@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mFinished :WalletMain:ohosTest@BuildNativeWithCmake... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@CompileResource...  [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@OhosTestCompileArkTS...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@OhosTestBuildJS... after 2 ms [39m
+> hvigor [32mUP-TO-DATE :CommUI:default@DoNativeStrip...  [39m
+> hvigor [32mUP-TO-DATE :AccountManager:default@DoNativeStrip...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@OhosTestCopyMockConfigJson... after 1 ms [39m
+> hvigor [32mFinished :WalletMain:ohosTest@BuildNativeWithNinja... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@ProcessLibs...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@DoNativeStrip...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@CacheNativeLibs...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@GeneratePkgModuleJson...  [39m
+> hvigor [32mFinished :WalletMain:ohosTest@ProcessCompiledResources... after 1 ms [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@PackageHap...  [39m
+> hvigor [32mUP-TO-DATE :WalletMain:ohosTest@SignHap...  [39m
+> hvigor [32mFinished :WalletMain:genOnDeviceTestHap... after 1 ms [39m
+> hvigor [32mBUILD SUCCESSFUL in 1 s 332 ms [39m

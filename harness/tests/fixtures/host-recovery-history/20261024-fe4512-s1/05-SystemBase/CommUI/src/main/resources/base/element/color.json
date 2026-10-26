@@ -1,0 +1,28 @@
+{
+  "color": [
+    {
+      "name": "comm_primary_blue",
+      "value": "#0A59F7"
+    },
+    {
+      "name": "comm_text_primary",
+      "value": "#182431"
+    },
+    {
+      "name": "comm_text_secondary",
+      "value": "#99182431"
+    },
+    {
+      "name": "comm_bg_page",
+      "value": "#F1F3F5"
+    },
+    {
+      "name": "comm_bg_card",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "comm_tab_unselected",
+      "value": "#99182431"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+--- hylyre page save 2026-10-24T19:48:21.261Z names=home ---
+
+--- save name=home exit=0 raw_status=0 duration_ms=6574 ---
+[2026-10-24 15:48:22,287] [30372] [Analysis] [WARNING] [tracker dependency is not ok]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Report path: D:\1.code\SimulatedWalletForHmos\doc\features\bc-openCard-2\bank-card-opening-flow\testing\reports\.hypium-workdir\reports\2026-10-24-15-48-22]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Load Managers ...]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Env pool running in cache mode.]
+[2026-10-24 15:48:22,289] [30372] [EnvPool] [INFO] [Prepare to init pool]
+[2026-10-24 15:48:22,290] [30372] [EnvPool] [INFO] [Pool is prepared]
+[2026-10-24 15:48:22,290] [30372] [EnvPool] [INFO] [Get device by selector]
+[2026-10-24 15:48:22,290] [30372] [EnvPool] [INFO] [Apply device in pool]
+[2026-10-24 15:48:22,747] [9028] [Hdc] [INFO] [3UJ0225321000395		USB	Connected	localhost
+]
+[2026-10-24 15:48:23,302] [30372] [EnvPool] [INFO] [Do matches, device:[state:Available, sn:3UJ0225321000395, label:phone], selection option:[device sn:['3UJ0225321000395'], label:phone]]
+[2026-10-24 15:48:23,303] [30372] [EnvPool] [INFO] [Device 3UJ0225321000395: extend value: {}]
+[2026-10-24 15:48:23,864] [30372] [Device] [INFO] [7.0.0.1]
+[2026-10-24 15:48:24,208] [30372] [Device] [INFO] [Init ui proxy by unix socket.]
+[2026-10-24 15:48:24,208] [30372] [DeviceUIProxy] [INFO] [Check uitest running status.]
+[2026-10-24 15:48:24,366] [30372] [DeviceUIProxy] [INFO] [Finish check uitest running status. Uitest pid: 34474]
+[2026-10-24 15:48:24,366] [30372] [Device] [INFO] [uitest version: 7.0.0.1. Using 1.2.2 agent version]
+[2026-10-24 15:48:24,505] [30372] [Device] [INFO] [UITEST_AGENT_LIBRARY@v0.0.0#1.2.2
+]
+[2026-10-24 15:48:24,505] [30372] [Device] [INFO] [local agent version 1.2.2, device agent version 1.2.2]
+[2026-10-24 15:48:24,628] [30372] [Device] [INFO] [Device agent is up to date!]
+[2026-10-24 15:48:24,779] [30372] [DeviceUIProxy] [INFO] [Harmony ui rpc already start!!!!]
+[2026-10-24 15:48:26,868] [30372] [DeviceUIProxy] [INFO] [tcp forward port: 9987 for 3UJ0225321000395]
+[2026-10-24 15:48:26,944] [30372] [Device] [INFO] [hypium base version: 6.1.0.210]
+D:\1.code\SimulatedWalletForHmos\doc\app-snapshot-cache\com.example.simulatedwallet\pages\home.json
+2026-10-24T15:48:27 pid=53516 hypium_dump_ui uitree.refresh_ms=722.3
+2026-10-24T15:48:27 pid=53516 augment_ui_dump_payload walk_ms=0.3

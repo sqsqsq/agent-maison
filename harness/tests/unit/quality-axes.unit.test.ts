@@ -20,7 +20,7 @@ import {
   validateQualityAxes,
 } from '../../scripts/utils/quality-axes';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
-import { collectCleanPassIssues } from '../../scripts/utils/verify-feature-completion';
+import { collectCleanPassIssues, collectDisclosedCompletionIssues } from '../../scripts/utils/verify-feature-completion';
 import { clearFrameworkConfigCache, receiptDirPath } from '../../config';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 import type { CheckResult } from '../../scripts/utils/types';
@@ -247,7 +247,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     }),
   },
   {
-    name: 'completion 消费面：legacy visual UNVERIFIED(needs_human) 重投影 needs_fix，不求人签',
+    name: 'completion 消费面：legacy visual UNVERIFIED 走披露——普通完成不再被发布轴阻断，release 仍 BLOCKED',
     run: async () => withTmpProject(async root => {
       const p = path.join(receiptDirPath(root, 'demo', 'testing'), 'reports', 'summary.json');
       fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -274,9 +274,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         },
       }), 'utf-8');
       const issues = collectCleanPassIssues({ projectRoot: root, feature: 'demo', chain: ['testing'] });
-      const hit = issues.find(i => i.condition === 'quality_axis_verified');
-      assertTrue(hit !== undefined, '应有 quality_axis_verified 违例');
-      assertEq(hit!.kind, 'needs_fix', 'legacy needs_human 必须重投影为机器重验');
+      assertTrue(!issues.some(i => i.condition === 'quality_axis_verified'), '披露项不得再阻断普通完成');
+      const disclosed = collectDisclosedCompletionIssues({ projectRoot: root, feature: 'demo', chain: ['testing'] });
+      const hit = disclosed.find(i => i.condition === 'quality_axis_verified');
+      assertTrue(hit !== undefined, '披露项必须出现在发布/展示投影');
+      assertTrue(/visual/.test(hit!.detail), '披露必须点名轴，且 release 仍 BLOCKED');
     }),
   },
   {

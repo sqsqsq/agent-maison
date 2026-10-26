@@ -1,0 +1,54 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93"
+elements:
+  - { element_id: card_type_status_bar, ref_id: ref_card_type_sheet, zone: system_chrome, type: system_chrome, disposition: defer, note: "系统状态栏；非应用自绘，保留为 best-effort 视觉债务" }
+  - { element_id: background_add_bank_title, ref_id: ref_card_type_sheet, zone: background_top, type: nav_bar, text: "添加银行卡", disposition: implement }
+  - { element_id: background_add_bank_subtitles, ref_id: ref_card_type_sheet, zone: background_body, type: content_display, text: "免输卡号添卡 支持 100 家银行", disposition: implement }
+  - { element_id: background_search_bank, ref_id: ref_card_type_sheet, zone: background_body, type: input, text: "搜索银行 搜索", disposition: implement }
+  - { element_id: background_bank_row, ref_id: ref_card_type_sheet, zone: background_body, type: list_row, text: "招商银行", disposition: implement }
+  - { element_id: card_type_sheet_panel, ref_id: ref_card_type_sheet, zone: overlay, type: sheet_scaffold, disposition: implement }
+  - { element_id: card_type_sheet_title, ref_id: ref_card_type_sheet, zone: overlay_top, type: title_text, text: "选择卡类型", disposition: implement }
+  - { element_id: card_type_sheet_close, ref_id: ref_card_type_sheet, zone: overlay_top, type: icon_button, disposition: implement }
+  - { element_id: card_type_bank_card, ref_id: ref_card_type_sheet, zone: overlay_body, type: card_container, disposition: implement }
+  - { element_id: card_type_bank_row, ref_id: ref_card_type_sheet, zone: overlay_body, type: list_row, text: "招商银行", disposition: implement }
+  - { element_id: debit_card_row, ref_id: ref_card_type_sheet, zone: overlay_body, type: list_row, text: "储蓄卡", disposition: implement }
+  - { element_id: credit_card_row, ref_id: ref_card_type_sheet, zone: overlay_body, type: list_row, text: "信用卡", disposition: implement }
+  - { element_id: card_type_authorization_copy, ref_id: ref_card_type_sheet, zone: overlay_body, type: paragraph, text: "为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给招商银行。", disposition: implement }
+  - { element_id: card_type_agreement_copy, ref_id: ref_card_type_sheet, zone: overlay_body, type: agreement_text, text: "我已阅读快捷支付服务协议、银联无卡自助消费授权协议", disposition: implement }
+  - { element_id: card_type_continue_btn, ref_id: ref_card_type_sheet, zone: overlay_bottom, type: primary_button, text: "同意并继续", disposition: implement }
+
+  - { element_id: selection_status_bar, ref_id: ref_bank_card_selection, zone: system_chrome, type: system_chrome, disposition: defer, note: "系统状态栏；非应用自绘，保留为 best-effort 视觉债务" }
+  - { element_id: selection_back_btn, ref_id: ref_bank_card_selection, zone: top_nav, type: icon_button, disposition: implement }
+  - { element_id: selection_nav_title, ref_id: ref_bank_card_selection, zone: top_nav, type: title_text, text: "招商银行", disposition: implement }
+  - { element_id: selection_hint, ref_id: ref_bank_card_selection, zone: content_body, type: caption_text, text: "请选择您要绑定的银行卡", disposition: implement }
+  - { element_id: selection_card_container, ref_id: ref_bank_card_selection, zone: content_body, type: card_container, disposition: implement }
+  - { element_id: bank_card_candidate_1, ref_id: ref_bank_card_selection, zone: content_body, type: list_row, text: "4392 **** **** 2269", disposition: implement }
+  - { element_id: selection_agreement_check, ref_id: ref_bank_card_selection, zone: content_body, type: checkbox, disposition: implement }
+  - { element_id: selection_agreement, ref_id: ref_bank_card_selection, zone: content_body, type: agreement_text, text: "同意并阅读《云内付App一键绑卡用户授权协议》、《招商银行信用卡快捷支付服务协议》，授权云闪付获得您在本行银行卡号等信息。", disposition: implement }
+  - { element_id: selection_next_btn, ref_id: ref_bank_card_selection, zone: content_body, type: primary_button, text: "下一步", disposition: implement }
+
+  - { element_id: otp_status_bar, ref_id: ref_otp_verification_sheet, zone: system_chrome, type: system_chrome, disposition: defer, note: "系统状态栏；非应用自绘，保留为 best-effort 视觉债务" }
+  - { element_id: otp_sheet_panel, ref_id: ref_otp_verification_sheet, zone: overlay, type: sheet_scaffold, disposition: implement }
+  - { element_id: otp_sheet_title, ref_id: ref_otp_verification_sheet, zone: overlay_top, type: title_text, text: "输入验证码", disposition: implement }
+  - { element_id: otp_sheet_close, ref_id: ref_otp_verification_sheet, zone: overlay_top, type: icon_button, disposition: implement }
+  - { element_id: otp_instruction, ref_id: ref_otp_verification_sheet, zone: overlay_body, type: caption_text, text: "为确认是您本人操作，请输入发送至手机", disposition: implement }
+  - { element_id: otp_phone_hint, ref_id: ref_otp_verification_sheet, zone: overlay_body, type: caption_text, text: "185**#***3841 的验证码。", disposition: implement }
+  - { element_id: otp_input, ref_id: ref_otp_verification_sheet, zone: overlay_body, type: input, text: "输入短信验证码", disposition: implement }
+  - { element_id: otp_resend_action, ref_id: ref_otp_verification_sheet, zone: overlay_body, type: action_button, text: "55 秒后重试", disposition: implement }
+  - { element_id: otp_next_btn, ref_id: ref_otp_verification_sheet, zone: overlay_bottom, type: primary_button, text: "下一步", disposition: implement }
+  - { element_id: otp_system_numeric_keyboard, ref_id: ref_otp_verification_sheet, zone: system_input, type: system_keyboard, disposition: defer, note: "系统数字键盘由输入类型触发；不由应用绘制，保留为 best-effort 视觉债务" }
+
+  - { element_id: result_status_bar, ref_id: ref_opening_result_success, zone: system_chrome, type: system_chrome, disposition: defer, note: "系统状态栏；非应用自绘，保留为 best-effort 视觉债务" }
+  - { element_id: result_status_icon, ref_id: ref_opening_result_success, zone: content_top, type: status_icon, disposition: implement }
+  - { element_id: result_title, ref_id: ref_opening_result_success, zone: content_top, type: title_text, text: "添卡成功", disposition: implement }
+  - { element_id: result_description, ref_id: ref_opening_result_success, zone: content_top, type: caption_text, text: "可用于实体店二维码支付和网上商城支付", disposition: implement }
+  - { element_id: result_guide_illustration, ref_id: ref_opening_result_success, zone: content_body, type: illustration, disposition: implement }
+  - { element_id: result_ocr_uncertain_copy, ref_id: ref_opening_result_success, zone: content_body, type: ocr_uncertain, text: "回中加", disposition: defer, note: "OCR 低置信孤立文本，reviewer 观察判定为插画区域而非可靠产品文案；留待有视觉能力复核" }
+  - element_id: result_nfc_panel
+    ref_id: ref_opening_result_success
+    zone: content_bottom
+    type: detail_section
+    text: "激活 NFC 支付功能可用于实体店碰一碰支付 激活 NFC 支付"
+    disposition: excluded
+    requirement_quote: "再往下的激活nfc部分本次先不需要"
+  - { element_id: result_finish_btn, ref_id: ref_opening_result_success, zone: bottom_action, type: primary_button, text: "完成", disposition: implement }

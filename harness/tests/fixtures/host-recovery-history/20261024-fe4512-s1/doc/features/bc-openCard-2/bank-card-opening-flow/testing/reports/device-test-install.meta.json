@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "exitCode": 0,
+  "durationMs": 858,
+  "hapPath": "D:\\1.code\\SimulatedWalletForHmos\\01-Product\\Phone\\build\\default\\outputs\\default\\Phone-default-signed.hap",
+  "bundleName": "com.example.simulatedwallet",
+  "candidateVersionCode": 1000000,
+  "candidateVersionName": "1.0.0",
+  "bmDumpExitCode": 0,
+  "deviceInstalledProbe": true,
+  "deviceVersionCodeParsed": null,
+  "deviceParseAmbiguous": false,
+  "downgradeDetected": false,
+  "downgradeBlocked": false,
+  "uninstallAttempted": false,
+  "uninstallKeepUserData": false,
+  "installDiagnosisKind": null,
+  "reused": false,
+  "hapMtimeMs": 1792870261498.6257,
+  "hapSizeBytes": 1345902,
+  "hapSha256": "b991e757c69c",
+  "timestamp": "2026-10-24T19:50:59.116Z"
+}

@@ -1,0 +1,99 @@
+schema_version: "1.0"
+feature: "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93"
+fidelity_target: pixel_1to1
+asset_acquisition_mode: approximate
+verified: unverified
+
+mappings:
+  assets:
+    - { ui_spec_key: bank_logo_cmb, contract_resource_key: bank_logo_cmb, contract_module: WalletMain, contract_category: media }
+    - { ui_spec_key: result_payment_guide, contract_resource_key: result_payment_guide, contract_module: WalletMain, contract_category: media }
+  tokens:
+    - { ui_spec_key: color.page_bg, contract_resource_key: color_page_bg, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.sheet_bg, contract_resource_key: color_page_bg, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.surface, contract_resource_key: color_card_bg, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.text_primary, contract_resource_key: color_text_primary, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.text_secondary, contract_resource_key: color_text_secondary, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.nav_button_bg, contract_resource_key: color_nav_btn_bg, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.primary, contract_resource_key: brand_primary, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.primary_tonal, contract_resource_key: button_tonal_bg, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.brand_action, contract_resource_key: brand_danger, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.success, contract_resource_key: brand_fuel_green, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: color.overlay_dim, contract_resource_key: opening_overlay_dim, contract_module: WalletMain, contract_category: color }
+    - { ui_spec_key: spacing.page_margin, contract_resource_key: bank_space_page_margin, contract_module: WalletMain, contract_category: float }
+    - { ui_spec_key: radius.card, contract_resource_key: bank_radius_card, contract_module: WalletMain, contract_category: float }
+    - { ui_spec_key: font.page_title, contract_resource_key: bank_font_page_title, contract_module: WalletMain, contract_category: float }
+  components:
+    - { ui_spec_node_id: card_type_sheet, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_overlay_root, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_background_page, contract_component: AddBankCardPage, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: background_add_bank_title, contract_component: AddBankCardPage, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: background_add_bank_subtitles, contract_component: AddBankCardPage, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: background_search_bank, contract_component: AddBankCardPage, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: background_bank_row, contract_component: AddBankCardPage, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_sheet_panel, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_sheet_title, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_sheet_close, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_bank_card, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_bank_row, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: debit_card_row, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: credit_card_row, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_authorization_copy, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_agreement_copy, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: card_type_continue_btn, contract_component: CardTypeSheet, ui_spec_screen: card_type_sheet, contract_module: WalletMain }
+
+    - { ui_spec_node_id: bank_card_selection, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: bank_card_selection_root, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_nav_bar, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_back_btn, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_nav_title, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_hint, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_card_container, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: bank_card_candidate_1, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_agreement_check, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_agreement, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+    - { ui_spec_node_id: selection_next_btn, contract_component: BankCardSelectionPage, ui_spec_screen: bank_card_selection, contract_module: WalletMain }
+
+    - { ui_spec_node_id: otp_verification_sheet, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_overlay_root, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_sheet_panel, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_sheet_title, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_sheet_close, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_instruction, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_phone_hint, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_code_row, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_input, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_resend_action, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+    - { ui_spec_node_id: otp_next_btn, contract_component: OtpVerificationSheet, ui_spec_screen: otp_verification_sheet, contract_module: WalletMain }
+
+    - { ui_spec_node_id: opening_result_success, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: opening_result_root, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: result_state_group, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: result_status_icon, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: result_title, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: result_description, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: result_guide_illustration, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+    - { ui_spec_node_id: result_finish_btn, contract_component: BankCardOpeningResultPage, ui_spec_screen: opening_result_success, contract_module: WalletMain }
+
+visual_debt:
+  - severity: major
+    screen: opening_result_success
+    element_id: result_guide_illustration
+    reason: "参考图插画无独立可验证素材；本轮按 approximate 使用可见占位，发布前必须替换并重新执行 delegated visual review。"
+  - severity: minor
+    screen: card_type_sheet
+    element_id: card_type_sheet_close
+    reason: "关闭图标使用系统符号近似；当前执行者无直接视觉能力。"
+  - severity: minor
+    screen: otp_verification_sheet
+    element_id: otp_phone_hint
+    reason: "参考 OCR 的手机号字符存在低置信残余；实现以 AccountService mock mobile 的标准脱敏结果为准。"
+  - severity: minor
+    screen: opening_result_success
+    element_id: result_status_icon
+    reason: "成功图标使用系统符号近似。"
+
+blind_review_pending:
+  - "四屏 bbox、像素间距、字体字重和系统状态栏须由后续真机截图与 delegated visual review 核对。"
+  - "结果页低置信 OCR 文案 result_ocr_uncertain_copy 不进入产品文案，等待视觉 provider 复核。"
+  - "系统数字键盘由数字输入类型触发，不由应用自绘。"
