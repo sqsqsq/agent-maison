@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { provisionRealChainProject, scaffoldRealChainHost, git } from '../utils/real-chain-host';
-import { seedCuBoundHost, CU_REQUIREMENT, writeCuPlanMaterials, writeCuSpecMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, writeCuFacts, publishVerifier } from './real-chain.unit.test';
+import { seedCuBoundHost, CU_REQUIREMENT, writeCuPlanMaterials, writeCuSpecMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, writeCuFacts, publishRequestedVerifier } from './real-chain.unit.test';
 import { runGoalRuntimeChain, requestVia } from './goal-runner-testing-integrity.unit.test';
 import { featureFilePath } from '../../config';
 import { loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact } from '../../scripts/utils/change-unit-path';
@@ -23,10 +23,17 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const { cu, birthChain } = seedCuBoundHost(project);
     git(project.root, ['add', '-A']); git(project.root, ['commit', '-qm', 'seed revision recovery fixture']);
     const writers = { spec: writeCuSpecMaterials, plan: writeCuPlanMaterials, coding: writeCuCodingMaterials, review: writeCuReviewMaterials, ut: writeCuUtMaterials };
-    const hook = (phase: keyof typeof writers) => (ctx: { runId: string; attempt: number }) => { cu.runId = ctx.runId; writers[phase](cu); if (ctx.attempt > 1) publishVerifier(cu, phase); };
+    const verifierDeliveries: Array<{ phase: string; next: string; skips: number }> = [];
+    const hook = (phase: keyof typeof writers) => (ctx: { runId: string; attempt: number }) => { cu.runId = ctx.runId; writers[phase](cu); };
     const common = { frameworkRoot: cu.frameworkRoot, featureId: cu.feature, realHarness: true, adapter: 'codex', noAutoForce: true,
       freshStartPhase: birthChain[0] as 'plan', freshEndPhase: birthChain.at(-1), freshRequirement: CU_REQUIREMENT,
-      onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut') };
+      onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut'),
+      onOutOfChain: (ctx: { phase: string; prompt: string; runId: string }) => {
+        const phase = ctx.phase.replace(/-verifier-format-repair$/, '');
+        const current = JSON.parse(fs.readFileSync(featureFilePath(cu.root, cu.feature, `${phase}/reports/summary.json`), 'utf8'));
+        verifierDeliveries.push({ phase, next: current.next_action, skips: current.blocking_skips?.length ?? 0 });
+        assert(publishRequestedVerifier(cu, ctx), 'only the actually delivered verifier request may publish its reply');
+      } };
     const first = await runGoalRuntimeChain(cu.root, { ...common, freshBudget: { max_total_turns: 30 },
       onCoding: ctx => { cu.runId = ctx.runId; writeCuFacts(cu, 'coding'); }, failExecutorFor: phase => phase === 'coding' });
     const runsDir = featureFilePath(cu.root, cu.feature, 'goal-runs');
@@ -54,6 +61,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     const decision = decideRunContinuation({ projectRoot: cu.root, feature: cu.feature, call: { requirement: CU_REQUIREMENT, attended: true } });
     assert.equal(decision.kind, 'successor', JSON.stringify(decision));
     const continued = await requestVia('foreground', cu.root, common);
+    assert(verifierDeliveries.some(delivery => delivery.phase === 'coding' && delivery.next === 'review_blocking_skips_then_verifier' && delivery.skips > 0),
+      `a currently issued request must reach its verifier while the original compatibility SKIP remains visible: ${JSON.stringify(verifierDeliveries)}`);
     const runIds = fs.readdirSync(runsDir).filter(id => !id.startsWith('.') && fs.existsSync(path.join(runsDir, id, 'manifest.json')));
     const successor = runIds.find(id => id !== firstId)!; assert(successor, `successor absent: ${continued.exitCode}`);
     const nextManifest = JSON.parse(fs.readFileSync(path.join(runsDir, successor, 'manifest.json'), 'utf8'));

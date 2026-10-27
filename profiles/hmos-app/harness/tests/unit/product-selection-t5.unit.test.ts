@@ -202,15 +202,25 @@ const cases: Array<{ name: string; run: () => void }> = [
     name: 't5(接线) ut-host 构建/执行入口单次解析 + 显式 product + unresolved 阻断',
     run: () => {
       const src = fs.readFileSync(path.join(hmosProfileDir, 'harness', 'ut-host-impl.ts'), 'utf-8');
-      const buildResolves = src.match(/const selection = resolveProductSelection\(\{ projectRoot: ctx\.projectRoot, purpose: 'ut' \}\)/g) ?? [];
-      assert.strictEqual(buildResolves.length, 2, `checkUtHvigorBuild/checkUtHvigorTest 各解析一次（实际 ${buildResolves.length}）`);
-      assert(
-        (src.match(/product: selection\.product \?\? undefined,/g) ?? []).length >= 2,
-        'ut 编译与执行均显式传递 product',
-      );
-      const unresolvedBlocks = src.match(/source === 'unresolved'/g) ?? [];
-      assert.strictEqual(unresolvedBlocks.length, 2, 'build 与 test 两个入口均有 unresolved 阻断');
-      assert(src.includes("blocking_class: 'externalBlocked'"), '阻断复用既有 externalBlocked 语义');
+      for (const [entry, nextFunction] of [
+        ['checkUtHvigorBuild', 'classifyConfigSchemaError'],
+        ['checkUtHvigorTest', 'checkTestRegistration'],
+      ]) {
+        const start = src.indexOf(`function ${entry}(`);
+        const end = src.indexOf(`function ${nextFunction}(`, start);
+        assert(start >= 0 && end > start, `${entry} 函数范围须可定位`);
+        const entrySrc = src.slice(start, end);
+        const resolves = entrySrc.match(/resolveProductSelection\(/g) ?? [];
+        assert.strictEqual(resolves.length, 1, `${entry} 须且仅解析一次（实际 ${resolves.length}）`);
+        assert(
+          entrySrc.includes("const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' })"),
+          `${entry} 须冻结该次 ut selection`,
+        );
+        assert(entrySrc.includes('product: selection.product ?? undefined,'), `${entry} 须显式传递冻结的 product`);
+        const unresolvedBlocks = entrySrc.match(/source === 'unresolved'/g) ?? [];
+        assert.strictEqual(unresolvedBlocks.length, 1, `${entry} 须有 unresolved 阻断`);
+        assert(entrySrc.includes("blocking_class: 'externalBlocked'"), `${entry} 阻断复用既有 externalBlocked 语义`);
+      }
     },
   },
   {

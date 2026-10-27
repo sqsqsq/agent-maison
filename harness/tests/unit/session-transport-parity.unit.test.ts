@@ -11,6 +11,7 @@ import { spawnSync } from 'child_process';
 import { prepareSessionCliProject } from '../utils/session-cli-project';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { facts as requestFacts } from './request-entry.unit.test';
+import { readDeliveredVerifierRequest } from './real-chain.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
@@ -37,11 +38,12 @@ const moduleAt = (root: string, relative: string): any => require(path.join(root
 const summary = (root: string, phase: string) => json(root, `doc/features/clamp/${phase}/reports/summary.json`);
 const events = (root: string): any[] => read(root, 'doc/features/clamp/goal-runs/session-cli/events.jsonl').split('\n').filter(Boolean).map(line => JSON.parse(line));
 
-function modelIssueVerification(root: string): string {
+function modelIssueVerification(root: string, required = true): string {
   const priorRun = process.env.MAISON_GOAL_RUN_ID;
   process.env.MAISON_GOAL_RUN_ID = 'session-cli';
   try {
     const proposal = moduleAt(root, 'scripts/utils/repair-candidates').readPhaseRepairIssues(root, 'clamp', 'ut');
+    if (!required && !proposal?.rows.length) return '';
     assert.equal(proposal?.rows.length, 1, JSON.stringify(proposal));
     return '\n```issue-verification\n' + YAML.stringify([{ issue: 'UP-CLAMP', verdict: 'confirmed', repair_owner: 'coding',
       evidence: SOURCE + ' | ' + proposal.rows[0].summary }], { lineWidth: 0 }) + '```\n';
@@ -140,10 +142,14 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
     }
     return checked.status ?? 1;
   };
-  const work = (phase: string, fence?: any, extraEnv?: Record<string, string>): number => {
+  const work = (phase: string, fence?: any, extraEnv?: Record<string, string>, instruction?: string): number => {
     invocations.push(phase);
     if (phase === 'ut-verifier-format-repair') {
-      modelVerifier(root, 'ut', summary(root, 'ut'), modelIssueVerification(root));
+      const current = summary(root, 'ut');
+      assert(readDeliveredVerifierRequest({ root, feature: 'clamp', frameworkRoot: path.join(root, 'framework'),
+        harnessDir: path.join(root, 'framework/harness'), module: 'math', modulePath: 'src/math' },
+      { phase, prompt: instruction ?? '', runId: 'session-cli' }));
+      modelVerifier(root, 'ut', current, modelIssueVerification(root, false));
       return 0; // Chain-external model repair writes only its requested report, never a phase harness/receipt.
     }
     if (phase === 'coding') { codingCalls++; write(root, SOURCE, scenario === 'repair' && codingCalls === 1 && !resume ? BAD : GOOD); }
@@ -161,7 +167,7 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
       for (let round = 0; step.type === 'phase_execute_request' && round < 14; round++) {
         const requestPath = step.request.path;
         const original = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
-        const code = work(original.context.phase, original.context, original.context.childEnv);
+        const code = work(original.context.phase, original.context, original.context.childEnv, original.context.instruction);
         step = await entry.runGoalModeSessionStep({ ...options, requestPath, report: { phase: original.context.phase, status: code === 0 ? 'passed' : 'failed',
           details: `${original.context.phase}: author selfcheck exit ${code}; actual script/native outcomes remain in the original phase reports.` } });
       }
@@ -173,7 +179,8 @@ export async function runGoal(root: string, mode: 'detached' | 'session', scenar
         const started = Date.now();
         const output = `Explicit author model substitute executing ${phase}; actual checkers and native tests run below.\n`;
         write(root, path.relative(root, options.outputLogPath), output);
-        const code = work(phase, undefined, options.extraEnv);
+        const instruction = phase === 'ut-verifier-format-repair' ? fs.readFileSync(path.join(path.dirname(options.outputLogPath), 'prompt.md'), 'utf8') : undefined;
+        const code = work(phase, undefined, options.extraEnv, instruction);
         fs.appendFileSync(options.outputLogPath, `Author selfcheck exited ${code}; script/native outcomes are unchanged.\n`);
         return { exitCode: code, stdout: output, stderr: '', duration_ms: Date.now() - started, command: 'test-model-substitute' };
       });
@@ -295,6 +302,9 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [{
           assert(!events(root).some(e => e.type === 'agent_process_settled' && e.process_role !== 'harness'), 'session resume cannot borrow a detached completion fact');
         }
         assert(!continued.invocations.includes('coding'), 'clearing a native-I/O gap cannot repeat already-valid implementation');
+        assert(continued.invocations.every(phase => phase === 'ut-verifier-format-repair'), 'native-I/O recovery must reuse all settled phase authors');
+        assert(!events(root).some(e => e.type === 'budget_turns' || e.type === 'budget_wall_clock'), 'verification recovery stays within the original budget');
+        assert.equal(json(root, 'doc/features/clamp/goal-runs/session-cli/manifest.json').run_id, 'session-cli', 'recovery keeps the original run identity');
         assert.equal(summary(root, 'ut').verdict, 'PASS'); assert.equal(summary(root, 'ut').closure_status, 'closed');
         assert.equal(moduleAt(root, 'scripts/utils/feature-assessment').assessFeature(root, 'clamp', { expectedChain: ['coding', 'review', 'ut'], expectedTrack: 'full', frameworkRoot: path.join(root, 'framework') }).complete, true);
       }

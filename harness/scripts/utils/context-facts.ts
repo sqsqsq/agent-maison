@@ -258,6 +258,10 @@ function checkFactsFile(
       && ('run_id' in invocation.subject
         ? !!admission?.baseline && admission.baseline.fingerprint === invocation.baseline?.fingerprint && admission.source_owners?.[source] === phase
         : !!invocation.baseline);
+    const { createObservedSourceHashReader } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
+    const inheritedSourceHash = invocation.baseline && 'run_id' in invocation.subject
+      ? createObservedSourceHashReader(projectRoot, invocation.subject.feature, { frameworkRoot: options?.frameworkRoot,
+        runId: invocation.subject.run_id }) : undefined;
     if (record.established_by !== expectedPhase || !expectedPhase || (!invocation.baseline && phase !== invocation.first_phase)) issue('context_exploration_facts_established_by_invalid', '建立资格必须来自首个实际调用或经验证的已有基线');
     if (invocation.baseline) {
       if (factsBaselineFingerprint(raw) !== invocation.baseline.fingerprint) issue('context_exploration_facts_baseline_stale', `facts 基线正文或原身份已变化；保留已核基线，在 ## phase_delta: ${phase} 精确追加当前变化来源与事实，不通过改正文或run_id洗新`);
@@ -302,7 +306,10 @@ function checkFactsFile(
           const diff = baseline.available ? diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha }) : undefined;
           changedInPhase = !!diff?.executed && diff.entries.some(entry => entry.path === source && entry.status === 'A');
         }
-        if (changedInPhase && mayAdvanceSource(source, hash)) {
+        // 既有下游合法新增原件只承接来源，不声称本作者已读，也不改写原 facts 基线。
+        if (!before && inheritedSourceHash?.({ path: source, role: 'input', exists: false, sha256: null }, phase)) {
+          // 原 phase_write_observed 的连续哈希与当前字节已核对，继续由真实业务 gate 验证。
+        } else if (changedInPhase && mayAdvanceSource(source, hash)) {
           ownedSourceDelta = true;
           ledgerWarn('context_exploration_facts_scope_coverage', `本阶段授权内新增或修改的源码未登记：${source}；追溯弱一级，不阻断本阶段。`, registrationSuggestion(source));
         } else issue('context_exploration_facts_scope_coverage', `当前目标未覆盖：${source}`);

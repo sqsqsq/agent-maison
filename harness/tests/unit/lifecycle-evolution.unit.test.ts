@@ -36,7 +36,7 @@ import { loadHostSnapshot, SNAPSHOT_CU_FEATURE, SNAPSHOT_FLAT_FEATURE } from '..
 import { git, writeHostFile, REAL_CHAIN_TEST, provisionRealChainProject, scaffoldRealChainHost, type RealChainProject } from '../utils/real-chain-host';
 import {
   writeSpecMaterials, writePlanMaterials, writeCodingMaterials, writeReviewMaterials, writeUtMaterials, writeTestPlan,
-  writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, writeCuPlanMaterials, writeCuSpecMaterials, publishVerifier, dumpPhase, seedCuBoundHost, CU_REQUIREMENT, CU_SOURCE,
+  writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials, writeCuPlanMaterials, writeCuSpecMaterials, publishRequestedVerifier, dumpPhase, seedCuBoundHost, CU_REQUIREMENT, CU_SOURCE,
 } from './real-chain.unit.test';
 import {
   runIds, runFile, readJson, uncoveredOwnerPhases, freezeAndTransfer, supersede, successorScope, auditedBy, completionOriginal,
@@ -335,10 +335,10 @@ export function authorHooks(p: RealChainProject, writers: Partial<Record<Phase, 
     p.runId = establishing ? ctx.runId : factsIdentity(p, ctx.runId);
     writers[phase]?.(p, ctx.runId);
     after?.[phase]?.(p);
-    if (ctx.attempt > 1) publishVerifier(p, phase);
   };
   return {
     realHarness: true, failExecutorFor: undefined,
+    onOutOfChain: (ctx: Parameters<typeof publishRequestedVerifier>[1]) => { assert(publishRequestedVerifier(p, ctx)); },
     onSpec: hook('spec'), onPlan: hook('plan'), onCoding: hook('coding'), onReview: hook('review'), onUt: hook('ut'), onTesting: hook('testing'),
   };
 }
@@ -532,7 +532,6 @@ export function specFirstCuHooks(p: RealChainProject, align: boolean) {
   return { ...hooks, onSpec: (ctx: { runId: string; attempt: number }): void => {
     establishFactsAtSpec(p, ctx.runId);
     if (align) alignAcceptance(p);
-    if (ctx.attempt > 1) publishVerifier(p, 'spec');
   } };
 }
 /** spec 责任方从当前 provider 重产 typed 验收，并走原事实建立门。 */

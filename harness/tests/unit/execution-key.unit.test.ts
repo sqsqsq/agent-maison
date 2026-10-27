@@ -14,12 +14,14 @@ import {
   listExecutionKeyRuns,
   restoreFrozenRunArtifacts,
   utFrozenRunArtifacts,
+  utExecutionModules,
   refreshStabilityForNewestRun,
   writeExecutionKeyRecord,
   type ExecutionKeyInputs,
 } from '../../../profiles/hmos-app/harness/execution-key';
 import type { UnitCaseResult } from '../run-unit';
 import { resolveAuthoritativeHylyreTracePath } from '../../scripts/utils/testing-trace-gates';
+import { utAcceptanceSourcePaths } from '../../../profiles/hmos-app/harness/ut-host-impl';
 
 const BASE_INPUTS: ExecutionKeyInputs = {
   hap_sha256_full: 'a'.repeat(64), derived_plan_sha256: 'b'.repeat(64), device: '3UJ0', display_env: '',
@@ -60,6 +62,16 @@ function writeRun(base: string, stamp: string, key: string, opts: { outcome: str
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'UT evidence facts keep native module names and source ownership in the profile',
+    run: () => {
+      assert.deepEqual(utExecutionModules({ frozen_files: ['frozen.ut-result.WalletMain.json', 'frozen.hdc-test.WalletMain.log', 'notes.json'] }), ['WalletMain']);
+      assert.deepEqual(utExecutionModules({}), []);
+      const files = ['WalletMain/src/main/ets/Otp.ets', 'WalletMain/src/ohosTest/ets/otp.test.ets', 'Other/src/main/ets/Otp.ets', 'WalletMain/src/main/resources/icon.png'];
+      assert.deepEqual(utAcceptanceSourcePaths(files, ['WalletMain/src/ohosTest/ets/otp.test.ets']), files.slice(0, 2));
+      assert.deepEqual(utAcceptanceSourcePaths(files, ['unowned.test.ets']), []);
+    },
+  },
   {
     name: '执行键：输入相同（flags 顺序无关）→ 同键；任一输入变（HAP/派生计划/设备/复位/版本/flags）→ 不同键',
     run: () => {

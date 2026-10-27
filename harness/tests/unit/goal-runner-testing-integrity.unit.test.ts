@@ -7376,6 +7376,8 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
     assert(probe.exitCode === 0 && !probe.events.some(event => event.type === 'run_end' && ['PARTIAL', 'HALTED', 'INTERRUPTED'].includes(String(event.status))), JSON.stringify(probe.events.slice(-5)));
     assert(fs.existsSync(path.join(probe.reportDir, 'feature-completion.json')), '真实完成核验没有生成 completion');
     assert(!probe.events.some(event => event.type === 'agent_invoke_start' && event.purpose === 'verifier_format_repair'), '普通 PASS 视觉披露不得被误发格式纠错');
+    assert(resolveResumedBudget(probe.events).totalTurns === probe.events.filter(event => event.type === 'agent_invoke_start').length,
+      '视觉披露完成过程的实际模型调用必须仍计入原预算');
     const { collectCleanPassIssues } = await import('../../scripts/utils/verify-feature-completion');
     assert(collectCleanPassIssues({ projectRoot: root, frameworkRoot: REPO_ROOT, feature, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }).length === 0, '真实 run 完成消费仍存在缺口');
     for (const phase of ['review', 'testing']) {
@@ -7388,7 +7390,7 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'request-missing'] as const) test(`repair1 R3 UT UNVERIFIED ${variant} uses D1 and budgeted bounded format recovery`, async () => {
+for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'request-missing', 'request-mismatched'] as const) test(`repair1 R3 UT UNVERIFIED ${variant} uses D1 and budgeted bounded format recovery`, async () => {
   const { root } = setupGoalRuntimeHost('codex');
   const feature = FEATURE;
   const { UT_REAL_ASSERTION_CHECK } = await import('./repair-candidates.unit.test');
@@ -7428,13 +7430,20 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
         writeFile(root, reportRel, body(variant === 'corrected') + renderResultBlock(subject, 'PASS', 0));
       },
     };
-    if (variant === 'request-missing') options.onHarnessFailureWithoutSummary = ({ phase, attempt }) => {
+    if (variant === 'request-missing' || variant === 'request-mismatched') options.onHarnessFailureWithoutSummary = ({ phase, attempt }) => {
       if (phase !== 'ut') return null;
       options.onHarnessSummary!({ phase, attempt }); // 先用真实 writer 形成 D1 summary，再模拟 request 文件丢失。
       const issued = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'ut/reports/summary.json'), 'utf8'));
       assert(issued.next_action === 'run_verifier_for_repair' && issued.verifier_request, '缺失用例必须是已有 D1 request');
-      fs.unlinkSync(path.join(root, issued.verifier_request));
-      return 'verifier request missing after current summary publication';
+      const file = path.join(root, issued.verifier_request);
+      if (variant === 'request-missing') fs.unlinkSync(file);
+      else {
+        const { buildVerifierRequest, renderVerifierRequest, parseVerifierRequest } = require('../../scripts/utils/verifier-request') as typeof import('../../scripts/utils/verifier-request');
+        const other = renderVerifierRequest(buildVerifierRequest({ ...JSON.parse(fs.readFileSync(file, 'utf8')), material_sha256: 'a'.repeat(64) }));
+        assert(parseVerifierRequest(other)?.subject_id !== issued.verifier_subject_id, 'must use a structurally valid request for another subject');
+        fs.writeFileSync(file, other);
+      }
+      return `verifier request ${variant} after current summary publication`;
     };
     let probe = await runGoalRuntimeChain(root, options);
     if (variant === 'reentered') {
@@ -7443,7 +7452,7 @@ for (const variant of ['corrected', 'still-bad', 'refuted', 'reentered', 'reques
       manifest.budget.max_total_turns = 8; fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       probe = await runGoalRuntimeChain(root, { ...options, resume: path.basename(probe.reportDir), resumeExtraArgs: ['--override-manifest'] });
     }
-    assert(corrections === (variant === 'refuted' || variant === 'request-missing' ? 0 : 1), `UT ${variant} corrections=${corrections}`);
+    assert(corrections === (variant === 'refuted' || variant === 'request-missing' || variant === 'request-mismatched' ? 0 : 1), `UT ${variant} corrections=${corrections}`);
     assert(probe.exitCode !== 0 && !probe.events.slice(probe.events.map(event => event.type).lastIndexOf('run_start')).some(event => event.type === 'run_end' && event.status === 'INTERRUPTED'), '真实失败必须准确退出而非异常/洗绿');
     assert(resolveResumedBudget(probe.events).totalTurns === probe.events.filter(event => event.type === 'agent_invoke_start').length, '纠错或恢复漏预算');
     const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, 'ut/reports/summary.json'), 'utf8'));

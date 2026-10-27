@@ -35,8 +35,8 @@ import {
 import { runGoalRuntimeChain, requestVia, claudeReadEventLine, writeAgentEvents } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
-import { parseResultBlock, RESULT_BLOCK_OPEN, RESULT_BLOCK_CLOSE, verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
+import { parseVerifierRequest, renderVerifierRequest, type VerifierRequest } from '../../scripts/utils/verifier-request';
+import { parseResultBlock, RESULT_BLOCK_OPEN, RESULT_BLOCK_CLOSE, verifierReportMdFilename, normalizeEol } from '../../scripts/utils/verifier-subject';
 import * as YAML from 'yaml';
 import { fixture as seedChangeUnitBlueprint } from './blueprint-skill-projection.unit.test';
 import { rewriteBlueprint } from './change-unit-progression.unit.test';
@@ -87,6 +87,7 @@ interface Summary {
   blockers?: Array<{ id?: string; check_id?: string; detail?: string; details?: string; affected_files?: string[] }>;
   checks?: Array<{ id?: string; status?: string; severity?: string; details?: string }>;
   verifier_subject_id?: string;
+  verifier_request?: string;
   next_action?: string;
 }
 
@@ -129,16 +130,27 @@ export function publishVerifier(p: RealChainProject, phase: string): void {
   });
 }
 
-/** Model boundary: consume the newly issued request and write only its verifier reply. */
-export function publishRequestedVerifier(p: RealChainProject, ctx: { phase: string; prompt: string; runId: string }): boolean {
-  if (!ctx.phase.endsWith('-verifier-format-repair')) return false;
-  const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+/** Read-only model boundary: require the complete actually delivered current request and material. */
+export function readDeliveredVerifierRequest(p: RealChainProject, ctx: { phase: string; prompt: string; runId: string }): VerifierRequest | null {
+  if (!ctx.phase.endsWith('-verifier-format-repair')) return null;
+  const phase = ctx.phase.slice(0, -'-verifier-format-repair'.length);
+  const summary = readSummary(p, phase);
+  const requestPath = path.resolve(p.root, summary?.verifier_request ?? '');
+  assert(requestPath.startsWith(path.resolve(p.root) + path.sep) && fs.existsSync(requestPath), 'current verifier request must exist in this isolated project');
+  const request = parseVerifierRequest(fs.readFileSync(requestPath, 'utf8'));
   assert(request && request.feature === p.feature && ctx.phase === request.phase + '-verifier-format-repair', 'model must consume the actual current verifier request');
-  const summary = readSummary(p, request!.phase);
+  assert(normalizeEol(ctx.prompt).includes(renderVerifierRequest(request!).trimEnd()), 'the complete current verifier request must actually be delivered; a disk-only request is not a task');
   assert(summary?.verifier_subject_id === request!.subject_id, 'model must not answer a historical subject');
   const promptPath = path.resolve(p.root, request!.prompt_path);
   assert(promptPath.startsWith(path.resolve(p.root) + path.sep), 'model reads only this isolated project');
   fs.readFileSync(promptPath, 'utf8');
+  return request!;
+}
+
+/** Model boundary: consume the newly issued request and write only its verifier reply. */
+export function publishRequestedVerifier(p: RealChainProject, ctx: { phase: string; prompt: string; runId: string }): boolean {
+  const request = readDeliveredVerifierRequest(p, ctx);
+  if (!request) return false;
   p.runId = ctx.runId;
   const reportsDir = path.dirname(path.join(p.root, request!.prompt_path));
   const reportPath = path.join(reportsDir, verifierReportMdFilename(request!.subject_id));

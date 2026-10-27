@@ -692,10 +692,11 @@ function finalizePhaseClosureUnlocked(
     frameworkRoot: opts.frameworkRoot, feature: opts.feature, chain: [String(opts.phase)], runId: opts.goalRunId,
     currentResults: [{ phase: String(opts.phase), summary: current.parsed, checks: currentChecks }] }));
   // 本事务正在发布的 closure/manifest/attestation 不能倒过来要求自己已发布；
-  // 完整summary形状仍由原gate负责，closure不重复前移；跨职责发现保留给共同恢复链。
+  // 完整summary形状仍由原gate负责；只有合法他方repair可交接，当前必修/待核与真实负面结论仍阻断。
   const publicationFacts = new Set(['closure_commit_present', 'lineage_fresh', 'attestation_present', 'quality_axes_valid']);
-  const unresolved = closureDisposition.completionBlocking.filter(problem => problem.phase === String(opts.phase)
-    && !publicationFacts.has(problem.id) && !problem.id.startsWith('open_finding:'));
+  const unresolved = closureDisposition.completionBlocking.filter(problem => !publicationFacts.has(problem.id)
+    && ((problem.owner ?? problem.phase) === String(opts.phase)
+      || problem.phase === String(opts.phase) && problem.action !== 'repair'));
   if (unresolved.length || current.parsed.blocker_count !== 0) {
     throw new Error(
       `summary 不满足 closure：verdict=${current.parsed.verdict}, blocker_count=${current.parsed.blocker_count}`

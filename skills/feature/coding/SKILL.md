@@ -1,5 +1,6 @@
 # 编码 Skill (`coding`)
 
+正式阶段在产出前和收口前读取[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)，按本次共同处置完成本职任务或合法交接；原总 PASS、旧回执或 closed 不遮住当前必修。独立请求仍到其授权终点结束。
 本次实现直接造成的既有测试编译/兼容问题，可当场修补既有类型、import、测试数据或替身；有无独立 UT 阶段均适用。`coding_existing_test_preserved` 对照真实修补前版本，要求已有用例定义和断言原样保留，不新增用例、断言或 skip/禁用声明。新增/调整测试及断言交 UT；前置原件不可取得、解析不能确认或保留检查失败时，交真实 UT 修正/核验采纳，不能用更旧 run Git 字节替代 UT 已更新的版本。源码修改权不包含签发测试 PASS、修改报告或降低验收的权力。
 
 在既有 coding 报告逐项说明改了哪些测试数据/替身、实际修改和原因，review 继续审真实 diff。UT 可沿有效产出 manifest 核验采纳当前字节，无需为了登记再改一遍；采纳后的新越权写入仍使原事实失效。返修保持原 facts 建立者和基线，仅追加本阶段 delta；原合法源码写入不会因撤销旧 PASS 丢失。
@@ -91,7 +92,7 @@
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {module-name} --summary --failures-only
 ```
 
-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-coding.md`（业务逻辑正确性/异常处理完整性/接口签名一致性 BLOCKER/组件 Props 一致性/数据所有权合规/模拟数据隔离/验收标准覆盖）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-coding.md`（业务逻辑正确性/异常处理完整性/接口签名一致性 BLOCKER/组件 Props 一致性/数据所有权合规/模拟数据隔离/验收标准覆盖）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
 **Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
@@ -109,9 +110,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 你自己没有视觉判断能力，但可以取得当前设备的观察数据（元素几何、截图）来选修法、验修法，再交 review。修前用 `cd framework/harness && npm run adhoc-device-test -- --bundle <bundle id> --dump-ui-only` 看失败屏现状（或 `--observe-ui --steps "<导航自然语言>"` 先走到再 dump）；修后在同一命令加 `--install-current-build`，用与 testing 同一套 product / build mode 解析器把当前工作树出包并强制装机，再 dump / observe；需要量测时加 `--measure-screen <screen_id> --feature <feature>`（截图 + 布局 + 该屏 ui-spec 元素量测，ui-spec 只读）。产物默认落 `doc/features/_adhoc/testing/reports/`（显式 `--dump-ui-out` 不要指向正式 feature 目录；observe / 执行解析主 Ability 时会更新同 bundle 共享的 `app-meta.json` 能力缓存）：不签任何凭证、不是验收证据、不替代 review → UT → testing，testing 会按自己的规则重新出包装机并判定；不要改正式 testing / device-testing 证据。CLI 自带设备门，门不过就继续从源码与证据推进，不要绕门；诊断耗时计入本次调用的活跃时长与超时，没有单独额度。
 
-**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供 ∧ 当前共同处置无本职责未完必修/待核**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
-1. `<features_dir>/<feature>/coding/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后编码阶段完成，**具备**进 code-review 的资格；**不授权**自动开 code-review。
+1. `<features_dir>/<feature>/coding/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后编码阶段完成，**具备**进 code-review 的资格；**不授权**自动开 code-review。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

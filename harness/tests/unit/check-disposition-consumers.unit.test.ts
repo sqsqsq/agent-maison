@@ -41,6 +41,8 @@ import { applyCompatDowngrade } from '../../compat-loader';
 import { resolvePhaseVerdict, writeRunSummaryBase } from '../../harness-runner';
 import { classifyFailureKind, shouldHaltNoProgress } from '../../scripts/utils/goal-failure-classifier';
 import { buildCurrentAttemptFailureProjection } from '../../scripts/goal-phase-runtime';
+import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
+import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
 import { __testing_buildTestingRunStatusResult } from '../../scripts/check-testing';
 import { validateLiteSchema } from '../../scripts/utils/lite-json-schema';
@@ -109,10 +111,10 @@ function seedGit(root: string): void {
   execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.test', 'commit', '-qm', 'base'], { cwd: root });
 }
 
-function runCli(root: string, args: string[]): ReturnType<typeof spawnSync> & { out: string } {
+function runCli(root: string, args: string[], extraEnv: Record<string, string> = {}): ReturnType<typeof spawnSync> & { out: string } {
   const r = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(HARNESS_ROOT, 'harness-runner.ts'), ...args], {
     cwd: root, encoding: 'utf8', timeout: 300000,
-    env: { ...process.env, TS_NODE_TRANSPILE_ONLY: '1', TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json'), MAISON_GOAL_RUN_ID: '' },
+    env: { ...process.env, TS_NODE_TRANSPILE_ONLY: '1', TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json'), MAISON_GOAL_RUN_ID: '', ...extraEnv },
   });
   return Object.assign(r, { out: `${r.stdout ?? ''}${r.stderr ?? ''}` });
 }
@@ -540,15 +542,35 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           fs.writeFileSync(path.join(root, 'doc/module-catalog.yaml'), `schema_version: "${phase === 'catalog' ? '' : '1.0'}"\nmodules: []\n`);
           if (phase === 'glossary') fs.writeFileSync(path.join(root, 'doc/glossary.yaml'), 'schema_version: ""\nterms: []\n');
           seedGit(root);
-          const cli = runCli(root, ['--phase', phase, '--project-root', root, '--framework-root', frameworkRoot]);
-          const out = cli.out;
-          assert(/FAIL \[BLOCKER\] schema_version_present/.test(out), `前提：检查照常产出原始 FAIL（${phase}）：${out}`);
-          assert.strictEqual(cli.status, 0, `${phase}：披露后退出码 0\n${out}`);
-          assert(out.includes('Verdict: PASS'), `${phase}：控制台结论\n${out}`);
-          const summaryPath = path.join(featurePhaseReportsDir(root, '_global', phase, frameworkRoot), 'summary.json');
-          const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
-          assert.strictEqual(summary.verdict, 'PASS');
-          assert.deepStrictEqual(summary.disclosed_failures?.map(d => d.id), ['schema_version_present'], `${phase}: ${JSON.stringify(summary.disclosed_failures)}`);
+          const runId = 'global-context-other-feature';
+          const manifest = buildGoalManifestFromInput({ feature: 'runless', adapter: 'generic', requirement: 'value is 42', unattended: false,
+            start_phase: 'coding', end_phase: 'coding' }, { projectRoot: root, runId });
+          createGoalRun({ projectRoot: root, manifest, chain: ['coding'] });
+          const goalEnv = { MAISON_GOAL_RUN_ID: runId, MAISON_GOAL_ATTEMPT: 'i1', MAISON_GOAL_ATTEMPT_PHASE: 'coding', MAISON_GOAL_HEADLESS: '1' };
+          let baseline: HarnessRunSummary | undefined;
+          const contexts: Array<{ name: string; feature: string; env: Record<string, string> }> = [{ name: 'plain', feature: '_global', env: {} },
+            { name: 'other-feature-goal', feature: '_global', env: goalEnv },
+            { name: 'global-staging-alias', feature: 'catalog-staging', env: {} }];
+          for (const context of contexts) {
+            const args = ['--phase', phase, '--project-root', root, '--framework-root', frameworkRoot,
+              ...(context.feature === '_global' ? [] : ['--feature', context.feature])];
+            const summaryPath = path.join(featurePhaseReportsDir(root, context.feature, phase, frameworkRoot), 'summary.json');
+            fs.rmSync(summaryPath, { force: true });
+            const cli = runCli(root, args, context.env);
+            const out = cli.out;
+            assert(/FAIL \[BLOCKER\] schema_version_present/.test(out), `前提：检查照常产出原始 FAIL（${phase}/${context.name}）：${out}`);
+            assert.strictEqual(cli.status, 0, `${phase}/${context.name}：global 不得借他 Feature 的 Goal 身份读取 Feature 材料\n${out}`);
+            assert(out.includes('Verdict: PASS'), `${phase}：控制台结论\n${out}`);
+            const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
+            assert.strictEqual(summary.verdict, 'PASS');
+            assert.deepStrictEqual(summary.disclosed_failures?.map(d => d.id), ['schema_version_present'], `${phase}: ${JSON.stringify(summary.disclosed_failures)}`);
+            if (baseline) assert.deepStrictEqual({ next: summary.next_action, closure: summary.closure_status, blockers: summary.blockers },
+              { next: baseline.next_action, closure: baseline.closure_status, blockers: baseline.blockers }, `${phase}/${context.name}: 原 global 动作与异常语义不变`);
+            else baseline = summary;
+          }
+          const wrongFeature = runCli(root, ['--phase', 'coding', '--feature', 'not-the-run-feature', '--project-root', root, '--framework-root', frameworkRoot], goalEnv);
+          assert.notEqual(wrongFeature.status, 0, 'ordinary Feature cannot borrow a different Feature run identity');
+          assert(wrongFeature.out.includes('[goal-manifest]'), wrongFeature.out);
         } finally { rmDir(root); clearFrameworkConfigCache(); }
       }
     },

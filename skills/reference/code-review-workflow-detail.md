@@ -141,7 +141,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {module-name}
 ```
 
-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
 **Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
@@ -158,9 +158,9 @@ closure-only 使用当前有效 verifier 结果或仅补缺失核验/回执，�
 合法 refuted/unclear 保留原判断，不因为零候选强制改成 confirmed。 当前 Goal attempt 的格式缺口先如实保留原回复并返回 runtime，由既有调用路径最多自动纠错一次；不在阶段内另叠重投循环。纠错调用与时间照计，重进不重新发放机会；其它条目错误不清掉逐条绑定有效的 confirmed。carried/disabled 或混合资格不足时不补造 request，
 先修当前阶段能合法修的资格原因；用户禁用配置不自动更改。拒修在案的旧 subject 无法重确认，真实 FAIL/open 不由人签放行。
 
-**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供 ∧ 当前共同处置无本职责未完必修/待核**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
-1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或仍有必须返修的 MAJOR，交正确责任阶段修复后复审；被 verifier 驳回的误报须先更正原报告，不能直接洗绿。允许披露的视觉差异不派 coding，review 不另写债务账，不预签 testing 的视觉 PASS/release READY。
+1. `<features_dir>/<feature>/review/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后 Review 阶段完成，**具备**进 business-ut 的资格；**不授权**自动开 business-ut。若审查结论为"不通过"或仍有必须返修的 MAJOR，交正确责任阶段修复后复审；被 verifier 驳回的误报须先更正原报告，不能直接洗绿。允许披露的视觉差异不派 coding，review 不另写债务账，不预签 testing 的视觉 PASS/release READY。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落，不自行推导或补写跨阶段建议；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

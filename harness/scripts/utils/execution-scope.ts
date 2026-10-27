@@ -616,7 +616,8 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
       revoked = affectedScopePhases([...Array.isArray(event.invalidated_phases) ? event.invalidated_phases.filter((p): p is string => typeof p === 'string') : [], ...(event.to_phase ? [event.to_phase] : [])], order, { ...dependencyContext, scope, workflow });
     } else if (event.type === 'phase_invalidated' && event.phase) revoked = affectedScopePhases([event.phase], order, { ...dependencyContext, scope, workflow });
     else if (event.phase && (event.type === 'phase_halt' || (event.type === 'phase_verdict' && event.verdict === 'FAIL'))) {
-      revoked = affectedScopePhases([event.phase], order, { ...dependencyContext, scope, workflow });
+      // A failed observation withdraws this phase's PASS; downstream proof validity is checked from its actual inputs.
+      revoked = [event.phase];
     }
     for (const phase of revoked) {
       invalidated.add(phase); passed.delete(phase);

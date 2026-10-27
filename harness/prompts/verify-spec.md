@@ -191,6 +191,8 @@ verification_result:
 
 ### 7.3 必需验收的实质问题与责任核实
 
+恢复旧发现时先核本次现行验收及 request/material 中的当前反证，区分仍妨碍验收与仅文档/预测漂移。冻结执行、真实断言、生产调用关系与源码/测试绑定共同支持已满足，不能仅凭用例名、标签或 PASS。原验证方有据关闭旧必修判断并保留差异；新契约/验收或失效绑定仍须受影响复验，缺证则指出具体待核材料。核实/关闭不移出当前材料锚中的相关反证。项目相对或当前 Feature 相对引用须唯一可读，坏引用具体诊断并保留其余有效引用，不猜跨 Feature 路径。
+
 `acceptance_ids` 与 `affected_files` 是本批在原 checks 项新增的可选字段；id/status/severity/details/suggestion 和 issue-verification 的逐条结论、evidence/repair_owner 继续复用。旧合法报告缺新增字段时保留原发现，回原独立 verifier 同次批量补核，不改历史报告、不静默丢弃；仅建议显式写 `acceptance_ids: []`，不进入派修。
 
 只有确实妨碍本次必需验收的具体 FAIL，才在原 `verification_result.checks` 项补 `acceptance_ids: [AC-ID]` 与 `affected_files: [真正待修的项目相对路径]`。`details` 用反引号标明当前可读的 `项目相对路径:行号`（范围可用 `:起-止`），指出具体字段和验收义务；`suggestion` 说明由谁改、改什么。路径是修复对象，源码或日志只作证据时不能误填成责任产物。只有优化建议、文字漂移或未核实风险不补此义务声明，MAJOR 标签本身不自动升级。

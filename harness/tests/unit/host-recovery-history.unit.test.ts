@@ -2,6 +2,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
 import { loadScopeRevisions } from '../../scripts/utils/goal-run-creation';
 import { effectiveScopeView, authorizedScopePhases } from '../../scripts/utils/execution-scope';
 import { loadWorkflowSpec } from '../../workflow-loader';
@@ -18,6 +19,15 @@ export function readHostHistory(suffix: string, group = '20261016') {
 }
 
 const cases: Array<{ name: string; run(): void }> = [
+  { name: 'S2 byte preservation verifies original gate, settled author, 29/30 budget and six UT-bound sources', run() {
+    const output = execFileSync(process.execPath, [path.join(historyRoot, '20261026-fe4512-s2/capture.mjs'), '--verify'], { encoding: 'utf8' });
+    const result = JSON.parse(output);
+    assert.equal(result.ok, true);
+    assert.equal(result.raw_gate, 'PASS');
+    assert.equal(result.current_verdict, 'FAIL');
+    assert.equal(result.turns, '29/30');
+    assert.equal(result.ut, '26/26');
+  } },
   { name: 'production obligation projection replays CR introduction without allowing an older plan PASS', run() {
     const { manifest, events } = readHostHistory('b9ac66');
     const workflow = loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');

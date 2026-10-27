@@ -8,6 +8,7 @@ profiles/hmos-app/vendor/hylyre/src/** text eol=lf
 # Frozen machine logs may mix line endings; preserve exact source SHA bytes.
 # These are evidence originals, not editable source text.
 harness/tests/fixtures/host-recovery-history/20261024-fe4512-s1/**/*.log binary
+harness/tests/fixtures/host-recovery-history/20261026-fe4512-s2/**/*.log binary
 
 *.whl binary
 *.traineddata binary

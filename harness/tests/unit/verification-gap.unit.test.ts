@@ -188,6 +188,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       assert(first.invokedPhases.includes('review') && first.invokedPhases.includes('ut'), JSON.stringify(first.invokedPhases));
       assert(!first.invokedPhases.includes('testing'), JSON.stringify(first.invokedPhases));
       assert.equal(first.invokedPhases.filter(phase => phase === 'review').length, 1, 'missing checker must not cause a content retry');
+      assert.equal(first.invokedPhases.filter(phase => phase === 'ut').length, 1, 'a deferred source publication gap must not re-dispatch already completed independent UT');
+      assert(!first.events.some(event => event.type === 'budget_turns'), 'known checker wait must use its waiting exit rather than consume the whole call budget');
+      assert(!first.events.some(event => event.type === 'phase_backtrack_requested' && event.reason === 'upstream_gap'
+        && !(event as { candidates?: unknown[] }).candidates?.length), 'derived publication placeholders cannot create an empty owner backtrack');
       const verdict = first.events.find(event => event.type === 'phase_verdict' && event.phase === 'review');
       assert.equal(verdict?.verdict, 'INCOMPLETE'); assert.equal(verdict?.action, 'defer_external_and_continue_if_allowed');
       assert(first.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'external'));
@@ -239,6 +243,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
       assert.equal(verdicts[1]?.verdict, 'INCOMPLETE'); assert.equal(verdicts[1]?.action, 'defer_external_and_continue_if_allowed');
       assert.equal(probe.invokedPhases.filter(phase => phase === 'review').length, 2);
       assert(probe.invokedPhases.includes('ut') && !probe.invokedPhases.includes('testing'));
+      assert.equal(probe.invokedPhases.filter(phase => phase === 'ut').length, 1);
+      assert(!probe.events.some(event => event.type === 'budget_turns'));
+      assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'external'));
       assert(fs.readFileSync(path.join(root, artifact), 'utf8').includes('repaired'));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },

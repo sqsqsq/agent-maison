@@ -81,6 +81,11 @@ export function utFrozenRunArtifacts(modules: readonly string[]): FrozenArtifact
   ]);
 }
 
+/** Module names are encoded by this profile's frozen UT result format. */
+export function utExecutionModules(record: Pick<ExecutionKeyRecord, 'frozen_files'>): string[] {
+  return (record.frozen_files ?? []).flatMap(name => /^frozen\.ut-result\.(.+)\.json$/.exec(name)?.[1] ?? []);
+}
+
 /** 把本 run 的顶层 timing/meta 冻结进 run 目录；返回冻结成功的文件名。 */
 export function freezeRunArtifacts(
   reportsDir: string,

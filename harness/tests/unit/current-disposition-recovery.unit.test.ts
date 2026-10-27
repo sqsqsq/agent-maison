@@ -14,7 +14,7 @@ import { generateRandomCanaryAnswerKey } from '../../scripts/utils/vision-canary
 import { loadLocalConfig } from '../../scripts/utils/framework-local-config';
 import { countAgentInvokeStarts, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
-import { resolveFrameworkOwnerRevisionGuard } from '../../scripts/goal-phase-runtime';
+import { resolveFrameworkOwnerRevisionGuard, buildVerificationNoProgressGuidance } from '../../scripts/goal-phase-runtime';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { AgentInvokeResult } from '../../scripts/utils/agent-invoke';
 import { loadWorkflowSpec } from '../../workflow-loader';
@@ -37,12 +37,247 @@ import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { visualDebtJsonPath } from '../../scripts/utils/visual-debt';
 import { writeRunSummaryBase } from '../../harness-runner';
+import { buildNextLine } from '../../harness-runner';
+import { repairResponsibilityContext, resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
+import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import type { CheckResult } from '../../scripts/utils/types';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import { selectRunnerActionFromAssess, type SelectRunnerActionInput } from '../../scripts/utils/goal-assess-driver';
 import type { UnitCaseResult } from '../run-unit';
 
+/** 可把 executeAuthor 换成真实 CLI；输入仍是正常 runtime 实际物化的 prompt。 */
+export async function prepareSamePhaseRequiredWorkCase(executeAuthor?: (ctx: Parameters<NonNullable<NonNullable<Parameters<typeof runGoalRuntimeChain>[1]>['onSpec']>>[0]) => void) {
+  const YAML = await import('yaml');
+  const { provisionRealChainProject, scaffoldRealChainHost, REAL_CHAIN_REQUIREMENT } = await import('../utils/real-chain-host');
+  const { writeSpecMaterials, writePlanMaterials } = await import('./real-chain.unit.test');
+  const { parseVerifierRequest } = await import('../../scripts/utils/verifier-request');
+  const { readVerifierSemanticIssues } = await import('../../scripts/utils/repair-candidates');
+  const project = provisionRealChainProject();
+  scaffoldRealChainHost(project);
+  // 单职责兼容入口；1.2/S2范围与下游恢复另由原生组合用例覆盖。
+  const configPath = path.join(project.root, 'framework.config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.active_workflow = 'spec-driven';
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  fs.rmSync(path.join(project.root, 'doc/features', project.feature, 'feature.yaml'), { force: true });
+  const required = '银行列表按银行名称升序排列';
+  const requirement = `${REAL_CHAIN_REQUIREMENT}\n${required}`;
+  const featureRoot = `doc/features/${project.feature}`;
+  const target = `${featureRoot}/spec/spec.md`, acceptance = `${featureRoot}/acceptance.yaml`;
+  fs.appendFileSync(path.join(project.root, featureRoot, 'requirements/requirement.md'), `\n${required}\n`);
+  writeSpecMaterials(project); writePlanMaterials(project);
+  const requireOrdering = (): void => {
+    const doc = YAML.parse(fs.readFileSync(path.join(project.root, acceptance), 'utf8'));
+    doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-2').expected_result += `；${required}`;
+    fs.writeFileSync(path.join(project.root, acceptance), YAML.stringify(doc));
+  };
+  fs.unlinkSync(path.join(project.root, acceptance));
+  const observations = { authorPrompts: [] as string[], verifierRequests: [] as string[], rawRequiredPass: false, closureBlocked: false };
+  const options: Parameters<typeof runGoalRuntimeChain>[1] = { frameworkRoot: project.frameworkRoot, featureId: project.feature,
+    realHarness: true, viaRuntimeClass: true, adapter: 'codex', freshEndPhase: 'spec', freshRequirement: requirement,
+    onSpec: ctx => {
+      project.runId = ctx.runId;
+      if (ctx.attempt === 1) {
+        writeSpecMaterials(project);
+        requireOrdering();
+        return;
+      }
+      observations.authorPrompts.push(ctx.prompt);
+      if (executeAuthor) return executeAuthor(ctx);
+      // 替身只消费收到的任务和原验收；缺送达就不会猜目标或替框架补实现。
+      if (!ctx.prompt.includes('required_bank_order') || !ctx.prompt.includes(target)) return;
+      const doc = YAML.parse(fs.readFileSync(path.join(project.root, acceptance), 'utf8'));
+      const expected = doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-2').expected_result;
+      fs.appendFileSync(path.join(project.root, target), `\n${expected}\n`);
+    },
+    onOutOfChain: ctx => {
+      const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+      assert(request && request.feature === project.feature && request.phase === 'spec', 'original verifier consumes the actual current request');
+      observations.verifierRequests.push(request!.subject_id);
+      const summaryPath = path.join(featurePhaseReportsDir(project.root, project.feature, 'spec', project.frameworkRoot), 'summary.json');
+      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+      assert.equal(summary.verifier_subject_id, request!.subject_id);
+      fs.readFileSync(path.resolve(project.root, request!.prompt_path), 'utf8');
+      const doc = YAML.parse(fs.readFileSync(path.join(project.root, acceptance), 'utf8'));
+      const expected = doc.criteria.find((criterion: { id: string }) => criterion.id === 'AC-2').expected_result;
+      const spec = fs.readFileSync(path.join(project.root, target), 'utf8');
+      const missing = !spec.includes(expected);
+      const text = '```yaml\n' + YAML.stringify({ verification_result: { phase: 'spec', feature: project.feature,
+        checks: missing ? [{ id: 'required_bank_order', status: 'FAIL', severity: 'MAJOR', acceptance_ids: ['AC-2'], affected_files: [target],
+          details: `\`${acceptance}:1\`；\`${target}:1\`：AC-2 的明确预期尚未完整写入本职责spec`, suggestion: `在spec明确记录当前AC-2预期：${expected}` }] : [],
+        summary: { verdict: 'PASS', blocker_count: 0 } } }) + '```\n';
+      const issues = readVerifierSemanticIssues(project.root, project.feature, 'spec', text, '(current independent verification)', project.frameworkRoot, ctx.runId);
+      assert(!missing || issues?.rows.length, JSON.stringify({ issues, acceptance: doc }));
+      const verification = missing ? `\`\`\`issue-verification\n- issue: required_bank_order\n  verdict: confirmed\n  repair_owner: spec\n  evidence: ${target} | ${issues!.rows[0].summary}\n\`\`\`\n` : '';
+      publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: path.dirname(summaryPath), feature: project.feature,
+        phase: 'spec', subjectId: request!.subject_id, reportText: text + verification, skipSummaryPatch: true });
+      if (missing) {
+        const rawReport = JSON.parse(fs.readFileSync(path.join(path.dirname(summaryPath), 'script-report.json'), 'utf8'));
+        observations.rawRequiredPass = rawReport.summary.verdict === 'PASS';
+        assert.throws(() => finalizePhaseClosure({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+          feature: project.feature, phase: 'spec', goalRunId: ctx.runId, persistPhaseState: () => undefined }), /required_bank_order/);
+        observations.closureBlocked = true;
+      }
+    },
+  };
+  return { project, target, acceptance, requirement, options, observations };
+}
+
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+  name: 'c6 verifier model consumes the complete current request with process or session transport and rejects an undelivered or wrong request',
+  async run() {
+    const { buildVerifierRequest, renderVerifierRequest, verifierRequestFilename } = await import('../../scripts/utils/verifier-request');
+    const { publishRequestedVerifier } = await import('./real-chain.unit.test');
+    const { root } = makeVerifierProject();
+    try {
+      const promptPath = 'doc/features/demo/plan/reports/ai-prompt.md';
+      const dir = path.join(root, path.dirname(promptPath)); fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(root, promptPath), 'Read the current isolated acceptance evidence.');
+      const request = buildVerifierRequest({ feature: 'demo', phase: 'plan', prompt_path: promptPath,
+        prompt_sha256: '1'.repeat(64), material_sha256: '2'.repeat(64), gate_fingerprint: null, source_commit_sha: null, worktree_digest: null });
+      const text = renderVerifierRequest(request);
+      fs.writeFileSync(path.join(dir, verifierRequestFilename(request.subject_id)), text);
+      fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({ verifier_subject_id: request.subject_id,
+        verifier_request: path.posix.join(path.posix.dirname(promptPath), verifierRequestFilename(request.subject_id)) }));
+      const project = { root, frameworkRoot: FRAMEWORK_SOURCE_ROOT, harnessDir: path.join(FRAMEWORK_SOURCE_ROOT, 'harness'), feature: 'demo', module: 'app', modulePath: 'app' };
+      const ctx = { phase: 'plan-verifier-format-repair', runId: 'transport-check' };
+      assert(publishRequestedVerifier(project, { ...ctx, prompt: `Verify the current request:\n${text.trimEnd()}` }));
+      assert(publishRequestedVerifier(project, { ...ctx, prompt: `Verify the current request:\r\n${text.replace(/\n/g, '\r\n')}\r\n执行本次命令时同时传递 context.childEnv 中的冻结标识。` }));
+      assert.throws(() => publishRequestedVerifier(project, { ...ctx, prompt: 'The request exists on disk; use it without receiving its contents.' }), /actually be delivered/);
+      const wrong = renderVerifierRequest(buildVerifierRequest({ ...request, material_sha256: '3'.repeat(64) }));
+      assert.throws(() => publishRequestedVerifier(project, { ...ctx, prompt: wrong }), /actually be delivered/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  },
+}, {
+  name: 'c6 no-progress guidance names the current verification subject gap and preserves content-repair wording selection',
+  run() {
+    const issue = { phase: 'plan', owner: 'plan', id: 'open_finding:pending-evidence', action: 'verify' as const,
+      affects: 'completion' as const, severity: 'BLOCKER' as const, detail: '缺少当前执行条件与冻结原件的对应核实' };
+    const input = { phase: 'plan', subjectId: 'subject-current', request: 'doc/features/demo/plan/reports/verifier.request.subject-current.json',
+      problems: [issue], diagnostics: ['pending-evidence：原验证方尚未解释配置变化'] };
+    const guidance = buildVerificationNoProgressGuidance(input)!.join('\n');
+    for (const required of ['同一 subject subject-current 补核仍有具体缺口', issue.detail, input.request, input.diagnostics[0], '责任方=plan', '由原 verifier', '按新的当前处置继续']) assert(guidance.includes(required), guidance);
+    assert(!guidance.includes('同输入修复未取得进展') && !guidance.includes('相关目标未知'));
+    assert.equal(buildVerificationNoProgressGuidance({ ...input, problems: [{ ...issue, action: 'repair' }] }), undefined,
+      'real repair retains its existing no-progress guidance');
+    assert.equal(buildVerificationNoProgressGuidance({ ...input, problems: [issue, { ...issue, id: 'real-external-condition', action: 'wait' }] }), undefined,
+      'a real missing external condition is not rendered as pure semantic verification');
+  },
+}, {
+  name: 'c6 real spec gate delivers a same-phase mandatory MAJOR beneath raw PASS and closes only after original verification',
+  async run() {
+    const fixture = await prepareSamePhaseRequiredWorkCase();
+    try {
+      const result = await runGoalRuntimeChain(fixture.project.root, fixture.options);
+      const reportsDir = featurePhaseReportsDir(fixture.project.root, fixture.project.feature, 'spec', fixture.project.frameworkRoot);
+      const summary = JSON.parse(fs.readFileSync(path.join(reportsDir, 'summary.json'), 'utf8'));
+      assert(fixture.observations.rawRequiredPass && fixture.observations.closureBlocked);
+      assert.equal(fixture.observations.authorPrompts.length, 1, JSON.stringify({ phases: result.invokedPhases, summary }));
+      assert(fixture.observations.authorPrompts[0].includes('required_bank_order') && fixture.observations.authorPrompts[0].includes(fixture.target));
+      assert(fixture.observations.verifierRequests.length >= 2, 'original verifier must judge the changed owned artifact');
+      assert.equal(summary.verdict, 'PASS'); assert.equal(summary.closure_status, 'closed');
+      assert.equal(summary.repair_candidates?.length ?? 0, 0);
+      assert.equal(result.exitCode, 2, 'legacy Goal honestly reports PARTIAL for a spec-only slice; the authorized stage itself must be closed');
+      assert(result.events.some(event => event.type === 'phase_verdict' && event.phase === 'spec' && event.verdict === 'PASS' && event.action === 'advance'));
+      assert(!result.invokedPhases.some(phase => ['coding', 'review', 'ut', 'testing'].includes(phase)), 'the authorized spec endpoint does not expand scope');
+    } finally { fs.rmSync(fixture.project.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  },
+}, {
+  name: 'c6 goal self-check NEXT lists the current required task before old PASS and closed receipt guidance',
+  run() {
+    const target = 'doc/features/demo/spec/spec.md';
+    const candidate = { id: 'current-required-spec', category: 'spec' as const, files: [target],
+      summary: 'doc/features/demo/acceptance.yaml:12-14 AC-2 requires the bank list to declare its approved ordering rule',
+      item_fingerprint: 'a'.repeat(64), source_phase: 'spec' };
+    for (const next_action of ['fix_verifier_findings_then_rerun_harness', 'fill_receipt_then_sync_closure', 'phase_closed_wait_user']) {
+      const summary = { verdict: 'PASS', next_action, closure_status: 'closed', repair_candidates: [candidate] };
+      const line = buildNextLine(summary, 'spec', 'demo', { outerGoalRerun: true });
+      assert(line.includes(candidate.id) && line.includes(target) && line.includes(candidate.summary));
+      assert(line.includes('acceptance.yaml') && line.includes('原验证方复验'));
+      assert(!line.includes('停下等待用户指令') && !line.includes('尚未完成的返修任务'), line);
+      assert(line.includes('既有闭环证明保留') && summary.closure_status === 'closed', 'new work changes guidance without invalidating the earlier closure proof');
+    }
+  },
+}, {
+  name: 'c6 NEXT separates actual owner work from handoffs and keeps every current blocker and lawful closure action',
+  run() {
+    const f = setupRunlessProject({ chain: ['review'], completionTarget: 'request' });
+    try {
+      const responsibility = repairResponsibilityContext({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature });
+      const coding = { id: 'CR-NEXT', category: 'coding' as const, files: ['src/demo/value.ts'],
+        summary: 'acceptance.yaml:8 AC-1 requires value 42', item_fingerprint: 'c'.repeat(64), source_phase: 'review' };
+      assert.equal(resolveRepairResponsibility({ ...responsibility, target: coding }).owner, 'coding');
+      const unit = { ...coding, id: 'UT-NEXT', category: 'verification' as const, files: [`doc/features/${f.feature}/ut/mock-plan.yaml`], source_phase: 'ut' };
+      assert.equal(resolveRepairResponsibility({ ...responsibility, target: unit }).owner, 'ut');
+      const unitLine = buildNextLine({ verdict: 'PASS', next_action: 'fill_receipt_then_sync_closure', repair_candidates: [unit] },
+        'ut', f.feature, { responsibility });
+      assert(unitLine.includes('当前本职责必修任务') && unitLine.includes('责任=ut') && !unitLine.includes('责任=verification'), unitLine);
+      for (const outerGoalRerun of [false, true]) for (const closure_status of ['open', 'closed']) {
+        const next_action = closure_status === 'closed' ? 'phase_closed_wait_user' : 'fill_receipt_then_sync_closure';
+        const summary = { verdict: 'PASS', next_action, closure_status, repair_candidates: [coding] };
+        const line = buildNextLine(summary, 'review', f.feature, { outerGoalRerun, responsibility });
+        assert(line.includes('他职责交接任务') && line.includes('责任=coding') && line.includes(coding.id), line);
+        assert(!line.includes('当前本职责必修任务'), line);
+        assert(!line.includes('harness-runner.ts --phase review'), 'a review-only request cannot be told to repair implementation or rerun review before owner work');
+        if (!outerGoalRerun) assert(line.includes(closure_status === 'closed' ? '停下等待用户指令' : 'check-receipt --phase review'), line);
+        else assert(line.includes('goal runtime 正式 gate') && !line.includes('尚未完成的返修任务'), line);
+
+        const negative = buildNextLine({ ...summary, verdict: 'FAIL', next_action: 'fix_verifier_findings_then_rerun_harness' },
+          'review', f.feature, { outerGoalRerun, responsibility });
+        assert(negative.includes('原始 FAIL 结论保留') && negative.includes('原验证方复验'), negative);
+        assert(!negative.includes('harness-runner.ts --phase review') && !negative.includes('停下等待用户指令') && !negative.includes('check-receipt --phase review'), negative);
+      }
+
+      const verification = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'review', verdict: 'FAIL', schemaCurrent: true,
+        closureCommitted: false, openFindings: [{ id: coding.id, detail: coding.summary, owner: 'review', verificationRequired: true }] }] });
+      const pending = buildNextLine({ verdict: 'FAIL', next_action: 'fix_verifier_findings_then_rerun_harness', repair_candidates: [coding] },
+        'review', f.feature, { responsibility, currentDisposition: verification });
+      assert(pending.includes('当前待核任务') && pending.includes('责任=review') && pending.includes('原始 FAIL 结论保留'), pending);
+      assert(!pending.includes('当前本职责必修任务') && !pending.includes('harness-runner.ts --phase review'), pending);
+
+      const spec = { id: 'SPEC-NEXT', category: 'spec' as const, files: [`doc/features/${f.feature}/spec.md`],
+        summary: 'acceptance.yaml:8 AC-1 requires its approved behavior', item_fingerprint: 's'.repeat(64), source_phase: 'spec' };
+      const owner = resolveRepairResponsibility({ ...responsibility, target: spec }).owner;
+      assert.equal(owner, 'spec');
+      const blockers = [{ id: 'product_gate', suggestion: 'fix the executed assertion' }, { id: 'receipt_gate', details_excerpt: 'repair the current receipt input' }];
+      for (const outerGoalRerun of [false, true]) for (const closure_status of ['open', 'closed']) {
+        for (const repair_candidates of [[spec], [spec, coding]]) {
+          const disposition = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'spec', verdict: 'FAIL',
+            schemaCurrent: true, closureCommitted: closure_status === 'closed',
+            failingChecks: blockers.map(blocker => ({ id: blocker.id, status: 'FAIL', severity: 'BLOCKER' })),
+            openFindings: repair_candidates.map(candidate => ({ id: candidate.id, detail: candidate.summary,
+              owner: resolveRepairResponsibility({ ...responsibility, target: candidate }).owner ?? undefined, source_phase: candidate.source_phase })) }] });
+          const line = buildNextLine({ verdict: 'FAIL', closure_status, next_action: 'fix_verifier_findings_then_rerun_harness', blockers, repair_candidates },
+            'spec', f.feature, { outerGoalRerun, responsibility, currentDisposition: disposition });
+          assert(line.includes('当前本职责必修任务') && line.includes('责任=spec') && line.includes(spec.id), line);
+          for (const blocker of blockers) assert(line.includes(blocker.id), line);
+          assert.equal(line.includes('他职责交接任务'), repair_candidates.length === 2, line);
+          assert(line.includes(outerGoalRerun ? 'goal runtime 正式 gate' : 'harness-runner.ts --phase spec'), line);
+          assert(!line.includes('停下等待用户指令'), line);
+        }
+      }
+      const gateReport = generateScriptReport(path.join(FRAMEWORK_SOURCE_ROOT, 'harness'), 'review', f.feature, f.root,
+        [{ id: 'review_report_exists', category: 'structure', description: 'current report', status: 'PASS', severity: 'BLOCKER', details: 'present' }], FRAMEWORK_SOURCE_ROOT);
+      let current: ReturnType<typeof resolveCurrentDisposition> | undefined;
+      writeRunSummaryBase(f.root, gateReport, f.frameworkRoot, { onCurrentDisposition: value => { current = value; } });
+      assert(current?.completionBlocking.every(problem => problem.phase === 'review'), 'the real writer exposes only its existing synchronous common disposition for NEXT rendering');
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  },
+}, {
+  name: 'c6 NEXT keeps an ownerless current finding consistent with the ordinary repair next_action',
+  run() {
+    const candidate = { id: 'OWNERLESS-NEXT', category: 'verification' as const, files: [],
+      summary: 'current review evidence requires repair', item_fingerprint: 'd'.repeat(64), source_phase: 'review' };
+    const currentDisposition = resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [{ phase: 'review', verdict: 'PASS',
+      schemaCurrent: true, closureCommitted: false, openFindings: [{ id: candidate.id, detail: candidate.summary }] }] });
+    assert(currentDisposition.completionBlocking.some(problem => problem.action === 'repair' && !problem.owner && problem.phase === 'review'));
+    const summary = { verdict: 'PASS', closure_status: 'open', next_action: 'fix_verifier_findings_then_rerun_harness', repair_candidates: [candidate] };
+    const line = buildNextLine(summary, 'review', 'demo', { currentDisposition });
+    assert(line.includes('当前本职责必修任务') && line.includes('责任=review') && line.includes(candidate.id), line);
+    assert(line.includes('harness-runner.ts --phase review --feature demo') && !line.includes('他职责交接任务') && !line.includes('待既有责任链确定'), line);
+    assert.equal(summary.next_action, 'fix_verifier_findings_then_rerun_harness');
+  },
+}, {
   name: 'global corrupt run completion problems preserve every current phase proof and remain visible at the completion endpoint',
   run() {
     const f = setupRunlessProject({ chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] });

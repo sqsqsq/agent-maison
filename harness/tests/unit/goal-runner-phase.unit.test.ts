@@ -33,6 +33,7 @@ import {
   foldBudgetLineage,
   partitionExecutionSessions,
   resolveResumedBudget,
+  resolveValidationOnlyEligibility,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
 import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
@@ -107,6 +108,72 @@ function writeFreshReceipt(
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'c6 interrupted validation resumes the original stage without an auxiliary process or accepted session stealing eligibility',
+    run() {
+      for (const transport of ['process', 'session']) {
+        const events: Array<Record<string, unknown>> = [
+          { type: 'agent_invoke_start', phase: 'ut', invoke_id: 'ut-i5' },
+          ...(transport === 'session' ? [{ type: 'phase_start', phase: 'ut', invoke_id: 'ut-i5', handoff_request: { sha256: 'stage-request' } },
+            { type: 'agent_invoke_end', phase: 'ut', invoke_id: 'ut-i5', status: 'passed', handoff_report: { request_sha256: 'stage-request' } }]
+            : [{ type: 'agent_process_settled', phase: 'ut', invoke_id: 'ut-i5' }]),
+          { type: 'harness_end', phase: 'ut', invoke_id: 'ut-i5', exit_code: 1 },
+          { type: 'agent_invoke_start', phase: 'format-helper', invoke_id: 'aux-i6', chain_phase: 'ut', purpose: 'verifier_format_repair' },
+          ...(transport === 'session' ? [{ type: 'phase_start', phase: 'format-helper', invoke_id: 'aux-i6', handoff_request: { sha256: 'aux-request' } },
+            { type: 'agent_invoke_end', phase: 'format-helper', invoke_id: 'aux-i6', status: 'passed', handoff_report: { request_sha256: 'aux-request' } }]
+            : [{ type: 'agent_process_settled', phase: 'format-helper', invoke_id: 'aux-i6' }]),
+          { type: 'run_end', status: 'INTERRUPTED', reason: 'uncaught_exception' },
+          { type: 'agent_process_settled', phase: 'spec', invoke_id: 'legacy-close' },
+        ];
+        const eligibility = () => resolveValidationOnlyEligibility(events, { requireInterrupt: true });
+        assert(eligibility()?.invoke_id === 'ut-i5', `${transport}: resume only the completed original stage, not its auxiliary handoff`);
+        assert(resolveValidationOnlyEligibility(events.map(event => event.invoke_id === 'ut-i5' ? { ...event, chain_phase: '' } : event),
+          { requireInterrupt: true })?.invoke_id === 'ut-i5', 'legacy empty optional chain metadata does not invent an auxiliary role');
+        assert(resolveValidationOnlyEligibility(events, { requireInterrupt: true, artifactsOk: () => false }) === null, 'changed artifacts still reject reuse');
+        for (const later of [{ type: 'phase_verdict', phase: 'ut', invoke_id: 'ut-i5', verdict: 'FAIL', action: 'halt' },
+          { type: 'agent_invoke_start', phase: 'ut', invoke_id: 'ut-i7' }, { type: 'phase_invalidated', phase: 'ut' },
+          { type: 'phase_backtrack_requested', to_phase: 'ut' }]) {
+          assert(resolveValidationOnlyEligibility([...events, later], { requireInterrupt: true }) === null, `${transport}: later real verdict/execution/revocation must still win`);
+        }
+      }
+    },
+  },
+  {
+    name: 'c6 only current re-verification may reuse settled raw-gate PASS beneath an old finding-only FAIL',
+    run() {
+      const history: Array<Record<string, unknown>> = [
+        { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-i28' },
+        { type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i28', completion_observed: true },
+        { type: 'agent_process_settled', phase: 'plan', invoke_id: 'plan-i28' },
+        { type: 'harness_start', phase: 'plan', invoke_id: 'plan-i28' },
+        { type: 'harness_end', phase: 'plan', invoke_id: 'plan-i28', exit_code: 0 },
+        { type: 'phase_verdict', phase: 'plan', invoke_id: 'plan-i28', verdict: 'FAIL', harness_exit: 0,
+          stale_summary: false, agent_failed: false, blocker_signature: 'open_finding:required-acceptance',
+          reconcile_observation: { blockers: [], deterministic_defects: [], signals: { timed_out: false } } },
+      ];
+      const options = { phase: 'plan', requireInterrupt: true,
+        verificationRequiredFindingIds: ['open_finding:required-acceptance'], artifactsOk: () => true };
+      assert(resolveValidationOnlyEligibility(history, options)?.invoke_id === 'plan-i28', 'strict finding re-verification reuses original author');
+      assert(resolveValidationOnlyEligibility(history, { ...options, artifactsOk: () => false }) === null, 'changed products/business inputs cannot borrow old gate');
+      assert(resolveValidationOnlyEligibility(history) === null, 'a generic FAIL remains a failure without current qualification');
+      assert(resolveValidationOnlyEligibility(history, { ...options, verificationRequiredFindingIds: [] }) === null, 'current independent verification must be required');
+      for (const patch of [{ verdict: 'PASS' }, { harness_exit: 1 }, { stale_summary: true }, { agent_failed: true },
+        { blocker_signature: 'open_finding:required-acceptance|real_content_failure' },
+        { reconcile_observation: { blockers: [{ id: 'real_content_failure' }], deterministic_defects: [], signals: {} } }]) {
+        const changed = history.map((event, index) => index === history.length - 1 ? { ...event, ...patch } : event);
+        assert(resolveValidationOnlyEligibility(changed, options) === null, `unsafe original negative source stays in normal repair: ${JSON.stringify(patch)}`);
+      }
+      for (const after of [{ type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-i30' },
+        { type: 'phase_invalidated', phase: 'plan' }, { type: 'phase_backtrack_requested', to_phase: 'plan' }]) {
+        assert(resolveValidationOnlyEligibility([...history, after], options) === null, 'later execution/revocation still wins');
+      }
+      const accepted = history.map(event => event.type === 'agent_process_settled' ? {
+        type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i28', handoff_report: { request_sha256: 'signed-request' },
+      } : event);
+      accepted.splice(1, 0, { type: 'phase_start', phase: 'plan', invoke_id: 'plan-i28', handoff_request: { sha256: 'signed-request' } });
+      assert(resolveValidationOnlyEligibility(accepted, options)?.invoke_id === 'plan-i28', 'accepted session report obeys the same negative-source boundary');
+    },
+  },
   {
     name: 'isSummaryFresh: new file after null before',
     run: () => {

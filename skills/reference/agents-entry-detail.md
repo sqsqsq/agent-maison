@@ -90,6 +90,20 @@
 6. **唯一执行 owner 与上下文减负**：完整交付统一由 GoalPhaseRuntime 推进，会话用 next/report。主会话只投递已签发原件路径/sha并消费结果，不另建原生 /goal phase 循环；有阶段隔离则派 phase-executor，无则主上下文执行并披露，必需 verifier/设计质询仍真实独立。执行者按原件读完整 instruction、原身份与精确命令，不传整段历史；同一任务不由两个入口共推。`--revalidate` 只是机械检查，不签完成。
 7. **子代理等待纪律**：verifier/phase-executor 同步等待，或先做无关工作；正式 gate 使用返回的时限与清理预留设置工具 timeout，允许等待同一宿主原生后台任务句柄终态。禁止 sleep、自造轮询/等待器和重复 report 催进度；verifier 未返回前不改其材料。按真实 NEXT 和请求原件执行，不读 framework 源码反推门禁。
 
+### 当前工作与验收证据
+
+正式阶段在产出前与收口前读取当前 request 的完整 instruction、harness `NEXT`/`next_action` 及所列原报告和证据。原始检查与 verifier 的 PASS/FAIL、当前工作是否完成、Feature 普通完成和发布资格分别保留；下一步只消费框架共同处置，不再以“只修 BLOCKER”或“已有 receipt/closed”另判一次。
+
+- 当前本职责确有必修任务：读取问题、责任对象、权限、依据路径和复验条件，实际修复本职产物；同阶段发现也必须处理，不以原总 PASS 退出。MAJOR 只是严重度，明确建议仍作披露，不能全部升级为必修。
+- 当前仅待核：交原 verifier 阅读签发 request/material 中的完整当前材料。先核旧担忧现在是否仍妨碍本次验收：冻结执行结果、断言、实现调用关系及源码/测试绑定要共同核对，用例名、`ut_covered` 或孤立 PASS 不足以认定已满足。未覆盖的新反证先补核，不先派产品作者试修。
+- 有效当前实证已解决旧担忧：由原验证方有据关闭必修判断，差异保留报告/notes；可确定的记录同步交合法 owner。真实新接口、验收、输入或执行条件变化仍须受影响复验，不把“文档差异”当普遍免验。
+- 他职责工作交既有回退/下游义务/设计 owner；真实负面结论在合法修改与原验证方复验前保留。只审查的请求不扩成开发，核实任务不交产品作者猜测。尚有本职具体任务时先做任务，不只填回执。
+- 闭环前再次消费当前工作；旧有效回执仍有效，但不能遮住真实新增义务。Goal 自检完成按原 request 交 runtime 正式 gate/finalizer；没有新模型需要时只做必要机器收口。
+
+核实期间和关闭后仍沿该次 request/material 的相关证据锚读取原件；不因发现关闭或下游 latest 报告变动回摆 subject。真实相关材料或绑定失效才刷新。引用使用可唯一定位的项目相对或当前 Feature 相对路径，框架归一后与 material 的项目相对 POSIX label 对齐；歧义、越界或缺证具体报告，不能猜路径或自动 confirmed。格式告警和未分类旧 SKIP 保持原边界。
+
+纯补 gate、核实、报告转录不算内容返修；真实模型调用与耗时照原累计计入。已送达任务的真实内容修复仍按原额度计数。必要核实用完剩余调用额度后，墙钟允许且无需模型的 gate/closure/finalizer 可以收口；调用额度已满且仍需模型核实时停 `budget_turns`，不启动超额调用。runner 不自动提额；按既有授权与 `--override-manifest` 恢复时累计不清零。
+
 ## §4.2 实例扩展与生命周期钩子
 
 允许在不改 `framework/` 的前提下挂载业务 Skill/knowledge/phase 前后钩子。
@@ -116,7 +130,7 @@
 
 1. `trace.json` 真实存在（缺失即视为阶段未完成）；
 2. 主 agent 已自跑 `harness-runner.ts`，verdict=PASS（或脚本退出码 0）；
-3. verifier 报告 verdict=PASS（仅当 harness 为本阶段输出了 verifier request；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 时 check-receipt 沿用并在 `summary.verifier_closure` 标 `completed_with_prior_review` 与未重审差异；WARN/UNKNOWN 记 `<phase>/notes.md` 不修）；
+3. verifier 报告 verdict=PASS（仅当 harness 为本阶段输出了 verifier request；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与必要补核按上文共同处置；建议记 `<phase>/notes.md`）；
 4. `framework/harness/scripts/check-receipt.ts` exit 0（回执 `phase-completion-receipt.md` 由 harness 从 summary/verifier 报告/真机产物**只读投影**生成，receipt_schema 2.1，agent 不手填任何字段）。
 
 严禁仅靠口头"完成"宣告而不留下上述四份物理凭证。若物理拦截层（Stop hook）检测到任一项缺失，将以 exit code 2 阻止当前消息结束，并把缺失项原文注入下一轮 prompt。被拦截后必须立即补齐缺失项，而不是再次声称完成。

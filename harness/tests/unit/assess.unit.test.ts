@@ -32,6 +32,7 @@ import {
 } from '../../scripts/utils/assess-renderer';
 import { selectRunnerActionFromAssess } from '../../scripts/utils/goal-assess-driver';
 import { recommendationAuthorized } from '../../scripts/utils/phase-transition-policy';
+import { resolveCurrentDisposition, type CurrentDispositionPhaseFact } from '../../scripts/utils/check-disposition';
 
 export interface UnitCaseResult {
   name: string;
@@ -234,6 +235,38 @@ const cases: Case[] = [
   authorizedDegradationCase,
   prunedPropagationCase,
   producerOwnedInputGapCase,
+  {
+    name: 'current disposition wait outranks derived publication gaps while genuine repair, verification and changed inputs remain executable',
+    run: () => {
+      const review: CurrentDispositionPhaseFact = { phase: 'review', summaryPresent: true, verdict: 'INCOMPLETE', schemaCurrent: true,
+        closureCommitted: false, lineage: 'missing', attestationPresent: false,
+        requiredGaps: [{ id: 'missing_required_executor', failure_kind: 'framework_bug', blocking_class: 'framework_internal' }] };
+      const assess = (fact: CurrentDispositionPhaseFact, observedReview: Partial<AssessPhaseObservation> = {}) => assessObservation({
+        ...observation(), goal_end: 'ut', phases: [phase({ phase: 'review', verdict: 'INCOMPLETE', closure: 'open', deferred: true,
+          verification_gaps: [{ id: 'missing_required_executor', blocking_class: 'framework_internal' }], ...observedReview }), phase({ phase: 'ut' })],
+        currentDisposition: resolveCurrentDisposition({ endpoint: 'feature-completion', phases: [fact, { phase: 'ut', summaryPresent: true, verdict: 'PASS', schemaCurrent: true,
+          closureCommitted: true, lineage: 'fresh' }] }),
+        reconcile: { schema_version: '1.0', state: 'active', current_summary_fresh: true, residual_fingerprints: [],
+          phase_outcome: { phase: 'ut', verdict: 'PASS', legacy_action: 'none' },
+          budgets: { retries_used: 0, max_retries_per_phase: 2, backtracks_used: 0 }, invalidatable_phases: ['review', 'ut'] },
+      }, { mode: 'goal_mode' });
+      const waiting = assess(review);
+      assert(waiting.recommendation.runner_action === 'advance', JSON.stringify(waiting.recommendation));
+      assert(waiting.gaps.some(gap => gap.kind === 'deferred') && waiting.gaps.some(gap => gap.kind === 'stale')
+        && waiting.gaps.some(gap => gap.kind === 'unclosed'), 'the recommendation must retain every underlying publication and waiting fact');
+      const repaired = assess({ ...review, openFindings: [{ id: 'current_required_review_work', detail: 'current independently confirmed work', owner: 'review' }] });
+      assert(repaired.recommendation.runner_action === 'backtrack_to_phase' && repaired.recommendation.phase === 'review', JSON.stringify(repaired.recommendation));
+      assert(repaired.recommendation.reason.includes('current_required_review_work'), 'a real repair must not be hidden by the framework wait');
+      const verify = assess({ ...review, requiredGaps: [], axes: { evidence: { applicable: true, required_for_release: true,
+        verdict: 'UNVERIFIED', resolution: { class: 'needs_fix', owner: 'review', retry_phase: 'review' }, source_checks: ['current_material'] } } },
+        { verification_gaps: undefined });
+      assert(verify.recommendation.runner_action === 'backtrack_to_phase' && verify.recommendation.phase === 'review', 'a deferred display flag cannot suppress a real current verification task');
+      const changedInput = assess({ ...review, verdict: 'PASS', requiredGaps: [], closureCommitted: true, lineage: 'stale',
+        lineageDetail: 'src/demo/value.ts changed', attestationPresent: true },
+        { verdict: 'PASS', deferred: false, closure: 'stale', closure_stale_detail: 'src/demo/value.ts changed', verification_gaps: undefined });
+      assert(changedInput.recommendation.runner_action === 'backtrack_to_phase' && changedInput.recommendation.phase === 'review', 'real input drift must still return to its verification owner');
+    },
+  },
   {
     name: 'P2-T5 fresh coding regression wins over unrelated stale plan observation',
     run: () => {

@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "run_id": "20261023T044016Z-fe4512",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "status": "HALTED",
+  "phases": [
+    {
+      "phase": "plan",
+      "verdict": "PASS",
+      "run_disposition": "TERMINAL"
+    },
+    {
+      "phase": "coding",
+      "verdict": "PASS"
+    },
+    {
+      "phase": "review",
+      "verdict": "PASS"
+    },
+    {
+      "phase": "ut",
+      "verdict": "PASS"
+    },
+    {
+      "phase": "testing",
+      "verdict": "PASS"
+    },
+    {
+      "phase": "plan",
+      "verdict": "FAIL",
+      "halted": true,
+      "summary_path": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports/summary.json",
+      "report_dir": "doc/features/bc-openCard-2/bank-card-opening-flow/plan/reports",
+      "retries": 2,
+      "agent_exit_code": 1,
+      "halt_reason": "content_retry_exhausted",
+      "halt_guidance": "open_finding:acceptance_to_interface：已核实发现仍未处置：acceptance_to_interface：验收要求：`doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml:46-55` 将 AC-3 定义为 `ut_layer: both`，要求 UT 可驱动六位数字校验、60 秒倒计时状态机和重发门禁；`doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml:135-145` 将 BD-2 定义为 `ut_layer: both`，要求倒计时期间重复发送被忽略、归零后一次点击重启 60 秒。责任产物缺口：`doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md:231` 仍将 mobile、otp、countdown、sending、saving 设计为 OtpVerif\n真实负责方：plan；下一步：补齐原始执行输入后由同一门禁复验，保留当前静态检查结果；无变化不要重复调用。",
+      "failure_kind_classified": "code_regression",
+      "agent_duration_ms": 820490,
+      "agent_stderr_excerpt": "Reading prompt from stdin... 2026-10-26T08:22:19.802551Z WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/ 2026-10-26T08:22:19.802589Z WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/ 2026-10-26T08:22:19.924102Z WARN codex_core::shell_snapshot: Failed to create shell s…",
+      "run_disposition": "TERMINAL"
+    }
+  ],
+  "deferred_phases": [],
+  "generated_at": "2026-10-26T08:40:08.699Z",
+  "fidelity_routing": {
+    "inferred": "pixel_1to1",
+    "selected": "pixel_1to1",
+    "effective": "pixel_1to1",
+    "strictness": "best_effort",
+    "asset_acquisition_mode": "approximate",
+    "clamped": false,
+    "source": "requirement_self_declared",
+    "decision_id": "fe22ac30d19ab059"
+  },
+  "recovery": {
+    "reason": "content_retry_exhausted",
+    "current_phase": "plan",
+    "action": "halt",
+    "changed_paths": []
+  }
+}

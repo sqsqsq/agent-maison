@@ -43,7 +43,7 @@ import { __testing_setLockHeartbeatMs, lockHeartbeatIntervalMs } from '../../scr
 import { __testing_setPidProbeExecutor } from '../../scripts/utils/goal-containment-reconcile';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { requestVia, runGoalRuntimeChain } from './goal-runner-testing-integrity.unit.test';
-import { publishVerifier, writeCuFacts, writeCuSpecDraft, writeCuSpecMaterials, writeCuPlanMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
+import { publishRequestedVerifier, writeCuFacts, writeCuSpecDraft, writeCuSpecMaterials, writeCuPlanMaterials, writeCuCodingMaterials, writeCuReviewMaterials, writeCuUtMaterials } from './real-chain.unit.test';
 import { FEATURE_LOCK_NAME, releaseLock, touchLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 import { evaluateDeviceReadinessProbe, runDeviceReadinessGate } from '../../scripts/utils/device-readiness-gate';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
@@ -150,7 +150,6 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
     onSpec: ctx => {
       writeDoc(featureFilePath(s.root, feature, 'acceptance.yaml'), { ...(structuredClone(approvedAcceptance.value) as Ev), source: 'spec:approved-ledger-design' });
       p.runId = ctx.runId; writeCuFacts(p, 'spec');
-      if (ctx.attempt > 1) publishVerifier(p, 'spec');
     },
     onPlan: ctx => {
       planInvokes += 1;
@@ -166,7 +165,6 @@ async function runWithStalePointerAtPlan(s: Snapshot, opts: {
       writeDoc(featureFilePath(s.root, feature, 'contracts.yaml'), authored);
       if (approvedCases) writeDoc(featureFilePath(s.root, feature, 'use-cases.yaml'), { ...approvedCases, source: 'plan:approved-ledger-design' });
       p.runId = ctx.runId; writeCuFacts(p, 'plan');
-      if (ctx.attempt > 1) publishVerifier(p, 'plan');
       opts.afterPlanWrites?.();
     },
   });
@@ -243,9 +241,18 @@ export async function s14Run(s: Snapshot, key: S14Key): Promise<StaleRun> {
   assert(interleave?.busy?.includes(RECONCILE_BUSY_HINT) && interleave.ready === false && interleave.unchanged, `run 持锁期间 readiness 应报忙且零写入：${JSON.stringify(interleave)}`);
   assert(repair && !rest.length && repair.phase === 'plan' && repair.action === 'pointer_reconcile' && repair.outcome === 'reconciled'
     && repair.blueprint_id === BLUEPRINT_ID && repair.bumped.some((b: Ev) => b.change_unit_id === CU), describeRun(run));
-  // plan 只有一轮 FAIL（指针过期），调和后原地重评即 PASS；其后的 PASS:retry 是既有的闭环补轮，与本修复无关。
+  // 一次指针调和后由原 run 重评一次，原 verifier 当轮收口，不再靠额外作者补闭环。
+  assert.strictEqual(run.planInvokes, 2, `初次 plan 与一次原地重评：${describeRun(run)}`);
   assert.deepStrictEqual(run.events.filter(e => e.type === 'phase_verdict' && e.phase === 'plan').map(e => `${e.verdict}:${e.action}`),
-    ['FAIL:retry', 'PASS:retry', 'PASS:advance'], `plan 应原地重评一次：${describeRun(run)}`);
+    ['FAIL:retry', 'PASS:advance'], `plan 应原地重评一次：${describeRun(run)}`);
+  const planVerifiers = run.events.filter(e => e.type === 'agent_invoke_start' && e.purpose === 'verifier_format_repair' && e.chain_phase === 'plan');
+  assert.strictEqual(planVerifiers.length, 1, `当前 plan 应由原 verifier 独立核实一次：${describeRun(run)}`);
+  const currentEvents = loadAuthoritativeEvents(runFile(s.root, feature, run.successor, 'events.jsonl'));
+  const calls = currentEvents.filter(event => event.type === 'agent_invoke_start').length;
+  const consumed = resolveResumedBudget(currentEvents);
+  const budgetManifest = readJson<Ev>(runFile(s.root, feature, run.successor, 'manifest.json'));
+  assert.strictEqual(consumed.totalTurns, calls, '原地重评与独立核实均须计入原 run 的总调用');
+  assert(consumed.totalTurns <= budgetManifest.budget.max_total_turns, '原地重评不得扩大原 run 预算');
   assert(!run.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'execution_scope_unresolved'), `不得停机等设计 owner：${describeRun(run)}`);
   assert(!run.error, `run 应正常结束：${describeRun(run)}`);
   // 写边界记账如实：调和是框架动作，发生在两次 agent 调用之间——canonical CU 不得被记成任何一次 agent 调用的写入。
@@ -387,7 +394,6 @@ async function haltAfterBirthAtSpec(s: Snapshot, completed: string | undefined, 
           specDraft = { ...(structuredClone(input.value) as Ev), source: 'spec:fixture-ledger-request' };
         }
         p.runId = ctx.runId; writeDoc(featureFilePath(s.root, feature, 'acceptance.yaml'), specDraft); writeCuFacts(p, 'spec');
-        if (ctx.attempt > 1) publishVerifier(p, 'spec');
       }
       if (!saved) {
         bumpBlueprint(s, bp => { const node = ledgerDomain(bp); saved = structuredClone(node); corrupt(node); });
@@ -441,7 +447,7 @@ function repairViaReadiness(s: Snapshot, mutate: (node: Ev) => void, message?: s
  *  · 链首是 spec：spec 责任方按当前权威对齐 acceptance，事实基线由 spec 建立（specFirstCuHooks）；
  *  · 链首是 coding（验收已对齐、后继只补后面的缺口）：上一个 run 的 spec 没过门，它写的事实基线未经验证——
  *    由本 run 的首个阶段重新建立事实（真实 agent 的做法），其余与 CU 源链相同。
- * 驱动层的 attempt 计数按一次调用重置，首轮按"非首轮"补 verifier 报告（publishVerifier 对没有 subject 的阶段是空操作）。
+ * 独立 verifier 只消费运行器本次实际签发的 request；阶段作者不代签旧 subject。
  */
 function authorsForContinuation(s: Snapshot, feature: string): Record<string, unknown> {
   const p = project(s, feature);
@@ -459,9 +465,10 @@ function authorsForContinuation(s: Snapshot, feature: string): Record<string, un
       p.runId = ctx.runId;
       writeCuSpecDraft(p);
     } else (bySpec ? specLed : codingLed)[key](ctx);
-    if (ctx.attempt === 1) publishVerifier(p, ctx.phase);
   };
-  return { realHarness: true, failExecutorFor: undefined, onSpec: hook('onSpec'), onPlan: hook('onPlan'), onCoding: hook('onCoding'), onReview: hook('onReview'), onUt: hook('onUt'), onTesting: hook('onTesting') };
+  return { realHarness: true, failExecutorFor: undefined,
+    onOutOfChain: (ctx: OutOfChainCtx) => { assert(publishRequestedVerifier(p, ctx), `unexpected model purpose: ${ctx.phase}`); },
+    onSpec: hook('onSpec'), onPlan: hook('onPlan'), onCoding: hook('onCoding'), onReview: hook('onReview'), onUt: hook('onUt'), onTesting: hook('onTesting') };
 }
 
 /** 重新发起同一请求：任务原请求的需求与起止，不带任何旗标（noAutoForce），不回拨事件时间。返回退出码与本次新出生的 run。 */

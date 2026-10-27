@@ -4,10 +4,13 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
-import { clearFrameworkConfigCache } from '../../config';
+import { clearFrameworkConfigCache, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact, loadFrameworkConfig } from '../../config';
 import {
   buildVerifierMaterialView,
+  collectCurrentAcceptanceEvidence,
+  currentAcceptanceExecutionKeyMatcher,
   diffVerifierMaterial,
   readVerifierMaterialOrNull,
   verifierMaterialFilename,
@@ -15,6 +18,24 @@ import {
 } from '../../scripts/utils/verifier-material';
 import type { ContextFileEntry } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
+import { copyC6HostReplay } from '../utils/c6-host-replay';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
+import { collectContextFiles, writeRunSummaryBase } from '../../harness-runner';
+import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
+import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
+import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
+import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
+import type { CheckContext } from '../../scripts/utils/types';
+import { readPhaseRepairIssues, verifierSemanticChecks } from '../../scripts/utils/repair-candidates';
+import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
+import { phaseCompletionProblems } from '../../scripts/utils/check-disposition';
+import { setupRunlessProject } from './execution-scope.unit.test';
+import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
+import { loadResolvedProfile } from '../../profile-loader';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FEATURE = 'vm-fixture';
 
@@ -36,7 +57,235 @@ const CHECKS = [
   { id: 'b', status: 'WARN', severity: 'MINOR' },
 ];
 
+function countAcceptanceCollections<T>(run: () => T): { result: T; count: number } {
+  const material = require('../../scripts/utils/verifier-material') as typeof import('../../scripts/utils/verifier-material');
+  const original = material.collectCurrentAcceptanceEvidence;
+  let count = 0;
+  material.collectCurrentAcceptanceEvidence = input => { count += 1; return original(input); };
+  try { return { result: run(), count }; }
+  finally { material.collectCurrentAcceptanceEvidence = original; }
+}
+
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'current acceptance anchors use the profile filename and preserve original or unavailable profile semantics',
+    run: () => {
+      const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..');
+      const native = require('../../../profiles/hmos-app/harness/execution-key') as { EXECUTION_KEY_FILE: string | undefined };
+      const original = native.EXECUTION_KEY_FILE;
+      const originalPath = `doc/features/${FEATURE}/ut/reports/run/ut/${original}`;
+      try {
+        put(root, originalPath, '{}');
+        const options = { projectRoot: root, frameworkRoot };
+        const build = (label: string, selectedFrameworkRoot = frameworkRoot) => buildVerifierMaterialView({ ...options, frameworkRoot: selectedFrameworkRoot,
+          feature: FEATURE, phase: 'plan', gateFingerprint: null, phaseRuleText: 'rule', templateText: 'template', checks: [],
+          contextFiles: [{ label, content: 'native proof' }] });
+        assert(currentAcceptanceExecutionKeyMatcher(options)(originalPath));
+        native.EXECUTION_KEY_FILE = 'native-ut-key.json';
+        const matches = currentAcceptanceExecutionKeyMatcher(options);
+        const variantPath = `doc/features/${FEATURE}/ut/reports/run/ut/native-ut-key.json`;
+        put(root, variantPath, '{}');
+        assert(matches(variantPath));
+        assert(!matches(originalPath));
+        assert(!matches(variantPath.replace('/ut/native-ut-key.json', '/other/native-ut-key.json')));
+        const repair = require('../../scripts/utils/repair-candidates') as typeof import('../../scripts/utils/repair-candidates');
+        const readIssues = repair.readPhaseRepairIssues;
+        let collections = 0;
+        repair.readPhaseRepairIssues = () => { collections += 1; return null; };
+        try {
+          build(variantPath);
+          assert.equal(collections, 0, 'the material producer recognizes a profile-named anchor already in context');
+        } finally { repair.readPhaseRepairIssues = readIssues; }
+        native.EXECUTION_KEY_FILE = undefined;
+        assert(!currentAcceptanceExecutionKeyMatcher(options)(variantPath));
+        native.EXECUTION_KEY_FILE = original;
+        assert(currentAcceptanceExecutionKeyMatcher(options)(originalPath), 'original material naming remains compatible');
+        assert(build(originalPath).files.some(file => file.path === originalPath));
+        put(root, 'framework.config.json', JSON.stringify({ project_profile: { name: 'minimal' } }));
+        put(root, 'framework/profiles/minimal/profile.yaml', 'name: minimal\n');
+        clearFrameworkConfigCache();
+        assert(!currentAcceptanceExecutionKeyMatcher({ projectRoot: root, frameworkRoot: path.join(root, 'framework') })(originalPath));
+        assert(build(originalPath, path.join(root, 'framework')).files.some(file => file.path === originalPath), 'missing native support does not erase supplied material');
+      } finally { native.EXECUTION_KEY_FILE = original; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
+  {
+    name: 'a same-path semantic contract change still reaches the original design-scope producer',
+    run: () => {
+      const f = setupRunlessProject({ chain: ['plan', 'coding', 'review', 'ut'] });
+      try {
+        assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature }).status, 'frozen');
+        const options = { projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, phase: 'plan', track: 'full' as const };
+        const entry = resolveCapabilityResolutionEntryInput({ ...options, featuresDir: relFeaturesDir(f.root) });
+        const inputs = resolveCapabilityInputs({ ...options, ...entry }).inputs!;
+        const loader = new SpecLoader(f.root, undefined, undefined, f.frameworkRoot);
+        const ctx: CheckContext = { ...options, phase: 'plan', resolvedInputs: inputs, featureSpec: loader.loadFeatureSpec(f.feature, inputs), factsContext: entry.factsContext,
+          phaseRule: loader.loadPhaseRule('plan'), resolvedProfile: loadResolvedProfile(f.root, loadFrameworkConfig(f.root), f.frameworkRoot),
+          harnessRoot: path.join(f.frameworkRoot, 'harness'), frameworkRel: 'framework' };
+        assert.deepEqual(designScopeRevisionChecks(ctx, []), []);
+        const contracts = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath;
+        const updated = YAML.parse(fs.readFileSync(contracts, 'utf8'));
+        updated.interfaces = [{ class: 'DemoPort', file: 'src/demo/value.ts', methods: [{ name: 'readValue', params: [], return: 'number' }] }];
+        fs.writeFileSync(contracts, YAML.stringify(updated));
+        const produced = resolveCapabilityInputs({ ...options,
+          inputContext: { schema_version: '1.1', subject: { feature: f.feature }, obligations: {}, required_outputs: [] } }).inputs!;
+        assert(produced.values.contracts.state === 'resolved');
+        assert(designScopeRevisionChecks({ ...ctx, resolvedInputs: produced, featureSpec: loader.loadFeatureSpec(f.feature, produced) }, [])
+          .some(check => check.scope_revision_input), 'path rebasing must not hide a real new interface contract');
+      } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
+  {
+    name: 'S2 shared entry and producer select current assertions and frozen proof, retain them after refutation and refresh real changes',
+    run: () => {
+      const f = copyC6HostReplay();
+      const frameworkRoot = path.resolve(__dirname, '../../..');
+      const reports = featurePhaseReportsDir(f.root, f.feature, 'plan', frameworkRoot);
+      const options = { projectRoot: f.root, feature: f.feature, phase: 'plan', frameworkRoot };
+      const current = () => resolveCurrentDisposition(readCurrentDispositionInput({ ...options, chain: ['plan'], runId: f.runId }));
+      try {
+        const beforeFiles = fs.readdirSync(reports).sort();
+        const originalIssues = readPhaseRepairIssues(f.root, f.feature, 'plan', { frameworkRoot })!;
+        assert(originalIssues.rows.some(row => row.id === 'acceptance_to_interface'));
+        const evidence = collectCurrentAcceptanceEvidence(options);
+        assert(evidence.some(file => file.label.endsWith('bank_open_card_ut.test.ets') && file.content.includes('expect(')), 'real assertions, beyond a test label');
+        assert(evidence.some(file => file.label.endsWith('OtpService.ets') && file.content.includes('OtpVerificationState')));
+        assert(evidence.some(file => file.label.endsWith('BankCardOpeningService.ets') && file.content.includes('tickOtp')));
+        assert(evidence.some(file => file.label.endsWith('frozen.ut-result.WalletMain.json')));
+        const nativeHost = require('../../../profiles/hmos-app/harness/ut-host-impl') as typeof import('../../../profiles/hmos-app/harness/ut-host-impl');
+        const nativeFacts = nativeHost.currentUtExecutionInputs;
+        try {
+          nativeHost.currentUtExecutionInputs = undefined as unknown as typeof nativeFacts;
+          assert.deepEqual(collectCurrentAcceptanceEvidence(options), [], 'a profile without current native facts retains ordinary verification semantics');
+        } finally { nativeHost.currentUtExecutionInputs = nativeFacts; }
+        assert(!evidence.some(file => /\/(?:summary|script-report|ac-coverage)\.json$/.test(file.label)), 'mutable latest reports are not plan materials');
+        const countedEntry = countAcceptanceCollections(current);
+        assert(countedEntry.result.completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'));
+        assert.equal(countedEntry.count, 1, 'one read-only entry assembles current counterevidence once');
+        assert.deepEqual(fs.readdirSync(reports).sort(), beforeFiles, 'read-only entry cannot issue requests');
+        const loader = new SpecLoader(f.root, undefined, undefined, frameworkRoot);
+        const entry = resolveCapabilityResolutionEntryInput({ ...options, featuresDir: relFeaturesDir(f.root), goalRunId: f.runId, goalAttemptId: 'i28' });
+        const resolvedInputs = resolveCapabilityInputs({ ...options, track: 'full', ...entry }).inputs;
+        assert(resolvedInputs, 'use the real CU/run-resolved producer input');
+        const scopeContext = { ...options, featureSpec: loader.loadFeatureSpec(f.feature, resolvedInputs), resolvedInputs, factsContext: entry.factsContext } as CheckContext;
+        const eventsFile = path.join(f.root, f.featureDir, 'goal-runs', f.runId, 'events.jsonl'), eventsBytes = fs.readFileSync(eventsFile);
+        assert.deepEqual(designScopeRevisionChecks(scopeContext, []), [], 'moving an unchanged contracts binding cannot publish a new design fact or refresh birth code observations');
+        const contractsFile = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath, contractsBytes = fs.readFileSync(contractsFile);
+        fs.appendFileSync(contractsFile, '\n# explanatory text only\n');
+        const commentInputs = resolveCapabilityInputs({ ...options, track: 'full', ...entry }).inputs!;
+        assert.deepEqual(designScopeRevisionChecks({ ...scopeContext, resolvedInputs: commentInputs,
+          featureSpec: loader.loadFeatureSpec(f.feature, commentInputs) }, []), [], 'a comment cannot manufacture an empty design revision after valid descendant proofs are retained');
+        fs.writeFileSync(contractsFile, contractsBytes);
+        assert(fs.readFileSync(eventsFile).equals(eventsBytes), 'design-fact comparison cannot rewrite historical scope or events');
+        const context = () => collectContextFiles(loader, { kind: 'consumer', projectRoot: f.root, frameworkRoot, frameworkRel: 'framework' }, 'plan', f.feature, loader.loadFeatureSpec(f.feature, resolvedInputs), { resolvedInputs, factsContext: entry.factsContext });
+        const contexts = context();
+        for (const file of evidence) assert(contexts.some(entry => entry.label === file.label), `real producer omitted ${file.label}`);
+        const script = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
+        const build = () => buildVerifierMaterialView({ ...options, resolvedInputs, factsContext: entry.factsContext, gateFingerprint: computeGateFingerprint(frameworkRoot, 'plan'), phaseRuleText: 'c6 material binding', templateText: 'current producer', checks: script.checks, contextFiles: context() });
+        const view = build();
+        const issued = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: view,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'production material test' } });
+        assert(issued.verifier_subject_id);
+        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: issued.verifier_subject_id,
+          reportText: '```issue-verification\n- issue: acceptance_to_interface\n  verdict: refuted\n  evidence: Current AC-3/BD-2 assertions drive OtpVerificationState through the production service.\n```', skipSummaryPatch: true });
+        const countedWriter = countAcceptanceCollections(() => writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: view,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'production material test' } }));
+        const reviewed = countedWriter.result;
+        assert.equal(countedWriter.count, 1, 'subject validation and disposition reuse one read view when no revision is written');
+        assert(!reviewed.repair_candidates?.length, 'the real producer consumes the independent refutation');
+        assert.equal(build().material_sha256, view.material_sha256, 'closing the finding cannot remove its counterevidence');
+        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'), 'current semantic/facts inputs cannot reopen an already reviewed counterevidence claim');
+        const native = evidence.find(file => file.label.endsWith('/ut/execution-key.json'))!;
+        const latest = path.join(path.dirname(path.dirname(path.dirname(path.join(f.root, native.label)))), '20991026T000000Z-000', 'ut');
+        fs.mkdirSync(path.dirname(latest), { recursive: true }); fs.cpSync(path.dirname(path.join(f.root, native.label)), latest, { recursive: true });
+        const keyFile = path.join(latest, 'execution-key.json');
+        const key = JSON.parse(fs.readFileSync(keyFile, 'utf8')); key.run_started_at = '2099-10-26T00:00:00Z'; fs.writeFileSync(keyFile, JSON.stringify(key));
+        assert.equal(build().material_sha256, view.material_sha256, 'routine same-key UT runs keep the original frozen anchor');
+        for (const label of ['02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets', '02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets']) {
+          const file = path.join(f.root, label), bytes = fs.readFileSync(file);
+          fs.appendFileSync(file, '\n// changed executable input\n');
+          try { assert.notEqual(build().material_sha256, view.material_sha256, label); }
+          catch (error) { assert.match((error as Error).message, /input binding stale:/, 'changed bound inputs must refresh or fail their existing binding'); }
+          assert(current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'), 'a refuted finding still requires fresh proof after real input changes');
+          fs.writeFileSync(file, bytes);
+        }
+        const config = path.join(f.root, 'hvigor/hvigor-config.json5'), configBytes = fs.readFileSync(config);
+        fs.appendFileSync(config, '\n// tool configuration changed\n');
+        assert(collectCurrentAcceptanceEvidence(options).some(file => file.label.startsWith('(') && file.content.includes('配置')));
+        const changedView = build();
+        assert.notEqual(changedView.material_sha256, view.material_sha256);
+        assert.equal(require('../../scripts/utils/repair-candidates').phaseIssuesForVerifierSubject(f.root, f.feature, 'plan', issued.verifier_subject_id, frameworkRoot), null, 'the old subject cannot certify changed execution conditions');
+        const changed = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: changedView,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'production changed inputs' } });
+        assert.notEqual(changed.verifier_subject_id, issued.verifier_subject_id, 'invalidated evidence must issue a new real request');
+        assert.equal(build().material_sha256, changedView.material_sha256, 'a pending request retains the historical anchor and current gap');
+        assert(current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'), 'the changed-subject producer cannot erase the pending original verification');
+        assert.equal(require('../../scripts/utils/repair-candidates').phaseIssuesForVerifierSubject(f.root, f.feature, 'plan', changed.verifier_subject_id, frameworkRoot), null);
+        const refutedBody = '```issue-verification\n- issue: acceptance_to_interface\n  verdict: refuted\n  evidence: Original verifier assessed the current configuration gap and all bound materials; the old plan concern is not a remaining acceptance obligation.\n```';
+        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: changed.verifier_subject_id,
+          reportText: refutedBody, skipSummaryPatch: true });
+        const close = () => finalizePhaseClosure({ ...options, phase: 'plan', resolvedInputs, factsContext: entry.factsContext,
+          goalRunId: f.runId, persistPhaseState: () => undefined });
+        assert.equal(close().summary.closure_status, 'closed', 'a real reply on the changed subject must close the original verification lifecycle');
+        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
+        fs.appendFileSync(config, '// another current configuration change\n');
+        assert(current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'));
+        const confirmedView = build();
+        const confirmedRequest = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: confirmedView,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'second changed configuration' } });
+        const issueRow = originalIssues.rows.find(row => row.id === 'acceptance_to_interface')!;
+        const finding = verifierSemanticChecks(originalIssues.reportText, 'plan', f.feature).find(row => row.id === issueRow.id)!;
+        const confirmedBody = '```yaml\n' + YAML.stringify({ verification_result: { feature: f.feature, phase: 'plan', checks: [finding],
+          summary: { pass: 0, fail: 1, blockers: 0, verdict: 'PASS' } } }) + '```\n```issue-verification\n- issue: ' + issueRow.id
+          + '\n  verdict: confirmed\n  repair_owner: plan\n  evidence: plan.md contracts.yaml | ' + issueRow.summary + '\n```';
+        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: confirmedRequest.verifier_subject_id,
+          reportText: confirmedBody, skipSummaryPatch: true });
+        const confirmed = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: confirmedView,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'current independent confirmation' } });
+        assert(confirmed.repair_candidates?.some(candidate => candidate.id === issueRow.id));
+        const ownerTasks = phaseCompletionProblems(current(), ['plan']);
+        assert(ownerTasks.some(problem => problem.id === 'open_finding:' + issueRow.id && problem.action === 'repair' && problem.owner === 'plan'), 'persisted author dispatch must see the original verifier confirmation as owner repair');
+        assert(!ownerTasks.every(problem => problem.action === 'verify'), 'the real runtime verifier-only predicate must yield to the current owner task');
+        assert.equal(confirmed.next_action, 'fix_verifier_findings_then_rerun_harness');
+        assert.throws(close, /open_finding:acceptance_to_interface/, 'confirmed required work cannot close before its author repairs it');
+        // A bounded native-execution substitute publishes the existing frozen result under the actual new configuration key.
+        const nativeApi = require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
+        const newRun = path.join(path.dirname(path.dirname(latest)), '20991027T000000Z-000', 'ut');
+        fs.mkdirSync(path.dirname(newRun), { recursive: true }); fs.cpSync(latest, newRun, { recursive: true });
+        const newRecord = JSON.parse(fs.readFileSync(keyFile, 'utf8'));
+        const modules = newRecord.frozen_files.flatMap((name: string) => /^frozen\.ut-result\.(.+)\.json$/.exec(name)?.[1] ?? []);
+        newRecord.inputs.tool_config_sha256 = nativeApi.sha256Text(modules.sort().map((module: string) => `${module}=${nativeHost.utBuildCollectorKey(f.root, module, 'default')}`).join('\n'));
+        newRecord.execution_key = nativeApi.computeExecutionKey(newRecord.inputs); newRecord.run_started_at = '2099-10-27T00:00:00Z';
+        nativeApi.writeExecutionKeyRecord(newRun, newRecord);
+        const refreshed = collectCurrentAcceptanceEvidence(options);
+        assert(refreshed.some(file => file.label === path.relative(f.root, path.join(newRun, 'execution-key.json')).replace(/\\/g, '/')), 'unusable prior anchors cannot hide a newly valid frozen execution');
+        assert(!refreshed.some(file => file.label === native.label), 'the current selected native anchor must actually refresh');
+        const refreshedView = build();
+        const refreshedRequest = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: refreshedView,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'current native evidence refresh' } });
+        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: refreshedRequest.verifier_subject_id,
+          reportText: refutedBody, skipSummaryPatch: true });
+        assert.equal(close().summary.closure_status, 'closed');
+        assert.equal(build().material_sha256, refreshedView.material_sha256, 'the refreshed anchor stays stable after the original verifier reply');
+        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
+        fs.writeFileSync(config, configBytes);
+        writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: view,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'restore original test configuration' } });
+        const frozen = path.join(f.root, evidence.find(file => file.label.endsWith('frozen.ut-result.WalletMain.json'))!.label);
+        fs.appendFileSync(frozen, '\n');
+        assert(collectCurrentAcceptanceEvidence(options).some(file => file.label.startsWith('(') && file.content.includes('字节变化')));
+        assert(current().completionBlocking.some(problem => problem.action === 'verify'));
+        const frozenView = build();
+        const frozenRequest = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: frozenView,
+          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'changed frozen native bytes' } });
+        assert.equal(build().material_sha256, frozenView.material_sha256, 'issuing a request cannot discard the configuration inputs selected for its frozen-evidence diagnosis');
+        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: frozenRequest.verifier_subject_id,
+          reportText: refutedBody, skipSummaryPatch: true });
+        assert.equal(close().summary.closure_status, 'closed');
+        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
+      } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    },
+  },
   {
     name: '材料视图：同材料两次构建同指纹；上下文文件内容/脚本 check 状态/规则/模板变了才换；reports 运行期产物不入材料',
     run: () => {
@@ -195,15 +444,19 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
+export function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [];
-  for (const c of cases) {
+  const timings: UnitExecutionTiming[] = [];
+  for (const c of cases.filter(test => matchesUnitCase(test.name, filter))) {
+    const finish = startCaseTiming([c.name], timings);
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { finish(); }
   }
-  return results;
+  return selectedUnitCases(results, filter, timings);
 }
+
+export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }

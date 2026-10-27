@@ -231,9 +231,10 @@ facts 的施工入口先严格验证来源、范围与环境；同阶段后继�
 
 - **phase executor**：Claude 原生 `/goal` 路径下主会话是薄 driver，每个阶段最多派发一个 `subagent_type: phase-executor`（模板 `agents/claude/templates/agents/phase-executor.md`），只投递最小输入、收回 summary 路径与终态块；与本 Skill 的 GoalPhaseRuntime 互斥，不同时推进同一任务。
 - **子代理等待**：同步等待或先做无关工作；禁止 sleep / 轮询 / 后台等待器；verifier 未返回前不改其输入材料。
-- **闭环判据**：harness PASS + verifier 一次 PASS + `check-receipt` 通过；回执是 harness 只读投影（receipt_schema 2.1），备注写 `<phase>/notes.md`；harness 输出末尾 `NEXT:` 行即下一步。
-- **verifier 结论**：只有 BLOCKER 级 FAIL 触发修正与重审；WARN/UNKNOWN 记 notes.md 带到下一阶段。
-- **漂移分级**：review 后源码变化按类型给一次复核（文档不复审；测试代码只跑相关测试；逻辑做 scoped diff review；布局/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review），`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核并如实标注。
+- **闭环判据**：当前共同处置无本职责未完必修/待核 + harness PASS + 适用 verifier 有效证明 + `check-receipt` 通过；回执是 harness 只读投影（receipt_schema 2.1），备注写 `<phase>/notes.md`；harness 输出末尾 `NEXT:` 行即下一步。
+- **当前工作**：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)读取完整共同处置。原始 verifier 总判保留，当前本职必修实际执行、待核交原验证方、他职责合法交接、建议披露；原总 PASS/closed/旧回执不免除真实工作，MAJOR 不自动升级。旧发现未覆盖当前验收反证时先补核，不能先耗一轮作者。
+- **补核与总预算**：settled 原作者仅剩核实时，须由对应 invoke 原 gate PASS、负面来源及有效产物/业务输入核资格，不能凭重试序号或任意旧 PASS。纯补核/gate/转录不扣内容返修，实际模型与墙钟照原累计；必要核实用完剩余调用额度后，墙钟允许且无需模型的 gate/closure/finalizer 可以收口；调用额度已满且仍需模型核实时停 `budget_turns`，不启动超额调用、不隐式扩额。有效下游 PASS 且当前完成问题为空时直接复用；真实新输入或失败仍处理。
+- **漂移分级**：review 后源码变化按类型给一次复核（仅已证等价的记录同步复用，真实契约/验收变化复验受影响部分；测试代码只跑相关测试；逻辑做 scoped diff review；布局/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review），`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核并如实标注。
 - **默认额度与用户总上限**：完整交付且明确全权/不要询问时，主 Agent 核原授权后，可沿既有 manifest/`--override-manifest` 显式提高默认额度；attended prepare 与每次 next/report 重传 `--authorize-autonomy`，不持久化新授权位。缺输入先找可信原授权，无可信上下文或冲突才澄清。默认 never/goal_mode、打印文本或 Agent 自写记录不授全权，单批预算不授设计权。覆盖前核 manifest 全部差异，不夹带未授权需求/范围/adapter 变化。用户总上限不破，累计不清零，无进展守卫不解除，runner 不循环自动提额；最终披露额度前后、原因、来源与累计消耗。detached 保留原完整交付设计授权，默认提额仍须明确不要询问。运行会话内睡眠仍计时，只有真实 waiting 停放沿原扣时规则。
 
 默认额度变更仍须原请求/单次明确授权及既有 --override-manifest，累计与用户硬上限不变。

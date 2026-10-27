@@ -20,13 +20,13 @@ import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection }
 import { projectComponentSelections } from './component-selection-check';
 import { resolveContractFileReferences, findUnplannedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
-import { isInsideProjectRoot, existingProjectPathSpelling } from './project-relative-path';
+import { isInsideProjectRoot, existingProjectPathSpelling, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { evaluateAcceptanceFlowStructure } from './p0-semantic-gates';
 import { SpecLoader, normalizeUseCasePortCalls } from './spec-loader';
 import { inspectTypedConstructionContent } from './design-content-checks';
 import { checkUseCaseSpecSchema } from '../check-ut';
 import type { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
-import type { ResolutionDependency } from './capability-resolution';
+import type { ResolutionDependency, InputBinding } from './capability-resolution';
 import { resolveCheckDisposition } from './check-disposition';
 import { identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
@@ -73,7 +73,10 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
   const inputId = ctx.phase === 'spec' ? 'acceptance' : 'contracts';
   const resolved = ctx.resolvedInputs.values[inputId];
   if (resolved?.state !== 'resolved') return [];
-  if (scope.obligations.some(obligation => obligation.kind === kind && obligation.basis.some(binding => canonical(binding) === canonical(resolved.binding)))) return [];
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, scope);
+  const located = (binding: InputBinding): string => canonical({ ...binding, dependencies: binding.dependencies.map(dependency =>
+    ({ ...dependency, path: resolveDependencyPath(ctx.projectRoot, dependency.path, legacyRoot) })) });
+  if (scope.obligations.some(obligation => obligation.kind === kind && obligation.basis.some(binding => located(binding) === located(resolved.binding)))) return [];
   const remaining = [...new Set(scope.obligations.filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length && obligation.owner_phase !== ctx.phase).map(obligation => obligation.owner_phase))];
   // 请求动作按终点二分：feature 终点仍是「除本阶段外还剩哪些责任阶段」；request 终点是单职责请求，
   // 请求动作**就是它自己**——结构上不可能新增阶段（`feature-track.ts` 另有一道 fail-closed 校验兜底）。

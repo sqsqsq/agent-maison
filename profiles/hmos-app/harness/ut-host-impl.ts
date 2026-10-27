@@ -77,6 +77,29 @@ import {
 
 const HARNESS_ROOT = path.resolve(__dirname, '../../../harness');
 
+export const utExecutionConfigFiles: readonly string[] = ['build-profile.json5', 'oh-package.json5', 'oh-package-lock.json5', 'hvigor/hvigor-config.json5'];
+
+/** Native source ownership only; the common reader still verifies every selected file. */
+export function utAcceptanceSourcePaths(files: readonly string[], tests?: readonly string[]): string[] {
+  if (!tests) return files.filter(file => /\/src\//.test(file));
+  const roots = [...new Set(tests.filter(file => file.includes('/src/')).map(file => file.split('/src/')[0]))];
+  return files.filter(file => /\.(?:[cm]?[jt]sx?|ets)$/.test(file) && roots.some(root => file.startsWith(root + '/src/')));
+}
+
+/** Current native input facts, without deciding whether an old proof establishes acceptance. */
+export function currentUtExecutionInputs(projectRoot: string, modules: readonly string[]): Pick<ExecutionKeyInputs, 'tool_config_sha256' | 'flags'> | null {
+  const selection = resolveProductSelection({ projectRoot, purpose: 'ut' });
+  if (selection.source === 'unresolved') return null;
+  return utToolExecutionInputs(projectRoot, modules, selection.product ?? undefined);
+}
+
+function utToolExecutionInputs(projectRoot: string, modules: readonly string[], product?: string): Pick<ExecutionKeyInputs, 'tool_config_sha256' | 'flags'> {
+  return {
+    tool_config_sha256: aggregateByModule(modules.map(module => [module, utBuildCollectorKey(projectRoot, module, product) ?? 'unresolved'])),
+    flags: Object.keys(process.env).filter(key => /^HARNESS_SKIP_HVIGOR/.test(key)).sort().map(key => `${key}=${process.env[key]}`),
+  };
+}
+
 function ruleDesc(
   ctx: CheckContext,
   section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
@@ -975,11 +998,7 @@ function buildUtExecutionKeyInputs(
     hylyre_version: null,
     manifest_version: null,
     profile: ctx.resolvedProfile.name,
-    tool_config_sha256: aggregateByModule(mods.map(m => [m.name, utBuildCollectorKey(ctx.projectRoot, m.name, product) ?? 'unresolved'])),
-    flags: Object.keys(process.env)
-      .filter(k => /^HARNESS_SKIP_HVIGOR/.test(k))
-      .sort()
-      .map(k => `${k}=${process.env[k]}`),
+    ...utToolExecutionInputs(ctx.projectRoot, mods.map(module => module.name), product),
   };
 }
 

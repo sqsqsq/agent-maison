@@ -11,7 +11,7 @@ import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { __testing_recomputeClosureRepairCandidates, finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { readPhaseRepairIssues, phaseIssuesForVerifierSubject, buildSummaryRepairCandidates,
-  verifiedPhaseDesignFindings, itemFingerprintOf, resolveRepairDeclineState, readableIssueEvidence } from '../../scripts/utils/repair-candidates';
+  verifiedPhaseDesignFindings, verifiedPhaseRepairIssues, buildCurrentVerifierDiagnosisContext, findUnreadableDiagnosisChecks, itemFingerprintOf, resolveRepairDeclineState, readableIssueEvidence } from '../../scripts/utils/repair-candidates';
 import { publishFixtureVerifierEvidence, fixtureSubjectId } from '../utils/verifier-evidence-fixture';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { sha256File } from '../../scripts/utils/phase-evidence-manifest';
@@ -68,6 +68,36 @@ const passed: CheckResult = { id: 'actual_stage_check', category: 'structure', d
 
 export function runAll(): UnitCaseResult[] {
   const cases: Array<[string, () => void]> = [
+    ['Feature-relative references reach the real subject with project POSIX labels and complete diagnosis context', () => withProject(root => {
+      writeIssues(root, 'coding', issue(target, '`plan/plan.md:2`'));
+      const proposed = readPhaseRepairIssues(root, FEATURE, 'coding')!;
+      assert.equal(proposed.rows.length, 1);
+      assert(proposed.evidenceFiles.some(file => file.label === target), JSON.stringify(proposed));
+      const issued = writer(root, 'coding', [compileFail]);
+      assert(phaseIssuesForVerifierSubject(root, FEATURE, 'coding', issued.verifier_subject_id!, FW), 'production material lookup must accept normalized references');
+      const context = buildCurrentVerifierDiagnosisContext({ projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding', subjectId: issued.verifier_subject_id! });
+      assert.deepEqual(context?.rows, proposed.rows);
+      assert.deepEqual(context?.diagnostics, proposed.diagnostics);
+      assert.equal(context?.sourcePhase, 'coding');
+      assert.equal(context?.verifierSubjectCurrent, true);
+    })],
+    ['a bad or ambiguous reference keeps good evidence and diagnostics without confirming the proposal', () => withProject(root => {
+      writeFile(path.join(root, 'doc/features/demo/build.log'), 'different Feature-local compiler output\n');
+      const diagnostics: string[] = [];
+      const evidence = readableIssueEvidence(root, '`plan/plan.md:2`、`missing.log:1`、`build.log:1`', { feature: FEATURE, diagnostics });
+      assert.deepEqual(evidence.map(file => file.label), [target]);
+      assert(diagnostics.some(message => message.includes('不存在')) && diagnostics.some(message => message.includes('歧义')), diagnostics.join('\n'));
+      writeIssues(root, 'coding', issue(target, '`plan/plan.md:2`、`missing.log:1`'));
+      const proposed = readPhaseRepairIssues(root, FEATURE, 'coding')!;
+      assert.equal(proposed.rows.length, 1, 'readable evidence remains available to the original verifier');
+      assert(proposed.diagnostics?.some(message => message.startsWith('UP-001：')));
+      const verifier = ['```issue-verification', '- issue: UP-001', '  verdict: confirmed', `  evidence: plan.md | ${proposed.rows[0].summary}`, '```'].join('\n');
+      assert.deepEqual(verifiedPhaseRepairIssues({ phaseIssues: proposed, verifierReportText: verifier }), [], 'locating one file does not validate all required references');
+      const context = buildCurrentVerifierDiagnosisContext({ projectRoot: root, frameworkRoot: FW, feature: FEATURE, phase: 'coding', subjectId: null, phaseIssues: proposed, verifierSubjectCurrent: false });
+      assert.deepEqual(context?.diagnostics, proposed.diagnostics);
+      assert.equal(context?.verifierSubjectCurrent, false);
+      assert(findUnreadableDiagnosisChecks('coding', verifier, context).some(message => message.includes('missing.log')), 'the production diagnosis predicate must receive the concrete missing reference');
+    })],
     ['verified owner conflicts in coding and UT proposals give corrective feedback without dispatching a false owner', () => withProject(root => {
       for (const phase of ['coding', 'ut'] as const) {
         writeIssues(root, phase);

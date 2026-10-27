@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0",
+  "kind": "assess@1",
+  "feature": "cu-YmMtb3BlbkNhcmQtMgBiYW5rLWNhcmQtb3BlbmluZy1mbG93",
+  "workflow": "obligation-driven",
+  "track": "full",
+  "goal_end": "testing",
+  "authorization_context": {
+    "mode": "goal_mode"
+  },
+  "observed_fingerprint": "1a6690384f6c734fdb3e200df2c58eca4cbbe81f69e52ba0814f852832289a50",
+  "fingerprints": {
+    "workflow": "41f6b2baab85ec890f8ef9182ab0f70050269b57c4adde437c7e7798dd27ca94",
+    "track": "a804d6ab5b827a0002416b2e8c8825a11b16cee39c2e231a6e1126f793625ce0",
+    "goal": "35b7b7b597923767ffe311a36dfbefd63edf2f570ab19f1a587256c8c06f54fc",
+    "run_attempt": "def5bed5098ae3ea1c69d3a0dd17ffd9e1e7cc864a2fa6254c3ce4df5362797c",
+    "summaries": "3909d948cafd08b094871a8f06abcc6b9b35acab18734d6ce629d63f8c7a168a",
+    "evidence": "aef11ca658ced2d287c23b357d099aa66d96bf879e0930abaab46810e11ef594",
+    "reconcile": "b2162085a26bb77e5536d408ff43464b9782176189b73d1c814d811790a58cae",
+    "observed": "1a6690384f6c734fdb3e200df2c58eca4cbbe81f69e52ba0814f852832289a50"
+  },
+  "observed": {
+    "phases": [
+      {
+        "phase": "spec",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "6d4305c1e6711520cf884459c80a5cc5805b8a2f1b74f1e47e889df6238957ef",
+        "evidence_fingerprint": "87f96e2ee4d858e10d6e4da35f7769513e37d7eb473dacc071f3cf9ba5b3c023"
+      },
+      {
+        "phase": "plan",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "repair_candidates": [
+          {
+            "id": "acceptance_to_interface",
+            "category": "plan",
+            "item_fingerprint": "837c668282539a015f2add5eb3c056b10d61335ee59896417cd3784fec7c46c9",
+            "files": [
+              "doc/features/bc-openCard-2/bank-card-opening-flow/contracts.yaml",
+              "doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md",
+              "doc/features/bc-openCard-2/bank-card-opening-flow/use-cases.yaml"
+            ],
+            "summary": "验收要求：`doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml:46-55` 将 AC-3 定义为 `ut_layer: both`，要求 UT 可驱动六位数字校验、60 秒倒计时状态机和重发门禁；`doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml:135-145` 将 BD-2 定义为 `ut_layer: both`，要求倒计时期间重复发送被忽略、归零后一次点击重启 60 秒。责任产物缺口：`doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md:231` 仍将 mobile、otp、countdown、sending、saving 设计为 OtpVerif"
+          }
+        ],
+        "deferred": false,
+        "summary_fingerprint": "5314fd18ff5e05d3ad1e81c6fea23305b09013b9656ee7b0ec3c667e8d4c3863",
+        "evidence_fingerprint": "25d356eb2879b26e77fbb52b3bba1df6f456baab5e33619385c7d71be5da301b"
+      },
+      {
+        "phase": "coding",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "44e67a803e4a455042257364a4443770e36b788eee85cf74790df68e0bdb780c",
+        "evidence_fingerprint": "8eb496077ecd0bf4cbc736b8ad84c652bca402b023c46eb620a4fb56b4c172a7"
+      },
+      {
+        "phase": "review",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "7ca793f354a790917b5cec23e6f87d1d18dcb4a2acd7f9fee0dd2ce685e9eb17",
+        "evidence_fingerprint": "72488ca474499ba0041488f186f25a1df8a107e717c4e43b1cb0abb4009b71f5"
+      },
+      {
+        "phase": "ut",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "4a8efa9cc3e345172a31cfd833a945eda64985a0bd2913f881569fa398bd0c20",
+        "evidence_fingerprint": "8d1b050b651ab3082ebaf219a3bc7e4469e489f57c5a2044583705477bd9df92"
+      },
+      {
+        "phase": "testing",
+        "summary_state": "current",
+        "schema_version": "1.3",
+        "verdict": "PASS",
+        "closure": "closed",
+        "closure_stale_detail": null,
+        "assurance": "full",
+        "required_assurance": null,
+        "assurance_satisfied": null,
+        "deferred": false,
+        "summary_fingerprint": "ed363d5567a7fe851c87b2a249bbeaf64fa1dc89693667900ea8adc6e736b0f3",
+        "evidence_fingerprint": "b915da0c976d92d7ee54fff0893a261f55598af7035237b294042128969b92a4"
+      }
+    ],
+    "degradations": [],
+    "pruned_propagations": []
+  },
+  "gaps": [
+    {
+      "phase": "plan",
+      "kind": "failed",
+      "detail": "open_finding:acceptance_to_interface: 已核实发现仍未处置：acceptance_to_interface：验收要求：`doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml:46-55` 将 AC-3 定义为 `ut_layer: both`，要求 UT 可驱动六位数字校验、60 秒倒计时状态机和重发门禁；`doc/features/bc-openCard-2/bank-card-opening-flow/acceptance.yaml:135-145` 将 BD-2 定义为 `ut_layer: both`，要求倒计时期间重复发送被忽略、归零后一次点击重启 60 秒。责任产物缺口：`doc/features/bc-openCard-2/bank-card-opening-flow/plan/plan.md:231` 仍将 mobile、otp、countdown、sending、saving 设计为 OtpVerif"
+    }
+  ],
+  "recommendation": {
+    "action": "stop",
+    "phase": null,
+    "reason": "phase_verdict:halt; failure_kind=code_regression",
+    "requires_driver_authorization": true,
+    "runner_action": "halt"
+  },
+  "alternatives": [],
+  "stop": {
+    "fused": false,
+    "reason": null
+  },
+  "run_status_candidate": null,
+  "feature_completion": null,
+  "projection_fingerprint": "69803256a666b13ae508c97a8ff7aba7b25556424ca56de3f105f9341fbe621f"
+}

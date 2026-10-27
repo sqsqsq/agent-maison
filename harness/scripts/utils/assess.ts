@@ -785,14 +785,16 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
   // 所有完成消费者消费同一处置；来源阶段只是证据出处，队列恢复真实修改/验证责任。
   for (const problem of observation.currentDisposition?.completionBlocking ?? []) {
     const phase = problem.owner && phaseOrder.has(problem.owner) ? problem.owner : problem.phase;
-    if (!phaseOrder.has(phase) || gaps.some(gap => gap.phase === phase)) continue;
+    if (!phaseOrder.has(phase)) continue;
     const kind: AssessGapKind = problem.action === 'wait' ? 'deferred'
       : problem.id === 'closure_commit_present' ? 'unclosed'
       : problem.id === 'lineage_fresh' ? 'stale'
       : problem.id === 'summary_schema_current' ? 'legacy_unverified' : 'failed';
-    gaps.push({ phase, kind, detail: `${problem.id}: ${problem.detail}` });
+    const detail = `${problem.id}: ${problem.detail}`;
+    if (!gaps.some(gap => gap.phase === phase && gap.detail === detail)) gaps.push({ phase, kind, detail });
   }
-  gaps.sort((a, b) => (phaseOrder.get(a.phase) ?? Infinity) - (phaseOrder.get(b.phase) ?? Infinity));
+  gaps.sort((a, b) => (phaseOrder.get(a.phase) ?? Infinity) - (phaseOrder.get(b.phase) ?? Infinity)
+    || Number(a.kind === 'unclosed') - Number(b.kind === 'unclosed'));
   return gaps;
 }
 
@@ -922,9 +924,18 @@ function recommendationForObservation(
   const phaseOutcome = observation.reconcile?.phase_outcome;
   // 当前阶段 PASS 不能吞掉已复用阶段的新发现；沿同一 gap/backtrack 通路处理。
   if (!fused && phaseOutcome?.verdict === 'PASS' && gaps.length) {
-    const currentIndex = observation.phases.findIndex(phase => phase.phase === phaseOutcome.phase);
-    const pending = gaps.find(gap => (gap.kind !== 'deferred' || gap.phase === phaseOutcome.phase)
-      && observation.phases.findIndex(phase => phase.phase === gap.phase) <= currentIndex);
+    const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
+    const currentIndex = phaseOrder.get(phaseOutcome.phase) ?? -1;
+    const pending = gaps.find(gap => {
+      // 共同处置已把具体工作排在 publication 之前；本职真实修复仍先于等待。
+      const currentProblems = observation.currentDisposition?.completionBlocking.filter(problem =>
+        (problem.owner && phaseOrder.has(problem.owner) ? problem.owner : problem.phase) === gap.phase) ?? [];
+      const currentTask = currentProblems.find(problem => problem.action === 'repair') ?? currentProblems[0];
+      // 具体等待已解释该阶段为何没有闭环证明；保留占位事实，但不由它另派一轮作者。
+      return (gap.kind !== 'deferred' || gap.phase === phaseOutcome.phase)
+        && !(gap.phase !== phaseOutcome.phase && currentTask?.action === 'wait')
+        && (phaseOrder.get(gap.phase) ?? -1) <= currentIndex;
+    });
     if (pending) return recommendationForGap(observation, pending, false);
   }
   if (!fused && phaseOutcome && observation.reconcile?.current_summary_fresh !== false) {

@@ -1,5 +1,15 @@
 # Framework 升级与迁移说明
 
+## 3.1.0 当前验收事实、必修送达与有界补核（plan c6ae8b4f）
+
+阶段的原始检查/verifier 总判继续保留；当前是否修复、补核、交接或披露统一读取共同处置。原总 PASS、closed 或旧有效回执不能遮住真实本职必修，建议也不因 MAJOR 标签自动升级。旧发现未核当前有效验收反证时，先交原验证方补核；冻结执行、断言、生产调用关系和源码/测试绑定支持有据关闭，不因文档预测落后重跑业务。真实接口、验收或执行条件变化仍须受影响复验。
+
+同阶段任务和诊断随现有 request/prompt 完整送达。引用支持唯一可定位的项目/Feature 相对路径，坏引用保留具体诊断，其余有效引用继续使用。纯补核复用合法下游来源，不改 facts 建立头部，也不宣称其它阶段的阅读是本作者已读。
+
+恢复可从已 settled、对应原 gate PASS 且外层只因待重核旧发现 FAIL 的 invoke 直接补 gate/核实；真实 gate FAIL、负面来源不明或业务输入失效不适用。纯补核/gate/转录不算内容返修，模型调用与墙钟仍累计；必要核实达到总轮数后，无需模型且墙钟允许的 closure/finalizer 可继续，不能启动超额模型调用。runner 不自行提额，既有显式授权和 `--override-manifest` 边界不变。
+
+消费者集成新发布件后沿原 framework-init UPDATE 刷新 Skill bridge、Claude phase-executor/verifier 及生成的 Codex verifier 角色。Codex 作者仍由 Skill/prompt 提供，不新增 phase-executor TOML。历史报告、事件、预算和业务源码不需人工改写；开发回放不代表宿主已验证，原 run 接续仍按实际发布安排执行。
+
 ## 3.1.0 完成与发布分立、调用事实与共同授权（plan 6fd6c8c1）
 
 **行为变化（消费者可见）**：

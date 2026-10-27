@@ -277,7 +277,7 @@ export interface PhaseRepairIssues {
   diagnostics?: string[];
 }
 
-function verifierSemanticChecks(reportText: string, phase: string, feature?: string): Record<string, unknown>[] {
+export function verifierSemanticChecks(reportText: string, phase: string, feature?: string): Record<string, unknown>[] {
   const findings: Record<string, unknown>[] = [];
   for (const block of reportText.matchAll(/```(?:yaml|yml)\s*\r?\n([\s\S]*?)```/g)) {
     try {
@@ -336,7 +336,9 @@ export function readVerifierSemanticIssues(projectRoot: string, feature: string,
     if (files.some(file => path.isAbsolute(file) || /^[A-Za-z]:/.test(file) || !isInsideProjectRoot(projectRoot, path.resolve(projectRoot, file)))) {
       diagnostics.push(`${finding.id}：affected_files 不是合法项目内目标；由原独立 verifier 核对实际责任产物。`); continue;
     }
-    const evidence = readableIssueEvidence(projectRoot, finding.details);
+    const referenceDiagnostics: string[] = [];
+    const evidence = readableIssueEvidence(projectRoot, finding.details, { feature, diagnostics: referenceDiagnostics });
+    diagnostics.push(...referenceDiagnostics.map(message => `${finding.id}：${message}；由原独立 verifier 明确证据引用。`));
     if (!evidence.length) { diagnostics.push(`${finding.id}：必需验收问题缺当前可读的项目相对路径:行号证据；由原独立 verifier 补核，不新增问题文件。`); continue; }
     let readable = true;
     for (const file of files) {
@@ -376,22 +378,36 @@ function verifiedRepairOwnerMatches(result: RepairResponsibility, verifiedOwner?
 }
 
 /** Current project-local evidence; no new evidence protocol or caller-provided freshness flag. */
-export function readableIssueEvidence(projectRoot: string, text: string): Array<{ label: string; content: string }> {
+export function readableIssueEvidence(projectRoot: string, text: string, context?: { feature?: string; diagnostics?: string[] }): Array<{ label: string; content: string }> {
   const out = new Map<string, string>();
   const refs = [...text.matchAll(/`([^`\r\n]+?):(\d+)(?:-(\d+))?`/g)];
   if (!refs.length) return [];
   for (const ref of refs) {
     const rel = ref[1].replace(/\\/g, '/').replace(/^\.\//, '');
-    const abs = path.resolve(projectRoot, rel);
-    if (!isInsideProjectRoot(projectRoot, abs) || path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) return [];
+    const fail = (reason: string): void => { context?.diagnostics?.push(`${ref[0]}：${reason}`); };
+    if (!isInsideProjectRoot(projectRoot, path.resolve(projectRoot, rel)) || path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) {
+      fail('证据引用越出项目范围'); continue;
+    }
+    const candidates = [path.resolve(projectRoot, rel)];
+    if (context?.feature) {
+      const { featureFilePath } = require('../../config') as typeof import('../../config');
+      const featureRoot = featureFilePath(projectRoot, context.feature, '');
+      const local = path.resolve(featureRoot, rel);
+      if (isInsideProjectRoot(featureRoot, local)) candidates.push(local);
+    }
+    const existing = [...new Set(candidates)].filter(file => fs.existsSync(file));
+    if (existing.length !== 1) {
+      fail(existing.length ? `证据引用有歧义：${existing.map(file => path.relative(projectRoot, file).replace(/\\/g, '/')).join('、')}` : '证据文件不存在'); continue;
+    }
+    const abs = existing[0];
     try {
-      if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return [];
+      if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) { fail('证据链接越出项目范围'); continue; }
       const content = fs.readFileSync(abs, 'utf8');
       const lines = content.split(/\r?\n/);
       const start = Number(ref[2]); const end = Number(ref[3] ?? ref[2]);
-      if (start < 1 || end < start || end > lines.length || !lines.slice(start - 1, end).join('').trim()) return [];
+      if (start < 1 || end < start || end > lines.length || !lines.slice(start - 1, end).join('').trim()) { fail('证据行号不存在或内容为空'); continue; }
       out.set(path.relative(projectRoot, abs).replace(/\\/g, '/'), content);
-    } catch { return []; }
+    } catch { fail('证据文件不可读取'); }
   }
   return [...out].map(([label, content]) => ({ label, content }));
 }
@@ -445,7 +461,9 @@ export function readPhaseRepairIssues(projectRoot: string, feature: string, phas
       }
       row.files = normalizeFiles(row.files.map(file => path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/')));
       if (currentPhaseOwnsRepairTarget(phase, row.files, authority())) { diagnostics.push(`${row.id}：修复目标属于当前 ${phase}，请在本阶段修正；上游提案应填写真正责任产物。`); return false; }
-      const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '');
+      const referenceDiagnostics: string[] = [];
+      const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature, diagnostics: referenceDiagnostics });
+      diagnostics.push(...referenceDiagnostics.map(message => `${row.id}：${message}；由原独立 verifier 明确证据引用。`));
       if (!evidence.length) { diagnostics.push(`${row.id}：缺少可读的当前证据；在问题描述提供 \`项目相对路径:行号\`，不能把证据文件误作修复目标。`); return false; }
       row.summary = [row.evidence, row.summary].filter(Boolean).join('；').replace(/\s+/g, ' ').trim();
       for (const file of evidence) evidenceFiles.set(file.label, file.content);
@@ -466,13 +484,16 @@ export function isDesignAuthorityRepairFile(file: string): boolean {
 
 /** The current subject must have read these exact proposal/evidence bytes, including runtime logs. */
 export function phaseIssuesForVerifierSubject(projectRoot: string, feature: string, phase: string, subjectId: string | null,
-  frameworkRoot?: string, phaseIssues?: PhaseRepairIssues | null, runId = process.env.MAISON_GOAL_RUN_ID?.trim()): PhaseRepairIssues | null {
+  frameworkRoot?: string, phaseIssues?: PhaseRepairIssues | null, runId = process.env.MAISON_GOAL_RUN_ID?.trim(),
+  currentEvidence?: { phaseIssues: PhaseRepairIssues | null; acceptanceEvidence: readonly import('./types').ContextFileEntry[];
+    authorityReaders?: import('./identity-neutral-digest').IdentityNeutralDigestReaders }): PhaseRepairIssues | null {
   const semantic = phase === 'spec' || phase === 'plan';
-  if (semantic || phaseIssues === undefined) phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase, { ...(semantic ? { subjectId } : {}), frameworkRoot, runId });
+  if (currentEvidence) phaseIssues = currentEvidence.phaseIssues;
+  else if (semantic || phaseIssues === undefined) phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase, { ...(semantic ? { subjectId } : {}), frameworkRoot, runId });
   if (!phaseIssues || phase === 'review') return phaseIssues;
   if (!subjectId) return null;
   const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
-  const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
+  const { readVerifierMaterialOrNull, collectCurrentAcceptanceEvidence } = require('./verifier-material') as typeof import('./verifier-material');
   const material = readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), subjectId);
   if (!material) return null;
   if (runId && designRepairDeclines(projectRoot, feature, runId).length) {
@@ -482,8 +503,10 @@ export function phaseIssuesForVerifierSubject(projectRoot: string, feature: stri
   }
   // A verifier report is this subject's output; hashing it as its own input creates a cycle.
   const manifestEvidence = semantic ? require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest') : undefined;
-  const digestReaders = semantic ? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() : undefined;
-  for (const file of [...(semantic ? [] : [phaseIssues.reportPath]), ...phaseIssues.evidenceFiles.map(entry => entry.label)]) {
+  const digestReaders = semantic ? currentEvidence?.authorityReaders ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() : undefined;
+  const acceptanceEvidence = semantic ? (currentEvidence?.acceptanceEvidence ?? collectCurrentAcceptanceEvidence({ projectRoot, feature, phase, frameworkRoot, subjectId, phaseIssues, runId, authorityReaders: digestReaders }))
+    .filter(entry => !entry.label.startsWith('(')) : [];
+  for (const file of [...(semantic ? [] : [phaseIssues.reportPath]), ...phaseIssues.evidenceFiles.map(entry => entry.label), ...acceptanceEvidence.map(entry => entry.label)]) {
     try {
       const recorded = material.files.find(entry => entry.path === file);
       if (!recorded) return null;
@@ -554,6 +577,18 @@ export interface ReviewDiagnosisContext {
   declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
   verifierSubjectCurrent?: boolean;
   diagnostics?: readonly string[];
+}
+
+/** Writer and runtime read the same proposal, diagnostics, refusal and subject context. */
+export function buildCurrentVerifierDiagnosisContext(input: {
+  projectRoot: string; feature: string; phase: string; frameworkRoot?: string; runId?: string;
+  subjectId: string | null; phaseIssues?: PhaseRepairIssues | null; verifierSubjectCurrent?: boolean;
+}): ReviewDiagnosisContext | undefined {
+  const issues = input.phaseIssues === undefined ? readPhaseRepairIssues(input.projectRoot, input.feature, input.phase,
+    { subjectId: input.subjectId, frameworkRoot: input.frameworkRoot, runId: input.runId }) : input.phaseIssues;
+  if (!issues) return undefined;
+  return { reportText: issues.reportText, rows: issues.rows, diagnostics: issues.diagnostics, sourcePhase: input.phase,
+    ...reviewRepairVerificationContext(input.projectRoot, input.feature, input.runId, input.verifierSubjectCurrent ?? true) };
 }
 
 /** 候选生产与失败诊断同一判据；合法 refuted/unclear 不因 verdict 本身被重投。 */
@@ -634,7 +669,8 @@ export function verifiedPhaseRepairIssues(input: {
 }): ReviewIssueRow[] {
   const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
   if (!verification.ok) return [];
-  return (input.phaseIssues?.rows ?? []).filter(row => !reviewIssueDiagnosis(row, verification.entries, { ...input, sourcePhase: input.phaseIssues?.phase })
+  return (input.phaseIssues?.rows ?? []).filter(row => !input.phaseIssues?.diagnostics?.some(message => message.startsWith(`${row.id}：`))
+    && !reviewIssueDiagnosis(row, verification.entries, { ...input, sourcePhase: input.phaseIssues?.phase })
     && verification.entries.find(entry => entry.issue === row.id)?.verdict === 'confirmed');
 }
 
@@ -849,7 +885,8 @@ export function findUnreadableDiagnosisChecks(
   if ((phase === 'coding' || phase === 'ut') && review?.rows?.length) {
     const verification = parseIssueVerificationBlock(verifierReportText);
     if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
-    return review.rows.flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, { ...review, sourcePhase: phase }); return reason ? [reason] : []; });
+    return [...(review.diagnostics ?? []).filter(message => review.rows!.some(row => message.startsWith(`${row.id}：`))),
+      ...review.rows.flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, { ...review, sourcePhase: phase }); return reason ? [reason] : []; })];
   }
   if (phase === 'ut') {
     return ['end_to_end_driving', 'business_assertion_value'].filter(

@@ -49,6 +49,7 @@ export function writeHostFile(root: string, rel: string, content: string): void 
 export function git(root: string, args: string[]): void {
   const r = spawnSync('git', args, { cwd: root, encoding: 'utf-8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  if (process.platform === 'win32' && args[0] === 'init') git(root, ['config', '--local', 'core.longpaths', 'true']);
 }
 
 /**

@@ -1,5 +1,7 @@
 # Code Review Skill (`code-review`)
 
+正式阶段在产出前和收口前读取[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)，按本次共同处置完成本职任务或合法交接；原总 PASS、旧回执或 closed 不遮住当前必修。独立请求仍到其授权终点结束。
+
 审查当前 diff、提交或指定文件；无需 Feature。默认只审不改，报告问题的触发条件、影响和文件依据。
 
 ## 按请求终点进入

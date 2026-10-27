@@ -70,6 +70,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'verification-gap', modulePath: './unit/verification-gap.unit.test' },
   { id: 'verifier-semantic-handoff', modulePath: './unit/verifier-semantic-handoff.unit.test' },
   { id: 'fe4512-semantic-recovery', modulePath: './unit/fe4512-semantic-recovery.unit.test', releaseOnly: true },
+  { id: 'c6-s2-recovery', modulePath: './unit/c6-s2-recovery.unit.test', releaseOnly: true },
   { id: 'fe4512-owner-repair-runtime', modulePath: './unit/fe4512-owner-repair-runtime.unit.test', releaseOnly: true },
   { id: 'current-disposition-recovery', modulePath: './unit/current-disposition-recovery.unit.test' },
   { id: 'disposition-runtime-repair', modulePath: './unit/disposition-runtime-repair.unit.test', releaseOnly: true },

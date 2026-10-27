@@ -331,7 +331,12 @@ function goalBalancedPlan(phase: string) {
  * 在 goal run 身份下跑 writer（生产里 harness 由 goal-runner 以这三个 env 拉起）。
  * summary.run_id 只在 `MAISON_GOAL_RUN_ID` 在场时落盘，check-receipt 的 goal 门禁要它。
  */
-function withGoalRunEnv<T>(runId: string, fn: () => T): T {
+function withGoalRunEnv<T>(root: string, runId: string, fn: () => T): T {
+  if (!fs.existsSync(path.join(root, 'doc/features/demo/goal-runs', runId, 'manifest.json'))) {
+    const manifest = buildGoalManifestFromInput({ feature: 'demo', adapter: 'claude', start_phase: 'spec', end_phase: 'testing', requirement: '', unattended: false },
+      { projectRoot: root, runId });
+    createGoalRun({ projectRoot: root, manifest, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] });
+  }
   const prev = process.env.MAISON_GOAL_RUN_ID;
   process.env.MAISON_GOAL_RUN_ID = runId;
   try {
@@ -443,7 +448,7 @@ function issueStrictSubject(
     contextFiles,
     ...(goalBriefText === undefined ? {} : { goalBriefText }),
   } as Parameters<typeof buildVerifierMaterialView>[0]);
-  const summary = withGoalRunEnv('run-X', () =>
+  const summary = withGoalRunEnv(root, 'run-X', () =>
     writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material }),
   );
   assert(Boolean(summary.verifier_subject_id), 'strict 轮必须签发 subject，否则本用例前提不成立');
@@ -493,7 +498,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       const subjectId = issueStrictSubject(root, 'review', report, []);
       publishFixtureVerifierEvidence({ projectRoot: root, reportsDir, feature: 'demo', phase: 'review', subjectId, verdict: 'FAIL', blockerCount: 1, skipSummaryPatch: true });
       setEvidenceProfile(root, 'balanced');
-      const summary = withGoalRunEnv('run-X', () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan('review') }));
+      const summary = withGoalRunEnv(root, 'run-X', () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan('review') }));
       assert(summary.verifier_subject_id === subjectId, '须保留同一份真实否决');
       assert(!!summary.disclosed_failures?.some(c => c.id === 'context_exploration_inputs_coverage'), '过程失败须披露');
       assert(summary.next_action === 'fix_verifier_findings_then_rerun_harness', summary.next_action);
@@ -762,7 +767,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           plan.mode === 'disabled' && plan.reason === 'policy_off',
           `构造性前提：goal×balanced×review 必须 policy_off，实得 ${plan.mode}/${plan.reason}`,
         );
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, path.dirname(HARNESS_ROOT), { verifierPlan: plan }),
         );
         assert(
@@ -813,7 +818,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const outRel = phaseOutputRelPath(root, 'review', 'review-report.md');
         fs.mkdirSync(path.dirname(path.join(root, outRel)), { recursive: true });
         fs.writeFileSync(path.join(root, outRel), '# review report（材料已变）\n', 'utf-8');
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, path.dirname(HARNESS_ROOT), { verifierPlan: goalBalancedPlan('review') }),
         );
         assert(
@@ -860,7 +865,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         setEvidenceProfile(root, 'balanced');
         // 材料真变：可选输入被删。其余材料与脚本投影一字未动。
         fs.rmSync(specAbs);
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, path.dirname(HARNESS_ROOT), { verifierPlan: goalBalancedPlan('review') }),
         );
         assert(
@@ -926,7 +931,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         });
         // 唯一变量：档位。manifest 面、gate、脚本投影一字未动。
         setEvidenceProfile(root, 'balanced');
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan('review') }),
         );
         assert(
@@ -977,7 +982,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         // reports 面内的文件改字节：不在比较面内 → 不构成材料换代。
         fs.writeFileSync(path.join(root, reviewReportRel), '# review report（改过，reports 面内）\n', 'utf-8');
         fs.writeFileSync(path.join(reportsDir, 'trace.json'), JSON.stringify({ schema_version: '1.0.0', changed: true }), 'utf-8');
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: goalBalancedPlan('review') }),
         );
         assert(
@@ -1004,7 +1009,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       try {
         const plan = goalBalancedPlan('review');
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, passScriptReport('review', root), path.dirname(HARNESS_ROOT), { verifierPlan: plan }),
         );
         assert(!summary.verifier_subject_id, '无报告时不得凭空沿用 subject');
@@ -1034,7 +1039,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       });
       try {
         const report = passScriptReport('review', root, [notApplicableSkipCheck()]);
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, path.dirname(HARNESS_ROOT), { verifierPlan: goalBalancedPlan('review') }),
         );
         assert(
@@ -1073,7 +1078,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           skipSummaryPatch: true,
         });
         setEvidenceProfile(root, 'balanced');
-        const summary = withGoalRunEnv('run-X', () =>
+        const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, report, path.dirname(HARNESS_ROOT), { verifierPlan: goalBalancedPlan('review') }),
         );
         assert(summary.blocking_skips.length === 0, `n/a SKIP 不得进 blocking_skips，实得 ${JSON.stringify(summary.blocking_skips)}`);

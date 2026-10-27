@@ -73,6 +73,8 @@ import {
   CU_SOURCE,
   CU_TEST,
   publishVerifier,
+  publishRequestedVerifier,
+  readDeliveredVerifierRequest,
   writeCodingMaterials,
   writePlanMaterials,
   writeReviewMaterials,
@@ -1082,17 +1084,24 @@ const REAL_PHASES = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 function realChainHooks(project: RealChainProject, overrides: {
   coding?: (ctx: { runId: string; attempt: number }) => void;
   testing?: (ctx: { runId: string; attempt: number }) => void;
+  reviewVerifier?: () => void;
 } = {}): Partial<Parameters<typeof runGoalRuntimeChain>[1]> {
   return {
-    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'spec'); },
-    onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'plan'); },
+    onOutOfChain: ctx => {
+      assert(REAL_PHASES.some(phase => ctx.phase === `${phase}-verifier-format-repair`), `unexpected model purpose: ${ctx.phase}`);
+      if (ctx.phase === 'review-verifier-format-repair' && overrides.reviewVerifier) {
+        assert(readDeliveredVerifierRequest(project, ctx)?.phase === 'review', 'review verifier must receive the actual current request');
+        overrides.reviewVerifier();
+      } else assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`);
+    },
+    onSpec: ctx => { project.runId = ctx.runId; writeSpecMaterials(project); },
+    onPlan: ctx => { project.runId = ctx.runId; writePlanMaterials(project); },
     onCoding: ctx => {
       project.runId = ctx.runId;
       if (overrides.coding) overrides.coding(ctx); else writeCodingMaterials(project);
-      if (ctx.attempt > 1) publishVerifier(project, 'coding');
     },
-    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'review'); },
-    onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); if (ctx.attempt > 1) publishVerifier(project, 'ut'); },
+    onReview: ctx => { project.runId = ctx.runId; writeReviewMaterials(project); },
+    onUt: ctx => { project.runId = ctx.runId; writeUtMaterials(project); },
     onTesting: ctx => {
       project.runId = ctx.runId;
       writeTestPlan(project);
@@ -1178,6 +1187,14 @@ const runS6: ScenarioRunner = async (_entry, done) => {
     let reviewFlagged = 0;
     let repairingExclusion = false;
     const hooks = realChainHooks(project, {
+      reviewVerifier: () => {
+        const report = readText(project.root, reviewReportRel(project));
+        if (report.includes(S6_ISSUE_FIX)) publishReviewConfirmation(project, { id: 'R-2', fileBase: path.basename(REAL_CHAIN_SOURCE), fix: S6_ISSUE_FIX });
+        else {
+          assert(report.includes('**审查结论**: 通过'), 'S6 verifier cannot approve an unknown review artifact');
+          publishVerifier(project, 'review');
+        }
+      },
       coding: () => {
         writeCodingMaterials(project);
         // 回退之后的 coding 按候选移除（writeCodingMaterials 即不含排除元素的实现）。
@@ -1206,11 +1223,9 @@ const runS6: ScenarioRunner = async (_entry, done) => {
         writeReviewWithIssue(project, {
           id: 'R-2', category: '其他', desc: `实现了需求明确排除的激活NFC元素（需求：「${S6_EXCLUSION}」）`, files: REAL_CHAIN_SOURCE, fix: S6_ISSUE_FIX,
         });
-        if (ctx.attempt > 1) publishReviewConfirmation(project, { id: 'R-2', fileBase: path.basename(REAL_CHAIN_SOURCE), fix: S6_ISSUE_FIX });
         return;
       }
       writeReviewMaterials(project);
-      if (ctx.attempt > 1) publishVerifier(project, 'review');
     };
     await realRun(project, prepared.scope.phase_chain.map(String), requirement, hooks);
     const [run] = listRuns(project.root, project.feature);
@@ -1275,6 +1290,14 @@ const runS7: ScenarioRunner = async (_entry, done) => {
     const specRel = `doc/features/${project.feature}/spec/spec.md`;
     const acceptanceRel = `doc/features/${project.feature}/acceptance.yaml`;
     const hooks = realChainHooks(project, {
+      reviewVerifier: () => {
+        const report = readText(project.root, reviewReportRel(project));
+        if (report.includes(S7_B_FIX)) publishReviewConfirmation(project, { id: 'R-2', fileBase: 'spec.md', fix: S7_B_FIX });
+        else {
+          assert(report.includes('**审查结论**: 通过'), 'S7 verifier cannot approve an unknown review artifact');
+          publishVerifier(project, 'review');
+        }
+      },
       testing: () => {
         // 冲突 A（位置：派生 Hylyre 计划 TC-002 第 1 步）：用屏 id `all_banks` 当元素 id——两套命名
         // （ui-spec 屏 id 与节点 id）对同一对象的描述不一致，非关键（动作步，不是身份断言）。
@@ -1296,11 +1319,9 @@ const runS7: ScenarioRunner = async (_entry, done) => {
           id: 'R-2', category: '其他', desc: 'spec.md 功能清单 F1=P0，acceptance 中 F1 的 AC-2 priority=P1，两处优先级不一致',
           files: `${specRel}, ${acceptanceRel}`, fix: S7_B_FIX,
         });
-        if (ctx.attempt > 1) publishReviewConfirmation(project, { id: 'R-2', fileBase: 'spec.md', fix: S7_B_FIX });
         return;
       }
       writeReviewMaterials(project);
-      if (ctx.attempt > 1) publishVerifier(project, 'review');
     };
     // 冲突 B 的执行者（spec 替身）：返修候选段里有候选即按目标拒修，逐候选追加到 spec 账本（写法取自候选段）。
     const onSpec = hooks.onSpec!;

@@ -2,13 +2,21 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
-import { clearFrameworkConfigCache, receiptDirPath } from '../../config';
+import { clearFrameworkConfigCache, receiptDirPath, featurePhaseReportsDir } from '../../config';
 import { resolveExecutionScope, affectedScopePhases, authorizedScopePhases, scopeDependencyEdges, scopeProofHistory, projectScopeSchedule, effectiveScopeView } from '../../scripts/utils/execution-scope';
 import { checkUpstreamVerdictGate, readUpstreamPhaseView } from '../../scripts/utils/upstream-verdict-gate';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, phaseEvidenceManifestPath } from '../../scripts/utils/phase-evidence-manifest';
 import { classifyCorrection, mapCategoryToPhase, mapCategoryToChainPhase } from '../../scripts/utils/correction-routing';
 import { setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
 import type { InputBinding } from '../../scripts/utils/capability-resolution';
+import { setupRunlessProject } from './execution-scope.unit.test';
+import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
+import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
+import { seedCleanCompletionChain, writeRunEvents } from '../utils/completion-chain-seed';
+import { collectPhaseCompletionIssues } from '../../scripts/utils/verify-feature-completion';
+import { resolveWorkflowSpec } from '../../workflow-loader';
+import type { ScopeHistoryEvent } from '../../scripts/utils/execution-scope';
+import type { CheckResult } from '../../scripts/utils/types';
 
 const FRAMEWORK = path.resolve(__dirname, '../../..');
 const workflow = loadWorkflowSpec(FRAMEWORK, 'obligation-driven');
@@ -25,7 +33,8 @@ const cases: Array<{ name: string; run(): void }> = [
     assert.deepStrictEqual(affectedScopePhases(['review'], workflow.auto_chain!, { scope, workflow }), ['review', 'testing']);
     assert.deepStrictEqual(affectedScopePhases(['coding'], workflow.auto_chain!, { scope, workflow }), ['coding', 'review', 'ut', 'testing']);
     const history = scopeProofHistory(scope, [{ type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' }, { type: 'phase_verdict', phase: 'ut', verdict: 'FAIL' }], workflow.auto_chain!, undefined, workflow);
-    assert(history.passed.has('review')); assert(!history.invalidated.has('review')); assert(history.invalidated.has('testing'));
+    assert(history.passed.has('review')); assert(!history.invalidated.has('review')); assert(history.invalidated.has('ut'));
+    assert(!history.invalidated.has('testing'), 'a current UT failure does not itself invalidate testing evidence bytes');
   } },
   { name: '真实绑定和control edge可增加依赖；没有依赖上下文时不再按队列后缀作废', run() {
     const scope = scopeFor(['coding', 'review', 'ut']);
@@ -54,10 +63,64 @@ const cases: Array<{ name: string; run(): void }> = [
     const inputEdges = [{ before: 'ut', after: 'review' }];
     assert.deepStrictEqual(affectedScopePhases(['ut'], workflow.auto_chain!, { scope, workflow: independent, inputEdges }), ['review', 'ut']);
     const history = scopeProofHistory(scope, [{ type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' }, { type: 'phase_verdict', phase: 'ut', verdict: 'FAIL' }], workflow.auto_chain!, undefined, independent, { inputEdges });
-    assert(!history.passed.has('review'));
-    assert(history.invalidated.has('review'));
+    assert(history.passed.has('review'));
+    assert(!history.invalidated.has('review'), 'input edges order current work; ordinary FAIL does not revoke another phase proof');
+    const explicitlyInvalidated = scopeProofHistory(scope, [{ type: 'phase_verdict', phase: 'review', verdict: 'PASS', action: 'advance' },
+      { type: 'phase_invalidated', phase: 'ut' }], workflow.auto_chain!, undefined, independent, { inputEdges });
+    assert(!explicitlyInvalidated.passed.has('review'));
+    assert(explicitlyInvalidated.invalidated.has('review'));
     const view = effectiveScopeView({ birth: scope, events: [], workflow: independent, reopen: 'ut', inputEdges });
     assert(view.phase_chain.indexOf('ut') < view.phase_chain.indexOf('review'));
+  } },
+  { name: 'current upstream failure blocks completion, resolved observation reuses descendants, and real revocations or stale inputs still reopen', run() {
+    const chain = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+    const f = setupRunlessProject({ chain });
+    try {
+      const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature });
+      assert.equal(frozen.status, 'frozen', JSON.stringify(frozen.checks));
+      const previous = readFeatureFrozenScope(f.root, f.feature)!.execution_scope;
+      const currentWorkflow = resolveWorkflowSpec(f.root, { frameworkRoot: f.frameworkRoot });
+      const source = path.join(f.root, 'src/demo/value.ts');
+      writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, phase: 'coding', extraInputs: [source] }));
+      seedCleanCompletionChain({ projectRoot: f.root, feature: f.feature, chain });
+      const initial: Array<Record<string, unknown>> = [{ type: 'run_start', chain },
+        ...chain.map(phase => ({ type: 'phase_verdict', phase, verdict: 'PASS', action: 'advance' }))];
+      const failed = [...initial, { type: 'phase_verdict', phase: 'plan', verdict: 'FAIL', action: 'retry' },
+        { type: 'phase_halt', phase: 'plan', halt_reason: 'content_retry_exhausted' }];
+      const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(f.root, f.feature, 'plan'), 'summary.json'), 'utf8'));
+      const check: CheckResult = { id: 'current_real_upstream_failure', category: 'structure', description: 'actual upstream check', status: 'FAIL',
+        severity: 'BLOCKER', details: 'upstream acceptance has not been verified', repair_owner: 'plan' };
+      const options = { projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, workflow: currentWorkflow,
+        previous, currentRunId: 'RUN1' };
+      writeRunEvents(f.root, f.feature, 'RUN1', failed);
+      const unresolved = resolveCurrentScopeView({ ...options, currentResults: [{ phase: 'plan', summary, checks: [check] }] });
+      assert(unresolved.phase_chain.includes('plan'));
+      assert(collectPhaseCompletionIssues({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, chain, workflow: currentWorkflow,
+        executionScope: unresolved, runId: 'RUN1', currentResults: [{ phase: 'plan', summary, checks: [check] }] })
+        .some(issue => issue.condition === check.id), 'real unresolved upstream FAIL still prevents Feature completion');
+      const resolvedEvents = [...failed, { type: 'phase_verdict', phase: 'plan', verdict: 'PASS', action: 'advance' }];
+      writeRunEvents(f.root, f.feature, 'RUN1', resolvedEvents);
+      const resolved = resolveCurrentScopeView(options);
+      assert.deepEqual(resolved.phase_chain, [], 'the original fresh descendant PASS proofs must survive a resolved upstream observation');
+      assert.deepEqual(collectPhaseCompletionIssues({ projectRoot: f.root, frameworkRoot: f.frameworkRoot, feature: f.feature, chain,
+        workflow: currentWorkflow, executionScope: resolved, runId: 'RUN1' }), []);
+      for (const event of [{ type: 'phase_invalidated', phase: 'coding' },
+        { type: 'phase_backtrack_requested', phase: 'review', from_phase: 'review', to_phase: 'coding' },
+        { type: 'phase_verdict', phase: 'coding', verdict: 'FAIL', action: 'retry' }]) {
+        writeRunEvents(f.root, f.feature, 'RUN1', [...resolvedEvents, event]);
+        assert(resolveCurrentScopeView(options).phase_chain.includes('coding'), JSON.stringify(event));
+      }
+      const newDuty = structuredClone(previous);
+      newDuty.obligations.push({ id: 'implementation:new', kind: 'implementation', owner_phase: 'coding', applicability: 'required', reason: 'new explicit work', basis: [] });
+      const newWork = scopeProofHistory(previous, [...initial, { type: 'scope_revised', execution_scope: newDuty }] as ScopeHistoryEvent[], chain, undefined, currentWorkflow);
+      assert(newWork.invalidated.has('coding') && newWork.invalidated.has('review'), 'an explicit new required duty still revokes its owner and actual consumers');
+      writeRunEvents(f.root, f.feature, 'RUN1', resolvedEvents);
+      const ownerSummary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(f.root, f.feature, 'coding'), 'summary.json'), 'utf8'));
+      assert(resolveCurrentScopeView({ ...options, currentResults: [{ phase: 'coding', summary: ownerSummary,
+        checks: [{ ...check, id: 'same_issue_reopened', repair_owner: 'coding' }] }] }).phase_chain.includes('coding'), 'current required work cannot borrow the old owner PASS');
+      fs.appendFileSync(source, '\nexport const changed = true;\n');
+      assert(resolveCurrentScopeView(options).phase_chain.includes('coding'), 'a genuine bound input change still rejects the old coding proof');
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
   { name: '原实现义务允许request必要验证；纯review request不能借队列/终点标签取得coding权限', run() {
     assert(authorizedScopePhases(scopeFor(['coding']), workflow).includes('ut'));

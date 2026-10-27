@@ -51,6 +51,7 @@ import {
   dumpPhase,
   publishVerifier,
   publishRequestedVerifier,
+  readDeliveredVerifierRequest,
   writeSpecMaterials,
   writePlanMaterials,
   writeCodingMaterials,
@@ -84,6 +85,8 @@ import {
 } from '../../scripts/utils/phase-state';
 import { sanitizeSpawnEnv, deleteEnvKeyCaseInsensitive } from '../../scripts/utils/process-integrity';
 import { computeRequestSubjectId, type VerifierRequest } from '../../scripts/utils/verifier-request';
+import { loadVerifierEvidence } from '../../scripts/utils/verifier-evidence';
+import { resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import type { VerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { isCheckNotApplicable, type CheckResult, type Phase } from '../../scripts/utils/types';
 
@@ -605,8 +608,18 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
   const bindingsByDigest = new Map<string, Record<string, ResolvedInput>>();
   const bindingProjection = (values: Record<string, ResolvedInput>): unknown => Object.entries(values)
     .map(([id, value]) => [id, value.state === 'resolved' ? value.binding : value]);
+  const captureBindings = (runId: string, goalAttemptId: string): void => {
+    const entry = resolveCapabilityResolutionEntryInput({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+      feature: project.feature, phase: 'ut', featuresDir: relFeaturesDir(project.root), goalRunId: runId, goalAttemptId });
+    const inputs = resolveCapabilityInputs({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+      feature: project.feature, phase: 'ut', track: 'full', ...entry }).inputs;
+    assert(!!inputs, 'RC-4 必须核对实际阶段输入绑定');
+    const digest = createHash('sha256').update(stableStringify(bindingProjection(inputs!.values))).digest('hex');
+    bindingsByDigest.set(digest, structuredClone(inputs!.values));
+  };
   /** 就绪门实际被调用的阶段（本条自备——显式 deviceGate 覆盖后 probe 的那份不再记录）。 */
   const gatedPhases: string[] = [];
+  const usedClocks = new Set<string>();
   try {
     const probe = await runGoalRuntimeChain(project.root, {
       onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
@@ -633,43 +646,46 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
       onUt: ctx => {
         project.runId = ctx.runId;
         subjectBefore[ctx.attempt] = readSummary(project, 'ut')?.verifier_subject_id;
-        const captureBindings = (): void => {
-          const entry = resolveCapabilityResolutionEntryInput({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
-            feature: project.feature, phase: 'ut', featuresDir: relFeaturesDir(project.root), goalRunId: ctx.runId, goalAttemptId: ctx.goalAttemptId });
-          const inputs = resolveCapabilityInputs({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
-            feature: project.feature, phase: 'ut', track: 'full', ...entry }).inputs;
-          assert(!!inputs, 'RC-4 必须核对实际阶段输入绑定');
-          const digest = createHash('sha256').update(stableStringify(bindingProjection(inputs!.values))).digest('hex');
-          bindingsByDigest.set(digest, structuredClone(inputs!.values));
-        };
-        // 新测试经首轮真实写入观测后才成为输入；下一轮写前读取原代，写后读取新代。
-        if (ctx.attempt > 1) captureBindings();
-        process.env.MAISON_TEST_AC_COVERAGE_NOW = RC4_CLOCKS[Math.min(ctx.attempt, RC4_CLOCKS.length) - 1];
+        process.env.MAISON_TEST_AC_COVERAGE_NOW = RC4_CLOCKS[0];
+        usedClocks.add(RC4_CLOCKS[0]);
         writeUtMaterials(project);
-        // 第 2 轮起改一次业务内容并**保持不变**：第 2 轮换代、之后必须稳定。
-        if (ctx.attempt >= 2) {
-          const abs = path.join(project.root, REAL_CHAIN_TEST);
-          fs.writeFileSync(abs, fs.readFileSync(abs, 'utf-8').replace(
-            'expect(banks.length).assertEqual(0);',
-            "expect(banks.length).assertEqual(0);\n    expect(typeof banks).assertEqual('object');",
-          ), 'utf-8');
-        }
-        if (ctx.attempt > 1) captureBindings();
-        if (ctx.attempt > 1) publishVerifier(project, 'ut');
       },
     });
     // 截断链（--end ut）以 `phase_closed_wait_user` 收尾，exitCode=2 是它的合法终态；
     // 判据落在阶段 verdict/closure 与 subject 上，不拿退出码冒充。
     const utPhases = probe.invokedPhases.filter(x => x === 'ut').length;
-    const final = readSummary(project, 'ut');
-    assert(final?.verdict === 'PASS' && final?.closure_status === 'closed',
+    const original = readSummary(project, 'ut');
+    assert(original?.verdict === 'PASS' && original?.closure_status === 'closed',
       `ut 未闭环：${dumpChain(project, ['spec', 'plan', 'coding', 'review', 'ut'])}`);
+    const utReportsDir = featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot);
+    const utAttemptId = phaseAttemptIdFromReceipt(project, 'ut');
+    const originalEvidence = loadVerifierEvidence(project.root, project.feature, 'ut', { frameworkRoot: project.frameworkRoot });
+    if (!originalEvidence.ok) throw new Error('初始真实闭环必须有原 subject 的有效核实');
+    const originalVerifierBytes = fs.readFileSync(originalEvidence.evidence.md_path_abs);
+    captureBindings(project.runId!, utAttemptId);
+    // 显式外部业务扰动：不用一次无意义的作者重写来制造第二代输入。
+    const testAbs = path.join(project.root, REAL_CHAIN_TEST);
+    const originalTest = fs.readFileSync(testAbs, 'utf8');
+    assert(originalTest.includes('expect(banks.length).assertEqual(0);'), 'RC-4 业务扰动必须命中实际测试正文');
+    fs.writeFileSync(testAbs, originalTest.replace('expect(banks.length).assertEqual(0);',
+      "expect(banks.length).assertEqual(0);\n    expect(typeof banks).assertEqual('object');"), 'utf8');
+    captureBindings(project.runId!, utAttemptId);
+    const businessRound = runGateHarness(project, 'ut', RC4_CLOCKS[1], utAttemptId, RC4_DEVICE_ENV);
+    assert(businessRound.status === 0, `真实业务变化后的 gate 不得被旁路：${businessRound.output.slice(-2400)}`);
+    assert(/\bmode=goal_mode\b/.test(businessRound.output), '业务扰动重评必须仍走原 Goal 身份路径');
+    usedClocks.add(RC4_CLOCKS[1]);
+    const final = readSummary(project, 'ut');
     const s3 = final!.verifier_subject_id ?? '';
     assert(/^[0-9a-f]{64}$/.test(s3), `ut summary 的 verifier_subject_id 形态非法：${s3}`);
+    assert(s3 !== original!.verifier_subject_id, '真实业务变化必须签发新 subject');
+    const changedEvidence = loadVerifierEvidence(project.root, project.feature, 'ut', { frameworkRoot: project.frameworkRoot });
+    const pending = resolveCompletionDisposition({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+      feature: project.feature, chain: ['ut'], runId: project.runId });
+    assert(!changedEvidence.ok && pending.completionBlocking.length > 0, '旧核实不得闭合新业务材料；本例不宣称新断言已真机通过');
+    assert(fs.readFileSync(originalEvidence.evidence.md_path_abs).equals(originalVerifierBytes), '初始核实原件必须保留');
 
     // 前提①：被改动的业务正文（UT 测试文件）在 subject 材料里——否则"内容变化必须换代"
     // 是空转。材料视图由生产 writer 落盘。
-    const utReportsDir = featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot);
     const materialAbs = path.join(utReportsDir, `verifier.material.${s3}.json`);
     assert(fs.existsSync(materialAbs), `verifier 材料视图未落盘：${materialAbs}`);
     const material = JSON.parse(fs.readFileSync(materialAbs, 'utf-8')) as { files: Array<{ path: string }> };
@@ -703,14 +719,15 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     const shaOf = (g: { view: MaterialView }): string | null =>
       g.view.files.find(f => f.path === REAL_CHAIN_TEST)?.sha256 ?? null;
     const dump = JSON.stringify({
-      harnessRounds, agentAttempts: utPhases, clocksUsed: utPhases,
+      harnessRounds: harnessRounds + 1, agentAttempts: utPhases, clocksUsed: usedClocks.size,
       generations: generations.map(g => ({ subject: g.subject.slice(0, 12), utTestSha: (shaOf(g) ?? '(none)').slice(0, 12) })),
       subjectBefore, finalSubject: s3.slice(0, 12),
     });
 
-    // 前提④：ut 真的跑了多轮且**每轮换一个时钟**，否则下面两条都没有对象。
+    // 原链与外部业务扰动都经过真实 gate；时钟注入不依赖重复作者。
     assert(harnessRounds >= 2, `ut 的 harness 只跑了 ${harnessRounds} 轮，取不到多时钟对照：${dump}`);
-    assert(utPhases >= 2, `ut 只调用了 ${utPhases} 次 agent，第二个时钟没被用上：${dump}`);
+    assert(utPhases === 1, `不应为时钟对照重新调用已产出有效材料的作者：${dump}`);
+    assert(usedClocks.size >= 2, `实际 gate 必须收到两个不同时钟：${dump}`);
 
     // ① 反洗白：业务内容换过一代，且换代确实由那份被改的 UT 正文驱动
     //（两代材料记录的该文件 sha 不同，末代与盘上字节一致）。
@@ -789,7 +806,6 @@ test('RC-4 verifier subject：时钟漂移不换代，业务内容变化必须�
     //    设备目标用甲段就绪门交出去的**同一个对象** `RC4_DEVICE_ENV`，不另造——否则乙段跑的
     //    是与甲段不同的环境（父进程回落 hmos-app 后 `ut.run` 属设备能力，就绪门会冻结 HDC 目标，
     //    生产在 `goal-phase-runtime.ts:8244` 把它传给 gate harness）。
-    const utAttemptId = phaseAttemptIdFromReceipt(project, 'ut');
     assert(gatedPhases.includes('ut'),
       `ut 没过就绪门，乙段带设备环境就失去依据：${JSON.stringify(gatedPhases)}`);
     const clockRound = (clock: string): { subject: string; request: VerifierRequest } => {
@@ -1318,8 +1334,23 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
     /** 回退发生后 coding 首次被调用时盘上的 ut summary / 未标注 SKIP——驱动回退的那一轮。 */
     let utAtBacktrack: (ReturnType<typeof readSummary> & { repair_candidates?: Array<Record<string, unknown>> }) | null = null;
     let skipsAtBacktrack: string[] = [];
+    const hasUpstreamGap = () => upstreamAudit && !fs.readFileSync(path.join(project.root, REAL_CHAIN_SERVICE), 'utf8').includes('!!id');
+    const publishAuditVerifier = (runId: string): void => {
+      const summary = readSummary(project, 'ut');
+      const issues = readPhaseRepairIssues(project.root, project.feature, 'ut', { frameworkRoot: project.frameworkRoot, runId });
+      assert(!!issues?.rows[0], '本次 UT 调用身份必须读到可核实的上游问题行');
+      publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
+        feature: project.feature, phase: 'ut', subjectId: summary?.verifier_subject_id, skipSummaryPatch: true,
+        reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${issues!.rows[0].summary}`, '```'].join('\n') });
+    };
     const probe = await runGoalRuntimeChain(project.root, {
-      onOutOfChain: ctx => { assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`); },
+      onOutOfChain: ctx => {
+        if (ctx.phase === 'ut-verifier-format-repair') {
+          assert(readDeliveredVerifierRequest(project, ctx)?.phase === 'ut', 'UT diagnosis must consume the actually delivered current request');
+          if (hasUpstreamGap()) publishAuditVerifier(ctx.runId);
+          else publishRc9bUtVerifier(project);
+        } else assert(publishRequestedVerifier(project, ctx), `unexpected model purpose: ${ctx.phase}`);
+      },
       frameworkRoot: project.frameworkRoot,
       featureId: project.feature,
       realHarness: true,
@@ -1361,7 +1392,7 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         project.runId = ctx.runId;
         writeUtMaterials(project);
         writeRc9bDag(project);
-        const upstreamGap = upstreamAudit && !fs.readFileSync(path.join(project.root, REAL_CHAIN_SERVICE), 'utf8').includes('!!id');
+        const upstreamGap = hasUpstreamGap();
         if (upstreamGap) fs.appendFileSync(featureFilePath(project.root, project.feature, 'ut/testability-audit.md'), [
           '', '## 问题清单', '', '| ID | 严重程度 | 分类 | 涉及文件 | 问题描述 | 修复建议 | 状态 |', '|---|---|---|---|---|---|---|',
           `| ${repairId} | MAJOR | 实现缺口 | ${REAL_CHAIN_SERVICE} | 当前 \`${REAL_CHAIN_SERVICE}:1\` 的业务入口缺空 id 防护，UT实际驱动该入口失败 | ${repairFix} | 未关闭 |`, '',
@@ -1369,21 +1400,8 @@ export async function rc9bUtBacktrackThroughCoding(upstreamAudit = false): Promi
         // 本轮内按 harness NEXT 指引完成诊断：自跑 harness 拿到本轮 subject → 发布 verifier 报告，
         // 外层 gate 以同一 subject 读到它（见段首「放弃的准确性」：报告留到下一轮才发布的两轮形态不覆盖）。
         runGateHarness(project, 'ut', undefined, ctx.goalAttemptId ?? '', RC4_DEVICE_ENV, 'agent');
-        if (upstreamGap) {
-          const summary = readSummary(project, 'ut');
-          const priorRunId = process.env.MAISON_GOAL_RUN_ID;
-          let issues: ReturnType<typeof readPhaseRepairIssues> = null;
-          try {
-            process.env.MAISON_GOAL_RUN_ID = ctx.runId;
-            issues = readPhaseRepairIssues(project.root, project.feature, 'ut');
-          } finally {
-            if (priorRunId === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRunId;
-          }
-          assert(!!issues?.rows[0], '本次 UT 调用身份必须读到可核实的上游问题行');
-          publishFixtureVerifierEvidence({ projectRoot: project.root, reportsDir: featurePhaseReportsDir(project.root, project.feature, 'ut', project.frameworkRoot),
-            feature: project.feature, phase: 'ut', subjectId: summary?.verifier_subject_id, skipSummaryPatch: true,
-            reportText: ['```issue-verification', `- issue: ${repairId}`, '  verdict: confirmed', `  evidence: BankService.ets | ${issues!.rows[0].summary}`, '```'].join('\n') });
-        } else publishRc9bUtVerifier(project);
+        if (upstreamGap) publishAuditVerifier(ctx.runId);
+        else publishRc9bUtVerifier(project);
       },
     });
     const events = probe.events;

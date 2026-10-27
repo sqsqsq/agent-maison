@@ -1616,6 +1616,9 @@ export interface ValidationOnlyOptions {
   requireInterrupt?: boolean;
   /** 产物/写入事实在场谓词；缺省不额外要求（由正式 gate 复查）。 */
   artifactsOk?: (fact: InvocationCompletionFact) => boolean;
+  phase?: string;
+  /** 当前共同处置要求重核的原发现；只有调用方同时验证产物/业务输入时才可复用旧外层 FAIL。 */
+  verificationRequiredFindingIds?: readonly string[];
 }
 
 /** 停机投影：不是“产品通过/失败”，而是“作者已完成、只差验证”的中断形状。 */
@@ -1644,11 +1647,16 @@ export function resolveValidationOnlyEligibility(
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
     const phase = phaseOf(event);
-    if (!phase) continue;
+    if (!phase || opts.phase && phase !== opts.phase) continue;
     const invokeId = typeof event.invoke_id === 'string' && event.invoke_id.length > 0 ? event.invoke_id : null;
     if (!invokeId || event.timed_out === true || event.kill_reason === 'agent_timeout') continue;
+    const start = [...events.slice(0, index)].reverse().find(row => row.type === 'agent_invoke_start'
+      && row.invoke_id === invokeId && phaseOf(row) === phase);
+    const chainPhase = event.chain_phase ?? start?.chain_phase;
+    if (typeof chainPhase === 'string' && chainPhase && chainPhase !== phase) continue;
     // 进程运输：settled 是完成观察；有 repair 请求时还须该请求的修复调用已完成。
     if (event.type === 'agent_process_settled') {
+      if (!events.slice(index + 1).some(row => row.type === 'harness_end' && phaseOf(row) === phase && row.invoke_id === invokeId)) continue;
       const ownerRequest = [...events].reverse().find(row => row.type === 'phase_backtrack_requested');
       if (ownerRequest?.to_phase === phase && !repairInvocationCompleted(events as never, phase, invokeId)) continue;
       fact = { phase, invoke_id: invokeId, transport: 'process', index };
@@ -1673,6 +1681,7 @@ export function resolveValidationOnlyEligibility(
   const after = events.slice(fact.index + 1);
   let interruptSeen = false;
   for (const event of after) {
+    if (event.type === 'run_end' && event.status === 'INTERRUPTED') interruptSeen = true;
     // 新回退窗口优先：任何 halt 之后的 backtrack 都把资格交给 applyInvalidationsToResume，
     // 旧 settled 不得覆盖新窗口（review P1；会话与后台同判）。
     if (event.type === 'phase_backtrack_requested') return null;
@@ -1682,15 +1691,24 @@ export function resolveValidationOnlyEligibility(
     if (event.type === 'agent_process_settled' || event.type === 'agent_invoke_end') return null;
     if (isInterruptionVerdict(event)) { interruptSeen = true; continue; }
     // 产品裁决（PASS/FAIL/其它 verdict）说明该阶段已经重新判定过，旧事实不再是“只差验证”。
-    if (event.type === 'phase_verdict') return null;
+    if (event.type === 'phase_verdict') {
+      const ids = typeof event.blocker_signature === 'string' ? event.blocker_signature.split('|').filter(Boolean) : [];
+      const original = event.reconcile_observation as { blockers?: unknown[]; deterministic_defects?: unknown[]; signals?: Record<string, unknown> } | undefined;
+      const gate = [...events.slice(fact.index + 1, events.indexOf(event))].reverse().find(row => row.type === 'harness_end'
+        && row.phase === fact!.phase && row.invoke_id === fact!.invoke_id);
+      const findingReverification = !!opts.artifactsOk && !!opts.verificationRequiredFindingIds?.length
+        && event.invoke_id === fact.invoke_id && event.verdict === 'FAIL' && event.harness_exit === 0
+        && event.stale_summary === false && event.agent_failed === false && gate?.exit_code === 0 && gate.timed_out !== true
+        && ids.length > 0 && ids.every(id => id.startsWith('open_finding:') && opts.verificationRequiredFindingIds!.includes(id))
+        && Array.isArray(original?.blockers) && original.blockers.length === 0
+        && Array.isArray(original?.deterministic_defects) && original.deterministic_defects.length === 0
+        && !Object.values(original.signals ?? {}).some(Boolean);
+      if (!findingReverification) return null;
+      interruptSeen = true;
+    }
     if (event.type === 'phase_halt' && event.run_disposition === 'WAITING') interruptSeen = true;
   }
-  // 进程运输的完成观察还需 harness_end（agent 做到 harness 边界）；会话 report 自带该观察。
-  if (fact.transport === 'process') {
-    const harnessEnded = events.slice(fact.index + 1).some(event =>
-      event.type === 'harness_end' && phaseOf(event) === fact.phase && event.invoke_id === fact.invoke_id);
-    if (!harnessEnded) return null;
-  }
+  // process 候选已逐条核过对应 harness_end；session report 自带完成观察。
   if (opts.requireInterrupt && !interruptSeen) {
     // 新中断窗口（halt/verdict）之外，也接受旧 phase_halt WAITING 形状（后台普通停等）。
     const halts = events.filter(event => event.type === 'phase_halt' && phaseOf(event) === fact!.phase

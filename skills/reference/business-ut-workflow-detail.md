@@ -173,7 +173,7 @@ UT 只拥有 profile 测试/夹具源目录，不拥有受保护业务源码。�
 
 **设备策略（BLOCKER，`ut.run` 需真机时）**：[device-policy-gate](device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止，含**凭据库不可读**，此时不得当成"未配置"去引导重新登记）；`code=device_policy_unset` 就**先问用户四选一**再跑装机/`aa test`（选 ③ 须追问 `existing`/`managed`，禁默认托管）。**只看 `code` 不看 `configured`**——凭据已 burned/不存在或只有 `emulator_fallback=disabled` 时，`configured=true` 而 `code=unset`。与 goal 模式同一契约——普通模式下用户同样有权知道"可以启用自动解锁"，而不是撞上一句干巴巴的"设备锁屏"。PIN 只能由用户在自己终端登记，**绝不进对话**。harness-runner 在需设备 phase 另有**进程级**入口门（同一 `code`，在任何设备操作前 fail-fast，并把设备目标解析一次注入全链），漏问不会静默跑到锁屏——但那只是兜底，四选一仍是你的活。
 
-**仅 Feature/CU 的归档定位协议**（专项按 request 入口）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证不得读取。 `<feature>` 语义见 [路径术语表](agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/contracts/acceptance/use-cases 是否存在）；输入缺失回上游补齐。
+**仅 Feature/CU 的归档定位协议**（专项按 request 入口）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证不得读取。 `<feature>` 语义见 [路径术语表](agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 只证明旧回执有效，随后读取当前共同处置：仍有本职必修则执行、待核交原 verifier、他职责沿合法交接；仅当前本职工作已清空才按已有授权处理 `phase.next_step`。展示输入矩阵（spec/plan/contracts/acceptance/use-cases 是否存在）；输入缺失回上游补齐。
 
 ## 条件加载索引
 
@@ -288,7 +288,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 11. **Step 7.5/7.6 编译与装机运行闭环**（必要出口，详见 reference）：`ut.compile`/`ut.run` 是必要出口非可选；自闭环修复策略按错误类型分类；**触及业务源码进约束#12 HARD STOP**；设备失败按 selfHealable/needsConfirmation/externalBlocked/clear 四类分流；绝不允许把"无设备"标 SKIP/PASS。
 12. **Step 8 Harness 验证门禁**：见下方门禁清单表；`stale_diff_base` 自动 `HARNESS_DIFF_BASE_REF=working` 重跑（**仅 review 未闭环的 git fallback 域**会出现该 failure_kind）；`summary.verdict=INCOMPLETE`（device 阻塞）不满足闭环；状态面板须完整贴给用户。
 13. **Step 8.0 Core 节点闭环闸门**：改动触及 Code Graph `core: true` 节点时启动可行性探测+更新图谱+同步 characterization/spec-driven UT（详见 reference）。
-14. **Step 8.2 AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`，prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+14. **Step 8.2 AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`，prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
 **Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
@@ -330,9 +330,9 @@ verifier 格式缺口须保留原回复和精确诊断；Goal 内返回 runtime�
 
 ## 阶段闭环判定（仅 Feature/CU）（全局入口 §5.1）
 
-**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供 ∧ 当前共同处置无本职责未完必修/待核**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
-1. `<features_dir>/<feature>/ut/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后业务级 UT 阶段完成，**具备**进 device-testing 的资格；**不授权**自动开 device-testing。
+1. `<features_dir>/<feature>/ut/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后业务级 UT 阶段完成，**具备**进 device-testing 的资格；**不授权**自动开 device-testing。
 
 **收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
 

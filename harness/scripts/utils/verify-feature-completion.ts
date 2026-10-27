@@ -51,6 +51,9 @@ import { phaseManifestBindsRuntimeArtifacts, validateRuntimeFidelityEvidenceDocu
 import { resolveP0DeviceObligations, loadAcceptanceFlowsDoc } from './p0-semantic-gates';
 import {
   loadPhaseEvidenceManifest,
+  evidenceEntryMatchesCurrentFile,
+  IDENTITY_NEUTRAL_EVIDENCE,
+  createRuntimeArtifactPredicate,
   recomputePhaseEvidenceStaleness,
   sha256File,
   stableStringify,
@@ -338,7 +341,10 @@ export interface CleanPassOptions {
   workflow?: WorkflowSpec;
   endpoint?: 'feature-completion' | 'request';
   /** 本轮生产中的完整原始结果，覆盖同一阶段的旧盘上材料。 */
-  currentResults?: ReadonlyArray<{ phase: string; summary: unknown; checks: readonly DispositionCheck[] }>;
+  currentResults?: ReadonlyArray<{ phase: string; summary: unknown; checks: readonly DispositionCheck[];
+    /** Same synchronous read action only; discard after any write or await. */
+    phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
+    acceptanceEvidence?: readonly import('./types').ContextFileEntry[] }>;
   projectRoot: string;
   feature: string;
   chain: string[];
@@ -453,11 +459,12 @@ function readDiagnosticFindings(
   frameworkRoot: string | undefined,
   subjectId: string | null,
   runId: string | undefined,
+  phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null,
 ): Array<{ id: string; detail: string }> {
   if (!subjectId || (phase !== 'spec' && phase !== 'plan')) return [];
   try {
     const { readPhaseRepairIssues, parseIssueVerificationBlock } = require('./repair-candidates') as typeof import('./repair-candidates');
-    const bound = readPhaseRepairIssues(projectRoot, feature, phase, { subjectId, frameworkRoot, runId });
+    const bound = phaseIssues === undefined ? readPhaseRepairIssues(projectRoot, feature, phase, { subjectId, frameworkRoot, runId }) : phaseIssues;
     if (!bound) return [];
     const out: Array<{ id: string; detail: string }> = [];
     for (const diagnostic of bound.diagnostics ?? []) {
@@ -560,6 +567,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       ...(checks === undefined ? { additionalProblems: [{ phase: opts.request.phase, id: 'verdict_pass', action: 'verify' as const,
         affects: 'completion' as const, severity: 'BLOCKER' as const, detail: `当前专项请求 ${opts.request.request_sha256} 尚无结果` }] } : {}) };
   }
+  opts = { ...opts, authorityReaders: opts.authorityReaders ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() };
   const { projectRoot, feature, chain } = opts;
   const staleness = chain.length
     ? recomputePhaseEvidenceStaleness(projectRoot, feature, chain, {
@@ -655,11 +663,34 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   // 来源阶段与修改责任不是同一维度。先读全部适用来源，再按当前终点选择其责任事实。
   const sources = [...new Set([...chain, ...(opts.executionScope ? executionCompletionPhases(opts.executionScope) : []),
     ...(opts.workflow?.artifacts.map(artifact => artifact.id) ?? [])])];
+  const isExecutionKey = (require('./verifier-material') as typeof import('./verifier-material')).currentAcceptanceExecutionKeyMatcher(opts);
   const findings = sources.flatMap(source => {
     const current = opts.currentResults?.find(result => result.phase === source);
     const summary = readSummaryLattice(projectRoot, feature, source, current?.summary);
     const subject = (summary.raw as { verifier_subject_id?: string } | null)?.verifier_subject_id ?? null;
     const registered = readRegisteredFindings(summary.raw, { ...responsibility, currentPhase: source });
+    let phaseIssues = current?.phaseIssues;
+    if (source === 'spec' || source === 'plan') {
+      if (phaseIssues === undefined) phaseIssues = (require('./repair-candidates') as typeof import('./repair-candidates'))
+        .readPhaseRepairIssues(projectRoot, feature, source, { subjectId: subject, frameworkRoot: opts.frameworkRoot, runId: opts.runId });
+      const { collectCurrentAcceptanceEvidence, readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
+      const evidence = current?.acceptanceEvidence ?? collectCurrentAcceptanceEvidence({ ...opts, phase: source, subjectId: subject, phaseIssues });
+      const reviewed = subject ? readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, source, opts.frameworkRoot), subject) : null;
+      if (evidence.filter(file => !file.label.startsWith('(')).some(file => !reviewed?.files.some(entry => entry.path === file.label
+        && (entry.sha256 === sha256File(path.resolve(projectRoot, file.label))
+          || evidenceEntryMatchesCurrentFile(projectRoot, { ...entry, role: 'input', exists: true, identity_neutral: IDENTITY_NEUTRAL_EVIDENCE }, feature, opts.authorityReaders))))) {
+        // Current counterevidence needs the original verifier; locating it never refutes a finding by itself.
+        if (!registered.length && reviewed?.files.some(file => isExecutionKey(file.path))) {
+          const { parseIssueVerificationBlock } = require('./repair-candidates') as typeof import('./repair-candidates');
+          const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+          const text = loadVerifierReportTextOrNull(projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, subjectId: subject });
+          for (const entry of parseIssueVerificationBlock(text ?? '').entries) if (entry.evidence) registered.push({
+            id: entry.issue, detail: `原核实的验收证据已变化或失效，须重核：${entry.evidence}`, owner: source, verificationRequired: true,
+          });
+        }
+        for (const finding of registered) { finding.owner = source; finding.verificationRequired = true; }
+      }
+    }
     if (!current) for (const finding of registered) {
       if (ownerAwaitingSourceVerification(source, finding.owner)) {
         // 修改职责已交回，缺陷仍开放；下一步是原验证方复核，不是再给同一修改方派一轮。
@@ -670,26 +701,39 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       const freshness = recomputePhaseEvidenceStaleness(projectRoot, feature, [source], {
         frameworkRoot: opts.frameworkRoot, runId: opts.runId, authorityReaders: opts.authorityReaders, pendingOwnerPhase: opts.pendingOwnerPhase,
       })[0];
+      const runtimeArtifact = createRuntimeArtifactPredicate({ projectRoot, feature, phase: source, frameworkRoot: opts.frameworkRoot });
+      const onlyRuntimeChanged = freshness?.verdict === 'stale' && !freshness.propagated_from
+        && freshness.changed_paths.length > 0 && freshness.changed_paths.every(runtimeArtifact);
       // 修改对象已变化时先交原验证方核实；旧候选不能绕过复验反复派同一修改方。
-      if (freshness?.verdict === 'stale' || freshness?.verdict === 'tampered') for (const finding of registered) {
+      if (freshness?.verdict === 'stale' && !onlyRuntimeChanged || freshness?.verdict === 'tampered') for (const finding of registered) {
         finding.owner = source;
         finding.verificationRequired = true;
       }
     }
-    const diagnostics = readDiagnosticFindings(projectRoot, feature, source, opts.frameworkRoot, subject, opts.runId)
+    const diagnostics = readDiagnosticFindings(projectRoot, feature, source, opts.frameworkRoot, subject, opts.runId, phaseIssues)
       .filter(finding => !registered.some(row => row.id === finding.id || row.id === `${source}:${finding.id}`))
       .map(finding => ({ ...finding, owner: source, verificationRequired: true }));
     const storedClosure = (summary.raw as { verifier_closure?: { mode?: string; reviewed_subject_id?: string; current_subject_id?: string; current_material_not_reverified?: string[] } } | null)?.verifier_closure;
     const closure = storedClosure ?? (subject && (source === 'spec' || source === 'plan')
       ? (require('./verifier-evidence') as typeof import('./verifier-evidence')).deriveVerifierClosureRecord(projectRoot, feature, source, opts.frameworkRoot) : null);
     if (closure?.mode === 'completed_with_prior_review' && closure.current_subject_id === subject && closure.reviewed_subject_id && closure.current_material_not_reverified?.length) {
-      const { readPhaseRepairIssues, verifiedPhaseRepairIssues } = require('./repair-candidates') as typeof import('./repair-candidates');
+      const { readPhaseRepairIssues, verifiedPhaseRepairIssues, parseIssueVerificationBlock } = require('./repair-candidates') as typeof import('./repair-candidates');
+      const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
       const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
       const priorIssues = readPhaseRepairIssues(projectRoot, feature, source, { subjectId: closure.reviewed_subject_id, frameworkRoot: opts.frameworkRoot, runId: opts.runId });
       const priorText = loadVerifierReportTextOrNull(projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, subjectId: closure.reviewed_subject_id });
       for (const row of verifiedPhaseRepairIssues({ phaseIssues: priorIssues, verifierReportText: priorText })) diagnostics.push({
         id: row.id, detail: `原独立发现尚未核对当前新增材料：${row.summary}`, owner: source, verificationRequired: true,
       });
+      const priorMaterial = readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, source, opts.frameworkRoot), closure.reviewed_subject_id);
+      const currentMaterial = subject ? readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, source, opts.frameworkRoot), subject) : null;
+      const evidenceChanged = closure.current_material_not_reverified.some(change => [...priorMaterial?.files ?? [], ...currentMaterial?.files ?? []]
+        .some(file => file.path === change.replace(/^[+-]/, '')));
+      if (evidenceChanged && priorMaterial?.files.some(file => isExecutionKey(file.path))) {
+        for (const entry of parseIssueVerificationBlock(priorText ?? '').entries) if (entry.evidence && !diagnostics.some(row => row.id === entry.issue)) diagnostics.push({
+          id: entry.issue, detail: `原核实结论尚未覆盖当前验收材料：${entry.evidence}`, owner: source, verificationRequired: true,
+        });
+      }
       diagnostics.push(...readDiagnosticFindings(projectRoot, feature, source, opts.frameworkRoot, closure.reviewed_subject_id, opts.runId)
         .map(finding => ({ ...finding, owner: source, verificationRequired: true })));
     }

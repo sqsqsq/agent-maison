@@ -19,11 +19,161 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest } from './phase-evidence-manifest';
+import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest, loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile, IDENTITY_NEUTRAL_EVIDENCE,
+  PHASE_OUTPUT_FILES_BY_PHASE, PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE, PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE } from './phase-evidence-manifest';
 import type { ContextFileEntry, Phase } from './types';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import type { FactsInvocationContext } from './context-facts';
 import { stableStringify } from './phase-evidence-manifest';
+import { isInsideProjectRoot } from './project-relative-path';
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
+
+/** The profile supplies the native filename; a missing reader never guesses an evidence anchor. */
+export function currentAcceptanceExecutionKeyMatcher(input: { projectRoot: string; frameworkRoot?: string }): (file: string) => boolean {
+  try {
+    const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+    const { loadResolvedProfile } = require('../../profile-loader') as typeof import('../../profile-loader');
+    const profile = loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), input.frameworkRoot);
+    if (!['.ts', '.js'].some(ext => fs.existsSync(path.join(profile.profileDir, 'harness', `execution-key${ext}`)))) return () => false;
+    const { tryLoadProfileHarnessModule } = require('../../profile-host-loader') as typeof import('../../profile-host-loader');
+    const filename = tryLoadProfileHarnessModule<{ EXECUTION_KEY_FILE?: string }>(profile.profileDir, 'execution-key')?.EXECUTION_KEY_FILE;
+    if (typeof filename === 'string' && filename.length) return file => file.endsWith(`/ut/${filename}`);
+  } catch { /* No native naming fact means no native anchor. */ }
+  return () => false;
+}
+
+/** Read-only evidence selection, shared by the phase entry and the original verifier producer. */
+export function collectCurrentAcceptanceEvidence(input: Pick<BuildVerifierMaterialInput,
+  'projectRoot' | 'feature' | 'phase' | 'frameworkRoot' | 'runId' | 'factsContext' | 'resolvedInputs'> & {
+  subjectId?: string | null;
+  phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
+  authorityReaders?: IdentityNeutralDigestReaders;
+}): ContextFileEntry[] {
+  if (input.phase !== 'spec' && input.phase !== 'plan') return [];
+  const { projectRoot, feature, phase } = input;
+  const { featurePhaseReportsDir, featureFilePath, artifactReadCandidatePaths, loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const reports = featurePhaseReportsDir(projectRoot, feature, phase, input.frameworkRoot);
+  let subject = input.subjectId;
+  if (subject === undefined) {
+    try { subject = JSON.parse(fs.readFileSync(path.join(reports, 'summary.json'), 'utf8')).verifier_subject_id; } catch { /* No previous subject. */ }
+  }
+  const material = subject ? readVerifierMaterialOrNull(reports, subject) : null;
+  const factsSubject = input.factsContext?.subject;
+  const runId = input.runId ?? (factsSubject && 'run_id' in factsSubject ? factsSubject.run_id : undefined);
+  const { readPhaseRepairIssues, verifierSemanticChecks } = require('./repair-candidates') as typeof import('./repair-candidates');
+  const issues = input.phaseIssues === undefined ? readPhaseRepairIssues(projectRoot, feature, phase,
+    { frameworkRoot: input.frameworkRoot, subjectId: subject, runId }) : input.phaseIssues;
+  const scopeIds = new Set((issues ? verifierSemanticChecks(issues.reportText, phase, feature) : []).flatMap(finding =>
+    finding.status === 'FAIL' && ['MAJOR', 'BLOCKER'].includes(String(finding.severity)) && Array.isArray(finding.acceptance_ids)
+      ? finding.acceptance_ids.filter((id): id is string => typeof id === 'string') : []));
+  const utReports = featurePhaseReportsDir(projectRoot, feature, 'ut', input.frameworkRoot);
+  const nativePrefix = toPosixRel(projectRoot, utReports) + '/';
+  const isExecutionKey = currentAcceptanceExecutionKeyMatcher(input);
+  const anchors = material?.files.filter(file => file.path.startsWith(nativePrefix) && isExecutionKey(file.path)) ?? [];
+  if (!scopeIds.size && !anchors.length) return [];
+  const read = (file: string): ContextFileEntry | null => {
+    const abs = path.resolve(projectRoot, file);
+    try {
+      if (!isInsideProjectRoot(projectRoot, abs) || !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return null;
+      const content = fs.readFileSync(abs, 'utf8');
+      return content.length > 64_000 ? { label: toPosixRel(projectRoot, abs), kind: 'path', content: `${fs.statSync(abs).size} bytes; read the bound original evidence at this path` }
+        : { label: toPosixRel(projectRoot, abs), content };
+    } catch { return null; }
+  };
+  let priorEntries: ContextFileEntry[] = [];
+  try {
+    const { loadResolvedProfile } = require('../../profile-loader') as typeof import('../../profile-loader');
+    const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), input.frameworkRoot);
+    // Native formats belong to the profile. Profiles without this reader retain ordinary unknown/verification semantics.
+    if (!['.ts', '.js'].some(ext => fs.existsSync(path.join(profile.profileDir, 'harness', `execution-key${ext}`)))) return [];
+    const { tryLoadProfileHarnessModule } = require('../../profile-host-loader') as typeof import('../../profile-host-loader');
+    const native = tryLoadProfileHarnessModule<typeof import('../../../profiles/hmos-app/harness/execution-key')>(profile.profileDir, 'execution-key');
+    if (!native?.listExecutionKeyRuns || !native.isExecutionRecordReusable || !native.utFrozenRunArtifacts || !native.utExecutionModules) return [];
+    const host = tryLoadProfileHarnessModule<Pick<typeof import('../../../profiles/hmos-app/harness/ut-host-impl'),
+      'utExecutionConfigFiles' | 'utAcceptanceSourcePaths' | 'currentUtExecutionInputs'>>(profile.profileDir, 'ut-host-impl');
+    if (!host?.utExecutionConfigFiles || !host.utAcceptanceSourcePaths || !host.currentUtExecutionInputs) return [];
+    const currentExecutionInputs = (record: import('../../../profiles/hmos-app/harness/execution-key').ExecutionKeyRecord, modules: string[]): boolean => {
+      const current = host.currentUtExecutionInputs(projectRoot, modules);
+      if (!current || record.inputs?.profile !== profile.name
+        || native.computeExecutionKey(record.inputs) !== record.execution_key) return false;
+      return current.tool_config_sha256 === record.inputs.tool_config_sha256 && JSON.stringify(current.flags) === JSON.stringify(record.inputs.flags);
+    };
+    const executionConfigFiles = host.utExecutionConfigFiles;
+    const unavailable = (reason: string): ContextFileEntry[] => [...priorEntries,
+      ...executionConfigFiles
+        .map(read).filter((entry): entry is ContextFileEntry => entry !== null),
+      { label: '(current acceptance evidence)', content: `旧发现的验收反证当前不可复用：${reason}。以上冻结件仅为历史依据，由原独立 verifier 核对具体缺口；不据此宣称验收已满足。` }];
+    let unavailableReason: string | undefined;
+    const fallback = (): ContextFileEntry[] => unavailableReason ? unavailable(unavailableReason) : priorEntries;
+    const latest = native.listExecutionKeyRuns(utReports, 'ut')[0];
+    const ownedArtifacts = new Set([
+      ...[...PHASE_OUTPUT_FILES_BY_PHASE[phase as Phase] ?? [], ...PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE[phase as Phase] ?? []]
+        .flatMap(name => artifactReadCandidatePaths(projectRoot, feature, name)).map(file => toPosixRel(projectRoot, file)),
+      ...(PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase as Phase] ?? []).map(file => toPosixRel(projectRoot, featureFilePath(projectRoot, feature, file))),
+    ]);
+    const anchoredSourcePaths = new Set(host.utAcceptanceSourcePaths(material?.files.map(file => file.path) ?? []));
+    const anchoredSources = material?.files.filter(file => anchoredSourcePaths.has(file.path) && !file.path.startsWith(nativePrefix)
+      || ownedArtifacts.has(file.path) || executionConfigFiles.includes(file.path)) ?? [];
+    // Closing the finding must not remove its counterevidence or bind a later routine test run into the plan.
+    for (const anchor of anchors) {
+      const recordFile = read(anchor.path);
+      priorEntries = [...anchoredSources.map(file => file.path), ...material!.files.filter(file =>
+        file.path.startsWith(path.posix.dirname(anchor.path) + '/')).map(file => file.path)]
+        .map(read).filter((entry): entry is ContextFileEntry => entry !== null);
+      if (!recordFile || sha256FileOrNull(path.resolve(projectRoot, anchor.path)) !== anchor.sha256) { unavailableReason = '原材料绑定的执行键缺失或字节变化'; continue; }
+      let record: import('../../../profiles/hmos-app/harness/execution-key').ExecutionKeyRecord;
+      try { record = JSON.parse(recordFile.content); if (!Array.isArray(record.frozen_files)) throw new Error('invalid frozen files'); }
+      catch { unavailableReason = '原材料绑定的执行键不可解析'; continue; }
+      const modules = native.utExecutionModules(record);
+      const frozenPaths = (record.frozen_files ?? []).map((name: string) => path.posix.join(path.posix.dirname(anchor.path), name));
+      if (!frozenPaths.every((file: string) => material?.files.some(entry => entry.path === file
+        && entry.sha256 === sha256FileOrNull(path.resolve(projectRoot, file))))) { unavailableReason = '原材料绑定的冻结执行原件缺失或字节变化'; continue; }
+      if (!currentExecutionInputs(record, modules)) { unavailableReason = '原执行键的当前配置、工具链或执行 flags 已变化或无法确认'; continue; }
+      if (!modules.length || !native.isExecutionRecordReusable(record, path.dirname(path.resolve(projectRoot, anchor.path)),
+        { executionKey: record.execution_key, artifacts: native.utFrozenRunArtifacts(modules) }).ok) continue;
+      priorEntries = [...anchoredSources.map(file => file.path), anchor.path,
+        ...record.frozen_files.map((name: string) => path.posix.join(path.posix.dirname(anchor.path), name))].map(read).filter((entry): entry is ContextFileEntry => entry !== null);
+      if (latest && latest.record.execution_key === record.execution_key && latest.record.outcome === 'failed') {
+        priorEntries.push(...[native.EXECUTION_KEY_FILE, ...(latest.record.frozen_files ?? [])]
+          .map(name => read(toPosixRel(projectRoot, path.join(latest.runDir, name))))
+          .filter((entry): entry is ContextFileEntry => entry !== null));
+        break;
+      }
+      if (anchoredSources.every(file => sha256FileOrNull(path.resolve(projectRoot, file.path)) === file.sha256
+        || evidenceEntryMatchesCurrentFile(projectRoot, { ...file, role: 'input', exists: true, identity_neutral: IDENTITY_NEUTRAL_EVIDENCE }, feature, input.authorityReaders))) {
+        const paths = [...anchoredSources.map(file => file.path), anchor.path,
+          ...record.frozen_files.map((name: string) => path.posix.join(path.posix.dirname(anchor.path), name))];
+        const entries = paths.map(read);
+        if (entries.every((entry): entry is ContextFileEntry => entry !== null)) return entries;
+      }
+    }
+    if (!latest) return fallback();
+    const manifest = loadPhaseEvidenceManifest(projectRoot, feature, 'ut');
+    if (!manifest?.integrityOk) return fallback();
+    const bound = [...manifest.manifest.inputs, ...manifest.manifest.outputs];
+    const { loadCoverageEvidence } = require('./coverage-evidence') as typeof import('./coverage-evidence');
+    const coverage = loadCoverageEvidence(projectRoot, feature);
+    const tests = scopeIds.size ? coverage?.feature === feature ? [...new Set((coverage.mappings ?? [])
+      .filter(mapping => scopeIds.has(mapping.scope_id) && mapping.evidence_source === 'ut_tags')
+      .map(mapping => mapping.evidence_ref).filter((file): file is string => !!file))] : []
+      : manifest.manifest.outputs.filter(entry => entry.owner_phase === 'ut' && anchoredSources.some(file => file.path === entry.path)).map(entry => entry.path);
+    if (!tests.length) return fallback();
+    if (tests.some(file => !bound.some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, input.authorityReaders)))) return fallback();
+    const modules = native.utExecutionModules(latest.record);
+    if (!currentExecutionInputs(latest.record, modules)) return anchors.length ? unavailable(unavailableReason ?? '当前执行输入未覆盖旧冻结证据') : [];
+    if (!modules.length || !native.isExecutionRecordReusable(latest.record, latest.runDir,
+      { executionKey: latest.record.execution_key, artifacts: native.utFrozenRunArtifacts(modules) }).ok) return fallback();
+    // Include the actual assertions and bound production call chain; a tag or success label is only a locator.
+    const sourcePaths = new Set(host.utAcceptanceSourcePaths(bound.map(entry => entry.path), tests));
+    const sourceEntries = bound.filter(entry => sourcePaths.has(entry.path));
+    if (!sourceEntries.length || sourceEntries.some(entry => !evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, input.authorityReaders))) return fallback();
+    const paths = [...anchoredSources.filter(entry => ownedArtifacts.has(entry.path) || executionConfigFiles.includes(entry.path)).map(entry => entry.path),
+      ...sourceEntries.map(entry => entry.path), toPosixRel(projectRoot, path.join(latest.runDir, native.EXECUTION_KEY_FILE)),
+      ...(latest.record.frozen_files ?? []).map(name => toPosixRel(projectRoot, path.join(latest.runDir, name)))];
+    const entries = [...new Set(paths)].map(read);
+    return entries.every((entry): entry is ContextFileEntry => entry !== null) ? entries : fallback();
+  } catch { return priorEntries; }
+}
 
 export const VERIFIER_MATERIAL_SCHEMA = 'maison-verifier-material@1';
 
@@ -96,6 +246,8 @@ export function computeMaterialSha256(view: Omit<VerifierMaterialView, 'material
 }
 
 export interface BuildVerifierMaterialInput {
+  /** Existing invocation identity, read-only context; not a material/request field. */
+  runId?: string;
   deviceTestEvidence?: { trace_path?: unknown };
   resolvedInputs?: ResolvedPhaseInputs;
   factsContext?: FactsInvocationContext;
@@ -144,7 +296,10 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
     /* manifest 解析失败（无 frameworkRoot 等）→ 只按上下文文件寻址 */
   }
 
-  for (const cf of input.contextFiles) {
+  const isExecutionKey = currentAcceptanceExecutionKeyMatcher(input);
+  const acceptanceEvidence = input.contextFiles.some(file => isExecutionKey(file.label) || file.label === '(current acceptance evidence)')
+    ? [] : collectCurrentAcceptanceEvidence(input);
+  for (const cf of [...input.contextFiles, ...acceptanceEvidence]) {
     const abs = cf.imagePath
       ? cf.imagePath
       : cf.label && !cf.label.startsWith('(') && !path.isAbsolute(cf.label)

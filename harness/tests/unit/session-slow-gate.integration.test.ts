@@ -6,6 +6,7 @@ import * as YAML from 'yaml';
 import { spawn, spawnSync } from 'child_process';
 import { prepareSessionCliProject } from '../utils/session-cli-project';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { readDeliveredVerifierRequest } from './real-chain.unit.test';
 import type { SessionExecutionRequest } from '../../scripts/utils/session-execution-handoff';
 import type { UnitCaseResult } from '../run-unit';
 import { startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
@@ -19,6 +20,7 @@ const RUN_ID = 'session-cli';
 const FEATURE = 'clamp';
 const SOURCE = 'src/math/src/main/clamp.ts';
 const TEST = 'src/math/src/test/clamp.test.ts';
+const VERIFIER_BODY = 'Deterministic verifier model substitute for a process-containment regression. Product source and native compiler/tests remain real; this is not a model-quality acceptance.';
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 function readJson(file: string): any { return JSON.parse(fs.readFileSync(file, 'utf8')); }
 function write(root: string, file: string, text: string): void {
@@ -102,9 +104,27 @@ function selfCheck(root: string, request: SessionExecutionRequest): void {
   if (summary.verdict !== 'PASS') throw new Error(`Real ${ctx.phase} self-check failed: ${JSON.stringify(readJson(path.join(reports, 'script-report.json')).checks.filter((check: any) => check.status === 'FAIL'))}`);
   assert(summary.verifier_subject_id, 'real self-check must issue its verifier subject');
   publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature: FEATURE, phase: ctx.phase, subjectId: summary.verifier_subject_id,
-    reportText: 'Deterministic verifier model substitute for a process-containment regression. Product source and native compiler/tests remain real; this is not a model-quality acceptance.', skipSummaryPatch: true });
+    reportText: VERIFIER_BODY, skipSummaryPatch: true });
   const closed = run(root, 'harness-runner', [...args, '--sync-closure'], ctx.phase + '-sync-closure');
   assert.equal(closed.status, 0, closed.stderr + closed.stdout);
+}
+function requestedVerifier(root: string, execution: SessionExecutionRequest): boolean {
+  const ctx = execution.context;
+  if (!ctx.phase.endsWith('-verifier-format-repair')) return false;
+  assert.equal(ctx.phase, 'ut-verifier-format-repair');
+  assert.equal(ctx.runId, RUN_ID); assert.equal(ctx.owner.run_id, RUN_ID);
+  const request = readDeliveredVerifierRequest({ root, feature: FEATURE, frameworkRoot: path.join(root, 'framework'),
+    harnessDir: path.join(root, 'framework/harness'), module: 'math', modulePath: 'src/math' },
+  { phase: ctx.phase, prompt: ctx.instruction ?? '', runId: ctx.runId });
+  assert(request && request.phase === 'ut');
+  const reports = path.dirname(path.join(root, request.prompt_path));
+  fs.readFileSync(path.join(root, SOURCE)); fs.readFileSync(path.join(root, TEST));
+  const tap = fs.readFileSync(path.join(reports, 'node-tests.tap'), 'utf8');
+  assert.match(tap, /^# tests 3$/m); assert.match(tap, /^# pass 3$/m); assert.match(tap, /^# fail 0$/m);
+  publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature: FEATURE, phase: request.phase, subjectId: request.subject_id,
+    reportText: VERIFIER_BODY + `\n| id | status | severity | 证据 |\n|---|---|---|---|\n| end_to_end_driving | PASS | BLOCKER | ${TEST} 直接调用 ${SOURCE} 的 clamp，原生 node-tests.tap 执行3条测试 |\n| business_assertion_value | PASS | BLOCKER | AC-1/2/3 用真实 expect/assert.equal 检查 0/10/4，原生 TAP 3 pass/0 fail |\n`,
+    skipSummaryPatch: true });
+  return true;
 }
 async function interruptedReport(root: string, requestPath: string, runDir: string): Promise<void> {
   const stdout = fs.openSync(path.join(root, 'observations/killed-report.stdout.log'), 'w');
@@ -150,7 +170,7 @@ async function execute(): Promise<void> {
     let killed = false;
     for (let turn = 0; turn < 6 && step?.type === 'phase_execute_request'; turn++) {
       const requestPath = step.request.path as string; const request = readJson(requestPath) as SessionExecutionRequest;
-      authorMaterials(root, request); selfCheck(root, request);
+      if (!requestedVerifier(root, request)) { authorMaterials(root, request); selfCheck(root, request); }
       if (!killed) {
         assert.equal(request.context.phase, 'coding');
         await interruptedReport(root, requestPath, runDir); killed = true;
@@ -174,6 +194,8 @@ async function execute(): Promise<void> {
     assert.equal(events.filter(event => event.type === 'harness_start' && event.process_role === 'harness' && event.phase === 'coding').length, 2);
     assert.equal(events.filter(event => event.type === 'harness_end' && event.phase === 'coding').length, 1);
     assert(!events.some(event => event.type === 'agent_process_settled'), 'session recovery cannot manufacture an agent process settlement');
+    assert(!events.some(event => event.type === 'budget_turns' || event.type === 'budget_wall_clock'), 'same-run recovery must stay within the original budget');
+    assert.equal(readJson(path.join(runDir, 'manifest.json')).run_id, RUN_ID);
     assert(fs.existsSync(path.join(runDir, 'feature-completion.json')));
     assert.equal(rows(path.join(root, 'observations/author-calls.jsonl')).length, 3);
     assert.equal(readJson(path.join(root, 'doc/features/clamp/ut/reports/summary.json')).verdict, 'PASS');
