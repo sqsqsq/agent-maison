@@ -12,6 +12,7 @@ import { prepareSessionCliProject } from '../utils/session-cli-project';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { facts as requestFacts } from './request-entry.unit.test';
 import { readDeliveredVerifierRequest } from './real-chain.unit.test';
+import { designRepairCompletionTransport } from './design-authority-repair.unit.test';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
@@ -232,6 +233,20 @@ async function runRequest(root: string, name: string): Promise<any> {
 }
 
 const cases: Array<{ name: string; run(): Promise<void> }> = [{
+  name: 'a7b615ff completed exit1 and accepted session passed perform identical checked design publication rebinding and continuation',
+  async run() {
+    const detached = await designRepairCompletionTransport('detached');
+    const session = await designRepairCompletionTransport('session');
+    assert.deepStrictEqual(detached, session, 'the same approved inputs and authorization must produce the same business outcome and total calls');
+  },
+}, {
+  name: 'a7b615ff waiting with exit0 cannot enter design questioning or publish in either transport',
+  async run() {
+    const detached = await designRepairCompletionTransport('detached', true);
+    const session = await designRepairCompletionTransport('session', true);
+    assert.deepStrictEqual(detached, session);
+  },
+}, {
   name: '1804 same Node assertion inputs fail and recover through detached session and request with real finalizers',
   async run() {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-transport-parity-'));

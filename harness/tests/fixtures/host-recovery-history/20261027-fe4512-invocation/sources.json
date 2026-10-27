@@ -1,0 +1,150 @@
+{
+  "captured_at": "2026-10-27T11:35:23.604Z",
+  "read_only": true,
+  "cutoff": "2026-10-27T07:15:56.571Z",
+  "entries": [
+    {
+      "file": "events.prefix.jsonl",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\goal-runs\\20261023T044016Z-fe4512\\events.jsonl",
+      "source_sha256": "42cd2850e674e24f649d42cf0a908df92186be5f30481b99a1c6ee276a116635",
+      "source_bytes": 3113844,
+      "source_mtime": "2026-10-27T07:18:07.210Z",
+      "sha256": "07c3b11c4605c8422d305187dca00802d119becb84caef621780c5a8cf71e08b",
+      "bytes": 4391,
+      "extraction": {
+        "method": "原始行：最早 run_start 加 2026-10-27 当前会话截至固定截点的连续原始事件；不改字段",
+        "cutoff": "2026-10-27T07:15:56.571Z",
+        "source_lines": [
+          2,
+          659,
+          660,
+          661,
+          662,
+          663,
+          664,
+          665,
+          666,
+          667,
+          668,
+          669,
+          670,
+          671,
+          672,
+          673,
+          674,
+          675
+        ],
+        "omitted": "省略此前完整执行历史；因此不用于证明历史累计 turns=30，只复现当前阶段与工作面错读"
+      }
+    },
+    {
+      "file": "manifest.projection.json",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\goal-runs\\20261023T044016Z-fe4512\\manifest.json",
+      "source_sha256": "8a1b923d0b1a996fd29677e580083c81fff177e844d425c6f49db28b74e03a2e",
+      "source_bytes": 51592,
+      "source_mtime": "2026-10-27T07:11:25.819Z",
+      "sha256": "bc61d594dcb19fc777dc135297b8afae24acfa223ca71f14157798dc094b39af",
+      "bytes": 849,
+      "extraction": {
+        "method": "仅抽取投影必要 manifest 键；不复制 requirement/execution_scope 业务资料"
+      }
+    },
+    {
+      "file": "detach.canary.txt",
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\goal-runs\\20261023T044016Z-fe4512\\detach.log",
+      "source_sha256": "fbdfb88f91f33e85acd0f9b6c326ee4cd2e6956dc8da81df71a527e69aca2569",
+      "source_bytes": 592033,
+      "source_mtime": "2026-10-27T07:18:07.249Z",
+      "sha256": "739194cc95b1cbf89d5b74e2d140fa844480eb71b63b500305bdb202e5127b3f",
+      "bytes": 1967,
+      "extraction": {
+        "method": "指定四条原始诊断行，前缀为原件行号"
+      }
+    },
+    {
+      "file": "canary-23.task-complete.jsonl",
+      "source": "C:\\Users\\shengqsq\\.codex\\sessions\\2026\\10\\23\\rollout-2026-10-23T00-40-38-01a1670f-92e3-71f1-972a-1bc173db2315.jsonl",
+      "source_sha256": "1219dc7d77c6a11a6e9dd4afccf6c0a864732f99b7886ae496666ba02b65dc42",
+      "source_bytes": 140876,
+      "source_mtime": "2026-10-23T04:40:39.118Z",
+      "sha256": "471a9dc543b0de46b4f9de0857c98cc3573f2096e0c006e8753cc4ab36f6c96e",
+      "bytes": 393,
+      "extraction": {
+        "method": "仅原始 event_msg/task_complete 答卷完成行；非 CLI stdout/turn.completed",
+        "source_lines": [
+          22
+        ]
+      }
+    },
+    {
+      "file": "canary-24.task-complete.jsonl",
+      "source": "C:\\Users\\shengqsq\\.codex\\sessions\\2026\\10\\24\\rollout-2026-10-24T12-22-00-01a16eb8-0a49-7f90-a655-1c9b14c63801.jsonl",
+      "source_sha256": "fc2e99e90b8fab3308ca9e619caa3f3ea68db2964ae23a8d291ce537b443c2fe",
+      "source_bytes": 140165,
+      "source_mtime": "2026-10-24T16:22:00.439Z",
+      "sha256": "1226b0eb22c407c00aeb56e98d5b00b91a164e28d1bc7264e70209f5a4b324f1",
+      "bytes": 393,
+      "extraction": {
+        "method": "仅原始 event_msg/task_complete 答卷完成行；非 CLI stdout/turn.completed",
+        "source_lines": [
+          22
+        ]
+      }
+    },
+    {
+      "file": "canary-26.task-complete.jsonl",
+      "source": "C:\\Users\\shengqsq\\.codex\\sessions\\2026\\10\\26\\rollout-2026-10-26T04-07-19-01a1773f-d474-7500-a150-053dbbfd763a.jsonl",
+      "source_sha256": "ad4ead7bbab31d1912fe81c44178b0fbe71a740666e1c932169be98b2520ef27",
+      "source_bytes": 143144,
+      "source_mtime": "2026-10-26T08:07:19.233Z",
+      "sha256": "3c158e55ffb3ba37f9d4dc72a2e396980e016e0364a5d80fc827a6fa7f3f9476",
+      "bytes": 394,
+      "extraction": {
+        "method": "仅原始 event_msg/task_complete 答卷完成行；非 CLI stdout/turn.completed",
+        "source_lines": [
+          22
+        ]
+      }
+    },
+    {
+      "file": "canary-27.task-complete.jsonl",
+      "source": "C:\\Users\\shengqsq\\.codex\\sessions\\2026\\10\\27\\rollout-2026-10-27T03-11-01-01a17c32-a655-7280-8ba1-b6f57d334b86.jsonl",
+      "source_sha256": "d9066a7473b7c8e9bda3670f5661282138f608e36a021dc813a7d11c4196552d",
+      "source_bytes": 139400,
+      "source_mtime": "2026-10-27T07:11:02.115Z",
+      "sha256": "f34b36aa4dbead02162312e751cc2066ae68a7a96690b612fff20fbab5abf149",
+      "bytes": 395,
+      "extraction": {
+        "method": "仅原始 event_msg/task_complete 答卷完成行；非 CLI stdout/turn.completed",
+        "source_lines": [
+          18
+        ]
+      }
+    }
+  ],
+  "log_stats": [
+    {
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\goal-runs\\20261023T044016Z-fe4512\\phases\\plan\\agent-output.log",
+      "relative_to_run": "phases/plan/agent-output.log",
+      "sha256": "a64657a7efde8c6b4dd066b3096795dde52fe566834313b7e4ca42cceaf422b9",
+      "bytes": 374276,
+      "mtime": "2026-10-26T08:35:53.849Z"
+    },
+    {
+      "source": "D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\bank-card-opening-flow\\goal-runs\\20261023T044016Z-fe4512\\phases\\plan-verifier-format-repair\\plan-verifier-format-repair-i28-7611d248ab56\\agent-output.log",
+      "relative_to_run": "phases/plan-verifier-format-repair/plan-verifier-format-repair-i28-7611d248ab56/agent-output.log",
+      "sha256": "3b74782b7aa162bcd2e6a929596aa6b9dd56133c6b45de2492da0e1617deb469",
+      "bytes": 1688106,
+      "mtime": "2026-10-27T07:16:47.652Z"
+    }
+  ],
+  "missing": [
+    "原随机卷答案未保留；四份历史答卷只证明回答和 task_complete，不能追认判卷正确",
+    "四次 canary 的 CLI 原始 stdout 未保留；协议等价 JSONL 如用于测试须标为构造",
+    "链外日志截点时的 mtime/size 未保留；源统计为最终文件状态，不能证明截点时新鲜；回放隔离 mtime 明确为构造",
+    "manifest 省略 execution_scope，事件省略此前历史；夹具用于局部投影，非历史预算全量重建"
+  ],
+  "constructed": [
+    "测试隔离工作日志仅占位并设置早于截点的可控 mtime；不复制真实日志内容或使用最终未来 mtime"
+  ]
+}

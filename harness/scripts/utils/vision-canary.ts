@@ -17,6 +17,7 @@ import Jimp from 'jimp';
 import { extractClaudeFinalResultText, planUsesClaudeStreamJson } from './claude-envelope';
 import { extractCodexAgentMessageText } from './codex-terminal-events';
 import { codexTerminalFailureStatus } from './goal-headless-sentinel';
+import { invocationCompleted, type InvocationCompletionFacts } from './invocation-completion';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
@@ -270,7 +271,7 @@ export function classifyCanaryResponse(
 // ---------------------------------------------------------------------------
 
 /** goal headless 调用事实（AgentInvokeResult 子集——探测有效性须消费完整调用状态） */
-export interface CanaryInvocationFacts {
+export interface CanaryInvocationFacts extends InvocationCompletionFacts {
   stdout: string;
   exitCode: number;
   timed_out?: boolean;
@@ -383,7 +384,7 @@ export function parseCanaryAnswer(
 
 /**
  * goal 路径唯一写盘判据（plan c7d2e9a4 t2/t3，codex 三轮收敛）：
- * ① invoke 事实先行——skipped/timed_out/silent_killed/非零退出 = 调用没成，与答卷无关；
+ * ① 共享调用完成资格先行；完成后的非零清理退出不代替答卷判卷；
  * ② 严格答卷解析（防 prompt echo 双杀——canary prompt 自身含全部答题键行与
  *    CANNOT_SEE_IMAGE 字面，isCanaryAnswerComplete 的 `KEY=` 在场判据会被回显骗过，
  *    classifyCanaryResponse 的 CANNOT_SEE 全文子串判会直接误判 none）：
@@ -400,18 +401,15 @@ export function resolveCanaryCacheDecision(
   // b7e4d2a9 Todo4：编译期必传（原默认参=固定卷，随机图+固定答案的漏传形态 TS 直接阻止）
   answerKey: CanaryAnswerKey,
 ): CanaryCacheDecision {
-  if (invocation.skipped) {
-    return { kind: 'invoke_failed', cache: false, detail: 'invoke 被跳过（dry-run/skipped）' };
-  }
-  if (invocation.timed_out || invocation.silent_killed) {
-    return {
-      kind: 'invoke_failed',
-      cache: false,
-      detail: invocation.timed_out ? 'invoke 超时被杀' : 'invoke 静默无输出被杀（silent watchdog）',
-    };
-  }
-  if (invocation.exitCode !== 0) {
-    return { kind: 'invoke_failed', cache: false, detail: `invoke 非零退出（exitCode=${invocation.exitCode}）` };
+  if (!invocationCompleted(invocation)) {
+    const detail = invocation.skipped ? 'invoke 被跳过（dry-run/skipped）'
+      : invocation.status === 'waiting' ? 'invoke 等待执行报告（waiting）'
+      : invocation.timed_out || invocation.kill_reason === 'agent_timeout' ? 'invoke 超时被杀'
+      : invocation.silent_killed ? 'invoke 静默无输出被杀（silent watchdog）'
+      : invocation.spawn_error ? 'invoke 无法启动（spawn_error）'
+      : invocation.terminal_failure_observed ? 'invoke 观测到失败终态'
+      : `invoke 未完成（exitCode=${invocation.exitCode}${invocation.status ? `，status=${invocation.status}` : ''}）`;
+    return { kind: 'invoke_failed', cache: false, detail };
   }
 
   const parsed = parseCanaryAnswer(invocation, answerKey);

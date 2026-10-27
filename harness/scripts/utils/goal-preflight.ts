@@ -471,25 +471,23 @@ export async function runVisionCanaryProbe(input: {
       };
     }
     const decision = resolveCanaryCacheDecision({
-      stdout: invoke.stdout,
-      exitCode: invoke.exitCode,
-      timed_out: invoke.timed_out,
-      silent_killed: invoke.silent_killed,
-      skipped: invoke.skipped,
+      ...invoke,
       // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
       // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
       structured_stdout: canaryStructuredStdout,
       ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
-      // 调用失败时带出 adapter terminal 原文（codex turn.failed 等），不让 400/401 只剩一个 exitCode；
-      // 没有终态信封时回退到 stderr 最后一行非空文字（去控制字符，plan c3f8a2d7 §3.4）。
-      const stderrTail = (invoke.stderr ?? '').split(/\r?\n/).map(line => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g, ' ').trim()).filter(Boolean).pop();
-      const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt || stderrTail : undefined;
+      // 明确终态优先；缺席时保留 stderr 尾行供排障，不将其定性为失败原因（plan c3f8a2d7 §3.4）。
+      const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt : undefined;
+      const stderrTail = decision.kind === 'invoke_failed' && !excerpt
+        ? (invoke.stderr ?? '').split(/\r?\n/).map(line => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g, ' ').trim()).filter(Boolean).pop()
+        : undefined;
       return {
         ran: true,
         outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',
-        error: excerpt ? `${decision.detail}：${excerpt.slice(0, 500)}` : decision.detail,
+        error: excerpt ? `${decision.detail}：${excerpt.slice(0, 500)}`
+          : stderrTail ? `${decision.detail}；stderr 尾行（仅供排障、未必是原因）：${stderrTail.slice(0, 500)}` : decision.detail,
       };
     }
     const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };

@@ -102,6 +102,8 @@ npx ts-node scripts/goal-mode-entry.ts --report-result '@phases/<phase>/<invoke-
 
 未完成回 `failed` 或 `waiting`。`@` 明确表示相对本 run 的 JSON 输入文件，也兼容 UTF-8 BOM；旧内联 JSON 仍可读，PowerShell 5.1 使用文件形式避免原生参数丢引号。执行者只可写 `next_command` 为当前已签请求指定的 `result-e<epoch>.json`，不得改写其它 goal-runs 文件；CLI 归档报告与写后事实，run/phase/attempt/owner/epoch 仍从原请求与事件核对。report 可能返回下一请求、真实等待或完成结果；本次 HALTED/INTERRUPTED 返回真实原因和非零退出码，不能按历史等待盲目 `--next`。主 Agent 只消费，不另造 assess/回退循环。链外设计作者/独立质询/格式修复也用同一交接，严格按用途 instruction 执行，不运行普通阶段 harness 或签 Feature receipt。
 
+后台与会话共用调用完成判据：waiting、failed、跳过与明确失败事实优先；否则退出 0 或已观测完成终态可进入原后续核验。完成后清理返回非零保留原码，不单独否定完成；调用完成仍须经过原答卷判卷、独立质询、设计检查与授权发布。失败原因读取明确终态错误或 spawn/超时/退出事实，不能以 stderr 任意末行的 WARN 代替。
+
 同一请求未上报时重领返回原件，不增 attempt、计次或重拍前快照；先看已有产物再续作。相同报告重发只复用回执，冲突报告拒绝。已接受后中断只补 gate/finalizer；不能重调作者、伪造 `agent_process_settled` 或并发第二个 gate。当前 fence 未变而请求自然到期时沿原 agent_timeout 收口，保留真实写入/消耗；实际受管作业终态须先消费，不能以 lease 过期冒充物理停止。
 
 正式 gate 可运行较长时间：按当前返回的 `gate_timeout_ms + cleanup_reserve_ms` 安排宿主工具时限；支持原生后台任务时等待同一任务句柄到终态，不能重复 report 催进度。工具无法给足时限且无可等待句柄时，启动 gate 前如实报能力缺口。长 stdout/stderr 留在本 run 日志，现场只读结论/报告路径。若报告 CLI 被杀，再接回先核上一 gate 结束/回收，保留已收报告，只续验证。
@@ -164,6 +166,7 @@ npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --sinc
   转出时报告 `run_id`、真实 phase/attempt、继续执行或停放状态、触及的监控上限与 `goal-status --feature <f> --run-id <id>` 续查入口，然后结束轮次。交还监控不等于完成终态交付，不能宣称已经完成；用户后续追问时按 status 现查现答。
 - **禁自建长驻桥**：不得自建 `tail detach.log` 之类长驻桥接进程变相恢复 stdout 监听——`--detach` 下 runner stdout 已全进 `detach.log`，不是事件通道；若未来存在非 detached、有活 stdout 的路径再按 L4 声明式设计，不在话术层保留。
 - 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` / `goal-monitor`（实时重算锁 pid）。
+- 链外调用的工作面、证据、日志和硬截止属于同一 invoke：后台读取 `phases/<label>/<invoke_id>/agent-output.log`，会话展示原请求/报告，无日志即 missing，不借旧阶段日志。没有日志或缓冲输出不证明停滞；真实过期流式输出、硬超时和失活仍按原规则显示。
 - 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。
 - **活性信号唯一权威 = `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍）；判断「是否卡死」只看这些。**
 - **BLOCKER（chrys / opencode 等无流式 headless adapter）**：`phases/<phase>/agent-output.log` 在该 phase **结束前恒为空**（chrys 结束才一次性写 stdout、opencode 流式但中途可长时间静默）——**禁止** tail 该日志判断进度或卡死；看到它空 ≠ runner 卡住。误把空日志当卡死会触发错误的 `--resume` / 重复起 run（chrys 实测坑）。

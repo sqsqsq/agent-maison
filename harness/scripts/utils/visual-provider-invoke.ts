@@ -30,6 +30,7 @@
 // ============================================================================
 
 import { createHash } from 'crypto';
+import { invocationCompleted } from './invocation-completion';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -572,9 +573,8 @@ export async function invokeVisualProvider(
   if (result.terminal_failure_observed === true) {
     return fail('unavailable', `provider 观测到失败终态：${result.terminal_error_excerpt ?? 'terminal failure'}`, common);
   }
-  // completion 观测成立即视为「跑完了」（完成≠通过）；否则以退出码判传输面失败。
-  if (result.exitCode !== 0 && result.completion_observed !== true) {
-    return fail('unavailable', `provider 非零退出（exit=${result.exitCode}）`, common);
+  if (!invocationCompleted(result)) {
+    return fail('unavailable', `provider 调用未完成（exit=${result.exitCode}）`, common);
   }
 
   const projected = projectVisualProviderBody(decl.declaration.stdout_envelope, result);

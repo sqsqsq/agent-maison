@@ -579,6 +579,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     if (derived.status !== 'pass' || blockers.length) {
       throw new AttemptFailure('validation', `草稿未通过校验 / 准入（${derived.status}）：${blockers.map(issue => `${issue.id}@${issue.path}`).slice(0, 12).join(', ')}`);
     }
+    // 报告完整不代表质询认可；显式否定走既有失败出口，远期 open_decision 仍沿原规则。
+    const denied = asRecords(asRecord(reviewOf(questioned).questioning)?.items).filter(item => item.disposition === 'blocker');
+    if (denied.length) {
+      throw new AttemptFailure('questioning', `独立质询否定草稿，不发布：${denied.map(item => `${String(item.scope_ref)}：${String(item.answer ?? item.question)}`).join('；')}`);
+    }
     fs.writeFileSync(draftFile, text);
     // ⑥ 发布：单写者，先复核 canonical 字节仍等于基线（两层锁约束不了所有手工写入者）；rename 成功即发布边界。
     const alreadyPublished = fs.readFileSync(canonicalPath).equals(Buffer.from(text));

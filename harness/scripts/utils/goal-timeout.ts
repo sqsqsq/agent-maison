@@ -10,6 +10,7 @@
 
 import type { FeaturePhase } from './phase-transition-policy';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
+import { invocationCompleted, type InvocationCompletionFacts } from './invocation-completion';
 
 export interface PhaseTimeoutManifestView {
   unattended?: {
@@ -81,7 +82,7 @@ export function canAffordBackoff(configuredBackoffMs: number, availableMs: numbe
 // ============================================================================
 // P0-5（plan 7c4f2e9b）：超时预算——授予高水位 + 实测棘轮（codex P1#8 + 五轮收敛）。
 // 事故实证：i3 已获授 67.5min 且以 exit0@49.6min 证明全量一遍成本，i4/i5 仍回落 45min
-// 被腰斩。completed 的 SSOT 钉死为 agent_invoke_end.exit_code===0 && timed_out!==true
+// 被腰斩。completed 由共享调用完成判据识别（含完成后清理的非零退出）。
 // （i2 是 harness-PASS 但 agent 超时、i3 是 agent exit0 但 harness FAIL——棘轮只认后者）。
 // 两值均从 events 重建（--resume 不丢）。显式配置=hard cap 不被棘轮突破，但实测逼近/超过
 // 时输出 advisory（诚实呈现不可自愈面）。
@@ -92,11 +93,11 @@ export const OBSERVED_RATCHET_FACTOR = 1.2;
 export interface TimeoutRatchetObservations {
   /** 本 phase 曾授予过的最高 effective_timeout_ms（agent_invoke_start/end + timeout_escalated 事件重建） */
   grantedHighwaterMs: number;
-  /** 本 phase completed attempt（exit_code===0 && !timed_out）的最大 duration_ms；无则 0 */
+  /** 本 phase 已完成调用的最大 duration_ms；无则 0（不依赖 harness PASS）。 */
   maxCompletedDurationMs: number;
 }
 
-interface RatchetEventLike {
+interface RatchetEventLike extends InvocationCompletionFacts {
   type?: string;
   phase?: string;
   exit_code?: number;
@@ -122,8 +123,7 @@ export function extractTimeoutRatchetFromEvents(
     }
     if (
       e.type === 'agent_invoke_end' &&
-      e.exit_code === 0 &&
-      e.timed_out !== true &&
+      invocationCompleted({ ...e, exitCode: e.exit_code }) &&
       typeof e.duration_ms === 'number' &&
       e.duration_ms > completed
     ) {

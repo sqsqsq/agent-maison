@@ -2405,6 +2405,10 @@ test('t3 review超时走invalid恢复，明确传输面失败保持unavailable',
       ['terminal failure', { terminal_failure_observed: true }],
       ['non-zero exit', { exitCode: 2 }],
       ['spawn error', { spawn_error: { message: 'CLI 缺失' } }],
+      ['waiting exit0', { status: 'waiting', completion_observed: true }],
+      ['failed exit0', { status: 'failed', completion_observed: true }],
+      ['skipped exit0', { skipped: true, completion_observed: true }],
+      ['silent killed', { silent_killed: true, completion_observed: true }],
     ] as Array<[string, Record<string, unknown>]>) {
       const inv = await call(r);
       assert.strictEqual(inv.outcome, label === 'timeout' ? 'invalid' : 'unavailable', label);
@@ -2418,6 +2422,10 @@ test('t3 review超时走invalid恢复，明确传输面失败保持unavailable',
     // 内容面失败（有回应但信封投不出正文）判 invalid，与传输面分开
     const invalid = await call({ stdout: 'not an envelope' });
     assert.strictEqual(invalid.outcome, 'invalid');
+    const completed = await call({ exitCode: 1, completion_observed: true, kill_attempted: true, lingering_pipe: true,
+      stdout: '{"type":"result","subtype":"success","is_error":false,"result":"payload"}\n' });
+    assert.strictEqual(completed.outcome, 'success', 'completion survives cleanup exit1 and still projects the original envelope');
+    assert.strictEqual(completed.body, 'payload');
     // 声明缺失同样 unavailable（不抛错）
     const noDecl = await invokeVisualProvider({
       projectRoot: tmp, frameworkRoot: FRAMEWORK_ROOT,

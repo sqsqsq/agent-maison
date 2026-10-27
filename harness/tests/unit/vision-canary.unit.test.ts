@@ -13,12 +13,50 @@ import {
 } from '../../scripts/utils/vision-canary';
 import { FIXTURE_CANARY_KEY } from '../utils/canary-fixture-key';
 import type { UnitCaseResult } from '../run-unit';
+import { AttendedGoalPhaseExecutor, DetachedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'a7 executors: detached cleanup completes with original exit1; failures win and attended waiting remains waiting/exit0',
+    run: async () => {
+      const context = { phase: 'plan' } as never;
+      const completed = { exitCode: 1, stdout: '', stderr: '', command: 'fake', completion_observed: true, kill_attempted: true };
+      for (const negative of [{}, { timed_out: true }, { silent_killed: true }, { terminal_failure_observed: true },
+        { skipped: true }, { spawn_error: { message: 'missing' } }]) {
+        const executor = new DetachedGoalPhaseExecutor(() => ({ plan: {} as never, cwd: '.' }),
+          (async () => ({ ...completed, ...negative })) as never);
+        const result = await executor.execute(context);
+        assert(result.status === (Object.keys(negative).length ? 'failed' : 'passed'), JSON.stringify(result));
+        assert(result.exitCode === 1, 'raw cleanup exit1 must be retained');
+      }
+      const waiting = await new AttendedGoalPhaseExecutor(async () => ({ status: 'waiting' })).execute(context);
+      assert(waiting.status === 'waiting' && waiting.exitCode === 0, JSON.stringify(waiting));
+      assert(resolveCanaryCacheDecision({ ...waiting, stdout: 'CANNOT_SEE_IMAGE' }, FIXTURE_CANARY_KEY).kind === 'invoke_failed', 'waiting exit0 cannot be graded');
+    },
+  },
+  {
+    name: 'a7 canary: completed Codex cleanup exit1 enters classifier while explicit negatives never grade',
+    run: () => {
+      const answer = 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q';
+      const invocation = { exitCode: 1, completion_observed: true, stdout: [
+        JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: answer } }),
+        JSON.stringify({ type: 'turn.completed' }),
+      ].join('\n'), structured_stdout: true, structured_stdout_format: 'codex_turn_jsonl' as const };
+      const good = resolveCanaryCacheDecision(invocation, FIXTURE_CANARY_KEY);
+      assert(good.kind === 'valid' && good.classify.verdict === 'tool_read', JSON.stringify(good));
+      const wrong = resolveCanaryCacheDecision({ ...invocation, stdout: invocation.stdout.replace('red', 'purple') }, FIXTURE_CANARY_KEY);
+      assert(wrong.kind === 'valid' && wrong.classify.verdict !== 'tool_read', 'completion does not establish answer correctness');
+      for (const negative of [{ status: 'waiting' }, { status: 'failed' }, { skipped: true }, { timed_out: true },
+        { kill_reason: 'agent_timeout' }, { silent_killed: true }, { terminal_failure_observed: true }, { spawn_error: { message: 'missing' } }]) {
+        const result = resolveCanaryCacheDecision({ ...invocation, exitCode: 0, ...negative }, FIXTURE_CANARY_KEY);
+        assert(result.kind === 'invoke_failed' && !result.cache, JSON.stringify({ negative, result }));
+      }
+    },
+  },
   {
     name: 'classifyCanaryResponse: 全部几何题正确 → tool_read（真视觉实锤）',
     run: () => {

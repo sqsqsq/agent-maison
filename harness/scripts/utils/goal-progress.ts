@@ -21,7 +21,6 @@ import {
   countAgentInvokeStarts,
   canRecheckLegacyBacktrackLimit,
   filterAuthoritativeEvents,
-  findLatestEffectiveTimeoutMs,
   foldBudgetLineage,
   loadEventsJsonl,
   partitionExecutionSessions,
@@ -234,6 +233,52 @@ interface PhaseSpan {
   ended: boolean;
   deferred: boolean;
   halted: boolean;
+  invocation?: InvocationView;
+}
+
+interface InvocationView {
+  start: GoalRunEvent;
+  phase: string | undefined;
+  end?: GoalRunEvent;
+  handoff?: GoalRunEvent['handoff_request'];
+}
+
+/** Read-only pairing; anonymous historical ends still close the most recent start. */
+function buildInvocationViews(events: GoalRunEvent[], chain?: FeaturePhase[]): InvocationView[] {
+  const views: InvocationView[] = [];
+  let open: InvocationView | null = null;
+  const reset = (phases?: string[]): void => {
+    for (let i = views.length - 1; i >= 0; i--) {
+      if (!phases || phases.includes(views[i].phase ?? '')) views.splice(i, 1);
+    }
+    if (open && !views.includes(open)) open = null;
+  };
+  for (let idx = 0; idx < events.length; idx++) {
+    const event = events[idx];
+    if (event.type === 'resume') {
+      reset();
+    } else if (event.type === 'phase_backtrack_requested' || event.type === 'phase_invalidated') {
+      const backtrack = event as { from_phase?: string; invalidated_phases?: string[] };
+      reset([...(backtrack.invalidated_phases ?? []), backtrack.from_phase ?? event.phase ?? '']);
+    } else if (event.type === 'agent_invoke_start') {
+      const owner = (event as { chain_phase?: string }).chain_phase;
+      const view: InvocationView = { start: event,
+        phase: owner && (!chain || chain.includes(owner)) ? owner : event.phase };
+      views.push(view);
+      open = view;
+    } else if (event.type === 'phase_start' && event.handoff_request) {
+      if (open && event.invoke_id && open.start.invoke_id === event.invoke_id) open.handoff = event.handoff_request;
+    } else if (event.type === 'agent_invoke_end' || event.type === 'agent_invoke_recovered') {
+      if (open && !(open.start.invoke_id && event.invoke_id && open.start.invoke_id !== event.invoke_id)) {
+        open.end = event;
+        open = null;
+      }
+    } else if (event.type === 'phase_verdict' && event.recovered === true) {
+      if (open) open.end = event;
+      open = null;
+    }
+  }
+  return views;
 }
 
 const TERMINAL_RUN_STATUSES = new Set<ProgressRunStatus>([
@@ -276,7 +321,12 @@ function countPhaseAttempts(events: GoalRunEvent[], phase: FeaturePhase): number
   return Math.max(n, 1);
 }
 
-function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSpan[] {
+function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[], invocations: InvocationView[]): PhaseSpan[] {
+  const invocationByEvent = new Map<GoalRunEvent, InvocationView>();
+  for (const view of invocations) {
+    invocationByEvent.set(view.start, view);
+    if (view.end) invocationByEvent.set(view.end, view);
+  }
   const spans: PhaseSpan[] = chain.map((phase) => ({
     phase,
     attempt: 0,
@@ -325,7 +375,8 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
       continue;
     }
 
-    const phase = e.phase as FeaturePhase | undefined;
+    const invocation = invocationByEvent.get(e);
+    const phase = (invocation?.phase ?? e.phase) as FeaturePhase | undefined;
     if (!phase || !spanByPhase.has(phase)) continue;
     const idx = spanByPhase.get(phase)!;
     const span = spans[idx];
@@ -341,14 +392,16 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
       span.status = 'PROMPT_READY';
       span.substep = 'prompt';
     }
-    if (e.type === 'agent_invoke_start' && !span.ended) {
-      span.attempt = countPhaseAttempts(events.slice(0, i + 1), phase);
-      const handoff = e.invoke_id && events.some(event => event.type === 'phase_start' && event.handoff_request && event.invoke_id === e.invoke_id);
-      span.started_at = handoff ? e.ts ?? span.started_at : span.started_at ?? e.ts ?? null;
+    if (e.type === 'agent_invoke_start' && invocation && !span.ended && (e.phase === phase || span.started_at !== null)) {
+      if (e.phase === phase) {
+        span.attempt = countPhaseAttempts(events.slice(0, i + 1), phase);
+        span.started_at = invocation.handoff ? e.ts ?? span.started_at : span.started_at ?? e.ts ?? null;
+      }
+      span.invocation = invocation;
       span.status = 'AGENT_RUNNING';
       span.substep = 'agent_invoke';
     }
-    if (e.type === 'agent_invoke_end' && !span.ended) {
+    if (e.type === 'agent_invoke_end' && invocation && span.invocation === invocation && !span.ended) {
       span.status = 'AGENT_DONE';
       span.substep = 'agent_invoke';
     }
@@ -482,10 +535,19 @@ function getAgentOutputStat(
   projectRoot: string,
   reportDir: string,
   phase: FeaturePhase | null,
+  invocation?: InvocationView | null,
 ): { mtimeMs: number | null; bytes: number; rel: string | null } {
-  if (!phase) return { mtimeMs: null, bytes: 0, rel: null };
-  const abs = path.join(projectRoot, reportDir, 'phases', phase, 'agent-output.log');
-  if (!fs.existsSync(abs)) return { mtimeMs: null, bytes: 0, rel: relPath(projectRoot, abs) };
+  if (invocation?.start.command === 'phase_execute_request' || invocation?.handoff || (!invocation && !phase)) {
+    return { mtimeMs: null, bytes: 0, rel: null };
+  }
+  const label = invocation?.start.phase ?? phase;
+  if (!label) return { mtimeMs: null, bytes: 0, rel: null };
+  const outOfChain = invocation && (invocation.phase !== label || typeof (invocation.start as { chain_phase?: unknown }).chain_phase === 'string');
+  if (outOfChain && !invocation.start.invoke_id) return { mtimeMs: null, bytes: 0, rel: null };
+  const abs = outOfChain
+    ? path.join(projectRoot, reportDir, 'phases', label, invocation.start.invoke_id ?? '', 'agent-output.log')
+    : path.join(projectRoot, reportDir, 'phases', label, 'agent-output.log');
+  if (!fs.existsSync(abs)) return { mtimeMs: null, bytes: 0, rel: null };
   const st = fs.statSync(abs);
   return { mtimeMs: st.mtimeMs, bytes: st.size, rel: relPath(projectRoot, abs) };
 }
@@ -496,18 +558,19 @@ function resolvePhaseEvidence(
   phase: FeaturePhase,
   span: PhaseSpan,
 ): string | null {
-  const agentLog = path.join(projectRoot, reportDir, 'phases', phase, 'agent-output.log');
+  const agentLog = getAgentOutputStat(projectRoot, reportDir, phase, span.invocation).rel;
   const harnessSummary = path.join(projectRoot, reportDir, 'phases', phase, 'harness', 'summary.json');
   if (
     span.substep === 'agent_invoke' ||
     span.status === 'AGENT_RUNNING' ||
     span.status === 'AGENT_DONE'
   ) {
-    if (fs.existsSync(agentLog)) return relPath(projectRoot, agentLog);
+    const reference = span.invocation?.end?.handoff_report ?? span.invocation?.handoff;
+    if (reference) return relPath(projectRoot, path.join(projectRoot, reportDir, reference.path));
+    return agentLog;
   }
   if (fs.existsSync(harnessSummary)) return relPath(projectRoot, harnessSummary);
-  if (fs.existsSync(agentLog)) return relPath(projectRoot, agentLog);
-  return null;
+  return agentLog;
 }
 
 function buildPhasesSummary(
@@ -534,25 +597,10 @@ function buildPhasesSummary(
 
 function findUnclosedInvoke(
   events: GoalRunEvent[],
-): { event: GoalRunEvent; idx: number } | null {
-  let open: { event: GoalRunEvent; idx: number } | null = null;
-  for (let i = 0; i < events.length; i++) {
-    const e = events[i];
-    if (e.type === 'agent_invoke_start') {
-      open = { event: e, idx: i };
-    }
-    if (e.type === 'agent_invoke_end' || e.type === 'agent_invoke_recovered') {
-      open = null;
-    }
-    if (e.type === 'phase_verdict' && e.recovered === true) {
-      open = null;
-    }
-    // New session supersedes dangling invoke from a prior crash/halt.
-    if (e.type === 'resume') {
-      open = null;
-    }
-  }
-  return open;
+): InvocationView | null {
+  const views = buildInvocationViews(events);
+  const latest = views[views.length - 1];
+  return latest && !latest.end ? latest : null;
 }
 
 /**
@@ -578,13 +626,6 @@ function findUnclosedHarness(
   return open;
 }
 
-function lastEventOfTypes(events: GoalRunEvent[], types: Set<string>): GoalRunEvent | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type && types.has(events[i].type!)) return events[i];
-  }
-  return null;
-}
-
 function resolveLockHeartbeatSignal(
   record: LockRecord | null | undefined,
   nowMs: number,
@@ -606,6 +647,7 @@ export interface LivenessInput {
   nowMs: number;
   liveProbe: boolean;
   lastLingeringPipe: boolean;
+  invocation?: InvocationView | null;
 }
 
 /**
@@ -694,26 +736,24 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
     }
   }
 
-  const unclosed = findUnclosedInvoke(events);
+  const unclosed = input.invocation === undefined ? findUnclosedInvoke(events)
+    : input.invocation && !input.invocation.end ? input.invocation : null;
   let hardStall = false;
-  if (unclosed && unclosed.event.ts) {
-    const startMs = new Date(unclosed.event.ts).getTime();
+  if (unclosed && unclosed.start.ts) {
+    const startMs = new Date(unclosed.start.ts).getTime();
     if (!Number.isNaN(startMs) && nowMs - startMs > input.phaseTimeoutMs) {
-      const lastEnd = lastEventOfTypes(
-        events.slice(unclosed.idx),
-        new Set(['agent_invoke_end', 'agent_invoke_recovered']),
-      );
-      const recoveredVerdict = events
-        .slice(unclosed.idx)
-        .some((e) => e.type === 'phase_verdict' && e.recovered === true);
-      if (!lastEnd && !recoveredVerdict) hardStall = true;
+      hardStall = true;
     }
   }
 
   // timed_out / silent_killed on closed invoke — before phase_verdict, unclosed is null.
+  const closedAuxiliary = input.invocation?.end && input.invocation.start.phase !== input.invocation.phase;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type !== 'agent_invoke_end') continue;
+    // 活跃辅助调用仍读自身；闭合后恢复所属正式阶段尚未被 verdict 消费的失败信号。
+    if (input.invocation !== undefined && e !== input.invocation?.end
+      && (!closedAuxiliary || e.phase !== input.invocation?.phase)) continue;
     // plan 9c3d7e1a §5.5：链外设计修复调用（带用途标识）没有阶段 verdict 跟在后面，不按阶段调用判停滞。
     if (typeof (e as { purpose?: unknown }).purpose === 'string') continue;
     if (!e.timed_out && !e.silent_killed) break;
@@ -849,8 +889,12 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);
 
-  const spans = buildPhaseSpans(eventsWithScopeRevocations(manifest.execution_scope, events), chain);
+  const spanEvents = eventsWithScopeRevocations(manifest.execution_scope, events);
+  const invocations = buildInvocationViews(spanEvents, chain);
+  const spans = buildPhaseSpans(spanEvents, chain, invocations);
   const currentSpan = findCurrentSpan(spans);
+  const latestInvocation = invocations[invocations.length - 1];
+  const invocation = latestInvocation && !latestInvocation.end ? latestInvocation : currentSpan?.invocation ?? null;
   const currentPhase = currentSpan?.phase ?? null;
   const currentIndex = currentPhase ? chain.indexOf(currentPhase) : 0;
 
@@ -881,22 +925,14 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   // 这里不传 chain 就会按出生链报一个更小的上限（review M3）。
   const wallLimitMs = resolveWallClockMs(manifest, chain);
   const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
-  // P0-4（plan d9b4f7e2）：timeout 单一事实源——优先读最近 agent_invoke_start 的
-  // effective_timeout_ms（钳制/升档后的真值；runner 升档而 progress 静态解析 manifest
-  // 会把合法运行 attempt 误报 STALLED）；旧日志无该字段时回落 manifest 解析。
-  const phaseTimeoutMs =
-    findLatestEffectiveTimeoutMs(events, currentPhase) ??
-    resolvePhaseTimeoutMs(stallPhase, manifest);
+  // 当前调用已授予的截止；旧调用缺字段时回落 manifest，不借另一 invocation 的授予。
+  const grantedTimeout = invocation?.start.effective_timeout_ms;
+  const phaseTimeoutMs = typeof grantedTimeout === 'number' && Number.isFinite(grantedTimeout) && grantedTimeout > 0
+    ? grantedTimeout : resolvePhaseTimeoutMs(stallPhase, manifest);
 
-  const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase);
+  const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase, invocation);
 
-  let lastLingeringPipe = false;
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type === 'agent_invoke_end') {
-      lastLingeringPipe = (events[i] as { lingering_pipe?: boolean }).lingering_pipe === true;
-      break;
-    }
-  }
+  const lastLingeringPipe = (invocation?.end as { lingering_pipe?: boolean } | undefined)?.lingering_pipe === true;
 
   const liveness = computeLiveness({
     events,
@@ -909,6 +945,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     nowMs,
     liveProbe: input.liveProbe ?? false,
     lastLingeringPipe,
+    invocation,
   });
 
   // d6 t5⓪-b：裁决轴由单一 reducer 给出（total function——空序列/仅 run_start 亦有值）。

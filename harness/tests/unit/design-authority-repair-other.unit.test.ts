@@ -1,4 +1,6 @@
-import { runSelectedCases as selectDesignRepair } from './design-authority-repair.unit.test';
+import { getCases as designRepairCases, runSelectedCases as selectDesignRepair } from './design-authority-repair.unit.test';
+
+export const getCases = () => designRepairCases('other');
 
 export const runSelectedCases = (selector?: string) => selectDesignRepair(selector, 'other');
 

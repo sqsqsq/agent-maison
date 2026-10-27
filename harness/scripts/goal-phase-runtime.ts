@@ -4,6 +4,7 @@ import { phaseInvocationStart } from './utils/goal-runner-phase';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
 import { issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, undeliveredSessionInvocation, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
+import { invocationCompleted } from './utils/invocation-completion';
 import { resumeIssuedSessionOwner } from './utils/goal-run-control';
 import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-containment';
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
@@ -6354,7 +6355,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const canaryKeyPath = path.join(canaryDir, 'answer-key.json');
     const canaryPromptExecutor = options.sessionHandoff || attendedExecutor ? async (text: string, key: CanaryAnswerKey) => {
       const existing = canarySession ? acceptedSessionReport(canarySession.request.context.runDir, canarySession) : null;
-      if (existing) return { exitCode: existing.report.status === 'passed' ? 0 : 1, stdout: existing.report.details ?? '', stderr: '',
+      if (existing) return { status: existing.report.status, exitCode: existing.event.exit_code ?? (existing.report.status === 'failed' ? 1 : 0), stdout: existing.report.details ?? '', stderr: '',
         timed_out: existing.event.timed_out ?? false, duration_ms: existing.event.duration_ms ?? 0, command: 'phase_execute_request' } as Awaited<ReturnType<InvokeAgentFn>>;
       const timeoutMs = Math.min(VISION_CANARY_TIMEOUT_MS, remainingWallMs());
       if (!(timeoutMs > 0)) {
@@ -6385,7 +6386,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
       const result = await attendedExecutor!.execute(context);
       goalEvents.emit({ type: 'agent_invoke_end', phase: 'vision-canary', invoke_id: canaryInvokeId, purpose: 'vision_canary',
-        chain_phase: String(chain[0]), command: result.command, exit_code: result.exitCode, duration_ms: Date.now() - timeoutStart });
+        chain_phase: String(chain[0]), command: result.command, status: result.status, exit_code: result.exitCode,
+        timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped,
+        completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+        ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}), duration_ms: Date.now() - timeoutStart });
       return { ...result, stdout: result.details ?? result.stdout, duration_ms: Date.now() - timeoutStart } as Awaited<ReturnType<InvokeAgentFn>>;
     } : undefined;
     const invokeCanaryTransport: InvokeAgentFn = async (plan, cwd, invokeOptions) => {
@@ -6397,7 +6401,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         invoke_id: invocationId, command: plan.label, effective_timeout_ms: invokeOptions?.timeoutMs });
       const result = await (injectedCanaryProbeInvoke ?? invokeAgentHeadless)(plan, cwd, invokeOptions);
       goalEvents.emit({ type: 'agent_invoke_end', phase: 'vision-canary', chain_phase: String(chain[0]), purpose: 'vision_canary',
-        invoke_id: invocationId, command: result.command, exit_code: result.exitCode, timed_out: result.timed_out, duration_ms: result.duration_ms });
+        invoke_id: invocationId, command: result.command, exit_code: result.exitCode, timed_out: result.timed_out,
+        silent_killed: result.silent_killed, skipped: result.skipped, completion_observed: result.completion_observed,
+        terminal_failure_observed: result.terminal_failure_observed,
+        ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}), duration_ms: result.duration_ms });
       return result;
     };
     const runCanaryWithinBudget = (): ReturnType<typeof runVisionCanaryProbe> => runVisionCanaryProbe({
@@ -7238,6 +7245,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 不派生（返回 null）= 只是不从旧 halt 派生资格，后续完全由既有 resume/invalidation 路径决定。
       const receivedSession = options.sessionHandoff && sessionRequest ? acceptedSessionReport(path.resolve(projectRoot, manifest.report_dir), sessionRequest) : null;
       const sessionEligibility = receivedSession?.report.status === 'waiting' && options.sessionHandoff?.report && sessionRequest
+        && chain.includes(sessionRequest.request.context.phase as FeaturePhase)
         ? { phase: sessionRequest.request.context.phase, invoke_id: sessionRequest.request.invoke_id }
         : receivedSession ? sessionValidationOnlyEligibility(recoveryEvents) : null;
       if (sessionEligibility && chain.includes(sessionEligibility.phase as FeaturePhase)) {
@@ -9768,7 +9776,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   if (['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json'].includes(name)) fs.writeFileSync(path.join(issued.request.context.runDir, 'design-repair', name), Buffer.from(bytes, 'base64'));
                 }
               }
-              return { started: true, ok: received.report.status === 'passed' && !received.event.timed_out,
+              return { started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }),
                 detail: received.report.details ?? `session reported ${received.report.status}`, preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: originalPostSnapshot };
             }
           }
@@ -9810,8 +9818,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
             const result = await attendedExecutor.execute(createPhaseExecutionContext({ ...phaseExecutionContext,
               phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} }));
             goalEvents.emit({ type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId,
-              exit_code: result.exitCode, duration_ms: result.duration_ms, command: result.command });
-            return { started: true, ok: result.status === 'passed', detail: result.details ?? result.status };
+              status: result.status, exit_code: result.exitCode, duration_ms: result.duration_ms, command: result.command,
+              timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped,
+              completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+              ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
+            return { started: true, ok: invocationCompleted(result), detail: result.details ?? result.status };
           }
           const originalStart = [...loadAuthoritativeEvents(eventsPath)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === outOfChainId);
           if (!originalStart?.ts) throw new Error('[goal-phase-runtime] invocation has not been started');
@@ -9853,11 +9864,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
           goalEvents.emit({
             type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, exit_code: result.exitCode,
             duration_ms: result.duration_ms, timed_out: result.timed_out, kill_attempted: result.kill_attempted, effective_timeout_ms: timeoutMs,
+            silent_killed: result.silent_killed, skipped: result.skipped, completion_observed: result.completion_observed,
+            terminal_failure_observed: result.terminal_failure_observed, terminal_error_excerpt: result.terminal_error_excerpt,
             ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}),
           });
           if (contained && !containmentError) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
           flushProgress();
-          const ok = result.exitCode === 0 && result.timed_out !== true && !containmentError;
+          const ok = invocationCompleted(result) && !containmentError;
           return { started: true, ok, detail: containmentError ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}` };
         };
         const harnessRun: HarnessPhaseResult = reusableHarnessEnd ? { exitCode: reusableHarnessEnd.exit_code ?? 1, timedOut: false, outputTail: undefined } : await runHarnessPhase(

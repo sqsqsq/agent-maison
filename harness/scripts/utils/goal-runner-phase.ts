@@ -15,6 +15,7 @@ import type {
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 import { isLegacyBacktrackLimitOnly } from './adjudication';
 import { resolveWallClockMs } from './goal-timeout';
+import { invocationCompleted } from './invocation-completion';
 
 const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
 
@@ -43,6 +44,7 @@ export interface RepairInvocationEvent {
   completion_observed?: unknown;
   agent_failed?: unknown;
   skipped?: unknown;
+  spawn_error?: unknown;
   to_phase?: unknown;
   result?: unknown;
 }
@@ -57,24 +59,29 @@ export function repairInvocationCompleted(
   const attemptEvents = windowEvents.slice(Math.max(0, lastStart));
   const execution = attemptEvents.filter(e => e.phase === phase &&
     ['agent_invoke_start', 'agent_invoke_end', 'agent_process_settled', 'phase_verdict'].includes(e.type ?? ''));
-  const latestId = [...execution].reverse().find(e => typeof e.invoke_id === 'string')?.invoke_id;
+  const latestId = [...execution].reverse().find(e => e.type !== 'phase_verdict' && typeof e.invoke_id === 'string')?.invoke_id
+    ?? [...execution].reverse().find(e => typeof e.invoke_id === 'string')?.invoke_id;
   const id = invokeId ?? latestId;
   const own = execution.filter(e => id ? e.invoke_id === id : e.invoke_id === undefined);
   const end = [...own].reverse().find(e => e.type === 'agent_invoke_end');
   const settled = [...own].reverse().find(e => e.type === 'agent_process_settled');
   const verdict = [...own].reverse().find(e => e.type === 'phase_verdict');
   const facts = end ?? settled;
-  if (end?.status === 'waiting') return false;
-  if ([end, settled].some(e => e?.timed_out === true || e?.kill_reason === 'agent_timeout' ||
-      e?.terminal_failure_observed === true || e?.silent_killed === true)) return false;
-  if (facts?.completion_observed === true) return true;
   // Older invoke-end events lack completion; the matching verdict retains that fact.
-  if (end?.completion_observed === undefined && verdict?.completion_observed === true) return true;
-  if (end?.completion_observed === undefined && verdict?.agent_failed === false) return true;
-  if (verdict?.agent_failed === true) return false;
-  if (facts?.skipped === true) return false;
-  if (facts?.exit_code === 0) return true;
-  return false;
+  const completion = facts?.completion_observed === true || (end?.completion_observed === undefined &&
+    (verdict?.completion_observed === true || verdict?.agent_failed === false));
+  return invocationCompleted({
+    ...facts,
+    exitCode: facts?.exit_code,
+    completion_observed: completion,
+    status: facts?.status === 'waiting' || facts?.status === 'failed' ? facts.status
+      : !completion && verdict?.agent_failed === true ? 'failed' : facts?.status,
+    timed_out: [end, settled].some(e => e?.timed_out === true || e?.kill_reason === 'agent_timeout'),
+    terminal_failure_observed: [end, settled].some(e => e?.terminal_failure_observed === true),
+    silent_killed: [end, settled].some(e => e?.silent_killed === true),
+    skipped: [end, settled].some(e => e?.skipped === true),
+    spawn_error: end?.spawn_error ?? settled?.spawn_error,
+  });
 }
 
 /** A later interrupted retry cannot erase a completed owner attempt in this repair window. */
@@ -212,9 +219,11 @@ export function resolveClosureAdvanceBlock(input: {
  */
 export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): PhaseVerdictResolveResult {
   const fresh = isSummaryFresh(input.summaryBeforeMtime, input.summaryAfterMtime);
-  // t4：完成观测收口的非零退出码由**框架自己的 tree-kill** 造成，不是 agent 失败
-  const agentFailed =
-    !input.agentSkipped && input.agentExitCode !== 0 && input.completionObserved !== true;
+  const agentFailed = !input.agentSkipped && !invocationCompleted({
+    exitCode: input.agentExitCode,
+    completion_observed: input.completionObserved,
+    timed_out: input.agentTimedOut,
+  });
 
   if (input.dryRun) {
     const verdict = (input.summaryVerdict ?? 'PASS') as HarnessVerdict;

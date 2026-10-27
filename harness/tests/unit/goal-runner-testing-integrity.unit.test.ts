@@ -534,7 +534,7 @@ export async function runGoalRuntimeChain(
      */
     invokeResultFor?: (phase: string, attempt: number) => Record<string, unknown> | null;
     /**
-     * plan 9c3d7e1a §5.5（R12）：链外 adapter 调用（日志在 `phases/design-repair-<用途>/` 下，不属于阶段链）的产出替身。
+     * 链外 adapter / session 调用的产出替身（设计修复、独立核实及会话金丝雀）。
      * 只替代 adapter 的产出（写草稿 / 越界写入 / 失败退出），事件、锁、准入、探针、恢复都由生产路径产生。
      * 返回值覆盖调用结果字段（缺省 exit 0）。既有用例不传，链外调用照旧返回默认结果。
      */
@@ -1026,7 +1026,7 @@ export async function runGoalRuntimeChain(
       runId: string,
       childEnv: Readonly<Record<string, string>> = {},
       issued?: AgentCtx['issued'],
-    ): Promise<{ status: 'passed' | 'failed'; phase: string }> => {
+    ): Promise<{ status: 'passed' | 'failed' | 'waiting'; phase: string; details?: string }> => {
       invokedPhases.push(phase);
       const n = (attempts.get(phase) ?? 0) + 1;
       attempts.set(phase, n);
@@ -1054,9 +1054,11 @@ export async function runGoalRuntimeChain(
       if (phase === 'plan') opts.onPlan?.(ctx);
       if (phase === 'ut') opts.onUt?.(ctx);
       if (phase === 'review') opts.onReview?.(ctx);
-      if (opts.onOutOfChain && (phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
+      if (opts.onOutOfChain && (phase === 'vision-canary' || phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
         const outcome = await opts.onOutOfChain({ ...ctx, goalAttemptId: issued?.attemptId });
-        return { status: outcome?.exitCode && outcome.exitCode !== 0 ? 'failed' : 'passed', phase };
+        const status = outcome?.status === 'waiting' || outcome?.status === 'failed' || outcome?.status === 'passed'
+          ? outcome.status : outcome?.exitCode && outcome.exitCode !== 0 ? 'failed' : 'passed';
+        return { status, phase, ...(typeof outcome?.details === 'string' ? { details: outcome.details } : {}) };
       }
       return {
         status: opts.failExecutorFor?.(phase, n) ? 'failed' : 'passed',
@@ -6995,6 +6997,58 @@ function uiHostNoCanaryCache(root: string): void {
   git(root, ['add', '-A']);
   git(root, ['commit', '-qm', 'ui feature, no canary cache']);
 }
+
+test('a7b615ff runtime canary completed exit1 and actual next/report passed reach the same real grader and cache', async () => {
+  const canary = require('../../scripts/utils/vision-canary') as typeof import('../../scripts/utils/vision-canary');
+  const { FIXTURE_CANARY_KEY } = require('../utils/canary-fixture-key') as typeof import('../utils/canary-fixture-key');
+  const originalKey = canary.generateRandomCanaryAnswerKey;
+  const answer = FIXTURE_CANARY_KEY.geometry_questions.map(q => `${q.id}=${q.expected_color}`).join('\n')
+    + `\nTEXT_TOKEN=${FIXTURE_CANARY_KEY.text_token}\n`;
+  const observations: unknown[] = [];
+  // Fix only the challenge input; rendering, answer parsing, grading and cache writes remain production code.
+  canary.generateRandomCanaryAnswerKey = () => structuredClone(FIXTURE_CANARY_KEY);
+  try {
+    for (const mode of ['detached', 'session'] as const) {
+      const { root } = setupHost('codex');
+      let probes = 0;
+      try {
+        uiHostNoCanaryCache(root);
+        if (mode === 'detached') __testing_setCanaryProbeInvoke((async () => {
+          probes++;
+          return { exitCode: 1, completion_observed: true, kill_attempted: true, duration_ms: 1000,
+            stdout: [JSON.stringify({ type: 'thread.started', thread_id: 'canary-fixture' }),
+              JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: answer } }),
+              JSON.stringify({ type: 'turn.completed', usage: {} })].join('\n'), stderr: '', command: 'test-canary-transport' };
+        }) as never);
+        const probe = await runChain(root, { adapter: 'codex', freshEndPhase: 'spec',
+          freshRequirement: '银行卡开卡页面按参考图还原布局',
+          ...(mode === 'session' ? { viaSessionStep: true, hostAuthorization: { mode: 'goal_mode' as const, autonomyAuthorized: true },
+            onOutOfChain: (ctx: AgentCtx) => {
+              assert(ctx.phase === 'vision-canary', 'this fixture only substitutes the actual session canary request');
+              assert(ctx.prompt.includes('TOP_LEFT_COLOR='), 'answer must be requested by the original canary instruction');
+              probes++;
+              return { status: 'passed', details: answer };
+            } } : {}) });
+        const ends = probe.events.filter(e => e.type === 'agent_invoke_end' && e.phase === 'vision-canary');
+        assert(probes === 1 && ends.length === 1, `${mode}: original canary must execute exactly once`);
+        if (mode === 'session') {
+          assert(!!ends[0].handoff_report && ends[0].exit_code === 0, 'session answer must be accepted through the report conversion');
+          assert(!probe.events.some(e => e.type === 'agent_process_settled' && e.phase === 'vision-canary'), 'session canary cannot borrow background process completion');
+        } else assert(ends[0].exit_code === 1 && ends[0].completion_observed === true, 'background end must retain the completed nonzero exit facts');
+        const cached = JSON.parse(fs.readFileSync(path.join(root, 'framework.local.json'), 'utf8')).vision?.canary;
+        assert(cached?.verdict === 'tool_read', `${mode}: real correct-answer grader must write tool_read, rather than falling back to adapter declarations`);
+        assert(probe.invokedPhases.includes('spec'), `${mode}: a valid canary must permit the actual business phase`);
+        observations.push({ adapter: cached.adapter, verdict: cached.verdict, probe_version: cached.probe_version,
+          model: cached.model, probe_context: cached.probe_context });
+      } finally {
+        __testing_setCanaryProbeInvoke(null);
+        clearFrameworkConfigCache();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+    assert(JSON.stringify(observations[0]) === JSON.stringify(observations[1]), 'both transports must cache the same actual capability result');
+  } finally { canary.generateRandomCanaryAnswerKey = originalKey; }
+});
 
 test('P3 R2 启动失败的后继被附着时补完承接：审计每个目标一次、预算沿周期折叠、后继执行到终点；出生即成功的后继重新接入不重复审计', async () => {
   const { root } = setupHost('codex');

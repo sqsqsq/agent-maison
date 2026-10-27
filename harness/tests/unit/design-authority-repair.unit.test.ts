@@ -17,6 +17,8 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
+import { resolveWorkflowSpec } from '../../workflow-loader';
+import { projectGoalProgress } from '../../scripts/utils/goal-progress';
 import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { designRepairAttempted, runUnattendedDesignRepair } from '../../scripts/utils/design-repair-unattended';
 import { foldBudgetLineage, loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
@@ -28,6 +30,7 @@ import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonical
 import { checkChangeUnitFeatureProjection } from '../../scripts/utils/change-unit-feature-projection';
 import { checkAuthoritativeContentAligned, classifyDesignAuthorityCodes, compareAuthoritativeContent, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
 import { parseVerifierRequest } from '../../scripts/utils/verifier-request';
+import { requiredQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { blueprintReviewPath, inspectBlueprintReview } from '../../scripts/utils/blueprint-review-materialization';
@@ -700,7 +703,8 @@ export function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
     onOutOfChain: async ctx => {
       (log.prompts[ctx.phase] ??= []).push(ctx.prompt);
       if (ctx.phase.endsWith('-verifier-format-repair')) {
-        const request = parseVerifierRequest(ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1));
+        const delivered = ctx.prompt.slice(ctx.prompt.lastIndexOf('\n{') + 1);
+        const request = parseVerifierRequest(delivered.slice(0, delivered.indexOf('\n}') + 2));
         assert(request, `补核实必须携带现成的当前 request；actual_phase=${ctx.phase}`);
         assert.equal(ctx.phase, request.phase + '-verifier-format-repair', '运输 phase 必须与真实 request 一致');
         const reportsDir = featurePhaseReportsDir(s.root, request.feature, request.phase, s.frameworkRoot);
@@ -848,6 +852,72 @@ export async function s16Born(s: Snapshot, opts: {
   return { feature, runId: current, events: born.flatMap(id => eventsOf(s, feature, id)), requirement: freshRequest.requirement,
     request: { start: chain[0], end: chain[chain.length - 1] }, saved: saved!, baseRevision, chain, log: adapter.log,
     ...(transportArgs.parentArgs ? { parentArgs: transportArgs.parentArgs } : {}), ...(transportArgs.childArgs ? { childArgs: transportArgs.childArgs } : {}), ...(error ? { error } : {}) };
+}
+
+/** Only transport/model output is substituted; the original design transaction and next/report run unchanged. */
+export async function designRepairCompletionTransport(mode: 'detached' | 'session', waiting = false): Promise<Ev> {
+  let business: Ev | undefined;
+  await withFreshCuHost(async s => {
+    const result = () => waiting ? { status: 'waiting', exitCode: 0 }
+      : mode === 'detached' ? { exitCode: 1, completion_observed: true, kill_attempted: true, duration_ms: 1000 }
+      : { status: 'passed' };
+    const b = await s16Born(s, { adapter: { author: result, questioning: result }, extra: {
+      ...(waiting ? { onSpec: (ctx: { runId: string; attempt: number }): void => {
+        assert.equal(ctx.attempt, 1, 'waiting设计调用不得无故重派业务作者');
+        const p = project(s, SNAPSHOT_CU_FEATURE); p.runId = ctx.runId; writeCuSpecDraft(p);
+      } } : {}),
+      ...(mode === 'session' ? { viaSessionStep: true,
+        hostAuthorization: { mode: 'goal_mode', autonomyAuthorized: true } } : {}),
+    } });
+    const starts = outOfChainStarts(b.events);
+    const ends = b.events.filter(e => e.type === 'agent_invoke_end' && String(e.phase).startsWith('design-repair-'));
+    const published = contentRepairs(b.events).find(e => e.stage === 'published');
+    const bp = readDoc(blueprintFile(s));
+    const transport = ends.map(e => ({ phase: e.phase, exit_code: e.exit_code, status: e.status,
+      completion_observed: e.completion_observed, kill_attempted: e.kill_attempted, handoff_report: e.handoff_report }));
+    assert(ends.length > 0, `${mode}: actual transport must reach its end: ${describeS16(b)}`);
+    if (mode === 'session') {
+      assert(ends.every(e => e.handoff_report), 'session facts must come from accepted next/report materials');
+      assert(!b.events.some(e => e.type === 'agent_process_settled' && e.process_role !== 'harness'), 'no detached settlement may supply session completion');
+      for (const end of ends) {
+        const accepted = readJson<Ev>(path.resolve(s.root, reportDirOf(s, b.feature, b.runId), end.handoff_report.path));
+        assert.equal(accepted.report.status, waiting ? 'waiting' : 'passed');
+      }
+    } else if (!waiting) {
+      assert(ends.every(e => e.exit_code === 1 && e.completion_observed === true && e.kill_attempted === true), 'raw completed exit1 facts must survive runtime emission');
+    }
+    if (waiting) {
+      assert.deepStrictEqual(starts.map(e => e.phase), ['design-repair-author'], 'waiting/exit0 must not enter independent questioning');
+      assert(!published && bp.revision === b.baseRevision, `${mode}: waiting must not publish: ${describeS16(b)}`);
+      const manifest = readJson<import('../../scripts/utils/goal-manifest').GoalManifest>(runFile(s.root, b.feature, b.runId, 'manifest.json'));
+      const progress = projectGoalProgress({ projectRoot: s.root, manifest, events: b.events as Parameters<typeof projectGoalProgress>[0]['events'],
+        workflow: resolveWorkflowSpec(s.root, { frameworkRoot: s.frameworkRoot }), featuresDir: relFeaturesDir(s.root) });
+      business = { published: false, questioning: false, revisionChanged: false,
+        status: progress.status, disposition: progress.run_disposition, waitKind: progress.run_wait_kind,
+        next: progress.next_action, haltReason: haltOf(b.events)?.halt_reason,
+        phaseAuthors: b.events.filter(e => e.type === 'agent_invoke_start' && e.phase === 'spec').length,
+        turns: progress.budget.turns_used };
+      console.log(`[a7b615ff-design-parity] ${JSON.stringify({ mode, waiting, business, transport })}`);
+      return;
+    }
+    assert.deepStrictEqual(starts.map(e => e.phase), ['design-repair-author', 'design-repair-questioning']);
+    assert(published?.outcome === 'recovered' && published.admission_after_questioning === 'pass', `${mode}: original checks must approve publication: ${describeS16(b)}`);
+    assert.equal(bp.revision, b.baseRevision + 1, 'formal runtime publication owns the single revision');
+    assert(pointsAtCurrentBlueprint(s, CU), 'formal CU rebinding must use the new publication');
+    assert.equal(bp.review_summary.admission.status, 'pass');
+    assert.equal(bp.review_summary.questioning.provider_id, 'design-repair-questioning');
+    assert.equal(endOf(b.events)?.status, 'CHAIN_SLICE_COMPLETED', `original request must automatically continue: ${describeS16(b)}`);
+    assertCompletedBy(s, b.feature, b.runId, `${mode}: completed cleanup transport`);
+    assert(!b.events.some(e => e.type === 'phase_halt'), 'transport cleanup cannot manufacture an owner halt');
+    assertAttemptCleanedUp(s);
+    business = { published: published.outcome, admission: bp.review_summary.admission.status,
+      questioningProvider: bp.review_summary.questioning.provider_id, revisionDelta: bp.revision - b.baseRevision,
+      rebound: pointsAtCurrentBlueprint(s, CU), finalStatus: endOf(b.events)?.status,
+      verdicts: b.events.filter(e => e.type === 'phase_verdict').map(e => [e.phase, e.verdict, e.action]),
+      turns: resolveResumedBudget(loadAuthoritativeEvents(runFile(s.root, b.feature, b.runId, 'events.jsonl'))).totalTurns };
+    console.log(`[a7b615ff-design-parity] ${JSON.stringify({ mode, waiting, business, transport })}`);
+  });
+  return business!;
 }
 /** Child-only physical crash: canonical rename succeeds, no published event can be written. */
 export async function __nonresidentDesignPublicationFaultWorker(metadataFile: string): Promise<void> {
@@ -1638,17 +1708,18 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       }
     },
   },
-  {
-    name: 'S16-c1c 有人在场（会话 owner，host bridge）+ 预授权 + B1 → 不派发，交会话里的设计 owner',
+  ...(['host bridge', 'next/report'] as const).map(transport => ({
+    name: `S16-c1c 有人在场（会话 owner，${transport}）+ 预授权 + B1 → 不派发，交会话里的设计 owner`,
     run: () => withFreshCuHost(async s => {
       // 用兄弟 CU 的 fresh run：会话 owner 经 host bridge 出生（本 CU 的后继出生在 host bridge 上受快照里历史绝对路径的影响依据所限）。
-      const { b } = await siblingFreshRun(s, { viaHostBridge: true });
+      const { b } = await siblingFreshRun(s, transport === 'host bridge' ? { viaHostBridge: true }
+        : { viaSessionStep: true, sessionSelfCheck: true });
       console.log(`[design-authority-repair] S16-c1c ${describeS16(b)}`);
       assert(!contentRepairs(b.events).length && !outOfChainStarts(b.events).length, `有人在场不得派发：${describeS16(b)}`);
       const halt = haltOf(b.events);
       assert(halt?.halt_reason === 'execution_scope_unresolved' && halt.design_authority?.class === 'B1', `应停在设计 owner 出口：${describeS16(b)}`);
     }),
-  },
+  })),
   {
     name: 'S16-c1b 旧个人预授权字符串不再阻断原需求内无人值守设计修订',
     run: () => withFreshCuHost(async s => {
@@ -1805,7 +1876,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
     name: 'S16-c3c 编写调用自报准入（改了 review_summary.admission）→ 不予采信，不发布',
     run: () => withFreshCuHost(async s => {
-      const b = await s16Born(s, { adapter: { author: doc => { doc.review_summary.admission.current_slice.controlled_fakes = ['self-asserted-pass']; } } });
+      const b = await s16Born(s, { adapter: { author: doc => { doc.review_summary.admission.current_slice.controlled_fakes = ['self-asserted-pass'];
+        return { exitCode: 1, completion_observed: true, kill_attempted: true }; } } });
       console.log(`[design-authority-repair] S16-c3c ${describeS16(b)}`);
       assertNotPublished(s, b, 'self_reported', '自报准入');
       assert(!b.log.prompts['design-repair-questioning'], '自报之后不得再派质询调用');
@@ -1815,7 +1887,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     name: 'S16-c3d 修复后准入不通过（质询结果缺必答范围）→ 机器派生不过，不发布',
     run: () => withFreshCuHost(async s => {
       // codex t6 第五轮之后，编写调用改指纹等定位之外的内容在授权边界就被拒（见 S16-r7）；准入派生不过改由质询结果触发。
-      const b = await s16Born(s, { adapter: { questioning: doc => { doc.review_summary.questioning.items = []; } } });
+      const b = await s16Born(s, { adapter: { questioning: doc => { doc.review_summary.questioning.items = [];
+        return { exitCode: 1, completion_observed: true, kill_attempted: true }; } } });
       console.log(`[design-authority-repair] S16-c3d ${describeS16(b)}`);
       const failed = assertNotPublished(s, b, 'validation', '准入不过');
       assert(/准入（blocker）/.test(String(failed.reason)) && failed.admission_after_questioning === 'blocker', JSON.stringify(failed));
@@ -1831,6 +1904,38 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const failed = assertNotPublished(s, b, 'questioning', '预算不足');
       assert(/未启动/.test(String(failed.reason)) && outOfChainStarts(b.events).length === 1 && !adapter.log.prompts['design-repair-questioning'], JSON.stringify(failed));
       assert.strictEqual(b.events.filter(e => e.type === 'agent_invoke_start').length, 2, '调用次数 = 实际启动的调用（spec 一次 + 编写一次）');
+    }),
+  },
+  {
+    name: 'S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布',
+    run: () => withFreshCuHost(async s => {
+      let approved: string | undefined;
+      const completed = { exitCode: 1, completion_observed: true, kill_attempted: true };
+      const p = project(s, SNAPSHOT_CU_FEATURE);
+      const b = await s16Born(s, { beforeBirth: async saved => { approved = saved.acceptance.criteria[0].expected_result; },
+        adapter: { author: doc => {
+          ledgerDomain(doc).acceptance.criteria[0].expected_result = '刷新请求不改变任何账目，也不要求恢复结果。';
+          return completed;
+        }, questioning: doc => {
+          assert(requiredQuestioningScopes(doc).has('view:logical'), '否定必须指向本次必需质询范围');
+          const item = doc.review_summary.questioning.items.find((q: Ev) => q.scope_ref === 'view:logical');
+          const current = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, CU);
+          assert((current.changeUnit.design_refs as Ev[]).some(ref => ref.target.view_id === 'logical' && ref.target.id === 'ledger-domain'), '当前CU实际依赖被否定的scope');
+          assert(item?.verification_refs?.length > 0, '保留完整合法质询材料，不能靠缺字段制造否定');
+          item.disposition = 'blocker';
+          item.answer = `当前ledger-refresh切片依赖的ledger-domain验收被降为无需刷新/恢复，与原批准结果「${approved}」矛盾；当前必需映射未获独立认可，不能发布。`;
+          item.verification_refs.push(path.relative(s.root, current.canonicalPath).replace(/\\/g, '/'));
+          assert.equal(doc.review_summary.questioning.status, 'complete');
+          return completed;
+        } }, extra: { onSpec: (ctx: { runId: string; attempt: number }): void => {
+          assert.equal(ctx.attempt, 1, '已否定设计不得发布后回到作者执行下游');
+          p.runId = ctx.runId; writeCuSpecDraft(p);
+        } } });
+      const failed = contentRepairs(b.events).find(e => e.stage === 'failed');
+      assert(failed && ['questioning', 'validation'].includes(String(failed.failed_step)), describeS16(b));
+      assertNotPublished(s, b, String(failed.failed_step), '已完成质询的当前scope否定');
+      assert(b.events.some(e => e.type === 'agent_invoke_end' && e.phase === 'design-repair-questioning'
+        && e.exit_code === 1 && e.completion_observed === true), '调用完成与质询业务否定必须同时被真实runtime观察');
     }),
   },
   {
@@ -2451,15 +2556,19 @@ for (const finalFailure of [false, true]) cases.push({
   }),
 });
 
-export async function runSelectedCases(selector?: string, group?: 'content' | 'continuation' | 'runtime' | 'other'): Promise<SelectedUnitCases> {
+type DesignRepairGroup = 'content' | 'continuation' | 'runtime' | 'other';
+export function getCases(group?: DesignRepairGroup): Array<{ name: string; run: () => Promise<void> }> {
+  return cases.filter(c => !group || group === (c.name.startsWith('S16-c') ? 'content'
+    : c.name.startsWith('S15-') ? 'continuation' : c.name.startsWith('S16-r') ? 'runtime' : 'other'))
+    .map(c => ({ ...c, name: `design-authority-repair: ${c.name}` }));
+}
+
+export async function runSelectedCases(selector?: string, group?: DesignRepairGroup): Promise<SelectedUnitCases> {
   const results: UnitCaseResult[] = [];
   const timings: UnitExecutionTiming[] = [];
-  for (const c of cases) {
-    const name = `design-authority-repair: ${c.name}`;
-    const category = c.name.startsWith('S16-c') ? 'content'
-      : c.name.startsWith('S15-') ? 'continuation'
-      : c.name.startsWith('S16-r') ? 'runtime' : 'other';
-    if ((group && group !== category) || !matchesUnitCase(name, selector)) continue;
+  for (const c of getCases(group)) {
+    const name = c.name;
+    if (!matchesUnitCase(name, selector)) continue;
     const endTiming = startCaseTiming([name], timings);
     const started = Date.now();
     try {
@@ -2468,7 +2577,7 @@ export async function runSelectedCases(selector?: string, group?: 'content' | 'c
     } catch (err) {
       results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
     } finally { endTiming(); }
-    console.log(`[design-authority-repair] ${c.name.split('：')[0]} ${((Date.now() - started) / 1000).toFixed(1)}s`);
+    console.log(`[${c.name.split('：')[0]}] ${((Date.now() - started) / 1000).toFixed(1)}s`);
   }
   return selectedUnitCases(results, selector, timings);
 }

@@ -23,6 +23,30 @@ const FIX = path.resolve(__dirname, '..', 'fixtures', 'cc-spec-deadlock');
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'a7 ratchet: terminal completion exit1 equals session exit0; waiting and failure never sample, auxiliary phase stays separate',
+    run: () => {
+      const base = { type: 'agent_invoke_end', phase: 'plan', duration_ms: 1000, effective_timeout_ms: 3000 };
+      for (const facts of [{ exit_code: 0, status: 'passed' }, { exit_code: 1, completion_observed: true, kill_attempted: true }]) {
+        const events = [{ ...base, ...facts }];
+        for (const history of [events, JSON.parse(JSON.stringify(events))]) {
+          const obs = extractTimeoutRatchetFromEvents(history, 'plan');
+          if (obs.maxCompletedDurationMs !== 1000 || obs.grantedHighwaterMs !== 3000) throw new Error(JSON.stringify(obs));
+        }
+      }
+      for (const negative of [{ status: 'waiting' }, { status: 'failed' }, { skipped: true }, { timed_out: true },
+        { kill_reason: 'agent_timeout' }, { silent_killed: true }, { terminal_failure_observed: true },
+        { spawn_error: { message: 'missing' } }]) {
+        const obs = extractTimeoutRatchetFromEvents([{ ...base, exit_code: 0, completion_observed: true, ...negative }], 'plan');
+        if (obs.maxCompletedDurationMs !== 0 || obs.grantedHighwaterMs !== 3000) throw new Error(JSON.stringify({ negative, obs }));
+      }
+      const incomplete = extractTimeoutRatchetFromEvents([{ ...base, exit_code: 1 }], 'plan');
+      if (incomplete.maxCompletedDurationMs !== 0) throw new Error('unobserved exit1 is incomplete');
+      const auxiliaryEvents = [{ ...base, phase: 'plan-verifier-format-repair', chain_phase: 'plan', exit_code: 0 }];
+      const auxiliary = extractTimeoutRatchetFromEvents(auxiliaryEvents, 'plan');
+      if (auxiliary.maxCompletedDurationMs !== 0 || auxiliary.grantedHighwaterMs !== 0) throw new Error('chain_phase cannot reassign timeout samples');
+    },
+  },
+  {
     name: 'ratchet: 事故序列（i1超时→i2超时→escalate 67.5→i3 exit0@49.6）→ i4 预算=67.5min 不回落',
     run: () => {
       const events = [
@@ -44,7 +68,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'ratchet: completed SSOT=exit0&&!timed_out——i2（harness PASS 但超时）不入棘轮',
+    name: 'ratchet: completed 由调用事实判定——i2（harness PASS 但超时）不入棘轮',
     run: () => {
       const events = [
         // i2 形态：exit 1 + timed_out（harness 层 PASS 与棘轮无关）

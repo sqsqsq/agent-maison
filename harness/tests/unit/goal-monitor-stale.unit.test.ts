@@ -19,7 +19,13 @@
 // ============================================================================
 
 import { __testing_classifyNotification, type IndexedEvent } from '../../scripts/goal-monitor';
-import type { GoalProgressSnapshot } from '../../scripts/utils/goal-progress';
+import { projectGoalProgress, type GoalProgressSnapshot } from '../../scripts/utils/goal-progress';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { loadWorkflowSpec } from '../../workflow-loader';
+import { loadEventsJsonl } from '../../scripts/utils/goal-runner-phase';
+import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -64,6 +70,35 @@ const RUN = [
 ];
 
 const cases: TestCase[] = [
+  {
+    name: 'a7 monitor consumes real projectGoalProgress: auxiliary log is current; actual invocation timeout still notifies',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'a7-monitor-progress-'));
+      const fixture = path.join(__dirname, '../fixtures/host-recovery-history/20261027-fe4512-invocation');
+      const manifest = JSON.parse(fs.readFileSync(path.join(fixture, 'manifest.projection.json'), 'utf-8')) as GoalManifest;
+      const events = loadEventsJsonl(path.join(fixture, 'events.prefix.jsonl'));
+      const now = Date.parse('2026-10-27T07:15:56.571Z');
+      try {
+        for (const [rel, age] of [['phases/plan/agent-output.log', 23 * 60 * 60_000],
+          ['phases/plan-verifier-format-repair/plan-verifier-format-repair-i28-7611d248ab56/agent-output.log', 1000]] as const) {
+          const file = path.join(root, manifest.report_dir, rel);
+          fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'constructed isolated output');
+          fs.utimesSync(file, new Date(now - age), new Date(now - age));
+        }
+        const project = () => projectGoalProgress({ projectRoot: root, manifest, events,
+          workflow: loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'spec-driven'), featuresDir: 'doc/features', nowMs: now });
+        const indexed = events.map((event, index) => ({ event, index }));
+        const active = project();
+        assert(active.liveness.state === 'ACTIVE' && active.next_action === 'wait_for_agent_invoke_end', JSON.stringify(active.liveness));
+        assert(__testing_classifyNotification(indexed, indexed.length - 2, active) === null, '新调用正常推进无需通知');
+        const start = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'plan-verifier-format-repair')!;
+        start.effective_timeout_ms = 1000;
+        const stalled = project();
+        assert(stalled.liveness.state === 'STALLED', JSON.stringify(stalled.liveness));
+        assert(__testing_classifyNotification(indexed, indexed.length - 2, stalled)?.notification_kind === 'liveness', '实际超时仍须通知，不更改监控政策');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
   {
     name: '复现(a)：游标 0 + STALLED → 每轮都报 liveness 异常（edge-trigger 判据 latestIndex>0 恒成立）',
     run: () => {

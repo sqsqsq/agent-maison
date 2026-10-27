@@ -34,6 +34,7 @@ import {
   partitionExecutionSessions,
   resolveResumedBudget,
   resolveValidationOnlyEligibility,
+  repairInvocationCompleted,
   type GoalRunEvent,
 } from '../../scripts/utils/goal-runner-phase';
 import { buildSupersedeAuditEvent } from '../../scripts/utils/goal-run-creation';
@@ -48,6 +49,7 @@ import {
 } from '../../scripts/goal-runner';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
+import { invocationCompleted, type InvocationCompletionFacts } from '../../scripts/utils/invocation-completion';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const FRAMEWORK_ROOT = REPO_ROOT;
@@ -108,6 +110,55 @@ function writeFreshReceipt(
 }
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'a7 invocation completion: negative facts win over exit0 and terminal completion; cleanup does not fail completion',
+    run() {
+      for (const facts of [{}, { exitCode: 1 }, { kill_attempted: true }, { lingering_pipe: true }]) {
+        assert(!invocationCompleted(facts as InvocationCompletionFacts), JSON.stringify(facts));
+      }
+      for (const facts of [{ exitCode: 0 }, { exitCode: 1, completion_observed: true, kill_attempted: true, lingering_pipe: true }]) {
+        assert(invocationCompleted(facts), JSON.stringify(facts));
+      }
+      for (const negative of [{ status: 'waiting' }, { status: 'failed' }, { skipped: true }, { timed_out: true },
+        { kill_reason: 'agent_timeout' }, { silent_killed: true }, { terminal_failure_observed: true },
+        { spawn_error: { code: 'ENOENT', message: 'missing' } }]) {
+        assert(!invocationCompleted({ exitCode: 0, completion_observed: true, ...negative }), JSON.stringify(negative));
+      }
+    },
+  },
+  {
+    name: 'a7 repair completion: own historical verdict fallback survives; waiting/skipped/failure and other invoke PASS cannot qualify',
+    run() {
+      const start = { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-i2' };
+      const end = { type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i2', exit_code: 1 };
+      const verdict = { type: 'phase_verdict', phase: 'plan', invoke_id: 'plan-i2', agent_failed: false, verdict: 'FAIL' };
+      assert(repairInvocationCompleted([start, end, verdict], 'plan'), 'matching legacy agent_failed=false retains completion independent of gate verdict');
+      assert(repairInvocationCompleted([start, { ...end, completion_observed: true }], 'plan'), 'cleanup exit1 is completed');
+      assert(!repairInvocationCompleted([start, end, { ...verdict, invoke_id: 'plan-i1' }], 'plan'), 'another invocation cannot supply completion');
+      assert(!repairInvocationCompleted([start, end], 'plan'), 'legacy exit1 without facts stays incomplete');
+      assert(repairInvocationCompleted([{ ...end, exit_code: 0 }], 'plan'), 'legacy exit0 remains completed');
+      for (const negative of [{ status: 'waiting' }, { status: 'failed' }, { skipped: true }, { timed_out: true },
+        { silent_killed: true }, { terminal_failure_observed: true }, { spawn_error: { message: 'missing' } }]) {
+        assert(!repairInvocationCompleted([start, { ...end, exit_code: 0, completion_observed: true, ...negative }, verdict], 'plan'), JSON.stringify(negative));
+      }
+      assert(!repairInvocationCompleted([start, { ...end, completion_observed: true },
+        { type: 'agent_process_settled', phase: 'plan', invoke_id: 'plan-i2', kill_reason: 'agent_timeout' }], 'plan'), 'settlement timeout wins');
+      assert(!repairInvocationCompleted([start, end, verdict, { type: 'phase_backtrack_requested' }], 'plan'), 'new repair window cannot borrow old completion');
+    },
+  },
+  {
+    name: 'a7 phase verdict: shared completion retains fresh gate priority, skipped and dryrun semantics',
+    run() {
+      const input = { dryRun: false, agentExitCode: 1, completionObserved: true, harnessExitCode: 0,
+        summaryBeforeMtime: null, summaryAfterMtime: 1, summaryVerdict: 'FAIL' as const };
+      const complete = resolvePhaseHarnessVerdict(input);
+      assert(!complete.agent_failed && complete.verdict === 'FAIL', 'transport completion cannot turn a failed gate into PASS');
+      const timeout = resolvePhaseHarnessVerdict({ ...input, summaryVerdict: 'PASS', agentTimedOut: true });
+      assert(timeout.agent_failed && timeout.verdict === 'PASS' && timeout.advance_blocked === true, 'timeout still blocks advance under fresh gate PASS');
+      assert(!resolvePhaseHarnessVerdict({ ...input, agentSkipped: true }).agent_failed, 'skip is not an agent failure');
+      assert(!resolvePhaseHarnessVerdict({ ...input, dryRun: true, completionObserved: false }).agent_failed, 'dryrun remains exempt');
+    },
+  },
   {
     name: 'c6 interrupted validation resumes the original stage without an auxiliary process or accepted session stealing eligibility',
     run() {

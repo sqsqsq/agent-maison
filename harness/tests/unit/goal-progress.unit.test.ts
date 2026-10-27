@@ -37,6 +37,10 @@ function projectGoalProgress(input: ProgressInput | Omit<ProgressInput, 'feature
 import { isLockStale } from '../../scripts/utils/goal-run-lock';
 import { loadEventsJsonl, type GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import type { UnitCaseResult } from '../run-unit';
+import { issueSessionExecution, acceptSessionExecution, acceptedSessionReport, readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
+import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
+import type { PhaseExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 const HARNESS_ROOT = path.join(__dirname, '../..');
@@ -2033,15 +2037,320 @@ cases.push({ name: 'session budget projection: 有效窗内睡眠、隔夜迟到
   assert(project(900) === 46, '收口后停机等待不再计时');
 } });
 
-export async function runAll(): Promise<UnitCaseResult[]> {
+const A7_FIXTURE = path.join(__dirname, '../fixtures/host-recovery-history/20261027-fe4512-invocation');
+
+function a7Project(run: (ctx: {
+  root: string; manifest: GoalManifest; events: GoalRunEvent[]; now: number;
+  log: (label: string, id?: string, ageMs?: number) => string;
+  project: () => GoalProgressSnapshot;
+}) => void): void {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'a7-progress-'));
+  const now = Date.parse('2026-10-27T07:15:56.571Z');
+  const manifest = mkManifest({ start_phase: 'plan', end_phase: 'plan' });
+  const events: GoalRunEvent[] = [
+    { type: 'run_start', ts: new Date(now - 60_000).toISOString(), chain: ['plan'] },
+    { type: 'adapter_probe', output_delivery: 'streaming' },
+    { type: 'phase_start', phase: 'plan', attempt: 1, ts: new Date(now - 50_000).toISOString() },
+    { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'plan-i1', ts: new Date(now - 40_000).toISOString(), effective_timeout_ms: 99 * 60_000 },
+    { type: 'agent_invoke_end', phase: 'plan', invoke_id: 'plan-i1', ts: new Date(now - 35_000).toISOString(), exit_code: 0 },
+    { type: 'harness_start', phase: 'plan', ts: new Date(now - 30_000).toISOString() },
+    { type: 'harness_end', phase: 'plan', ts: new Date(now - 25_000).toISOString() },
+    { type: 'heartbeat', phase: 'plan', ts: new Date(now - 1000).toISOString() },
+  ];
+  const log = (label: string, id?: string, ageMs = 1000): string => {
+    const rel = path.posix.join(manifest.report_dir, 'phases', label, ...(id ? [id] : []), 'agent-output.log');
+    const file = path.join(root, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'constructed isolated output');
+    fs.utimesSync(file, new Date(now - ageMs), new Date(now - ageMs));
+    return rel;
+  };
+  const project = () => projectGoalProgress({ projectRoot: root, manifest, events, workflow, nowMs: now });
+  try { run({ root, manifest, events, now, log, project }); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+cases.push({
+  name: 'a7 real minimal event prefix: auxiliary progress owns its log; omitted history is not full-run budget evidence',
+  run: () => a7Project(({ root, log, now }) => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(A7_FIXTURE, 'manifest.projection.json'), 'utf-8')) as GoalManifest;
+    const events = loadEventsJsonl(path.join(A7_FIXTURE, 'events.prefix.jsonl'));
+    const oldFile = path.join(root, manifest.report_dir, 'phases/plan/agent-output.log');
+    const label = 'plan-verifier-format-repair';
+    const id = 'plan-verifier-format-repair-i28-7611d248ab56';
+    const ownRel = path.posix.join(manifest.report_dir, 'phases', label, id, 'agent-output.log');
+    for (const [rel, mtime] of [[oldFile, Date.parse('2026-10-26T08:35:53.849Z')], [path.join(root, ownRel), now - 1000]] as const) {
+      fs.mkdirSync(path.dirname(rel), { recursive: true });
+      fs.writeFileSync(rel, 'constructed isolated output; cutoff mtime is not a captured host stat');
+      fs.utimesSync(rel, new Date(mtime), new Date(mtime));
+    }
+    const snapshot = projectGoalProgress({ projectRoot: root, manifest, events, workflow, nowMs: now });
+    assert(snapshot.phase.name === 'plan' && snapshot.phase.status === 'AGENT_RUNNING', JSON.stringify(snapshot.phase));
+    assert(snapshot.phase.substep === 'agent_invoke' && snapshot.next_action === 'wait_for_agent_invoke_end', snapshot.next_action);
+    assert(snapshot.artifacts.agent_output_log === ownRel && snapshot.phases_summary.find(s => s.phase === 'plan')?.evidence === ownRel, '工作面和证据须同一次调用');
+    assert(snapshot.liveness.state === 'ACTIVE' && snapshot.liveness.agent_output_stalled_ms === null, JSON.stringify(snapshot.liveness));
+    assert(snapshot.phase.attempt === 1 && snapshot.budget.turns_used === 1, '局部 fixture 修前修后均为 attempt=1/turns=1，不凑历史30轮');
+    assert(snapshot.phase.started_at === '2026-10-27T07:11:37.125Z' && snapshot.budget.phase_timeout_ms === 5_400_000, '阶段起点与本调用已授予超时不变');
+  }),
+});
+
+cases.push({
+  name: 'a7 production projection: ordinary, verifier repair, design repair and canary follow matching start/end/harness/verdict',
+  run: () => {
+    for (const label of ['plan', 'plan-verifier-format-repair', 'design-repair-author', 'vision-canary']) {
+      a7Project(({ events, now, log, project }) => {
+        const before = project();
+        const auxiliary = label !== 'plan';
+        const ownRel = log(label, auxiliary ? 'current-i2' : undefined);
+        if (auxiliary) log('plan', undefined, 23 * 60 * 60_000);
+        events.push({ type: 'agent_invoke_start', phase: label, ...(auxiliary ? { chain_phase: 'plan', purpose: label } : {}),
+          invoke_id: 'current-i2', ts: new Date(now - 10_000).toISOString(), effective_timeout_ms: 20 * 60_000 } as GoalRunEvent);
+        const active = project();
+        assert(active.phase.status === 'AGENT_RUNNING' && active.next_action === 'wait_for_agent_invoke_end', label);
+        assert(active.artifacts.agent_output_log === ownRel && active.phases_summary[0].evidence === ownRel, label + ' evidence');
+        assert(active.budget.phase_timeout_ms === 20 * 60_000 && active.liveness.state === 'ACTIVE', label + ' timeout/liveness');
+        assert(active.phase.started_at === before.phase.started_at, label + ' 不重置阶段起点');
+        assert(active.phase.attempt === (auxiliary ? before.phase.attempt : before.phase.attempt + 1), label + ' 不把辅助调用计阶段尝试');
+        events.push({ type: 'agent_invoke_end', phase: label, invoke_id: 'other', ts: new Date(now - 8000).toISOString() });
+        assert(project().phase.status === 'AGENT_RUNNING', label + ' 不匹配ID不得关闭');
+        events.push({ type: 'agent_invoke_end', phase: label, invoke_id: 'current-i2', ts: new Date(now - 7000).toISOString() });
+        assert(project().phase.status === 'AGENT_DONE', label + ' 对应结束');
+        events.push({ type: 'harness_start', phase: 'plan', ts: new Date(now - 6000).toISOString() });
+        assert(project().phase.status === 'HARNESS_RUNNING' && project().next_action === 'wait_for_harness_end', label + ' harness');
+        events.push({ type: 'phase_verdict', phase: 'plan', verdict: 'PASS', action: 'advance', ts: new Date(now - 5000).toISOString() });
+        assert(project().phase.status === 'PASSED', label + ' verdict');
+        events.push({ type: 'agent_invoke_start', phase: 'vision-canary', chain_phase: 'plan', invoke_id: 'after-pass', ts: new Date(now - 3000).toISOString() } as GoalRunEvent);
+        assert(project().phase.status === 'PASSED', label + ' 不重开已结束span');
+        assert(project().artifacts.agent_output_log === null, label + ' canary不借已结束span日志');
+      });
+    }
+  },
+});
+
+cases.push({
+  name: 'a7 production projection: session handoff evidence never borrows a background log or its static mtime',
+  run: () => a7Project(({ root, manifest, events, now, log, project }) => {
+    const label = 'plan-verifier-format-repair', id = 'session-i2';
+    log('plan', undefined, 23 * 60 * 60_000);
+    log(label, id, 23 * 60 * 60_000);
+    events.push({ type: 'agent_invoke_start', phase: label, chain_phase: 'plan', invoke_id: id, command: 'phase_execute_request',
+      effective_timeout_ms: 300_000, ts: new Date(now - 10_000).toISOString() } as GoalRunEvent);
+    const request = { path: `phases/${label}/${id}/request-e1.json`, sha256: 'a'.repeat(64) };
+    const file = path.join(root, manifest.report_dir, request.path);
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '{}');
+    fs.utimesSync(file, new Date(now - 24 * 60 * 60_000), new Date(now - 24 * 60 * 60_000));
+    events.push({ type: 'phase_start', phase: label, driver: 'session', invoke_id: id, handoff_request: request } as GoalRunEvent);
+    const active = project();
+    assert(active.phase.status === 'AGENT_RUNNING' && active.artifacts.agent_output_log === null, JSON.stringify(active.phase));
+    assert(active.liveness.signals.agent_output_log === 'missing' && active.liveness.agent_output_stalled_ms === null && active.liveness.state === 'ACTIVE', JSON.stringify(active.liveness));
+    assert(active.phases_summary[0].evidence === `${manifest.report_dir}/${request.path}`, String(active.phases_summary[0].evidence));
+    const report = { path: `phases/${label}/${id}/report.json`, sha256: 'b'.repeat(64), request_sha256: request.sha256 };
+    events.push({ type: 'agent_invoke_end', phase: label, invoke_id: id, handoff_report: report, ts: new Date(now - 1000).toISOString() });
+    const done = project();
+    assert(done.phase.status === 'AGENT_DONE' && done.phases_summary[0].evidence === `${manifest.report_dir}/${report.path}`, '结束后指向原报告引用');
+  }),
+});
+
+cases.push({
+  name: 'a7 production projection: current invocation timeout falls back to manifest and never borrows an earlier grant',
+  run: () => a7Project(({ events, now, project, log }) => {
+    events.push({ type: 'agent_invoke_start', phase: 'plan-verifier-format-repair', chain_phase: 'plan', invoke_id: 'legacy-aux',
+      ts: new Date(now - 1000).toISOString() } as GoalRunEvent);
+    assert(project().budget.phase_timeout_ms === 3_600_000, '缺字段按manifest回落，不借上次99分钟');
+    assert(project().artifacts.agent_output_log === null && project().phases_summary[0].evidence === null, '无本调用日志，不借旧阶段证据');
+    delete events[events.length - 1].invoke_id;
+    log('plan-verifier-format-repair');
+    assert(project().artifacts.agent_output_log === null, '链外旧记录缺编号时不猜测阶段平级日志');
+  }),
+});
+
+cases.push({
+  name: 'a7 production projection: streaming auxiliary genuinely stale, buffered and missing output keep existing policy',
+  run: () => {
+    for (const delivery of ['streaming', 'buffered', 'unknown']) {
+      a7Project(({ events, now, log, project }) => {
+        events[1].output_delivery = delivery;
+        const label = 'plan-verifier-format-repair';
+        log('plan', undefined, 1000);
+        log(label, 'quiet-i2', SOFT_STALL_MS + 60_000);
+        events.push({ type: 'agent_invoke_start', phase: label, chain_phase: 'plan', invoke_id: 'quiet-i2',
+          effective_timeout_ms: 90 * 60_000, ts: new Date(now - 20 * 60_000).toISOString() } as GoalRunEvent);
+        events.push({ type: 'heartbeat', ts: new Date(now - 1000).toISOString() });
+        const snap = project();
+        assert(snap.liveness.state === (delivery === 'streaming' ? 'SUSPECTED_STALL' : 'ACTIVE'), delivery + JSON.stringify(snap.liveness));
+        assert(snap.liveness.agent_output_stalled_ms === (delivery === 'streaming' ? SOFT_STALL_MS + 60_000 : null), delivery);
+      });
+    }
+  },
+});
+
+cases.push({
+  name: 'a7 production projection: legacy anonymous pairing survives, while two explicit different IDs stay open',
+  run: () => {
+    for (const [startId, endId, expected] of [[undefined, undefined, 'AGENT_DONE'], ['new', undefined, 'AGENT_DONE'],
+      [undefined, 'new', 'AGENT_DONE'], ['new', 'other', 'AGENT_RUNNING'], ['new', 'new', 'AGENT_DONE']] as const) {
+      a7Project(({ events, now, project }) => {
+        events.push({ type: 'agent_invoke_start', phase: 'plan', ...(startId ? { invoke_id: startId } : {}), ts: new Date(now - 10_000).toISOString() });
+        events.push({ type: 'agent_invoke_end', phase: 'plan', ...(endId ? { invoke_id: endId } : {}), ts: new Date(now - 1000).toISOString() });
+        assert(project().phase.status === expected, `${startId}/${endId}: ${project().phase.status}`);
+      });
+    }
+    a7Project(({ events, now, project }) => {
+      events.push({ type: 'agent_invoke_start', phase: 'plan', invoke_id: 'older', ts: new Date(now - 20_000).toISOString() },
+        { type: 'agent_invoke_start', phase: 'plan', ts: new Date(now - 10_000).toISOString() },
+        { type: 'agent_invoke_end', phase: 'plan', ts: new Date(now - 1000).toISOString() });
+      assert(project().phase.status === 'AGENT_DONE', '匿名end仍关闭最近start');
+    });
+  },
+});
+
+cases.push({
+  name: 'a7 production projection: resume/backtrack clears stale auxiliary windows without resetting budgets',
+  run: () => {
+    for (const reset of [{ type: 'resume', start_index: 0 }, { type: 'phase_backtrack_requested', from_phase: 'plan', invalidated_phases: ['plan'] },
+      { type: 'phase_invalidated', phase: 'plan' }]) {
+      a7Project(({ events, now, project }) => {
+        events.push({ type: 'agent_invoke_start', phase: 'design-repair-author', chain_phase: 'plan', invoke_id: 'stale-aux',
+          effective_timeout_ms: 1000, ts: new Date(now - 30 * 60_000).toISOString() } as GoalRunEvent);
+        events.push({ ...reset, ts: new Date(now - 1000).toISOString() } as GoalRunEvent,
+          { type: 'phase_start', phase: 'plan', attempt: 1, ts: new Date(now - 500).toISOString() });
+        const snap = project();
+        assert(snap.phase.status === 'PROMPT_READY' && snap.liveness.state === 'ACTIVE', JSON.stringify(snap.phase));
+        assert(snap.budget.phase_timeout_ms === 3_600_000 && snap.budget.turns_used === 2, '清调用窗口不清实际调用预算');
+      });
+    }
+  },
+});
+
+cases.push({
+  name: 'a7 production projection: real hard timeout and dead runner remain visible without output',
+  run: () => a7Project(({ events, now, project, root, manifest }) => {
+    events.push({ type: 'agent_invoke_start', phase: 'vision-canary', chain_phase: 'plan', invoke_id: 'canary-open',
+      effective_timeout_ms: 1000, ts: new Date(now - 2000).toISOString() } as GoalRunEvent,
+      { type: 'agent_invoke_end', phase: 'vision-canary', invoke_id: 'unrelated', ts: new Date(now - 1000).toISOString() });
+    assert(project().liveness.state === 'STALLED', '无关end不得遮蔽硬超时');
+    const dead = projectGoalProgress({ projectRoot: root, manifest, events, workflow, nowMs: now, liveProbe: true,
+      featureLock: { pid: 2_147_483_647, hostname: os.hostname(), updated_at: new Date(now - 10 * 60_000).toISOString() } as Parameters<typeof computeLiveness>[0]['featureLock'] });
+    assert(dead.liveness.state === 'ORPHAN_SUSPECTED', JSON.stringify(dead.liveness));
+  }),
+});
+
+cases.push({
+  name: 'a7 production projection: pre-phase canary does not invent a span; WAITING/TERMINAL action keeps priority',
+  run: () => a7Project(({ events, now, project, root, manifest, log }) => {
+    const canary: GoalRunEvent = { type: 'agent_invoke_start', phase: 'vision-canary', chain_phase: 'plan', invoke_id: 'canary-pre',
+      effective_timeout_ms: 120_000, ts: new Date(now - 1000).toISOString() } as GoalRunEvent;
+    const pre = projectGoalProgress({ projectRoot: root, manifest, workflow, events: [canary], nowMs: now });
+    assert(pre.status === 'PENDING' && pre.phase.status === 'NOT_STARTED' && pre.phase.started_at === null && pre.phase.attempt === 0, JSON.stringify(pre.phase));
+    assert(pre.artifacts.agent_output_log === null, 'canary无日志保持missing');
+    log('plan', undefined, 24 * 60 * 60_000);
+    events.push(canary);
+    assert(project().artifacts.agent_output_log === null, '运行中canary不得借之前的阶段日志');
+    for (const disposition of ['WAITING', 'TERMINAL'] as const) {
+      events.push({ type: 'run_end', status: disposition === 'TERMINAL' ? 'CHAIN_SLICE_COMPLETED' : 'HALTED',
+        run_disposition: disposition, run_wait_kind: 'human', ts: new Date(now - 500).toISOString() } as GoalRunEvent);
+      const snap = project();
+      assert(snap.phase.status === 'AGENT_RUNNING', '保留活动子步来验证裁决优先级');
+      assert(snap.run_disposition === disposition && snap.next_action === (disposition === 'WAITING' ? 'await_human_action' : 'inspect_events_terminal'), JSON.stringify({ d: snap.run_disposition, next: snap.next_action }));
+      events.pop();
+    }
+  }),
+});
+
+cases.push({
+  name: 'a7 production session issue-accept progress wiring uses signed request and accepted report with no background log',
+  run: () => a7Project(({ root, manifest, log }) => {
+    const now = Date.now(), label = 'plan-verifier-format-repair', invokeId = 'session-production-i1';
+    const runDir = path.join(root, manifest.report_dir);
+    fs.mkdirSync(runDir, { recursive: true });
+    ensureRunControl(runDir, manifest.run_id);
+    const acquired = casAcquireRunOwner(runDir, manifest.run_id, 0, { kind: 'session', owner_id: 'a7-progress-session', lease_ms: 120_000 });
+    assert(acquired.ok, '沿现有session-handoff fixture建立真实owner');
+    if (!acquired.ok) throw new Error('session owner unavailable');
+    const context: PhaseExecutionContext = {
+      runId: manifest.run_id, feature: manifest.feature, workflowId: 'spec-driven', track: 'full', chain: ['plan'],
+      phase: label, attemptId: invokeId, owner: { ...acquired.token, kind: 'session' }, projectRoot: root,
+      frameworkRoot: FRAMEWORK_ROOT, runDir, reportDir: manifest.report_dir, adapter: 'codex',
+      instruction: 'Complete this verifier format repair and report its result.',
+      runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {},
+    };
+    let eventTime = now;
+    const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'),
+      JSON.stringify({ ts: new Date(eventTime).toISOString(), ...event }) + '\n');
+    // Only seed the runtime's dispatch prerequisites; issuance and completion rows come from production.
+    emit({ type: 'run_start', chain: ['plan'], ts: new Date(now - 3000).toISOString() });
+    emit({ type: 'phase_start', phase: 'plan', attempt: 1, ts: new Date(now - 2000).toISOString() });
+    emit({ type: 'agent_invoke_start', phase: label, chain_phase: 'plan', purpose: 'verifier_format_repair', invoke_id: invokeId,
+      command: 'phase_execute_request', effective_timeout_ms: 120_000, ts: new Date(now - 1000).toISOString() });
+    const oldLog = log('plan', undefined, 23 * 60 * 60_000);
+    const issued = issueSessionExecution({ context, invokeId, chainPhase: 'plan', purpose: 'verifier_format_repair', timeoutMs: 120_000,
+      gateTimeoutMs: 30_000, cleanupReserveMs: 500, preSnapshot: null, writeBoundary: null, emit });
+    const project = () => projectGoalProgress({ projectRoot: root, manifest, workflow, events: loadEventsJsonl(path.join(runDir, 'events.jsonl')), nowMs: eventTime });
+    assert(readHandoffMaterial<{ invoke_id: string }>(runDir, issued.reference).invoke_id === invokeId, '读取并验证生产签发的真实request材料');
+    const running = project();
+    assert(running.phase.name === 'plan' && running.phase.status === 'AGENT_RUNNING' && running.phase.substep === 'agent_invoke', JSON.stringify(running.phase));
+    assert(running.next_action === 'wait_for_agent_invoke_end', running.next_action);
+    assert(running.phases_summary[0].evidence === `${manifest.report_dir}/${issued.reference.path}`, '运行中证据来自生产签发request');
+    assert(running.artifacts.agent_output_log === null && running.liveness.signals.agent_output_log === 'missing'
+      && running.liveness.agent_output_stalled_ms === null, '会话没有后台log，不能借旧阶段log');
+    assert(running.liveness.state === 'ACTIVE' && fs.existsSync(path.join(root, oldLog)), '旧阶段log存在但不参与当前活性');
+    eventTime = now + 1000;
+    const accepted = acceptSessionExecution({ runDir, issued, report: { phase: label, status: 'passed', details: 'verification reply completed' }, emit, nowMs: eventTime });
+    assert(!accepted.duplicate && !accepted.timedOut, '生产接受本次有效报告');
+    const committed = acceptedSessionReport(runDir, issued);
+    assert(committed?.report.status === 'passed' && !!committed.event.handoff_report, '真实报告材料与生产end事件绑定');
+    const done = project();
+    assert(done.phase.status === 'AGENT_DONE' && done.phase.substep === 'agent_invoke', JSON.stringify(done.phase));
+    assert(done.phases_summary[0].evidence === `${manifest.report_dir}/${committed!.event.handoff_report!.path}`, '结束证据来自生产接受的报告归档');
+    assert(done.artifacts.agent_output_log === null && done.liveness.signals.agent_output_log === 'missing', '接受报告后仍不借旧日志');
+    assert(!fs.existsSync(path.join(runDir, 'phases', label, invokeId, 'agent-output.log')), '生产session签发/接受没有生成后台log');
+    console.log('[a7-session-progress] ' + JSON.stringify({ invoke_id: invokeId, request: issued.reference,
+      report: committed!.event.handoff_report, start: { phase: running.phase, next_action: running.next_action, evidence: running.phases_summary[0].evidence,
+        log: running.artifacts.agent_output_log, output_signal: running.liveness.signals.agent_output_log },
+      end: { phase: done.phase, evidence: done.phases_summary[0].evidence, log: done.artifacts.agent_output_log } }));
+  }),
+});
+
+cases.push({
+  name: 'a7 closed auxiliary preserves unresolved formal timeout without stalling active recovery',
+  run: () => {
+    for (const failure of ['timed_out', 'silent_killed'] as const) {
+      a7Project(({ events, now, log, project }) => {
+        events[4].exit_code = 1;
+        events[4][failure] = true;
+        const label = 'design-repair-author', id = 'repair-i2';
+        log(label, id);
+        events.push({ type: 'agent_invoke_start', phase: label, chain_phase: 'plan', purpose: 'author', invoke_id: id,
+          effective_timeout_ms: 120_000, ts: new Date(now - 10_000).toISOString() } as GoalRunEvent);
+        const active = project();
+        assert(active.phase.status === 'AGENT_RUNNING' && active.liveness.state === 'ACTIVE', failure + ': 活跃辅助调用不被原正式失败盖成停滞');
+        events.push({ type: 'agent_invoke_end', phase: label, chain_phase: 'plan', purpose: 'author', invoke_id: id,
+          exit_code: 0, ts: new Date(now - 1000).toISOString() } as GoalRunEvent);
+        const closed = project();
+        assert(closed.phase.status === 'AGENT_DONE' && closed.liveness.state === 'STALLED', failure + ': 辅助已闭合而正式调用尚无verdict，保留原硬停滞信号');
+        events.push({ type: 'phase_verdict', phase: 'coding', verdict: 'PASS', action: 'advance', ts: new Date(now - 500).toISOString() });
+        assert(project().liveness.state === 'STALLED', failure + ': 别的阶段verdict不能收掉plan的超时');
+        events.push({ type: 'phase_verdict', phase: 'plan', verdict: 'FAIL', action: 'retry', ts: new Date(now - 100).toISOString() });
+        assert(project().liveness.state === 'ACTIVE', failure + ': 正式阶段已有verdict，原超时不再保持未收口停滞');
+      });
+    }
+  },
+});
+
+export async function runSelectedCases(selector?: string) {
   const results: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
+    const finish = startCaseTiming([c.name], timings);
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
+    } finally { finish(); }
   }
-  return results;
+  return selectedUnitCases(results, selector, timings);
 }
+
+export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

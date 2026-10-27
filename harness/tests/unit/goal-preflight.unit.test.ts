@@ -794,7 +794,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       }),
   },
   {
-    name: 'c7d2e9a4 runVisionCanaryProbe: 非零退出/timed_out/silent_killed/skipped → invoke_failed_not_cached，不写盘',
+    name: 'a7 runVisionCanaryProbe: 未完成/等待/明确失败 → invoke_failed_not_cached，不写盘',
     run: () =>
       withTmpAsync(async (root) => {
         const fw = setupCanaryFrameworkFixture(root);
@@ -804,6 +804,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', timed_out: true },
           { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', silent_killed: true },
           { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', skipped: true },
+          { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', status: 'waiting', completion_observed: true },
+          { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', status: 'failed', completion_observed: true },
+          { exitCode: 0, stdout: fullAnswer, stderr: '', command: 'fake', terminal_failure_observed: true, completion_observed: true },
         ];
         for (const f of facts) {
           const r = await runVisionCanaryProbe({
@@ -818,23 +821,64 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       }),
   },
   {
-    // plan c3f8a2d7 §3.4：exit=1、无终态信封时原因不得全丢——回退到 stderr 最后一行（去控制字符、单行）。
-    name: 'c3f8a2d7 runVisionCanaryProbe: invoke 失败无 terminal_error_excerpt → error 带 stderr 尾行摘要',
+    // plan c3f8a2d7 §3.4：exit=1、无终态信封时原因不得全丢——清洗尾行只作为排障补充。
+    name: 'c3f8a2d7 runVisionCanaryProbe: invoke 失败无 terminal_error_excerpt → error 保留清洗后的 stderr 尾行诊断',
     run: () =>
       withTmpAsync(async (root) => {
         const fw = setupCanaryFrameworkFixture(root);
-        const r = await runVisionCanaryProbe({
-          projectRoot: root,
-          frameworkRoot: fw,
-          manifest: baseManifest('claude'),
-          invokeFn: (async () => ({ exitCode: 1, stdout: '', command: 'fake',
-            stderr: 'Reading prompt from stdin...\n\x1b[31mERROR: stream disconnected before completion\x07\x1b[0m\n\n' })) as typeof invokeAgentHeadless,
-        });
-        assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify(r));
-        assert.match(r.error ?? '', /exitCode=1.*ERROR: stream disconnected before completion$/, JSON.stringify(r));
-        assert(!/[\x00-\x1f\x7f]/.test(r.error ?? ''), `摘要须去控制字符：${JSON.stringify(r.error)}`);
-        assert(!(r.error ?? '').includes('Reading prompt'), '只取尾部单行');
+        const detail = 'invoke 未完成（exitCode=1）';
+        const diagnostic = '；stderr 尾行（仅供排障、未必是原因）：';
+        const samples = [
+          { stderr: 'Reading prompt from stdin...\n\x1b[31mERROR: stream disconnected before completion\x07\x1b[0m\n\n\x1b[0m\x07\n', tail: 'ERROR: stream disconnected before completion' },
+          { stderr: '', tail: '' },
+          { stderr: '\n \r\n\x1b[31m\x07\x1b[0m\n', tail: '' },
+          { stderr: 'x'.repeat(501), tail: 'x'.repeat(500) },
+        ];
+        for (const { stderr, tail } of samples) {
+          const r = await runVisionCanaryProbe({
+            projectRoot: root, frameworkRoot: fw, manifest: baseManifest('claude'),
+            invokeFn: (async () => ({ exitCode: 1, stdout: '', command: 'fake', stderr })) as typeof invokeAgentHeadless,
+          });
+          assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify(r));
+          assert.strictEqual(r.error, tail ? `${detail}${diagnostic}${tail}` : detail, JSON.stringify(r));
+          assert(!/[\x00-\x1f\x7f]/.test(r.error ?? ''), `摘要须去控制字符：${JSON.stringify(r.error)}`);
+          assert(!(r.error ?? '').includes('Reading prompt'), '只取尾部单行');
+        }
       }),
+  },
+  {
+    name: 'a7 runVisionCanaryProbe: 主说明保留退出事实，终态优先于排障尾行，不把 MCP/Unknown model WARN 当根因',
+    run: () =>
+      withTmpAsync(async (root) => {
+        const fw = setupCanaryFrameworkFixture(root);
+        for (const terminal_error_excerpt of [undefined, 'turn.failed: stream disconnected before completion']) {
+          const r = await runVisionCanaryProbe({
+            projectRoot: root, frameworkRoot: fw, manifest: baseManifest('claude'),
+            invokeFn: (async () => ({ exitCode: 1, stdout: '', command: 'fake', terminal_error_excerpt,
+              stderr: 'WARN MCP startup unavailable\nWARN Unknown model gpt-6.1-sol\n' })) as typeof invokeAgentHeadless,
+          });
+          assert.strictEqual(r.outcome, 'invoke_failed_not_cached', JSON.stringify(r));
+          assert.strictEqual(r.error, terminal_error_excerpt
+            ? `invoke 未完成（exitCode=1）：${terminal_error_excerpt}`
+            : 'invoke 未完成（exitCode=1）；stderr 尾行（仅供排障、未必是原因）：WARN Unknown model gpt-6.1-sol',
+            '主说明须来自结构化失败事实；无终态时 WARN 仅列作排障，有终态时不再附无关 WARN');
+        }
+      }),
+  },
+  {
+    name: 'a7 runVisionCanaryProbe: 完成后清理 exit1 透传至原判卷及缓存，无关参数 WARN 不拦截有效答卷',
+    run: () => withTmpAsync(async root => {
+      const fw = setupCanaryFrameworkFixture(root);
+      const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: false,
+        result: 'TOP_LEFT_COLOR=red\nTOP_RIGHT_COLOR=blue\nBOTTOM_LEFT_COLOR=green\nBOTTOM_RIGHT_COLOR=yellow\nTEXT_TOKEN=MAISON7X3Q' }) + '\n';
+      const r = await runVisionCanaryProbe({
+        projectRoot: root, frameworkRoot: fw, manifest: baseManifest('claude'), answerKeyFn: () => FIXTURE_CANARY_KEY,
+        invokeFn: (async () => ({ exitCode: 1, stdout, stderr: "error: unknown argument '--unrelated-warning'", command: 'fake',
+          completion_observed: true, kill_attempted: true, lingering_pipe: true })) as typeof invokeAgentHeadless,
+      });
+      assert.strictEqual(r.outcome, 'valid_cached', JSON.stringify(r));
+      assert.strictEqual(loadLocalConfig(root)?.vision?.canary?.verdict, 'tool_read');
+    }),
   },
   {
     name: 'c7d2e9a4 runVisionCanaryProbe: 有效全对答卷 → valid_cached，写入 probe_version 且保留其余字段',
