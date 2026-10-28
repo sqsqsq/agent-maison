@@ -175,6 +175,8 @@ export function superviseRun(args: {
   runId: string;
   feature?: string;
   events: readonly unknown[];
+  /** Restart accounting stays on the original request while execution signals may come from a child. */
+  restartEvents?: readonly unknown[];
   probe?: ProcessProbe;
   conditionProbe?: (probe: string, phase?: string) => { ready: boolean; reason?: string };
   /** plan 9c3d7e1a §5.2：被本 run 承接的、同一交付周期内未完成 run 上已记的重启次数（起后继不重置上限）。 */
@@ -189,7 +191,7 @@ export function superviseRun(args: {
     legacyLimitRecheck: !!args.feature && canRecheckLegacyBacktrackLimit({
       projectRoot: args.projectRoot, feature: args.feature, runId: args.runId, events: args.events,
     }),
-    restartsSoFar: countSupervisorRestarts(args.events) + (args.inheritedRestarts ?? 0),
+    restartsSoFar: countSupervisorRestarts(args.restartEvents ?? args.events) + (args.inheritedRestarts ?? 0),
     beaconStale: isBeaconStale(verdict),
     condition: (() => {
       if (!waitingProbe || !args.conditionProbe) return undefined;

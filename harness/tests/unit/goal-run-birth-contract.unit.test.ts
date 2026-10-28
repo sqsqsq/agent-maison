@@ -620,9 +620,12 @@ cases.push(
     let d = decide(root, { requirement: '完成开卡' }, T0 + 60_000);
     assert.strictEqual(d.kind, 'hold', `冷却期内没有变化须保持停止：${JSON.stringify(d)}`);
     assert(d.kind === 'hold' && /约 \d+ 秒后再发起/.test(d.guidance), `无人值守的冷却须给出剩余秒数：${JSON.stringify(d)}`);
-    // 调度方 2026-09-29 裁定：有人在场不设冷却——同一现场直接重新接入（条件是否解除交给原检查）
     const att = decide(root, { requirement: '完成开卡', attended: true }, T0 + 60_000);
-    assert(att.kind === 'rejoin' && att.runId === a.manifest.run_id, `有人在场须直接重新接入：${JSON.stringify(att)}`);
+    assert.deepStrictEqual(att, d, '仅换运输不能把无变化冷却变成重新接入');
+    for (const attended of [false, true]) {
+      const explicit = decide(root, { requirement: '完成开卡', resume: a.manifest.run_id, attended }, T0 + 60_000);
+      assert(explicit.kind === 'rejoin' && explicit.explicit && explicit.runId === a.manifest.run_id, '两运输的显式恢复交同一后续恢复守卫');
+    }
     const b = bornRun(root, '完成开卡', '2');
     appendRunEvents(b.eventsPath, [started(T0 + 100), ...halted(T0 + 200, 'budget_wall_clock')]);
     d = decide(root, { requirement: '完成开卡' }, T0 + HOUR);

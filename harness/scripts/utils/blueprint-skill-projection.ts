@@ -725,6 +725,26 @@ export interface DesignAuthorityFinding {
 /** 重跑结果：`unevaluable` 非空 = 这道门此刻重评不了（输入解析失败 / 门的对象不在），调用方不得据此认为阻断已消除。 */
 export interface DesignAuthorityDiagnosis { findings: DesignAuthorityFinding[]; unevaluable?: string }
 
+/** Read the authority producer before a construction scope exists; absent content remains downstream work. */
+export function diagnoseBlueprintSkillAuthority(projectRoot: string, frameworkRoot: string, feature: string,
+  kinds: readonly BlueprintProjectionKind[] = ['acceptance', 'contracts']): DesignAuthorityDiagnosis {
+  if (!feature.startsWith('cu-')) return { findings: [] };
+  const identity = parseChangeUnitFeatureId(feature);
+  const relative = (file: string): string => path.relative(projectRoot, file).replace(/\\/g, '/');
+  const paths = { blueprint: relative(componentBlueprintPath(projectRoot, identity.blueprintId)),
+    change_unit: relative(changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId)) };
+  return { findings: kinds.flatMap(kind => {
+    const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind);
+    if (projected.state !== 'invalid') return [];
+    const codes = projected.codes ?? [];
+    const verdict = classifyDesignAuthorityCodes(codes);
+    return [{ check: 'authoritative_content_aligned', codes, class: verdict.class,
+      artifacts: verdict.artifacts.map(artifact => paths[artifact]),
+      basis: `${kind}: ${projected.detail ?? '设计权威投影不可用'}\n来源：${projected.dependencies.map(dependency => relative(dependency.path)).join('、')}`,
+      needs: verdict.needs, ...(projected.locations ? { locations: projected.locations } : {}) }];
+  }) };
+}
+
 /**
  * 只读重跑某阶段的设计权威门（spec → A1 验收；其余阶段 → CU 施工投影，plan 另含 A1 契约），返回其中责任在设计 owner 的阻断
  *（`repair_owner='external'` 且带 `structured.kind='design_authority'`）。停机说明的分类 / 简报与探针共用。
@@ -737,6 +757,9 @@ export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: stri
   const verifiedFindings = readVerifiedPhaseDesignFindings(projectRoot, frameworkRoot, feature, phase, runId);
   const cuGate = ['plan', 'change', 'coding', 'review', 'ut'].includes(phase);
   if (phase !== 'spec' && !cuGate) return { findings: [] };
+  const authority = diagnoseBlueprintSkillAuthority(projectRoot, frameworkRoot, feature,
+    phase === 'spec' ? ['acceptance'] : phase === 'plan' ? ['acceptance', 'contracts'] : ['contracts']);
+  const fallbackFindings = [...verifiedFindings, ...authority.findings];
   let featureSpec: CheckContext['featureSpec'];
   try {
     /* eslint-disable @typescript-eslint/no-require-imports */
@@ -754,11 +777,11 @@ export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: stri
     });
     featureSpec = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, resolution.inputs);
   } catch (error) {
-    return verifiedFindings.length ? { findings: verifiedFindings } : { findings: [], unevaluable: `${phase} 的输入按生产路径解析失败：${(error as Error).message}` };
+    return fallbackFindings.length ? { findings: fallbackFindings } : { findings: [], unevaluable: `${phase} 的输入按生产路径解析失败：${(error as Error).message}` };
   }
   // 门的对象不在（解析不出 acceptance / contracts）时，门会按"不适用"空转——那不是阻断消除了，是重评不了。
   if (phase === 'spec' ? !featureSpec.acceptance : feature.startsWith('cu-') && !featureSpec.contracts) {
-    return verifiedFindings.length ? { findings: verifiedFindings } : { findings: [], unevaluable: `${phase} 的 ${phase === 'spec' ? 'acceptance' : 'contracts'} 按当前输入解析不出来，设计权威门无法重评` };
+    return fallbackFindings.length ? { findings: fallbackFindings } : { findings: [], unevaluable: `${phase} 的 ${phase === 'spec' ? 'acceptance' : 'contracts'} 按当前输入解析不出来，设计权威门无法重评` };
   }
   const ctx = { projectRoot, frameworkRoot, feature, phase, phaseRule: {}, featureSpec } as unknown as CheckContext;
   const checks = phase === 'spec' ? checkAuthoritativeContentAligned(ctx, 'acceptance') : checkChangeUnitFeatureProjection(ctx, phase as 'plan');
@@ -769,12 +792,14 @@ export function diagnoseDesignAuthority(projectRoot: string, frameworkRoot: stri
       return { blueprint: rel(componentBlueprintPath(projectRoot, identity.blueprintId)), change_unit: rel(changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId)) };
     } catch { return { blueprint: '(canonical 蓝图)', change_unit: '(canonical Change Unit)' }; }
   })();
-  return { findings: [...verifiedFindings, ...checks.flatMap(check => {
+  const findings = [...verifiedFindings, ...checks.flatMap(check => {
     const structured = asRecord(check.structured);
     if (check.status !== 'FAIL' || check.repair_owner !== 'external' || structured?.kind !== 'design_authority') return [];
     const codes = Array.isArray(structured.codes) ? structured.codes.map(String) : [];
     const verdict = classifyDesignAuthorityCodes(codes);
     const locations = Array.isArray(structured.locations) ? structured.locations as DesignAuthorityLocation[] : undefined;
     return [{ check: check.id, codes, class: verdict.class, artifacts: verdict.artifacts.map(kind => paths[kind]), basis: check.details, needs: verdict.needs, ...(locations ? { locations } : {}) }];
-  })] };
+  })];
+  const represented = new Set(findings.flatMap(finding => finding.codes));
+  return { findings: [...findings, ...authority.findings.filter(finding => !finding.codes.length || finding.codes.some(code => !represented.has(code)))] };
 }

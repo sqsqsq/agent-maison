@@ -23,7 +23,9 @@ import * as path from 'path';
 import minimist from 'minimist';
 import { detectRepoLayout } from '../repo-layout';
 import { loadAuthoritativeEvents } from './utils/goal-runner-phase';
-import { countSupervisorRestarts, superviseRun, schedulerSupport, restartBackoffMs } from './utils/goal-supervisor';
+import { countSupervisorRestarts, superviseRun, schedulerSupport, restartBackoffMs, type SupervisorDecision } from './utils/goal-supervisor';
+import { loadGoalRunManifestFromRun, type GoalRunManifest, type InitialDesignGoalManifest } from './utils/goal-manifest';
+import { originalDeliveryForManifest, resolveOriginalDeliveryExecution } from './utils/delivery-origin';
 import { defaultProcessProbe } from './utils/device-session';
 import {
   pidExists,
@@ -295,36 +297,55 @@ async function main(): Promise<number> {
     return installSchtasks({ feature, everyMinutes: every, selfCmd });
   }
 
-  const run = resolveRun(projectRoot, feature, String(argv['run-id'] ?? 'latest'));
-  if (!run) {
+  const requested = resolveRun(projectRoot, feature, String(argv['run-id'] ?? 'latest'));
+  if (!requested) {
     console.error(`[goal-supervise] 找不到 feature=${feature} 的 goal run`);
     return 1;
   }
-  if ('creationIncomplete' in run) {
+  if ('creationIncomplete' in requested) {
     console.log(
-      `[goal-supervise] run=${run.runId} → no_op：CREATION_INCOMPLETE（${run.creationIncomplete}）；` +
+      `[goal-supervise] run=${requested.runId} → no_op：CREATION_INCOMPLETE（${requested.creationIncomplete}）；` +
         '仅供诊断，不自动 resume/接管',
     );
     return 0;
   }
-  const ownerGate = gateSupervisorOwner(run.runDir, run.runId);
-  if (ownerGate.action === 'no_op') {
-    console.log(`[goal-supervise] run=${run.runId} → no_op：${ownerGate.reason}`);
-    return 0;
+  let run = requested;
+  let resumeFeature = feature;
+  let original: InitialDesignGoalManifest | null = null;
+  const raw = JSON.parse(fs.readFileSync(path.join(run.runDir, 'manifest.json'), 'utf8')) as Partial<GoalRunManifest>;
+  // Ordinary legacy runs retain their existing reader; only declared family inputs use the union loader.
+  if ('initial_design' in raw || raw.delivery_origin) {
+    original = originalDeliveryForManifest(projectRoot, loadGoalRunManifestFromRun(projectRoot, run.runId, { feature }));
+    if (original) {
+      const target = resolveRun(projectRoot, original.feature, original.run_id);
+      if (!target || 'creationIncomplete' in target) throw new Error('[goal-supervise] original delivery birth is unavailable');
+      run = target;
+      resumeFeature = original.feature;
+    }
   }
-  const decide = () => {
-    const events = loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
+  const decide = (): { events: Array<Record<string, unknown>>; recordEvents: Array<Record<string, unknown>>; decision: SupervisorDecision } => {
+    const actual = original ? resolveOriginalDeliveryExecution(projectRoot, original) : null;
+    const execution = actual ? { runId: actual.manifest.run_id, reportDir: actual.manifest.report_dir, runDir: actual.runDir, feature: actual.manifest.feature } : { ...run, feature: resumeFeature };
+    const events = loadAuthoritativeEvents(path.join(execution.runDir, 'events.jsonl')) as unknown as Array<Record<string, unknown>>;
+    const recordEvents = execution.runDir === run.runDir ? events : loadAuthoritativeEvents(run.eventsPath) as unknown as Array<Record<string, unknown>>;
+    const ownerGate = gateSupervisorOwner(execution.runDir, execution.runId);
+    if (ownerGate.action === 'no_op') return { events, recordEvents, decision: { action: 'no_op', reason: ownerGate.reason } };
     const decision = superviseRun({
-      projectRoot, feature, reportDir: run.reportDir, runId: run.runId, events,
-      conditionProbe: (probe, phase) => runConditionProbe(projectRoot, run.reportDir, probe, phase),
+      projectRoot, feature: execution.feature, reportDir: execution.reportDir, runId: execution.runId, events, restartEvents: recordEvents,
+      probe: activeProcessProbe(),
+      conditionProbe: (probe, phase) => runConditionProbe(projectRoot, execution.reportDir, probe, phase),
       inheritedRestarts: inheritedSupervisorRestarts(run.runDir),
     });
-    return { events, decision };
+    return { events, recordEvents, decision };
   };
 
   // 退避（首次为 0）——防重启风暴，退避值与重启序号同源自决策核。在锁外睡：最长 10 分钟，持锁睡会挡住
   // 人工 resume 与同蓝图的设计修复；睡完在锁内重读重判（见下）。
   const preview = decide().decision;
+  if (preview.action === 'no_op') {
+    console.log(`[goal-supervise] run=${run.runId} → no_op：${preview.reason}`);
+    return 0;
+  }
   if (!argv['dry-run'] && preview.action === 'resume' && preview.backoff_ms > 0) {
     console.log(`[goal-supervise] 退避 ${Math.round(preview.backoff_ms / 1000)}s 后重启…`);
     await new Promise((r) => setTimeout(r, preview.backoff_ms));
@@ -340,14 +361,14 @@ async function main(): Promise<number> {
     return 0;
   }
   try {
-    const { events, decision } = decide();
+    const { events, recordEvents, decision } = decide();
     console.log(`[goal-supervise] run=${run.runId} → ${decision.action}：${decision.reason}`);
     if (decision.action !== 'resume') {
       // 判定不介入/不重启**不是失败**——supervisor 的职责就是分辨该不该拉。
       // codex 订正：**no_op 不落事件**。feature 级计划任务不随 run 完成而消失，
       // 每 5 分钟落一条 = 已完成/长期 WAITING 的 run 每天多 288 条零信息事件，
       // 而且都出现在 run_end 之后。终局类结论有审计价值，但**只记一次**（去重）。
-      if (decision.action !== 'no_op' && !hasObservation(events, decision.action)) {
+      if (decision.action !== 'no_op' && !hasObservation(recordEvents, decision.action)) {
         appendSupervisorEvent(run.eventsPath, {
           type: 'supervisor_observation', run_id: run.runId,
           action: decision.action, reason: decision.reason,
@@ -383,7 +404,7 @@ async function main(): Promise<number> {
         `[goal-supervise] 旧版 run 无 Job 绑定事件（${guardianState.reason}）——`
         + 'fail-closed 需人工清理，supervisor 不自动拉起',
       );
-      if (!hasObservation(events, 'legacy_needs_manual')) {
+      if (!hasObservation(recordEvents, 'legacy_needs_manual')) {
         appendSupervisorEvent(run.eventsPath, {
           type: 'supervisor_observation',
           run_id: run.runId,
@@ -400,7 +421,7 @@ async function main(): Promise<number> {
           `[goal-supervise] 接管守卫：guardian(pid=${aliveMatch.bound.pid}) 仍存活且身份严格匹配` +
           '——旧 owner 未死，维持退避不拉起',
         );
-        if (!hasObservation(events, 'owner_alive')) {
+        if (!hasObservation(recordEvents, 'owner_alive')) {
           appendSupervisorEvent(run.eventsPath, {
             type: 'supervisor_observation',
             run_id: run.runId,
@@ -433,7 +454,7 @@ async function main(): Promise<number> {
     // 原 run 继续还是起后继由 runner 的恢复入口决定（plan 9c3d7e1a §5.3）。
     const runnerArgs = [
       runnerScriptPath(),
-      '--feature', feature,
+      '--feature', resumeFeature,
       '--resume', run.runId,
       // t3（plan c6a9e4d2）：受控 force——仅当确认旧 owner（guardian）死亡（guardian
       // 不存在=Job 已关，唯一持柄契约）后才追加 --force-resume；owner 存活时上层

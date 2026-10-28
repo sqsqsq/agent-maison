@@ -42,9 +42,7 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
 
 ## 核心架构认知
 
-做 Step 2 / Step 5 / Step 6 模块与依赖设计时读 [plan-workflow-detail.md「核心架构认知」](../../reference/plan-workflow-detail.md)（`doc/architecture.md` + [framework.config.json](../../../framework.config.json) `> architecture` 五条依赖规则与非 CU-bound 的功能拆分规则）。
-
-**功能拆分核心任务**：非 CU-bound 按上述规则把 spec 功能点分配到已声明模块；CU-bound 时模块归属来自蓝图 development 节点 `module`（CU `touches` 派生的可修改模块集合），预计模块/文件可随实现调整；真实架构或公共职责变化仍回 `/component-design`。
+Step 2/5/6 的模块与依赖设计先读 [plan-workflow-detail.md「核心架构认知」](../../reference/plan-workflow-detail.md)（`doc/architecture.md`、[framework.config.json](../../../framework.config.json) `architecture` 五条依赖规则与非 CU-bound 拆分规则）。非 CU-bound 将 spec 功能分配到已声明模块；CU-bound 模块归属来自蓝图 development 节点 `module` 与 CU `touches` 派生的可修改模块集合，模块/文件预测可随实现调整；真实架构或公共职责变化回 `/component-design`。
 
 ## 输入
 

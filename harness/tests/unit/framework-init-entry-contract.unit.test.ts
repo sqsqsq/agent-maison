@@ -632,9 +632,9 @@ const cases: Array<{ name: string; run: () => void }> = [
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.length > 0, '模板缺 §4.0 需求路由节');
       const DESIGN_HANDOFF_SENTENCE =
-        '**设计交接**（admitted blueprint + ready CU）是范围候选的输入；由当前主 Agent 先完成';
-      const CANDIDATE_NOT_FREEZE_SENTENCE = '**`--prepare-scope` 只生成候选、不冻结范围**';
-      const FIRST_PHASE_FREEZE_SENTENCE = '**新完整交付在 run 出生时冻结范围**';
+        '原 consumer 接受/readiness 后才由 P2 选择正常 CU';
+      const CANDIDATE_NOT_FREEZE_SENTENCE = '正常 CU/Feature 的 `feature.yaml.execution_scope` 是出生前候选，run 的 `manifest.execution_scope` 是冻结范围权威';
+      const FIRST_PHASE_FREEZE_SENTENCE = '机器派生并在 CU run 出生冻结施工范围';
       for (const [why, sentence] of [
         ['设计交接是候选的输入（需求 R2 第二条）', DESIGN_HANDOFF_SENTENCE],
         ['候选与冻结分清，不得写成 prepare-scope 冻结范围（需求 R2 第一条）', CANDIDATE_NOT_FREEZE_SENTENCE],
@@ -642,6 +642,7 @@ const cases: Array<{ name: string; run: () => void }> = [
       ] as const) {
         assert(section.includes(sentence), `AGENTS 模板 §4.0 缺原句：${why}。期望逐字包含：\n${sentence}`);
       }
+      assert(section.includes('无 CU 的受管初始设计变体没有施工范围，不代表写产品获准'), '受管设计出生不能冒充施工范围或产品写权限');
     },
   },
   {
@@ -678,10 +679,9 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'full delivery authority continues to the endpoint',
     run: () => {
-      // R4：整句含「既有确认点」五项枚举——删掉枚举或反转前半句都会失配。
-      // **只锁「授权延续到终点」这一句**；「建 run 具体怎么做」由模板 §4.0 的上下文说明承载。
+      // f3b8e6a1: the controlled runtime carries the original authorization to the endpoint.
       const AUTHORITY_CONTINUATION_SENTENCE =
-        '**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、未获授权的预算调整、外部不可逆动作、有人在场时的设计缺口澄清）。';
+        '完整交付已授权就持续到原终点，真实授权/实质验收变化、秘密、不可逆动作、硬预算和明确禁止仍沿原边界';
       const template = read('templates/AGENTS.md.template');
       const section = template.slice(template.indexOf('### 4.0 需求路由'), template.indexOf('### 4.0.1'));
       assert(section.includes(AUTHORITY_CONTINUATION_SENTENCE), `AGENTS 模板 §4.0 缺交付授权延续原句（需求 R4）。期望逐字包含：\n${AUTHORITY_CONTINUATION_SENTENCE}`);

@@ -1,0 +1,519 @@
+artifact: component-blueprint@1
+component_id: wallet
+blueprint_id: bc-openCard-2
+revision: 1
+source_fingerprint: sha256:0f483e509979a5e90a6619c56fdf486b3372ce1c838f8e566af9dbda317881cd
+decision_fingerprint: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+provenance:
+  source_kind: requirement
+  source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+  observed_at: 2026-10-27T15:12:31.252Z
+  evidence_strength: authoritative
+  extraction_method: source_read
+review_summary:
+  title: 银行卡添卡
+  summary: 从两个银行入口完成模拟选卡、验证码、本地保存及按结果清栈。
+  authored_by: codex-main
+  admission:
+    status: blocker
+    root_questions_complete: false
+    current_slice:
+      slice_id: open-card
+      contracts_ready: false
+      design_refs_ready: false
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 用户
+      - 开发
+      - 测试
+    purpose: 银行卡数据和业务能力
+    current_state: 现有银行数据没有卡种、持久卡或验码
+    target_state: 提供卡种、模拟卡、验证码和完整卡持久化
+    delta: 提供卡种、模拟卡、验证码和完整卡持久化
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+    nodes:
+      - node_id: logical-opening
+        owner: WalletMain
+        current_state: 现有银行数据没有卡种、持久卡或验码
+        target_state: 提供卡种、模拟卡、验证码和完整卡持久化
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:12:31.252Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+          - doc/features/bc-openCard-2/blueprint/design-draft.md
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 用户
+      - 开发
+      - 测试
+    purpose: 写入及导航生命周期
+    current_state: 点击银行只提示
+    target_state: 选择、验证、保存并依据实际结果清栈
+    delta: 选择、验证、保存并依据实际结果清栈
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+    nodes:
+      - node_id: runtime-opening
+        owner: WalletMain
+        current_state: 点击银行只提示
+        target_state: 选择、验证、保存并依据实际结果清栈
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:12:31.252Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+          - doc/features/bc-openCard-2/blueprint/design-draft.md
+        design_basis_refs:
+          - view:logical/node:logical-opening
+    runtime_data_flows:
+      - flow_id: card-write-and-result
+        data_domain_refs:
+          - bank-card
+        external_contract_refs: []
+        source_of_truth:
+          authority: view:logical/node:logical-opening
+          persistence: local-rdb:wallet-cards
+          projections_and_caches:
+            - view:runtime/node:runtime-opening
+          reconciliation: 以 RDB 写入结果为准，失败不得展示成功
+        triggers:
+          - kind: user
+            timing: 六位验证码完成且点击下一步
+            idempotency: 提交期间禁用重复点击；卡号唯一约束避免重复卡
+        initial_load:
+          initial_load_id: load
+          strategy: 打开或创建 RDB
+          owner: WalletMain
+          data_scope: 本机已保存卡
+          freshness: 提交时使用当前写入结果
+        state_owner:
+          ref: view:runtime/node:runtime-opening
+          states:
+            - 选择银行
+            - 选择类型
+            - 选择卡
+            - 验证码
+            - 保存中
+            - 结果
+        mutations:
+          - mutation_id: save
+            kind: user
+            persistence_ref: local-rdb:wallet-cards
+            publication_ref: publication:result
+            recovery_ref: recovery:save-failure
+        publications:
+          - publication_id: result
+            payload: 完整卡号与写入成功或失败结果，交给结果页
+        subscriptions: []
+        consumers:
+          - consumer_id: result-page
+            initial_load_ref: initial-load:load
+            update_ref: publication:result
+        failure_recovery:
+          recovery_id: save-failure
+          handling: 结果页展示失败并保留本次完整卡号；完成后回添卡入口
+          retry: 重新发起添卡
+        decisions_and_gaps: []
+        evidence_refs: &a1
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+          - doc/features/bc-openCard-2/blueprint/design-draft.md
+        verification_refs: *a1
+        logical_contract_refs: []
+        development_owner_ref: view:development/node:development-opening
+        lifecycle_coverage:
+          cold_start:
+            status: covered
+            description: 重新打开 RDB；不恢复未提交操作
+            evidence_refs: *a1
+          warm_resume:
+            status: covered
+            description: 页面持有选择期间保持状态，验证码按到期时间重新计算
+            evidence_refs: *a1
+          page_attach:
+            status: covered
+            description: 进入时读取账号展示手机号，打开验证码即开始倒计时
+            evidence_refs: *a1
+          page_detach:
+            status: covered
+            description: 取消计时并释放页面临时状态
+            evidence_refs: *a1
+          account_switch:
+            status: covered
+            description: 当前账号仅为 mock；切换时丢弃未完成的流程状态
+            evidence_refs: *a1
+          process_recreation:
+            status: covered
+            description: 未提交的临时流程丢弃，已保存卡仍存在
+            evidence_refs: *a1
+          background_write:
+            status: not_applicable
+            description: 本需求没有后台写入
+            evidence_refs: *a1
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:13:27.574Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 用户
+      - 开发
+      - 测试
+    purpose: 工程模块与职责
+    current_state: WalletMain 提供银行页面，Phone 注册目的地，AccountManager 管理账号
+    target_state: WalletMain 实现添卡和 RDB；Phone 注册路由；AccountManager 提供 mock 手机号
+    delta: WalletMain 实现添卡和 RDB；Phone 注册路由；AccountManager 提供 mock 手机号
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+    nodes:
+      - node_id: development-opening
+        owner: WalletMain
+        module: WalletMain
+        current_state: WalletMain 提供银行页面，Phone 注册目的地，AccountManager 管理账号
+        target_state: WalletMain 实现添卡和 RDB；Phone 注册路由；AccountManager 提供 mock 手机号
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:12:31.252Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+          - doc/features/bc-openCard-2/blueprint/design-draft.md
+        design_basis_refs:
+          - view:logical/node:logical-opening
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 用户
+      - 开发
+      - 测试
+    purpose: 本地 App 与数据库
+    current_state: Phone HAP 和本地模拟银行数据
+    target_state: 同一 HAP 增加本地 RDB，不依赖真实短信服务
+    delta: 同一 HAP 增加本地 RDB，不依赖真实短信服务
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+    nodes:
+      - node_id: deployment-opening
+        owner: WalletMain
+        current_state: Phone HAP 和本地模拟银行数据
+        target_state: 同一 HAP 增加本地 RDB，不依赖真实短信服务
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:12:31.252Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+          - doc/features/bc-openCard-2/blueprint/design-draft.md
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 用户
+      - 开发
+      - 测试
+    purpose: 添卡用户旅程
+    current_state: 无法从银行进入绑卡
+    target_state: 从两个银行入口进入类型、选卡、验证码及结果页
+    delta: 从两个银行入口进入类型、选卡、验证码及结果页
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+    nodes:
+      - node_id: scenarios-opening
+        owner: WalletMain
+        current_state: 无法从银行进入绑卡
+        target_state: 从两个银行入口进入类型、选卡、验证码及结果页
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:12:31.252Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - doc/features/原始需求/1-2-银行卡/原始需求.md
+          - doc/features/bc-openCard-2/blueprint/design-draft.md
+        logical_refs:
+          - view:logical/node:logical-opening
+        runtime_refs:
+          - view:runtime/node:runtime-opening
+        development_owner_ref: view:development/node:development-opening
+        deployment_refs:
+          - view:deployment/node:deployment-opening
+decisions_and_gaps:
+  decisions: []
+  gaps: []
+relations:
+  - relation_id: journey-logic
+    from: view:scenarios/node:scenarios-opening
+    to: view:logical/node:logical-opening
+    relation_type: uses
+    owner: WalletMain
+    provenance:
+      source_kind: requirement
+      source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+      observed_at: 2026-10-27T15:12:31.252Z
+      evidence_strength: authoritative
+      extraction_method: source_read
+    verification_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+contracts: []
+providers:
+  - provider_id: current-facts-discovery
+    definition: current-facts-discovery
+    consumer: design owner
+    provider: current-facts-discovery
+    requirement: required
+    authority_rule: Code, schema, interface, config, and tests are current-state authority.
+    source_rule: Every assertion carries source_ref and source revision when available.
+    missing_behavior: 保留未决事实并按实际影响处理
+    replacement_behavior: 复核来源后更新设计
+    exit_behavior: 保留来源
+    conflict_behavior: 保留冲突并追权威来源
+    writes:
+      - canonical_blueprint_input
+    available: true
+  - provider_id: se-manual-contracts
+    definition: se-manual-contracts
+    consumer: design owner
+    provider: se-manual-contracts
+    requirement: optional
+    authority_rule: Authorized SE or contract owner is external-contract authority.
+    source_rule: Every contract segment carries source_ref, verification ref, and
+      provenance.
+    missing_behavior: 保留未决事实并按实际影响处理
+    replacement_behavior: 复核来源后更新设计
+    exit_behavior: 保留来源
+    conflict_behavior: 保留冲突并追权威来源
+    writes:
+      - canonical_blueprint_input
+    available: false
+    missing_disposition: not_applicable
+  - provider_id: app-design-lens
+    definition: app-design-lens
+    consumer: design owner
+    provider: app-design-lens
+    requirement: required
+    authority_rule: Lens is not fact authority and cannot override inputs.
+    source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+    missing_behavior: 保留未决事实并按实际影响处理
+    replacement_behavior: 复核来源后更新设计
+    exit_behavior: 保留来源
+    conflict_behavior: 保留冲突并追权威来源
+    writes:
+      - canonical_blueprint_input
+    available: true
+  - provider_id: independent-design-questioning
+    definition: independent-design-questioning
+    consumer: design owner
+    provider: independent-design-questioning
+    requirement: required
+    authority_rule: Questioning is not fact or decision authority.
+    source_rule: Answers cite isolated blueprint, evidence package, and registered
+      external inputs.
+    missing_behavior: 保留未决事实并按实际影响处理
+    replacement_behavior: 复核来源后更新设计
+    exit_behavior: 保留来源
+    conflict_behavior: 保留冲突并追权威来源
+    writes:
+      - canonical_blueprint_input
+    available: true
+  - provider_id: conventions-knowledge
+    definition: conventions-knowledge
+    consumer: design owner
+    provider: conventions-knowledge
+    requirement: optional
+    authority_rule: Project conventions are stable knowledge input, not current-code authority.
+    source_rule: Applicable facts cite the configured conventions file and exact heading id.
+    missing_behavior: 保留未决事实并按实际影响处理
+    replacement_behavior: 复核来源后更新设计
+    exit_behavior: 保留来源
+    conflict_behavior: 保留冲突并追权威来源
+    writes:
+      - canonical_blueprint_input
+    available: false
+    missing_disposition: not_applicable
+  - provider_id: component-assets
+    definition: component-assets
+    consumer: design owner
+    provider: component-assets
+    requirement: optional
+    authority_rule: Source is component fact authority; curation is human selection guidance.
+    source_rule: Selection evidence cites the configured component index or catalog;
+      component_ref identifies the asset.
+    missing_behavior: 保留未决事实并按实际影响处理
+    replacement_behavior: 复核来源后更新设计
+    exit_behavior: 保留来源
+    conflict_behavior: 保留冲突并追权威来源
+    writes:
+      - canonical_blueprint_input
+    available: true
+discovery:
+  source_fingerprint: sha256:0f483e509979a5e90a6619c56fdf486b3372ce1c838f8e566af9dbda317881cd
+  facts:
+    - fact_id: existing-entry
+      subject: existing bank entry
+      value: 添加银行卡和全部银行页点击银行均提示暂不支持；Phone 注册两条目的地并持有根导航栈。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+        observed_at: 2026-10-27T15:12:31.252Z
+        evidence_strength: observed
+        extraction_method: source_read
+    - fact_id: account
+      subject: mock account
+      value: AccountService 模拟账号当前为脱敏邮箱，未暴露手机号。
+      provenance:
+        source_kind: code
+        source_ref: 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+        observed_at: 2026-10-27T15:12:31.252Z
+        evidence_strength: observed
+        extraction_method: source_read
+  conflicts: []
+  inputs:
+    current_scope_items:
+      - item_id: bank-card-opening
+        kind: requirement
+        source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+        source_sha256: sha256:2a6bbd10d4ff297ad9b23670ba0e302f5feef7cc0757e43dd7b04ae909052300
+        provenance:
+          source_kind: requirement
+          source_ref: doc/features/原始需求/1-2-银行卡/原始需求.md
+          observed_at: 2026-10-27T15:12:31.252Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        authority:
+          owner: user
+          formality: formal_requirement
+    knowledge_assets: []
+  requirement_traceability:
+    - item_id: bank-card-opening
+      blueprint_refs:
+        - view:scenarios/node:scenarios-opening
+app_lens:
+  module_boundaries:
+    disposition: answered_with_evidence
+    answer: WalletMain 承担添卡和卡数据，Phone 注册目的地，AccountManager 提供账号 mock 手机号；依现有模块出口。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  capability_seams:
+    disposition: answered_with_evidence
+    answer: 页面调用 WalletMain 的卡仓库，账号手机号通过 AccountManager 出口读取，Phone 只装配导航。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  feature_flags:
+    disposition: answered_with_evidence
+    answer: 本需求不引入功能开关，既有入口改为选择卡类型。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  data_producers_consumers:
+    disposition: answered_with_evidence
+    answer: 模拟银行和卡由本地数据源提供；确认保存的完整卡由 RDB 持久化；结果页和首页消费本次交接。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  lifecycle_triggers:
+    disposition: answered_with_evidence
+    answer: 打开验证码即发送模拟短信并启动计时；关闭停止计时；点击有效验证码后等待保存。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  state_owners:
+    disposition: answered_with_evidence
+    answer: 页面持有流程中临时选择，仓库持有数据库访问；RDB 是成功写入的权威。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  initialization:
+    disposition: answered_with_evidence
+    answer: 银行列表按现有仓库加载；创建或打开 RDB，结果页接收当前完整卡号与成功状态。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  publication_subscription:
+    disposition: answered_with_evidence
+    answer: 本轮完成操作经现有导航栈交接本次结果，临时状态在流程结束清理；无后台订阅。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  ui_refresh:
+    disposition: answered_with_evidence
+    answer: 写入完成后结果页显示真实结果；成功完成后首页接收本次卡号，失败回添卡入口。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  process_recovery:
+    disposition: answered_with_evidence
+    answer: 半完成的选择与验证码不持久化；进程重建不伪造成功，已提交成功的卡由 RDB 保留。
+    evidence_refs:
+      - doc/features/原始需求/1-2-银行卡/原始需求.md
+      - doc/features/bc-openCard-2/blueprint/design-draft.md
+  runtime_flow_trigger_assessment:
+    persistent_or_remote_ui:
+      applies: true
+      evidence_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+        - doc/features/bc-openCard-2/blueprint/design-draft.md
+    multiple_consumers:
+      applies: true
+      evidence_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+        - doc/features/bc-openCard-2/blueprint/design-draft.md
+    background_system_external_scheduled_write:
+      applies: false
+      evidence_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+        - doc/features/bc-openCard-2/blueprint/design-draft.md
+    cold_start_resume_mount_account_switch:
+      applies: true
+      evidence_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+        - doc/features/bc-openCard-2/blueprint/design-draft.md
+    user_mutation_refreshes_other_consumers:
+      applies: true
+      evidence_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+        - doc/features/bc-openCard-2/blueprint/design-draft.md
+    cache_sync_freshness_consistency_process_recreation:
+      applies: true
+      evidence_refs:
+        - doc/features/原始需求/1-2-银行卡/原始需求.md
+        - doc/features/bc-openCard-2/blueprint/design-draft.md
+derived_results: []

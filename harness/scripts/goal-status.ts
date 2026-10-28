@@ -7,7 +7,8 @@ import minimist from 'minimist';
 import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
 import { loadFrameworkConfig } from '../config';
 import { resolveWorkflowSpec, workflowForExistingRun } from '../workflow-loader';
-import { loadGoalManifestFromRun } from './utils/goal-manifest';
+import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './utils/goal-manifest';
+import { projectInitialDesignDelivery } from './utils/initial-design-delivery';
 import {
   buildLiveGoalStatusSnapshot,
   formatGoalStatusJson,
@@ -64,8 +65,8 @@ Goal status — progress projection reader
 
   let manifest;
   try {
-    manifest = loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir });
-    workflow = workflowForExistingRun(workflow, manifest, frameworkRoot, projectRoot);
+    manifest = loadGoalRunManifestFromRun(projectRoot, runId, { feature, featuresDir });
+    if (!isInitialDesignManifest(manifest)) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot, projectRoot);
   } catch (e) {
     console.error((e as Error).message);
     return 1;
@@ -78,6 +79,21 @@ Goal status — progress projection reader
   const wantMd = Boolean(argv.markdown);
 
   const renderOnce = (): void => {
+    if (isInitialDesignManifest(manifest)) {
+      const delivery = projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+      if (wantJson) console.log(JSON.stringify(delivery, null, 2));
+      else console.log([
+        `Goal ${delivery.feature} · run ${delivery.run_id}`,
+        `状态：${delivery.status}；当前职责：${delivery.stage}；完成：${delivery.complete}`,
+        delivery.current ? `当前执行：${JSON.stringify(delivery.current)}` : null,
+        `累计调用：${delivery.budget.total_turns}/${delivery.budget.max_total_turns}；活跃时间：${delivery.budget.active_ms}ms/${delivery.budget.wall_clock_minutes}min`,
+        `下一步：${delivery.next_action}`,
+        delivery.halt_reason ? `停止原因：${delivery.halt_reason}` : null,
+        delivery.recovery ? `恢复信息：${JSON.stringify(delivery.recovery)}` : null,
+        ...delivery.issues.map(issue => `待处理：${issue}`),
+      ].filter(Boolean).join('\n'));
+      return;
+    }
     const snapshot = buildLiveGoalStatusSnapshot({
       projectRoot,
       manifest,

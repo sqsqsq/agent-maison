@@ -874,6 +874,7 @@ export async function runAll(selector?: string): Promise<UnitCaseResult[]> {
         kind: 'session', owner_id: 'owner-1', lease_ms: 60_000,
       });
       assert(first.ok, '首次 acquire 失败');
+      if ('initial_design' in prepared.manifest) throw new Error('Existing scoped fixture must use a construction manifest');
       appendGoalEventFenced(temp2, prepared.manifest, prepared.runDir, first.token, {
         type: 'phase_started', phase: 'spec', run_id: runId,
       });

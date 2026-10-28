@@ -1,0 +1,145 @@
+# AGENTS.md — InitialDesignInbox（应用工程）全局指令
+
+> 由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template` 实例化生成，是本工程所有 AI coding agent 的**全局系统指令**。
+> 每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。**这里只列清单，不复述细节**——展开文本见 [framework/skills/reference/agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)（条件加载：需要某条红线的完整判据文本时读）。
+
+## 一、基础信息
+
+| 维度 | 取值 |
+|------|------|
+| 项目名 | `InitialDesignInbox` |
+| 项目类型 | `app` |
+| project profile | `hmos-app`（子型：`标准应用`） |
+| Framework 接入方式 | `framework/` 子目录（Maison 发布件 zip 解压集成，非 git submodule） |
+| 架构摘要 | 1 个外层（02-Feature…02-Feature），模块内 1 层 main，跨模块出口见 DSL `cross_module_exports_file` |
+
+## 二、SSOT（Single Source of Truth）
+
+| 维度 | SSOT 文件 | 说明 |
+|------|----------|------|
+| 架构与模块划分 | [doc/architecture.md](doc/architecture.md) | 层级划分+依赖矩阵。任何冲突设计一律以本文为准 |
+| 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 修改必过 `/framework-init`（UPDATE 模式） |
+| 模块画像（Catalog） | [doc/module-catalog.yaml](doc/module-catalog.yaml) | 职责/`NOT_responsible_for`/`easily_confused_with`。Scope 防错源头 |
+| 业务术语表（Glossary） | [doc/glossary.yaml](doc/glossary.yaml) | 自然语言业务名词 ↔ 权威模块映射 |
+| 组件资产（可选·若存在） | [doc/component-index.yaml](doc/component-index.yaml) / [doc/component-catalog.yaml](doc/component-catalog.yaml) | 源码派生索引与人确认台账；`/component-catalog-bootstrap` |
+| 工程惯例（Conventions，可选·若存在） | [doc/conventions.md](doc/conventions.md) | 横切工程实践；仅由 `/conventions-bootstrap` 创建并逐条确认 |
+| 通用编码规范（hmos-app） | [framework/profiles/hmos-app/skills/coding/templates/coding-standards.md](framework/profiles/hmos-app/skills/coding/templates/coding-standards.md) | ArkTS 命名、目录、import、资源等编码规则 |
+| ArkTS 易错点（hmos-app） | [framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md](framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
+| 阶段规则/校验脚本 | [framework/specs/phase-rules/](framework/specs/phase-rules/) / [framework/harness/scripts/](framework/harness/scripts/) | BLOCKER 级门禁 |
+| 全局设计原则 | 所有阶段遵循 [framework/docs/overview.md §1.2.1](framework/docs/overview.md#121-四条总设计原则) 的“效率优先、简单优先、回退重签、协作可恢复”。在满足用户目标、确定性正确性、安全与数据完整性以及用户明确要求后，使用覆盖当前真实风险的最小验证；不得为过程证据完美、绝对防篡改或假设风险追加无新信息的阶段、模型轮次、工具调用与重复验证。速度与准确度的边界缺少实证时，披露已知缺口并依据真实宿主反馈迭代，不为寻找理论最优先造比较实验或额外机制。 | BLOCKER |
+
+## 三、红线清单（无论在哪个阶段都必须遵守，BLOCKER 除标注外）
+
+| # | 红线 | 判据一句话 | enforced_by |
+|---|------|-----------|-------------|
+| 1 | 架构守门 | 层间/模块内依赖方向按 `architecture` DSL；跨模块经出口文件，禁深路径 import | check-coding |
+| 2 | 术语守门 | spec 起始 `## 0. 术语映射表`，逐条人工 `[x]` 确认，权威模块须在 Catalog 存在 | check-spec |
+| 3 | Scope 守门 | spec 声明 in/out_of_scope_modules（须在 Catalog 存在）；扩展须走用户批准的提议流程；diff 不得越界 | check-spec / diff_within_scope |
+| 4 | 宿主 toolchain 守门 | 1. 写 `.ets` 文件**前**先扫一眼 [arkts-pitfalls.md（profile）](framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md) 相关条目（其它 `project_profile` 以其 addendum / 宿主约定为准）。
+2. **逐文件闭环**：写一个文件 → 立刻 `ReadLints` → 零 error 才能写下一个。**严禁批量生成多文件后再统一 lint**。
+3. 不允许出现 `any`、硬编码字符串、未定义资源 key、以及在跨模块导出入口文件（由实例 `architecture.cross_module_exports_file` 指定文件名）中遗漏本应导出的符号。 | compile capabilities |
+| 5 | 文档与代码同步 | contracts.yaml/use-cases.yaml 为强契约真源；架构影响声明非 none 才更新架构文档 | plan Step 12 |
+| 6 | Context Facts Gate | 该 track 首个 phase（旧出生协议为 spec）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
+| 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | agent-behavioral-principles + Layer 2 量化门禁 |
+| 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
+| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，需求临时件放所属蓝图 `blueprint/` 或 Feature `tmp/`，无关需求诊断放系统临时目录，用完清理（[材料归属细则](framework/skills/reference/consumer-framework-boundary.md#材料归属与临时文件清理)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
+
+## 四、工作流与 Skill 路由
+
+### 4.0 需求路由（正式性与请求终点）
+
+> **两问定路由**：① 本轮要动什么（**范围**）；② 按什么标准算对（**验收语义**）。「不改实现」只回答①，不免除②。
+> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。
+
+判类前**先查已有依据**（既有 acceptance、蓝图、[doc/module-catalog.yaml](doc/module-catalog.yaml)、约束知识）：查到即复用并写明引用；恢复明确既有预期的普通 bug 按维护处理（包括已完成 Feature），不新建蓝图/Feature/后继 run；只有涉及**新增或变更预期、契约或新的设计决定**才进入设计职责，再决定复用、修订还是新建蓝图——不因「不改实现」跳过②，也不因「补测试」强制新建蓝图。查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。非正式维护按本次范围直接完成、不创建蓝图；任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑。三条边界。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。
+
+| 请求终点 | 主 Agent 的职责 |
+|---|---|
+| 只编译工程 | `cd framework/harness` 后运行 `npm run compile -- --project-root <宿主根> --json`；不要求 Feature、diff 或修正登记 |
+| 显式 Skill / 局部维护 | 按请求终点使用共享方法；实际执行再用 project CLI 或 request CLI；产出请求结果后结束 |
+| 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
+| 完整实现交付 | 主 Agent 最初判类并传原请求/来源/影响输入与可信授权；会话经 `--prepare-run --run-mode attended` 和 `--next / --report-result`，无人值守经 `goal-runner --detach`，从原始需求进入同一 GoalPhaseRuntime。无 CU 时先受管设计/真实独立质询/检查，原 consumer 接受/readiness 后才由 P2 选择正常 CU、机器派生并在 CU run 出生冻结施工范围。正常 CU 的 `--prepare-scope` 只生成候选、不冻结范围；输入为完成终点 `--completion-target`、请求结果 `--requested-results`、明确动作 `--requested-phases`、影响判断及来源，由机器计算绑定与义务。主 Agent 不先做完设计才启动、不手拼 CU/phase，只消费返回的真实请求及精确命令。child 报告自动回原请求，全部适用 CU 正式完成后还须原 P3（单 CU 沿原退化算法），仅 CU 交付不冒称部件完成。原需求/来源、模型视觉钉、超时和有效预算跨段继承，累计不清零；origin/运输不授全权。普通作者可无隔离，必需独立核验保持真实独立，缺后台能力如实披露。完整交付已授权就持续到原终点，真实授权/实质验收变化、秘密、不可逆动作、硬预算和明确禁止仍沿原边界；明确全权时按可信原授权在 prepare/控制调用重传 `--authorize-autonomy`。旧有效范围/run/证据按原接续复用，不建平行运行。 |
+| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
+
+阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。正常 CU/Feature 的 `feature.yaml.execution_scope` 是出生前候选，run 的 `manifest.execution_scope` 是冻结范围权威；无 CU 的受管初始设计变体没有施工范围，不代表写产品获准。新任务按义务计算范围，旧运行恢复见 MIGRATION。
+
+**普通请求由主 Agent 负责**：framework-init 仅用于明确安装、更新、配置或 adapter 物化意图；产物提及 framework 不构成 init 意图。init-next-steps 是可选建议，不授权 catalog、glossary、Graph 或 Feature 全链。入口与独立动作见 [项目请求入口](framework/docs/operations/project-entry.md)。
+
+**修正三问**（在途 Feature 的中途 NL 修正必答；普通维护不跑 correction-init）：
+
+| 问 | 是 → 落点层 |
+|---|---|
+| Q1 需求/验收本身变了？ | spec（spec.md/acceptance.yaml；旧记录=change.md 意图/验收清单） |
+| Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；旧记录=change.md Scope/关键契约） |
+| Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
+
+`--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
+重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。用户反馈是 successor/correction 输入，不是对上一 run 的签名。
+**明确要求已完成 Feature 正式重新交付时**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
+
+### 4.0.1 阶段 Skill 总表
+
+具体触发方式（slash/技能跳板/直链）由当前运行宿主及已物化入口决定，见 [framework/agents/README.md](framework/agents/README.md)；也可直接让 agent 读对应 Skill 正文进入。
+
+| 阶段 | Skill 路径 |
+|------|-----------|
+| 0. Framework 初始化/升级 | [framework/skills/project/framework-init/SKILL.md](framework/skills/project/framework-init/SKILL.md) |
+| 0. 模块画像/术语表自举 | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
+| 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
+| 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
+| 0. 实例扩展管理 | [framework/skills/project/extension/SKILL.md](framework/skills/project/extension/SKILL.md) |
+| **创建或继续部件设计（Story Design，唯一设计入口）** | [framework/skills/project/component-design/SKILL.md](framework/skills/project/component-design/SKILL.md) |
+| CU 推进 / 部件闭环 | [change-unit-progression](framework/skills/project/change-unit-progression/SKILL.md) · [component-closure](framework/skills/project/component-closure/SKILL.md) |
+| 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
+
+
+
+### component-design 设计前知识
+
+动笔前读取适用原文；索引/候选不是事实确认或已读证明。维护写入须沿原授权与时点，不在 run 内擅自刷新图谱。
+
+- `doc/module-catalog.yaml` — 模块职责、反例与易混项；完整索引可继续探索
+- `doc/glossary.yaml` — 术语与 alias 候选；字面命中不替代语义消歧
+- `doc/architecture.md` — 架构背景；设计依据仍按原权威链引用
+- `doc/conventions.md` — 存在时读全文；review 独立选适用项并打开范例（文件缺失 / 未启用；不声称已消费）
+- `doc/component-index.yaml` — 完整组件库存；与策展按 id 联合读取并反查源码（文件缺失 / 未启用；不声称已消费）
+- `doc/component-catalog.yaml` — 组件适用/不适用与易混项；不覆盖源码事实（文件缺失 / 未启用；不声称已消费）
+- `framework/docs/README.md` — 框架背景索引，按当前任务跟随相关原始链接
+- `framework/profiles/hmos-app/skills/README.md` — 当前 profile 知识与 Skill 资产协议
+- `<module>/code-graph.yaml` — 按相关模块替换 <module>；无图回源码，不自动建图（文件缺失 / 未启用；不声称已消费）
+- component-design knowledge：未声明可选资产（extension → profile）。
+> **catalog-bootstrap（catalog+glossary）**：正式需求的术语消歧与模块 Scope 消费相应资料；独立编译不要求先建 Catalog/Glossary，专项请求只补实际缺少的输入。
+
+**执行规则（正式阶段）**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
+
+**执行者与 verifier 职责**：当前阶段执行者主动运行 harness 并按真实 request 派独立 verifier、完整落报告及核回执；直接交互时该执行者是主 agent，受管 Goal 时是阶段 agent，外层调度者不并行派审查或写报告。closure-only 仅补所缺核验/回执，不重跑完整作业。详见 [agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md) §4.1。
+
+**实例扩展与生命周期钩子**：允许在不改 `framework/` 前提下挂业务 Skill/知识/phase 钩子，落点 `doc/extensions/`（`paths.extension_dir` 可覆盖）。触发询问时机与协议 SSOT 见 reference。
+
+## 五、交付凭证与阶段闭环判定
+
+正式 Feature 每阶段完成须在 `doc/features/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环 = harness verdict=PASS + verifier 一次 PASS + `check-receipt.ts` 通过**（trace.json 由 harness 产出；verifier 只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并如实标 `completed_with_prior_review`；回执是 harness 只读投影，agent 不手填，备注写 `<phase>/notes.md`；harness 输出末尾的 `NEXT:` 行就是下一步）；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
+
+**跨会话恢复**：新会话/继续 feature 前须先 `check-receipt.ts --feature <feature> --phase <phase>`（或 `harness-runner.ts --sync-closure`）；exit 0 → 已闭环，停等 `phase.next_step`，禁止重跑。清理陈旧状态：`harness-runner.ts --clear-state`。会话边界表/resume 完整机制见 reference。
+
+## 六、与用户交互的硬性规则
+
+最小改动原则、scope 越界即停、不确定用工具验证、产物即契约——完整表述见 reference。**用户确认 UX（BLOCKER）**：需用户确认的步骤须遵守 [user-confirmation-ux.md](framework/skills/reference/user-confirmation-ux.md)（widget/portable 编号菜单，禁止仅要求打字）。
+
+**反假设条款（Rule Hallucination Ban，BLOCKER）**：若你声称某条规则限制你执行某动作，必须立即逐字 quote 该规则原文+文件路径+行号；quote 不出 = 该规则不存在 = 你必须执行该动作。禁止以"我假设""通常这类项目""为了安全起见"为由跳过工作流步骤。
+
+## 七、快速索引
+
+- Skill 索引：[framework/skills/README.md](framework/skills/README.md)
+- 功能需求产物目录：[doc/features](doc/features)
+- catalog-bootstrap 全局阶段命令（无 `--feature`）：`cd framework/harness && npx ts-node harness-runner.ts --phase catalog`（或 `--phase glossary`）
+
+## 本次隔离验收的原生环境与授权边界
+
+# Initial-design CLI acceptance
+
+原始用户需求与授权唯一入口为 doc/requirement.md；工程事实为现有源码、模块目录与架构。按 framework/skills/project/goal-mode/SKILL.md 和生产公开 next/report 继续，直至原请求正式完成或真实边界。不得预填或改写机器结果，不得修改 framework/、host-node-toolchain.json 或验收能力。必需独立质询和 verifier 必须使用真正独立 CLI/子代理及原始请求，不能由作者自签。所有实现/设计答案由当前任务作者形成。
+
+本工程为 hmos-app 身份的 host-only TypeScript 原生接缝：产品 src/main/ets/*.ts，测试 src/ohosTest/ets/test/*.test.ts，使用真实 node:test 的 it 与现有 Expect.ts 断言包装（内部真实执行 node:assert/strict），保留共享 checker 可消费的 expect(...).toBe/toEqual 形态。保留公共 App lens、结构/追溯、P1/P2/P3、gate/finalizer、预算和完成检查；不声称 HarmonyOS 构建或设备验收。原生能力文件不可修改。所有调用使用同一原始全权授权，设计作者不得提前写产品或测试，UT 不得改产品。
+
+原生 UT 仅把真实 TAP 中 type=test 的通过终态、且能唯一定位当前执行源的 node:test 用例名投影为非阻断观察检查 id，绑定实际测试文件的相对路径。整套门禁仍要求真实 TAP 通过、选中数等于执行数且无跳过，聚合计数不反推逐例通过。P3 的自动执行证据沿原协议使用 <测试相对路径>#<实际命名用例名>，由原脚本报告、manifest 和当前文件字节核验；设计/plan 可以规划引用，只有真实测试产生并执行通过后才成为证据。不得以已有测试文件名、未执行用例、随意字符串或人工 passed 代替执行。

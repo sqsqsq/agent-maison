@@ -30,6 +30,7 @@ import {
 } from '../../scripts/utils/goal-run-control';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import { readHandoffRequest } from '../../scripts/utils/goal-handoff';
+import { CONTINUATION_COOLDOWN_MINUTES } from '../../scripts/utils/goal-run-creation';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import {
   runGoalRuntimeChain,
@@ -81,14 +82,19 @@ const cases: TestCase[] = [
       const root = path.join(temporary, 'host with spaces');
       const oldTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
       try {
-        prepareSessionCliProject(root, 'claude', false);
+        const historicalClock = path.join(temporary, 'historical-clock.cjs');
+        const offset = (CONTINUATION_COOLDOWN_MINUTES + 5) * 60_000;
+        fs.writeFileSync(historicalClock, `const RealDate=Date,now=()=>RealDate.now()-${offset};global.Date=new Proxy(RealDate,{construct(target,args){return Reflect.construct(target,args.length?args:[now()]);},apply(){return new RealDate(now()).toString();},get(target,key){return key==='now'?now:Reflect.get(target,key);}});exports.restore=()=>{global.Date=RealDate;};`);
+        const restoreClock = (require(historicalClock) as { restore(): void }).restore;
+        try { prepareSessionCliProject(root, 'claude', false); } finally { restoreClock(); }
         const harness = path.join(root, 'framework/harness');
         const runDir = path.join(root, 'doc/features/clamp/goal-runs/session-cli');
         const env = { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(root, '.trust') };
+        const historicalEnv = { ...env, NODE_OPTIONS: `--require ${JSON.stringify(historicalClock)}` };
         const args = [path.join(harness, 'node_modules/ts-node/dist/bin.js'), '--project', path.join(harness, 'tsconfig.json'),
           path.join(harness, 'scripts/goal-mode-entry.ts'), '--project-root', root, '--framework-root', path.join(root, 'framework'),
           '--feature', 'clamp', '--run-id', 'session-cli', '--adapter', 'claude', '--run-mode', 'attended', '--authorize-autonomy', '--next'];
-        const next = spawnSync(process.execPath, args, { cwd: harness, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        const next = spawnSync(process.execPath, args, { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true });
         assert(next.status === 0, next.stderr + next.stdout);
         const issued = JSON.parse(next.stdout.trim());
         const request = JSON.parse(fs.readFileSync(issued.request.path, 'utf8'));
@@ -97,11 +103,17 @@ const cases: TestCase[] = [
         const psScript = path.join(temporary, 'generated command.ps1');
         fs.writeFileSync(psScript, `$PSVersionTable.PSVersion.ToString()\n${issued.next_command}\nexit $LASTEXITCODE\n`);
         const reported = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript],
-          { cwd: harness, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+          { cwd: harness, env: historicalEnv, encoding: 'utf8', timeout: 60_000, windowsHide: true });
         assert(reported.status === 0, reported.stderr + reported.stdout);
         assert(/^5\.1\./.test(reported.stdout), 'test must use Windows PowerShell 5.1');
         const waiting = JSON.parse(reported.stdout.trim().split(/\r?\n/).at(-1)!);
         assert(waiting.result.status === 'waiting' && waiting.exit_code === 0, JSON.stringify(waiting));
+        const historicalEvents = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line));
+        const historicalEnd = [...historicalEvents].reverse().find(event => event.type === 'run_end');
+        assert(!!historicalEnd && Date.now() - Date.parse(historicalEnd.ts) > CONTINUATION_COOLDOWN_MINUTES * 60_000,
+          'fixture history must already be outside the shared cooldown before the current fault');
+        const times = historicalEvents.map(event => Date.parse(event.ts));
+        assert(times.every((time, index) => index === 0 || time >= times[index - 1]), 'production-written fixture history must stay chronological');
         const fault = path.join(temporary, 'startup-fault.cjs');
         fs.writeFileSync(fault, `const fs=require('fs'),append=fs.appendFileSync;let fired=false;fs.appendFileSync=function(file,data,...args){if(!fired&&String(file).endsWith('events.jsonl')&&String(data).includes('"type":"run_start"')){fired=true;throw new Error('current startup write failure');}return append.call(this,file,data,...args)};`);
         const interrupted = spawnSync(process.execPath, args, { cwd: harness, env: { ...env, NODE_OPTIONS: `--require ${JSON.stringify(fault)}` }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
@@ -462,6 +474,7 @@ const cases: TestCase[] = [
         });
         assert(acquired.ok, 'session owner acquisition failed');
         const eventsBefore = fs.readFileSync(path.join(prepared.runDir, 'events.jsonl'), 'utf8');
+        if ('initial_design' in prepared.manifest) throw new Error('Existing scoped fixture must use a construction manifest');
         const requestId = handoffSessionToDetached({
           projectRoot: root, frameworkRoot: FRAMEWORK_ROOT,
           runDir: prepared.runDir, token: acquired.token, manifest: prepared.manifest,

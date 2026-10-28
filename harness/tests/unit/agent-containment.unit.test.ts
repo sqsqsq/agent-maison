@@ -687,6 +687,22 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
     },
   },
   {
+    name: 't3: spawn failure before a process exists cannot emit a new settled fact',
+    run: async () => {
+      const { setupGoalRuntimeHost, runGoalRuntimeChain } = require('./goal-runner-testing-integrity.unit.test') as typeof import('./goal-runner-testing-integrity.unit.test');
+      const { root } = setupGoalRuntimeHost('codex', false);
+      try {
+        const result = await runGoalRuntimeChain(root, { adapter: 'codex', freshStartPhase: 'spec', freshEndPhase: 'spec', viaRuntimeClass: true,
+          freshRequirement: '定义本次内部职责，不触发UI、设备或外部动作。', freshBudget: { max_total_turns: 1 },
+          invokeResultFor: () => ({ exitCode: 127, spawn_error: 'ENOENT: test transport failed before a child process existed' }) });
+        assert(result.events.some(event => event.type === 'agent_invoke_start'), '该反例必须实际到达调用，而非前置拒绝');
+        assert(!result.events.some(event => event.type === 'agent_process_bound'), '测试运输未创建/绑定进程');
+        assert(!result.events.some(event => event.type === 'agent_process_settled'), 'spawn前失败不能发settled');
+        assert(!result.events.some(event => event.type === 'run_end' && event.status === 'COMPLETED'), 'spawn前失败不能完成交付');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
     name: 't3: goal-runner 接线——resume 对账逐项处置（legacy force 路径/settled 条件/收口）',
     run: () => {
       const src = fs.readFileSync(path.join(__dirname, '../../scripts/goal-phase-runtime.ts'), 'utf-8');
@@ -697,17 +713,18 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
       assert(src.includes("type: 'agent_process_settled'"), 'agent_process_settled 事件缺失');
       assert(src.includes('for (const item of reconcile.items)'), '多未闭合逐项处置缺失');
       assert(src.includes("type: 'legacy_run_override'"), 'legacy force 确认事件缺失');
-      const settledIdx = src.indexOf("type: 'agent_process_settled'");
       // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不再重复 emit——
-      // settled 仍受 bound 成功约束；skipExecutor包含post-agent恢复及未获事实入场的零调用。
-      const settledCondIdx = src.indexOf('if (containmentCtx && !guardianBoundError && !skipExecutor)');
+      // 真实绑定失败不能发settled；既有无进程测试运输仍保留调用收尾事实。
       assert(src.includes('const skipExecutor = resumePostAgent || !!factsAdmissionError;'), '未调用executor不能新发settled');
-      const settledCondIdxLegacy = src.indexOf('if (containmentCtx && !guardianBoundError)');
-      assert(
-        (settledCondIdx >= 0 && settledCondIdx < settledIdx) ||
-          (settledCondIdxLegacy >= 0 && settledCondIdxLegacy < settledIdx),
-        'settled 未受 bound 成功条件约束',
-      );
+      const settledSites = [...src.matchAll(/type: 'agent_process_settled'/g)];
+      assert(settledSites.length === 4, '所有实际settled writer都须接受同一源级检查');
+      for (const site of settledSites) {
+        const before = src.slice(Math.max(0, site.index! - 180), site.index);
+        assert(/if \((?:guardianBound|bound) && !containmentError\) (?:emit|goalEvents\.emit)\(\{\s*$/.test(before)
+          || /if \(contained && !containmentError && !result\.spawn_error\) goalEvents\.emit\(\{\s*$/.test(before)
+          || /if \(containmentCtx && !guardianBoundError && !invoke\.spawn_error && !skipExecutor\) \{\s*goalEvents\.emit\(\{\s*$/.test(before),
+        `settled 未排除真实绑定失败/未执行调用：${site.index}`);
+      }
       assert(src.includes("concludeStartupBlocker('legacy_run_requires_manual_cleanup'"), 'legacy BLOCKER 未收口');
       assert(src.includes("concludeStartupBlocker('guardian_termination_failed'"), '杀不死 BLOCKER 未收口');
       const killTreeCallSites = src.match(/killProcessTree\(/g) ?? [];

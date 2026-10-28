@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import type { PhaseExecutionContext } from './goal-phase-executor';
+import { featureFilePath } from '../../config';
 import { assertFencedOwner, readRunControl, setSessionExecutionLease, type RunFenceToken } from './goal-run-control';
 import { loadEventsJsonlStrict, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges,
@@ -55,6 +56,27 @@ export function assertSessionRequestFence(runDir: string, issued: IssuedSessionE
   const control = readRunControl(runDir, token.run_id);
   if (!control?.owner || control.current_epoch !== token.epoch || control.owner.owner_id !== token.owner_id
     || !['active', 'orphaned_session'].includes(control.owner.state)) throw new Error('[session-handoff] stale owner fence');
+}
+
+/** Shared public transport prelude, before any runtime attempt or owner allocation. */
+export function inspectSessionExecutionBeforeRuntime(options: {
+  runDir: string; requestPath?: string; report?: SessionExecutionReport; forceTakeover?: boolean;
+}) {
+  const current = readSessionExecution(options.runDir, options.requestPath);
+  const report = options.report ? normalizeSessionReport(options.report) : undefined;
+  if (report && !current) throw new Error('[session-handoff] report has no signed request');
+  if (current && report && current.request.context.phase !== report.phase) throw new Error('[session-handoff] invalid execution phase');
+  const accepted = current ? acceptedSessionReport(options.runDir, current) : null;
+  if (accepted && report && JSON.stringify(accepted.report) !== JSON.stringify(report)) throw new Error('[session-handoff] conflicting execution report');
+  let reusable: IssuedSessionExecution | null = null;
+  if (current && !accepted) {
+    const control = readRunControl(options.runDir, current.request.context.runId);
+    const releasedForTakeover = options.forceTakeover && !report && control?.owner?.state === 'released'
+      && control.current_epoch === current.request.context.owner.epoch && control.owner.owner_id === current.request.context.owner.owner_id;
+    if (!releasedForTakeover) assertSessionRequestFence(options.runDir, current);
+    if (!releasedForTakeover && !report && Date.parse(current.request.deadline) > Date.now()) reusable = current;
+  }
+  return { current, report, accepted, reusable };
 }
 
 /** Shared run-material boundary, including new files beneath a root junction alias. */
@@ -295,6 +317,10 @@ export function acceptSessionExecution(input: {
     } else fs.writeFileSync(acceptedToolEvents, bytes, { flag: 'wx' });
   }
   if (!saved && (issued.request.purpose === 'author' || issued.request.purpose === 'questioning')) {
+    if (issued.request.context.phase.startsWith('initial-design-') && boundary) {
+      const blueprint = featureFilePath(boundary.projectRoot, issued.request.context.feature, 'blueprint/component-blueprint.yaml');
+      if (fs.existsSync(blueprint)) draftOutputs['initial-design-blueprint.yaml'] = fs.readFileSync(blueprint).toString('base64');
+    }
     for (const name of ['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json']) {
       const draft = path.join(runDir, 'design-repair', name);
       if (fs.existsSync(draft)) draftOutputs[name] = fs.readFileSync(draft).toString('base64');

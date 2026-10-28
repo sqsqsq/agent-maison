@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 import * as path from 'path';
+import * as fs from 'fs';
 import minimist from 'minimist';
+import { featureFilePath } from '../config';
+import { resolveProbeFrameworkRoot } from '../repo-layout';
+import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './utils/goal-manifest';
+import { projectInitialDesignDelivery } from './utils/initial-design-delivery';
 import { assessFeature } from './utils/assess';
 import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
@@ -30,6 +35,15 @@ function main(): void {
   if (!['manual', 'batch_authorized', 'goal_mode'].includes(mode)) {
     throw new Error(`--mode 非法：${mode}`);
   }
+  const runId = argv['run-id'] ? String(argv['run-id']) : undefined;
+  if (runId && fs.existsSync(featureFilePath(projectRoot, feature, `goal-runs/${runId}/manifest.json`))) {
+    const manifest = loadGoalRunManifestFromRun(projectRoot, runId, { feature });
+    if (isInitialDesignManifest(manifest)) {
+      console.log(JSON.stringify(projectInitialDesignDelivery({ projectRoot,
+        frameworkRoot: frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '..')), manifest }), null, 2));
+      return;
+    }
+  }
   const result = assessFeature({
     projectRoot,
     frameworkRoot,
@@ -39,7 +53,7 @@ function main(): void {
       mode: mode as 'manual' | 'batch_authorized' | 'goal_mode',
       ...(argv['through-phase'] ? { through_phase: String(argv['through-phase']) } : {}),
     },
-    runId: argv['run-id'] ? String(argv['run-id']) : undefined,
+    runId,
     attemptId: argv['attempt-id'] ? String(argv['attempt-id']) : undefined,
     writeProjection: argv.write !== false,
   });

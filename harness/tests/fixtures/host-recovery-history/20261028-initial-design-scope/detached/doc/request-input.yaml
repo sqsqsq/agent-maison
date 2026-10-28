@@ -1,0 +1,23 @@
+feature: inbox-batch-read
+requirement: 为通知收件箱部件新增正式内部能力：调用公开入口 markAllRead()
+  时，将当前所有未读消息一次性标为已读并写回现有存储，返回本次实际改变的消息数；只在发生改变时向现有订阅者发送一次最终快照。空收件箱或全部已读时返回
+  0，不写存储、不发通知；重复调用保持幂等。读取列表、单条
+  markRead、持久化重载与取消订阅的现有行为必须保留。沿现有入口、InboxStore、MemoryStorage 和订阅消费者实现并验证该能力，不引入
+  UI、图片、设备交互、网络服务或外部不可逆动作。由你从本原始需求和工程现状完成初始部件设计、真正独立质询、合法 CU
+  准入、实施、独立核验和原请求正式完整交付。授权在此隔离工程内全权完成目标内可恢复工作，不重复询问；禁止改验收能力或框架、提交、打包、发布、改版本和访问真实宿主/设备。总预算最多
+  30 次模型调用及 120 分钟，各段累计且不得重置；单次超时 900 秒。
+requirement_source_files:
+  - doc/requirement.md
+adapter: codex
+adapter_model_pin:
+  adapter: codex
+  value: gpt-6.1-sol
+budget:
+  max_total_turns: 30
+  wall_clock_minutes: 120
+  max_retries_per_phase: 3
+unattended:
+  write_mode: full-access
+  approval_mode: never
+  max_turns: 30
+  timeout_seconds: 900

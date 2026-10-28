@@ -1,0 +1,81 @@
+authority: 原需求授权的内部设计；既有存储签名及副本行为来自MemoryStorage.ts，不是远程协议。
+source_refs:
+  - doc/requirement.md
+  - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+  - 02-Feature/Inbox/src/main/ets/Message.ts
+operation:
+  operation_id: MemoryStorage.save
+  direction: internal
+  version: existing
+  signature: "save(messages: Message[]): void"
+  semantics: 同步增加writes一次并复制完整最终数组；调用方只在实际改变时调用。
+  source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/operation
+  verification_refs:
+    - acceptance:AC-1
+    - acceptance:AC-2
+    - acceptance:AC-5
+request_dto:
+  dto_id: StorageSaveArguments
+  fields:
+    - field_id: messages
+      type: Message[]
+      semantics: 完整消息数组，保持id、text、read和顺序；save逐条浅复制。
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/request_dto/fields/0
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+  source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/request_dto
+  verification_refs:
+    - acceptance:AC-1
+    - acceptance:AC-2
+    - acceptance:AC-5
+response_dto:
+  dto_id: StorageSaveVoid
+  type: void
+  fields: []
+  source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/response_dto
+  verification_refs:
+    - acceptance:AC-1
+    - acceptance:AC-2
+    - acceptance:AC-5
+mappings:
+  - mapping_id: messages-copy
+    kind: direct
+    source_fields:
+      - messages
+    target_field: MemoryStorage.messages
+    rule: 整体替换为逐条浅副本，不追加、不排序、不改id/text。
+    source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/mappings/0
+    provenance:
+      source_kind: code
+      source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: source_read
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-5
+errors:
+  semantics: 现有MemoryStorage无业务错误码或外部I/O失败，不增加重试或回滚；同步异常沿原链传播。
+  source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/errors
+  verification_refs:
+    - acceptance:AC-1
+    - acceptance:AC-2
+    - acceptance:AC-5
+idempotency:
+  semantics: save每次调用均增加writes，不负责去重；InboxStore依据当前read状态判空，零改变不调用save，无需幂等键。
+  source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/idempotency
+  verification_refs:
+    - acceptance:AC-1
+    - acceptance:AC-2
+    - acceptance:AC-5
+nfr:
+  semantics: 保持同步进程内数组副本；正数只写一次。无数据库、版本迁移、加密级别、账号体系或跨进程耐久保证。
+  source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/nfr
+  verification_refs:
+    - acceptance:AC-1
+    - acceptance:AC-2
+    - acceptance:AC-5

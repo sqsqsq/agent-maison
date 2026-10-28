@@ -2862,11 +2862,9 @@ export function runAll(): UnitCaseResult[] {
         assert(fillAt >= 0 && forceAt > fillAt, `--force-resume 只能出现在"补齐来源之后"：${guidance}`);
         assert(rerequestAt > fillAt && explicitAt > rerequestAt && forceAt > explicitAt,
           `首选须是补齐后重新发起同一请求，带旗标的命令只作备选：${guidance}`);
-        // plan 4e6fb3b6 首轮评审 R5-1（调度方裁定）：共享的重发说明须区分两种调用——有人在场不设冷却、补好即可立即重发；
-        // 无人值守在停止后 5 分钟内重发会保持停止，显式续跑也一样要等。笼统写"重新发起即可"会让无人值守的重发空转。
-        assert(/有人在场时补好即可立即重发/.test(guidance), `须写明有人在场不设冷却：${guidance}`);
-        assert(/无人值守时.{0,20}5 分钟内重发会先保持停止/.test(guidance), `须写明无人值守的冷却等待条件：${guidance}`);
-        assert(/显式续跑命令也一样要等/.test(guidance), `须写明显式续跑也不能越过冷却：${guidance}`);
+        assert(/有人在场与无人值守同规则/.test(guidance), `运输不能改变重发判断：${guidance}`);
+        assert(/没有变化时.{0,30}5 分钟内重发会先保持停止/.test(guidance), `须写明实际无变化的冷却条件：${guidance}`);
+        assert(/显式合法恢复仍走原恢复守卫/.test(guidance), `不得取消合法明确恢复：${guidance}`);
       },
     },
     {

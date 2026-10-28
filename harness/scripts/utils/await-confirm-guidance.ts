@@ -1,13 +1,15 @@
+import * as path from 'path';
+
 /**
  * plan 4e6fb3b6 §7 / §9：恢复办法首选"补上缺的输入后重新发起同一请求"（接续决策判重新接入、起后继或保持停止），
- * 已填好的完整命令降为备选。首轮评审 R5（调度方裁定）：有人在场的调用不设冷却；无人值守的调用在有正式开始的
- * run 停止后 5 分钟内重发会保持停止（显式续跑同样受冷却约束），须如实写出，不能笼统写"重新发起即可"。
+ * 已填好的完整命令降为备选。两运输在无变化、已有正式开始的 run 停止后 5 分钟内都保持停止；
+ * 可核实变化与显式合法恢复仍交同一接续/恢复守卫，不能笼统写"重新发起即可"。
  * 本段刻意不写旗标字面量：调用方把带旗标的完整命令放在其后作备选，测试据此断言先后。
  */
 const REREQUEST_LINE =
-  '补上缺的输入后，重新发起同一请求（对 agent 说同一句话，或重跑同一条启动命令）：框架会重新接入本 run，'
+  '补上缺的输入后，重新发起同一请求（对 agent 说同一句话，或重跑同一条启动命令）：框架按真实变化判断重新接入本 run、起正规后继或保持停止，'
   + '条件是否解除仍由原来的检查判断，没解除就以原来的原因再停一次、不新建 run。'
-  + '有人在场时补好即可立即重发；无人值守时，本 run 停止后 5 分钟内重发会先保持停止（显式续跑命令也一样要等），过了这段冷却再发。';
+  + '没有变化时，已正式开始的本 run 停止后 5 分钟内重发会先保持停止；有人在场与无人值守同规则，显式合法恢复仍走原恢复守卫。';
 
 export interface ClosureWallGuidanceOpts {
   feature: string;
@@ -157,6 +159,10 @@ export interface BudgetExhaustedGuidanceOpts {
   limit: number;
   /** consumer='framework/harness'、standalone='harness' */
   harnessPrefixRel: string;
+  /** Exact authoritative manifest when this execution is bound to an original request. */
+  manifestPath?: string;
+  projectRoot?: string;
+  frameworkRoot?: string;
 }
 
 /**
@@ -171,6 +177,9 @@ export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts):
     kind === 'budget_wall_clock'
       ? `已累计 ${Math.round(activeElapsedMs / 60000)}m / 预算 ${Math.round(limit / 60000)}m`
       : `已消耗 agent 轮次达上限 ${limit}`;
+  const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
+  const layout = `${opts.projectRoot ? ` --project-root ${quote(opts.projectRoot)}` : ''}${opts.frameworkRoot ? ` --framework-root ${quote(opts.frameworkRoot)}` : ''}`;
+  const prefix = opts.frameworkRoot ? quote(path.join(opts.frameworkRoot, 'harness')) : harnessPrefixRel;
   // plan 4e6fb3b6 §3.3：删去"复制 manifest、以新 run_id 启动、旧 run 用 --supersede 废弃"一路——它要求用户自己拼 run 与旗标。
   // plan a2f7c9e4 §3.2/§3.3：预算耗尽且只改了预算时，带 --override-manifest 重新发起同一请求或显式续跑都接回本 run，
   // 不起后继、不要 --force-resume、不受冷却。
@@ -180,9 +189,9 @@ export function buildBudgetExhaustedGuidance(opts: BudgetExhaustedGuidanceOpts):
     '预算按运行会话时间累计：停机等待不计入；合盖或待机期间执行可能暂停，但运行会话计时照走，睡眠时间仍计入墙钟预算。无人值守长跑请接电源并关闭睡眠。',
     '谁能修：预算有权者；runner 不自行增额。用户已明确无人值守＋不要询问＋授权完整交付时，主 Agent 可显式提高默认额度并沿现有入口恢复；用户单独总上限不可突破，累计消耗与无进展熔断不重置。',
     '',
-    '怎么恢复：调大本 run manifest.json 的 budget.wall_clock_minutes / budget.max_total_turns，然后带 --override-manifest 重新发起同一请求，',
+    `怎么恢复：调大${opts.manifestPath ? ` ${opts.manifestPath}` : '本 run manifest.json'} 的 budget.wall_clock_minutes / budget.max_total_turns，然后带 --override-manifest 重新发起同一请求，`,
     '  或显式续跑本 run（已填好）：',
-    `  npm --prefix ${harnessPrefixRel} run goal -- --feature ${feature} --resume ${runId} --override-manifest`,
+    `  npm --prefix ${prefix} run goal -- --feature ${feature} --resume ${runId} --override-manifest${layout}`,
     '  两种做法都接回本 run 继续，不需要 --force-resume，也不用等冷却。',
     // plan 4e6fb3b6 返修 3：overrideAuthorizedIdentityFields 对 --override-manifest 返回 'all'——整体授权。
     '  （--override-manifest 是对本 run manifest 身份字段的**整体授权**，会接受 manifest 里的全部改动，',

@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
-import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned } from '../../scripts/utils/blueprint-skill-projection';
+import { deriveBlueprintSkillInput, materializeBlueprintSkillInputs, BlueprintProjectionPreparationError, designScopeRevisionChecks, checkTypedConstructionContent, checkAuthoritativeContentAligned, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { asRecord, type BlueprintRecord, type ComponentBlueprintRef } from '../../scripts/utils/component-blueprint-model';
 import { resolveFeatureArtifact, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
@@ -91,6 +91,43 @@ export function planContracts(f: ReturnType<typeof fixture>): ContractsSpec & { 
 }
 
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'f3b8e6a1 authority preparation: invalid canonical construction reaches the design diagnosis without a scope', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const flowRef = cu.design_refs.find((ref: ComponentBlueprintRef) => ref.target.kind === 'flow');
+    const flow = asRecord(resolveBlueprintTarget(doc, flowRef.target))!;
+    delete ((flow.contracts as BlueprintRecord).state_management as BlueprintRecord[])[0].owner_ref;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    const projected = deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts');
+    assert.equal(projected.state, 'invalid', projected.detail);
+    const diagnosis = diagnoseDesignAuthority(f.root, frameworkRoot, f.feature, 'plan');
+    assert(!diagnosis.unevaluable, diagnosis.unevaluable);
+    assert(diagnosis.findings.some(item => item.codes.includes('change_unit_runtime_owner_contract_missing')));
+    assert(diagnosis.findings.some(item => item.artifacts.includes(path.relative(f.root, f.blueprintFile).split(path.sep).join('/'))));
+    assert(!fs.existsSync(resolveFeatureArtifact(f.root, f.feature, 'execution-scope.json').actualPath));
+  } },
+  { name: 'f3b8e6a1 authority preparation: genuinely absent content remains downstream preparation', run(f) {
+    const doc = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+    const cu = YAML.parse(fs.readFileSync(f.cuFile, 'utf8'));
+    const node = asRecord(resolveBlueprintTarget(doc, cu.design_refs[0].target))!;
+    delete node.acceptance;
+    fs.writeFileSync(f.blueprintFile, YAML.stringify(doc)); f.bind();
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'acceptance').state, 'absent');
+    assert.deepEqual(diagnoseBlueprintSkillAuthority(f.root, frameworkRoot, f.feature, ['acceptance']).findings, []);
+  } },
+  { name: 'f3b8e6a1 authority preparation: hand-written Feature drift does not become a canonical design defect', run(f) {
+    materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
+    const file = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath;
+    const contracts = YAML.parse(fs.readFileSync(file, 'utf8'));
+    contracts.version = 'incorrect-feature-mapping';
+    fs.writeFileSync(file, YAML.stringify(contracts));
+    assert.equal(deriveBlueprintSkillInput(f.root, f.feature, frameworkRoot, 'contracts').state, 'resolved');
+    assert.deepEqual(diagnoseBlueprintSkillAuthority(f.root, frameworkRoot, f.feature).findings, []);
+    const checks = checkAuthoritativeContentAligned({ projectRoot: f.root, frameworkRoot, feature: f.feature,
+      featureSpec: { contracts } } as CheckContext, 'contracts');
+    assert(checks.some(check => check.status === 'FAIL'));
+    assert(!checks.some(check => check.repair_owner === 'external'));
+  } },
   { name: '1804 independent projection CLI scopes spec and plan; invalid phases write nothing', run(f) {
     for (const name of ['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml']) fs.rmSync(resolveFeatureArtifact(f.root, f.feature, name).actualPath, { force: true });
     const invoke = (phaseArgs: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'),

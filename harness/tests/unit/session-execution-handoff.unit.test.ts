@@ -497,7 +497,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { exports.buildGoalManifestFromInput = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 production waiting report parks without a gate or PASS and a later call executes the same phase before progressing',
+  name: '1804 production waiting report preserves the shared cooldown and retries its author only after that boundary',
   async run() {
     const root = setupGoalRuntimeHost('codex').root; const runId = 'session-real-waiting';
     try {
@@ -513,6 +513,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(sessionValidationOnlyEligibility(waiting), null);
       assert(!waiting.some(event => event.type === 'harness_start' || event.type === 'harness_end' || event.type === 'phase_verdict' && event.verdict === 'PASS'));
       assert(waiting.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting'));
+      const held = await runGoalModeSessionStep({ projectRoot: root, frameworkRoot: path.resolve(__dirname, '../../..'), feature: 'bc-openCard', runId,
+        adapter: 'codex', runMode: 'attended' });
+      assert.equal(held.type, 'goal_session_result');
+      assert.equal(sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start').length, 1, 'accepted waiting report is not a transport-specific retry grant');
+      const eventsPath = path.join(runDir, 'events.jsonl');
+      fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map(line => {
+        if (!line.trim()) return line;
+        const event = JSON.parse(line) as { type: string; ts?: string };
+        if (event.type === 'run_end') event.ts = new Date(Date.now() - 10 * 60_000).toISOString();
+        return JSON.stringify(event);
+      }).join('\n'));
       const resumed = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
       assert.equal(resumed.exitCode, 0, JSON.stringify(resumed.events.filter(event => event.type === 'phase_halt' || event.type === 'run_end')));
       assert(resumed.invokedPhases.includes('spec'), 'a waiting author has not earned validation-only recovery');

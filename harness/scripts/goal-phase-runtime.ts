@@ -2,9 +2,9 @@
 import { pendingPublishedDesignRepair } from './utils/design-repair-unattended';
 import { phaseInvocationStart } from './utils/goal-runner-phase';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
-import { issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, undeliveredSessionInvocation, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
-import { invocationCompleted } from './utils/invocation-completion';
+import { invocationCompleted, invocationWaitingDetail } from './utils/invocation-completion';
 import { resumeIssuedSessionOwner } from './utils/goal-run-control';
 import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-containment';
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
@@ -33,6 +33,21 @@ import { designDeliveryNextStep } from './utils/design-delivery-entry';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as YAML from 'yaml';
+import { randomUUID } from 'crypto';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, projectInitialDesignDelivery, initialDesignAuthorInstruction, validateInitialDesignInvocation, initialDesignPhasePolicy, initialDesignScopeActionIssues, type InitialDesignObservation } from './utils/initial-design-delivery';
+import { readOriginalDeliveryBudget, originalDeliveryForManifest } from './utils/delivery-origin';
+import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
+import { featureTrackDeclPath, resolveFeatureExecutionScope } from './utils/feature-track';
+import { resolveBirthExecutionScope, readFeatureFrozenScope } from './utils/feature-execution-scope';
+import { isInitialDesignManifest, loadGoalRunManifestFromRun, type InitialDesignGoalManifest, type GoalRunManifest } from './utils/goal-manifest';
+import { writeBackAdmission, refreshBlueprintFingerprints } from './utils/design-repair-unattended';
+import { loadCanonicalBlueprint, componentBlueprintPath } from './utils/component-blueprint-path';
+import { asRecord } from './utils/component-blueprint-model';
+import { materializeBlueprintReview } from './utils/blueprint-review-materialization';
+import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from './utils/change-unit-design-preparation';
+import type { ChangeUnitCandidate } from './utils/change-unit-provider-boundary';
+import { evaluateComponentClosure } from './utils/component-closure-validator';
 import { spawn, spawnSync } from 'child_process';
 import minimist from 'minimist';
 import {
@@ -97,9 +112,15 @@ import {
   designRepairInvokeLabel,
   designRepairSignature,
   designRepairInputFingerprint,
+  designRepairTarget,
+  replayDesignRepairInvocation,
+  recordDesignRepairInvocation,
+  DESIGN_REPAIR_CONTRACT_DOC,
   runUnattendedDesignRepair,
   type DesignRepairInvokeOutcome,
   type DesignRepairPurpose,
+  type DesignRepairInvocationGuard,
+  type DesignRepairBriefLike,
   type UnattendedDesignRepairResult,
 } from './utils/design-repair-unattended';
 import {
@@ -146,7 +167,7 @@ import {
   resolvePhaseRunIds,
 } from './utils/verify-feature-completion';
 import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
-import { parseChangeUnitFeatureId, pointerStaleCandidate } from './utils/change-unit-path';
+import { parseChangeUnitFeatureId, pointerStaleCandidate, deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits } from './utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, type BlueprintRefReconciliation, type HeldFeatureLock } from './utils/change-unit-design-preparation';
 import { BlueprintProjectionPreparationError, materializeBlueprintSkillInputs, classifyDesignAuthorityCodes, diagnoseDesignAuthority, type DesignAuthorityFinding, type DesignRepairClass } from './utils/blueprint-skill-projection';
 import { requiredSummaryCheckGaps, phaseCompletionProblems } from './utils/check-disposition';
@@ -165,6 +186,7 @@ import {
   inheritSuccessorManifest,
   SCOPE_REVISION_FIELDS,
   loadGoalManifestFile,
+  loadGoalManifestDefinition,
   loadGoalManifestFromRun,
   newRunId,
   resolveGoalReportDir,
@@ -179,12 +201,15 @@ import {
   writeGoalManifest,
   effectiveHeadlessUnattended,
   type GoalManifest,
+  RUN_ADAPTER_PROVENANCES,
+  type RunAdapterProvenance,
 } from './utils/goal-manifest';
 import {
   assertGoalRunAttachable,
   buildSupersedeAuditEvent,
   createGoalRun,
   decideRunContinuation,
+  deliveryCycleView,
   resolveEffectiveScopeSource,
   successorCatchUpTargets,
   successorBoundsConflicts,
@@ -776,19 +801,22 @@ function resolveDesignDeliveryRequest(argv: minimist.ParsedArgs, projectRoot: st
   const check = validateManifestCliOverrides(cli);
   if (!check.ok) throw new Error(check.message);
   if (!argv.manifest) return { startPhase: cli.start, endPhase: cli.end, requirement: requirement.text, requirementSourceFiles: requirement.sources };
-  const manifest = loadGoalManifestFile(String(argv.manifest), projectRoot);
+  const definition = loadGoalManifestDefinition(String(argv.manifest), projectRoot);
+  const manifest = definition.manifest;
   applyManifestCliOverrides(manifest, cli);
-  return { startPhase: manifest.start_phase, endPhase: manifest.end_phase, requirement: manifest.requirement, requirementSourceFiles: manifest.requirement_source_files };
+  return { startPhase: manifest.start_phase, endPhase: manifest.end_phase, requirement: manifest.requirement, requirementSourceFiles: manifest.requirement_source_files,
+    requestedPhases: definition.requestedPhases, requestedResults: definition.requestedResults };
 }
 
-function guardNestedGoalRunner(): void {
+function guardNestedGoalRunner(): boolean {
   if (isGoalHeadlessEnv() && process.env.MAISON_GOAL_ALLOW_NESTED !== '1') {
     console.error(
       '[goal-runner] BLOCKER: nested goal-runner from headless agent (MAISON_GOAL_HEADLESS=1). ' +
         'Phase agents must not invoke goal-runner / --resume / --manifest.',
     );
-    process.exit(1);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -4297,18 +4325,18 @@ function guardOrphanedFeatureRun(
   featuresDir: string,
   feature: string,
   force: boolean,
-): void {
-  if (force) return;
+): boolean {
+  if (force) return false;
   const featureRunsDirAbs = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   const orphan = resolveOrphanedIncompleteRun(featureRunsDirAbs, projectRoot);
-  if (!orphan) return;
+  if (!orphan) return false;
   if (orphan.runMode === 'unknown') {
     // v23 P1-①：无法判别形态——不猜、不给 resume 指引，人工处置。
     console.error(
       `[goal-runner] BLOCKER: feature "${feature}" 有形态无法判别的孤儿 lock（run "${orphan.runId}"，` +
         `${orphan.reason}）。请人工核查 goal-runs/${orphan.runId}/ 后处置；确认放弃加 --force。`,
     );
-    process.exit(1);
+    return true;
   }
   console.error(
     `[goal-runner] BLOCKER: feature "${feature}" 有未完成的 goal-run "${orphan.runId}"` +
@@ -4316,7 +4344,7 @@ function guardOrphanedFeatureRun(
       `  续跑既有 run（推荐）: --resume ${orphan.runId} --feature ${feature} [--force-resume]\n` +
       `  确认放弃该 run 改起全新 run: 本次命令加 --force`,
   );
-  process.exit(1);
+  return true;
 }
 
 function acquireGoalLocks(
@@ -4474,7 +4502,7 @@ function setupProgressHooks(
       const lineage = foldBudgetLineage({
         projectRoot, featuresDir, feature: manifest.feature, currentEvents: events,
       });
-      const budget = resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() });
+      const budget = readOriginalDeliveryBudget(projectRoot, manifest) ?? resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() });
       // 二轮 review P1：elapsed_ms 用**活跃段累计**（nextSessionStartMs 钳制后
       // priorActiveMs 已含当前直播段至 now）——旧 Date.now()-wallClockStartMs 会把
       // halt/人工介入/隔夜停摆计入（runner/progress 用活跃口径，三方须真同源）。
@@ -4673,7 +4701,7 @@ function resumeTurnsIntoSuccessor(argv: minimist.ParsedArgs, decision: RunContin
 function readRepairNotes(argv: minimist.ParsedArgs, projectRoot: string): { file: string; text: string } | null {
   const raw = typeof argv['repair-notes'] === 'string' ? argv['repair-notes'].trim() : '';
   if (!raw) return null;
-  if (!argv.resume && !argv['detached-child']) {
+  if (!argv.resume && !argv['detached-child'] && !argv['attach-created']) {
     throw new Error('--repair-notes 只随 --resume 生效（返修诊断材料不是需求；要改需求请用 --requirement-file 开新 run）。');
   }
   const file = path.resolve(projectRoot, raw);
@@ -4715,12 +4743,12 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
     return 1;
   }
   const feature = raw.feature;
-  if (!raw.isResume && !raw.dryRun && !normalizeSupersedeTargets(argv.supersede).length && !argv['attach-created']) {
-    const next = designDeliveryNextStep({ projectRoot, frameworkRoot: layout.frameworkRoot, feature, ...resolveDesignDeliveryRequest(argv, projectRoot) });
-    if (next) { console.log(JSON.stringify(next, null, 2)); return 0; }
-  }
+  const designRequest = !raw.isResume && !raw.dryRun ? resolveDesignDeliveryRequest(argv, projectRoot) : null;
+  const originalDesign = !raw.dryRun ? findInitialDesignRun({ projectRoot, feature,
+    ...(designRequest?.requirement ? { requirement: designRequest.requirement } : {}),
+    ...(raw.isResume && raw.runId ? { runId: raw.runId } : {}) }) : null;
   let isResume = raw.isResume;
-  let runId = raw.runId ?? newRunId();
+  let runId = raw.runId ?? originalDesign?.run_id ?? newRunId();
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
   let launchArgs = process.argv.slice(2);
   // plan 9c3d7e1a §5.3：supervisor 只负责拉起 `--resume`；原 run 继续还是起后继由这里与子进程用同一判断决定。
@@ -4740,7 +4768,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   // plan 4e6fb3b6 §7.3：与前台同一个接续决策，在孤儿守卫与接续守卫之前执行。保持停止 = 不起子进程、不新建 run；
   // 重新接入 = 打印并等待那个既有 run（子进程按同一决策改写为恢复或附着）；新开与起后继照常给新 run id。
   const explicitContinuation = isResume || supersedeTargets.length > 0 || Boolean(argv.force);
-  if (!explicitContinuation && !raw.dryRun) {
+  if (!explicitContinuation && !raw.dryRun && !originalDesign) {
     let decision: RunContinuationDecision;
     try {
       const requirement = resolveRequirementInput({
@@ -4774,7 +4802,7 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
   // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
   // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。显式旗标的调用照现状执行（其余已由接续决策消费）。
   if (!isResume && !raw.dryRun && explicitContinuation) {
-    guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
+    if (guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force))) return 1;
     try {
       const requirement = resolveRequirementInput({
         requirement: argv.requirement,
@@ -4917,95 +4945,8 @@ export function designRepairNeedsContinuation(events: readonly GoalRunEvent[], c
     && !records.slice(repairAt + 1, haltAt).some(event => event.type === 'agent_invoke_start' && chain.includes(String(event.phase)));
 }
 
-/** Preserve the current process's explicit launch posture; continuation grants none. */
-export function inheritRunProcessArgs(argv: Record<string, unknown>): string[] {
-  return [...(argv['foreground-ok'] ? ['--foreground-ok'] : []), ...(argv['detached-child'] ? ['--detached-child'] : [])];
-}
-
-export class GoalPhaseRuntime {
-  constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}) {}
-
-  lastRunId?: string;
-
-  /** In-run revisions stay in the run; only a completed design repair may enter existing continuation. */
-  async run(): Promise<number> {
-    const options = this.options;
-    {
-      const argv = minimist([...(options.args ?? process.argv.slice(2))]);
-      const priorRunId = argv.resume ?? argv['attach-created'];
-      const { projectRoot: root, frameworkRoot } = resolveRuntimeLayout(options, argv);
-      if (typeof priorRunId === 'string' && typeof argv.feature === 'string') {
-        const scope = loadEffectiveExecutionScope(root, argv.feature, priorRunId);
-        if (scope) {
-          const prior = loadGoalManifestFromRun(root, priorRunId, { feature: argv.feature });
-          const events = loadEventsJsonlStrict(path.join(root, prior.report_dir, 'events.jsonl')).events;
-          const terminal = [...events].reverse().find(event => event.type === 'run_end');
-          if (terminal?.status === 'CHAIN_SLICE_COMPLETED' && !scope.unresolved.length) {
-            const completed = scope.completion_target === 'feature'
-              ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full', frameworkRoot }).complete
-              : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot }).length === 0;
-            if (completed) { this.lastRunId = priorRunId; return 0; }
-          }
-        }
-      }
-      const code = await main(options);
-      if (code === 3) { this.lastRunId = terminalEventCtx?.runId; return code; }
-      const finished = terminalEventCtx;
-      if (!finished) return code;
-      this.lastRunId = finished.runId;
-      // A published owner repair can invalidate birth bindings. Reuse the normal continuation
-      // decision after main has released its locks; never ask the outer Agent to relaunch it.
-      const terminal = loadAuthoritativeEvents(path.resolve(finished.projectRoot, finished.reportDir, 'events.jsonl')) as Array<GoalRunEvent & { stage?: string; outcome?: string }>;
-      if (designRepairNeedsContinuation(terminal, finished.workflowChain) && typeof argv.feature === 'string') {
-        const { projectRoot, frameworkRoot } = resolveRuntimeLayout(options, argv);
-        const next = new GoalPhaseRuntime({ ...options, args: ['--feature', argv.feature,
-          '--project-root', projectRoot, '--framework-root', frameworkRoot,
-          ...inheritRunProcessArgs(argv),
-          '--runtime-executor', String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached')),
-          '--runtime-owner', String(argv['runtime-owner'] ?? options.ownerKind ?? (options.executor ? 'session' : 'process'))] });
-        const continued = await next.run();
-        if (next.lastRunId) this.lastRunId = next.lastRunId;
-        return continued;
-      }
-      // D2: the run projects its own completion and there is no ancestor chain to clean up, so the
-      // post-run verification that used to gate that cleanup is gone rather than left as a no-op.
-      return code;
-    }
-  }
-
-  async executeExecutor(
-    context: PhaseExecutionContext,
-    executor: GoalPhaseExecutor,
-  ): Promise<GoalPhaseExecutorResult> {
-    validatePhaseExecutionContext(context);
-    if (context.owner.owner_id !== 'dry-run') {
-      assertFencedOwner(context.runDir, context.owner, 'runtime_pre_executor');
-    }
-    const result = await executor.execute(context);
-    if (context.owner.owner_id !== 'dry-run') {
-      assertFencedOwner(context.runDir, context.owner, 'runtime_post_executor');
-    }
-    return result;
-  }
-}
-
-/**
- * 主入口。**导出供 runner 级集成测试直接调用**（配合 __testing_set* 注入缝）——
- * 生产路径仍由文件尾的 require.main 分支驱动，行为不变。
- */
-export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise<number> {
-  // Programmatic host bridges may run more than one lifecycle in the same Node process.
-  // Reset only ephemeral process-local projection; persisted truth remains manifest/events/control.
-  terminalEventCtx = null;
-  runConcluded = false;
-  appendEventBaseFields = {};
-  progressSubstep = null;
-  progressPhase = null;
-  progressHeartbeatHook = null;
-  guardNestedGoalRunner();
-  setupSignalHandlers();
-
-  const argv = minimist([...(options.args ?? process.argv.slice(2))], {
+function parseGoalRuntimeArgs(args: readonly string[]): minimist.ParsedArgs {
+  return minimist([...args], {
     string: [
       'feature', 'requirement', 'adapter', 'adapter-source', 'start', 'end', 'resume', 'manifest',
       'run-id', 'supersede', 'rebaseline-to', 'attach-created',
@@ -5037,6 +4978,831 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
     ],
     alias: { f: 'feature', h: 'help' },
   });
+}
+
+/** Preserve the current process's explicit launch posture; continuation grants none. */
+export function inheritRunProcessArgs(argv: Record<string, unknown>): string[] {
+  return [...(argv['foreground-ok'] === true ? ['--foreground-ok'] : []), ...(argv['detached-child'] === true ? ['--detached-child'] : []),
+    ...(argv['authorize-autonomy'] === true ? ['--authorize-autonomy'] : [])];
+}
+
+function resolveEntryAuthorization(options: GoalPhaseRuntimeLaunchOptions, argv: Record<string, unknown>) {
+  return options.authorization ?? (argv['authorize-autonomy'] === true ? { mode: 'goal_mode' as const, autonomyAuthorized: true } : undefined);
+}
+
+function liveFeatureLock(projectRoot: string, feature: string): LockRecord | null {
+  const record = readLockRecord(featureFilePath(projectRoot, feature, path.join('goal-runs', FEATURE_LOCK_NAME)));
+  return record && !isLockStale(record) ? record : null;
+}
+
+function buildManifestBudgetGuidance(projectRoot: string, frameworkRoot: string, manifest: GoalRunManifest,
+  options: Parameters<typeof buildBudgetExhaustedGuidance>[0]): string[] {
+  const original = originalDeliveryForManifest(projectRoot, manifest);
+  return buildBudgetExhaustedGuidance({ ...options, ...(original ? {
+    feature: original.feature, runId: original.run_id, manifestPath: path.resolve(projectRoot, original.report_dir, 'manifest.json'), projectRoot, frameworkRoot,
+  } : {}) });
+}
+
+function recoverRuntimeGuardians(priorEvents: GoalRunEvent[], runId: string, forceResume: boolean, emit: (event: Record<string, unknown>) => void, stop: (reason: string, detail: string) => void): number {
+  const manifest = { run_id: runId };
+  const goalEvents = { emit };
+  const concludeStartupBlocker = stop;
+      const reconcile = reconcileGuardianOwnership(priorEvents, defaultProcessProbe());
+      if (reconcile.kind === 'legacy_run') {
+        const msg =
+          '[goal-runner] BLOCKER: 本 run 存在未闭合 agent invoke 记录但没有任何 Job 绑定事件\n'
+          + '  （agent_process_bound）——旧版 run 的遗留进程无法按 guardian 身份契约接管。\n'
+          + `  原因：${reconcile.reason}`;
+        if (forceResume) {
+          // P1-4 review：人工清理后以 --force-resume 显式确认（可审计指令）。
+          goalEvents.emit({
+            type: 'legacy_run_override',
+            run_id: manifest.run_id,
+            reason: 'operator acknowledged legacy run via --force-resume',
+          });
+          console.warn(
+            `[goal-runner] ⚠ 旧版 run 经 --force-resume 显式确认放行（${reconcile.unclosedInvokes}`
+            + ' 个未闭合 invoke 无 Job 绑定——请已按提示人工清理残留 CLI 进程）',
+          );
+        } else {
+          console.error(`${msg}\n处置：人工核查进程树后清理残留 CLI 后代后，`
+            + '以 --force-resume 显式确认（可审计）后 resume——不猜测、不自动回收、'
+            + 'supervisor 不代其确认。');
+          concludeStartupBlocker('legacy_run_requires_manual_cleanup', msg);
+          return 1;
+        }
+      } else if (reconcile.kind === 'outcomes') {
+        for (const item of reconcile.items) {
+          if (item.kind === 'guardian_gone') {
+            goalEvents.emit({
+              type: 'orphan_reclaimed',
+              run_id: manifest.run_id,
+              invoke_id: item.bound.invoke_id,
+              pid: item.bound.pid,
+              method: 'guardian_gone',
+            });
+            console.log(
+              `[goal-runner] 接管对账：guardian(pid=${item.bound.pid}) 已不存在——`
+              + '依唯一持柄契约判定 Job 已关闭，无需回收',
+            );
+          } else if (item.kind === 'guardian_alive_matching') {
+            const pid = item.bound.pid;
+            const killed = terminateGuardianProcessOnly(pid);
+            if (!killed || !awaitGuardianGone(pid)) {
+              const msg =
+                `[goal-runner] BLOCKER: guardian(pid=${pid}) 身份严格匹配（token=` +
+                `${item.bound.token}）但无法终止——拒绝续跑（真冲突，勿自动覆盖）。\n`
+                + '  处置：人工核查该 guardian 终止失败原因（权限/句柄占用）后重试。';
+              console.error(msg);
+              concludeStartupBlocker('guardian_termination_failed', msg);
+              return 1;
+            }
+            goalEvents.emit({
+              type: 'orphan_reclaimed',
+              run_id: manifest.run_id,
+              invoke_id: item.bound.invoke_id,
+              pid,
+              method: 'terminate_job_owner',
+            });
+            console.log(
+              `[goal-runner] 接管对账：已终止匹配 guardian(pid=${pid})，Job 关闭团灭其全部后代`
+              + '（孤儿已回收）',
+            );
+          } else {
+            console.warn(`[goal-runner] ⚠ 接管对账：${item.reason}（不杀、不阻断）`);
+          }
+        }
+      }
+  return 0;
+}
+
+function rejectsResumeRequirementFile(argv: minimist.ParsedArgs): boolean {
+  if (argv.resume && Object.prototype.hasOwnProperty.call(argv, 'requirement-file')) {
+    console.error('[goal-runner] BLOCKER: --requirement-file 仅在 fresh run 生效——resume 只认 manifest ' +
+      '中已冻结的 requirement。若确要换需求，请开新 run。');
+    return true;
+  }
+  return false;
+}
+
+export class GoalPhaseRuntime {
+  constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}, private readonly deliveryParent?: InitialDesignGoalManifest) {}
+
+  lastRunId?: string;
+  private acceptedSessionInvokeId?: string;
+
+  /** In-run revisions stay in the run; only a completed design repair may enter existing continuation. */
+  async run(): Promise<number> {
+    const options = this.options;
+    {
+      const argv = parseGoalRuntimeArgs(options.args ?? process.argv.slice(2));
+      if (rejectsResumeRequirementFile(argv)) return 2;
+      const priorRunId = argv.resume ?? argv['attach-created'];
+      const { projectRoot: root, frameworkRoot } = resolveRuntimeLayout(options, argv);
+      if (!this.deliveryParent && !argv.help && !argv.h && !argv['dry-run'] && !(argv.detach && !argv['detached-child'])) {
+        if (guardNestedGoalRunner()) return 1;
+        const feature = typeof argv.feature === 'string' ? argv.feature : argv.manifest ? resolveRawRunInput(argv as Record<string, unknown>, root).feature : undefined;
+        if (feature) {
+          const located = typeof priorRunId === 'string'
+            ? loadGoalRunManifestFromRun(root, priorRunId, { feature }) : null;
+          if (located && !isInitialDesignManifest(located) && located.delivery_origin) {
+            const original = loadGoalRunManifestFromRun(root, located.delivery_origin.run_id, { feature: located.delivery_origin.feature });
+            if (!isInitialDesignManifest(original)) throw new Error('[initial-design] delivery origin does not identify the original design request');
+            return this.runInitialDesign(original, root, frameworkRoot, argv);
+          }
+          const request = !priorRunId ? resolveDesignDeliveryRequest(argv, root) : null;
+          const existing = located && isInitialDesignManifest(located) ? located : findInitialDesignRun({ projectRoot: root, feature,
+            ...(request?.requirement ? { requirement: request.requirement } : {}) });
+          if (existing) return this.runInitialDesign(originalDeliveryForManifest(root, existing) ?? existing, root, frameworkRoot, argv);
+          if (!priorRunId) {
+            if (request && (findInitialDesignRun({ projectRoot: root, feature }) || designDeliveryNextStep({ projectRoot: root, frameworkRoot, feature, ...request }))) {
+              const source = argv.manifest ? loadGoalManifestFile(String(argv.manifest), root) : undefined;
+              const adapter = String(argv.adapter ?? source?.adapter ?? 'generic');
+              const pin = resolveFinalModelPin({ cliValue: normalizeAdapterModelCliValue(argv['adapter-model']), effectiveAdapter: adapter,
+                originalAdapter: source?.adapter, manifestPin: source?.adapter_model_pin, isResume: false, hasManifestFlag: !!argv.manifest,
+                isSuccessor: false, overrideManifest: Boolean(argv['override-manifest']), overrideAdapter: Boolean(argv['override-adapter']) });
+              if (!pin.ok) throw new Error(pin.message);
+              const visual = resolveFinalVisualProviderPin({ cliRef: normalizeVisualProviderCliPair(argv['visual-adapter'], argv['visual-model']),
+                manifestPin: source?.visual_provider_pin, isResume: false, hasManifestFlag: !!argv.manifest, isSuccessor: false, overrideManifest: Boolean(argv['override-manifest']) });
+              if (!visual.ok) throw new Error(visual.message);
+              const localVisual = visual.pin ?? resolveUnattendedVisualProviderPin(loadFrameworkLocalConfig(root), frameworkRoot).pin;
+              const prepared = prepareInitialDesignRun({ projectRoot: root, frameworkRoot, feature,
+                requirement: request.requirement ?? '', requirementSourceFiles: request.requirementSourceFiles,
+                adapter, runId: typeof argv['run-id'] === 'string' ? argv['run-id'] : undefined,
+                startPhase: request.startPhase, endPhase: request.endPhase,
+                requestedPhases: 'requestedPhases' in request ? request.requestedPhases : undefined,
+                requestedResults: 'requestedResults' in request ? request.requestedResults : undefined,
+                budget: source?.budget, unattended: source?.unattended, adapterModelPin: pin.pin,
+                visualProviderPin: localVisual, fidelity: source?.fidelity,
+                adapterSource: source?.adapter_provenance && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(source.adapter_provenance)
+                  ? source.adapter_provenance as RunAdapterProvenance : argv.adapter ? 'user_explicit' : 'entry_declared',
+                dependencyPolicy: source?.dependency_policy, minimumAssurance: source?.minimum_assurance, preAuthorizedMutations: source?.pre_authorized_mutations,
+              });
+              return this.runInitialDesign(prepared.manifest, root, frameworkRoot, argv);
+            }
+          }
+        }
+      }
+      if (typeof priorRunId === 'string' && typeof argv.feature === 'string') {
+        const scope = loadEffectiveExecutionScope(root, argv.feature, priorRunId);
+        if (scope) {
+          const prior = loadGoalManifestFromRun(root, priorRunId, { feature: argv.feature });
+          const events = loadEventsJsonlStrict(path.join(root, prior.report_dir, 'events.jsonl')).events;
+          const terminal = [...events].reverse().find(event => event.type === 'run_end');
+          if (terminal?.status === 'CHAIN_SLICE_COMPLETED' && !scope.unresolved.length) {
+            const completed = scope.completion_target === 'feature'
+              ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full', frameworkRoot }).complete
+              : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot }).length === 0;
+            if (completed) { this.lastRunId = priorRunId; return 0; }
+          }
+        }
+      }
+      const code = await main(options);
+      if (code === 3) { this.lastRunId = terminalEventCtx?.runId; return code; }
+      const finished = terminalEventCtx;
+      if (!finished) return code;
+      this.lastRunId = finished.runId;
+      // A published owner repair can invalidate birth bindings. Reuse the normal continuation
+      // decision after main has released its locks; never ask the outer Agent to relaunch it.
+      const terminal = loadAuthoritativeEvents(path.resolve(finished.projectRoot, finished.reportDir, 'events.jsonl')) as Array<GoalRunEvent & { stage?: string; outcome?: string }>;
+      if (designRepairNeedsContinuation(terminal, finished.workflowChain) && typeof argv.feature === 'string') {
+        const { projectRoot, frameworkRoot } = resolveRuntimeLayout(options, argv);
+        const next = new GoalPhaseRuntime({ ...options, args: ['--feature', argv.feature,
+          '--project-root', projectRoot, '--framework-root', frameworkRoot,
+          ...inheritRunProcessArgs(argv),
+          '--runtime-executor', String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached')),
+          '--runtime-owner', String(argv['runtime-owner'] ?? options.ownerKind ?? (options.executor ? 'session' : 'process')),
+          ] }, this.deliveryParent);
+        const continued = await next.run();
+        if (next.lastRunId) this.lastRunId = next.lastRunId;
+        return continued;
+      }
+      // D2: the run projects its own completion and there is no ancestor chain to clean up, so the
+      // post-run verification that used to gate that cleanup is gone rather than left as a no-op.
+      return code;
+    }
+  }
+
+  /** Initial P1/P2 work is a segment of this runtime, using its existing execution transports. */
+  private async runInitialDesign(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string, argv: minimist.ParsedArgs): Promise<number> {
+    this.lastRunId = manifest.run_id;
+    const runDir = path.resolve(projectRoot, manifest.report_dir);
+    const eventsPath = path.join(runDir, 'events.jsonl');
+    const history = (): GoalRunEvent[] => loadEventsJsonlStrict(eventsPath).events;
+    const flushOriginalProgress = (): void => {
+      try { writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest })); }
+      catch { /* A progress projection never replaces authoritative events or blocks recovery. */ }
+    };
+    const emit = (event: Record<string, unknown>): void => {
+      const line = JSON.stringify({ ...event, ts: new Date().toISOString(), run_id: manifest.run_id }) + '\n';
+      fs.appendFileSync(eventsPath, line);
+      eventLineRecorder?.(eventsPath, line);
+      if (event.type === 'run_end') runConcluded = true;
+      flushOriginalProgress();
+    };
+    assertGoalRunAttachable(projectRoot, manifest);
+    if (guardNestedGoalRunner()) return 1;
+    if (resolveEffectiveRunEnd(history())?.status === 'COMPLETED'
+      && projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }).complete) {
+      runConcluded = true;
+      return 0;
+    }
+    if (enumerateCanonicalChangeUnits(projectRoot, manifest.feature).some(unit =>
+      liveFeatureLock(projectRoot, deriveChangeUnitFeatureId(manifest.feature, String(unit.changeUnit.change_unit_id))))) {
+      runConcluded = true;
+      return 3;
+    }
+    setupSignalHandlers();
+    terminalEventCtx = { projectRoot, reportDir: manifest.report_dir, runId: manifest.run_id, feature: manifest.feature, chain: [], workflowChain: [] };
+    runConcluded = false;
+    const transport = this.options.sessionHandoff || this.options.executor ? 'session' : 'process';
+    const lockPath = path.join(runDir, '.runner.lock');
+    const lock = tryAcquireLock(lockPath, { run_id: manifest.run_id, run_mode: 'authoritative', report_dir: manifest.report_dir });
+    if (!lock) throw new Error('[initial-design] original request runtime is already controlled');
+    let token: RunFenceToken | undefined;
+    let preserveOwner = false;
+    const conclude = (reason: string, detail: string, disposition?: Record<string, unknown>): number => {
+      if ((reason === 'budget_turns' || reason === 'budget_wall_clock') && !disposition?.halt_guidance) {
+        const spent = readOriginalDeliveryBudget(projectRoot, manifest)!;
+        detail = [detail, ...buildManifestBudgetGuidance(projectRoot, frameworkRoot, manifest, { feature: manifest.feature, runId: manifest.run_id,
+          phase: String([...history()].reverse().find(event => event.type === 'agent_invoke_start')?.phase ?? 'initial-design'),
+          kind: reason, activeElapsedMs: spent.priorActiveMs,
+          limit: reason === 'budget_turns' ? spent.budget.max_total_turns : resolveWallClockMs({ ...manifest, budget: spent.budget }, initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest).domain),
+          harnessPrefixRel: path.relative(projectRoot, path.join(frameworkRoot, 'harness')).replace(/\\/g, '/') || 'harness',
+        })].join('\n');
+      }
+      emit({ type: 'run_end', status: 'HALTED', halt_reason: reason, error: detail, halt_guidance: detail,
+        ...runDispositionFields(decide({ incident: reason, phase: 'initial-design', detail }, NO_AUTHORITY,
+          { orchestration: 'goal', owner_kind: transport, can_prompt_now: transport === 'session', invocation: argv.resume ? 'resume' : 'fresh' })), ...disposition });
+      let report: unknown;
+      try { report = projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }); }
+      catch { report = { run_id: manifest.run_id, feature: manifest.feature, status: 'HALTED', halt_reason: reason, detail }; }
+      fs.writeFileSync(path.join(runDir, 'goal-report.json'), JSON.stringify(report, null, 2) + '\n');
+      return 1;
+    };
+    const repairStop = (result: UnattendedDesignRepairResult): number => {
+      const usage = readOriginalDeliveryBudget(projectRoot, manifest)!;
+      const available = checkRunBudget(usage.totalTurns, usage.budget.max_total_turns, usage.priorActiveMs,
+        resolveWallClockMs(manifest, initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest).domain) - FINALIZE_RESERVE_MS);
+      return conclude(available === 'turns' ? 'budget_turns' : available === 'wall_clock' ? 'budget_wall_clock'
+        : result.outcome === 'containment_unresolved' ? 'agent_containment_unresolved'
+        : result.outcome === 'violation' ? 'unauthorized_source_mutation'
+        : result.outcome === 'not_dispatched' || result.outcome === 'waiting' ? 'execution_scope_unresolved' : 'content_retry_exhausted', result.reason);
+    };
+    const automaticDesignRepair = resolveTaskAutomationPolicy({ fullDelivery: true,
+      autonomyAuthorized: resolveEntryAuthorization(this.options, argv)?.autonomyAuthorized }).automaticDesignRepair;
+    const exposeRequest = (issued: IssuedSessionExecution): number => {
+      preserveOwner = true; this.options.sessionHandoff?.onRequest(issued); runConcluded = true; return 3;
+    };
+    try {
+      const supplied = this.options.sessionHandoff?.requestPath;
+      const ownRequest = supplied && !path.relative(runDir, path.resolve(supplied)).startsWith('..') && !path.isAbsolute(path.relative(runDir, path.resolve(supplied)));
+      const prelude = inspectSessionExecutionBeforeRuntime({ runDir, ...(ownRequest ? { requestPath: supplied, report: this.options.sessionHandoff?.report } : {}),
+        forceTakeover: Boolean(argv['force-resume']) });
+      let current = prelude.current;
+      if (prelude.reusable) return exposeRequest(prelude.reusable);
+      if (current && !acceptedSessionReport(runDir, current) && argv['force-resume'] && !this.options.sessionHandoff?.report) {
+        const currentControl = readRunControl(runDir, manifest.run_id);
+        if (currentControl?.owner?.state === 'released' || currentControl?.owner?.state === 'orphaned_session') {
+          const acquired = forceTakeoverRunOwner(runDir, manifest.run_id, currentControl.current_epoch,
+            { kind: 'session', owner_id: randomUUID(), lease_ms: this.options.leaseMs ?? 60_000 });
+          current = resignSessionExecution(runDir, current, acquired.token, emit);
+          const resumed = inspectSessionExecutionBeforeRuntime({ runDir });
+          if (resumed.reusable) return exposeRequest(resumed.reusable);
+        }
+      }
+      if (current && !acceptedSessionReport(runDir, current)) {
+        const reportsThisRequest = this.options.sessionHandoff?.requestPath && path.resolve(this.options.sessionHandoff.requestPath) === path.resolve(runDir, current.reference.path);
+        resumeIssuedSessionOwner(runDir, current.request.context.owner);
+        const accepted = acceptSessionExecution({ runDir, issued: current,
+          report: reportsThisRequest && this.options.sessionHandoff?.report ? this.options.sessionHandoff.report : { status: 'failed', phase: current.request.context.phase, details: 'execution deadline expired' }, emit });
+        if (!accepted.duplicate) this.acceptedSessionInvokeId = current.request.invoke_id;
+        if (accepted.timedOut) releaseRunOwner(runDir, current.request.context.owner);
+      }
+      const control = ensureRunControl(runDir, manifest.run_id);
+      if (current && control.owner?.state === 'active' && current.request.context.owner.owner_id === control.owner.owner_id && current.request.context.owner.epoch === control.current_epoch) {
+        token = current.request.context.owner;
+      } else {
+        const ownerInput: Parameters<typeof casAcquireRunOwner>[3] = {
+          kind: transport, owner_id: randomUUID(), ...(transport === 'session' ? { lease_ms: this.options.leaseMs ?? 60_000 } : { pid: process.pid }),
+        };
+        const acquired = argv['force-resume']
+          ? { ok: true as const, ...forceTakeoverRunOwner(runDir, manifest.run_id, control.current_epoch, ownerInput) }
+          : casAcquireRunOwner(runDir, manifest.run_id, control.current_epoch, ownerInput);
+        if (!acquired.ok) throw new Error('[initial-design] active owner or expired request requires the original owner recovery');
+        token = acquired.token;
+      }
+      const sessionStart = Date.now();
+      const baseline = resolveManifestIdentityBaseline(history());
+      const currentFields = computeManifestIdentityFields(manifest);
+      const changed = baseline ? diffManifestIdentityFields(baseline, currentFields) : [];
+      if (changed.length) {
+        if (!argv['override-manifest'] || changed.some(field => field !== 'budget')) return conclude('manifest_identity_drift', `原始请求身份漂移：${changed.join(', ')}`);
+        emit({ type: 'manifest_identity_rebase', to_fields: currentFields, changed_fields: changed, authorized_by: '--override-manifest' });
+      }
+      if (resolveEffectiveRunEnd(history())?.status === 'COMPLETED'
+        && projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }).complete) { runConcluded = true; return 0; }
+      try { writeLivenessBeacon({ projectRoot, reportDir: manifest.report_dir, runId: manifest.run_id }); }
+      catch { /* Same conservative liveness writer as normal runs; no synthetic process identity. */ }
+      emit({ type: 'run_start', session_started_at: new Date(sessionStart).toISOString(), manifest_identity_fields: computeManifestIdentityFields(manifest), phase_chain: [] });
+      if (transport === 'process' && process.platform === 'win32' && recoverRuntimeGuardians(history(), manifest.run_id, Boolean(argv['force-resume']), emit, conclude)) return 1;
+      for (;;) {
+        const state = { blueprintPath: componentBlueprintPath(projectRoot, manifest.feature) };
+        const designEvents = history();
+        const activeAttempt = [...designEvents].reverse().find(event => event.type === 'design_authority_repair'
+          && 'stage' in event && event.stage === 'attempted' && 'handoff_context' in event
+          && !designEvents.slice(designEvents.indexOf(event) + 1).some(later => later.type === 'design_authority_repair'
+            && 'signature' in later && 'signature' in event && later.signature === event.signature && 'stage' in later
+            && (later.stage === 'failed' || later.stage === 'published'
+              && !('outcome' in later && later.outcome === 'unrecovered' && 'failed_step' in later && later.failed_step === 'reconcile'))));
+        if (activeAttempt && 'handoff_context' in activeAttempt && 'signature' in activeAttempt) {
+          if (!automaticDesignRepair) return conclude('execution_scope_unresolved', '原设计事务仍未完成；需要恢复本请求已有的自动修复授权后继续，不扩大授权。');
+          const original = readHandoffMaterial<{ baseline: string; cu?: string; brief: DesignRepairBriefLike }>(runDir, activeAttempt.handoff_context as import('./utils/session-execution-handoff').HandoffReference);
+          const cu = original.cu ? asRecord(YAML.parse(Buffer.from(original.cu, 'base64').toString('utf8'))) : null;
+          const blueprint = asRecord(YAML.parse(Buffer.from(original.baseline, 'base64').toString('utf8')));
+          if (typeof blueprint?.blueprint_id !== 'string' || cu && (typeof cu.blueprint_id !== 'string' || typeof cu.change_unit_id !== 'string')) return conclude('framework_bug', '原设计事务缺少可恢复的真实设计身份。');
+          const target = cu ? deriveChangeUnitFeatureId(String(cu.blueprint_id), String(cu.change_unit_id)) : blueprint.blueprint_id;
+          const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, target, original.brief, emit, String(activeAttempt.signature));
+          if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
+          if (repaired.outcome === 'published') {
+            if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
+            continue;
+          }
+          return repairStop(repaired);
+        }
+        const prior = history();
+        const latest = [...prior].reverse().find(event => event.type === 'agent_invoke_end');
+        const latestPurpose = latest && 'purpose' in latest ? latest.purpose : undefined;
+        if (latest?.invoke_id) {
+          const invocationDir = path.join(runDir, 'phases', String(latest.phase), latest.invoke_id);
+          const beforeFile = path.join(invocationDir, 'blueprint-before.yaml');
+          const saved = latest.handoff_report ? readHandoffMaterial<{ draft_outputs?: Record<string, string> }>(runDir, latest.handoff_report) : undefined;
+          const original = saved?.draft_outputs?.['initial-design-blueprint.yaml'];
+          const outputFile = path.join(invocationDir, 'draft-output.yaml');
+          const output = original ? Buffer.from(original, 'base64').toString('utf8') : fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : fs.existsSync(state.blueprintPath) ? fs.readFileSync(state.blueprintPath, 'utf8') : '';
+          if (fs.existsSync(beforeFile) && (latestPurpose === 'author' || latestPurpose === 'questioning')) {
+            const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
+            if (violation) return conclude('unauthorized_source_mutation', violation);
+            if (latestPurpose === 'author' && output) {
+              try {
+                const before = asRecord(YAML.parse(fs.readFileSync(beforeFile, 'utf8')));
+                const after = asRecord(YAML.parse(output));
+                if (asRecord(before?.review_summary)) delete asRecord(before!.review_summary)!.questioning;
+                if (asRecord(after?.review_summary)) delete asRecord(after!.review_summary)!.questioning;
+                if (stableStringify(before) !== stableStringify(after) && fs.existsSync(state.blueprintPath)) {
+                  const currentBlueprint = asRecord(YAML.parse(fs.readFileSync(state.blueprintPath, 'utf8')));
+                  const review = asRecord(currentBlueprint?.review_summary);
+                  if (review?.questioning) { delete review.questioning; fs.writeFileSync(state.blueprintPath, YAML.stringify(currentBlueprint)); }
+                }
+              } catch { /* Original parser diagnostics own incomplete author output. */ }
+            }
+          }
+        }
+        if (latest?.handoff_report && latest.invoke_id) {
+          const issued = sessionExecutionForInvoke(runDir, latest.invoke_id);
+          const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, latest.handoff_report);
+          if (issued?.request.pre_snapshot && saved.post_snapshot) {
+            const diff = diffPhaseInvocationSnapshots(issued.request.pre_snapshot, saved.post_snapshot);
+            const allowed = issued.request.snapshot_options?.ownedPrefixes ?? [];
+            if (diff.kind === 'unverifiable' || diff.kind === 'changed' && diff.changes.some(change => !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix.replace(/\\/g, '/') + '/')))) {
+              return conclude('unauthorized_source_mutation', '设计调用修改了授权设计目录之外的文件，或原写快照不可核实。');
+            }
+          }
+        }
+        const received = current && current.request.invoke_id === this.acceptedSessionInvokeId ? acceptedSessionReport(runDir, current) : undefined;
+        const acceptedWaitingDetail = received && invocationWaitingDetail(received.report);
+        if (acceptedWaitingDetail) return conclude('execution_scope_unresolved', acceptedWaitingDetail);
+        let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+        if (!enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
+          && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
+          try {
+            const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
+            refreshBlueprintFingerprints(loaded.blueprint);
+            writeBackAdmission(loaded.blueprint, { projectRoot, canonicalPath: state.blueprintPath });
+            fs.writeFileSync(state.blueprintPath, YAML.stringify(loaded.blueprint));
+          } catch { /* The original validator gives the author the concrete parse/identity issue. */ }
+          observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+        }
+        if (!observed.designRepair && (observed.kind === 'author' || observed.progression?.action === 'blocked')) {
+          const units = enumerateCanonicalChangeUnits(projectRoot, manifest.feature);
+          for (const unit of units) {
+            const feature = deriveChangeUnitFeatureId(manifest.feature, String(unit.changeUnit.change_unit_id));
+            const diagnosis = diagnoseDesignAuthority(projectRoot, frameworkRoot, feature, 'plan');
+            if (!diagnosis.findings.length) continue;
+            if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `设计责任在${feature}；需恢复原请求的自动设计修复授权。${diagnosis.findings.map(item => item.basis).join('\n')}`);
+            const brief: DesignRepairBriefLike = { class: diagnosis.findings.some(item => item.class === 'B2') ? 'B2' : 'B1', items: diagnosis.findings };
+            const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, feature, brief, emit);
+            if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
+            if (repaired.outcome !== 'published') return repairStop(repaired);
+            if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
+            observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+            break;
+          }
+        }
+        if ((observed.kind === 'decompose' || observed.kind === 'construction') && fs.existsSync(observed.candidatesPath)) {
+          const candidates: unknown = JSON.parse(fs.readFileSync(observed.candidatesPath, 'utf8'));
+          if (!Array.isArray(candidates)) throw new Error('[initial-design] candidates must be an array for the original consumer');
+          const canonical = enumerateCanonicalChangeUnits(projectRoot, manifest.feature);
+          const accepted = candidates.length > 0 && candidates.every(candidate => {
+            const artifact = asRecord(asRecord(candidate)?.artifact);
+            return artifact && canonical.some(unit => stableStringify(unit.changeUnit) === stableStringify(artifact));
+          });
+          try {
+            if (accepted) {
+              try { fs.unlinkSync(observed.candidatesPath); } catch { /* Canonical acceptance is already authoritative. */ }
+            } else {
+            acceptChangeUnitDecomposition(projectRoot, manifest.feature, candidates as ChangeUnitCandidate[]);
+            try { fs.unlinkSync(observed.candidatesPath); } catch { /* Accepted canonical facts are authoritative; cleanup is advisory. */ }
+            continue;
+            }
+          }
+          catch (error) { observed.issues.push((error as Error).message); }
+        }
+        if (observed.kind === 'construction') {
+          const next = await this.continueInitialDesignConstruction(manifest, projectRoot, frameworkRoot, argv, observed, emit, conclude, () => {
+            if (token) { releaseRunOwner(runDir, token); token = undefined; }
+          }, () => { releaseLock(lockPath, lock.ownerId); });
+          if (typeof next === 'number') return next;
+          observed = next;
+        }
+        if (observed.designRepair) {
+          if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `当前设计权威需要原责任方修复；需恢复原请求的自动设计修复授权。${observed.issues.join('\n')}`);
+          const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, observed.designRepair.feature, observed.designRepair.brief, emit);
+          if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
+          if (repaired.outcome === 'published') {
+            if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
+            continue;
+          }
+          return repairStop(repaired);
+        }
+        if (observed.kind === 'questioning') materializeBlueprintReview(projectRoot, manifest.feature);
+        const spent = readOriginalDeliveryBudget(projectRoot, manifest) ?? resolveResumedBudget(history(), { nextSessionStartMs: Date.now() });
+        const wall = resolveWallClockMs(manifest, initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest).domain);
+        const budget = checkRunBudget(spent.totalTurns, manifest.budget.max_total_turns, spent.priorActiveMs, wall - FINALIZE_RESERVE_MS);
+        if (budget !== 'ok') return conclude(budget === 'turns' ? 'budget_turns' : 'budget_wall_clock', `原始请求剩余预算不足：${budget}`);
+        const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
+        const label = observed.scope ? `initial-design-scope-${path.basename(path.dirname(observed.scope.candidatePath))}`
+          : observed.kind === 'decompose' ? 'initial-design-decomposition' : `initial-design-${purpose}`;
+        const scopeWindow = observed.scope ? history().map((event, index) => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'published' ? index : -1).reduce((latest, index) => Math.max(latest, index), -1) : -1;
+        const starts = history().slice(scopeWindow + 1).filter(event => event.type === 'agent_invoke_start' && event.phase === label);
+        if (starts.length > manifest.budget.max_retries_per_phase) return conclude('content_retry_exhausted', observed.issues.join('\n'));
+        const invokeId = `${label}-i${spent.totalTurns + 1}`;
+        const invocationDir = path.join(runDir, 'phases', label, invokeId);
+        fs.mkdirSync(invocationDir, { recursive: true });
+        const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed });
+        const promptFile = path.join(invocationDir, 'prompt.md');
+        fs.writeFileSync(promptFile, prompt);
+        const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
+        fs.writeFileSync(path.join(invocationDir, 'blueprint-before.yaml'), beforeBlueprint, { flag: 'wx' });
+        const resolution = { projectRoot, protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
+        const snapshotOptions = { ownedPrefixes: [path.relative(projectRoot,
+          observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/')], runtimeExcluded: [manifest.report_dir] };
+        const pre = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
+        if (pre.failureReason) return conclude('framework_bug', pre.failureReason);
+        const timeoutMs = Math.min(resolvePhaseTimeoutMs('plan', manifest), wall - spent.priorActiveMs - FINALIZE_RESERVE_MS);
+        if (!token) throw new Error('[initial-design] no original author window after CU handoff');
+        const childEnv: Record<string, string> = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: invokeId, MAISON_GOAL_ATTEMPT_PHASE: label,
+          ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}) };
+        applyGoalVisualProviderEnv(childEnv, manifest.visual_provider_pin);
+        const context = createPhaseExecutionContext({ runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full',
+          chain: [label], phase: label, attemptId: invokeId, owner: { ...token, kind: transport }, projectRoot, frameworkRoot,
+          runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value,
+          instruction: prompt, runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false }, childEnv });
+        const capability = loadGoalCapability(frameworkRoot, manifest.adapter ?? 'generic');
+        let headlessPlan: ReturnType<typeof resolveHeadlessInvokePlan> | undefined;
+        if (!this.options.executor && !this.options.sessionHandoff) {
+          try {
+            if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
+            headlessPlan = resolveHeadlessInvokePlan(manifest.adapter ?? 'generic', capability.capability, manifest.unattended, prompt,
+              { PROMPT: prompt, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/project/component-design/SKILL.md') }, manifest.adapter_model_pin?.value);
+          } catch (error) { return conclude('adapter_cli_hard_failure', (error as Error).message); }
+        }
+        emit({ type: 'agent_invoke_start', phase: label, purpose, invoke_id: invokeId, owner_id: token.owner_id, owner_epoch: token.epoch,
+          command: transport === 'session' ? 'phase_execute_request' : 'headless', effective_timeout_ms: timeoutMs });
+        if (this.options.sessionHandoff) {
+          const issued = issueSessionExecution({ context, invokeId, purpose, timeoutMs, gateTimeoutMs: Math.max(1, wall - spent.priorActiveMs), cleanupReserveMs: FINALIZE_RESERVE_MS,
+            preSnapshot: pre, writeBoundary: { ...resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] }, snapshotOptions, emit });
+          preserveOwner = true; this.options.sessionHandoff.onRequest(issued); runConcluded = true; return 3;
+        }
+        writePhaseExecutionRequestMaterial({ context, invokeId, purpose, issuedAt: history().filter(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId).at(-1)!.ts!,
+          timeoutMs, gateTimeoutMs: Math.max(1, wall - spent.priorActiveMs), cleanupReserveMs: FINALIZE_RESERVE_MS,
+          preSnapshot: pre, writeBoundary: { ...resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] }, snapshotOptions });
+        let containmentError: string | undefined;
+        let containmentStillAlive = false;
+        let guardianBound = false;
+        const executor = this.options.executor ?? new DetachedGoalPhaseExecutor(() => {
+          if (!headlessPlan || !capability.capability) throw new Error('initial design headless capability was not resolved');
+          return { plan: headlessPlan,
+            cwd: projectRoot, options: { timeoutMs, deadlineMs: Date.now() + timeoutMs, outputLogPath: path.join(invocationDir, 'agent-output.log'),
+              extraEnv: childEnv, usageCapture: capability.capability.usage_capture, toolEventCapture: capability.capability.tool_event_provenance,
+              ...(process.platform === 'win32' ? { containment: { runId: manifest.run_id, invokeId } } : {}),
+              onActiveChild: ({ pid, kill }) => {
+                activeAgentKill = async () => { await kill(); };
+                if (process.platform !== 'win32' || pid <= 0) return;
+                const bound = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
+                if (!bound.ok) { containmentError = bound.error; containmentStillAlive = bound.stillAlive; return; }
+                guardianBound = true;
+                emit({ type: 'agent_process_bound', phase: label, invoke_id: invokeId, pid, started_at_ms: bound.identity.startedAtMs,
+                  executable: bound.identity.executable, token: `${manifest.run_id}/${invokeId}` });
+              }, onChildExit: () => { activeAgentKill = null; } } };
+        }, injectedInvokeAgent ?? invokeAgentHeadless);
+        const result = await this.executeExecutor(context, executor);
+        activeAgentKill = null;
+        if (containmentError && containmentStillAlive) return conclude('agent_containment_unresolved', containmentError);
+        if (fs.existsSync(observed.blueprintPath)) fs.writeFileSync(path.join(invocationDir, 'draft-output.yaml'), fs.readFileSync(observed.blueprintPath), { flag: 'wx' });
+        emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
+          command: result.command, usage: result.usage,
+          duration_ms: result.duration_ms, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
+          kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
+        if (guardianBound && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
+        const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
+        if (hardCli || containmentError) return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!);
+        const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
+        const delta = diffPhaseInvocationSnapshots(pre, post);
+        if (delta.kind === 'unverifiable' || delta.kind === 'changed' && delta.changes.some(change => !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))) return conclude('unauthorized_source_mutation', '设计调用写界或原快照不可核实。');
+        const waitingDetail = invocationWaitingDetail(result);
+        if (waitingDetail) return conclude('execution_scope_unresolved', waitingDetail);
+      }
+    } catch (error) {
+      emit({ type: 'run_end', status: 'INTERRUPTED', error: (error as Error).message });
+      throw error;
+    } finally {
+    if (token && !preserveOwner) releaseRunOwner(runDir, token);
+      releaseLock(lockPath, lock.ownerId);
+    }
+  }
+
+  private async repairInitialDesignOwner(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string,
+    token: RunFenceToken, designFeature: string, brief: DesignRepairBriefLike, emit: (event: Record<string, unknown>) => void,
+    priorSignature?: string): Promise<UnattendedDesignRepairResult> {
+    const runDir = path.resolve(projectRoot, manifest.report_dir);
+    if (!this.options.executor && !this.options.sessionHandoff) {
+      try {
+        const cap = loadGoalCapability(frameworkRoot, manifest.adapter ?? 'generic');
+        if (!cap.valid || !cap.capability) throw new Error(cap.issues.join('; '));
+        resolveHeadlessInvokePlan(manifest.adapter ?? 'generic', cap.capability, manifest.unattended, '',
+          { PROMPT: '', PROMPT_FILE: path.join(runDir, 'design-repair', 'author-prompt.md'), PROJECT_ROOT: projectRoot,
+            FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: 'design-repair-author', SKILL_PATH: path.join(frameworkRoot, DESIGN_REPAIR_CONTRACT_DOC) }, manifest.adapter_model_pin?.value);
+      } catch (error) { return { outcome: 'not_dispatched', reason: `原设计责任方运输能力不可用，未派发/未记尝试；恢复该能力后重发同一请求：${(error as Error).message}` }; }
+    }
+    const signature = priorSignature ?? designRepairSignature(designFeature, 'initial-design', brief.items, designRepairInputFingerprint(projectRoot, designFeature));
+    const events = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl')).events;
+    if (!priorSignature && designRepairAttempted(events, signature)) return { outcome: 'failed', step: 'runtime', reason: '同一设计输入/签名已尝试且未收敛，保留原预算和产物；需要真实新事实或按原有有界恢复处理。' };
+    return runUnattendedDesignRepair({ projectRoot, frameworkRoot, feature: manifest.feature, designTarget: designRepairTarget(projectRoot, designFeature), phase: 'initial-design',
+      runId: manifest.run_id, reportDir: manifest.report_dir, requirement: manifest.requirement, brief, signature,
+      heldFeatureLock: null, runtimeWrites: [manifest.report_dir], emit,
+      invoke: (purpose, prompt, guard) => this.invokeInitialDesignOwner(manifest, projectRoot, frameworkRoot, token, purpose, prompt, guard, emit),
+      registerLockRelease: release => { designRepairLockRelease = release; },
+      recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; const previous = eventLineRecorder;
+        eventLineRecorder = (file, line) => { previous?.(file, line); lines.push({ file, line }); };
+        return () => { eventLineRecorder = previous; return lines; }; },
+      recheckReadiness: () => { const ready = deriveDesignPreparationReadiness(projectRoot, manifest.feature);
+        return { ready: ready.ready, reason: ready.ready ? '原始请求的真实P1/P2 readiness已重派生' : JSON.stringify(ready.perUnit) }; },
+    });
+  }
+
+  /** The existing design transaction uses the same fenced request/result transport at the raw-request anchor. */
+  private async invokeInitialDesignOwner(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string,
+    token: RunFenceToken, purpose: DesignRepairPurpose, text: string, guard: DesignRepairInvocationGuard | undefined,
+    emit: (event: Record<string, unknown>) => void): Promise<DesignRepairInvokeOutcome> {
+    const runDir = path.resolve(projectRoot, manifest.report_dir);
+    const label = designRepairInvokeLabel(purpose);
+    const replay = replayDesignRepairInvocation(runDir, purpose, this.acceptedSessionInvokeId, this.options.sessionHandoff?.onRequest);
+    if (replay) return replay;
+    const budget = readOriginalDeliveryBudget(projectRoot, manifest)!;
+    const wall = resolveWallClockMs(manifest, initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest).domain);
+    const available = checkRunBudget(budget.totalTurns, budget.budget.max_total_turns, budget.priorActiveMs, wall - FINALIZE_RESERVE_MS);
+    if (available !== 'ok') return { started: false, ok: false, detail: available === 'turns' ? 'budget_turns' : 'budget_wall_clock' };
+    const timeoutMs = Math.min(resolvePhaseTimeoutMs('plan', manifest), wall - budget.priorActiveMs - FINALIZE_RESERVE_MS);
+    const invokeId = `${label}-i${budget.totalTurns + 1}`;
+    const dir = path.join(runDir, 'phases', label, invokeId);
+    fs.mkdirSync(dir, { recursive: true });
+    const promptFile = path.join(dir, 'prompt.md'); fs.writeFileSync(promptFile, text);
+    const kind = this.options.sessionHandoff || this.options.executor ? 'session' : 'process';
+    const childEnv: Record<string, string> = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: invokeId, MAISON_GOAL_ATTEMPT_PHASE: label,
+      ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}) };
+    applyGoalVisualProviderEnv(childEnv, manifest.visual_provider_pin);
+    const context = createPhaseExecutionContext({ runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full', chain: [label], phase: label,
+      attemptId: invokeId, owner: { ...token, kind }, projectRoot, frameworkRoot, runDir, reportDir: manifest.report_dir,
+      adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value, instruction: text,
+      runtimeFacts: { receiptRequired: false, resume: true, successor: false }, childEnv });
+    emit({ type: 'agent_invoke_start', phase: label, purpose, invoke_id: invokeId, owner_id: token.owner_id, owner_epoch: token.epoch,
+      command: kind === 'session' ? 'phase_execute_request' : 'headless', effective_timeout_ms: timeoutMs });
+    const boundary = guard ? { ...guard.resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null;
+    if (this.options.sessionHandoff) {
+      const issued = issueSessionExecution({ context, invokeId, purpose, timeoutMs, gateTimeoutMs: Math.max(1, wall - budget.priorActiveMs), cleanupReserveMs: FINALIZE_RESERVE_MS,
+        preSnapshot: guard?.pre ?? null, writeBoundary: boundary, snapshotOptions: guard?.options, emit });
+      this.options.sessionHandoff.onRequest(issued);
+      return { started: true, ok: false, handoff: true, detail: '原design owner真实请求已签发' };
+    }
+    writePhaseExecutionRequestMaterial({ context, invokeId, purpose, issuedAt: new Date().toISOString(), timeoutMs,
+      gateTimeoutMs: Math.max(1, wall - budget.priorActiveMs), cleanupReserveMs: FINALIZE_RESERVE_MS, preSnapshot: guard?.pre ?? null, writeBoundary: boundary, snapshotOptions: guard?.options });
+    const capability = loadGoalCapability(frameworkRoot, manifest.adapter ?? 'generic');
+    let containmentError: string | undefined; let containmentAlive = false; let bound = false;
+    const executor = this.options.executor ?? new DetachedGoalPhaseExecutor(() => {
+      if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
+      return { plan: resolveHeadlessInvokePlan(context.adapter, capability.capability, manifest.unattended, text,
+        { PROMPT: text, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/reference/design-repair-unattended.md') }, manifest.adapter_model_pin?.value),
+        cwd: projectRoot, options: { timeoutMs, deadlineMs: Date.now() + timeoutMs, outputLogPath: path.join(dir, 'agent-output.log'), extraEnv: childEnv,
+          ...(process.platform === 'win32' ? { containment: { runId: manifest.run_id, invokeId } } : {}),
+          usageCapture: capability.capability.usage_capture, toolEventCapture: capability.capability.tool_event_provenance,
+          onActiveChild: ({ pid, kill }) => {
+            activeAgentKill = async () => { await kill(); };
+            if (process.platform !== 'win32' || pid <= 0) return;
+            const ownership = bindGuardianOrKill(pid, `${manifest.run_id}/${invokeId}`);
+            if (!ownership.ok) { containmentError = ownership.error; containmentAlive = ownership.stillAlive; return; }
+            bound = true; emit({ type: 'agent_process_bound', phase: label, invoke_id: invokeId, pid, started_at_ms: ownership.identity.startedAtMs,
+              executable: ownership.identity.executable, token: `${manifest.run_id}/${invokeId}` });
+          }, onChildExit: () => { activeAgentKill = null; } } };
+    }, injectedInvokeAgent ?? invokeAgentHeadless);
+    if (kind === 'session') renewSessionLease(runDir, token, timeoutMs);
+    const result = await this.executeExecutor(context, executor); activeAgentKill = null;
+    if (containmentError && containmentAlive) return { started: true, ok: false, containmentUnresolved: true, detail: containmentError };
+    const post = guard ? capturePhaseInvocationSnapshot(guard.resolution, guard.options) : undefined;
+    emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode, command: result.command,
+      duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+      terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
+    if (bound && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode });
+    const outcome: DesignRepairInvokeOutcome = { started: true, ok: invocationCompleted(result) && !containmentError, status: result.status,
+      detail: containmentError ?? result.details ?? `exit=${result.exitCode}`, preSnapshot: guard?.pre, postSnapshot: post };
+    recordDesignRepairInvocation(runDir, purpose, invokeId, outcome);
+    return outcome;
+  }
+
+  private async continueInitialDesignConstruction(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string, argv: minimist.ParsedArgs, observation: InitialDesignObservation,
+    emit: (event: Record<string, unknown>) => void, stop: (reason: string, detail: string, disposition?: Record<string, unknown>) => number,
+    releaseOriginal: () => void, releaseController: () => void): Promise<number | InitialDesignObservation> {
+    const decision = observation.progression;
+    if (!decision) return observation;
+    const phasePolicy = initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest);
+    if (decision.action === 'ready_for_component_closure') {
+      let detail = '全部适用CU已真实正式完成。';
+      let componentVerdict: string | undefined;
+      try {
+        const checked = evaluateComponentClosure(projectRoot, manifest.feature);
+        componentVerdict = checked.closure.verdict;
+        detail += ' P3只读检查=' + componentVerdict + '；仅披露，不自动写闭环或派修。' +
+          [...checked.issues.map(issue => issue.id + ': ' + issue.message), ...checked.closure.gaps.map(gap => gap.gap_id + ': ' + gap.reason)].join('；');
+      } catch (error) { detail += ' P3只读检查无法评估：' + (error as Error).message + '；未据此宣称P3通过。'; }
+      emit({ type: 'run_end', status: 'COMPLETED', detail, ...(componentVerdict ? { component_verdict: componentVerdict } : {}) });
+      fs.writeFileSync(path.resolve(projectRoot, manifest.report_dir, 'goal-report.json'), JSON.stringify(projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }), null, 2) + '\n');
+      return 0;
+    }
+    let nextScope: InitialDesignObservation | undefined;
+    let childCode = 1;
+    const scopeWork = (request: Pick<ChangeUnitGoalHandoff, 'featureId' | 'requirement'>, issues: string[]): InitialDesignObservation => {
+      const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
+      const requirement = manifest.requirement_source_files?.length === 1
+        ? `--requirement-file ${quote(manifest.requirement_source_files[0])}` : `--requirement ${quote(manifest.requirement ?? '')}`;
+      return { ...observation, kind: 'scope', issues, scope: { feature: request.featureId, candidatePath: featureTrackDeclPath(projectRoot, request.featureId),
+        command: `npx ts-node scripts/goal-mode-entry.ts --project-root ${quote(projectRoot)} --framework-root ${quote(frameworkRoot)} --prepare-scope --feature ${quote(request.featureId)} --completion-target feature --requested-results ${quote(request.requirement)} --requested-phases <按该CU实际动作选取的原授权阶段> ${requirement} --impact-behavior-change <按最终用户可见行为真实判断true或false> --impact-reason <具体依据> --impact-basis <实际源码或设计路径> --overwrite` } };
+    };
+    if (decision.action === 'select_one' && decision.selected) {
+      const request = buildChangeUnitGoalRequest(projectRoot, decision.selected);
+      const feature = request.featureId;
+      if (!fs.existsSync(featureTrackDeclPath(projectRoot, feature))) return scopeWork(request, ['尚无本CU的明确动作A和有据影响判断，由原scope责任方完整准备；机器不把域D预填成请求动作。']);
+      const runsDir = featureFilePath(projectRoot, feature, 'goal-runs');
+      const hasRun = fs.existsSync(runsDir) && fs.readdirSync(runsDir).some(name => !name.startsWith('.'));
+      if (!hasRun && !readFeatureFrozenScope(projectRoot, feature)) {
+        try {
+          resolveBirthExecutionScope(projectRoot, feature, resolveWorkflowSpec(projectRoot, { frameworkRoot }), frameworkRoot, manifest.requirement, manifest.fidelity);
+          const actionIssues = initialDesignScopeActionIssues(projectRoot, feature, phasePolicy);
+          if (actionIssues.length) return scopeWork(request, actionIssues);
+        }
+        catch (error) { return scopeWork(request, [(error as Error).message, '整份重生成当前交接候选，保留原请求；不要只更新旧hash或沿用旧判断。']); }
+      }
+    }
+    const invoke = async (handoff: ChangeUnitGoalHandoff, activeRunId?: string, notes?: string) => {
+      const mode = await import('./goal-mode-entry');
+      let child: GoalManifest;
+      if (activeRunId) child = loadGoalManifestFromRun(projectRoot, activeRunId, { feature: handoff.featureId });
+      else {
+        const candidatePath = featureTrackDeclPath(projectRoot, handoff.featureId);
+        if (!fs.existsSync(candidatePath)) {
+          nextScope = scopeWork(handoff, ['尚无本CU的明确动作A和完整范围候选，由原scope责任方准备。']);
+          return { status: 'paused' as const, reason: '原scope责任方明确本CU动作' };
+        }
+        const scope = resolveBirthExecutionScope(projectRoot, handoff.featureId, resolveWorkflowSpec(projectRoot, { frameworkRoot }), frameworkRoot, manifest.requirement, manifest.fidelity).scope;
+        if (!scope || scope.unresolved.length) {
+          nextScope = scopeWork(handoff, scope?.unresolved.map(gap => `${gap.obligation_id}: ${gap.reason}`) ?? ['尚无合法范围候选']);
+          return { status: 'paused' as const, reason: '原设计责任方继续准备当前真实CU的范围输入' };
+        }
+        const prepared = mode.prepareGoalModeRun({ projectRoot, frameworkRoot, feature: handoff.featureId, adapter: manifest.adapter ?? 'generic',
+          requirement: manifest.requirement ?? '', deliveryOrigin: { feature: manifest.feature, run_id: manifest.run_id } });
+        if (isInitialDesignManifest(prepared.manifest)) throw new Error('[initial-design] canonical CU unexpectedly entered initial design');
+        child = prepared.manifest;
+      }
+      if (child.delivery_origin?.feature !== manifest.feature || child.delivery_origin.run_id !== manifest.run_id) throw new Error('[initial-design] active CU belongs to another original request');
+      if (liveFeatureLock(projectRoot, child.feature)) {
+        childCode = 3;
+        runConcluded = true;
+        return { status: 'paused' as const, runId: child.run_id, reason: '原请求的真实child仍由存活的feature锁持有者推进；沿当前执行观察，不启动第二作者。' };
+      }
+      const childRunDir = path.resolve(projectRoot, child.report_dir);
+      const reportPath = this.options.sessionHandoff?.requestPath;
+      const relativeReport = reportPath ? path.relative(childRunDir, path.resolve(reportPath)) : '..';
+      const handoffOptions = this.options.sessionHandoff ? { ...this.options.sessionHandoff,
+        ...(relativeReport.startsWith('..') || path.isAbsolute(relativeReport) ? { requestPath: undefined, report: undefined } : {}) } : undefined;
+      const prelude = handoffOptions ? inspectSessionExecutionBeforeRuntime({ runDir: childRunDir,
+        requestPath: handoffOptions.requestPath, report: handoffOptions.report, forceTakeover: Boolean(argv['force-resume']) }) : null;
+      if (prelude?.reusable) {
+        handoffOptions!.onRequest(prelude.reusable);
+        childCode = 3;
+        runConcluded = true;
+        return { status: 'paused' as const, runId: child.run_id, reason: '复用真实child尚未报告的原签请求，不再领取第二作者窗口。' };
+      }
+      releaseOriginal();
+      const childEvents = loadEventsJsonlStrict(path.join(childRunDir, 'events.jsonl')).events;
+      const started = childEvents.some(event => event.type === 'run_start');
+      const pending = prelude?.current ?? readSessionExecution(childRunDir);
+      const resume = started && (!resolveEffectiveRunEnd(childEvents) || pending && !acceptedSessionReport(childRunDir, pending)
+        || handoffOptions?.report && handoffOptions.requestPath);
+      // A stopped child goes through the normal implicit continuation decision:
+      // a design publication may require a successor with freshly resolved bindings.
+      const childEntry = resume ? ['--resume', child.run_id] : started ? [] : ['--attach-created', child.run_id];
+      const runtime = new GoalPhaseRuntime({ ...this.options, sessionHandoff: handoffOptions,
+        args: ['--feature', child.feature, ...childEntry, '--project-root', projectRoot, '--framework-root', frameworkRoot,
+          '--runtime-executor', this.options.executor || this.options.sessionHandoff ? 'attended' : 'detached',
+          '--runtime-owner', this.options.executor || this.options.sessionHandoff ? 'session' : 'process', ...inheritRunProcessArgs(argv),
+          ...(argv['force-resume'] ? ['--force-resume'] : []), ...(notes ? ['--repair-notes', notes] : [])] }, manifest);
+      try { childCode = await runtime.run(); }
+      finally { releaseController(); }
+      return { status: childCode === 0 ? 'completed' as const : childCode === 3 ? 'paused' as const : 'failed' as const,
+        runId: runtime.lastRunId ?? child.run_id, reason: `当前CU runtime exit=${childCode}` };
+    };
+    if (decision.action === 'resume_active' && decision.activeRun) {
+      const ready = decision.readySet.units.find(unit => deriveChangeUnitFeatureId(unit.changeUnit.blueprint_id, unit.changeUnit.change_unit_id) === decision.activeRun!.featureId);
+      if (!ready) throw new Error('[initial-design] active CU is not in the canonical workspace');
+      await invoke(buildChangeUnitGoalHandoff(projectRoot, ready.changeUnit, { runId: decision.activeRun.runId, frameworkRoot }), decision.activeRun.runId);
+    } else if (decision.action === 'blocked') {
+      // P2 deliberately leaves INCOMPLETE completion blocked. The request still owns
+      // the existing run; its normal continuation rules decide rejoin/successor/wait.
+      const family = readOriginalDeliveryBudget(projectRoot, manifest)!;
+      const existing = family.runs.filter(run => !isInitialDesignManifest(run.manifest)
+        && decision.readySet.units.some(unit => unit.completion.state !== 'VALID'
+          && unit.completion.featureId === run.manifest.feature))
+        .sort((left, right) => String(left.events.at(-1)?.ts).localeCompare(String(right.events.at(-1)?.ts))).at(-1);
+      const unit = existing && decision.readySet.units.find(unit => unit.completion.featureId === existing.manifest.feature);
+      if (existing && unit) await invoke(buildChangeUnitGoalHandoff(projectRoot, unit.changeUnit, { runId: existing.manifest.run_id, frameworkRoot }), existing.manifest.run_id);
+      else return stop('execution_scope_unresolved', decision.reasons.join('\n'));
+    } else await runChangeUnitProgression(projectRoot, manifest.feature, { maxUnits: 1, caller: handoff => invoke(handoff),
+      buildHandoff: (root, unit) => {
+        const feature = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
+        const prior = deliveryCycleView(root, feature).unfinished.at(-1);
+        return buildChangeUnitGoalHandoff(root, unit, prior ? { runId: prior.runId, frameworkRoot } : undefined);
+      } });
+    if (nextScope) return nextScope;
+    if (childCode === 0) return new GoalPhaseRuntime({ ...this.options, args: ['--feature', manifest.feature, '--resume', manifest.run_id, '--project-root', projectRoot, '--framework-root', frameworkRoot,
+      ...inheritRunProcessArgs(argv)] }).run();
+    if (childCode !== 3) {
+      const family = readOriginalDeliveryBudget(projectRoot, manifest)!;
+      const child = family.runs.filter(run => !isInitialDesignManifest(run.manifest))
+        .sort((left, right) => String(left.events.at(-1)?.ts).localeCompare(String(right.events.at(-1)?.ts))).at(-1);
+      const end = child && resolveEffectiveRunEnd(child.events);
+      return stop(end?.halt_reason ?? 'execution_scope_unresolved', end && 'error' in end && typeof end.error === 'string'
+        ? end.error : '当前CU未完成，沿同一原始请求和该CU正式记录恢复。', {
+        ...(end && 'recovery' in end ? { recovery: end.recovery } : {}),
+        ...(end && 'run_disposition' in end ? { run_disposition: end.run_disposition } : {}),
+        ...(end && 'run_wait_kind' in end ? { run_wait_kind: end.run_wait_kind } : {}),
+        ...(end && 'halt_guidance' in end ? { halt_guidance: end.halt_guidance } : {}),
+      });
+    }
+    return childCode;
+  }
+
+  async executeExecutor(
+    context: PhaseExecutionContext,
+    executor: GoalPhaseExecutor,
+  ): Promise<GoalPhaseExecutorResult> {
+    validatePhaseExecutionContext(context);
+    if (context.owner.owner_id !== 'dry-run') {
+      assertFencedOwner(context.runDir, context.owner, 'runtime_pre_executor');
+    }
+    const result = await executor.execute(context);
+    if (context.owner.owner_id !== 'dry-run') {
+      assertFencedOwner(context.runDir, context.owner, 'runtime_post_executor');
+    }
+    return result;
+  }
+}
+
+/**
+ * 主入口。**导出供 runner 级集成测试直接调用**（配合 __testing_set* 注入缝）——
+ * 生产路径仍由文件尾的 require.main 分支驱动，行为不变。
+ */
+export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise<number> {
+  // Programmatic host bridges may run more than one lifecycle in the same Node process.
+  // Reset only ephemeral process-local projection; persisted truth remains manifest/events/control.
+  terminalEventCtx = null;
+  runConcluded = false;
+  appendEventBaseFields = {};
+  progressSubstep = null;
+  progressPhase = null;
+  progressHeartbeatHook = null;
+  if (guardNestedGoalRunner()) return 1;
+  setupSignalHandlers();
+
+  const argv = parseGoalRuntimeArgs(options.args ?? process.argv.slice(2));
 
   const executorMode = String(argv['runtime-executor'] ?? (options.executor ? 'attended' : 'detached'));
   if (executorMode !== 'attended' && executorMode !== 'detached') {
@@ -5111,7 +5877,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     [--detach]   fork the run into the background, print {run_id,...} JSON, exit 0
                  (for hosts whose shell tool blocks / can't background a long task)
 `);
-    process.exit(0);
+    return 0;
   }
 
   const manifestArgv = toManifestCliArgv(argv);
@@ -5120,8 +5886,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // plan 6fd6c8c1 §4.3.2：**共同授权入口**——后台 --detach（父进程已转换成
   // --authorize-autonomy 透传）、supervisor 的同式重启、会话 --authorize-autonomy 都落到
   // 同一个 authorization 输入。--detached-child 只是运输标记，本身不授权。
-  const entryAuthorization = options.authorization
-    ?? (argv['authorize-autonomy'] === true ? { mode: 'goal_mode' as const, autonomyAuthorized: true } : undefined);
+  const entryAuthorization = resolveEntryAuthorization(options, argv);
 
   // f9c2e6b4 t4：**fresh 才读源文件**——resume 一律只认 manifest 里已冻结的 requirement，
   // 这样"权威需求文件可长期复用"与"旧内容绝不悄悄进新 run"同时成立。
@@ -5129,13 +5894,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // 下游看到的就是最终值，不存在第二个真值来源。
   // resume **显式拒绝** --requirement-file，避免静默忽略显式输入：
   // resume 只认已冻结的 requirement，悄悄忽略一个用户明确给了的输入是最坏的形态。
-  if (argv.resume && typeof argv['requirement-file'] === 'string' && argv['requirement-file'].trim()) {
-    console.error(
-      '[goal-runner] BLOCKER: --requirement-file 仅在 fresh run 生效——resume 只认 manifest ' +
-      '中已冻结的 requirement。若确要换需求，请开新 run。',
-    );
-    process.exit(2);
-  }
+  if (rejectsResumeRequirementFile(argv)) return 2;
   // plan a2f7c9e4 §3.7：返修诊断材料按原始参数判合法（readRepairNotes）；读一次留在本进程，只注入返修窗口的候选段之后。
   // 判在下方"显式 --resume 改起后继"之前：起后继时材料随本次调用进入后继。
   let repairNotes: { file: string; text: string } | null = null;
@@ -5143,7 +5902,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     repairNotes = readRepairNotes(argv, projectRoot);
   } catch (error) {
     console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
-    process.exit(2);
+    return 2;
   }
   if (repairNotes) console.log(`[goal-runner] 返修诊断材料：${repairNotes.file}（只进返修窗口提示词，标为驱动方假设、非需求）`);
   if (!argv.resume) {
@@ -5163,7 +5922,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       }
     } catch (err) {
       console.error((err as Error).message);
-      process.exit(2);
+      return 2;
     }
   }
   // e9d4b7a3 t1（三轮 review P1）：显式增量判定以 **CLI 输入事实**为准（字段值 ≠ 显式
@@ -5180,7 +5939,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const manifestCliCheck = validateManifestCliOverrides(manifestArgv);
   if (!manifestCliCheck.ok) {
     console.error(manifestCliCheck.message);
-    process.exit(1);
+    return 1;
   }
 
   // plan d7f3a9c4 t1：--adapter-model CLI 值归一 + fail-fast 校验（trim/非空/≤128/无控制
@@ -5190,7 +5949,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     cliAdapterModel = normalizeAdapterModelCliValue(argv['adapter-model']);
   } catch (err) {
     console.error((err as Error).message);
-    process.exit(1);
+    return 1;
   }
 
   // plan ab072691 t1④：--visual-adapter/--visual-model 成对归一 + 资格 fail-fast。
@@ -5202,7 +5961,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (cliVisualProvider) assertVisualProviderCliSupported(frameworkRoot, cliVisualProvider);
   } catch (err) {
     console.error((err as Error).message);
-    process.exit(1);
+    return 1;
   }
 
   // plan 4e6fb3b6 §7.3：接续决策在选择入口、生成出生范围之前执行。显式旗标原样走；其余按决策改写入口：
@@ -5213,7 +5972,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   })();
   if (!argv.resume && !attachCreatedRunId && !argv['dry-run'] && !normalizeSupersedeTargets(argv.supersede).length && launchFeature) {
     const next = designDeliveryNextStep({ projectRoot, frameworkRoot, feature: launchFeature, ...resolveDesignDeliveryRequest({ ...argv, requirement: argv['requirement-file'] ? undefined : argv.requirement }, projectRoot) });
-    if (next) { console.log(JSON.stringify(next, null, 2)); return 0; }
+    if (next) return new GoalPhaseRuntime(options).run();
   }
   const publicationResume = options.sessionHandoff && typeof argv.resume === 'string' && launchFeature
     ? (() => {
@@ -5287,7 +6046,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     rawRunInput = resolveRawRunInput(argv as unknown as Record<string, unknown>, projectRoot);
   } catch (e) {
     console.error(`[goal-runner] BLOCKER: ${(e as Error).message}`);
-    process.exit(1);
+    return 1;
   }
   const dryRunMode = rawRunInput.dryRun;
 
@@ -5305,7 +6064,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   } else if (argv.resume) {
     if (!argv.manifest && !argv.feature) {
       console.error('[goal-runner] BLOCKER: --resume 须配 --feature 或 --manifest');
-      process.exit(1);
+      return 1;
     }
     // plan a2f7c9e4 §3.2：预算耗尽 + 仅授权预算改动的自动接回——决策按原 run 当前的 manifest（含刚调整的预算）批准。
     // 本次重发带的 --manifest 若只是重复原 run（出生时的旧输入），按原 run 的 manifest 续跑；文件另带改动时（codex 检视 r2）
@@ -5526,7 +6285,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     if (ft.blockers.length > 0) {
       console.error(`[goal-runner] BLOCKER: fidelity transition 校验失败：\n- ${ft.blockers.join('\n- ')}`);
-      process.exit(1);
+      return 1;
     }
     fidelityTransitionFields = ft.authorizedFields;
   }
@@ -5607,7 +6366,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     if (!finalPin.ok) {
       console.error(finalPin.message);
-      process.exit(1);
+      return 1;
     }
     if (finalPin.pin) {
       manifest.adapter_model_pin = finalPin.pin;
@@ -5632,7 +6391,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     if (!finalVisualPin.ok) {
       console.error(finalVisualPin.message);
-      process.exit(1);
+      return 1;
     }
     let pin = finalVisualPin.pin;
     // 无显式输入也无冻结值时，fresh run 才回落个人级配置。goal-runner 是**无人值守**入口：
@@ -5676,7 +6435,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       attachedCreation = assertGoalRunAttachable(projectRoot, manifest);
     } catch (error) {
       console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
-      process.exit(1);
+      return 1;
     }
   }
   if (!argv.resume && !attachCreatedRunId && workflow.schema_version === '1.2') {
@@ -5761,17 +6520,20 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const seeds = [...new Set([...requestedSupersedeTargets, manifest.successor_of])];
     const cycleBoundary = resolveDeliveryCycleBoundary({ projectRoot, featuresDir, feature: manifest.feature, frameworkRoot, seedTargets: seeds, currentEvents: [] });
     const lineage = foldBudgetLineage({ projectRoot, featuresDir, feature: manifest.feature, seedTargets: seeds, currentEvents: [], cycleBoundary });
-    const spent = resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() });
+    const deliveryBudget = readOriginalDeliveryBudget(projectRoot, manifest);
+    if (deliveryBudget) manifest.budget = structuredClone(deliveryBudget.budget);
+    const spent = deliveryBudget ?? resolveResumedBudget(lineage.budgetFoldEvents, { nextSessionStartMs: Date.now() });
     const wall = resolveWallClockMs(manifest, actualBirthChain);
     const admission = checkRunBudget(spent.totalTurns, manifest.budget.max_total_turns, spent.priorActiveMs, wall - FINALIZE_RESERVE_MS);
     if (admission !== 'ok') {
       const source = loadGoalManifestFromRun(projectRoot, manifest.successor_of, { feature: manifest.feature });
       const kind = admission === 'turns' ? 'budget_turns' : 'budget_wall_clock';
-      const guidance = buildBudgetExhaustedGuidance({ feature: manifest.feature, runId: manifest.successor_of,
+      const guidance = buildManifestBudgetGuidance(projectRoot, frameworkRoot, manifest, { feature: manifest.feature, runId: manifest.successor_of,
         phase: source.end_phase, kind, activeElapsedMs: spent.priorActiveMs,
         limit: kind === 'budget_turns' ? manifest.budget.max_total_turns : wall,
         harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness' });
-      throw new Error(`${kind}: 后继未创建。应修改现存 ${path.join(projectRoot, source.report_dir, 'manifest.json')} 的预算。\n${guidance.join('\n')}`);
+      const owner = originalDeliveryForManifest(projectRoot, manifest) ?? source;
+      throw new Error(`${kind}: 后继未创建。应修改现存 ${path.resolve(projectRoot, owner.report_dir, 'manifest.json')} 的预算。\n${guidance.join('\n')}`);
     }
   }
 
@@ -5792,7 +6554,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         'is_background left a "running" corpse). Relaunch with --detach for unattended survival, ' +
         'or pass --foreground-ok to override (manual / short / deliberate foreground run).',
     );
-    process.exit(1);
+    return 1;
   }
   if (survivalPosture === 'warn') {
     console.error(
@@ -5807,7 +6569,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // plan 4e6fb3b6 §7.3：接续决策已选好路（孤儿 run 与失败 run 都在决策里被重新接入、承接或保持停止）时消费决策，
   // 这两道守卫只对显式旗标的调用照现状生效。
   if (!argv.resume && !attachCreatedRunId && !dryRun && !continuationDecision) {
-    guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
+    if (guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force))) return 1;
     const continuation = evaluateFreshRunContinuation({
       projectRoot,
       manifest,
@@ -5821,6 +6583,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
   runtimeSessionLogs = !!options.sessionHandoff;
   let sessionRequest = options.sessionHandoff ? readSessionExecution(path.resolve(projectRoot, manifest.report_dir), options.sessionHandoff.requestPath) : null;
+  let acceptedSessionInvokeId: string | undefined;
   const incompleteSessionStart = options.sessionHandoff ? undeliveredSessionInvocation(loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'))) : undefined;
   const sessionControl = (sessionRequest || incompleteSessionStart) ? readRunControl(path.resolve(projectRoot, manifest.report_dir), manifest.run_id) : null;
   const sameSessionWindow = sessionRequest && sessionControl?.owner && sessionControl.current_epoch === sessionRequest.request.context.owner.epoch
@@ -5889,9 +6652,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // An incomplete receipt transaction still belongs to this signed window.
       // I/O failure must not release its owner and strand a valid retry.
       preserveSessionOwner = true;
-      acceptSessionExecution({ runDir: path.resolve(projectRoot, manifest.report_dir), issued: sessionRequest,
+      const accepted = acceptSessionExecution({ runDir: path.resolve(projectRoot, manifest.report_dir), issued: sessionRequest,
         report: options.sessionHandoff.report ?? uncommittedSessionReport(path.resolve(projectRoot, manifest.report_dir), sessionRequest)
           ?? { status: 'failed', phase: sessionRequest.request.context.phase, details: 'runtime execution deadline expired; no executor report received' }, emit: goalEvents.emit });
+      if (!accepted.duplicate) acceptedSessionInvokeId = sessionRequest.request.invoke_id;
       preserveSessionOwner = false;
       if (expired && runControl) {
         advanceExpiredSession();
@@ -5999,18 +6763,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         registerLockRelease: release => { designRepairLockRelease = release; },
         recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; eventLineRecorder = (file, line) => lines.push({ file, line });
           return () => { eventLineRecorder = null; return lines; }; },
-        invoke: async purpose => {
-          const history = loadAuthoritativeEvents(startupEventsPath);
-          const transactionAt = history.map(event => event.type === 'design_authority_repair'
-            && (event as Record<string, unknown>).stage === 'attempted' && (event as Record<string, unknown>).signature === pendingPublication.signature).lastIndexOf(true);
-          const start = [...history.slice(transactionAt + 1)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel(purpose));
-          const issued = start?.invoke_id ? sessionExecutionForInvoke(runDir, start.invoke_id) : null;
-          const accepted = issued ? acceptedSessionReport(runDir, issued) : null;
-          if (!issued || !accepted?.event.handoff_report || accepted.report.status !== 'passed' || accepted.event.timed_out) return { started: false, ok: false, detail: 'publication recovery lacks a completed original invocation' };
-          const saved = readHandoffMaterial<{ draft_outputs?: Record<string, string>; post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, accepted.event.handoff_report);
-          for (const [name, bytes] of Object.entries(saved.draft_outputs ?? {})) if (['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json'].includes(name)) fs.writeFileSync(path.join(runDir, 'design-repair', name), Buffer.from(bytes, 'base64'));
-          return { started: true, ok: true, detail: 'original accepted design invocation', preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: saved.post_snapshot };
-        },
+        invoke: async purpose => replayDesignRepairInvocation(runDir, purpose, acceptedSessionInvokeId)
+          ?? { started: false, ok: false, detail: 'publication recovery lacks a completed original invocation' },
       });
     }
   }
@@ -6068,7 +6822,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // 事件——checkpoint 退出基线角色后无 schema 迁移语义。
 
     const { adapterStatus } = loadFrameworkConfigWithSources(projectRoot);
-    const resolvedProfile = loadResolvedProfile(projectRoot, cfg);
+    const resolvedProfile = loadResolvedProfile(projectRoot, cfg, frameworkRoot);
     const provenance = resolveAdapterProvenance(
       {
         adapter: argv.adapter ? String(argv.adapter) : undefined,
@@ -6223,7 +6977,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           '[goal-runner] BLOCKER: 截断链核验无法计算当前 run 的 requirement 血缘哈希' +
             '（manifest.requirement 缺失/空白）——fail-closed，拒绝启动。',
         );
-        process.exit(1);
+        return 1;
       }
       const currentReqSha = computeRequirementShaFromText(
         projectRoot, manifest.feature, manifest.requirement ?? '', featuresDir,
@@ -6237,7 +6991,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             corruptAtPreflight.map((c) => `  - ${c.runId}: ${c.reason}`).join('\n') +
             '\n人工核查（恢复 manifest 或确认废弃该目录）后重试。',
         );
-        process.exit(1);
+        return 1;
       }
       const staleness = recomputePhaseEvidenceStaleness(projectRoot, manifest.feature, upstream, {
         runId: manifest.run_id,
@@ -6262,7 +7016,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.error('  - [review] 缺 review-closure-attestation.json（须回跑 review 闭环生成）');
         }
         console.error('  修复后重试，或从受影响的最上游阶段重新起链（--start）。');
-        process.exit(1);
+        return 1;
       }
       emitMilestone(
         `GOAL_RUN event=upstream_closure_verified phases=${upstream.join(',')} run_id=${manifest.run_id}`,
@@ -6320,7 +7074,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
     });
     const ancestorBudgetEvents = budgetLineage.ancestorEvents;
     const budgetFoldEvents = budgetLineage.budgetFoldEvents;
-    const budgetBase = resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
+    const deliveryBudget = readOriginalDeliveryBudget(projectRoot, manifest, sessionStartMs);
+    const executionBudget = deliveryBudget?.budget ?? manifest.budget;
+    const executionManifest = (): GoalManifest => deliveryBudget ? { ...manifest, budget: executionBudget } : manifest;
+    const budgetBase = deliveryBudget ?? resolveResumedBudget(budgetFoldEvents, { nextSessionStartMs: sessionStartMs });
     let totalTurns = budgetBase.totalTurns;
     const priorActiveMs = budgetBase.priorActiveMs;
     // 真实时间线起点（sinceMs/partial 回喂消费面——绝不喂合成时间，否则跨夜 resume
@@ -6330,7 +7087,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
     // Derived from the chain in force, and re-derived after a revision: a revision that adds a
     // phase must not leave that phase without budget. Consumed budget (`priorActiveMs`) is untouched.
-    let wallMs = resolveWallClockMs(manifest, chain);
+    let wallMs = resolveWallClockMs(executionManifest(), chain);
     // P0-4（plan d9b4f7e2，rev8 偏离① 定稿口径）：wall deadline 制——**硬上界覆盖
     // agent/harness/backoff 三路径**（可用预算一律先扣 FINALIZE_RESERVE_MS 收尾预留）；
     // run_end 后收尾为 pre-check 拦截的 best-effort（finalize_skipped/finalize_overrun）。
@@ -6924,7 +7681,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // plan 4e6fb3b6 §7.3：接续决策判定"重新发起请求就是重新接入这个 run"时（最新的未终局 run、非结构终局、
       // 冷却只在没有变化时生效——决策已处理），恢复守卫消费该结果，不再要求 --force-resume；条件是否解除仍由其后的原检查判断。
       const sessionRecovery = options.sessionHandoff && sessionRequest && acceptedSessionReport(path.resolve(projectRoot, manifest.report_dir), sessionRequest)
-        && (sessionValidationOnlyEligibility(priorEvents) || lastRunEnd?.halt_reason === 'executor_waiting');
+        && sessionValidationOnlyEligibility(priorEvents);
       const decidedRejoin = sessionRecovery || (plainContinuation?.kind === 'rejoin' && plainContinuation.runId === manifest.run_id) ||
         canRecheckLegacyBacktrackLimit({ projectRoot, feature: manifest.feature, runId: manifest.run_id, events: priorEvents });
       // plan a2f7c9e4 §3.3：--resume 只定目标；决策对它给出起后继（存在变化但不可原地恢复）时冷却不适用，仍要 --force-resume 授权原地恢复。
@@ -7135,7 +7892,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         manifest,
         featuresDirRel: featuresDir,
         chainStartsAtSpec: chain[0] === fullWorkflowChain[0],
-        profileDir: loadResolvedProfile(projectRoot, cfg).profileDir,
+        profileDir: loadResolvedProfile(projectRoot, cfg, frameworkRoot).profileDir,
         fidelityFromCli: Boolean(manifestArgv.fidelity),
       });
       if (fidelityAction.action !== 'proceed') {
@@ -7315,74 +8072,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 任一匹配但杀不死 → 拒绝续跑（真冲突，勿自动覆盖）。
     // 所有拒绝路径经 concludeStartupBlocker 优雅收口（run_start 已落，直接 return
     // 会留僵尸 RUNNING 投影）。非 Windows 平台不启用（无 Job 语义，零变化）。
-    if (argv.resume && !dryRun && process.platform === 'win32') {
-      const reconcile = reconcileGuardianOwnership(priorEvents, defaultProcessProbe());
-      if (reconcile.kind === 'legacy_run') {
-        const msg =
-          '[goal-runner] BLOCKER: 本 run 存在未闭合 agent invoke 记录但没有任何 Job 绑定事件\n'
-          + '  （agent_process_bound）——旧版 run 的遗留进程无法按 guardian 身份契约接管。\n'
-          + `  原因：${reconcile.reason}`;
-        if (forceResume) {
-          // P1-4 review：人工清理后以 --force-resume 显式确认（可审计指令）。
-          goalEvents.emit({
-            type: 'legacy_run_override',
-            run_id: manifest.run_id,
-            reason: 'operator acknowledged legacy run via --force-resume',
-          });
-          console.warn(
-            `[goal-runner] ⚠ 旧版 run 经 --force-resume 显式确认放行（${reconcile.unclosedInvokes}`
-            + ' 个未闭合 invoke 无 Job 绑定——请已按提示人工清理残留 CLI 进程）',
-          );
-        } else {
-          console.error(`${msg}\n处置：人工核查进程树后清理残留 CLI 后代后，`
-            + '以 --force-resume 显式确认（可审计）后 resume——不猜测、不自动回收、'
-            + 'supervisor 不代其确认。');
-          concludeStartupBlocker('legacy_run_requires_manual_cleanup', msg);
-          return 1;
-        }
-      } else if (reconcile.kind === 'outcomes') {
-        for (const item of reconcile.items) {
-          if (item.kind === 'guardian_gone') {
-            goalEvents.emit({
-              type: 'orphan_reclaimed',
-              run_id: manifest.run_id,
-              invoke_id: item.bound.invoke_id,
-              pid: item.bound.pid,
-              method: 'guardian_gone',
-            });
-            console.log(
-              `[goal-runner] 接管对账：guardian(pid=${item.bound.pid}) 已不存在——`
-              + '依唯一持柄契约判定 Job 已关闭，无需回收',
-            );
-          } else if (item.kind === 'guardian_alive_matching') {
-            const pid = item.bound.pid;
-            const killed = terminateGuardianProcessOnly(pid);
-            if (!killed || !awaitGuardianGone(pid)) {
-              const msg =
-                `[goal-runner] BLOCKER: guardian(pid=${pid}) 身份严格匹配（token=` +
-                `${item.bound.token}）但无法终止——拒绝续跑（真冲突，勿自动覆盖）。\n`
-                + '  处置：人工核查该 guardian 终止失败原因（权限/句柄占用）后重试。';
-              console.error(msg);
-              concludeStartupBlocker('guardian_termination_failed', msg);
-              return 1;
-            }
-            goalEvents.emit({
-              type: 'orphan_reclaimed',
-              run_id: manifest.run_id,
-              invoke_id: item.bound.invoke_id,
-              pid,
-              method: 'terminate_job_owner',
-            });
-            console.log(
-              `[goal-runner] 接管对账：已终止匹配 guardian(pid=${pid})，Job 关闭团灭其全部后代`
-              + '（孤儿已回收）',
-            );
-          } else {
-            console.warn(`[goal-runner] ⚠ 接管对账：${item.reason}（不杀、不阻断）`);
-          }
-        }
-      }
-    }
+    if (argv.resume && !dryRun && process.platform === 'win32' && recoverRuntimeGuardians(priorEvents, manifest.run_id, forceResume, goalEvents.emit, concludeStartupBlocker)) return 1;
 
     let halted = false;
     // S4 回退状态机：计数从 events 回放（进程重启不清零）；计数只用于观测/事务序号，硬资源跨交付周期折叠。
@@ -7390,7 +8080,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
     // wallMs / wallDeadlineMs 已提前到启动期金丝雀探测之前建立（plan 4e6fb3b6 §6.3），语义不变。
     // P0-A：显式 timeout 低于建议地板只 WARN 不抬升（尊重显式 override 契约）。
-    for (const warn of collectPhaseTimeoutWarnings(manifest, chain)) {
+    for (const warn of collectPhaseTimeoutWarnings(executionManifest(), chain)) {
       console.warn(warn);
     }
 
@@ -7399,13 +8089,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // 口径与熔断同源（foldBudgetLineage → resolveResumedBudget）。
     {
       const activeElapsedMs = budgetBase.priorActiveMs + (Date.now() - sessionStartMs);
-      const remainingTurns = Math.max(0, manifest.budget.max_total_turns - budgetBase.totalTurns);
+      const remainingTurns = Math.max(0, executionBudget.max_total_turns - budgetBase.totalTurns);
       const remainingWallMs = Math.max(0, wallMs - activeElapsedMs);
       const min = Math.round.bind(null);
       console.log(
         `[goal-runner] ${argv.resume ? 'resume' : 'run_start'} 预算（本交付周期口径：自上次可信完成起，含 supersede 链` +
           `${budgetLineage.cycleBoundary ? `；边界 ${budgetLineage.cycleBoundary}` : ''}）: ` +
-          `turns ${budgetBase.totalTurns}/${manifest.budget.max_total_turns}（remaining ${remainingTurns}）；` +
+          `turns ${budgetBase.totalTurns}/${executionBudget.max_total_turns}（remaining ${remainingTurns}）；` +
           `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）；` +
           `回退 ${backtracksUsed} 次`,
       );
@@ -7415,7 +8105,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // outcome/console banner；run_end 经 resolveLastHaltReason 取 outcome）。
     const emitWallBudgetHaltGuidance = (phaseArg: string): string => {
       const activeElapsedMs = priorActiveMs + (Date.now() - sessionStartMs);
-      const guidance = buildBudgetExhaustedGuidance({
+      const guidance = buildManifestBudgetGuidance(projectRoot, frameworkRoot, manifest, {
         feature: manifest.feature,
         runId: manifest.run_id,
         phase: phaseArg,
@@ -7760,7 +8450,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const activeElapsedMs = priorActiveMs + (Date.now() - sessionStartMs);
         const budget = checkRunBudget(
           totalTurns,
-          manifest.budget.max_total_turns,
+          executionBudget.max_total_turns,
           activeElapsedMs,
           wallMs,
         );
@@ -7769,13 +8459,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const budgetHaltReason = budget === 'wall_clock' ? 'budget_wall_clock' : 'budget_turns';
           // T2(c)：budget halt 全链可解释——reason + guidance 进 outcome/phase_halt/
           // run_end（resolveLastHaltReason 消费 outcome.halt_reason）+ console banner。
-          const budgetGuidance = [...buildBudgetExhaustedGuidance({
+          const budgetGuidance = [...buildManifestBudgetGuidance(projectRoot, frameworkRoot, manifest, {
             feature: manifest.feature,
             runId: manifest.run_id,
             phase: String(phase),
             kind: budgetHaltReason,
             activeElapsedMs,
-            limit: budget === 'wall_clock' ? wallMs : manifest.budget.max_total_turns,
+            limit: budget === 'wall_clock' ? wallMs : executionBudget.max_total_turns,
             harnessPrefixRel: layout.frameworkRel ? path.posix.join(layout.frameworkRel, 'harness') : 'harness',
           }), ...phaseProblems.map(problem => `${problem.id}：${problem.detail}；责任方=${problem.owner ?? problem.phase}；动作=${problem.action}`)].join('\n');
           goalEvents.emit({
@@ -7988,7 +8678,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               typeof e.duration_ms === 'number',
           )
           .map((e) => e.duration_ms as number);
-        const baseTimeoutMs = resolvePhaseTimeoutMs(phase, manifest);
+        const baseTimeoutMs = resolvePhaseTimeoutMs(phase, executionManifest());
         // P0-5（plan 7c4f2e9b）：授予高水位 + 实测棘轮——effective = max(base,
         // consecutive-escalation, granted_highwater, 1.2×max_completed)，events 重建
         // （resume 不丢）；显式配置=hard cap 不被棘轮突破（advisory 诚实提示预算过小）。
@@ -8332,7 +9022,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // The prompt must describe the chain and obligations that are actually in force now:
           // `manifest.execution_scope` keeps its birth bytes (identity), so a revised run would
           // otherwise instruct the agent from the superseded scope (review M3).
-          effectiveBirthScope ? { ...manifest, execution_scope: applyScopeRevisions(validateExecutionScope(manifest.execution_scope!), loadAuthoritativeEvents(eventsPath)) } : manifest,
+          effectiveBirthScope ? { ...executionManifest(), execution_scope: applyScopeRevisions(validateExecutionScope(manifest.execution_scope!), loadAuthoritativeEvents(eventsPath)) } : executionManifest(),
           projectRoot,
           phase,
           frameworkRoot,
@@ -8431,7 +9121,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               ...(() => {
                 // plan c3f8a2d7 §3.3：资格取本 run 的有效阶段链（review→coding 与恢复会话同样适用），设备当下是否可用由 adhoc 设备门判断
                 let deviceCapable = false;
-                try { deviceCapable = chainRequiresDevice(chain.map(String), loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot))); } catch { /* 无可解析 profile：不给复看要求 */ }
+                try { deviceCapable = chainRequiresDevice(chain.map(String), loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot)); } catch { /* 无可解析 profile：不给复看要求 */ }
                 const diagnosis = formatRepairLocalDiagnosis(String(phase), mine, {
                   harnessDir: path.relative(projectRoot, path.join(frameworkRoot, 'harness')).replace(/\\/g, '/') || '.',
                   feature: manifest.feature,
@@ -8594,7 +9284,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               projectRoot,
               phase,
               retries,
-              resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)),
+              resolvedProfile: loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot),
               emitEvent: ev => {
                 if ((ev as { type?: unknown }).type === 'phase_halt') deferredCapHalts.push(ev);
                 else goalEvents.emit(ev as Parameters<typeof appendEvent>[2]);
@@ -8625,7 +9315,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         let deviceEnv: Record<string, string> = {};
         // null = 本 phase 未经设备门（与 'unknown'=经过门但判不出机型 语义不同，见封顶函数）
         let deviceKindThisPhase: DeviceTargetKind | null = null;
-        if (!dryRun && phaseRequiresDevice(phase, loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot)))) {
+        if (!dryRun && phaseRequiresDevice(phase, loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot))) {
           // P1（三轮 review）：把**本 run 已托管的模拟器**交给 gate 复用。
           // 不传的话，每个设备 phase 都会当作"从零开始"：真机若一直锁着，UT 起一个、
           // testing 再起一个，后写的 session 覆盖前一个 → 旧进程再也回收不掉。
@@ -9155,11 +9845,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
         // t3（plan c6a9e4d2）：invoke 收尾落 settled 事件——在 agent_invoke_end 之后
         // 追加（run 结束/接管对账据其闭合 invoke，恢复决策永不用 report）。
-        // P0-2（review）：仅**绑定成功**才落 settled——绑定失败且 guardian 未证明消失
-        // 时不得声称已收纳（上方已 halt 阻断，本分支不可达；此处条件为结构保障）。
+        // 保留既有调用收尾语义；真实绑定失败或尚未创建进程的 spawn 失败不能落 settled。
         // adjudicated-repair-loop：resumePostAgent（跳过已 settled 的 agent）不重复 emit
         // settled——原 settled invocation 的事件已在盘上，伪造 invoke 不得再落一个。
-        if (containmentCtx && !guardianBoundError && !skipExecutor) {
+        if (containmentCtx && !guardianBoundError && !invoke.spawn_error && !skipExecutor) {
           goalEvents.emit({
             type: 'agent_process_settled',
             phase,
@@ -9759,7 +10448,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
           + (materialVerification ? `-${summary?.verifier_subject_id?.slice(0, 12) ?? 'legacy'}` : '');
         const invokeOutOfChain = async (purpose: DesignRepairPurpose | 'verifier_format_repair', text: string, originalGuard?: import('./utils/design-repair-unattended').DesignRepairInvocationGuard): Promise<DesignRepairInvokeOutcome> => {
           const label = purpose === 'verifier_format_repair' ? `${phase}-verifier-format-repair` : designRepairInvokeLabel(purpose);
-          if (options.sessionHandoff) {
+          if (purpose !== 'verifier_format_repair') {
+            const replay = replayDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, acceptedSessionInvokeId,
+              options.sessionHandoff ? issued => { preserveSessionOwner = true; options.sessionHandoff!.onRequest(issued); } : undefined);
+            if (replay) return replay;
+          }
+          if (options.sessionHandoff && purpose === 'verifier_format_repair') {
             const history = loadAuthoritativeEvents(eventsPath);
             const transactionAt = purpose === 'verifier_format_repair' ? -1 : history.map(event => event.type === 'design_authority_repair' && (event as Record<string, unknown>).stage === 'attempted').lastIndexOf(true);
             const prior = [...history.slice(transactionAt + 1)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === label
@@ -9776,12 +10470,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   if (['component-blueprint.yaml', 'change-unit.yaml', 'architecture.json'].includes(name)) fs.writeFileSync(path.join(issued.request.context.runDir, 'design-repair', name), Buffer.from(bytes, 'base64'));
                 }
               }
-              return { started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }),
-                detail: received.report.details ?? `session reported ${received.report.status}`, preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: originalPostSnapshot };
+              if (received.report.status !== 'waiting' || prior?.invoke_id === acceptedSessionInvokeId) {
+                return { started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }), status: received.report.status,
+                  detail: received.report.details ?? `session reported ${received.report.status}`, preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: originalPostSnapshot };
+              }
             }
           }
           const elapsed = priorActiveMs + (Date.now() - sessionStartMs);
-          const budgetNow = checkRunBudget(totalTurns, manifest.budget.max_total_turns, elapsed, wallMs);
+          const budgetNow = checkRunBudget(totalTurns, executionBudget.max_total_turns, elapsed, wallMs);
           const timeoutMs = Math.min(effectiveAgentTimeoutMs, remainingWallMs());
           if (budgetNow !== 'ok' || !(timeoutMs > 0)) {
             return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
@@ -9822,7 +10518,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
               timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped,
               completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
               ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
-            return { started: true, ok: invocationCompleted(result), detail: result.details ?? result.status };
+            const outcome: DesignRepairInvokeOutcome = { started: true, ok: invocationCompleted(result), status: result.status, detail: result.details ?? result.status,
+              ...(originalGuard ? { preSnapshot: originalGuard.pre, postSnapshot: capturePhaseInvocationSnapshot(originalGuard.resolution, originalGuard.options) } : {}) };
+            if (purpose !== 'verifier_format_repair') recordDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, outOfChainId, outcome);
+            return outcome;
           }
           const originalStart = [...loadAuthoritativeEvents(eventsPath)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === outOfChainId);
           if (!originalStart?.ts) throw new Error('[goal-phase-runtime] invocation has not been started');
@@ -9861,17 +10560,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (containmentError && containmentStillAlive) {
             return { started: true, ok: false, containmentUnresolved: true, detail: `guardian 绑定失败且未证明消失：${containmentError}` };
           }
+          const waitingDetail = invocationWaitingDetail(result);
           goalEvents.emit({
             type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, exit_code: result.exitCode,
+            ...(waitingDetail ? { status: 'waiting' } : {}),
             duration_ms: result.duration_ms, timed_out: result.timed_out, kill_attempted: result.kill_attempted, effective_timeout_ms: timeoutMs,
             silent_killed: result.silent_killed, skipped: result.skipped, completion_observed: result.completion_observed,
             terminal_failure_observed: result.terminal_failure_observed, terminal_error_excerpt: result.terminal_error_excerpt,
             ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}),
           });
-          if (contained && !containmentError) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
+          if (contained && !containmentError && !result.spawn_error) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
           flushProgress();
           const ok = invocationCompleted(result) && !containmentError;
-          return { started: true, ok, detail: containmentError ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}` };
+          const outcome: DesignRepairInvokeOutcome = { started: true, ok, ...(waitingDetail ? { status: 'waiting' } : {}), detail: containmentError ?? waitingDetail ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}`,
+            ...(originalGuard ? { preSnapshot: originalGuard.pre, postSnapshot: capturePhaseInvocationSnapshot(originalGuard.resolution, originalGuard.options) } : {}) };
+          if (purpose !== 'verifier_format_repair') recordDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, outOfChainId, outcome);
+          return outcome;
         };
         const harnessRun: HarnessPhaseResult = reusableHarnessEnd ? { exitCode: reusableHarnessEnd.exit_code ?? 1, timedOut: false, outputTail: undefined } : await runHarnessPhase(
           projectRoot,
@@ -10052,7 +10756,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ({ summary, summaryPath, summaryAbsPath, reportDir } = readPhaseSummary(projectRoot, manifest.feature, phase));
             continue;
           }
-          const remaining = checkRunBudget(totalTurns, manifest.budget.max_total_turns,
+          const remaining = checkRunBudget(totalTurns, executionBudget.max_total_turns,
             priorActiveMs + (Date.now() - sessionStartMs), wallMs);
           if (remaining !== 'ok') {
             const reason = remaining === 'turns' ? 'budget_turns' : 'budget_wall_clock';
@@ -10754,7 +11458,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               + `连续两轮 unverified 集合完全相同（roundFingerprint=`
               + `${unverifiedRoundFingerprint.slice(0, 12)}…）——继续重试只会空转，本 run 终止。\n`,
             );
-          } else if (retries < manifest.budget.max_retries_per_phase) {
+          } else if (retries < executionBudget.max_retries_per_phase) {
             driverGuardAction = 'retry';
             priorFailure =
               `本轮存在 ${actionableResult.unverified.length} 项不可采信的缺陷证据（${notes}）。`
@@ -10764,7 +11468,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             console.error(
               `\n===== unverifiable_must_fix =====\n${notes}\n`
               + `缺陷证据尚不可采信——retry 重采/重评（`
-              + `${retries + 1}/${manifest.budget.max_retries_per_phase}）。\n`,
+              + `${retries + 1}/${executionBudget.max_retries_per_phase}）。\n`,
             );
           } else {
             driverGuardAction = 'halt';
@@ -10870,7 +11574,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.log(`\n===== framework_bug =====\n${awaitConfirmGuidance}\n`);
         } else if (failureKind === 'transient_api_error' && verdict !== 'PASS') {
           // P0-D：断流走独立 backoff 重试（与 max_retries_per_phase 解耦），耗尽才 halt。
-          if (transientRetriesUsed < manifest.budget.max_transient_api_retries) {
+          if (transientRetriesUsed < executionBudget.max_transient_api_retries) {
             driverGuardAction = 'retry';
           } else {
             driverGuardAction = 'halt';
@@ -10914,7 +11618,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           !resolved.stale_summary &&
           !dryRun &&
           designOwnerBlockers(decisionSummary?.blockers).length > 0 &&
-          retries < manifest.budget.max_retries_per_phase &&
+          retries < executionBudget.max_retries_per_phase &&
           pointerStaleCandidate(projectRoot, manifest.feature) &&
           (pointerReconcile = reconcilePointerInRun({ projectRoot, feature: manifest.feature, heldFeatureLock: featureLock })).ok
         ) {
@@ -10927,7 +11631,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           !resolved.stale_summary &&
           !dryRun &&
           designOwnerBlockers(decisionSummary?.blockers).length > 0 &&
-          retries < manifest.budget.max_retries_per_phase &&
+          retries < executionBudget.max_retries_per_phase &&
           contentRepairEligible() &&
           (contentRepair = await runUnattendedDesignRepair({
             projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase), runId: manifest.run_id,
@@ -10952,6 +11656,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.log(`\n[design-authority] 无人值守修复：${contentRepair.reason}——冻结绑定仍有效，当前阶段原地重评。\n`);
         } else if (contentRepair?.outcome === 'handoff') {
           return 3;
+        } else if (contentRepair?.outcome === 'waiting') {
+          driverGuardAction = 'halt';
+          haltReason = 'execution_scope_unresolved';
+          awaitConfirmGuidance = contentRepair.reason;
+          postVerdictHaltEvent = { type: 'phase_halt', phase, halt_reason: haltReason, detail: contentRepair.reason };
         } else if (contentRepair?.outcome === 'failed' && contentRepair.step === 'declined') {
           driverGuardAction = 'retry';
           priorFailure = `设计 owner 经独立质询拒修，权威产物未发布：${contentRepair.reason}。原提案阶段须据理由修自身产物或补真实新事实；旧核实不得重派。`;
@@ -11154,7 +11863,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // P0-B.5/§七.1（062613Z 病灶）：PASS+超时+闭环未完成的首次续跑不受 max_retries
             // 闸控（给一次机会补关环）；第二次即上面的累计分支接管，不再无限重试。
             driverGuardAction = 'retry';
-          } else if (retries < manifest.budget.max_retries_per_phase) {
+          } else if (retries < executionBudget.max_retries_per_phase) {
             driverGuardAction = 'retry';
           } else {
             driverGuardAction = 'halt';
@@ -11352,7 +12061,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           })),
           deterministicDefects: driverActionableDefects.map((defect) => defect.fingerprint),
           retriesUsed: retries,
-          maxRetriesPerPhase: manifest.budget.max_retries_per_phase,
+          maxRetriesPerPhase: executionBudget.max_retries_per_phase,
           backtracksUsed,
           repeatedCount: currentBlockerSignature
             ? countRepeatedSignatureInFamily(
@@ -11642,7 +12351,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           haltReason = assessment.recommendation.runner_action === 'backtrack_to_phase' && !assessment.recommendation.phase ? 'backtrack_target_absent'
             : assessment.recommendation.reason.startsWith('execution_scope_unresolved:') ? 'execution_scope_unresolved' : resolveAssessHaltIncident({
             retriesUsed: retries,
-            maxRetriesPerPhase: manifest.budget.max_retries_per_phase,
+            maxRetriesPerPhase: executionBudget.max_retries_per_phase,
             runnerAction: assessment.recommendation.runner_action,
             verdict,
             fused: assessment.stop.fused,
@@ -11793,7 +12502,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // One judgement for both paths: the in-run cursor and `--resume` derive the revoked
             // phases from the same revision content and run it through the same function.
             outcomes = applyInvalidationsToResume(chain, outcomes, eventsWithScopeRevocations(birth, loadAuthoritativeEvents(eventsPath), readRepairDependencyContext(projectRoot, manifest.feature, workflow, birth, frameworkRoot))).outcomes;
-            wallMs = resolveWallClockMs(manifest, chain);
+            wallMs = resolveWallClockMs(executionManifest(), chain);
             wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
             // The effective view already removed valid proofs; dispatch its first remaining owner.
             phaseIdx = -1;
@@ -12086,7 +12795,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               type: 'transient_api_retry_scheduled',
               phase,
               attempt: transientRetriesUsed,
-              max_attempts: manifest.budget.max_transient_api_retries,
+              max_attempts: executionBudget.max_transient_api_retries,
               backoff_ms: backoffMs,
               api_error_excerpt: apiErrorSentinel?.matchedLine,
             });

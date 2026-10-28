@@ -1,0 +1,2421 @@
+artifact: component-blueprint@1
+component_id: Inbox
+blueprint_id: inbox-batch-read
+revision: 2
+source_fingerprint: sha256:ac71d45289bde10d63d724f2f48010c3771cef9b114b49e9e3780a4bdf5733c9
+decision_fingerprint: sha256:d0c533d1d5a261ebdee664802729752c0d58b6bbf431c1b5fc919a43a1a5eb4f
+provenance:
+  source_kind: design_repair_unattended
+  source_ref: doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/manifest.json#requirement
+  observed_at: 2026-10-28T06:10:31.486Z
+  evidence_strength: authoritative
+  extraction_method: unattended_b1_repair:authoritative_content_aligned[change_unit_runtime_propagation_edge_mismatch,change_unit_runtime_propagation_edge_mismatch]
+  source_revision: revision-1
+review_summary:
+  questioning:
+    status: complete
+    provider_id: design-repair-questioning
+    isolated_context: true
+    writes_ssot: false
+    frontier_budget: 1
+    repeated_frontier_count: 0
+    items:
+      - question_id: DRQ-01
+        question: 公开批量能力是否保持原数据模型、精确计数与零改变契约？
+        frontier_fingerprint: sha256:430cf11cc223bb814e592a8ba20c0945c3655097f693d21f8fed0c025ad4572e
+        owner: Inbox
+        scope_kind: view
+        scope_ref: view:logical
+        disposition: answered_with_evidence
+        answer: "是。目标接口为已有InboxStore实例新增同步markAllRead():
+          number；仅false转true计数，保留id/text/数量/顺序。AC-1至AC-3覆盖正数一次写回、零改变静默与幂等，AC-6保\
+          留旧操作；这是设计义务，尚非实现通过证据。"
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/index.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/Message.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-02
+        question: 状态变更、保存、发布与返回的完整顺序及异常边界是否明确？
+        frontier_fingerprint: sha256:b203380308e14f43f1bf2d9d1208bf8f97a08c033127162048300f96e43bd050
+        owner: Inbox
+        scope_kind: view
+        scope_ref: view:runtime
+        disposition: answered_with_evidence
+        answer: 是。ordered_steps先完成全部状态变更，零改变直接返回；正数save同步返回后逐listener发布独立最终副本，正常回调结束才返回计数。异常沿既有同步链传播，保存后listener抛错可能中断后续投递；蓝图明确保留此既有边界，没有承诺异常完整投递。
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-03
+        question: 运行流和嵌入state_management是否描述同一条生产、存储、订阅与恢复链？
+        frontier_fingerprint: sha256:09031e4d2d59873431bf2950504dd718cadadda27905371b4d10ba306030f7ac
+        owner: Inbox
+        scope_kind: flow
+        scope_ref: flow:batch-read
+        disposition: answered_with_evidence
+        answer: 是。两处均以store为状态拥有者，mark-all关联final-snapshot和reload；projection-sub与caller-sub分别指向unread-projection与caller-listener；两消费者均以storage-load初始化、final-snapshot更新。保存先于发布，取消从原Set删除，同对象重建load；运行对象标识及传播边逐项一致。
+        evidence_refs:
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/design_views/1/runtime_data_flows/0
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/design_views/1/runtime_data_flows/0
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-04
+        question: 实现落点和公开接缝是否真实存在，是否需要新增模块或出口？
+        frontier_fingerprint: sha256:e563785d9113fb3fe53555e3deb7b936e648a21f162ca3130f7ae30931f09e8e
+        owner: Inbox
+        scope_kind: view
+        scope_ref: view:development
+        disposition: answered_with_evidence
+        answer: InboxStore.ts为产品改动落点；index.ts已导出InboxStore且createInbox返回实例，因此实例新增方法即可公开。MemoryStorage、Message及InboxProjection均存在，可直接复用；没有新增模块、依赖或平行状态源。测试文件和注册名留待plan/UT产生，没有预填执行结果。
+        evidence_refs:
+          - 02-Feature/Inbox/index.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - doc/module-catalog.yaml
+          - framework.config.json
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/index.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-05
+        question: verified_unchanged是否有事实支持，是否暗中增加进程、设备或耐久能力？
+        frontier_fingerprint: sha256:ed9ca40a19186b099d37bef66e3400d6b405667e898743336c8fecb43a17f7e4
+        owner: Inbox
+        scope_kind: view
+        scope_ref: view:deployment
+        disposition: answered_with_evidence
+        answer: 已核实不变。architecture.md明确现有进程内库、MemoryStorage和Node验收；MemoryStorage源码只保存对象内数组副本，没有磁盘或远程接缝。新增方法仍在同一进程和对象拓扑内运行，不涉及部署、设备、网络或跨进程耐久；architecture.json与framework.config.json现有architecture完全一致。
+        evidence_refs:
+          - doc/architecture.md
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - framework.config.json
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/architecture.json
+        verification_refs:
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/architecture.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-06
+        question: 正常、空、全已读、重复、重载和取消是否都能追到验收？
+        frontier_fingerprint: sha256:790e26a9618509fda67e75db4729e5a87cc7be39b2c10055246d79ca0f09cdaa
+        owner: Inbox
+        scope_kind: view
+        scope_ref: view:scenarios
+        disposition: answered_with_evidence
+        answer: 是。批量旅程对应逻辑能力及运行流；typed
+          use_cases覆盖changed、empty、already_read、repeat、reload、compatibility六分支。AC-1还要求全未读，AC-4要求多个listener和Projection、保存先于通知与副本隔离，AC-6覆盖取消和原操作。没有UI旅程或设备验收。
+        evidence_refs:
+          - doc/requirement.md
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/design_views/0/nodes/0/acceptance
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/design_views/1/runtime_data_flows/0/use_cases
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-07
+        question: 场景是否确由所引用的公开能力实现，而非另设界面或服务？
+        frontier_fingerprint: sha256:85bee17159ccf21de62d20a9876ff6e6cda9838cc46c55498dba77cf5357f59c
+        owner: Inbox
+        scope_kind: relation
+        scope_ref: relation:scenario-capability
+        disposition: answered_with_evidence
+        answer: batch-journey指向batch-read逻辑节点；旅程调用markAllRead并继续使用既有操作，与需求一致。入口返回InboxStore实例，既有接口可承接该调用，无需新增UI或服务。
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/index.ts
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/relations/0
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-08
+        question: 逻辑能力是否完整落到批量运行流，包括静默和最终快照？
+        frontier_fingerprint: sha256:3b8a3b4ccda2c997a6b027144ed4d5ba3393a522eb5dd306aeb28c9a8625052e
+        owner: Inbox
+        scope_kind: relation
+        scope_ref: relation:capability-flow
+        disposition: answered_with_evidence
+        answer: batch-read逻辑节点通过capability-flow指向同名runtime
+          flow；该flow具备计数、零改变跳过、一次save和最终发布步骤，对应AC-1至AC-4，未以循环单条markRead替代批量契约。
+        evidence_refs:
+          - doc/requirement.md
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/relations/1
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/design_views/1/runtime_data_flows/0/contracts/state_management/0/ordered_steps
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-09
+        question: 运行流的实施责任是否与真实状态拥有者及获准模块一致？
+        frontier_fingerprint: sha256:1b32f6efb4595647bf0aab00675eb4047c2156bfc12b773403fe2e3b82599ab0
+        owner: Inbox
+        scope_kind: relation
+        scope_ref: relation:flow-owner
+        disposition: answered_with_evidence
+        answer: flow-owner和development_owner_ref均指向Inbox的inbox-implementation节点；该节点落点InboxStore.ts。源码中messages与listeners由InboxStore独占，Catalog确认Inbox负责进程内状态、存储与订阅，未转移责任至消费者。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - doc/module-catalog.yaml
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/relations/2
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-4
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-10
+        question: 存储关系是否引用真实签名，且没有将save误作幂等机制？
+        frontier_fingerprint: sha256:0ebe4d1a0d40580ca86cc320e59d1078a9c486ef479179649c59fed1c13ab661
+        owner: Inbox
+        scope_kind: relation
+        scope_ref: relation:flow-storage
+        disposition: answered_with_evidence
+        answer: "flow-storage指向inbox-storage；登记契约和源码均为同步save(Message[]):
+          void、逐条浅复制且每次writes增加。零改变和重复静默由Store按read状态判断，存储不去重；持久化仅为同一对象重载。"
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/relations/3
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-5
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-11
+        question: 运行流是否真正接入已有消费者并保留取消行为？
+        frontier_fingerprint: sha256:f769d269ea687766e8fb6038cd7a4ea5b8350530ab2edb8c643e0a336e8e71fb
+        owner: Inbox
+        scope_kind: relation
+        scope_ref: relation:flow-consumer
+        disposition: answered_with_evidence
+        answer: flow-consumer指向projection节点，flow同时列普通caller-listener消费者。InboxProjection原先先list初始化，再subscribe重算unreadCount并由dispose取消；批量流复用该发布路径，AC-4与AC-6要求验证正常消费和取消后的静默。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/relations/4
+        verification_refs:
+          - acceptance:AC-4
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-12
+        question: 实现与部署节点之间是否引入未经授权的平台运行依赖？
+        frontier_fingerprint: sha256:0aee28cb7e69bb090892fcd8a29be2ced7f6f789014ea23e6b3f4323b0de2712
+        owner: Inbox
+        scope_kind: relation
+        scope_ref: relation:implementation-process
+        disposition: answered_with_evidence
+        answer: implementation-process把Inbox实现落在既有node-process节点。架构说明明确TypeScript/Node且无UI或设备执行；接口、内存存储和同步订阅均在进程内，没有新增服务、平台能力或发布动作。
+        evidence_refs:
+          - doc/architecture.md
+          - doc/requirement.md
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/relations/5
+        verification_refs:
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/architecture.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-13
+        question: 本次模块范围和依赖方向是否符合既有架构？
+        frontier_fingerprint: sha256:3cea56fc4077ff98360919d597321941b906e4b4b46dc0e86a7d6348bd571d17
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:module_boundaries
+        disposition: answered_with_evidence
+        answer: 仅Inbox模块内新增能力。Catalog将UI/device/network排除于职责外；framework.config.json及只读architecture.json均为02-Feature、main、index.ts出口，没有新增模块或依赖边，也无需架构配置变更。
+        evidence_refs:
+          - doc/module-catalog.yaml
+          - framework.config.json
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/architecture.json
+          - 02-Feature/Inbox/index.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/module-catalog.yaml
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-14
+        question: 公开入口是否足以暴露markAllRead，存储接缝是否仍兼容？
+        frontier_fingerprint: sha256:127e6f2b5b65c048bfc2872a26e155fd5d299d9ee964fbe882887c9adc2ddd7e
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:capability_seams
+        disposition: answered_with_evidence
+        answer: index.ts导出InboxStore并由createInbox返回其实例；新增实例方法足以公开。原构造参数仍是MemoryStorage，同步load/save不变；没有另设远程协议、工厂或外观层。
+        evidence_refs:
+          - 02-Feature/Inbox/index.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/index.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-15
+        question: 是否存在必须接入的开关或新增配置义务？
+        frontier_fingerprint: sha256:e654d5ae2d5184bac103000594e2b04a05a8bcf9818dea18765a3349f90cf054
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:feature_flags
+        disposition: answered_with_evidence
+        answer: 已读入口及Store没有能力开关，需求只要求兼容的新增内部方法，蓝图不增加开关或配置。该范围不需要迁移或分批发布，保持现有入口即可。
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/index.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - framework.config.json
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-16
+        question: 消息、保存副本和派生计数的数据生产消费关系是否清楚？
+        frontier_fingerprint: sha256:bd17d9a04d1a684ba55281ee7b4b421ca48718d2f2adfc6dc52e4d8a9184bf7f
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:data_producers_consumers
+        disposition: answered_with_evidence
+        answer: 调用方提供MemoryStorage种子，Store经load持有副本并修改read，save保存完整副本；Projection和普通listener消费最终快照。模型只有id/text/read，保持字段和顺序；没有第二缓存或外部生产者。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - 02-Feature/Inbox/src/main/ets/Message.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-4
+          - acceptance:AC-5
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-17
+        question: 初始化、调用、订阅、取消和销毁触发是否覆盖且无虚构平台事件？
+        frontier_fingerprint: sha256:7ad7021c477f038611045350b7d344a7df8b844f6df90c95ee44fb1194f15711
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:lifecycle_triggers
+        disposition: answered_with_evidence
+        answer: 构造同步load，显式markAllRead触发批量，subscribe登记、cancel移除、Projection.dispose调用cancel。运行流列明这些触发，同对象重建复用load；无页面、账号切换、系统后台或设备生命周期。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - doc/architecture.md
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-18
+        question: 谁负责可写状态、订阅集合和派生状态，是否制造平行真源？
+        frontier_fingerprint: sha256:d42bd8a5ab8f12581deedb8340975d74725fff799406af0be3145f23f8975c2f
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:state_owners
+        disposition: answered_with_evidence
+        answer: InboxStore拥有本实例messages与listeners，MemoryStorage保存写回副本，Projection仅派生unreadCount。活跃实例无跨store自动同步承诺，与现有构造load语义一致；批量仍由原拥有者执行。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-4
+          - acceptance:AC-5
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-19
+        question: 首次读取和首次订阅是否会多写或重复推送？
+        frontier_fingerprint: sha256:83db623c18e2c30270ee958358672c951ac6ecf3acb1e11b7df97a14d410ba49
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:initialization
+        disposition: answered_with_evidence
+        answer: Store构造仅load；Projection先list取得初值再subscribe，subscribe只向Set添加listener而不重放。蓝图保留该顺序，重建store不写不发，首次消费者值来自列表而非新通知机制。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+        verification_refs:
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-20
+        question: 正数一次最终快照、零改变静默、隔离和取消是否有完整设计？
+        frontier_fingerprint: sha256:c73886ac3dfee1e367775b43a8cac9a95ee8d0fed415b120c46e39a1d785e748
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:publication_subscription
+        disposition: answered_with_evidence
+        answer: 正数在一次save返回后按原Set同步迭代，每个当前listener调用一次this.list()取得独立最终副本；零改变不进入save和发布。cancel移除原listener，dispose复用cancel。AC-4验证多个消费者和快照隔离，AC-6验证取消。listener抛错仍沿旧链传播，不新增吞错或补发义务。
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - doc/features/inbox-batch-read/goal-runs/20261028T042154Z-5c27ac/design-repair/component-blueprint.yaml#/design_views/1/runtime_data_flows/0/contracts/state_management/0
+        verification_refs:
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-21
+        question: 是否错误引入UI刷新义务，已有消费者如何更新？
+        frontier_fingerprint: sha256:3421fbec37c88d6186d70f9a296d229a778ed16e1e1a6d0cee323ff23ed780b8
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:ui_refresh
+        disposition: answered_with_evidence
+        answer: 需求明确不引入UI。实际消费者InboxProjection按订阅快照重算unreadCount；批量最终快照应使其归零，dispose后保持原值。AC-4和AC-6验证该消费行为，不以界面、图片或设备作为验收。
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+          - doc/architecture.md
+        verification_refs:
+          - acceptance:AC-4
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-22
+        question: 重载与真正进程恢复是否被准确区分？
+        frontier_fingerprint: sha256:8ea8e5e6bd66be6581bc914dea31138af145f7b80313feefaf8211ad5f54202d
+        owner: Inbox
+        scope_kind: app_lens
+        scope_ref: app_lens:process_recovery
+        disposition: answered_with_evidence
+        answer: MemoryStorage仅在同一对象内保留数组，重建Store从该对象load可恢复批量结果；进程退出对象消失。蓝图将process_recreation列为不适用，并在恢复限制中明确无跨进程耐久，没有以Node进程重启冒充持久化验收。
+        evidence_refs:
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - doc/architecture.md
+        verification_refs:
+          - acceptance:AC-3
+          - acceptance:AC-5
+        provenance:
+          source_kind: independent_review
+          source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+      - question_id: DRQ-23
+        question: 当前范围条目中的业务术语是否都落到已有权威模块，是否伪造确认？
+        frontier_fingerprint: sha256:bb8f90136cded88e27fc3462ebf1386b924d3cb62121ec9206c278e3537b75b4
+        owner: Inbox
+        scope_kind: terminology
+        scope_ref: terminology:current_scope_items
+        disposition: answered_with_evidence
+        answer: 五个current_scope_items均围绕通知收件箱、批量已读、静默幂等、最终快照、兼容和边界。唯一模块术语通知收件箱在glossary精确映射Inbox，Catalog职责和源码一致；discovery保留exact_glossary_match，未伪称用户另行确认。持久化重载明确为同一MemoryStorage对象；其余为该模块API及验收语义，无新增模块术语或未知归属。
+        evidence_refs:
+          - doc/requirement.md
+          - doc/glossary.yaml
+          - doc/module-catalog.yaml
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        provenance:
+          source_kind: independent_review
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T06:15:07.980Z
+          evidence_strength: observed
+          extraction_method: isolated_blueprint_and_registered_source_comparison
+  title: 通知收件箱：一次标记全部已读
+  authored_by: initial-design-author
+  background: 调用方已有读取、单条已读、内存写回和订阅。
+  problem: 只能逐条标记；循环单条方法会多次写入并推送中间快照。
+  summary: 新增markAllRead()，同步改变当前全部未读并返回实际数量；正数保存一次，再向每个现有订阅者一次最终快照；0不写不发。
+  positioning: Inbox模块内部同步能力，沿已有入口、MemoryStorage及InboxProjection。
+  goals:
+    - goal_id: batch-read
+      statement: 闭合批量状态、存储和订阅，保持原行为。
+      success_measures:
+        - 精确计数、保留字段和顺序、正数一次写回。
+        - 空、全已读、重复调用为0且无副作用。
+        - 最终快照、同对象重载及原操作/取消行为通过真实测试。
+  in_scope:
+    - 公开实例markAllRead
+    - InboxStore与现有存储和消费者
+    - host-only TypeScript/Node真实验证
+  non_goals:
+    - UI、图片、设备、HarmonyOS构建验收
+    - 网络、数据库、账号或跨进程耐久
+    - 跨store实例自动同步
+    - 提交、打包、发布、版本或验收能力修改
+  must_review:
+    - 持久化重载仅指同一MemoryStorage对象，进程退出会丢失数据。
+    - listener抛错保持既有同步传播及迭代中止，不保证异常回调场景完整投递。
+  admission:
+    current_slice:
+      slice_id: batch-read
+      contracts_ready: true
+      design_refs_ready: true
+    status: pass
+    root_questions_complete: true
+    blocker_refs: []
+  reader_guide:
+    sections:
+      - section: summary
+        title: 一次操作清除当前未读
+        prose: 通知收件箱目前只能逐条标记已读。本次让使用公开入口的调用方执行一次markAllRead()并取得实际改变数。有未读时，所有未读项一起改为已读，保存一次，然后每个现有订阅者只收到一次最终列表；空、全部已读及重复调用返回0，不写存储、不通知。读取、单条已读、重载和取消订阅保持原行为。
+        source_refs:
+          - /review_summary/summary
+          - /review_summary/in_scope
+          - /review_summary/non_goals
+        graph_ids: []
+      - section: background
+        title: 问题、目标与边界
+        prose: 循环现有markRead会多次保存并推送中间快照，无法满足批量契约。本次只扩展Inbox模块已有的同步内部能力，使用真实TypeScript/Node测试；不含UI、图片、设备、网络、数据库、版本改动、提交或发布。
+        source_refs:
+          - /review_summary/problem
+          - /review_summary/goals
+          - /review_summary/non_goals
+        graph_ids: []
+      - section: terms
+        title: 通知收件箱和未读
+        prose: 通知收件箱由Inbox模块负责，保存消息与已读状态，公开读取、写回及订阅。消息仍只有id、text、read；只有read=false的行计入本次实际改变数，不按id去重，也不修改正文或顺序。
+        source_refs:
+          - /discovery/facts/0
+          - /design_views/2/nodes/0/contracts/data_models
+        graph_ids: []
+      - section: journey
+        title: 内部调用方的操作
+        prose: 调用方提供MemoryStorage，通过createInbox取得store；调用markAllRead同步取得改变数量，然后继续读取、单条已读、重建store或取消订阅。此旅程只有一次业务动作和原有后续使用，因此省略旅程总览；没有界面或导航。
+        source_refs:
+          - /design_views/4/nodes/0
+        graph_ids: []
+      - section: solution
+        title: 入口、状态、存储和消费者各负其责
+        prose: 既有index.ts已导出InboxStore，createInbox直接返回该实例，因此新增实例方法即可公开能力。状态拥有者InboxStore负责修改、计数、保存和发布；MemoryStorage保存完整副本；InboxProjection只根据快照计算未读数，普通listener沿原subscribe消费。它们继续使用同一条数据链路，不增加第二状态源或订阅通道。
+        source_refs:
+          - /discovery/facts/1
+          - /design_views/2/nodes/0/contracts/components
+          - /decisions_and_gaps/decisions/1
+        graph_ids: []
+      - section: flows
+        title: 一次批量变更与最终通知
+        prose: 图中描述一次批量操作：状态拥有者先完成所有修改并计数。0直接返回；正数先等待同步save返回，再按原Set迭代向每个当前listener回调一次，各自取得独立的最终列表副本。正常回调结束后才返回改变数。不能循环调用单条markRead。订阅前由list提供初值，取消函数从原Set移除listener，Projection.dispose复用该取消函数。
+        source_refs:
+          - /design_views/1/runtime_data_flows/0/contracts/state_management/0/ordered_steps
+          - /design_views/1/runtime_data_flows/0/subscriptions
+        graph_ids:
+          - sequence:batch-read
+      - section: data
+        title: 内存副本与重载范围
+        prose: 批量操作仅把未读项的read改为true，保留id、text、数量和顺序。MemoryStorage的load/save继续逐条浅复制。持久化重载在此工程中指复用同一MemoryStorage对象重新createInbox；真实进程退出会丢失对象，不承诺磁盘或跨进程耐久。没有账号、库表、唯一索引、加密级别或迁移机制，本次不引入这些能力。
+        source_refs:
+          - /data_domains/0
+          - /discovery/facts/3
+          - /design_views/1/runtime_data_flows/0/initial_load
+        graph_ids: []
+      - section: decisions
+        title: 为何直接扩展原状态拥有者
+        prose: 选定方案保留原状态、存储和消费者接缝。下列决策记录逐条操作及新增平行服务的被否原因。方案沿用同步回调和逐订阅者复制的成本，不增加错误隔离或重发机制。
+        source_refs:
+          - /decisions_and_gaps/decisions
+        graph_ids: []
+      - section: recovery
+        title: 静默、取消与恢复
+        prose: |-
+          | 情形 | 数据与返回 | 后续行为 |
+          | --- | --- | --- |
+          | 空或全部已读（AC-2） | 返回0，不保存 | 不通知 |
+          | 重复调用（AC-3） | 第二次为0 | 不重复写回或发送 |
+          | 同对象重建（AC-5） | load已保存结果 | 不写不发 |
+          | 取消订阅（AC-6） | 消息照常处理 | 取消者不再更新 |
+
+          MemoryStorage没有外部I/O失败分支。同步依赖异常沿原链传播，不吞错、重试或回滚；listener抛错时存储已更新，后续listener可能未执行，这是既有边界，不能宣称异常回调也获得完整投递。没有页面或异步用户中断。
+        source_refs:
+          - /design_views/1/runtime_data_flows/0/failure_recovery
+          - /design_views/0/nodes/0/acceptance
+        graph_ids: []
+      - section: quality
+        title: 兼容性、安全与成本
+        prose: 保留现有公开签名、列表副本与同步订阅行为。遍历消息完成修改和计数，正数save一次；每个listener仍取得独立副本，成本随消息数和订阅者数增长。不新增日志或外部数据流。主题、无障碍和设备指标不适用于无UI内部能力。
+        source_refs:
+          - /quality_attributes
+        graph_ids: []
+      - section: delivery
+        title: 实现落点和交接
+        prose: 产品实现预计只修改02-Feature/Inbox/src/main/ets/InboxStore.ts，新增markAllRead。既有index.ts、Message、MemoryStorage、InboxProjection继续承担入口、模型、存储和消费，预计不需修改。测试由后续plan/UT在Inbox现有测试根内选择真实文件和注册名，关联稳定验收及运行局部对象。本次尚未创建canonical
+          CU；runtime将先做独立质询和准入，再由正式consumer接受施工单元。无需迁移、发布或开关；交付后原有操作均可继续使用。
+        source_refs:
+          - /design_views/2/nodes/0/contracts
+          - /design_views/3
+        graph_ids: []
+      - section: acceptance
+        title: 逐项验收
+        prose: AC-1验证实际计数、数据保留及一次写回；AC-2验证空和全部已读；AC-3验证重复调用；AC-4验证多消费者、先保存后通知、一次最终快照与隔离；AC-5验证同存储对象重载；AC-6验证list、单条markRead、取消函数及Projection.dispose。使用真实node:test和Expect执行；设计意图不是执行证据，最终须由UT和机器核对当前文件及逐例身份。
+        source_refs:
+          - /design_views/0/nodes/0/acceptance
+        graph_ids: []
+      - section: questions
+        title: 限制与待复核事项
+        prose: 当前业务契约没有需要用户补充的决定。独立质询、机器准入、canonical
+          CU及施工验证仍待runtime实际产生，本蓝图没有自签。需核实同一MemoryStorage对象重载和异常listener保留原行为的边界。当前仅审查Mermaid图源，未用图像预览核字号与布局。
+        source_refs:
+          - /review_summary/must_review
+          - /review_summary/admission
+          - /decisions_and_gaps/gaps
+        graph_ids: []
+    source_digest: sha256:5a976461adb9d49d61c881d9699f73d4f8cee89120b51d3ab62472fe8ed14593
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 内部调用方
+      - Inbox维护者
+    purpose: 定义公开能力、模型和内部存储契约。
+    current_state: 仅list、markRead和subscribe。
+    target_state: "新增markAllRead(): number，保留原模型和方法。"
+    delta: 在既有状态、存储与订阅链路增加批量已读。
+    decisions_and_gaps:
+      - decision:batch-once
+      - decision:existing-seams
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+    nodes:
+      - node_id: batch-read
+        label: 全部已读能力
+        owner: Inbox
+        current_state: 逐条已读。
+        target_state: 一次批量返回计数，正数写回并最终发布，零改变静默。
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        acceptance:
+          schema_version: "1.1"
+          criteria:
+            - id: AC-1
+              priority: P0
+              description: 批量修改、准确计数与单次写回
+              testable: true
+              ut_layer: unit
+              ut_focus: 混合、全未读、实际计数和数据保留
+              verification_steps:
+                - 经index.ts创建含两条未读和一条已读的store；另覆盖全未读输入。
+                - 调用markAllRead，检查返回值、列表和storage.writes。
+              expected_result: 混合输入返回2；全部read=true，id/text/数量/顺序不变；writes仅增加1。全未读输入返回其消息数。
+              verification_method: 通过公开index.ts入口、真实MemoryStorage和InboxProjection驱动node:test；Expect做精确断言。
+            - id: AC-2
+              priority: P0
+              description: 空和全部已读保持静默
+              testable: true
+              ut_layer: unit
+              ut_focus: 分别覆盖两个零改变分支
+              verification_steps:
+                - 分别创建空列表与全部已读列表，注册计数listener。
+                - 调用markAllRead，比较writes、通知次数和列表。
+              expected_result: 两种情况均返回0；零写入、零通知，列表不变。
+              verification_method: 通过公开index.ts入口、真实MemoryStorage和InboxProjection驱动node:test；Expect做精确断言。
+            - id: AC-3
+              priority: P0
+              description: 重复调用幂等
+              testable: true
+              ut_layer: unit
+              ut_focus: 首次成功后的无副作用重复调用
+              verification_steps:
+                - 含未读时调用markAllRead。
+                - 再次调用，比较累积writes和通知数。
+              expected_result: 第二次返回0，写入和每个订阅者的通知次数不再增加。
+              verification_method: 通过公开index.ts入口、真实MemoryStorage和InboxProjection驱动node:test；Expect做精确断言。
+            - id: AC-4
+              priority: P0
+              description: 一次最终快照传播至所有现有消费者
+              testable: true
+              ut_layer: unit
+              ut_focus: 多消费者、保存先于通知、一次最终快照及副本隔离
+              verification_steps:
+                - 注册至少两个listener和InboxProjection；listener内核storage.load已全部已读。
+                - 调用markAllRead，记录每个listener的快照。
+                - 修改一个收到的快照对象，再检查store和其它listener快照。
+              expected_result: 每个listener恰好一次全量最终快照，无中间状态；save先完成；Projection未读数为0；副本修改不污染store或其它listener。
+              verification_method: 通过公开index.ts入口、真实MemoryStorage和InboxProjection驱动node:test；Expect做精确断言。
+            - id: AC-5
+              priority: P0
+              description: 同一存储对象重载
+              testable: true
+              ut_layer: unit
+              ut_focus: 初始化与存储副本恢复
+              verification_steps:
+                - 完成批量操作后用同一MemoryStorage重新createInbox。
+                - 检查新旧列表、storage.load及writes。
+              expected_result: 重建store读回全部已读及原id/text/顺序；load不增加writes；仅同一对象内重载。
+              verification_method: 通过公开index.ts入口、真实MemoryStorage和InboxProjection驱动node:test；Expect做精确断言。
+            - id: AC-6
+              priority: P0
+              description: 原操作与取消订阅兼容
+              testable: true
+              ut_layer: unit
+              ut_focus: list、markRead、cancel及Projection.dispose直接回归
+              verification_steps:
+                - 检查list返回副本；未知和已读id的markRead返回false且静默，未读id返回true且只写/通知一次。
+                - 仍有未读时取消一个listener并dispose一个Projection，再调用markAllRead。
+              expected_result: 原有列表和单条已读行为保持；取消者和已dispose Projection不更新，剩余订阅者正常收到最终快照。
+              verification_method: 通过公开index.ts入口、真实MemoryStorage和InboxProjection驱动node:test；Expect做精确断言。
+          boundaries: []
+          performance: []
+        operations:
+          - "list(): Message[]"
+          - "markRead(id: string): boolean"
+          - "markAllRead(): number"
+          - "subscribe(listener): () => void"
+        contract_refs:
+          - contract:inbox-storage
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 内部调用方
+      - Inbox维护者
+    purpose: 描述状态、写回、发布、消费与清理。
+    current_state: 单条修改后save并通知。
+    target_state: 全部修改完成后一次save及最终通知。
+    delta: 在既有状态、存储与订阅链路增加批量已读。
+    decisions_and_gaps:
+      - decision:batch-once
+      - decision:existing-seams
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+    nodes:
+      - node_id: store
+        label: 消息状态拥有者
+        owner: Inbox
+        current_state: InboxStore拥有messages/listeners。
+        target_state: 同一拥有者增加批量操作。
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        design_basis_refs:
+          - view:logical/node:batch-read
+          - contract:inbox-storage
+      - node_id: projection
+        label: 既有订阅消费者
+        owner: Inbox
+        current_state: 先list再subscribe计算未读数。
+        target_state: 同样消费批量最终快照；dispose不变。
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        design_basis_refs:
+          - view:logical/node:batch-read
+    runtime_data_flows:
+      - flow_id: batch-read
+        label: 批量已读与最终快照闭环
+        owner: Inbox
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        data_domain_refs:
+          - inbox-messages
+        external_contract_refs:
+          - contract:inbox-storage
+        source_of_truth:
+          authority: view:runtime/node:store
+          persistence: contract:inbox-storage
+          projections_and_caches:
+            - view:runtime/node:projection
+          reconciliation: 活跃store拥有实例状态；save完整副本；同storage新store构造load；Projection由list与订阅重算。
+        triggers:
+          - kind: public_method
+            timing: 调用方显式同步调用markAllRead()
+            idempotency: 按read状态统计，零改变跳过写回和通知。
+        initial_load:
+          initial_load_id: storage-load
+          strategy: 构造store同步load；Projection先list再subscribe。
+          owner: Inbox
+          data_scope: 同一MemoryStorage完整Message[]，无账号过滤。
+          freshness: 构造时load副本；活跃store对自身实例状态负责，不增跨实例同步。
+          verification_refs:
+            - acceptance:AC-5
+            - acceptance:AC-6
+        state_owner:
+          ref: view:runtime/node:store
+          states:
+            - 含未读
+            - 全部已读或空
+          verification_refs:
+            - acceptance:AC-1
+            - acceptance:AC-5
+        mutations:
+          - mutation_id: mark-all
+            kind: synchronous
+            operation: InboxStore.markAllRead
+            condition: changedCount>0
+            persistence_ref: contract:inbox-storage
+            publication_ref: publication:final-snapshot
+            recovery_ref: recovery:reload
+            idempotency: 零改变返回0，跳过save/通知。
+            verification_refs:
+              - acceptance:AC-1
+              - acceptance:AC-2
+              - acceptance:AC-3
+        publications:
+          - publication_id: final-snapshot
+            payload: 完整最终Message[]，原id/text/顺序保留且read=true；每个listener独立副本。
+            timing: 正数改变且save同步返回之后。
+            verification_refs:
+              - acceptance:AC-4
+        subscriptions:
+          - subscription_id: projection-sub
+            consumer_ref: consumer:unread-projection
+            publication_ref: publication:final-snapshot
+            attach: InboxProjection构造时subscribe。
+            detach: dispose调用cancel。
+            cleanup: 取消函数从Set移除原listener，不额外通知。
+            replay_or_snapshot: subscribe不重放；首次由list提供快照。
+            ordering: 原Set同步迭代，每个listener一次最终副本。
+            verification_refs:
+              - acceptance:AC-4
+              - acceptance:AC-6
+          - subscription_id: caller-sub
+            consumer_ref: consumer:caller-listener
+            publication_ref: publication:final-snapshot
+            attach: 调用方subscribe。
+            detach: 调用返回的cancel函数。
+            cleanup: 取消函数从Set移除原listener，不额外通知。
+            replay_or_snapshot: subscribe不重放；首次由list提供快照。
+            ordering: 原Set同步迭代，每个listener一次最终副本。
+            verification_refs:
+              - acceptance:AC-4
+              - acceptance:AC-6
+        consumers:
+          - consumer_id: unread-projection
+            ref: view:runtime/node:projection
+            initial_load_ref: initial-load:storage-load
+            update_ref: publication:final-snapshot
+            effect: 重算unreadCount，dispose后不再更新。
+            verification_refs:
+              - acceptance:AC-4
+              - acceptance:AC-5
+              - acceptance:AC-6
+          - consumer_id: caller-listener
+            ref: view:logical/node:batch-read
+            initial_load_ref: initial-load:storage-load
+            update_ref: publication:final-snapshot
+            effect: 一次完整最终副本，不可修改store。
+            verification_refs:
+              - acceptance:AC-4
+              - acceptance:AC-6
+        failure_recovery:
+          recovery_id: reload
+          handling: 同一MemoryStorage重建store可load；现有同步异常直接传播，listener异常发生在save之后，不回滚或自动补发。
+          retry: 正常重复调用按read幂等，不新增异常重试队列。
+          limitation: 进程退出内存对象消失，不保证跨进程恢复。
+          verification_refs:
+            - acceptance:AC-3
+            - acceptance:AC-5
+            - acceptance:AC-6
+        decisions_and_gaps:
+          - decision:batch-once
+          - decision:existing-seams
+        evidence_refs:
+          - doc/requirement.md
+          - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        logical_contract_refs:
+          - contract:inbox-storage
+        development_owner_ref: view:development/node:inbox-implementation
+        lifecycle_coverage:
+          cold_start:
+            status: covered
+            reason: createInbox同步load同一对象存储。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+          warm_resume:
+            status: not_applicable
+            reason: 无页面、账号、平台恢复或后台生产者。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+          page_attach:
+            status: not_applicable
+            reason: 无页面、账号、平台恢复或后台生产者。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+          page_detach:
+            status: not_applicable
+            reason: 无页面、账号、平台恢复或后台生产者。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+          account_switch:
+            status: not_applicable
+            reason: 无页面、账号、平台恢复或后台生产者。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+          process_recreation:
+            status: not_applicable
+            reason: MemoryStorage为内存，原能力不承诺跨进程耐久。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+          background_write:
+            status: not_applicable
+            reason: 无页面、账号、平台恢复或后台生产者。
+            evidence_refs:
+              - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+            verification_refs:
+              - acceptance:AC-5
+              - acceptance:AC-6
+        contracts:
+          state_management:
+            - data: Message[]
+              holder: InboxStore
+              owner_ref: view:runtime/node:store
+              contract_refs:
+                - contract:inbox-storage
+              ordered_steps:
+                - 调用方从index.ts取得createInbox(storage)，工厂同步构造InboxStore；构造函数调用MemoryStorage.load返回副本，工厂返回store。
+                - InboxProjection先store.list初始化未读数，再store.subscribe注册listener；普通listener也可注册并保存取消函数。subscribe本身不重放。
+                - 调用方同步调用store.markAllRead()，无参数。InboxStore遍历当前messages，累计read=false项并置为true；保留id/text/数量/顺序。
+                - 计数为0，直接向原调用方返回0；跳过save和全部listener，消费者保持原值。
+                - 计数大于0，InboxStore只调用一次MemoryStorage.save(messages)；存储增加writes一次并保存逐条副本；等待同步返回void后才通知。不得循环调用markRead。
+                - InboxStore按原Set迭代对每个当前listener调用一次listener(this.list())，各自取得独立最终列表副本；所有read=true。InboxProjection回调重算unreadCount=0。
+                - 全部正常回调返回后，InboxStore向原调用方返回累计改变数；再次调用返回0且无副作用。
+                - 取消函数从Set删除原listener；Projection.dispose调用cancel；之后不再更新。新Projection仍先list再subscribe。
+                - 同一MemoryStorage对象重新createInbox时构造load恢复已保存结果，不写不发；原有另一store实例不会自动同步，保持实例隔离边界。
+                - MemoryStorage无外部I/O失败。若同步依赖或listener抛错则按原链传播，不吞错、重试或回滚；listener抛错时存储已更新，后续listener可能未执行。正常回调是完整投递的运行前提。
+              lifecycle_triggers:
+                - createInbox(storage)
+                - markAllRead()
+                - subscribe(listener)
+                - cancel()
+                - InboxProjection.dispose()
+                - 同一storage重建store
+              initial_load:
+                initial_load_id: storage-load
+                strategy: 构造store同步load；Projection先list再subscribe。
+                owner: Inbox
+                data_scope: 同一MemoryStorage完整Message[]，无账号过滤。
+                freshness: 构造时load副本；活跃store对自身实例状态负责，不增跨实例同步。
+                verification_refs:
+                  - acceptance:AC-5
+                  - acceptance:AC-6
+              mutations:
+                - mutation_id: mark-all
+                  kind: synchronous
+                  operation: InboxStore.markAllRead
+                  condition: changedCount>0
+                  persistence_ref: contract:inbox-storage
+                  publication_ref: publication:final-snapshot
+                  recovery_ref: recovery:reload
+                  idempotency: 零改变返回0，跳过save/通知。
+                  verification_refs:
+                    - acceptance:AC-1
+                    - acceptance:AC-2
+                    - acceptance:AC-3
+              publications:
+                - publication_id: final-snapshot
+                  payload: 完整最终Message[]，原id/text/顺序保留且read=true；每个listener独立副本。
+                  timing: 正数改变且save同步返回之后。
+                  verification_refs:
+                    - acceptance:AC-4
+              subscriptions:
+                - subscription_id: projection-sub
+                  consumer_ref: consumer:unread-projection
+                  publication_ref: publication:final-snapshot
+                  attach: InboxProjection构造时subscribe。
+                  detach: dispose调用cancel。
+                  cleanup: 取消函数从Set移除原listener，不额外通知。
+                  replay_or_snapshot: subscribe不重放；首次由list提供快照。
+                  ordering: 原Set同步迭代，每个listener一次最终副本。
+                  verification_refs:
+                    - acceptance:AC-4
+                    - acceptance:AC-6
+                - subscription_id: caller-sub
+                  consumer_ref: consumer:caller-listener
+                  publication_ref: publication:final-snapshot
+                  attach: 调用方subscribe。
+                  detach: 调用返回的cancel函数。
+                  cleanup: 取消函数从Set移除原listener，不额外通知。
+                  replay_or_snapshot: subscribe不重放；首次由list提供快照。
+                  ordering: 原Set同步迭代，每个listener一次最终副本。
+                  verification_refs:
+                    - acceptance:AC-4
+                    - acceptance:AC-6
+              consumers:
+                - consumer_id: unread-projection
+                  ref: view:runtime/node:projection
+                  initial_load_ref: initial-load:storage-load
+                  update_ref: publication:final-snapshot
+                  effect: 重算unreadCount，dispose后不再更新。
+                  verification_refs:
+                    - acceptance:AC-4
+                    - acceptance:AC-5
+                    - acceptance:AC-6
+                - consumer_id: caller-listener
+                  ref: view:logical/node:batch-read
+                  initial_load_ref: initial-load:storage-load
+                  update_ref: publication:final-snapshot
+                  effect: 一次完整最终副本，不可修改store。
+                  verification_refs:
+                    - acceptance:AC-4
+                    - acceptance:AC-6
+              failure_recovery:
+                recovery_id: reload
+                handling: 同一MemoryStorage重建store可load；现有同步异常直接传播，listener异常发生在save之后，不回滚或自动补发。
+                retry: 正常重复调用按read幂等，不新增异常重试队列。
+                limitation: 进程退出内存对象消失，不保证跨进程恢复。
+                verification_refs:
+                  - acceptance:AC-3
+                  - acceptance:AC-5
+                  - acceptance:AC-6
+              verification_refs:
+                - acceptance:AC-1
+                - acceptance:AC-2
+                - acceptance:AC-3
+                - acceptance:AC-4
+                - acceptance:AC-5
+                - acceptance:AC-6
+        use_cases:
+          schema_version: "2.0"
+          use_cases:
+            - id: inbox_batch_read
+              description: 无UI的内部调用；ui_bindings为空，不制造界面；使用具名公开入口驱动。
+              coordinator: InboxStore
+              coordinator_file: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+              ui_bindings: []
+              data_boundaries:
+                - name: storage
+                  type: MemoryStorage
+                  kind: storage
+                  methods:
+                    - name: load
+                      params: []
+                      returns: Message[]
+                      async: false
+                    - name: save
+                      params:
+                        - Message[]
+                      returns: void
+                      async: false
+              state_model:
+                phases:
+                  - Idle
+                fields:
+                  - name: messages
+                    type: Message[]
+              branches:
+                - id: changed
+                  scenario: 混合或全未读，一次写回后最终通知。
+                  user_sequence:
+                    - createInbox
+                    - subscribe
+                    - markAllRead
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_phase_seq:
+                    - Idle
+                  expected_port_calls:
+                    - storage.load
+                    - storage.save
+                  expected_state:
+                    allRead: true
+                    saveDelta: 1
+                  not_called: []
+                  local_expect:
+                    - storage.load
+                    - storage.save
+                  linked_acceptance:
+                    - AC-1
+                    - AC-4
+                - id: empty
+                  scenario: 空列表静默。
+                  user_sequence:
+                    - createInbox
+                    - subscribe
+                    - markAllRead
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_phase_seq:
+                    - Idle
+                  expected_port_calls:
+                    - storage.load
+                  expected_state:
+                    changed: 0
+                    saveDelta: 0
+                    notifications: 0
+                  not_called:
+                    - storage.save
+                  local_expect:
+                    - storage.load
+                  linked_acceptance:
+                    - AC-2
+                - id: already_read
+                  scenario: 全部已读静默。
+                  user_sequence:
+                    - createInbox
+                    - subscribe
+                    - markAllRead
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_phase_seq:
+                    - Idle
+                  expected_port_calls:
+                    - storage.load
+                  expected_state:
+                    changed: 0
+                    saveDelta: 0
+                    notifications: 0
+                  not_called:
+                    - storage.save
+                  local_expect:
+                    - storage.load
+                  linked_acceptance:
+                    - AC-2
+                - id: repeat
+                  scenario: 首次改变后再次静默。
+                  user_sequence:
+                    - createInbox
+                    - subscribe
+                    - markAllRead
+                    - markAllRead
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_phase_seq:
+                    - Idle
+                  expected_port_calls:
+                    - storage.load
+                    - storage.save
+                  expected_state:
+                    secondChanged: 0
+                    totalSaveDelta: 1
+                  not_called: []
+                  local_expect:
+                    - storage.load
+                    - storage.save
+                  linked_acceptance:
+                    - AC-3
+                - id: reload
+                  scenario: 同一存储对象重建。
+                  user_sequence:
+                    - createInbox
+                    - markAllRead
+                    - createInbox
+                    - list
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_phase_seq:
+                    - Idle
+                  expected_port_calls:
+                    - storage.load
+                    - storage.save
+                    - storage.load
+                  expected_state:
+                    allRead: true
+                  not_called: []
+                  local_expect:
+                    - storage.load
+                    - storage.save
+                    - storage.load
+                  linked_acceptance:
+                    - AC-5
+                - id: compatibility
+                  scenario: 列表、单条成功/无效/重复，取消后批量。
+                  user_sequence:
+                    - createInbox
+                    - list
+                    - subscribe
+                    - markRead
+                    - markRead
+                    - markRead
+                    - dispose
+                    - markAllRead
+                  cloud_stubs: {}
+                  local_stubs: {}
+                  expected_phase_seq:
+                    - Idle
+                  expected_port_calls:
+                    - storage.load
+                    - storage.save
+                    - storage.save
+                  expected_state:
+                    cancelledConsumerUnchanged: true
+                  not_called: []
+                  local_expect:
+                    - storage.load
+                    - storage.save
+                    - storage.save
+                  linked_acceptance:
+                    - AC-6
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 内部调用方
+      - Inbox维护者
+    purpose: 约束模块、文件和接口。
+    current_state: Inbox已有公开导出、存储和消费者。
+    target_state: 仅扩展原InboxStore方法，无新模块/依赖。
+    delta: 在既有状态、存储与订阅链路增加批量已读。
+    decisions_and_gaps:
+      - decision:batch-once
+      - decision:existing-seams
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+    nodes:
+      - node_id: inbox-implementation
+        label: Inbox批量实现与验证
+        owner: Inbox
+        current_state: 已有单条已读。
+        target_state: 增加markAllRead并验证完整链路。
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        module: Inbox
+        design_basis_refs:
+          - view:logical/node:batch-read
+          - contract:inbox-storage
+          - decision:batch-once
+          - decision:existing-seams
+        contracts:
+          schema_version: "1.1"
+          modules:
+            - name: Inbox
+              layer: 02-Feature
+              format: HAR
+              change_type: modify
+              package_path: 02-Feature/Inbox
+              export_file: 02-Feature/Inbox/index.ts
+          module_dependencies:
+            Inbox: []
+          data_models:
+            - name: Message
+              file: 02-Feature/Inbox/src/main/ets/Message.ts
+              kind: interface
+              fields:
+                - name: id
+                  type: string
+                  required: true
+                  description: 既有标识，不修改或增加唯一索引。
+                - name: text
+                  type: string
+                  required: true
+                  description: 既有正文，原样保留。
+                - name: read
+                  type: boolean
+                  required: true
+                  description: 仅false转true计数，已有true不改变。
+          interfaces:
+            - class: InboxStore
+              layer: main
+              file: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+              methods:
+                - name: list
+                  params: []
+                  return: Message[]
+                  async: false
+                  description: 逐条复制返回。
+                - name: markRead
+                  params:
+                    - name: id
+                      type: string
+                  return: boolean
+                  async: false
+                  description: 保留原行为。
+                - name: markAllRead
+                  params: []
+                  return: number
+                  async: false
+                  description: 同步返回false转true数量；正数save一次、每个listener一次最终副本；0不写不发。
+                - name: subscribe
+                  params:
+                    - name: listener
+                      type: "(messages: Message[]) => void"
+                  return: () => void
+                  async: false
+                  description: 保留不重放和取消语义。
+            - class: MemoryStorage
+              layer: main
+              file: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              methods:
+                - name: load
+                  params: []
+                  return: Message[]
+                  async: false
+                  description: ""
+                - name: save
+                  params:
+                    - name: messages
+                      type: Message[]
+                  return: void
+                  async: false
+                  description: ""
+            - class: InboxProjection
+              layer: main
+              file: 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+              methods:
+                - name: dispose
+                  params: []
+                  return: void
+                  async: false
+                  description: ""
+          components:
+            - name: InboxStore
+              module: Inbox
+              kind: state-store
+              file: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+              state:
+                - name: messages
+                  type: Message[]
+              description: 拥有消息与listeners并执行批量能力。
+            - name: MemoryStorage
+              module: Inbox
+              kind: memory-storage
+              file: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+              description: 复用同步load/save副本存储。
+            - name: InboxProjection
+              module: Inbox
+              kind: subscription-consumer
+              file: 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+              description: 复用快照未读数消费及dispose。
+          files:
+            - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+          integration_points:
+            - consumer_module: Inbox
+              provider_module: Inbox
+              entry_symbol: createInbox
+              requires_modification: false
+          architecture_impact: none；既有Inbox状态/存储/订阅职责内增量，无新模块或依赖。
+          test_design: plan在同predicate/provide/精确design和runtime局部对象登记具体文件#实际注册名；UT在既有Inbox测试根内形成真实覆盖和执行。P1不预测未来私有测试路径/名字。
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: applicable
+    evolution_impact: verified_unchanged
+    stakeholders:
+      - 内部调用方
+      - Inbox维护者
+    purpose: 核实固有进程拓扑和重载边界。
+    current_state: 同一Node进程内Inbox及MemoryStorage对象。
+    target_state: 同一Node进程内Inbox及MemoryStorage对象。
+    delta: none
+    decisions_and_gaps:
+      - decision:batch-once
+      - decision:existing-seams
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+    nodes:
+      - node_id: node-process
+        label: 进程内运行落点
+        owner: Inbox
+        current_state: 同一Node进程内模块和内存对象。
+        target_state: 同一Node进程内模块和内存对象。
+        provenance:
+          source_kind: architecture
+          source_ref: doc/architecture.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        delta: none
+        responsibilities:
+          - 执行入口、状态、存储和消费者。
+        inputs:
+          - MemoryStorage对象
+        outputs:
+          - 计数与快照
+        not_responsible_for:
+          - 设备、网络、跨进程存储
+        failure_impact: 进程退出丢失内存；无迁移或发布。
+    unchanged_evidence:
+      evidence_refs:
+        - doc/architecture.md
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+      current_state_ref: doc/architecture.md
+    rollout: []
+    coordination: []
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 内部调用方
+      - Inbox维护者
+    purpose: 定义正常、静默、重载和取消场景。
+    current_state: 调用方逐条标记。
+    target_state: 一次操作得到数量与最终快照。
+    delta: 在既有状态、存储与订阅链路增加批量已读。
+    decisions_and_gaps:
+      - decision:batch-once
+      - decision:existing-seams
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+    nodes:
+      - node_id: batch-journey
+        label: 内部调用方的一次清除
+        owner: Inbox
+        current_state: 需要逐条操作。
+        target_state: 一次完成，零改变静默。
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-2
+          - acceptance:AC-3
+          - acceptance:AC-4
+          - acceptance:AC-5
+          - acceptance:AC-6
+        target_users:
+          - 公开入口调用方
+        preconditions:
+          - 提供MemoryStorage。
+        journey_steps:
+          - step_id: invoke
+            stage: 批量操作
+            user_action: 调用markAllRead()
+            system_behavior: 正数一次写回并最终通知；0静默；同步返回数量。
+            preconditions:
+              - 普通listener正常返回。
+          - step_id: continue
+            stage: 继续使用
+            user_action: 读取、单条已读、重建store或取消订阅
+            system_behavior: 保留原有行为。
+            preconditions: []
+        path_variants:
+          - user_type: 含未读
+            difference: 正数与一次最终快照。
+          - user_type: 空或全已读
+            difference: 0，无写入和通知。
+        logical_refs:
+          - view:logical/node:batch-read
+          - contract:inbox-storage
+        runtime_refs:
+          - view:runtime/flow:batch-read
+          - view:runtime/node:projection
+        development_owner_ref: view:development/node:inbox-implementation
+        deployment_refs:
+          - view:deployment/node:node-process
+decisions_and_gaps:
+  decisions:
+    - decision_id: batch-once
+      label: 在状态拥有者内一次完成
+      kind: design_choice
+      status: decided_with_authority
+      owner: Inbox
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/requirement.md
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: authorized_design
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-3
+        - acceptance:AC-4
+      conclusion: InboxStore统计并修改全部未读，正数save一次后每个listener一次最终副本；0直接返回。
+      rationale: 消息和listener原本同属InboxStore；一次完整写回满足原需求并避免中间状态。
+      alternatives:
+        - option: 循环markRead(id)
+          rejected_reason: 每条都会保存和发布，违反一次最终快照。
+          defect: 多次写入和中间快照。
+    - decision_id: existing-seams
+      label: 复用公开入口、存储和消费者
+      kind: design_choice
+      status: decided_with_authority
+      owner: Inbox
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/requirement.md
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: authorized_design
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-3
+        - acceptance:AC-4
+        - acceptance:AC-5
+        - acceptance:AC-6
+      knowledge_refs:
+        - doc/module-catalog.yaml#Inbox
+        - doc/glossary.yaml#通知收件箱
+        - doc/architecture.md#Architecture
+      conclusion: "新增InboxStore.markAllRead():
+        number即通过已有index.ts导出和createInbox实例公开；复用MemoryStorage及InboxProjection，不\
+        增加抽象或配置。"
+      rationale: 现有同步存储/订阅可承载需求，无替换提供者或新外部边界。
+      alternatives:
+        - option: 新建批量服务和第二缓存/通道
+          rejected_reason: 制造平行状态与同步责任。
+          defect: 额外状态和接线。
+  gaps: []
+relations:
+  - relation_id: scenario-capability
+    from: view:scenarios/node:batch-journey
+    to: view:logical/node:batch-read
+    relation_type: realized_by
+    owner: Inbox
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  - relation_id: capability-flow
+    from: view:logical/node:batch-read
+    to: view:runtime/flow:batch-read
+    relation_type: realized_by
+    owner: Inbox
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  - relation_id: flow-owner
+    from: view:runtime/flow:batch-read
+    to: view:development/node:inbox-implementation
+    relation_type: owned_by
+    owner: Inbox
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  - relation_id: flow-storage
+    from: view:runtime/flow:batch-read
+    to: contract:inbox-storage
+    relation_type: consumes
+    owner: Inbox
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  - relation_id: flow-consumer
+    from: view:runtime/flow:batch-read
+    to: view:runtime/node:projection
+    relation_type: updates
+    owner: Inbox
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  - relation_id: implementation-process
+    from: view:development/node:inbox-implementation
+    to: view:deployment/node:node-process
+    relation_type: deployed_in
+    owner: Inbox
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+contracts:
+  - contract_id: inbox-storage
+    label: 现有内存存储写回契约
+    owner: Inbox
+    needed_by: batch-read
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/requirement.md
+      observed_at: 2026-10-28T04:30:15.766Z
+      evidence_strength: authoritative
+      extraction_method: authorized_design
+    operation:
+      operation_id: MemoryStorage.save
+      direction: internal
+      version: existing
+      signature: "save(messages: Message[]): void"
+      semantics: 同步增加writes一次并复制完整最终数组；调用方只在实际改变时调用。
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/operation
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-5
+    request_dto:
+      dto_id: StorageSaveArguments
+      fields:
+        - field_id: messages
+          type: Message[]
+          semantics: 完整消息数组，保持id、text、read和顺序；save逐条浅复制。
+          source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/request_dto/fields/0
+          provenance:
+            source_kind: code
+            source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+            observed_at: 2026-10-28T04:30:15.766Z
+            evidence_strength: authoritative
+            extraction_method: source_read
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/request_dto
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-5
+    response_dto:
+      dto_id: StorageSaveVoid
+      type: void
+      fields: []
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/response_dto
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-5
+    mappings:
+      - mapping_id: messages-copy
+        kind: direct
+        source_fields:
+          - messages
+        target_field: MemoryStorage.messages
+        rule: 整体替换为逐条浅副本，不追加、不排序、不改id/text。
+        source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/mappings/0
+        provenance:
+          source_kind: code
+          source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: source_read
+        verification_refs:
+          - acceptance:AC-1
+          - acceptance:AC-5
+    errors:
+      semantics: 现有MemoryStorage无业务错误码或外部I/O失败，不增加重试或回滚；同步异常沿原链传播。
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/errors
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-5
+    idempotency:
+      semantics: save每次调用均增加writes，不负责去重；InboxStore依据当前read状态判空，零改变不调用save，无需幂等键。
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/idempotency
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-5
+    nfr:
+      semantics: 保持同步进程内数组副本；正数只写一次。无数据库、版本迁移、加密级别、账号体系或跨进程耐久保证。
+      source_ref: doc/features/inbox-batch-read/blueprint/internal-storage-contract.yaml#/nfr
+      verification_refs:
+        - acceptance:AC-1
+        - acceptance:AC-2
+        - acceptance:AC-5
+providers:
+  - provider_id: current-facts-discovery
+    definition: current-facts-discovery
+    consumer: builder/lens/questioning
+    provider: current-facts-discovery
+    requirement: required
+    authority_rule: Code, schema, interface, config, and tests are current-state authority.
+    source_rule: Every assertion carries source_ref and source revision when available.
+    missing_behavior: required缺失交owner补据并阻断；optional按适用性保留未知或未启用。
+    replacement_behavior: 同源重读并重算受影响设计。
+    exit_behavior: 保留provenance，不写下游状态。
+    conflict_behavior: 保留双方来源交原owner裁决，不按顺序覆盖。
+    writes:
+      - canonical_blueprint_input
+  - provider_id: se-manual-contracts
+    definition: 原需求授权的内部存储契约，无远程API
+    consumer: builder/lens/questioning
+    provider: se-manual-contracts
+    requirement: required
+    authority_rule: Authorized SE or contract owner is external-contract authority.
+    source_rule: Every contract segment carries source_ref, verification ref, and
+      provenance.
+    missing_behavior: required缺失交owner补据并阻断；optional按适用性保留未知或未启用。
+    replacement_behavior: 同源重读并重算受影响设计。
+    exit_behavior: 保留provenance，不写下游状态。
+    conflict_behavior: 保留双方来源交原owner裁决，不按顺序覆盖。
+    writes:
+      - canonical_blueprint_input
+  - provider_id: app-design-lens
+    definition: app-design-lens
+    consumer: builder/lens/questioning
+    provider: app-design-lens
+    requirement: required
+    authority_rule: Lens is not fact authority and cannot override inputs.
+    source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+    missing_behavior: required缺失交owner补据并阻断；optional按适用性保留未知或未启用。
+    replacement_behavior: 同源重读并重算受影响设计。
+    exit_behavior: 保留provenance，不写下游状态。
+    conflict_behavior: 保留双方来源交原owner裁决，不按顺序覆盖。
+    writes:
+      - canonical_blueprint_input
+  - provider_id: independent-design-questioning
+    definition: runtime另派的真正独立质询职责
+    consumer: builder/lens/questioning
+    provider: independent-design-questioning
+    requirement: required
+    authority_rule: Questioning is not fact or decision authority.
+    source_rule: Answers cite isolated blueprint, evidence package, and registered
+      external inputs.
+    missing_behavior: required缺失交owner补据并阻断；optional按适用性保留未知或未启用。
+    replacement_behavior: 同源重读并重算受影响设计。
+    exit_behavior: 保留provenance，不写下游状态。
+    conflict_behavior: 保留双方来源交原owner裁决，不按顺序覆盖。
+    writes:
+      - canonical_blueprint_input
+  - provider_id: conventions-knowledge
+    definition: conventions-knowledge
+    consumer: builder/lens/questioning
+    provider: conventions-knowledge
+    requirement: optional
+    authority_rule: Project conventions are stable knowledge input, not current-code authority.
+    source_rule: Applicable facts cite the configured conventions file and exact heading id.
+    missing_behavior: required缺失交owner补据并阻断；optional按适用性保留未知或未启用。
+    replacement_behavior: 同源重读并重算受影响设计。
+    exit_behavior: 保留provenance，不写下游状态。
+    conflict_behavior: 保留双方来源交原owner裁决，不按顺序覆盖。
+    writes:
+      - canonical_blueprint_input
+    available: false
+    missing_disposition: not_applicable
+  - provider_id: component-assets
+    definition: component-assets
+    consumer: builder/lens/questioning
+    provider: component-assets
+    requirement: optional
+    authority_rule: Source is component fact authority; curation is human selection guidance.
+    source_rule: Selection evidence cites the configured component index or catalog;
+      component_ref identifies the asset.
+    missing_behavior: required缺失交owner补据并阻断；optional按适用性保留未知或未启用。
+    replacement_behavior: 同源重读并重算受影响设计。
+    exit_behavior: 保留provenance，不写下游状态。
+    conflict_behavior: 保留双方来源交原owner裁决，不按顺序覆盖。
+    writes:
+      - canonical_blueprint_input
+    available: false
+    missing_disposition: not_applicable
+discovery:
+  source_fingerprint: sha256:ac71d45289bde10d63d724f2f48010c3771cef9b114b49e9e3780a4bdf5733c9
+  facts:
+    - fact_id: term-inbox
+      subject: term:通知收件箱
+      value:
+        canonical_module: Inbox
+        confidence: high
+        easily_confused_with: []
+        meaning: 保存消息和已读状态，公开读取、写回和订阅的进程内部件。
+      provenance:
+        source_kind: glossary
+        source_ref: doc/glossary.yaml#通知收件箱
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: exact_glossary_match
+    - fact_id: public-entry
+      subject: 公开入口
+      value: index.ts导出createInbox、InboxStore、MemoryStorage、InboxProjection及Message；工厂返回InboxStore实例，当前无markAllRead。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/Inbox/index.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: state-owner
+      subject: 状态归属
+      value: InboxStore构造load，list逐条复制；markRead修改一个未读项后save并同步遍历listeners；subscribe不重放，返回从Set删除listener的取消函数。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: storage
+      subject: 存储事实
+      value: MemoryStorage仅在同一对象内保存数组；load/save逐条浅复制，save每次writes++；无磁盘、数据库、账号、加密或迁移能力。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: model
+      subject: 消息模型
+      value:
+        id: string
+        text: string
+        read: boolean
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/Inbox/src/main/ets/Message.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: consumer
+      subject: 订阅消费者
+      value: InboxProjection先list初始化unreadCount，再subscribe按快照重算；dispose调用cancel。
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: baseline-test
+      subject: 既有测试
+      value: node:test已覆盖单条已读、重复静默、writes、同存储对象重载和Projection更新；Expect包装真实node:assert/strict。尚无批量测试。
+      provenance:
+        source_kind: test
+        source_ref: 02-Feature/Inbox/src/ohosTest/ets/test/InboxExisting.test.ts
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: module
+      subject: 模块边界
+      value: 唯一Inbox模块位于02-Feature；职责是进程内状态、存储和订阅，不负责UI、device、network。
+      provenance:
+        source_kind: catalog
+        source_ref: doc/module-catalog.yaml#Inbox
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+    - fact_id: dsl
+      subject: 架构约束
+      value: 02-Feature外层，main内层，index.ts为出口；host-only TypeScript/Node，无新增模块或依赖边。
+      provenance:
+        source_kind: config
+        source_ref: framework.config.json
+        observed_at: 2026-10-28T04:30:15.766Z
+        evidence_strength: authoritative
+        extraction_method: source_read
+  conflicts: []
+  inputs:
+    current_scope_items:
+      - item_id: batch-capability
+        kind: requirement
+        statement: 公开markAllRead批量设置全部未读并写回，返回实际改变数。
+        source_ref: doc/requirement.md
+        source_sha256: sha256:d8dae4991a4f9a87c0b97bc1c2e5ab9df8381e06562e4e19a901c5c3c04f07a2
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+      - item_id: quiet-idempotency
+        kind: invariant
+        statement: 空、全已读或重复调用返回0，不写不发。
+        source_ref: doc/requirement.md
+        source_sha256: sha256:d8dae4991a4f9a87c0b97bc1c2e5ab9df8381e06562e4e19a901c5c3c04f07a2
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+      - item_id: final-snapshot
+        kind: requirement
+        statement: 有变化时向每个现有订阅者发送一次最终快照。
+        source_ref: doc/requirement.md
+        source_sha256: sha256:d8dae4991a4f9a87c0b97bc1c2e5ab9df8381e06562e4e19a901c5c3c04f07a2
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+      - item_id: compatibility
+        kind: invariant
+        statement: 保留列表、单条markRead、同一存储对象重载和取消订阅。
+        source_ref: doc/requirement.md
+        source_sha256: sha256:d8dae4991a4f9a87c0b97bc1c2e5ab9df8381e06562e4e19a901c5c3c04f07a2
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+      - item_id: bounded-delivery
+        kind: goal
+        statement: 沿已有模块完成内部能力，不引入UI、设备、网络或不可逆操作，不改框架或能力。
+        source_ref: doc/requirement.md
+        source_sha256: sha256:d8dae4991a4f9a87c0b97bc1c2e5ab9df8381e06562e4e19a901c5c3c04f07a2
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/requirement.md
+          observed_at: 2026-10-28T04:30:15.766Z
+          evidence_strength: authoritative
+          extraction_method: authorized_design
+    knowledge_assets:
+      - doc/module-catalog.yaml
+      - doc/glossary.yaml
+      - doc/architecture.md
+      - framework.config.json
+    optional_knowledge:
+      conventions: 默认doc/conventions.md不存在且未显式配置，未启用。
+      component_assets: 库存和策展文件均不存在；无UI，not_applicable。
+      code_graph: Inbox无code-graph.yaml，已回源读取。
+      design_knowledge: doc/extensions不存在；profile
+        skill-assets未声明component-design.knowledge，无可选资产。
+  requirement_traceability:
+    - item_id: batch-capability
+      blueprint_refs:
+        - view:logical/node:batch-read
+        - view:runtime/flow:batch-read
+        - view:development/node:inbox-implementation
+        - contract:inbox-storage
+    - item_id: quiet-idempotency
+      blueprint_refs:
+        - view:logical/node:batch-read
+        - view:runtime/flow:batch-read
+    - item_id: final-snapshot
+      blueprint_refs:
+        - view:runtime/flow:batch-read
+        - view:runtime/node:projection
+    - item_id: compatibility
+      blueprint_refs:
+        - view:logical/node:batch-read
+        - view:runtime/flow:batch-read
+        - view:runtime/node:projection
+    - item_id: bounded-delivery
+      blueprint_refs:
+        - view:development/node:inbox-implementation
+        - view:deployment/node:node-process
+app_lens:
+  module_boundaries:
+    disposition: answered_with_evidence
+    answer: 仅Inbox职责内增量，无新模块/DSL/依赖。
+    evidence_refs:
+      - doc/module-catalog.yaml
+      - framework.config.json
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  capability_seams:
+    disposition: answered_with_evidence
+    answer: 已有index.ts工厂返回InboxStore；新增实例方法，复用MemoryStorage，不引入远程协议。
+    evidence_refs:
+      - 02-Feature/Inbox/index.ts
+      - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  feature_flags:
+    disposition: answered_with_evidence
+    answer: 源码没有开关；兼容增量不增加配置。
+    evidence_refs:
+      - 02-Feature/Inbox/index.ts
+      - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  data_producers_consumers:
+    disposition: answered_with_evidence
+    answer: 调用方提供种子，Store修改，MemoryStorage保存，Projection与普通listener消费。
+    evidence_refs:
+      - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+      - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  lifecycle_triggers:
+    disposition: answered_with_evidence
+    answer: 构造load，显式批量调用，subscribe/cancel与dispose；没有平台生命周期。
+    evidence_refs:
+      - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+      - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  state_owners:
+    disposition: answered_with_evidence
+    answer: 每个InboxStore拥有实例messages/listeners；Projection仅派生计数。
+    evidence_refs:
+      - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+      - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  initialization:
+    disposition: answered_with_evidence
+    answer: store构造load，Projection先list再subscribe；subscribe不自动重放。
+    evidence_refs:
+      - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+      - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  publication_subscription:
+    disposition: answered_with_evidence
+    answer: 全部修改并save返回后，每个当前listener一次最终副本；0不发；取消从Set删除。
+    evidence_refs:
+      - doc/requirement.md
+      - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  ui_refresh:
+    disposition: answered_with_evidence
+    answer: 没有UI；实际Projection沿快照计算unreadCount。
+    evidence_refs:
+      - doc/requirement.md
+      - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  process_recovery:
+    disposition: answered_with_evidence
+    answer: 同一MemoryStorage重建store可load；真实进程退出内存消失，无跨进程耐久。
+    evidence_refs:
+      - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+      - doc/architecture.md
+    owner: Inbox
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-3
+      - acceptance:AC-4
+      - acceptance:AC-5
+      - acceptance:AC-6
+  runtime_flow_trigger_assessment:
+    persistent_or_remote_ui:
+      applies: false
+      reason: 无UI/远程。
+      evidence_refs:
+        - doc/requirement.md
+        - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    multiple_consumers:
+      applies: true
+      reason: 多个listener及Projection。
+      evidence_refs:
+        - doc/requirement.md
+        - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    background_system_external_scheduled_write:
+      applies: false
+      reason: 无后台或系统生产者。
+      evidence_refs:
+        - doc/requirement.md
+        - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    cold_start_resume_mount_account_switch:
+      applies: true
+      reason: 仅构造首次load，其它事件不适用。
+      evidence_refs:
+        - doc/requirement.md
+        - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    user_mutation_refreshes_other_consumers:
+      applies: true
+      reason: 批量修改刷新现有订阅者。
+      evidence_refs:
+        - doc/requirement.md
+        - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+    cache_sync_freshness_consistency_process_recreation:
+      applies: true
+      reason: 保持store/存储副本/Projection一致，覆盖同对象重建而非跨进程耐久。
+      evidence_refs:
+        - doc/requirement.md
+        - 02-Feature/Inbox/src/main/ets/InboxStore.ts
+        - 02-Feature/Inbox/src/main/ets/MemoryStorage.ts
+        - 02-Feature/Inbox/src/main/ets/InboxProjection.ts
+derived_results:
+  - result_id: sequence:batch-read
+    kind: generated_graph
+    input_revision: 1
+    source_fingerprint: sha256:ac71d45289bde10d63d724f2f48010c3771cef9b114b49e9e3780a4bdf5733c9
+    decision_fingerprint: sha256:cc8a0df8178b2c1687cf8824cf50d2602511f000751b5028526b9751bf455d88
+    status: stale
+    superseded_by_revision: 2
+generated_graphs:
+  - graph_id: sequence:batch-read
+    label: 一次批量变更和最终通知
+    format: mermaid
+    source_view_id: runtime
+    node_refs:
+      - view:runtime/flow:batch-read
+      - view:runtime/node:store
+      - view:runtime/node:projection
+      - contract:inbox-storage
+    relation_refs: []
+    content: |
+      sequenceDiagram
+          participant Caller as 内部调用方
+          participant Store as 状态拥有者（InboxStore）
+          participant Storage as 内存存储（MemoryStorage）
+          participant Consumer as 当前订阅者及未读计数消费者
+          Caller->>Store: 一次标记全部已读（markAllRead）
+          Store->>Store: 修改全部未读项并累计数量
+          alt 改变数为零
+              Store-->>Caller: 返回0，不保存也不通知
+          else 改变数大于零
+              Store->>Storage: 保存完整最终列表（save）
+              Storage-->>Store: 同步确认复制完成（void）
+              Note over Store,Consumer: 对每个当前listener一次回调，各自独立副本
+              Store->>Consumer: 发送全部已读最终快照
+              Consumer-->>Store: 正常回调返回，Projection未读数为0
+              Store-->>Caller: 返回实际改变数
+          end
+quality_attributes:
+  - qa_id: compatibility
+    category: compatibility
+    requirement: 保留原签名、字段、副本、同步订阅及取消语义。
+    landing: view:development/node:inbox-implementation
+    source_ref: doc/requirement.md
+    verification_refs:
+      - acceptance:AC-5
+      - acceptance:AC-6
+  - qa_id: work
+    category: performance
+    requirement: 遍历消息修改计数；正数save一次，每个listener一次副本。成本随消息数和订阅者数增长，不增加缓存。
+    landing: view:runtime/flow:batch-read
+    source_ref: doc/requirement.md
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-2
+      - acceptance:AC-4
+  - qa_id: privacy
+    category: security
+    requirement: 不新增数据、日志或外部传输；无UI，主题/无障碍不适用。
+    landing: view:development/node:inbox-implementation
+    source_ref: doc/requirement.md
+    verification_refs:
+      - acceptance:AC-1
+      - acceptance:AC-6
+data_domains:
+  - data_domain_id: inbox-messages
+    usage: 既有Message及read状态。
+    retention: 同一MemoryStorage对象生命周期。
+    isolation: 沿用store和storage实例隔离；无账号体系或跨实例同步。
+    cleanup: cancel移除listener；dispose取消订阅。无新增数据清理接口。
+    security: 内存明文；无数据库、安全等级、加密、唯一索引或迁移，不冒称平台能力。id/text不改，不新增去重。

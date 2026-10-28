@@ -95,7 +95,7 @@ current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
 仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
-**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。主 Agent 写 JSON 数组 `[{providerId, artifact}]` 到既有蓝图目录的 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（`<features_dir>` 从 `paths.features_dir` 解析）；蓝图工作区根不放临时件，材料归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。然后在 `framework/harness` 调用公开 consumer 命令；`--accept-candidates` 相对路径按 `--project-root` 解析：
+**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。设计作者写 JSON 数组 `[{providerId, artifact}]` 到既有蓝图目录的 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（`<features_dir>` 从 `paths.features_dir` 解析）；蓝图工作区根不放临时件，材料归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。然后在 `framework/harness` 调用公开 consumer 命令；受管运行由 runtime 消费该原接缝，`--accept-candidates` 相对路径按 `--project-root` 解析：
 ```bash
 npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates "<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json" --json
 npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --readiness --json
@@ -121,8 +121,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 - 施工：[`/change-unit-progression`](../change-unit-progression/SKILL.md)
 - 闭环：[`/component-closure`](../component-closure/SKILL.md)
 
-**边界（BLOCKER）**：本 Skill **停在设计交接**——设计阶段不启动 run：不进入 P2 selector、不进入施工
-循环、不进入 P3 closure、不选择任何 CU。用户已授权完整实现时，外层接收 readiness 后在已有授权内按用户选择启动 attended 或 detached Goal；无人值守的初始设计仍先在当前主 Agent 会话完成，ready 后才 detach；设计专项到此结束（[入口边界](../../../docs/operations/project-entry.md)）。goal run 按共同有效授权派出的设计修复不走本 Skill，子契约见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
+**边界（BLOCKER）**：本 Skill 自身**停在设计交接**：不进入 P2 selector、施工循环或 P3 closure，不选择 CU，也不因直接设计请求启动施工 run。用户已授权完整实现时，原始请求已由同一 Goal runtime 受管；runtime 调用本设计职责，接收真实检查、独立质询与 readiness 后继续原 P2/CU 执行；全部适用 CU 正式完成后仅按原口径只读检查一次部件闭环并披露，不自动修复或改判，不要求主会话先做完设计才启动后台。仅设计请求仍到自身终点结束（[入口边界](../../../docs/operations/project-entry.md)）。受管初建与修订共用作者/质询接缝，具体写界和恢复见 [design-repair-unattended.md](../../reference/design-repair-unattended.md)。
 
 ### 5. 默认本地人读文档与可选宿主接入
 
@@ -142,7 +141,6 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 注意分层：**合法 `component-blueprint@1` 的判据不含 CU 数量**（P1 不反向依赖 P2）——
 `admitted blueprint + 0 CU` 是合法状态、是设计准备子流程的入口；"完整设计交付"才要求 CU。
 
-本结果只代表**设计阶段**完成，不代表任何 Change Unit 已施工、也不代表 Component closure
-已成立。
+本结果只代表**设计阶段**完成，不代表 Change Unit 已施工或 Component closure 已成立。
 
 真实宿主进入条件与缺失路由见 [准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。

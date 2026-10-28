@@ -762,4 +762,10 @@ if (process.platform === 'win32') test('R7 Windows fallback 与 Git 大小写一
   assert(!checks.some(c => c.id === 'component_new_static_checks' && c.details?.includes('#Legacy')));
 }));
 
-export function runAll() { return cases.map(({ name, run }) => { try { run(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } }); }
+export function runSelectedCases(selector?: string) {
+  const results = cases.filter(test => selector === undefined || test.name.includes(selector)).map(({ name, run }) => {
+    try { run(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; }
+  });
+  return { results, matchedCaseCount: results.length, executionTimings: [] };
+}
+export function runAll() { return runSelectedCases().results; }

@@ -1,6 +1,6 @@
 ---
 name: goal-mode
-description: 目标模式生产入口（有人在场先 prepare-run 再走 goal-mode-entry host bridge，无人值守走 detached runner）
+description: 目标模式薄入口；原始需求与初始设计由共同 runtime 受管，会话 next/report 或后台运输
 ---
 
 <!--

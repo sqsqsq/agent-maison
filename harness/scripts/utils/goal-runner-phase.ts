@@ -1687,6 +1687,13 @@ export function resolveValidationOnlyEligibility(
   if (!fact) return null;
   if (opts.artifactsOk && !opts.artifactsOk(fact)) return null;
 
+  const designAttempt = [...events].reverse().find(event => event.type === 'design_authority_repair' && event.phase === fact!.phase
+    && event.stage === 'attempted' && event.handoff_context);
+  const designWaiting = !!designAttempt && events.slice(events.indexOf(designAttempt) + 1).some(event => event.type === 'agent_invoke_end'
+    && event.chain_phase === fact!.phase && event.status === 'waiting' && (event.purpose === 'author' || event.purpose === 'questioning'))
+    && !events.slice(events.indexOf(designAttempt) + 1).some(event => event.type === 'design_authority_repair'
+      && event.signature === designAttempt.signature && (event.stage === 'failed' || event.stage === 'published'));
+
   const after = events.slice(fact.index + 1);
   let interruptSeen = false;
   for (const event of after) {
@@ -1701,6 +1708,9 @@ export function resolveValidationOnlyEligibility(
     if (isInterruptionVerdict(event)) { interruptSeen = true; continue; }
     // 产品裁决（PASS/FAIL/其它 verdict）说明该阶段已经重新判定过，旧事实不再是“只差验证”。
     if (event.type === 'phase_verdict') {
+      // The original author ended before the chain-external design responsibility
+      // paused. Re-run the real gate/transaction, not that already completed author.
+      if (designWaiting && event.action === 'halt' && event.run_disposition === 'WAITING') { interruptSeen = true; continue; }
       const ids = typeof event.blocker_signature === 'string' ? event.blocker_signature.split('|').filter(Boolean) : [];
       const original = event.reconcile_observation as { blockers?: unknown[]; deterministic_defects?: unknown[]; signals?: Record<string, unknown> } | undefined;
       const gate = [...events.slice(fact.index + 1, events.indexOf(event))].reverse().find(row => row.type === 'harness_end'

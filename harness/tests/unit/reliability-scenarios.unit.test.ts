@@ -1587,8 +1587,9 @@ const runS12: ScenarioRunner = async (_entry, done) => {
     }
     return original.call(this, ctx);
   };
-  const request = (): ReturnType<typeof runGoalRuntimeChain> =>
-    runGoalRuntimeChain(root, { adapter: 'codex', executorMode: 'attended', noAutoForce: true, onCoding: writeDone });
+  const request = (resume?: string): ReturnType<typeof runGoalRuntimeChain> =>
+    runGoalRuntimeChain(root, { adapter: 'codex', executorMode: 'attended', noAutoForce: true, onCoding: writeDone,
+      ...(resume ? { resume, forceResume: true, skipLegacySeal: true } : {}) });
   const stoppedHost = async (): Promise<{ run: string; events: Ev[]; halt?: Ev }> => {
     fs.rmSync(root, { recursive: true, force: true });
     clearFrameworkConfigCache();
@@ -1627,8 +1628,7 @@ const runS12: ScenarioRunner = async (_entry, done) => {
       },
     });
 
-    // 重复请求（有人在场，未补授权）：调度方 2026-09-29 裁定有人在场不设冷却——每次重发都重新接入、由原授权检查以同一原因再停，run 数不增加。
-    // 无人值守的"保持停止、不写事件"由 S1/budget 分支的连续重发覆盖。
+    // Presence is not a recovery grant: unchanged requests keep the original stop.
     const rep1 = await stoppedHost();
     const waitsOf = (id: string): number => eventsOf(root, RT_FEATURE, id).filter(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting').length;
     const repeatExits: number[] = [];
@@ -1642,33 +1642,40 @@ const runS12: ScenarioRunner = async (_entry, done) => {
       expectation: () => {
         const reasons = [
           runsAfterRepeat.length === 1 || `重复请求新建了 run：${runsAfterRepeat.join(',')}`,
-          waitsOf(rep1.run) === 1 + repeatExits.length || `每次重发都须以授权确认再停：${waitsOf(rep1.run)}`,
+          waitsOf(rep1.run) === 1 || `无变化重发不得新增作者/停机记录：${waitsOf(rep1.run)}`,
           repeatExits.every(c => c !== 0) || `每次都须停下：${repeatExits.join(',')}`,
         ].filter((x): x is string => typeof x === 'string');
-        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '三次重复请求均重新接入并以授权确认再停，run 数 1' };
+        return { met: reasons.length === 0, detail: reasons.length ? reasons.join('；') : '三次无变化重复请求均保持原停止，run 数 1、原调用 1' };
       },
     });
 
-    // 有人在场、立即重发仍未补授权 → 重新接入后执行者仍停在授权确认处（不新建 run）；补上授权立即重发 → 重新接入并完成。
+    // After the external grant, explicit recovery still uses the same guards.
     const re = await stoppedHost();
     await request();
     const waitsWithoutAuth = eventsOf(root, RT_FEATURE, re.run).filter(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting').length;
     authorized = true;
-    const resumed = await request();
+    const eventsPath = path.join(runsDirOf(root, RT_FEATURE), re.run, 'events.jsonl');
+    fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map(line => {
+      if (!line.trim()) return line;
+      const event = JSON.parse(line) as { type: string; ts?: string };
+      if (event.type === 'run_end') event.ts = new Date(Date.now() - 10 * 60_000).toISOString();
+      return JSON.stringify(event);
+    }).join('\n'));
+    const resumed = await request(re.run);
     const finalEvents = eventsOf(root, RT_FEATURE, re.run);
     done({
       key: 'reauthorized', root, feature: RT_FEATURE, frameworkRoot: REPO_ROOT, runIds: [re.run],
       interventions: [
         { ...RE_REQUEST('有人在场立即重发同一请求（仍未补授权）'), necessary: false },
         { kind: 'reauthorization', actor: 'reliability-scenarios（测试代码，模拟设备所有者）', necessary: true, content: '设备所有者给出授权' },
-        RE_REQUEST('补上授权后重新发起同一请求（未带任何旗标）'),
+        { kind: 'rescue_command', necessary: true, content: `补授权且冷却已过后明确恢复原run：--resume ${re.run} --force-resume（测试仅推进事件时间十分钟，不改变生产时长或跳过检查）` },
       ],
       acceptance: productAcceptance(root),
       after: re.halt ? { run_id: re.run, event_index: re.events.indexOf(re.halt) } : undefined,
-      hit: { ok: !!re.halt && waitsWithoutAuth === 2, evidence: `未补授权的重发后停在授权确认 ${waitsWithoutAuth} 次` },
+      hit: { ok: !!re.halt && waitsWithoutAuth === 1, evidence: `未补授权的无变化重发保留原授权暂停 ${waitsWithoutAuth} 次` },
       expectation: (t) => {
         const reasons = [
-          waitsWithoutAuth === 2 || `未补授权的重发须以原因再停一次：${waitsWithoutAuth}`,
+          waitsWithoutAuth === 1 || `未补授权的无变化重发不得新增调用：${waitsWithoutAuth}`,
           listRuns(root, RT_FEATURE).length === 1 || '不得新建 run',
           resumed.invokedPhases.includes('coding') || `补授权后须执行 coding：${resumed.invokedPhases.join(',')}`,
           /COMPLETED/.test(String(rtRunEnd(finalEvents)?.status ?? '')) || `终态=${String(rtRunEnd(finalEvents)?.status)}`,

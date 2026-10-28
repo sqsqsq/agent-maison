@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { readSessionExecution, acceptedSessionReport, normalizeSessionReport, assertSessionRequestFence, sessionRunMaterialPath, sessionReportInputPath, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { readSessionExecution, acceptedSessionReport, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import type {
@@ -25,9 +25,18 @@ import {
   inheritSuccessorManifest,
   deriveSuccessorRequirement,
   loadGoalManifestFromRun,
+  loadGoalManifestFile,
+  loadGoalManifestDefinition,
+  loadGoalRunManifestFromRun,
+  isInitialDesignManifest,
+  type InitialDesignGoalManifest,
   resolveRequirementInput,
   RUN_ADAPTER_PROVENANCES,
   type GoalManifest,
+  type GoalRunManifest,
+  type GoalBudget,
+  type UnattendedContract,
+  type AdapterModelPin,
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
 import {
@@ -40,6 +49,7 @@ import {
   successorBoundsRefusal,
   resolveActualGoalPhaseChainAtBirth,
   type RunContinuationDecision,
+  loadEffectiveExecutionScope,
 } from './utils/goal-run-creation';
 import { loadLocalConfig } from './utils/framework-local-config';
 import {
@@ -47,7 +57,7 @@ import {
 } from './utils/visual-provider-identity';
 import { resolveWorkflowSpec } from '../workflow-loader';
 import { relFeaturesDir } from '../config';
-import { executionCompletionPhases, executionScopeFingerprint } from './utils/execution-scope';
+import { executionCompletionPhases, executionScopeFingerprint, authorizedScopePhases } from './utils/execution-scope';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl, prepareFeatureScopeCandidate, featureScopePhaseHealth } from './utils/feature-track';
 import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
@@ -58,6 +68,10 @@ import { validateMinimumAssurance } from './utils/skill-contract';
 import { loadGoalCapability, routeGoalCapability } from './utils/goal-adapter-capability';
 import { loadInertLegacyFidelityIntentSsot } from './utils/fidelity-shared';
 import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './utils/design-delivery-entry';
+import { findInitialDesignRun, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignScopeActionIssues } from './utils/initial-design-delivery';
+import type { ProviderRef } from './utils/types';
+import { applyManifestCliOverrides, validateManifestCliOverrides } from './utils/goal-manifest-cli';
+import { readOriginalDeliveryBudget, assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
@@ -97,6 +111,17 @@ export interface PrepareGoalModeRunOptions {
   forceFresh?: boolean;
   budgetOverride?: boolean;
   autonomyAuthorized?: boolean;
+  requestedResults?: string[];
+  requestedPhases?: string[];
+  budget?: GoalBudget;
+  unattended?: UnattendedContract;
+  adapterModelPin?: AdapterModelPin;
+  visualProviderPin?: ProviderRef;
+  fidelity?: GoalManifest['fidelity'];
+  deliveryOrigin?: GoalManifest['delivery_origin'];
+  dependencyPolicy?: GoalManifest['dependency_policy'];
+  minimumAssurance?: GoalManifest['minimum_assurance'];
+  preAuthorizedMutations?: GoalManifest['pre_authorized_mutations'];
 }
 
 /** harness/scripts → framework root；standalone 与 consumer 的目录层级一致。 */
@@ -106,20 +131,36 @@ export function defaultGoalModeFrameworkRoot(scriptDir = __dirname): string {
 
 /** Create the persisted manifest/control skeleton for a fresh attended run. */
 export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
-  manifest: GoalManifest;
+  manifest: GoalRunManifest;
   manifestPath: string;
   runDir: string;
   /** plan 4e6fb3b6 §7：本次 prepare 走了哪条路（新开 = 新出生；重新接入 = 返回既有 run，宿主照常以它的 run id 附着）。 */
   continuation: RunContinuationDecision;
 } {
+  if (options.deliveryOrigin) {
+    assertCanonicalDeliveryChild(options.projectRoot, options.feature, options.deliveryOrigin);
+    const origin = loadGoalRunManifestFromRun(options.projectRoot, options.deliveryOrigin.run_id, { feature: options.deliveryOrigin.feature });
+    if (!isInitialDesignManifest(origin)) throw new Error('[goal-mode-entry] delivery origin is not an original design request');
+    assertGoalRunAttachable(options.projectRoot, origin);
+    const effective = readOriginalDeliveryBudget(options.projectRoot, origin);
+    if (origin.requirement !== options.requirement || origin.adapter !== options.adapter) throw new Error('[goal-mode-entry] child cannot replace original requirement or adapter');
+    options = { ...options, requirementSourceFiles: origin.requirement_source_files, budget: effective?.budget ?? origin.budget, unattended: origin.unattended,
+      adapterSource: typeof origin.adapter_provenance === 'string' && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(origin.adapter_provenance) ? origin.adapter_provenance as RunAdapterProvenance : undefined,
+      adapterModelPin: origin.adapter_model_pin, visualProviderPin: origin.visual_provider_pin, fidelity: origin.fidelity,
+      dependencyPolicy: origin.dependency_policy, minimumAssurance: origin.minimum_assurance, preAuthorizedMutations: origin.pre_authorized_mutations };
+  }
   const feature = options.feature.trim();
   const adapter = options.adapter.trim();
-  const requirement = options.requirement.trim();
-  if (!feature || !adapter || !requirement) {
+  const requirement = options.deliveryOrigin ? options.requirement : options.requirement.trim();
+  if (!feature || !adapter || !requirement.trim()) {
     throw new Error('--prepare-run requires --feature, --adapter, and --requirement');
   }
+  const existingInitial = findInitialDesignRun({ ...options, feature });
+  const previousInitial = existingInitial ?? findInitialDesignRun({ projectRoot: options.projectRoot, feature });
   // plan 4e6fb3b6 §7.3：接续决策在生成出生范围之前执行（与前台、detach 同一个函数）。
-  const continuation: RunContinuationDecision = options.forceFresh
+  const continuation: RunContinuationDecision = existingInitial
+    ? { kind: 'rejoin', explicit: false, runId: existingInitial.run_id, started: true, reason: '接回原始正式请求' }
+    : options.forceFresh
     ? { kind: 'fresh', explicit: true, reason: '显式 --force' }
     : decideRunContinuation({
         projectRoot: options.projectRoot, feature,
@@ -131,8 +172,16 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
         },
       });
   if (continuation.kind === 'hold') throw new Error(`[goal-mode-entry] ${continuation.guidance}`);
-  const next = designDeliveryNextStep({ ...options, feature });
-  if (next) throw new DesignDeliveryPreparationRequired(next);
+  const initial = existingInitial;
+  const next = previousInitial ? null : designDeliveryNextStep({ ...options, feature });
+  if (initial || previousInitial || next) {
+    const prepared = prepareInitialDesignRun({ ...options, feature,
+      visualProviderPin: options.visualProviderPin ?? resolveUnattendedVisualProviderPin(loadLocalConfig(options.projectRoot), options.frameworkRoot).pin });
+    const continuation: RunContinuationDecision = prepared.created
+      ? { kind: 'fresh', explicit: false, reason: '原始正式请求进入同一受管设计段' }
+      : { kind: 'rejoin', explicit: false, runId: prepared.manifest.run_id, started: true, reason: '接回原始正式请求与其现有设计/CU工作' };
+    return { ...prepared, continuation };
+  }
   if (continuation.kind === 'rejoin') {
     const existing = loadGoalManifestFromRun(options.projectRoot, continuation.runId, {
       feature, featuresDir: relFeaturesDir(options.projectRoot),
@@ -165,7 +214,15 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       feature, run_id: options.runId, requirement, adapter: source.adapter,
       ...(options.requirementSourceFiles?.length ? { requirement_source_files: options.requirementSourceFiles } : {}),
       start_phase: source.start_phase, end_phase: source.end_phase,
-      unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
+      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
+      ...(options.budget ? { budget: options.budget } : {}),
+      ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
+      ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
+      ...(options.fidelity ? { fidelity: options.fidelity } : {}),
+      ...(options.deliveryOrigin ? { delivery_origin: options.deliveryOrigin } : {}),
+      ...(options.dependencyPolicy ? { dependency_policy: options.dependencyPolicy } : {}),
+      ...(options.minimumAssurance ? { minimum_assurance: options.minimumAssurance } : {}),
+      ...(options.preAuthorizedMutations ? { pre_authorized_mutations: options.preAuthorizedMutations } : {}),
     }, { projectRoot: options.projectRoot, featuresDir });
     const manifest = inheritSuccessorManifest(birthInput, source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
     // Same budget inheritance and explicit override as the runtime birth path.
@@ -190,6 +247,12 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     return { manifest, manifestPath: path.join(successorDir, 'manifest.json'), runDir: successorDir, continuation };
   }
   // D1.3：出生范围 = 转交时 feature 的**有效**范围（有记录时不重算候选）。
+  if (options.deliveryOrigin) {
+    const original = loadGoalRunManifestFromRun(options.projectRoot, options.deliveryOrigin.run_id, { feature: options.deliveryOrigin.feature });
+    if (!isInitialDesignManifest(original)) throw new Error('[goal-mode-entry] original request is not an initial-design request');
+    const issues = initialDesignScopeActionIssues(options.projectRoot, feature, initialDesignPhasePolicy(options.projectRoot, options.frameworkRoot, original));
+    if (issues.length) throw new Error(issues.join('\n'));
+  }
   const birth = resolveBirthExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, requirement);
   const executionScope = birth.scope;
   if (executionScope && !executionScope.phase_chain.length) throw new Error('[goal-mode-entry] empty scope: verify existing results without creating a run');
@@ -208,13 +271,22 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       end_phase: options.endPhase ?? executionScope?.phase_chain.at(-1) ?? 'testing',
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
-      unattended: { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
+      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
+      ...(options.budget ? { budget: options.budget } : {}),
+      ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
+      ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
+      ...(options.fidelity ? { fidelity: options.fidelity } : {}),
+      ...(options.deliveryOrigin ? { delivery_origin: options.deliveryOrigin } : {}),
+      ...(options.dependencyPolicy ? { dependency_policy: options.dependencyPolicy } : {}),
+      ...(options.minimumAssurance ? { minimum_assurance: options.minimumAssurance } : {}),
+      ...(options.preAuthorizedMutations ? { pre_authorized_mutations: options.preAuthorizedMutations } : {}),
       // plan ab072691 t1③(b)：attended goal 在**创建 manifest 前**冻结只读视觉 provider。
       // 询问/重选发生在宿主会话里（registry setup.visual_provider → init-orchestrate
       // record-visual-provider 机器写盘）；这里只读 local 的既成结果并冻结进 manifest。
       // local 缺失或旧配置失去资格时不伪造 provider；严格需求与能力不足的冲突由
       // fidelity/capability 门禁裁决，optional 视觉轴保持 advisory。
       ...(() => {
+        if (options.visualProviderPin || options.deliveryOrigin) return {};
         let local: ReturnType<typeof loadLocalConfig> = null;
         try {
           local = loadLocalConfig(options.projectRoot);
@@ -482,19 +554,85 @@ export function parseSessionReportResult(value: string, runDir: string, expected
   return normalizeSessionReport(JSON.parse(text));
 }
 
+function resolveOriginalDeliveryRequest(projectRoot: string, original: InitialDesignGoalManifest, requestPath: string): IssuedSessionExecution {
+  const file = path.resolve(requestPath);
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { context?: { feature?: string; runId?: string; runDir?: string } };
+  if (!raw.context?.feature || !raw.context.runId) throw new Error('[session-handoff] invalid delivery request');
+  const current = loadGoalRunManifestFromRun(projectRoot, raw.context.runId, { feature: raw.context.feature });
+  if (!(current.feature === original.feature && current.run_id === original.run_id)
+    && (current.delivery_origin?.feature !== original.feature || current.delivery_origin.run_id !== original.run_id)) throw new Error('[session-handoff] request belongs to another original delivery');
+  if (!isInitialDesignManifest(current)) assertCanonicalDeliveryChild(projectRoot, current.feature, original);
+  const runDir = path.resolve(projectRoot, current.report_dir);
+  if (path.resolve(raw.context.runDir ?? '') !== runDir) throw new Error('[session-handoff] delivery request location mismatch');
+  const issued = readSessionExecution(runDir, file);
+  if (!issued) throw new Error('[session-handoff] request has no signed execution');
+  return issued;
+}
+
 export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOptions, 'executePhase' | 'sessionHandoff'> & {
   requestPath?: string; report?: SessionExecutionReport;
 }): Promise<Record<string, unknown>> {
   assertAttendedRunMode(options.runMode);
+  const deliveryManifest = loadGoalRunManifestFromRun(options.projectRoot, options.runId, { feature: options.feature });
+  const currentOriginal = originalDeliveryForManifest(options.projectRoot, deliveryManifest);
+  if (currentOriginal && (currentOriginal.run_id !== options.runId || currentOriginal.feature !== options.feature)) {
+    return runGoalModeSessionStep({ ...options, feature: currentOriginal.feature, runId: currentOriginal.run_id });
+  }
+  if (!isInitialDesignManifest(deliveryManifest) && deliveryManifest.delivery_origin) {
+    return runGoalModeSessionStep({ ...options, feature: deliveryManifest.delivery_origin.feature, runId: deliveryManifest.delivery_origin.run_id });
+  }
+  if (isInitialDesignManifest(deliveryManifest)) {
+    const original = deliveryManifest;
+    if (original.adapter !== options.adapter) throw new Error('[goal-mode-entry] attach adapter mismatch');
+    const runDir = path.resolve(options.projectRoot, original.report_dir);
+    const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
+    const command = (action: string): string => `npx ts-node ${quote(path.join(options.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(original.feature)} --run-id ${quote(original.run_id)} --adapter ${quote(options.adapter)} --run-mode attended --project-root ${quote(options.projectRoot)} --framework-root ${quote(options.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''} ${action}`;
+    if (options.requestPath) {
+      const request = resolveOriginalDeliveryRequest(options.projectRoot, original, options.requestPath);
+      const prelude = inspectSessionExecutionBeforeRuntime({ runDir: request.request.context.runDir, requestPath: options.requestPath,
+        report: options.report, forceTakeover: options.forceTakeover });
+      if (options.report) {
+        const prior = prelude.accepted;
+        if (prior) {
+          return { type: 'goal_session_report_received', run_id: original.run_id, delivery_run_id: original.run_id, phase: prior.report.phase,
+            status: prior.report.status, duplicate: true, next_command: command('--next'), report: path.resolve(request.request.context.runDir, prior.event.handoff_report!.path) };
+        }
+      }
+    }
+    let issued: IssuedSessionExecution | undefined;
+    const runtime = new GoalPhaseRuntime({ args: ['--feature', original.feature, '--resume', original.run_id,
+      '--project-root', options.projectRoot, '--framework-root', options.frameworkRoot, '--runtime-executor', 'attended', '--runtime-owner', 'session', '--foreground-ok',
+      ...(options.overrideManifest ? ['--override-manifest'] : []), ...(options.forceTakeover ? ['--force-resume'] : [])],
+      authorization: options.authorization, leaseMs: options.leaseMs,
+      sessionHandoff: { requestPath: options.requestPath, report: options.report ? normalizeSessionReport(options.report) : undefined,
+        onRequest: request => { issued = request; } } });
+    const controlLog = path.join(runDir, 'session-control.log');
+    const savedConsole = { log: console.log, warn: console.warn, error: console.error };
+    const log = (...args: unknown[]): void => fs.appendFileSync(controlLog, args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ') + '\n');
+    let exitCode: number;
+    try { console.log = log; console.warn = log; console.error = log; exitCode = await runtime.run(); }
+    finally { Object.assign(console, savedConsole); }
+    if (issued) return { type: 'phase_execute_request', run_id: issued.request.context.runId, delivery_run_id: original.run_id,
+      feature: issued.request.context.feature, phase: issued.request.context.phase, attempt_id: issued.request.context.attemptId,
+      log: controlLog,
+      request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
+      deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
+      status: 'execution_required', status_line: '按原件完成本职并报告；作者调用结束不表示原始交付完成。',
+      next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + sessionReportInputPath(issued.request.context.runDir, issued))}`) };
+    const view = projectInitialDesignDelivery({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest: original });
+    const status = view.complete ? 'completed' : exitCode === 3 || view.recovery?.run_disposition === 'WAITING' ? 'waiting' : 'fused';
+    const result = { status, exit_code: exitCode, halt_reason: view.halt_reason, recovery: view.recovery,
+      issues: view.issues, current: view.current, next_action: view.next_action };
+    return { type: 'goal_session_result', run_id: original.run_id, exit_code: status === 'waiting' ? 0 : exitCode, report_dir: runDir, log: controlLog,
+      result, ...(view.recovery ? { recovery: view.recovery } : {}), ...(view.complete ? {} : { next_command: command('--next') }) };
+  }
   const manifest = loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) });
   if (manifest.adapter !== options.adapter) throw new Error('[goal-mode-entry] attach adapter mismatch');
   assertGoalRunAttachable(options.projectRoot, manifest);
   const runDir = path.resolve(options.projectRoot, manifest.report_dir);
-  const current = readSessionExecution(runDir, options.requestPath);
-  if (options.report) {
-    options = { ...options, report: normalizeSessionReport(options.report) };
-    if (current && current.request.context.phase !== options.report!.phase) throw new Error('[session-handoff] invalid execution phase');
-  }
+  const prelude = inspectSessionExecutionBeforeRuntime({ runDir, requestPath: options.requestPath, report: options.report, forceTakeover: options.forceTakeover });
+  const current = prelude.current;
+  if (prelude.report) options = { ...options, report: prelude.report };
   const quote = (value: string): string => process.platform === 'win32'
     ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\\''")}'`;
   const command = (action: string, commandRunId = options.runId): string => `npx ts-node ${quote(path.join(options.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(options.feature)} --run-id ${quote(commandRunId)} --adapter ${quote(options.adapter)} --run-mode attended --project-root ${quote(options.projectRoot)} --framework-root ${quote(options.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''} ${action}`;
@@ -506,22 +644,13 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
     next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + path.relative(issued.request.context.runDir, sessionReportInputPath(issued.request.context.runDir, issued)).replace(/\\/g, '/'))}`, issued.request.context.runId),
   });
-  if (options.report && !current) throw new Error('[session-handoff] report has no signed request');
   if (current) {
-    const accepted = acceptedSessionReport(runDir, current);
+    const accepted = prelude.accepted;
     if (accepted && options.report) {
-      if (JSON.stringify(accepted.report) !== JSON.stringify(options.report)) throw new Error('[session-handoff] conflicting execution report');
       return { type: 'goal_session_report_received', run_id: options.runId, phase: accepted.report.phase, status: accepted.report.status, duplicate: true,
         next_command: command('--next'), report: path.resolve(runDir, accepted.event.handoff_report!.path) };
     }
-    if (!accepted) {
-      const control = readRunControl(runDir, options.runId);
-      const releasedForTakeover = options.forceTakeover && !options.report && control?.owner?.state === 'released'
-        && control.current_epoch === current.request.context.owner.epoch && control.owner.owner_id === current.request.context.owner.owner_id;
-      if (!releasedForTakeover) assertSessionRequestFence(runDir, current);
-      if (releasedForTakeover) { /* runtime acquires and appends the replacement fence under its physical locks */ }
-      else if (!options.report && Date.parse(current.request.deadline) > Date.now()) return project(current);
-    }
+    if (prelude.reusable) return project(prelude.reusable);
   }
   let issued: IssuedSessionExecution | undefined;
   const controlLog = path.join(runDir, 'session-control.log');
@@ -568,9 +697,9 @@ async function main(): Promise<void> {
       'completion-target', 'requested-results', 'requested-phases',
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
-      'requirement-file',
+      'requirement-file', 'manifest',
     ],
-    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest'],
+    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest', 'override-start', 'override-end'],
   });
   if (argv.help) {
     console.log(
@@ -580,8 +709,10 @@ async function main(): Promise<void> {
       'Scope candidate (run this BEFORE --prepare-run; the two flags are mutually exclusive):\n' +
       '  --prepare-scope --feature <f> --completion-target <request|feature>\n' +
       '    --requested-results "<text>" (repeatable) --requested-phases spec,plan,coding,review,ut\n' +
+      '    requested-phases declares actual work, within the authorized phases; a default six-phase allowance is not six explicit requests. Feature evidence is still derived.\n' +
       '    [--requirement "<text>" | --requirement-file <path>]  same text you will pass to --prepare-run\n' +
       '    [--impact-behavior-change true|false --impact-reason "<text>" --impact-basis <path>]  all three or none\n' +
+      '    true means end-user-visible runtime behaviour and requires testing/device prerequisites; false retains device/visual acceptance duties. Missing tools never justify false.\n' +
       '    [--overwrite]  only when an existing candidate differs from the generated one\n' +
       '  e.g. --prepare-scope --feature ledger-refresh --completion-target feature\n' +
       '       --requested-results "refreshed balance is correct" --requested-phases coding,review,ut\n' +
@@ -591,9 +722,25 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const feature = String(argv.feature ?? '').trim();
+  const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
+  const frameworkRoot = path.resolve(String(argv['framework-root'] ?? defaultGoalModeFrameworkRoot()));
+  const inputDefinition = argv.manifest && argv['prepare-run'] ? loadGoalManifestDefinition(String(argv.manifest), projectRoot) : undefined;
+  const inputManifest = inputDefinition?.manifest;
+  if (argv.manifest && !argv['prepare-run']) throw new Error('[goal-mode-entry] --manifest is a prepare-run input; subsequent controls use the returned run identity');
+  const suppliedRequirement = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot });
+  if (inputManifest) {
+    const overrides = { manifest: String(argv.manifest), adapter: typeof argv.adapter === 'string' ? argv.adapter : undefined,
+      start: typeof argv.start === 'string' ? argv.start : undefined, end: typeof argv.end === 'string' ? argv.end : undefined,
+      requirement: suppliedRequirement.text, requirement_source_files: suppliedRequirement.sources,
+      'override-manifest': Boolean(argv['override-manifest']), 'override-start': Boolean(argv['override-start']), 'override-end': Boolean(argv['override-end']) };
+    const validation = validateManifestCliOverrides(overrides);
+    if (!validation.ok) throw new Error(validation.message);
+    applyManifestCliOverrides(inputManifest, overrides);
+    if (argv.feature && argv.feature !== inputManifest.feature) throw new Error('[goal-mode-entry] --feature differs from --manifest');
+  }
+  const feature = String(argv.feature ?? inputManifest?.feature ?? '').trim();
   const runId = String(argv['run-id'] ?? '').trim();
-  const adapter = String(argv.adapter ?? '').trim();
+  const adapter = String(argv.adapter ?? inputManifest?.adapter ?? '').trim();
   const runMode = String(argv['run-mode'] ?? '').trim();
   const prepareRun = Boolean(argv['prepare-run']);
   const prepareScope = Boolean(argv['prepare-scope']);
@@ -608,8 +755,6 @@ async function main(): Promise<void> {
   if (adapterSourceRaw && !adapterSources.has(adapterSourceRaw)) {
     throw new Error(`--adapter-source 非法：${adapterSourceRaw}`);
   }
-  const projectRoot = path.resolve(String(argv['project-root'] ?? process.cwd()));
-  const frameworkRoot = path.resolve(String(argv['framework-root'] ?? defaultGoalModeFrameworkRoot()));
   if (prepareRun) {
     const prepared = prepareGoalModeRun({
       projectRoot,
@@ -617,6 +762,10 @@ async function main(): Promise<void> {
       feature,
       runId: runId || undefined,
       adapter,
+      ...(inputManifest ? { budget: inputManifest.budget, unattended: inputManifest.unattended,
+        adapterModelPin: inputManifest.adapter_model_pin, visualProviderPin: inputManifest.visual_provider_pin, fidelity: inputManifest.fidelity,
+        dependencyPolicy: inputManifest.dependency_policy, minimumAssurance: inputManifest.minimum_assurance, preAuthorizedMutations: inputManifest.pre_authorized_mutations,
+        ...(inputManifest.adapter_provenance && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(inputManifest.adapter_provenance) ? { adapterSource: inputManifest.adapter_provenance as RunAdapterProvenance } : {}) } : {}),
       ...(adapterSourceRaw
         ? { adapterSource: adapterSourceRaw as RunAdapterProvenance }
         : {}),
@@ -630,12 +779,15 @@ async function main(): Promise<void> {
           projectRoot,
         });
         return {
-          requirement: resolved.text ?? '',
-          ...(resolved.sources.length > 0 ? { requirementSourceFiles: resolved.sources } : {}),
+          requirement: inputManifest?.requirement ?? resolved.text ?? '',
+          ...(inputManifest?.requirement_source_files?.length ? { requirementSourceFiles: inputManifest.requirement_source_files }
+            : resolved.sources.length > 0 ? { requirementSourceFiles: resolved.sources } : {}),
         };
       })(),
-      startPhase: typeof argv.start === 'string' ? argv.start : undefined,
-      endPhase: typeof argv.end === 'string' ? argv.end : undefined,
+      startPhase: inputManifest?.start_phase ?? (typeof argv.start === 'string' ? argv.start : undefined),
+      endPhase: inputManifest?.end_phase ?? (typeof argv.end === 'string' ? argv.end : undefined),
+      requestedPhases: inputDefinition?.requestedPhases,
+      requestedResults: inputDefinition?.requestedResults,
       forceFresh: Boolean(argv.force),
       budgetOverride: Boolean(argv['override-manifest']),
       autonomyAuthorized: Boolean(argv['authorize-autonomy']),
@@ -755,8 +907,10 @@ async function main(): Promise<void> {
   if (argv['report-result'] && !argv.request) throw new Error('--report-result requires --request');
   let report: SessionExecutionReport | undefined;
   if (typeof argv['report-result'] === 'string') {
-    const reportRunDir = path.resolve(projectRoot, loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir: relFeaturesDir(projectRoot) }).report_dir);
-    const issued = readSessionExecution(reportRunDir, path.resolve(String(argv.request)));
+    const selected = loadGoalRunManifestFromRun(projectRoot, runId, { feature, featuresDir: relFeaturesDir(projectRoot) });
+    const bound = isInitialDesignManifest(selected) ? resolveOriginalDeliveryRequest(projectRoot, selected, path.resolve(String(argv.request))) : null;
+    const reportRunDir = bound?.request.context.runDir ?? path.resolve(projectRoot, selected.report_dir);
+    const issued = bound ?? readSessionExecution(reportRunDir, path.resolve(String(argv.request)));
     if (!issued) throw new Error('[session-handoff] report has no signed request');
     report = parseSessionReportResult(argv['report-result'], reportRunDir, sessionReportInputPath(reportRunDir, issued));
   }

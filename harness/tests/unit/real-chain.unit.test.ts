@@ -50,7 +50,7 @@ import { featureRelativePath } from '../../scripts/utils/feature-identity';
 import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { loadCanonicalChangeUnit, asChangeUnitArtifact, createChangeUnitRef, parseChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
-import { loadEffectiveExecutionScope, loadFrozenExecutionScope } from '../../scripts/utils/goal-run-creation';
+import { loadEffectiveExecutionScope, loadFrozenExecutionScope, assertGoalRunAttachable } from '../../scripts/utils/goal-run-creation';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { authorCurrentCuPlan } from './component-design-handoff.unit.test';
@@ -58,6 +58,10 @@ import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path'
 import { BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { tryAcquireLock, releaseLock } from '../../scripts/utils/goal-run-lock';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
+import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
+import { loadGoalRunManifestFromRun, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
+import { readOriginalDeliveryBudget } from '../../scripts/utils/delivery-origin';
+import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
 import { probeDesignAuthorityRecovered } from '../../scripts/utils/condition-wait';
@@ -1759,16 +1763,6 @@ function deliveryCli(p: RealChainProject, script: string, args: string[], nodeAr
   return { ...result, json, diagnostic: `${result.status}: ${stdout}\n${result.stderr}` };
 }
 
-function deliveryStepArgs(step: any, feature: string): string[] {
-  const replacements: Record<string, string[]> = {
-    '<project-root>': [step.parameters.project_root], '<returned-feature-id>': [feature],
-    '<requested-results>': ['交付账本功能（结果描述不同于原需求）'],
-    '<requested-phases>': [step.parameters.requested_phases.join(',')],
-    '<requirement-arguments>': step.parameters.requirement_arguments,
-  };
-  return step.command.split(' ').slice(3).flatMap((token: string) => replacements[token] ?? [token]);
-}
-
 function deliveryProfile(p: RealChainProject, name: string): void {
   const file = path.join(p.root, 'framework.config.json');
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -1777,254 +1771,67 @@ function deliveryProfile(p: RealChainProject, name: string): void {
   clearFrameworkConfigCache();
 }
 
-test('5f8c2d70 raw requirement → main Agent design/questioning → public consumer → detached CU Goal first phase', async () => {
+test('5f8c2d70 managed raw entry births its original root before design and preserves standalone task identity', async () => {
   const p = provisionRealChainProject();
+  const previousTrust = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+  process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(p.root, '.test-checkpoints');
   try {
     scaffoldRealChainHost(p);
     fs.rmSync(path.join(p.root, 'doc/features'), { recursive: true, force: true });
     deliveryProfile(p, 'hmos-app');
+    writeLocalConfig(p.root, { schema_version: '1.0', agent_adapter: 'codex' });
     writeHostFile(p.root, 'request.md', CU_REQUIREMENT);
-    const rawFeature = 'ledger-new-delivery';
-    const scopeArgs = ['--project-root', p.root, '--prepare-scope', '--feature', rawFeature, '--completion-target', 'feature', '--requested-results', CU_REQUIREMENT, '--requested-phases', 'spec,plan,coding,review,ut', '--requirement-file', 'request.md'];
-    for (const [script, args] of [
-      ['goal-runner.ts', ['--feature', rawFeature, '--requirement-file', 'request.md', '--adapter', 'codex', '--detach']],
-      ['goal-runner.ts', ['--feature', rawFeature, '--requirement-file', 'request.md', '--adapter', 'codex']],
-      ['goal-mode-entry.ts', scopeArgs],
-      ['goal-mode-entry.ts', ['--project-root', p.root, '--prepare-run', '--feature', rawFeature, '--adapter', 'codex', '--run-mode', 'attended', '--requirement-file', 'request.md']],
-    ] as Array<[string, string[]]>) {
-      const result = deliveryCli(p, script, args);
-      assert(result.status === 0 && result.json?.type === 'design_preparation_required', result.diagnostic);
-      assert(result.json.steps[1].command.includes('--accept-candidates') && result.json.steps[2].parameters.project_root === p.root, 'next steps must carry executable commands and parameter sources');
-      assert(result.json.steps[1].command.includes(`--accept-candidates "${result.json.materials.features_dir}/<actual-blueprint-id>/blueprint/change-unit-candidates.json"`), 'candidate command must use the configured blueprint directory');
-      assert(!fs.existsSync(path.join(p.root, 'doc/features', rawFeature)), 'raw entry must not create a flat candidate/run/log directory');
-    }
-    for (const detached of [false, true]) {
-      const flags = detached ? ['--detach'] : ['--foreground-ok'];
-      writeHostFile(p.root, 'entry-manifest.yaml', YAML.stringify({ feature: rawFeature, start_phase: 'spec', end_phase: 'spec', adapter: 'codex', requirement: CU_REQUIREMENT, requirement_source_files: ['request.md'] }));
-      const definition = deliveryCli(p, 'goal-runner.ts', ['--manifest', 'entry-manifest.yaml', ...flags]);
-      assert(definition.status === 0 && definition.json?.type === 'design_preparation_required', definition.diagnostic);
-      assert(definition.json.steps[2].parameters.requested_phases.join(',') === 'spec' && definition.json.materials.requirement === CU_REQUIREMENT && definition.json.materials.requirement_source_files.join(',') === 'request.md', 'manifest-only definition must retain effective request and bounds');
-      writeHostFile(p.root, 'entry-manifest.yaml', YAML.stringify({ feature: `${rawFeature}-coding-${detached}`, start_phase: 'coding', end_phase: 'coding', adapter: 'codex', requirement: 'only implementation' }));
-      const coding = deliveryCli(p, 'goal-runner.ts', ['--manifest', 'entry-manifest.yaml', ...flags]);
-      assert(!coding.diagnostic.includes('design_preparation_required') && coding.status === 1, 'manifest coding-only must reach original missing-scope check, not default spec design');
-      const override = deliveryCli(p, 'goal-runner.ts', ['--manifest', 'entry-manifest.yaml', '--start', 'spec', '--override-start', '--end', 'spec', '--override-end', '--requirement-file', 'request.md', '--override-manifest', ...flags]);
-      assert(override.status === 0 && override.json?.type === 'design_preparation_required' && override.json.materials.requirement === CU_REQUIREMENT && override.json.materials.requirement_source_files.join(',') === 'request.md', override.diagnostic);
-      const invalidOverride = deliveryCli(p, 'goal-runner.ts', ['--manifest', 'entry-manifest.yaml', '--start', 'spec', ...flags]);
-      assert(invalidOverride.status !== 0 && invalidOverride.diagnostic.includes('override mismatch') && !invalidOverride.diagnostic.includes('design_preparation_required'), 'unauthorized override must retain original validation');
-    }
-    assert(!fs.existsSync(path.join(p.root, 'doc/features', rawFeature)), 'manifest design preparation must leave the raw Feature empty');
-    const flatCandidate = 'execution_scope:\n  request:\n    completion_target: feature\n    requested_phases: [spec, plan]\n';
-    writeHostFile(p.root, `doc/features/${rawFeature}/feature.yaml`, flatCandidate);
-    fs.mkdirSync(path.join(p.root, 'doc/features', rawFeature, 'goal-runs/failed-start'), { recursive: true });
-    const replay = deliveryCli(p, 'goal-mode-entry.ts', scopeArgs);
-    assert(replay.json?.type === 'design_preparation_required' && fs.readFileSync(path.join(p.root, 'doc/features', rawFeature, 'feature.yaml'), 'utf8') === flatCandidate, replay.diagnostic);
-    assert(fs.readdirSync(path.join(p.root, 'doc/features', rawFeature, 'goal-runs')).length === 1, 'empty failed-start directory and unfrozen candidate must not become a valid task');
-    // Main Agent substitute reads the response and writes a DRAFT from known source/design inputs.
-    // No admitted blueprint or CU exists at setup; independent questioning and admission follow below.
-    const input = path.resolve(__dirname, '../fixtures/component-blueprint/valid');
-    for (const dir of ['src', 'test', 'requirements', 'contracts', 'mappings']) fs.cpSync(path.join(input, dir), path.join(p.root, dir), { recursive: true });
-    fs.copyFileSync(path.join(input, 'doc/module-catalog.yaml'), path.join(p.root, 'doc/module-catalog.yaml'));
-    const blueprint: any = YAML.parse(fs.readFileSync(path.join(input, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml'), 'utf8'));
-    const candidate: any = YAML.parse(fs.readFileSync(path.join(input, 'doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml'), 'utf8'));
-    const questions = blueprint.review_summary.questioning.items;
-    blueprint.review_summary.questioning.items = [];
-    blueprint.review_summary.questioning.status = 'incomplete';
-    blueprint.review_summary.admission.status = 'blocker';
-    blueprint.review_summary.admission.root_questions_complete = false;
-    blueprint.review_summary.admission.current_slice.contracts_ready = false;
-    blueprint.review_summary.admission.current_slice.design_refs_ready = false;
-    const node = asRecord(resolveBlueprintTarget(blueprint, candidate.design_refs[0].target))!;
-    const readDesign = (name: string) => YAML.parse(fs.readFileSync(path.resolve(__dirname, '../fixtures/blueprint-design-inputs', `${name}.yaml`), 'utf8'));
-    node.provenance = { ...asRecord(node.provenance), evidence_strength: 'authoritative' };
-    node.acceptance = readDesign('acceptance'); node.contracts = readDesign('contracts'); node.use_cases = readDesign('use-cases');
-    node.contracts = JSON.parse(JSON.stringify(node.contracts).split('test/ledger/LedgerFeature.test.ets').join(CU_TEST).split('planned:').join(''));
-    (node.contracts as any).modules = [{ name: 'ledger', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: 'src/ledger' }];
-    (node.contracts as any).files = [CU_SOURCE];
-    for (const useCase of (node.use_cases as any).use_cases) {
-      useCase.coordinator = 'LedgerFeature.add';
-      useCase.ui_bindings = [{ ui: 'LedgerPage', role: 'entry', user_actions: [{ trigger: '点击新增账目', calls: 'LedgerFeature.add' }] }];
-    }
-    writeHostFile(p.root, CU_SOURCE, 'export class LedgerFeature { balance(): number { return 0; } }\n');
-    writeHostFile(p.root, CU_TEST, "import { describe } from '@ohos/hypium';\ndescribe('LedgerFeature', () => {});\n");
-    writeHostFile(p.root, 'src/ledger/ClosureFixture.ts', 'export const currentLedger = true;\n');
-    const configFile = path.join(p.root, 'framework.config.json');
-    const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    config.architecture.outer_layers.push({ id: 'src', can_depend_on: [], intra_layer_deps: 'dag' });
-    fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-    const flow = asRecord(resolveBlueprintTarget(blueprint, candidate.design_refs.find((ref: any) => ref.target.kind === 'flow').target))!;
-    flow.provenance = { ...asRecord(flow.provenance), evidence_strength: 'authoritative' }; flow.contracts = readDesign('runtime');
-    const blueprintRel = 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.yaml';
-    const checkArgs = ['--project-root', p.root, '--blueprint', 'ledger-app-blueprint', '--write-review', '--json'];
-    writeHostFile(p.root, blueprintRel, YAML.stringify(blueprint));
-    const draft = deliveryCli(p, 'check-component-blueprint.ts', checkArgs);
-    assert(draft.status === 1 && draft.json?.issues?.some((row: any) => row.id.startsWith('blueprint_questioning_')), draft.diagnostic);
-    const cuArgs = ['--project-root', p.root, '--blueprint', 'ledger-app-blueprint', '--json'];
-    const candidatesRel = 'doc/features/ledger-app-blueprint/blueprint/change-unit-candidates.json';
-    writeHostFile(p.root, candidatesRel, '[]');
-    assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]).status === 1, 'draft must not enter decomposition');
-    assert(fs.existsSync(path.join(p.root, candidatesRel)), 'entry rejection must preserve candidates');
-    // Isolated questioning substitute consumes the draft/evidence, writes its own coverage rows.
-    blueprint.review_summary.questioning.items = questions.map((q: any, index: number) => ({ ...q, question_id: `isolated-${index}`, question: `证据是否支持 ${q.scope_ref}？`, answer: `已核对 ${q.evidence_refs.join(', ')}；${q.answer}` }));
-    blueprint.review_summary.questioning.status = 'complete';
-    writeHostFile(p.root, blueprintRel, YAML.stringify(blueprint));
-    let checked = deliveryCli(p, 'check-component-blueprint.ts', checkArgs);
-    // The author substitute only patches expected values exposed by public CLI diagnostics.
-    const admissionPaths = new Set([
-      '$.review_summary.admission.status', '$.review_summary.admission.root_questions_complete',
-      '$.review_summary.admission.current_slice.contracts_ready', '$.review_summary.admission.current_slice.design_refs_ready',
-    ]);
-    let correctionRounds = 0;
-    while (checked.status !== 0 && correctionRounds < 2) {
-      const corrections = (checked.json?.issues ?? []).filter((row: any) => admissionPaths.has(row.path));
-      assert(corrections.length > 0, checked.diagnostic);
-      console.log('5f8c2d70 public admission diagnostics', JSON.stringify(corrections));
-      for (const row of corrections) {
-        const expected = /派生为 (true|false|pass|blocker)[。，]/.exec(row.message)?.[1];
-        assert(!!expected, `public diagnostic lacks an expected admission value: ${JSON.stringify(row)}`);
-        const keys = row.path.slice(2).split('.');
-        const parent = keys.slice(0, -1).reduce((value: any, key: string) => value[key], blueprint);
-        parent[keys.at(-1)] = expected === 'true' ? true : expected === 'false' ? false : expected;
-      }
-      writeHostFile(p.root, blueprintRel, YAML.stringify(blueprint));
-      correctionRounds += 1;
-      checked = deliveryCli(p, 'check-component-blueprint.ts', checkArgs);
-    }
-    assert(correctionRounds > 0 && checked.status === 0, `public admission correction failed after ${correctionRounds}/2 rounds: ${checked.diagnostic}`);
-    const admittedBytes = fs.readFileSync(path.join(p.root, blueprintRel), 'utf8');
-    const decompositionNext = deliveryCli(p, 'goal-mode-entry.ts', scopeArgs);
-    assert(decompositionNext.json?.type === 'design_preparation_required' && fs.readFileSync(path.join(p.root, blueprintRel), 'utf8') === admittedBytes, 'admitted blueprint with zero CU must retain design and only need decomposition');
-    candidate.target_predicates.forEach((row: any) => row.verification_refs.push('acceptance:AC-1'));
-    const hash = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(path.join(p.root, blueprintRel))).digest('hex')}`;
-    const bind = (value: any): void => { if (!value || typeof value !== 'object') return; if (value.artifact === 'component-blueprint@1') { value.artifact_sha256 = hash; value.source_fingerprint = blueprint.source_fingerprint; } Object.values(value).forEach(bind); };
-    bind(candidate);
-    const providerId = 'builtin-vertical-slice-decomposition';
-    candidate.provenance.extraction_method = providerId;
-    const candidates = [{ providerId, artifact: candidate }];
-    const malformed = structuredClone(candidate); malformed.change_unit_id = 'invalid-unit'; malformed.target_predicates = [];
-    const invalidCandidates = JSON.stringify([...candidates, { providerId, artifact: malformed }]);
-    writeHostFile(p.root, candidatesRel, invalidCandidates);
-    assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]).status === 1, 'invalid batch must fail');
-    assert(fs.readFileSync(path.join(p.root, candidatesRel), 'utf8') === invalidCandidates, 'rejected batch must preserve candidate bytes');
-    const cuPath = path.join(p.root, 'doc/features/ledger-app-blueprint/ledger-refresh/change-unit.yaml');
-    assert(!fs.existsSync(cuPath), 'batch must not partly accept the valid candidate');
-    writeHostFile(p.root, candidatesRel, JSON.stringify(candidates));
-    const lock = path.join(p.root, 'doc/features/ledger-app-blueprint', BLUEPRINT_RECONCILE_LOCK_NAME);
-    const locked = tryAcquireLock(lock, { ownerId: 'readiness-test', pid: process.pid });
-    assert(locked !== null, 'test must own readiness lock');
-    const accepted = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]);
-    releaseLock(lock, 'readiness-test');
-    assert(accepted.status === 1 && accepted.json?.accepted?.length === 1 && accepted.json?.readiness?.blueprintRefs?.busy
-      && accepted.json.readiness.ready === false && accepted.json.ready_ids.length === 0, accepted.diagnostic);
-    assert(!fs.existsSync(path.join(p.root, candidatesRel)), 'accepted candidates must be removed even when readiness is busy');
-    const bytes = fs.readFileSync(cuPath, 'utf8');
-    writeHostFile(p.root, candidatesRel, JSON.stringify(candidates));
-    const duplicate = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel]);
-    assert(duplicate.status === 1 && duplicate.json.issues[0].id === 'change_unit_candidate_already_exists', duplicate.diagnostic);
-    assert(fs.existsSync(path.join(p.root, candidatesRel)), 'duplicate rejection must retain its input');
-    // A real filesystem failure in review materialization cannot revoke accepted/ready CUs.
-    const reviewPath = path.join(p.root, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.review.md');
-    fs.rmSync(reviewPath);
-    fs.mkdirSync(reviewPath);
-    const documentCandidate = { ...structuredClone(candidate), change_unit_id: 'z-document-failure' };
-    const documentCandidatesRel = 'doc/features/ledger-app-blueprint/blueprint/document-candidates.json';
-    writeHostFile(p.root, documentCandidatesRel, JSON.stringify([{ providerId, artifact: documentCandidate }]));
-    const documentFailure = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', documentCandidatesRel]);
-    assert(documentFailure.status === 0 && documentFailure.json.status === 'PASS'
-      && documentFailure.json.accepted.length === 1 && documentFailure.json.accepted[0].change_unit_id === 'z-document-failure'
-      && documentFailure.json.readiness.ready && documentFailure.json.ready_ids.includes('z-document-failure')
-      && documentFailure.json.ready_ids.includes('ledger-refresh'), documentFailure.diagnostic);
-    assert(!fs.existsSync(path.join(p.root, documentCandidatesRel)), 'accepted candidates must be removed even when review materialization fails');
-    assert(documentFailure.json.acceptanceReview.status === 'failed' && documentFailure.json.readiness.reviewDocument.status === 'failed'
-      && documentFailure.json.acceptanceReview.reason && documentFailure.json.readiness.reviewDocument.rebuildCommand
-      && documentFailure.json.next.includes('文档物化失败') && documentFailure.json.next.includes('独立重建'), documentFailure.diagnostic);
-    assert(fs.existsSync(documentFailure.json.accepted[0].canonical_path) && fs.readFileSync(cuPath, 'utf8') === bytes, 'document failure must preserve both accepted canonical facts');
-    console.log('5f8c2d70 document failure result', JSON.stringify({ status: documentFailure.json.status, exit: documentFailure.status, accepted: documentFailure.json.accepted, ready: documentFailure.json.readiness.ready, ready_ids: documentFailure.json.ready_ids, acceptanceReview: documentFailure.json.acceptanceReview, reviewDocument: documentFailure.json.readiness.reviewDocument, next: documentFailure.json.next }));
-    const documentRetry = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--readiness']);
-    assert(documentRetry.status === 0 && documentRetry.json.readiness.ready && documentRetry.json.ready_ids.includes('z-document-failure')
-      && documentRetry.json.readiness.reviewDocument.status === 'failed' && documentRetry.json.next.includes('独立重建'), documentRetry.diagnostic);
-    fs.rmdirSync(reviewPath);
-    const rebuilt = deliveryCli(p, 'check-component-blueprint.ts', checkArgs);
-    assert(rebuilt.status === 0 && rebuilt.json.review_document.status !== 'failed', rebuilt.diagnostic);
-    const ready = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--readiness']);
-    assert(ready.status === 0 && ready.json.readiness.ready && fs.readFileSync(cuPath, 'utf8') === bytes, ready.diagnostic);
-    const again = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--readiness']);
-    assert(again.status === 0 && fs.readFileSync(cuPath, 'utf8') === bytes, 'repeated readiness must retain canonical identity/content');
-    const cleanupCandidate = { ...structuredClone(candidate), change_unit_id: 'z-cleanup-failure' };
-    writeHostFile(p.root, candidatesRel, JSON.stringify([{ providerId, artifact: cleanupCandidate }]));
-    const cleanupPreload = path.join(p.root, 'fail-candidate-cleanup.cjs');
-    fs.writeFileSync(cleanupPreload, `const fs = require('fs'); const unlink = fs.unlinkSync;
-fs.unlinkSync = (file, ...args) => {
-  if (file === ${JSON.stringify(path.join(p.root, candidatesRel))}) throw new Error('simulated candidate cleanup failure');
-  return unlink(file, ...args);
-};\n`);
-    const cleanupFailure = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--accept-candidates', candidatesRel], ['--require', cleanupPreload]);
-    assert(cleanupFailure.status === 0 && cleanupFailure.json.accepted.length === 1 && cleanupFailure.json.readiness.ready
-      && fs.existsSync(cleanupFailure.json.accepted[0].canonical_path), cleanupFailure.diagnostic);
-    assert(fs.existsSync(path.join(p.root, candidatesRel)) && cleanupFailure.stderr.includes('临时文件清理失败')
-      && cleanupFailure.stderr.includes('--readiness'), 'cleanup failure must warn without revoking acceptance or requesting reacceptance');
-    assert(fs.existsSync(path.join(p.root, 'doc/features/ledger-app-blueprint/blueprint/component-blueprint.review.md')), 'readiness retains document materialization side effect');
-    const canonical = loadCanonicalChangeUnit(p.root, 'ledger-app-blueprint', 'ledger-refresh');
-    const writeUnit = (id: string, patch: any = {}) => {
-      const unit = { ...structuredClone(canonical.changeUnit), change_unit_id: id, ...patch };
-      writeHostFile(p.root, `doc/features/ledger-app-blueprint/${id}/change-unit.yaml`, YAML.stringify(unit));
-      return loadCanonicalChangeUnit(p.root, 'ledger-app-blueprint', id);
-    };
-    const retired = writeUnit('retired-slice');
-    writeUnit('replacement-slice', { supersedes: createChangeUnitRef(retired) });
-    writeUnit('waiting-slice', { requires: [{ require_id: 'wait-for-refresh', from_change_unit_id: 'ledger-refresh', provide_id: (canonical.changeUnit.provides as any[])[0].provide_id }] });
-    const multi = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--readiness']);
-    assert(multi.status === 0 && multi.json.ready_ids.includes('ledger-refresh') && multi.json.ready_ids.includes('replacement-slice'), multi.diagnostic);
-    assert(!multi.json.ready_ids.includes('retired-slice') && !multi.json.ready_ids.includes('waiting-slice'), 'retired and unsatisfied dependency must not be executable');
-    assert(multi.json.inventory.some((row: any) => row.change_unit_id === 'retired-slice') && multi.json.next.includes('inventory'), 'inventory must explicitly retain and distinguish historical identity');
-    // hmos canonical birth reaches the substituted executor through each real entry, with no model.
-    for (const entry of ['foreground', 'detach'] as const) {
-      const id = `hmos-${entry}`;
-      writeUnit(id);
-      const hmosFeature = deriveChangeUnitFeatureId('ledger-app-blueprint', id);
-      const hmosScope = deliveryCli(p, 'goal-mode-entry.ts', deliveryStepArgs(decompositionNext.json.steps[2], hmosFeature));
-      assert(hmosScope.status === 0 && hmosScope.json.type === 'scope_candidate_prepared', hmosScope.diagnostic);
-      const probe = await requestVia(entry, p.root, { frameworkRoot: p.frameworkRoot, featureId: hmosFeature,
-        freshStartPhase: hmosScope.json.phase_chain[0], freshEndPhase: hmosScope.json.phase_chain.at(-1),
-        freshRequirement: CU_REQUIREMENT, omitRequirement: true, launchArgs: decompositionNext.json.steps[3].parameters.requirement_arguments, freshBudget: { max_total_turns: 1 }, failExecutorFor: () => true });
-      assert(probe.invokedPhases.includes(hmosScope.json.phase_chain[0]) && (entry !== 'detach' || !!probe.childArgs), `hmos canonical ${entry} must pass birth and reach executor`);
-      assert(JSON.parse(fs.readFileSync(path.join(p.root, 'framework.config.json'), 'utf8')).project_profile.name === 'hmos-app', 'hmos release path must retain its profile');
-    }
-    const feature = ready.json.inventory.find((row: any) => row.change_unit_id === ready.json.ready_ids[0]).feature_id;
-    assert(feature === deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh'), 'Feature must come from canonical CU identity');
-    const old = deliveryCli(p, 'check-change-unit.ts', [...cuArgs, '--unit', 'ledger-refresh']);
-    assert(old.status === 0 && old.json.status === 'PASS' && old.json.canonical_path === cuPath && !old.json.readiness, old.diagnostic);
-    for (const args of [['--readiness', '--unit', 'ledger-refresh'], ['--readiness', '--accept-candidates', candidatesRel]]) assert(deliveryCli(p, 'check-change-unit.ts', [...cuArgs, ...args]).status === 2, 'operations must reject mixed arguments');
-    // Consume the returned command/arguments, rather than reconstructing the original CLI.
-    const scopeStep = decompositionNext.json.steps[2];
-    const scopeCommand = deliveryStepArgs(scopeStep, feature);
-    assert(JSON.stringify(scopeStep.parameters.requirement_arguments) === JSON.stringify(['--requirement-file', 'request.md']), 'scope command must retain original requirement source');
-    assert(JSON.stringify(decompositionNext.json.steps[3].parameters.requirement_arguments) === JSON.stringify(scopeStep.parameters.requirement_arguments), 'scope and Goal use the same request arguments');
-    const prepared = deliveryCli(p, 'goal-mode-entry.ts', [...scopeCommand, '--overwrite']);
-
-    assert(prepared.status === 0 && prepared.json.type === 'scope_candidate_prepared', prepared.diagnostic);
-    // Actual Goal launcher/runtime and actual harness first phase; transport/model are substitutes.
-    deliveryProfile(p, 'test-chain');
-    git(p.root, ['add', '-A']); git(p.root, ['commit', '-qm', 'test design handoff']);
-    const cu = { ...p, feature, module: 'ledger', modulePath: 'src/ledger' };
-    const phases: string[] = prepared.json.phase_chain;
-    const probe = await requestVia('detach', p.root, { frameworkRoot: p.frameworkRoot, featureId: feature, realHarness: true,
-      onOutOfChain: ctx => { assert(publishRequestedVerifier(cu, ctx), `unexpected model purpose: ${ctx.phase}`); },
-      freshStartPhase: phases[0] as 'spec', freshEndPhase: phases.at(-1), freshRequirement: CU_REQUIREMENT, omitRequirement: true, launchArgs: scopeStep.parameters.requirement_arguments,
-      freshBudget: { max_total_turns: 2 },
-      onSpec: ctx => { cu.runId = ctx.runId; writeCuSpecMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'spec'); },
-      onPlan: ctx => { cu.runId = ctx.runId; writeCuPlanMaterials(cu); if (ctx.attempt > 1) publishVerifier(cu, 'plan'); },
-    });
-    assert(!!probe.childArgs && probe.invokedPhases.includes(phases[0]), 'ready CU must really launch and enter its first phase');
-    assert(JSON.parse(fs.readFileSync(path.join(probe.reportDir, 'manifest.json'), 'utf8')).requirement_source_files.join(',') === scopeStep.parameters.requirement_source_files.join(','), 'Goal manifest must retain the scope original request source');
-    const summary = readSummary(cu, phases[0]);
-    assert(summary?.verdict === 'PASS' && summary.closure_status === 'closed', JSON.stringify(summary));
-    const runDir = path.join(p.root, 'doc/features/ledger-app-blueprint/ledger-refresh/goal-runs');
-    const runs = fs.readdirSync(runDir).filter(name => !name.startsWith('.'));
-    const manifestPath = path.join(runDir, runs[0], 'manifest.json');
-    const manifestBytes = fs.readFileSync(manifestPath, 'utf8');
-    const repeated = deliveryCli(p, 'goal-mode-entry.ts', ['--project-root', p.root, '--prepare-run', '--feature', feature, '--adapter', 'codex', '--run-mode', 'attended', '--requirement', CU_REQUIREMENT]);
-    assert(repeated.status === 1 && !repeated.diagnostic.includes('design_preparation_required') && fs.readFileSync(manifestPath, 'utf8') === manifestBytes && fs.readdirSync(runDir).filter(name => !name.startsWith('.')).length === runs.length, 'budget-held canonical CU reentry must retain its existing run/budget, not reroute to initial design');
-  } finally { fs.rmSync(p.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    const feature = 'ledger-managed-delivery';
+    const input = 'entry-manifest.yaml';
+    writeHostFile(p.root, input, YAML.stringify({ feature, adapter: 'codex', requirement: CU_REQUIREMENT,
+      requirement_source_files: ['request.md'], budget: { max_total_turns: 2, wall_clock_minutes: 120 },
+      unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }));
+    const inputBytes = fs.readFileSync(path.join(p.root, input));
+    const prepareArgs = ['--project-root', p.root, '--framework-root', p.frameworkRoot, '--prepare-run', '--manifest', input, '--run-mode', 'attended'];
+    const first = deliveryCli(p, 'goal-mode-entry.ts', prepareArgs);
+    assert(first.status === 0 && first.json?.type === 'goal_run_prepared', first.diagnostic);
+    const original = loadGoalRunManifestFromRun(p.root, first.json.run_id, { feature });
+    if (!isInitialDesignManifest(original)) throw new Error('raw request must create its real managed root');
+    assertGoalRunAttachable(p.root, original);
+    assert(original.requirement === CU_REQUIREMENT && original.requirement_source_files?.join(',') === 'request.md', 'root birth must preserve the exact request and source');
+    assert(!original.execution_scope && !original.phase_chain && !original.run_base_sha, 'design preparation cannot fabricate construction identity');
+    const runDir = path.resolve(p.root, original.report_dir);
+    const rows = () => fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+    assert(rows().filter(event => event.type === 'run_created').length === 1 && !rows().some(event => event.type === 'agent_invoke_start'), 'prepare must persist one birth before any author starts');
+    const birthBytes = fs.readFileSync(first.json.manifest);
+    const repeated = deliveryCli(p, 'goal-mode-entry.ts', prepareArgs);
+    assert(repeated.status === 0 && repeated.json?.run_id === original.run_id && repeated.json.continuation === 'rejoin', repeated.diagnostic);
+    assert(fs.readFileSync(first.json.manifest).equals(birthBytes), 'same raw request must rejoin its exact root');
+    let calls = 0;
+    const waiting = 'Bounded transport observes the real initial author task; no design, admission or construction result is supplied.';
+    const code = await new GoalPhaseRuntime({ args: ['--manifest', input, '--project-root', p.root, '--framework-root', p.frameworkRoot, '--foreground-ok', '--authorize-autonomy'],
+      authorization: { mode: 'goal_mode', autonomyAuthorized: true }, executor: { async execute(context) {
+        calls++;
+        assert(context.runId === original.run_id && context.feature === feature && context.phase === 'initial-design-author', 'unadmitted input must reach its original design author, never a construction executor');
+        assert(context.instruction?.includes(CU_REQUIREMENT) && context.instruction.includes('request.md') && context.instruction.includes('app-component-blueprint.schema.json'), 'the actual author task must contain the request, source and real design schema');
+        return { status: 'waiting', phase: context.phase, details: waiting, exitCode: 0, stdout: '', stderr: '', command: 'bounded-raw-entry-observer' };
+      } } }).run();
+    assert((code === 1 || code === 3) && calls === 1, 'the bounded waiting author must stop the real runtime after one task');
+    const after = rows();
+    assert(after.filter(event => event.type === 'run_created').length === 1 && after.filter(event => event.type === 'agent_invoke_start').length === 1, 'backend manifest entry must reuse the actual root birth');
+    const lastEnd = [...after].reverse().find(event => event.type === 'run_end');
+    assert(lastEnd?.status === 'HALTED' && String(lastEnd.error).includes(waiting), 'the real wait must remain incomplete with its actual reason');
+    assert(!after.some(event => event.type === 'phase_verdict' || event.type === 'run_end' && event.status === 'COMPLETED'), 'a design wait cannot claim phase or request completion');
+    const family = readOriginalDeliveryBudget(p.root, original)!;
+    assert(family.runs.length === 1 && family.totalTurns === 1, 'unadmitted raw work cannot birth a normal CU or reset its original counter');
+    assert(!fs.existsSync(path.join(p.root, 'doc/features', feature, 'feature.yaml')) && !fs.existsSync(path.join(p.root, 'doc/features', feature, 'blueprint/component-blueprint.yaml')), 'transport must not prefill a scope or design');
+    assert(fs.readFileSync(path.join(p.root, input)).equals(inputBytes), 'the original pure input stays unchanged');
+    const localFeature = 'standalone-spec-entry', localRequirement = '仅写 spec';
+    prepareFeatureScopeCandidate({ projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: localFeature, completionTarget: 'request',
+      requestedResults: [localRequirement], requestedPhases: ['spec'], requirement: localRequirement });
+    const localOptions = { projectRoot: p.root, frameworkRoot: p.frameworkRoot, feature: localFeature, adapter: 'codex', requirement: localRequirement };
+    const local = prepareGoalModeRun(localOptions), rejoined = prepareGoalModeRun(localOptions);
+    assert(!isInitialDesignManifest(local.manifest) && !isInitialDesignManifest(rejoined.manifest) && local.manifest.run_id === rejoined.manifest.run_id, 'single-duty input and its existing valid task must retain their original normal birth/rejoin path');
+    assert(calls === 1, 'standalone preparation must not call the raw design executor');
+  } finally {
+    if (previousTrust === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR; else process.env.MAISON_GOAL_CHECKPOINT_DIR = previousTrust;
+    fs.rmSync(p.root, { recursive: true, force: true }); clearFrameworkConfigCache();
+  }
 });
 
 test('5f8c2d70 generic and single-duty request keep production prepare/birth paths', async () => {

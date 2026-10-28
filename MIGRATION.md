@@ -1,5 +1,19 @@
 # Framework 升级与迁移说明
 
+## 3.1.0 原始正式需求受管与设计施工连续推进（plan f3b8e6a1）
+
+**替代旧策略**：具备 design lens 的新正式完整请求从原始需求进入同一 Goal runtime，不再要求主会话先完成初始设计/CU readiness 才启动。会话沿原 prepare-run/next/report、后台沿 detached 入口推进作者、真实独立质询、检查与 CU 接受/readiness；作者退出或设计 ready 不代表原请求完成，不新增宿主设计回调。
+
+正常 CU run 保持自身身份，以不可变 `delivery_origin` 定位原请求；P2 继续单并发选择/恢复，正常 Feature/CU 的施工、验收和正式 completion 规则保持。**本批原请求终点是全部适用 CU 正式完成**。随后仅按原部件闭环口径只读检查一次并如实披露，不自动修复、写出或收口 P3，不把检查缺口改成 PASS，也不以本请求完成冒称部件闭环通过。直接仅设计、维护、单职责和 generic 保留原终点。
+
+需求原文/来源、adapter、模型/视觉钉、超时与限制沿原字段继承；授权仍来自可信原请求，运输和 origin 不授权限。原请求有效总预算约束设计、质询、修复及各 CU/后继，累计不清零，活动墙钟不嵌套双计。状态和恢复展示当前实际工作，全部适用 CU 正式完成后同请求重入返回重读的原结果。
+
+设计修订后，若尚无该 CU 的 child 且无冻结范围，过时的出生前 scope 候选交原 scope 作者，沿返回的 `--prepare-scope … --overwrite` **整份重算**，再走原严格出生校验；不只换 hash，不重派已合格设计。已有 child/冻结范围仍按原规则处理。本批不提供未开工 child 输入纠错或历史 root 阶段字段 override 迁移。
+
+新 root 的请求动作只保存原输入明确给定的阶段，未给时不注入默认六阶段或 coding；既有起止边界、真实 workflow 与预算含义保持，边界不能反推成用户明确动作。CU 仍按真实请求和原范围解析器准备，用户明确动作、验收设备层、性能待定及视觉义务不因缺工具删除。`--impact-behavior-change` 指最终用户在运行产品上可观察/操作到的变化；内部函数变化或正式分类本身不等于 true，未知不默认 false。
+
+消费者集成新发布件后沿原 framework-init UPDATE 刷新入口和 Skill/adapter 模板；历史 manifest/events、蓝图、CU 与完成证据不人工改写。缺独立质询、后台或工具能力如实披露。开发回归不代表真实 CLI、宿主或设备验收，真实验收须在宿主干净环境另行运行。
+
 ## 3.1.0 调用完成识别与链外进度（plan a7b615ff）
 
 视觉探测、设计修复和超时棘轮与正式阶段共用调用完成判据：没有 waiting、failed、跳过或明确失败事实时，退出 0 或已观测完成终态均可进入原后续核验。完成后清理返回非零不再单独否定完成，原退出码照常保留；超时、静默终止、spawn 错误与失败终态仍优先。完成识别不替代答卷判卷、独立质询、设计校验、授权或正式发布。
@@ -216,7 +230,7 @@ deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决
 - **新周期不继承上一周期的追加**：上一次可信完成之后的首个后继取本次出生输入的预算（`--manifest` 给出的预算，否则默认值），不再沿用来源 run 的预算快照。原先只在首次 `--manifest` 里设过、从未再改的 feature 级预算，在新周期需要重新给出。本版之前出生、已继承旧值的后继不追溯修正。
 - **未授权的预算改动不生效**：手改 manifest 预算却不带 `--override-manifest`，调高调低都不会被采用；只有现有 manifest 里已找不到最新授权值时，后继才不出生（不建 run、不写事件），按提示带 `--override-manifest` 重新发起，或把 `manifest.budget` 还原为已授权值。旧版本留下的 run 若整个交付周期都没有身份事件（没有 `run_created`，`run_start` 也不带预算摘要），框架无从核验授权值，后继照旧沿用合同来源 run 的预算；周期里只要有一个 run 带预算摘要，就按上面的规则核验。
 - **仅预算变化续原 run**：run 停在 `budget_turns` / `budget_wall_clock`，有权者只改了它的预算并带 `--override-manifest` 重新发起同一请求或显式 `--resume`，都接回这个 run 续跑，不再起后继、不再需要 `--force-resume`、不受冷却。叠加真实需求变化、型号变化或范围失效时仍起后继，后继预算取上面的有效值；其它终局原因（如 `no_progress_fuse`）不因预算变化被接回。功能已完成且本次只改了预算时保持停止，要追加内容须写明需求。这样自动接回时若同时传了 `--manifest`：文件只是重复原 run 就按原 run 续跑；文件另带改动则采用文件（文件里没写的字段不重置为默认值），预算取原 run 当前已改的值，统一按 `--override-manifest` 登记改写。
-- **显式 `--resume` 的冷却**：`--resume <run>` 只确定目标 run，能否原地恢复看去掉显式旗标后的同一接续决策——判为重新接入该 run 时立即恢复；判为"有变化但不能原地恢复"（起后继）时不等冷却，但仍须 `--force-resume`（例外不变：停机所挂探针已就绪而冻结绑定已失效时，显式 `--resume` 照旧直接改为起后继并承接）；没有任何变化的重复请求照旧冷却。冷却时长与有人在场不冷却的规则不变。
+- **显式 `--resume` 的冷却**：`--resume <run>` 只确定目标 run，能否原地恢复看去掉显式旗标后的同一接续决策——判为重新接入该 run 时立即恢复；判为"有变化但不能原地恢复"（起后继）时不等冷却，但仍须 `--force-resume`（例外不变：停机所挂探针已就绪而冻结绑定已失效时，显式 `--resume` 照旧直接改为起后继并承接）；没有任何变化的重复请求照旧冷却。当前两运输在相同输入、授权、事实下按同一 5 分钟冷却与恢复规则处理；旧的有人在场免冷却不再适用，`--force-resume` 也不绕过无变化冷却，真实变化与明确合法恢复仍由原守卫裁决。
 - **assess 已完成投影（`assess@1` 取值扩展）**：完成评估已成立（完成记录校验 VALID、义务全覆盖、无后续未终局 run）时，`next.json` 输出 `recommendation.action=feature_completed`、`recommendation.requires_driver_authorization=false`、`feature_completion=VALIDATED`、`run_status_candidate=CHAIN_SLICE_COMPLETED`、`gaps=[]`，渲染为 `authorization=none`；不再推荐 `validate_feature_completion`，也不再列旧缺口。`requires_driver_authorization` 由恒为 `true` 改为布尔，按字面 `true` 解析 `assess.schema.json` 的自写工具须放宽。无 run 上下文时按完成记录所属 run 的执行范围观察缺口，不再落到全工作流链。完成记录存在但校验失败时仍推荐验证；记录缺失时按既有观察推荐回责任阶段。
 - **测试报告措辞改为同源**（`test-report.md`）：显式断言（trace `role=assertion` 且 passed）与被 `--skip-assert-expected` 跳过的自然语言预期分开计数，弱化旗标只限定被跳过的部分，带旗标的报告仍不签「达标」；视觉几何 / 内容 / 样式改读授权过滤后的有效视图，内容 / 样式"已复核"要求规范路径 `device-testing/reports/critic-receipt.json` 通过门禁同一结构校验、且其图像 hash 覆盖当前截图、判定未因截图或构建指纹变化而过期；minor 残差在缺陷表记「披露」，不计入"待修复"（缺陷统计表的"数量"因此可能大于各状态列之和）；testing gate 的视觉检查（`visual_diff*`、`visual_reference_viewport`、`runtime_mount_conformance` 等）有真实阻断时，总体结论为"不达标"。visual-diff 门禁的受检屏集合按有效处置取（有效 pass 或授权 minor 的屏都纳入锚点检查）。
 - **返修局部诊断（可选，诊断不是验收）**：coding 返修窗口收到真机 testing 报出的候选时，提示词与 coding Skill 给出 `adhoc-device-test` 的诊断入口：`--install-current-build`（以与 testing 同一解析器出包当前工作树并强制装机）、`--measure-screen <screen_id> --feature <f>`（截图 + 布局 + 只读 ui-spec 量测），与既有 `--dump-ui-only` / `--observe-ui` 同用。产物默认落 `doc/features/_adhoc/testing/reports/`，不写正式截图、visual-diff、回执与 testing 报告，不签凭证、不替代 review → UT → testing；testing 照常自行出包装机判定。设备门照旧在首个设备操作前执行；诊断耗时计入本次调用。注意它会改写工程构建输出、替换设备上的应用；可选的 provider 视觉筛查未提供。使用契约：`_adhoc` 只是默认落点，显式 `--dump-ui-out` 不做路径隔离，不要指向正式 feature 目录；`--observe-ui` / 执行解析主 Ability 时会更新同 bundle 共享的 `doc/app-snapshot-cache/<bundle>/app-meta.json` 能力缓存。
@@ -242,7 +256,7 @@ deployment 继续按部件固有平台/进程/独立持久化/外部边界裁决
 
 ## 3.1.0：按义务执行与旧运行恢复
 
-新请求默认使用 obligation-driven workflow 1.2。完整实现先完成设计交接（admitted blueprint + ready CU），再由 `goal-mode-entry --prepare-scope` 只生成候选、不冻结范围；新完整交付在 run 出生时冻结范围。会话经 `--prepare-run --run-mode attended` 后使用 `--next / --report-result @<run-relative-JSON-file> --request <已签发路径>`，无人值守仍用 `goal-runner --detach`；同一 GoalPhaseRuntime 负责正式 gate/finalizer、责任回退和恢复。所有可命令适配器同形接入，阶段隔离仅安排上下文；必需独立 verifier/设计质询保持真实独立。局部维护、纯编译、纯设计、专项 request 保留原终点。
+新请求默认使用 obligation-driven workflow 1.2。正式完整交付从原始需求进入共同 Goal runtime，初始设计与真实独立质询/准入后由 P2 接正常 CU，替代主会话先完成设计才起 run 的旧策略。真实 CU 经 `goal-mode-entry --prepare-scope` 只生成候选、不冻结范围，在正常 run 出生时冻结施工范围；会话经 `--prepare-run --run-mode attended` 和原 `--next / --report-result`，无人值守经 `goal-runner --detach`。共同 runtime 负责正常 CU 的正式 gate/finalizer、责任回退与恢复；全部适用 CU 正式完成后，部件闭环仅按原口径只读检查一次披露，不自动修复或改判；全部可命令 adapter 同形接入，普通作者隔离只安排上下文，必需独立 verifier/质询保持真实独立。局部维护、纯编译、纯设计与专项 request 保留原终点。
 
 - 集成的是 Maison 发布件，宿主 framework/ 不是 submodule；依赖仅在 framework/harness 安装。
 - framework-init UPDATE 将旧内置 active_workflow=spec-driven 更新为 obligation-driven；自定义 workflow 保留。UPDATE 沿既有 .framework-backup 备份并清理 change-lite 公共桥接，不删除任何 Feature、CU、run 或报告。

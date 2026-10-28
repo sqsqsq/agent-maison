@@ -17,3 +17,10 @@ export function invocationCompleted(facts: InvocationCompletionFacts): boolean {
       facts.terminal_failure_observed === true || facts.spawn_error) return false;
   return facts.exitCode === 0 || facts.completion_observed === true;
 }
+
+/** A transport's newly received waiting result is an external pause, never another author turn. */
+export function invocationWaitingDetail(facts: InvocationCompletionFacts & { details?: string; detail?: string }): string | undefined {
+  if (facts.status !== 'waiting') return undefined;
+  const detail = facts.details ?? facts.detail;
+  return detail?.trim() ? detail : '执行者报告等待，尚未提供具体解除条件；补齐真实条件后继续原请求。';
+}

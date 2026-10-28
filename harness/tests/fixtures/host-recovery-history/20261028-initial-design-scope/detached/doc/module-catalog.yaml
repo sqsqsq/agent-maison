@@ -1,0 +1,22 @@
+schema_version: "1.0"
+modules:
+  - name: Inbox
+    layer: 02-Feature
+    sub_layer: null
+    format: HAR
+    one_liner: 进程内通知收件箱状态、存储和订阅
+    responsibilities:
+      - 读取消息
+      - 单条已读
+      - 存储重载
+      - 订阅快照
+    NOT_responsible_for:
+      - UI
+      - device
+      - network
+    typical_business_terms:
+      - 通知收件箱
+    easily_confused_with: []
+    key_exports:
+      - createInbox
+    entry_file: 02-Feature/Inbox/index.ts

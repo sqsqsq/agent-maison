@@ -6,6 +6,8 @@
 
 只有一种蓝图协议，内容深度由真实影响面派生；当前仅支持 `hmos-app` / App design lens，其它 component type 明确返回 unsupported / missing design lens。
 
+正式完整交付的初始设计由原始请求的同一 Goal runtime 调用本流程，不要求先在主会话做完设计才出生。作者一次读取当前准确 schema、工程事实入口、当前缺口与精确命令；先展开当前交付切片，后续滚动细化，不能以全填空或反复重写整蓝图代替设计。作者返回后由原检查和真实独立质询决定下一步；准入派生字段由 runtime 调用既有 `deriveBlueprintAdmission` 写回并复验，作者不自填通过。直接只设计调用仍止于设计职责，不因此获得施工权。
+
 > 真实宿主的正式需求在进入蓝图前，材料准入与缺失路由见
 > [真实宿主准入与回灌契约](./real-host-admission-and-feedback.md)（适用范围内）；
 > 宿主侧三条接缝的适配细则见

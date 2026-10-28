@@ -16,6 +16,8 @@ import {
 } from './change-unit-ready-set';
 import { selectNextChangeUnit } from './change-unit-selection';
 import { validateChangeUnitProviderBoundary } from './change-unit-provider-boundary';
+import { loadEffectiveExecutionScope, deliveryCycleView, supersededRunIds } from './goal-run-creation';
+import { executionCompletionPhases } from './execution-scope';
 
 export type ChangeUnitProgressionAction =
   | 'resume_active'
@@ -89,8 +91,10 @@ export function inspectActiveChangeUnitRuns(
     const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
     const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
     const classified = classifyGoalRunsDir(runsDir);
+    const retired = supersededRunIds(deliveryCycleView(projectRoot, featureId).siblings, false);
     for (const item of classified.corruptRuns) corrupt.push({ featureId, runId: item.runId, reason: item.reason });
     for (const runId of [...classified.runs].reverse()) {
+      if (retired.has(runId)) continue;
       const events = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, runId, 'events.jsonl')));
       if (events.length > 0 && !resolveEffectiveRunEnd(events)) {
         active.push({ featureId, runId });
@@ -135,18 +139,24 @@ export function deriveChangeUnitProgressionDecision(
   return { action: 'blocked', reasons: reasons.length > 0 ? reasons : ['没有 ready CU，且未达到 component closure handoff。'], readySet };
 }
 
-export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnitArtifact): ChangeUnitGoalHandoff {
+export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnitArtifact, existing?: { runId: string; frameworkRoot?: string }): ChangeUnitGoalHandoff {
+  const request = buildChangeUnitGoalRequest(projectRoot, unit);
+  const scope = existing ? loadEffectiveExecutionScope(projectRoot, request.featureId, existing.runId, existing.frameworkRoot) : undefined;
+  const expected = scope ? { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) }
+    : resolveChangeUnitExpectedExecution(projectRoot, request.featureId, !existing, existing?.frameworkRoot);
+  return { ...request, ...expected };
+}
+
+/** The exact formal handoff input is also used before a construction scope is available. */
+export function buildChangeUnitGoalRequest(projectRoot: string, unit: ChangeUnitArtifact): Omit<ChangeUnitGoalHandoff, 'expectedTrack' | 'expectedChain'> {
   const loaded = loadCanonicalChangeUnit(projectRoot, unit.blueprint_id, unit.change_unit_id);
   const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
-  const expected = resolveChangeUnitExpectedExecution(projectRoot, featureId, true);
   const ref = createChangeUnitRef(loaded);
   return {
     featureId,
     canonicalPath: loaded.canonicalPath,
     changeUnitRef: ref,
     componentBlueprintRef: unit.component_blueprint_ref,
-    expectedTrack: expected.expectedTrack,
-    expectedChain: expected.expectedChain,
     requirement: [
       `Implement exactly canonical Change Unit ${loaded.canonicalPath}.`,
       `change_unit_ref=${JSON.stringify(ref)}`,

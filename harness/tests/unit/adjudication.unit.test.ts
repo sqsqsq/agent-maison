@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import {
   INCIDENT_REGISTRY,
   isStructuralFactsIncident,
@@ -1600,7 +1601,8 @@ const projectionCases: TestCase[] = [
       );
       // codex 复核 P2：resume 携该参数必须**显式拒绝**，不得静默忽略
       assert(
-        /argv\.resume && typeof argv\['requirement-file'\][\s\S]{0,300}?process\.exit\(2\)/.test(runner),
+        /argv\.resume && Object\.prototype\.hasOwnProperty\.call\(argv, 'requirement-file'\)[\s\S]{0,300}?return true;/.test(runner)
+          && (runner.match(/if \(rejectsResumeRequirementFile\(argv\)\) return 2;/g) ?? []).length === 2,
         'resume 携 --requirement-file 须 fail-closed（禁止静默忽略显式输入）',
       );
       // codex 复核 P2：manifest override 校验必须在 requirement 解析之后，
@@ -1612,6 +1614,19 @@ const projectionCases: TestCase[] = [
         validateAt > resolveAt,
         'manifest override 校验必须晚于 requirement 解析，否则 --manifest + --requirement-file 静默失效',
       );
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'requirement-resume-'));
+      try {
+        for (const requirementArgs of [['--requirement-file', 'intentionally-missing.md'], ['--requirement-file']]) {
+        const invocation = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), '-e',
+          'const {GoalPhaseRuntime}=require(process.argv[1]);new GoalPhaseRuntime({args:process.argv.slice(2)}).run().then(code=>{process.exitCode=code;});',
+          path.join(SCRIPTS_DIR, 'goal-phase-runtime.ts'), '--resume', 'unopened-run', '--feature', 'demo',
+          ...requirementArgs, '--project-root', projectRoot, '--framework-root', path.resolve(SCRIPTS_DIR, '../..')],
+        { encoding: 'utf8', timeout: 20000 });
+        assert(invocation.status === 2, `实际runtime须拒绝显式resume需求：${invocation.status} ${invocation.stderr}`);
+        assert(invocation.stderr.includes('--requirement-file 仅在 fresh run 生效'), '必须拒绝显式输入，不能先读取不存在的文件或找run');
+        assert(fs.readdirSync(projectRoot).length === 0, '拒绝输入不能创建运行状态');
+        }
+      } finally { fs.rmSync(projectRoot, { recursive: true, force: true }); }
     },
   },
 ];

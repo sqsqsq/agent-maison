@@ -111,6 +111,31 @@ function writeFreshReceipt(
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'A2 validation-only retains the completed phase author while its actual design transaction waits, and revocation still wins',
+    run() {
+      const events: Array<Record<string, unknown>> = [
+        { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i1' },
+        { type: 'agent_process_settled', phase: 'spec', invoke_id: 'spec-i1' },
+        { type: 'harness_end', phase: 'spec', invoke_id: 'spec-i1', exit_code: 1 },
+        { type: 'design_authority_repair', phase: 'spec', stage: 'attempted', signature: 'same-design', handoff_context: { path: 'original-context.json' } },
+        { type: 'agent_invoke_start', phase: 'design-repair-questioning', chain_phase: 'spec', purpose: 'questioning', invoke_id: 'questioning-i3' },
+        { type: 'agent_invoke_end', phase: 'design-repair-questioning', chain_phase: 'spec', purpose: 'questioning', invoke_id: 'questioning-i3', status: 'waiting' },
+        { type: 'phase_verdict', phase: 'spec', verdict: 'FAIL', action: 'halt', run_disposition: 'WAITING' },
+        { type: 'phase_halt', phase: 'spec', halt_reason: 'execution_scope_unresolved', run_disposition: 'WAITING' },
+      ];
+      const eligible = (history = events) => resolveValidationOnlyEligibility(history, { requireInterrupt: true });
+      assert(eligible()?.invoke_id === 'spec-i1', 'the completed original author must yield to its unfinished independent design responsibility');
+      assert(resolveValidationOnlyEligibility(events, { requireInterrupt: true, artifactsOk: () => false }) === null, 'changed input/artifact qualification must still reject reuse');
+      for (const next of [
+        { type: 'phase_invalidated', phase: 'spec' },
+        { type: 'phase_backtrack_requested', to_phase: 'spec' },
+        { type: 'agent_invoke_start', phase: 'spec', invoke_id: 'spec-i4' },
+        { type: 'design_authority_repair', phase: 'spec', stage: 'failed', signature: 'same-design' },
+        { type: 'design_authority_repair', phase: 'spec', stage: 'published', signature: 'same-design' },
+      ]) assert(eligible([...events, next]) === null, `a later real ownership/result boundary wins: ${JSON.stringify(next)}`);
+    },
+  },
+  {
     name: 'a7 invocation completion: negative facts win over exit0 and terminal completion; cleanup does not fail completion',
     run() {
       for (const facts of [{}, { exitCode: 1 }, { kill_attempted: true }, { lingering_pipe: true }]) {

@@ -15,6 +15,7 @@ import { GoalPhaseRuntime } from '../../scripts/utils/goal-phase-runtime';
 import { extractPriorFailureContext } from '../../scripts/goal-runner';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import type { HeadlessInvokePlan } from '../../scripts/utils/agent-invoke';
+import { recordDesignRepairInvocation, replayDesignRepairInvocation } from '../../scripts/utils/design-repair-unattended';
 import {
   casAcquireRunOwner,
   ensureRunControl,
@@ -998,6 +999,53 @@ const cases: Case[] = [{
       assert(result.status === 'failed', JSON.stringify(result));
       assert(result.exitCode === 7 && result.timed_out === true && result.duration_ms === 55, JSON.stringify(result));
       assert(result.stdout === 'stdout' && result.stderr === 'stderr', JSON.stringify(result));
+    },
+  },
+  {
+    name: 'M2 detached executor: an explicit waiting result retains its reason instead of becoming failed',
+    run: async () => {
+      const detail = '独立提供方暂不可用；提供方恢复后继续原窗口。';
+      const executor = new DetachedGoalPhaseExecutor(
+        () => ({ plan: { argv: ['codex'], label: 'codex exec' } as HeadlessInvokePlan, cwd: '/project' }),
+        async () => ({ status: 'waiting', details: detail, exitCode: 0, stdout: '', stderr: '', command: 'codex exec' }),
+      );
+      const result = await executor.execute(context());
+      assert(result.status === 'waiting', JSON.stringify(result));
+      assert(result.details === detail, JSON.stringify(result));
+      assert(result.exitCode === 0, JSON.stringify(result));
+      const withoutReason = new DetachedGoalPhaseExecutor(
+        () => ({ plan: { argv: ['codex'], label: 'codex exec' } as HeadlessInvokePlan, cwd: '/project' }),
+        async () => ({ status: 'waiting', details: '', exitCode: 0, stdout: '', stderr: '', command: 'codex exec' }),
+      );
+      const incomplete = await withoutReason.execute(context());
+      assert(incomplete.status === 'waiting' && !!incomplete.details, 'an absent reason must not turn waiting into an author failure');
+    },
+  },
+  {
+    name: 'M2 design invocation replay follows the original completed or waiting fact and restores only its real draft output',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-result-replay-'));
+      const invokeId = 'design-repair-author-i1';
+      const eventFile = path.join(root, 'events.jsonl');
+      fs.mkdirSync(path.join(root, 'design-repair'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'phases/design-repair-author', invokeId), { recursive: true });
+      const draft = path.join(root, 'design-repair/component-blueprint.yaml');
+      const rows = [{ type: 'design_authority_repair', stage: 'attempted', signature: 'real-design' },
+        { type: 'agent_invoke_start', phase: 'design-repair-author', invoke_id: invokeId },
+        { type: 'agent_invoke_end', phase: 'design-repair-author', invoke_id: invokeId, exit_code: 0, status: 'passed' }];
+      try {
+        fs.writeFileSync(eventFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+        fs.writeFileSync(draft, 'original author bytes\n');
+        recordDesignRepairInvocation(root, 'author', invokeId, { started: true, ok: true, status: 'passed', detail: 'actual invocation output' });
+        fs.writeFileSync(draft, 'later machine invalidation\n');
+        assert(replayDesignRepairInvocation(root, 'author')?.ok === true, 'completed role material should be reusable');
+        assert(fs.readFileSync(draft, 'utf8') === 'original author bytes\n', 'replay must restore the pre-invalidation role output');
+        for (const status of ['waiting', 'failed']) {
+          fs.writeFileSync(eventFile, rows.map(row => JSON.stringify(row.type === 'agent_invoke_end' ? { ...row, status, exit_code: status === 'failed' ? 1 : 0 } : row)).join('\n') + '\n');
+          const result = replayDesignRepairInvocation(root, 'author');
+          assert(status === 'waiting' ? result === undefined : result?.ok === false, 'a cached passed claim cannot overwrite the original negative fact');
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {

@@ -75,6 +75,11 @@ export function createIndependentQuestioningResult(input: {
   };
 }
 
+/** A complete report can still explicitly deny the design; schema success is not acceptance. */
+export function independentQuestioningBlockers(blueprint: BlueprintRecord): BlueprintRecord[] {
+  return asRecords(asRecord(asRecord(blueprint.review_summary)?.questioning)?.items).filter(item => item.disposition === 'blocker');
+}
+
 export function validateBlueprintQuestioning(blueprint: BlueprintRecord): BlueprintIssue[] {
   const out: BlueprintIssue[] = [];
   const review = asRecord(blueprint.review_summary);

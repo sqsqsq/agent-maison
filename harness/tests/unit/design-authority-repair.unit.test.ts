@@ -1969,7 +1969,12 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const real = preparation.reviseChangeUnitContent;
       let b: Awaited<ReturnType<typeof s16Born>>;
       try {
-        b = await s16Born(s, { adapter: { questioning: () => {
+        b = await s16Born(s, { adapter: { author: (_doc, draft) => {
+          const candidateFile = path.join(path.dirname(draft), 'change-unit.yaml');
+          const candidate = readDoc(candidateFile);
+          candidate.purpose += '；保留原账目刷新和恢复义务。';
+          writeDoc(candidateFile, candidate);
+        }, questioning: () => {
           preparation.reviseChangeUnitContent = () => { preparation.reviseChangeUnitContent = real; throw new Error('injected: CU content commit failed'); };
         } } });
       } finally {

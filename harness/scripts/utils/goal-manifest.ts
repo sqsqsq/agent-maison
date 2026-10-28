@@ -1,4 +1,4 @@
-import { validateExecutionScope, type ExecutionScope } from './execution-scope';
+import { validateExecutionScope, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
 /**
  * Goal manifest parser — SSOT for goal-runner CLI and
  * {features_dir}/<feature>/goal-runs/<run-id>/manifest.json
@@ -89,6 +89,8 @@ export interface UnattendedContract {
 }
 
 export interface GoalManifest {
+  /** Immutable original delivery locator; it grants no authority. */
+  delivery_origin?: { feature: string; run_id: string };
   execution_scope?: ExecutionScope;
   schema_version: '1.0';
   start_phase: FeaturePhase;
@@ -170,6 +172,51 @@ export interface GoalManifest {
   inherited_drift_fingerprints?: string[];
 }
 
+/** A request may be managed before a canonical CU or construction scope exists. */
+export type InitialDesignGoalManifest = Omit<GoalManifest,
+  'start_phase' | 'end_phase' | 'phase_chain' | 'chain_override' | 'execution_scope' | 'run_base_sha'> & {
+  initial_design: ExecutionScopeInput['request'];
+  /** Initial-request domain boundaries, not a running construction phase. Legacy roots omit both. */
+  start_phase?: GoalManifest['start_phase'];
+  end_phase?: GoalManifest['end_phase'];
+  phase_chain?: never;
+  chain_override?: never;
+  execution_scope?: never;
+  run_base_sha?: never;
+};
+
+export type GoalRunManifest = GoalManifest | InitialDesignGoalManifest;
+
+export function isInitialDesignManifest(manifest: GoalRunManifest): manifest is InitialDesignGoalManifest {
+  return 'initial_design' in manifest;
+}
+
+export function validateDeliveryOrigin(value: unknown): { feature: string; run_id: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('[goal-manifest] delivery_origin must locate an existing run');
+  const origin = value as Record<string, unknown>;
+  if (typeof origin.feature !== 'string' || typeof origin.run_id !== 'string' || !origin.run_id
+    || origin.run_id.startsWith('.') || /[\\/]/.test(origin.run_id)) throw new Error('[goal-manifest] invalid delivery_origin');
+  featureRelativePath(origin.feature);
+  return { feature: origin.feature, run_id: origin.run_id };
+}
+
+function validateInitialDesignRequest(value: unknown): ExecutionScopeInput['request'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('[goal-manifest] initial_design request missing');
+  const request = value as Record<string, unknown>;
+  if (request.completion_target !== 'feature' || !Array.isArray(request.requested_results) || !request.requested_results.length
+    || !Array.isArray(request.requested_phases)
+    || [...request.requested_results, ...request.requested_phases].some(item => typeof item !== 'string' || !item.trim())) {
+    throw new Error('[goal-manifest] invalid initial_design request boundary');
+  }
+  return structuredClone(request) as ExecutionScopeInput['request'];
+}
+
+export function buildInitialDesignGoalManifest(input: Record<string, unknown>, opts: GoalManifestParseOptions): InitialDesignGoalManifest {
+  const { phase_chain, chain_override, execution_scope, run_base_sha, ...common } = buildGoalManifestFromInput(input, opts);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(common.feature)) throw new Error('[goal-manifest] initial design feature must be a blueprint workspace id');
+  return { ...common, initial_design: validateInitialDesignRequest(input.initial_design) };
+}
+
 export interface GoalManifestParseOptions {
   projectRoot: string;
   runId?: string;
@@ -204,12 +251,12 @@ const DEFAULT_BUDGET: Required<GoalBudget> = {
 /** 十一轮 review P1：**逐字段**身份哈希——resume 时字段级 diff（哪些字段变了），
  * 支撑"只允许本次 override 覆盖对应字段"的字段级授权（裸 --override-start 不得放行
  * requirement/budget 等无关字段的漂移）。 */
-export function computeManifestIdentityFields(manifest: GoalManifest): Record<string, string> {
+export function computeManifestIdentityFields(manifest: GoalRunManifest): Record<string, string> {
   const fields: Record<string, unknown> = {
     schema_version: manifest.schema_version,
-    start_phase: manifest.start_phase,
+    start_phase: manifest.start_phase ?? null,
     minimum_assurance: manifest.minimum_assurance ?? null,
-    end_phase: manifest.end_phase,
+    end_phase: manifest.end_phase ?? null,
     feature: manifest.feature,
     requirement: manifest.requirement ?? null,
     chain_override: manifest.chain_override ?? null,
@@ -221,6 +268,8 @@ export function computeManifestIdentityFields(manifest: GoalManifest): Record<st
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
   if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) fields.execution_scope = JSON.parse(JSON.stringify(manifest.execution_scope ?? null));
+  if (isInitialDesignManifest(manifest)) fields.initial_design = manifest.initial_design;
+  if (Object.prototype.hasOwnProperty.call(manifest, 'delivery_origin')) fields.delivery_origin = manifest.delivery_origin;
   if (manifest.execution_scope && manifest.successor_of) fields.successor_of = manifest.successor_of;
   // adapter_model_pin 条件入集——键在场即在
   // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
@@ -730,6 +779,7 @@ export function buildGoalManifestFromInput(
     : undefined;
 
   return {
+    ...(input.delivery_origin === undefined ? {} : { delivery_origin: validateDeliveryOrigin(input.delivery_origin) }),
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
     ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
@@ -921,17 +971,32 @@ export function loadGoalManifestFile(
   projectRoot: string,
   opts?: Pick<GoalManifestParseOptions, 'featuresDir' | 'dryRun' | 'runId'>,
 ): GoalManifest {
+  return loadGoalManifestDefinition(filePath, projectRoot, opts).manifest;
+}
+
+/** Preserve declared initial actions before normal Goal defaults are applied. */
+export function loadGoalManifestDefinition(filePath: string, projectRoot: string,
+  opts?: Pick<GoalManifestParseOptions, 'featuresDir' | 'dryRun' | 'runId'>): { manifest: GoalManifest; requestedPhases?: string[]; requestedResults?: string[] } {
   const abs = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
+  const nested = raw?.initial_design && typeof raw.initial_design === 'object' ? raw.initial_design as Record<string, unknown> : undefined;
+  const declared = (key: 'requested_phases' | 'requested_results'): string[] | undefined => {
+    const top = raw?.[key], inner = nested?.[key];
+    if (top !== undefined && inner !== undefined && JSON.stringify(top) !== JSON.stringify(inner)) throw new Error(`[goal-manifest] conflicting ${key} declarations`);
+    const value = top ?? inner;
+    if (value === undefined) return;
+    if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim())) throw new Error(`[goal-manifest] ${key} must be an array of explicit strings`);
+    return [...value];
+  };
   // 注意：不在此做 legacy 超时迁移——用户手写 --manifest 里的 timeout_seconds:3600
   // 是显式选择，须按"扁平覆盖所有 phase"契约尊重。迁移只针对 resume 旧 run
   // （那里的 3600 是 2.3.0 旧硬编码默认、非用户选择），见 loadGoalManifestFromRun。
-  return buildGoalManifestFromInput(raw, {
+  return { manifest: buildGoalManifestFromInput(raw, {
     projectRoot,
     featuresDir: opts?.featuresDir,
     dryRun: opts?.dryRun,
     runId: opts?.runId,
-  });
+  }), requestedPhases: declared('requested_phases'), requestedResults: declared('requested_results') };
 }
 
 /**
@@ -1044,7 +1109,7 @@ export function resolvePersistedAdapterProvenance(opts: {
   return opts.decisionProvenance;
 }
 
-function serializeGoalManifest(manifest: GoalManifest): string {
+function serializeGoalManifest(manifest: GoalRunManifest): string {
   return JSON.stringify(manifest, null, 2) + '\n';
 }
 
@@ -1094,7 +1159,7 @@ export function restoreFrozenAdapterProvenance(
   };
 }
 
-export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): string {
+export function writeGoalManifest(manifest: GoalRunManifest, projectRoot: string): string {
   const abs = path.join(projectRoot, manifest.report_dir, 'manifest.json');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, serializeGoalManifest(manifest), 'utf-8');
@@ -1103,7 +1168,7 @@ export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): 
 
 /** Validate on-disk manifest matches canonical feature-bound evidence path (resume SSOT). */
 export function validateLoadedGoalManifest(
-  manifest: GoalManifest,
+  manifest: GoalRunManifest,
   opts: { featuresDir: string; feature: string; runId: string },
 ): void {
   const feature = opts.feature.trim();
@@ -1148,6 +1213,14 @@ export function validateLoadedGoalManifest(
   if (manifest.run_base_sha !== undefined && !/^[0-9a-f]{40}$/.test(manifest.run_base_sha)) {
     throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
   }
+  if (isInitialDesignManifest(manifest)) {
+    validateInitialDesignRequest(manifest.initial_design);
+    if (['phase_chain', 'chain_override', 'execution_scope', 'run_base_sha'].some(key => Object.prototype.hasOwnProperty.call(manifest, key))) {
+      throw new Error('[goal-manifest] initial design cannot contain construction identity');
+    }
+    if (Object.prototype.hasOwnProperty.call(manifest, 'start_phase') !== Object.prototype.hasOwnProperty.call(manifest, 'end_phase')) throw new Error('[goal-manifest] initial design domain requires both boundaries');
+  }
+  if (manifest.delivery_origin !== undefined) validateDeliveryOrigin(manifest.delivery_origin);
   if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) {
     validateExecutionScope(manifest.execution_scope);
     if (JSON.stringify(manifest.phase_chain) !== JSON.stringify(manifest.execution_scope!.phase_chain)) throw new Error('[goal-manifest] execution_scope/phase_chain mismatch');
@@ -1199,6 +1272,17 @@ export function loadGoalManifestFromRun(
     throw new Error(`[goal-manifest] 未找到 run manifest: ${abs}`);
   }
   const manifest = JSON.parse(fs.readFileSync(abs, 'utf-8')) as GoalManifest;
+  if ('initial_design' in manifest) throw new Error('[goal-manifest] initial design request has no construction manifest; use loadGoalRunManifestFromRun');
   validateLoadedGoalManifest(manifest, { featuresDir, feature, runId });
   return applyLegacyTimeoutMigration(manifest);
+}
+
+export function loadGoalRunManifestFromRun(projectRoot: string, runId: string, opts: LoadGoalManifestFromRunOptions): GoalRunManifest {
+  const featuresDir = opts.featuresDir ?? relFeaturesDir(projectRoot);
+  if (!opts.feature || !runId || runId.startsWith('.') || /[\\/]/.test(runId)) throw new Error('[goal-manifest] invalid run locator');
+  const file = path.join(projectRoot, resolveGoalReportDir({ featuresDir, feature: opts.feature, runId }), 'manifest.json');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as GoalRunManifest;
+  if (!isInitialDesignManifest(raw)) return loadGoalManifestFromRun(projectRoot, runId, opts);
+  validateLoadedGoalManifest(raw, { featuresDir, feature: opts.feature, runId });
+  return raw;
 }

@@ -1,0 +1,7 @@
+schema_version: "1.0"
+terms:
+  - term: 通知收件箱
+    canonical_module: Inbox
+    aliases:
+      - Inbox
+    definition: 保存消息及已读状态，公开读取、写回和订阅能力

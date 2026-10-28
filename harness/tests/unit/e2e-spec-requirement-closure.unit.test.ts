@@ -424,6 +424,7 @@ const cases: Case[] = [
         });
         if (!owner.ok) throw new Error('run owner acquisition failed');
         // 主干 attended runtime truth 加固（cp c7e2a9f4 B2）：initializer 前须有当前 owner fence 签发的 phase_start。
+        if ('initial_design' in prepared.manifest) throw new Error('Existing scoped fixture must use a construction manifest');
         appendGoalEventFenced(root, prepared.manifest, prepared.runDir, owner.token, {
           type: 'phase_start', phase: 'spec', attempt_id: attemptId,
           owner_id: owner.token.owner_id, owner_epoch: owner.token.epoch,

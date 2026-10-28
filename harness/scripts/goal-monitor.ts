@@ -9,7 +9,8 @@ import minimist from 'minimist';
 import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
 import { loadFrameworkConfig } from '../config';
 import { resolveWorkflowSpec } from '../workflow-loader';
-import { loadGoalManifestFromRun } from './utils/goal-manifest';
+import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './utils/goal-manifest';
+import { projectInitialDesignDelivery } from './utils/initial-design-delivery';
 import type { GoalRunEvent } from './utils/goal-runner-phase';
 import {
   buildLiveGoalStatusSnapshot,
@@ -349,12 +350,42 @@ async function main(): Promise<number> {
 
   let manifest;
   try {
-    manifest = loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir });
+    manifest = loadGoalRunManifestFromRun(projectRoot, runId, { feature, featuresDir });
   } catch (e) {
     console.error((e as Error).message);
     return 1;
   }
 
+  if (isInitialDesignManifest(manifest)) {
+    while (true) {
+      const delivery = projectInitialDesignDelivery({ projectRoot, frameworkRoot: layout.frameworkRoot, manifest });
+      const changed = delivery.event_count > sinceEvent;
+      if (changed || Date.now() >= deadline) {
+        const kind: NotificationKind = changed
+          ? delivery.status === 'RUNNING' ? 'heartbeat' : 'run_end'
+          : 'none';
+        const markdown = [
+          `Goal ${delivery.feature} · run ${delivery.run_id}`,
+          `状态：${delivery.status}；当前职责：${delivery.stage}；完成：${delivery.complete}`,
+          delivery.current ? `当前执行：${JSON.stringify(delivery.current)}` : null,
+          `累计调用：${delivery.budget.total_turns}/${delivery.budget.max_total_turns}；活跃时间：${delivery.budget.active_ms}ms/${delivery.budget.wall_clock_minutes}min`,
+          `下一步：${delivery.next_action}`,
+          delivery.halt_reason ? `停止原因：${delivery.halt_reason}` : null,
+          delivery.recovery ? `恢复信息：${JSON.stringify(delivery.recovery)}` : null,
+          ...delivery.issues.map(issue => `待处理：${issue}`),
+          !changed ? '本次有界观察内没有新事件。' : null,
+        ].filter(Boolean).join('\n') + '\n';
+        const notification = { schema_version: '1.0', ...delivery,
+          event_index: delivery.event_count, next_since_event: delivery.event_count, notification_kind: kind,
+          phase: delivery.current?.phase ?? null,
+          ...(!changed ? { no_op_reason: 'timeout_no_notification' } : {}), markdown };
+        if (wantJson) console.log(JSON.stringify(notification, null, 2));
+        else console.log(markdown);
+        return 0;
+      }
+      await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())));
+    }
+  }
   const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
 
   while (true) {

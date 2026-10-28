@@ -1,0 +1,41 @@
+{
+  "captured_at": "2026-10-27T17:03:43.911Z",
+  "purpose": "Preserve two observed initial-design failures; historical drafts are not admitted designs or success fixtures.",
+  "historical_reuse": "harness/tests/fixtures/host-recovery-history/20261026-fe4512-s2/",
+  "entries": [
+    {
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml",
+      "copied": "component-blueprint.yaml",
+      "sha256": "7b11cf36b77aff8b06a7fa45edeb1e35c00d33dfcfcbd0f27238b61f0354cef9",
+      "copy": "byte-for-byte; source read-only"
+    },
+    {
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/component-blueprint.review.md",
+      "copied": "component-blueprint.review.md",
+      "sha256": "22475d0e6713f7ed0a3e7437aafab8ba0d63a25ebc6f544b750dd3e5e7980b32",
+      "copy": "byte-for-byte; source read-only"
+    },
+    {
+      "source": "D:/1.code/SimulatedWalletForHmos/doc/features/bc-openCard-2/blueprint/design-draft.md",
+      "copied": "design-draft.md",
+      "sha256": "f27d6b48435653992069daeee2554457689beec43c0eaf2ace890178bda6ecf7",
+      "copy": "byte-for-byte; source read-only"
+    },
+    {
+      "source": "C:/Users/shengqsq/.codex/sessions/2026/10/27/rollout-2026-10-27T10-30-24-01a17dc4-fcfa-7c23-ab4c-8f6bd4d7ecc0.jsonl",
+      "copied": "request-and-failures.jsonl",
+      "source_sha256": "ef0fe1761c9630efd4c4df19490c991603d60acf0b7c291dc25681181d6802ed",
+      "sha256": "8dc8b296202a4c9fd9242246531d44645472eb8575aa60a565f367b9759430c9",
+      "source_line_numbers": [
+        12,
+        114,
+        122,
+        234,
+        264,
+        267,
+        272
+      ],
+      "copy": "Only original user requests, final outcomes and final checker call/output; no reasoning or credentials"
+    }
+  ]
+}

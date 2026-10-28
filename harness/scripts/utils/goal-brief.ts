@@ -8,7 +8,7 @@
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { loadRefElementsFile, refElementsAbsPath, resolveCurrentRequirementSource } from './fidelity-shared';
 import { resolveEffectiveScopeSource } from './goal-run-creation';
-import { effectiveHeadlessUnattended } from './goal-manifest';
+import { effectiveHeadlessUnattended, loadGoalRunManifestFromRun, isInitialDesignManifest, type InitialDesignGoalManifest } from './goal-manifest';
 import { parseScope } from './scope-parser';
 import { loadRepairDeclineState, designRepairDeclines } from './repair-candidates';
 import type { ResolvedPhaseInputs } from './capability-resolution';
@@ -41,12 +41,18 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
     featuresDirRel = (loadFrameworkConfig(projectRoot).paths?.features_dir ?? featuresDirRel).replace(/\\/g, '/');
   } catch { /* 无配置 → 默认目录 */ }
   const runId = (opts.runId ?? process.env.MAISON_GOAL_RUN_ID)?.trim() || undefined;
+  let initial: InitialDesignGoalManifest | undefined;
+  if (runId) {
+    try { const manifest = loadGoalRunManifestFromRun(projectRoot, runId, { feature }); if (isInitialDesignManifest(manifest)) initial = manifest; }
+    catch { /* Existing unavailable-source behavior is preserved. */ }
+  }
 
   let source: ReturnType<typeof resolveCurrentRequirementSource> = null;
   try { source = resolveCurrentRequirementSource(projectRoot, feature, featuresDirRel, runId ?? ''); } catch { /* 不可得 */ }
-  const requirementText = source?.kind === 'run' ? source.requirement.trim() : source?.kind === 'runless' ? source.text.trim() : '';
+  const requirementText = initial?.requirement?.trim() ?? (source?.kind === 'run' ? source.requirement.trim() : source?.kind === 'runless' ? source.text.trim() : '');
 
   const brief: GoalBrief = { requirement: requirementText || null, resolved_conflicts: [] };
+  if (initial) brief.requested = { completion_target: initial.initial_design.completion_target, requested_results: [...initial.initial_design.requested_results] };
 
   try {
     const scope = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
@@ -72,18 +78,19 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
   } catch { /* spec 不可读 → 无出范围模块 */ }
   if (elements.length > 0 || outOfScope.length > 0) brief.exclusions = { elements, out_of_scope_modules: outOfScope };
 
-  if (source?.kind === 'run') {
+  if (source?.kind === 'run' || initial) {
     const u = effectiveHeadlessUnattended();
     brief.permissions = { write_mode: u.write_mode, approval_mode: u.approval_mode };
     // §4.6：本交付周期内来源核验通过的拒修——与四处运行时判定同一个状态函数，不另读账本
     try {
-      brief.resolved_conflicts = [...new Set(loadRepairDeclineState(projectRoot, feature, source.runId).values())]
+      const sourceRunId = initial?.run_id ?? (source?.kind === 'run' ? source.runId : '');
+      brief.resolved_conflicts = [...new Set(loadRepairDeclineState(projectRoot, feature, sourceRunId).values())]
         // Factual refusals travel as their original ledger evidence; keep the goal brief free of self-verification feedback.
         .filter(s => s.basis?.text.includes('「'))
         .flatMap(s => (s.basis ? [{ s, b: s.basis }] : []))
         .sort((x, y) => Date.parse(x.b.round.ts) - Date.parse(y.b.round.ts) || x.s.id.localeCompare(y.s.id))
         .map(({ s, b }) => ({ candidate: `${s.id}（${s.summary}）`, basis: b.text, run_id: b.run_id }));
-      brief.resolved_conflicts.push(...designRepairDeclines(projectRoot, feature, source.runId));
+      brief.resolved_conflicts.push(...designRepairDeclines(projectRoot, feature, sourceRunId));
     } catch { /* 事件或账本不可读 → 省略该栏 */ }
   }
   return brief;

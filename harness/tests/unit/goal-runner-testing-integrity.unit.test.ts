@@ -122,7 +122,9 @@ import {
   assetManifestAbsPath,
   loadFidelityIntentSsot,
 } from '../../scripts/utils/fidelity-shared';
-import { loadGoalManifestFromRun, mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
+import { loadGoalManifestFromRun, loadGoalRunManifestFromRun, loadGoalManifestFile, isInitialDesignManifest, resolveRequirementInput, mergeSuccessorRequirement } from '../../scripts/utils/goal-manifest';
+import { applyManifestCliOverrides, validateManifestCliOverrides } from '../../scripts/utils/goal-manifest-cli';
+import minimist from 'minimist';
 import type { UnitCaseResult } from '../run-unit';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 import { NO_AUTHORITY, decide } from '../../scripts/utils/adjudication';
@@ -634,7 +636,7 @@ export async function runGoalRuntimeChain(
       if (phase === 'plan') opts.onPlan?.(ctx);
       if (phase === 'ut') opts.onUt?.(ctx);
       if (phase === 'review') opts.onReview?.(ctx);
-      if (opts.onOutOfChain && (phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
+      if (opts.onOutOfChain && (phase.startsWith('initial-design-') || phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
         const { activeChildPid, ...override } = (await opts.onOutOfChain(ctx)) ?? {};
         // 替身 adapter 报告它起的子进程（真实 adapter 在 spawn 后调用 onActiveChild；运行时据此做收容绑定核验）。
         if (typeof activeChildPid === 'number') {
@@ -1054,7 +1056,7 @@ export async function runGoalRuntimeChain(
       if (phase === 'plan') opts.onPlan?.(ctx);
       if (phase === 'ut') opts.onUt?.(ctx);
       if (phase === 'review') opts.onReview?.(ctx);
-      if (opts.onOutOfChain && (phase === 'vision-canary' || phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
+      if (opts.onOutOfChain && (phase === 'vision-canary' || phase.startsWith('initial-design-') || phase.startsWith('design-repair-') || phase.endsWith('-verifier-format-repair'))) {
         const outcome = await opts.onOutOfChain({ ...ctx, goalAttemptId: issued?.attemptId });
         const status = outcome?.status === 'waiting' || outcome?.status === 'failed' || outcome?.status === 'passed'
           ? outcome.status : outcome?.exitCode && outcome.exitCode !== 0 ? 'failed' : 'passed';
@@ -1162,8 +1164,20 @@ export async function runGoalRuntimeChain(
     let bridgeReportDir: string | null = null;
     const exitCode = opts.viaHostBridge || opts.viaSessionStep
       ? await (async () => {
+          const rawBridgeArgs = minimist(process.argv.slice(2));
+          const bridgeRequirement = resolveRequirementInput({ projectRoot: root,
+            requirement: rawBridgeArgs.requirement, requirementFile: rawBridgeArgs['requirement-file'] });
+          const definition = !opts.resume && useManifestPath ? loadGoalManifestFile('budget-manifest.yaml', root) : undefined;
+          if (definition) {
+            const overrides = { manifest: 'budget-manifest.yaml', start: rawBridgeArgs.start, end: rawBridgeArgs.end, adapter: rawBridgeArgs.adapter,
+              requirement: bridgeRequirement.text || undefined, requirement_source_files: bridgeRequirement.sources,
+              'override-manifest': Boolean(rawBridgeArgs['override-manifest']), 'override-start': Boolean(rawBridgeArgs['override-start']), 'override-end': Boolean(rawBridgeArgs['override-end']) };
+            const valid = validateManifestCliOverrides(overrides);
+            if (!valid.ok) throw new Error(valid.message);
+            applyManifestCliOverrides(definition, overrides);
+          }
           const bridgeManifest = opts.resume
-            ? loadGoalManifestFromRun(root, opts.resume, { feature: featureId })
+            ? loadGoalRunManifestFromRun(root, opts.resume, { feature: featureId })
             : prepareGoalModeRun({
                 projectRoot: root,
                 frameworkRoot: frameworkRoot,
@@ -1171,10 +1185,15 @@ export async function runGoalRuntimeChain(
                 runId: opts.runId,
                 adapter: opts.adapter ?? 'codex',
                 adapterSource: 'user_explicit',
-                requirement: opts.freshRequirement ?? '真机测试银行卡开卡流程',
-                startPhase: opts.freshStartPhase,
-                endPhase: opts.freshEndPhase,
+                requirement: definition?.requirement ?? bridgeRequirement.text ?? opts.freshRequirement ?? '真机测试银行卡开卡流程',
+                requirementSourceFiles: definition?.requirement_source_files ?? bridgeRequirement.sources,
+                startPhase: definition?.start_phase ?? opts.freshStartPhase,
+                endPhase: definition?.end_phase ?? opts.freshEndPhase,
+                ...(definition ? { budget: definition.budget, unattended: definition.unattended, adapterModelPin: definition.adapter_model_pin,
+                  visualProviderPin: definition.visual_provider_pin, fidelity: definition.fidelity, dependencyPolicy: definition.dependency_policy,
+                  minimumAssurance: definition.minimum_assurance } : {}),
               }).manifest;
+          const originalRequest = isInitialDesignManifest(bridgeManifest);
           bridgeReportDir = path.resolve(root, bridgeManifest.report_dir);
           if (opts.viaSessionStep) {
             const stepOptions = { projectRoot: root, frameworkRoot, feature: featureId, runId: bridgeManifest.run_id,
@@ -1191,23 +1210,25 @@ export async function runGoalRuntimeChain(
               if (opts.sessionSelfCheck && !request.purpose) {
                 const { spawnSync } = require('child_process') as typeof import('child_process');
                 const arguments_ = [require.resolve('ts-node/dist/bin.js'), '--project', path.join(frameworkRoot, 'harness/tsconfig.json'), path.join(frameworkRoot, 'harness/harness-runner.ts'),
-                  '--project-root', root, '--phase', ctx.phase, '--feature', featureId,
+                  '--project-root', root, '--phase', ctx.phase, '--feature', ctx.feature,
                   '--goal-run-id', ctx.runId, '--goal-attempt-id', ctx.attemptId, '--goal-owner-id', ctx.owner.owner_id, '--goal-owner-epoch', String(ctx.owner.epoch)];
                 spawnSync(process.execPath, [...arguments_, '--summary'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000, windowsHide: true });
-                const reports = featurePhaseReportsDir(root, featureId, ctx.phase, frameworkRoot);
+                const reports = featurePhaseReportsDir(root, ctx.feature, ctx.phase, frameworkRoot);
                 const summaryFile = path.join(reports, 'summary.json');
                 const summary = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, 'utf8')) : {};
                 if (summary.verifier_subject_id) {
                   (require('../utils/verifier-evidence-fixture') as typeof import('../utils/verifier-evidence-fixture')).publishFixtureVerifierEvidence({
-                    projectRoot: root, reportsDir: reports, feature: featureId, phase: ctx.phase, subjectId: summary.verifier_subject_id,
+                    projectRoot: root, reportsDir: reports, feature: ctx.feature, phase: ctx.phase, subjectId: summary.verifier_subject_id,
                     reportText: 'Independent verifier model substitute for deterministic transaction regression.', skipSummaryPatch: true });
                   spawnSync(process.execPath, [...arguments_, '--sync-closure'], { cwd: path.join(frameworkRoot, 'harness'), encoding: 'utf8', timeout: 60000, windowsHide: true });
                 }
               }
-              bridgeReportDir = ctx.runDir;
-              step = await runGoalModeSessionStep({ ...stepOptions, runId: ctx.runId, requestPath, report: outcome });
+              if (!originalRequest) bridgeReportDir = ctx.runDir;
+              const controlRunId = typeof step.delivery_run_id === 'string' ? step.delivery_run_id : ctx.runId;
+              step = await runGoalModeSessionStep({ ...stepOptions, runId: controlRunId, requestPath, report: outcome });
             }
             if (step.type === 'phase_execute_request') throw new Error('session step did not converge');
+            if (originalRequest && typeof step.exit_code === 'number') return step.exit_code;
             const result = step.result as import('../../scripts/utils/goal-phase-runtime').InSessionRoundResult;
             return result.status === 'reconciled' || result.status === 'executed' ? 0 : result.status === 'waiting' ? 2 : 1;
           }
@@ -1756,7 +1777,7 @@ test('P3 批三框架根清点：截断链 preflight 用调用方的框架根重
       }));
     }
   };
-  // preflight 拒绝走 process.exit(1)：两例都把它换成抛错，拒绝才能作为普通断言失败而不是打断整套。
+  // 库入口以返回码拒绝；拦住意外 process.exit，避免它杀掉整个测试 worker。
   const runCatchingExit = async (root: string, extra: Parameters<typeof runChain>[1] = {}): Promise<{ probe?: RunProbe; exited: string }> => {
     const realExit = process.exit;
     process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
@@ -1769,7 +1790,7 @@ test('P3 批三框架根清点：截断链 preflight 用调用方的框架根重
   const ok = setupHost().root;
   writeUpstream(ok);
   const good = await runCatchingExit(ok, { onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot) });
-  assert(!good.exited && !!good.probe, `合法上游证据须照常开跑（不得被判 stale 拒绝）：${good.exited}`);
+  assert(!good.exited && good.probe?.exitCode === 0, `合法上游证据须返回 0 并照常开跑：${good.exited || good.probe?.exitCode}`);
   assert(good.probe!.events.some(event => event.type === 'run_start'), `合法上游证据须写 run_start：exit=${good.probe!.exitCode}`);
   assert(good.probe!.invokedPhases[0] === 'coding', `应从 coding 起跑，实得 ${good.probe!.invokedPhases.join('→')}`);
 
@@ -1777,8 +1798,11 @@ test('P3 批三框架根清点：截断链 preflight 用调用方的框架根重
   const stale = setupHost().root;
   writeUpstream(stale);
   writeFile(stale, `doc/features/${FEATURE}/plan/plan.md`, '# plan\n（上游闭环之后被改动）\n');
-  const { exited } = await runCatchingExit(stale);
-  assert(exited.includes('process.exit(1)'), `真实 stale 的上游证据须拒绝启动：${exited || '未退出'}`);
+  const { probe: rejected, exited } = await runCatchingExit(stale);
+  assert(!exited && typeof rejected?.exitCode === 'number' && rejected.exitCode === 1,
+    `真实 stale 的上游证据须返回 1：${exited || String(rejected?.exitCode)}`);
+  assert(rejected!.invokedPhases.length === 0 && rejected!.harnessPhases.length === 0,
+    'stale 拒绝后不得继续调用作者或阶段 harness');
   const staleRuns = path.join(stale, 'doc', 'features', FEATURE, 'goal-runs');
   const started = fs.existsSync(staleRuns) && fs.readdirSync(staleRuns).some(id => {
     const ev = path.join(staleRuns, id, 'events.jsonl');
@@ -2635,6 +2659,7 @@ for (const entry of ['foreground', 'detach'] as const) test(`a2f7c9e4 §3.6/§3.
   const realExit = process.exit;
   let freshExit = '';
   let freshChildArgs: string[] | undefined;
+  let freshProbe: RunProbe | undefined;
   process.exit = ((code?: number) => { throw new Error(`process.exit(${code})`); }) as typeof process.exit;
   try {
     if (entry === 'detach') {
@@ -2642,12 +2667,17 @@ for (const entry of ['foreground', 'detach'] as const) test(`a2f7c9e4 §3.6/§3.
       freshExit = `exit=${fresh.exitCode}`;
       freshChildArgs = fresh.childArgs;
     } else {
-      await runChain(root, { launchArgs: ['--repair-notes', 'repair-notes.md'], onTesting, onCoding });
+      freshProbe = await runChain(root, { launchArgs: ['--repair-notes', 'repair-notes.md'], onTesting, onCoding });
+      freshExit = `return=${freshProbe.exitCode}`;
     }
   } catch (error) {
     freshExit = String((error as Error).message);
   } finally { process.exit = realExit; }
-  assert(entry === 'detach' ? freshExit === 'exit=2' && !freshChildArgs : freshExit.includes('process.exit(2)'), `fresh 带 --repair-notes 须入口用法错误：${freshExit || '未退出'}`);
+  assert(entry === 'detach' ? freshExit === 'exit=2' && !freshChildArgs
+    : typeof freshProbe?.exitCode === 'number' && freshProbe.exitCode === 2,
+    `fresh 带 --repair-notes 须入口用法错误：${freshExit || '无返回码'}`);
+  if (freshProbe) assert(freshProbe.invokedPhases.length === 0 && freshProbe.harnessPhases.length === 0,
+    'fresh repair-notes 拒绝后不得继续调用作者或阶段 harness');
   assert(goalRunIds(root).length === 1, `fresh 拒绝不得建 run：${goalRunIds(root).join(',')}`);
 
   // ③ 显式 resume + 授权预算 + 材料：原 run 续跑，返修 coding 提示同时含诊断入口与标明非需求的材料
@@ -6463,7 +6493,7 @@ for (const entry of ['foreground', 'detach'] as const) {
   });
 }
 
-test('P3 t5 A12/A14 attended：执行者停在授权确认处——有人在场不设冷却：未补授权立即重发即重新接入并以原因再停、不新建 run；补上授权立即重发即继续完成', async () => {
+test('P3 t5 A12/A14 attended：无变化重发保持停止；补上授权并明确恢复后同一run继续完成', async () => {
   const { root } = setupHost('codex');
   const proto = AttendedGoalPhaseExecutor.prototype;
   const original = proto.execute;
@@ -6480,15 +6510,22 @@ test('P3 t5 A12/A14 attended：执行者停在授权确认处——有人在场�
     const [run] = goalRunIds(root);
     const waits = (): number => goalRunEvents(root, run).filter(e => e.type === 'phase_halt' && e.halt_reason === 'executor_waiting').length;
     assert(waits() === 1, `夹具：首个请求须停在授权确认：${goalRunEvents(root, run).map(e => e.type).join(',')}`);
-    // 调度方 2026-09-29 裁定：有人在场不设冷却——刚停下就重发即重新接入，原授权检查照常执行。
-    await requestVia('attended', root, common);
-    assert(goalRunIds(root).length === 1 && waits() === 2, `有人在场、未补授权的立即重发须重新接入并以原因再停、不新建 run：runs=${goalRunIds(root).length} waits=${waits()}`);
+    let held = '';
+    try { await requestVia('attended', root, common); } catch (error) { held = String(error); }
+    assert(held.includes('保持停止') && goalRunIds(root).length === 1 && waits() === 1, `无变化重发须保持原停止，不新建run/调用：runs=${goalRunIds(root).length} waits=${waits()} ${held}`);
     const waitingEvents = goalRunEvents(root, run);
-    assert(waitingEvents.filter(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.status === 'waiting').length === 2,
+    assert(waitingEvents.filter(event => event.type === 'agent_invoke_end' && event.phase === 'coding' && event.status === 'waiting').length === 1,
       'each returned callback window must close as waiting, without borrowing a CLI process identity');
     assert(!waitingEvents.some(event => event.type === 'agent_process_settled'), 'callback waiting must not fabricate process settlement');
     authorized = true;
-    const done = await requestVia('attended', root, common);
+    const eventsPath = path.join(root, 'doc/features/bc-openCard/goal-runs', run, 'events.jsonl');
+    fs.writeFileSync(eventsPath, fs.readFileSync(eventsPath, 'utf8').split('\n').map(line => {
+      if (!line.trim()) return line;
+      const event = JSON.parse(line) as { type: string; ts?: string };
+      if (event.type === 'run_end') event.ts = new Date(Date.now() - 10 * 60_000).toISOString();
+      return JSON.stringify(event);
+    }).join('\n'));
+    const done = await requestVia('attended', root, { ...common, resume: run, forceResume: true, skipLegacySeal: true });
     assert(goalRunIds(root).length === 1 && done.invokedPhases.includes('coding'), `补授权后须重新接入并执行：${done.invokedPhases.join(',')}`);
     assertSealedComplete(goalRunEvents(root, run), 'attended 重新接入');
   } finally {

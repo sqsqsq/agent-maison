@@ -1,5 +1,5 @@
 ---
-description: 目标模式 goal-runner 薄入口（Cursor Command）
+description: 目标模式薄入口；原始需求起的设计与施工共用 Goal runtime（Cursor Command）
 argument-hint: <feature-name> [requirement]
 ---
 

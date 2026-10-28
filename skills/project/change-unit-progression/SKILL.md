@@ -14,7 +14,7 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 | **设计准备段** | admitted blueprint；**canonical CU 数量为 0 合法** | decomposition provider 提临时候选 → consumer validator 校验后**原子**写出 1..N canonical CU → design gate/readiness。停在 selector 之前，不启动 Goal Mode |
 | **施工段** | admitted blueprint **且 ≥1 canonical CU** | selector 选一个 ready CU → `goal-mode-entry --prepare-scope` 生成范围候选（**在任何产品源码改动之前**；主 Agent 只给完成终点、请求结果、明确的请求动作、影响判断及其来源路径；绑定与指纹由机器算；该入口**只生成候选、不冻结范围**，新完整交付在 run 出生时冻结，旧无 run 有效范围先正式转交）→ 同一 GoalPhaseRuntime 单并发推进（会话 next/report、无人值守 detached） → `ready_for_component_closure` |
 
-设计准备段的入口放宽**不传导到施工段**：没有任何 canonical CU 时，selector 不选择、Goal Mode 不启动，推进决策返回 `design_preparation_required`（这是合法入口提示，不是故障）。设计准备段通常由 `/component-design` 编排入口调用；直接进入本 Skill 时同样适用。
+设计准备段的入口放宽**不传导到施工段**：没有 canonical CU 时，selector 不选择、施工不启动；`design_preparation_required` 表示仍需设计准备，不是原始请求完成。正式完整交付已由同一 Goal runtime 受管时，runtime 继续派发设计职责，真实准入后才交 P2。直接设计调用仍停在 readiness，不能自行启动施工。
 
 > 真实宿主场景：选中 CU 前的准入与缺失输入三级路由见
 > [真实宿主准入与回灌契约](../../reference/real-host-admission-and-feedback.md)。
@@ -37,13 +37,13 @@ Use this Skill when a blueprint has an admitted canonical artifact. Canonical `c
 2. If an existing Goal Mode run is active, resume it and do not start another CU.
 3. Otherwise select at most one ready CU by ascending numeric priority, then stable `change_unit_id`.
 4. Hand Goal Mode the canonical CU path/ref/hash, blueprint ref and derived Feature id. After it returns, reread all facts before selecting again.
-5. On failure, pause or awaiting-human, stop on that run. Do not create a P2 checkpoint or start a second CU.
+5. On failure, pause or awaiting-human, preserve that run and its existing recovery decision. Do not create a P2 checkpoint or start a second CU. 完整交付由共同 runtime 接续：child 报告后自动回到原请求重读 P2，原请求止于全部适用 CU 正式完成；随后只按原口径只读检查一次部件闭环并披露，不自动修复或写出，`ready_for_component_closure` 不是部件完成。
 
 Blueprint/CU identity drift makes mappings and readiness stale. Pure pointer reconciliation preserves the same CU when historical stable targets still resolve and remain admitted; it does not revise content. 未完成内容修订保留历史与累计预算，旧业务产物不自动刷新；停住 run 沿既有 cu:feature-binding/合同 binding 缺口回 plan 更新映射与范围再继续。曾完成现为 INCOMPLETE 仍保留完成事实，原义务补证据走同 Feature successor；完成后新增工作及拆分/合并/迁移使用新 `change_unit_id`，适用时声明精确 `supersedes`，退役前身不改字节。`revises` is read-only legacy.
 
 ## Boundaries
 
-- Generic profile、单职责 request 与有效存量 standalone Feature 保留原流程。具备 design lens 的新完整 Feature 含 spec/plan 定义职责时，出生前回当前主 Agent 完成 component-design/CU 交接；未冻结候选不算有效既有任务。
+- Generic profile、单职责 request 与有效存量 standalone Feature 保留原流程。具备 design lens 的新正式完整交付可在尚无 CU 时出生受管初始设计段；未冻结候选和工作区目录都不代表设计已准入或施工获准。
 - `ready_for_component_closure` is only a handoff to later P3 evaluation. Never create or claim component closure here.
 - Do not add a registry, ledger, lock, daemon, semantic-diff/invalidates engine, dynamic Provider loader or second recovery authority.
 - The first release assumes one main Agent/process. If multiple writers become a real requirement, stop and propose a separate change.

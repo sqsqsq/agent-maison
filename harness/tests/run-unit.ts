@@ -101,6 +101,15 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'component-closure', modulePath: './unit/component-closure.unit.test' },
   { id: 'component-design-host-seams', modulePath: './unit/component-design-host-seams.unit.test' },
   { id: 'component-design-handoff', modulePath: './unit/component-design-handoff.unit.test' },
+  { id: 'initial-design-delivery', modulePath: './unit/initial-design-delivery.unit.test' },
+  { id: 'initial-design-budget', modulePath: './unit/initial-design-budget.unit.test' },
+  { id: 'initial-design-repair', modulePath: './unit/initial-design-repair.unit.test' },
+  { id: 'initial-design-supervisor', modulePath: './unit/initial-design-supervisor.unit.test' },
+  { id: 'initial-design-control', modulePath: './unit/initial-design-control.unit.test' },
+  { id: 'initial-design-waiting', modulePath: './unit/initial-design-waiting.unit.test' },
+  { id: 'initial-design-requirement', modulePath: './unit/initial-design-requirement.unit.test' },
+  { id: 'initial-design-scope-recovery', modulePath: './unit/initial-design-scope-recovery.unit.test' },
+  { id: 'initial-design-phase-input', modulePath: './unit/initial-design-phase-input.unit.test' },
   { id: 'mechanical-loop-closure', modulePath: './unit/mechanical-loop-closure.unit.test' },
   // M5A（plan e2a7c4b9）t2 返修验收：新布局生产入口最小合成用例（resolveChangeUnitRef
   // → enumerateFeatures → closure inputs 零 BLOCKER），t4 证明 11/12 的底座

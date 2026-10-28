@@ -1,6 +1,6 @@
 import type { HeadlessInvokePlan, AgentInvokeOptions, AgentInvokeResult } from './agent-invoke';
 import { invokeAgentHeadless } from './agent-invoke';
-import { invocationCompleted } from './invocation-completion';
+import { invocationCompleted, invocationWaitingDetail } from './invocation-completion';
 import type { RunFenceToken, RunOwnerKind } from './goal-run-control';
 
 export interface PhaseExecutionContext {
@@ -147,9 +147,11 @@ export class DetachedGoalPhaseExecutor implements GoalPhaseExecutor {
   async execute(context: PhaseExecutionContext): Promise<GoalPhaseExecutorResult> {
     const invocation = this.resolveInvocation(context);
     const result = await this.invoke(invocation.plan, invocation.cwd, invocation.options);
+    const waitingDetail = invocationWaitingDetail(result);
     return {
       ...result,
-      status: invocationCompleted(result) ? 'passed' : 'failed',
+      status: waitingDetail ? 'waiting' : invocationCompleted(result) ? 'passed' : 'failed',
+      ...(waitingDetail ? { details: waitingDetail } : {}),
       phase: context.phase,
     };
   }

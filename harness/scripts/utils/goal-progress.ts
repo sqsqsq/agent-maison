@@ -10,6 +10,7 @@ import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
 import { inspectGoalRunCreationFiles, applyScopeRevisions, eventsWithScopeRevocations } from './goal-run-creation';
 import { validateExecutionScope, effectiveScopeView } from './execution-scope';
+import { readOriginalDeliveryBudget } from './delivery-origin';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -846,6 +847,7 @@ export function mapGoalStatusToProgress(status: GoalRunStatus): ProgressRunStatu
 export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSnapshot {
   const nowMs = input.nowMs ?? Date.now();
   const { projectRoot, manifest, workflow } = input;
+  let effectiveBudget = manifest.budget;
   const reportDir = manifest.report_dir;
   // 实施 round2 P1：普通 run 的投影单点走权威视图——legacy 混写文件里的 dry 段
   //（span/turn/run_start 基点/recent_events）不得进面板真值，修「面板显示旧 dry-run
@@ -916,14 +918,16 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       feature: input.manifest.feature,
       currentEvents: events,
     });
-    const foldPartition = partitionExecutionSessions(fold.budgetFoldEvents, { liveTailMs: nowMs });
+    const deliveryBudget = readOriginalDeliveryBudget(projectRoot, manifest, nowMs);
+    if (deliveryBudget) effectiveBudget = deliveryBudget.budget;
+    const foldPartition = deliveryBudget ?? partitionExecutionSessions(fold.budgetFoldEvents, { liveTailMs: nowMs });
     turnsUsed = foldPartition.totalTurns;
     wallElapsed = foldPartition.priorActiveMs;
   }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
   // 同源包括**链**：runtime 在修订后按有效链重算 wall（goal-phase-runtime 的 revise_scope 分支），
   // 这里不传 chain 就会按出生链报一个更小的上限（review M3）。
-  const wallLimitMs = resolveWallClockMs(manifest, chain);
+  const wallLimitMs = resolveWallClockMs({ ...manifest, budget: effectiveBudget }, chain);
   const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
   // 当前调用已授予的截止；旧调用缺字段时回落 manifest，不借另一 invocation 的授予。
   const grantedTimeout = invocation?.start.effective_timeout_ms;
@@ -1071,7 +1075,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     liveness,
     budget: {
       turns_used: turnsUsed,
-      turns_limit: manifest.budget.max_total_turns,
+      turns_limit: effectiveBudget.max_total_turns,
       wall_elapsed_ms: wallElapsed,
       wall_limit_ms: wallLimitMs,
       phase_timeout_ms: phaseTimeoutMs,
@@ -1417,7 +1421,7 @@ export function atomicRenameWithRetry(
 export function writeProgressSnapshotAtomic(
   projectRoot: string,
   reportDir: string,
-  snapshot: GoalProgressSnapshot,
+  snapshot: GoalProgressSnapshot | import('./initial-design-delivery').InitialDesignDeliveryProjection,
   writeMd = false,
 ): void {
   const base = path.join(projectRoot, reportDir);
@@ -1439,7 +1443,10 @@ export function writeProgressSnapshotAtomic(
 
   if (writeMd) {
     const mdPath = path.join(base, 'progress.md');
-    fs.writeFileSync(mdPath, generateProgressMarkdown(snapshot), 'utf-8');
+    const markdown = 'kind' in snapshot
+      ? `# ${snapshot.feature}\n\n${snapshot.status}\n\n${snapshot.current?.phase ?? snapshot.stage}\n\n${snapshot.next_action}\n\n${snapshot.issues.join('\n')}\n`
+      : generateProgressMarkdown(snapshot);
+    fs.writeFileSync(mdPath, markdown, 'utf-8');
   }
 }
 

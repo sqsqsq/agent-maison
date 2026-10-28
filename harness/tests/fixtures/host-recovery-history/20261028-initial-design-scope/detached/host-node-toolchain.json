@@ -1,0 +1,8 @@
+{
+  "source_suffix": ".ts",
+  "source_root": "02-Feature/Inbox/src/main/ets",
+  "test_root": "02-Feature/Inbox/src/ohosTest/ets/test",
+  "compiler": "framework/harness/node_modules/typescript/bin/tsc",
+  "test_runner": "node --test",
+  "environment": "host-only; no HarmonyOS/device claim"
+}
