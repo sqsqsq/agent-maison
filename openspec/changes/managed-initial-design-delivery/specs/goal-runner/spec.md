@@ -18,9 +18,17 @@ Enforcement: `harness/scripts/utils/design-delivery-entry.ts`, `harness/scripts/
 
 The runtime SHALL reuse existing design author/questioning/check/publication and P2 progress calls, then create normal canonical CU runs with immutable optional `delivery_origin: {feature, run_id}` bound by their original run birth and identity. Normal child birth plus that origin SHALL be the sole handoff fact; no parallel handoff event, active-child file or request ledger SHALL be introduced. Old runs without the key SHALL retain existing identity semantics. Original design and child construction author windows MUST NOT overlap; each control/report SHALL use the real current run and fence.
 
+Each initial-design responsibility SHALL receive its actual preceding role output, existing materials and current machine diagnostics before transport dispatch. Notes SHALL NOT substitute for the required blueprint, questioning, decomposition or scope artifact. Normal incomplete content SHALL remain within the existing role quota. An exhausted run SHALL NOT reset that quota through resume, force-resume or repeated next/report. An explicit `--supersede` of the current original run SHALL reach the existing audited initial-design successor path through prepare and runtime entries, retaining original input and cumulative turns/active time; a superseded target SHALL rejoin its current successor rather than fork. Existing live-owner, unreported-request, adapter, authorization and total-budget boundaries SHALL remain.
+
 Child reports, including direct reports through the child entry, SHALL automatically return to the original P2 caller after formal completion. Re-entry SHALL locate real origin-bound runs and reread current completion/P2 facts, including birth-before-stdout and accepted-report-before-root-reassessment interruption windows; it MUST NOT repeat acceptance, create another active child or abandon the original request while applicable CUs remain unfinished. All applicable CU formal completion/carry-forward SHALL establish the original request's endpoint. Existing component closure SHALL then be checked once read-only and disclosed without automatic repair, write, closure or verdict changes. Request completion MUST NOT establish component closure PASS or relax existing Feature/CU/UT acceptance. A completed original request SHALL return its reread valid result on identical re-entry rather than create a new initial-design run.
 
 Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/goal-mode-entry.ts`, `harness/scripts/utils/goal-manifest.ts`, `harness/scripts/utils/change-unit-progress-loop.ts`, `harness/scripts/utils/change-unit-completion.ts`, `harness/scripts/check-component-closure.ts`.
+
+#### Scenario: Explicit recovery after initial-design content exhaustion
+
+- **WHEN** initial design exhausted its role quota with only notes and the same original request explicitly supersedes the current stopped run
+- **THEN** the audited successor SHALL consume the real old role output and notes, retain all prior turns and active time, and continue real author/questioning/admission/CU handoff within the remaining budget
+- **AND** plain re-entry SHALL retain exhaustion, pending old execution SHALL refuse successor birth, and a stale supersede target SHALL rejoin the current successor
 
 #### Scenario: Child birth survives a lost launcher response
 

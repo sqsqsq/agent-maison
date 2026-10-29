@@ -6,6 +6,7 @@ import {
   asStrings,
   issue,
   nonEmptyString,
+  DISPOSITIONS,
 } from './component-blueprint-model';
 import { validateProvenanceRecord } from './blueprint-provenance';
 import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint-views';
@@ -54,6 +55,20 @@ export function unchangedViewQuestioningScopes(blueprint: BlueprintRecord): Map<
     }
   }
   return out;
+}
+
+export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, providerId: string): string[] {
+  const scopes = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => `- ${ref}（${kind}）`);
+  const unchanged = [...unchangedViewQuestioningScopes(blueprint)].map(([ref, refs]) => `- ${ref}：须核实不变声明及其依据（answered_with_evidence，evidence_refs 至少含其一：${refs.join(', ') || '（未声明）'}）`);
+  return [
+    `质询方标识 provider_id：${providerId}`,
+    '结果形状：status: complete；isolated_context: true；writes_ssot: false；frontier_budget；repeated_frontier_count；items[]（每项 question_id / question / frontier_fingerprint / owner / scope_kind / scope_ref / disposition / verification_refs / provenance，answered_with_evidence 另需 answer 与 evidence_refs）。',
+    `disposition只能使用以下合法值：${DISPOSITIONS.join(' / ')}；不要用open等其它拼写。`,
+    '',
+    '## 必答范围（每个恰好一项）',
+    ...scopes,
+    ...(unchanged.length ? ['', '## verified_unchanged 视图', ...unchanged] : []),
+  ];
 }
 
 export function createIndependentQuestioningResult(input: {
@@ -115,7 +130,7 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
       covered.add(scopeRef);
     }
     const disposition = String(item.disposition);
-    if (!['answered_with_evidence', 'decided_with_authority', 'open_decision', 'blocker', 'not_applicable'].includes(disposition)) {
+    if (!(DISPOSITIONS as readonly string[]).includes(disposition)) {
       out.push(issue('blueprint_questioning_disposition_invalid', `${base}.disposition`, '质询 disposition 非法。'));
     }
     if (disposition === 'answered_with_evidence' && (asStrings(item.evidence_refs).length === 0 || !nonEmptyString(item.answer))) {

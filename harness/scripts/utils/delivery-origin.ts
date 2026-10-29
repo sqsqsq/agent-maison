@@ -135,7 +135,7 @@ export function readOriginalDeliveryBudget(projectRoot: string, manifest: GoalRu
   }
   const intervals: Array<{ startMs: number; endMs: number }> = [];
   let totalTurns = 0;
-  const childStarts = runs.slice(1).flatMap(run => run.events.filter(event => event.type === 'run_start')
+  const childStarts = runs.filter(run => !isInitialDesignManifest(run.manifest)).flatMap(run => run.events.filter(event => event.type === 'run_start')
     .map(event => Date.parse(String('session_started_at' in event ? event.session_started_at : event.ts))).filter(Number.isFinite));
   for (const run of runs) {
     const owner = readRunControl(path.resolve(projectRoot, run.manifest.report_dir), run.manifest.run_id)?.owner;

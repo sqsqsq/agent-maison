@@ -101,6 +101,7 @@ export interface PrepareGoalModeRunOptions {
   frameworkRoot: string;
   feature: string;
   runId?: string;
+  supersede?: string[];
   adapter: string;
   adapterSource?: RunAdapterProvenance;
   requirement: string;
@@ -158,7 +159,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   const existingInitial = findInitialDesignRun({ ...options, feature });
   const previousInitial = existingInitial ?? findInitialDesignRun({ projectRoot: options.projectRoot, feature });
   // plan 4e6fb3b6 §7.3：接续决策在生成出生范围之前执行（与前台、detach 同一个函数）。
-  const continuation: RunContinuationDecision = existingInitial
+  const continuation: RunContinuationDecision = existingInitial && !options.supersede?.length
     ? { kind: 'rejoin', explicit: false, runId: existingInitial.run_id, started: true, reason: '接回原始正式请求' }
     : options.forceFresh
     ? { kind: 'fresh', explicit: true, reason: '显式 --force' }
@@ -169,6 +170,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
           ...(options.requirementSourceFiles?.length ? { requirementSourceFiles: options.requirementSourceFiles } : {}),
           attended: true,
           budgetOverride: options.budgetOverride === true,
+          supersede: options.supersede,
         },
       });
   if (continuation.kind === 'hold') throw new Error(`[goal-mode-entry] ${continuation.guidance}`);
@@ -178,7 +180,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     const prepared = prepareInitialDesignRun({ ...options, feature,
       visualProviderPin: options.visualProviderPin ?? resolveUnattendedVisualProviderPin(loadLocalConfig(options.projectRoot), options.frameworkRoot).pin });
     const continuation: RunContinuationDecision = prepared.created
-      ? { kind: 'fresh', explicit: false, reason: '原始正式请求进入同一受管设计段' }
+      ? prepared.continuation ?? { kind: 'fresh', explicit: false, reason: '原始正式请求进入同一受管设计段' }
       : { kind: 'rejoin', explicit: false, runId: prepared.manifest.run_id, started: true, reason: '接回原始正式请求与其现有设计/CU工作' };
     return { ...prepared, continuation };
   }
@@ -697,7 +699,7 @@ async function main(): Promise<void> {
       'completion-target', 'requested-results', 'requested-phases',
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
-      'requirement-file', 'manifest',
+      'requirement-file', 'manifest', 'supersede',
     ],
     boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest', 'override-start', 'override-end'],
   });
@@ -706,6 +708,7 @@ async function main(): Promise<void> {
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
       '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end; --force records an operator override).\n' +
+      'Exhausted initial design: --prepare-run --supersede <current-run-id> with the original requirement creates an audited successor and keeps cumulative budget.\n' +
       'Scope candidate (run this BEFORE --prepare-run; the two flags are mutually exclusive):\n' +
       '  --prepare-scope --feature <f> --completion-target <request|feature>\n' +
       '    --requested-results "<text>" (repeatable) --requested-phases spec,plan,coding,review,ut\n' +
@@ -789,6 +792,7 @@ async function main(): Promise<void> {
       requestedPhases: inputDefinition?.requestedPhases,
       requestedResults: inputDefinition?.requestedResults,
       forceFresh: Boolean(argv.force),
+      supersede: (Array.isArray(argv.supersede) ? argv.supersede : argv.supersede ? [argv.supersede] : []).map(String),
       budgetOverride: Boolean(argv['override-manifest']),
       autonomyAuthorized: Boolean(argv['authorize-autonomy']),
     });

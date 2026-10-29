@@ -359,6 +359,412 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   },
 }];
 
+for (const scenario of ['definition-gap', 'empty-chain'] as const) cases.push({
+  name: `9f6c2e41 initial construction ${scenario === 'definition-gap' ? 'births spec and plan with unresolved definitions' : 'returns an empty executable chain to its scope owner'}`,
+  async run() {
+    const { withFreshCuHost } = require('./lifecycle-evolution.unit.test') as typeof import('./lifecycle-evolution.unit.test');
+    const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
+    const manifests = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    const { prepareFeatureScopeCandidate } = require('../../scripts/utils/feature-track') as typeof import('../../scripts/utils/feature-track');
+    const { resolveBirthExecutionScope } = require('../../scripts/utils/feature-execution-scope') as typeof import('../../scripts/utils/feature-execution-scope');
+    const { resolveWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+    const { deriveChangeUnitFeatureId } = require('../../scripts/utils/change-unit-path') as typeof import('../../scripts/utils/change-unit-path');
+    const { readOriginalDeliveryBudget } = require('../../scripts/utils/delivery-origin') as typeof import('../../scripts/utils/delivery-origin');
+    const { readSessionExecution } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const runtime = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
+    runtime.__testing_setInvokeAgent(async () => { throw new Error('A public next request must not launch a headless model.'); });
+    runtime.__testing_setCanaryProbeInvoke(async () => { throw new Error('This nonvisual birth regression must not launch a canary model.'); });
+    try { await withFreshCuHost(async host => {
+      const blueprint = 'ledger-app-blueprint', requirement = '新增一笔账目后刷新账页并在重启后恢复余额';
+      const original = manifests.buildInitialDesignGoalManifest({ feature: blueprint, run_id: `scope-birth-${scenario}`, adapter: 'codex', requirement,
+        initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] },
+        budget: { max_total_turns: 20, wall_clock_minutes: 120 }, unattended: UNATTENDED }, { projectRoot: host.root });
+      const root = createGoalRun({ projectRoot: host.root, manifest: original, chain: [] });
+      const rootRunDir = path.dirname(root.manifestPath);
+      const feature = deriveChangeUnitFeatureId(blueprint, 'ledger-refresh');
+      if (scenario === 'empty-chain') {
+        const { handWriteProjections } = require('./component-design-handoff.unit.test') as typeof import('./component-design-handoff.unit.test');
+        handWriteProjections(host.root);
+      }
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
+        completionTarget: 'feature', requestedResults: [requirement], requirement, overwrite: true,
+        requestedPhases: scenario === 'definition-gap' ? ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] : ['coding', 'review', 'ut'],
+        impact: { userVisibleBehaviorChange: false, reason: '既有账目领域函数，不含设备或UI目标', basisPaths: ['src/ledger/LedgerFeature.ets'] } });
+      prepared.candidate.facts.push(scenario === 'definition-gap'
+        ? { id: 'acceptance-definition:pending', kind: 'acceptance-definition', applicability: 'unknown', reason: '新增验收定义仍待 spec 责任方补齐', basis: [prepared.candidate.request.requirement_basis!] }
+        : { id: 'implementation:pending', kind: 'implementation', applicability: 'unknown', reason: '当前实现义务尚不可执行，下游必须等待', basis: prepared.candidate.facts.find(fact => fact.kind === 'implementation')!.basis });
+      const candidate = YAML.parse(fs.readFileSync(prepared.path, 'utf8'));
+      candidate.execution_scope = prepared.candidate;
+      fs.writeFileSync(prepared.path, YAML.stringify(candidate));
+      const scope = resolveBirthExecutionScope(host.root, feature, resolveWorkflowSpec(host.root, { frameworkRoot: host.frameworkRoot }), host.frameworkRoot, requirement).scope!;
+      assert.deepEqual(scope.phase_chain, scenario === 'definition-gap' ? ['spec', 'plan'] : []);
+      assert(scope.unresolved.length > 0);
+      const result = await entry.runGoalModeSessionStep({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature: blueprint,
+        runId: original.run_id, adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: true } });
+      assert.equal(result.type, 'phase_execute_request', JSON.stringify(result));
+      const family = readOriginalDeliveryBudget(host.root, original)!;
+      const children = family.runs.filter(run => !manifests.isInitialDesignManifest(run.manifest));
+      if (scenario === 'definition-gap') {
+        assert.equal(children.length, 1);
+        const child = children[0].manifest;
+        assert(!manifests.isInitialDesignManifest(child));
+        assert.deepEqual(child.delivery_origin, { feature: blueprint, run_id: original.run_id });
+        assert.deepEqual(child.execution_scope, scope, 'shared preparation must freeze the same unresolved and needed_by obligations');
+        assert.deepEqual(child.phase_chain, ['spec', 'plan']);
+        const issued = readSessionExecution(path.resolve(host.root, child.report_dir), (result.request as { path: string }).path)!;
+        assert.equal(issued.request.context.phase, 'spec');
+        assert.equal(result.run_id, child.run_id);
+        assert(!fs.readFileSync(path.join(rootRunDir, 'events.jsonl'), 'utf8').includes('initial-design-scope-'), 'the scope owner must not be called again');
+      } else {
+        assert.equal(children.length, 0, 'an empty chain must not birth a child');
+        const issued = readSessionExecution(rootRunDir, (result.request as { path: string }).path)!;
+        assert(issued.request.context.phase.startsWith('initial-design-scope-'));
+        assert(issued.request.context.instruction?.includes('当前实现义务尚不可执行'));
+      }
+      assert.equal(family.totalTurns, 1, 'only the signed request consumes the original budget');
+    }); } finally {
+      runtime.__testing_setInvokeAgent(null); runtime.__testing_setCanaryProbeInvoke(null);
+    }
+  },
+});
+
+function seedExhaustedDesign(project: Project, maxTurns = 30) {
+  const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+  const manifests = require(path.join(project.harnessDir, 'scripts/utils/goal-manifest')) as typeof import('../../scripts/utils/goal-manifest');
+  const prepared = entry.prepareGoalModeRun({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+    adapter: 'codex', runId: 'exhausted-original', requirement: project.requirement, requirementSourceFiles: project.requirementSourceFiles,
+    requestedResults: ['原始请求完整交付'], budget: { ...ORIGINAL_BUDGET, max_total_turns: maxTurns, max_retries_per_phase: 2 }, unattended: UNATTENDED });
+  const eventsPath = path.join(prepared.runDir, 'events.jsonl');
+  const append = (event: Record<string, unknown>, offset: number) => fs.appendFileSync(eventsPath,
+    JSON.stringify({ ...event, run_id: prepared.manifest.run_id, ts: new Date(Date.now() - 6000 + offset).toISOString() }) + '\n');
+  append({ type: 'run_start' }, 0);
+  for (let index = 1; index <= 3; index++) {
+    const invokeId = `initial-design-author-i${index}`;
+    append({ type: 'agent_invoke_start', phase: 'initial-design-author', invoke_id: invokeId, purpose: 'author' }, index * 1000);
+    const directory = path.join(prepared.runDir, 'phases', 'initial-design-author', invokeId);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'agent-output.log'), [
+      JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', aggregated_output: 'TOOL-DATA'.repeat(20000) } }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: `事故原调用最终正文${index}：已写发现笔记，尚未交付蓝图。` } }),
+      JSON.stringify({ type: 'turn.completed' }),
+    ].join('\n'));
+    append({ type: 'agent_invoke_end', phase: 'initial-design-author', invoke_id: invokeId, purpose: 'author', status: 'passed',
+      completion_observed: true, exit_code: 1, duration_ms: 500 }, index * 1000 + 500);
+  }
+  append({ type: 'run_end', status: 'HALTED', halt_reason: 'content_retry_exhausted', run_disposition: 'TERMINAL' }, 4500);
+  const note = path.join(project.root, 'doc/features', project.feature, 'blueprint/author-findings.md');
+  fs.mkdirSync(path.dirname(note), { recursive: true });
+  fs.writeFileSync(note, '真实发现中间材料，不能作为蓝图或准入。\n');
+  assert(manifests.isInitialDesignManifest(prepared.manifest));
+  return { ...prepared, manifest: prepared.manifest, eventsPath, note };
+}
+
+cases.push({
+  name: '9f6c2e41 explicit successor preserves exhausted history and process feedback across session handoff without branching',
+  async run() {
+    await withProject(async project => {
+      const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+      const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+      const origin = require(path.join(project.harnessDir, 'scripts/utils/delivery-origin')) as typeof import('../../scripts/utils/delivery-origin');
+      const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
+      const old = seedExhaustedDesign(project);
+      const originalBytes = fs.readFileSync(old.eventsPath);
+      const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'codex',
+        requirement: project.requirement, requirementSourceFiles: project.requirementSourceFiles, supersede: [old.manifest.run_id] };
+      assert.throws(() => entry.prepareGoalModeRun({ ...options, adapter: 'claude' }), /adapter/);
+      for (const force of [false, true]) {
+        const code = await new runtime.GoalPhaseRuntime({ args: ['--project-root', project.root, '--framework-root', project.frameworkRoot,
+          '--feature', project.feature, '--resume', old.manifest.run_id, ...(force ? ['--force-resume'] : [])],
+          executor: { async execute() { throw new Error('an exhausted original must not call an author'); } } }).run();
+        assert.equal(code, 1);
+      }
+      assert.equal(handoff.sessionEvents(old.runDir).filter(event => event.type === 'agent_invoke_start').length, 3);
+      assert(!fs.existsSync(path.join(old.runDir, 'phases/initial-design-author/initial-design-author-i4/prompt.md')));
+      assert.equal(entry.prepareGoalModeRun({ ...options, supersede: undefined }).manifest.run_id, old.manifest.run_id);
+      const stoppedBytes = fs.readFileSync(old.eventsPath);
+      const successor = entry.prepareGoalModeRun({ ...options, runId: 'explicit-successor', adapterModelPin: { adapter: 'codex', value: 'gpt-6.1-terra' } });
+      const manifests = require(path.join(project.harnessDir, 'scripts/utils/goal-manifest')) as typeof import('../../scripts/utils/goal-manifest');
+      assert(manifests.isInitialDesignManifest(successor.manifest));
+      assert.equal(successor.continuation.kind, 'successor');
+      assert.equal(successor.manifest.successor_of, old.manifest.run_id);
+      assert.deepEqual(successor.manifest.initial_design, old.manifest.initial_design);
+      assert.deepEqual(successor.manifest.requirement_source_files, old.manifest.requirement_source_files);
+      assert.equal(successor.manifest.requirement, old.manifest.requirement);
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 3);
+      assert(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.priorActiveMs >= 1500);
+      assert.deepEqual(fs.readFileSync(old.eventsPath), stoppedBytes, 'successor cannot rewrite its source history');
+      assert(stoppedBytes.subarray(0, originalBytes.length).equals(originalBytes));
+      const step = { ...options, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const next = await entry.runGoalModeSessionStep(step);
+      assert.equal(next.type, 'phase_execute_request');
+      const request = handoff.readSessionExecution(successor.runDir, (next.request as { path: string }).path)!;
+      const instruction = request.request.context.instruction!;
+      assert(instruction.includes('事故原调用最终正文3'), 'session successor must read the old process output');
+      assert(instruction.includes(old.note) && instruction.includes('必须实际编写或补齐'));
+      assert(!instruction.includes('TOOL-DATA') && instruction.length < 20000, 'tool stdout must not inflate continuation');
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 4);
+      assert.deepEqual((await entry.runGoalModeSessionStep(step)).request, next.request);
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 4);
+      assert.throws(() => entry.prepareGoalModeRun({ ...options, supersede: [successor.manifest.run_id], runId: 'blocked-by-pending' }), /尚未报告/);
+      const rejoined = entry.prepareGoalModeRun({ ...options, runId: 'must-not-fork' });
+      assert.equal(rejoined.manifest.run_id, successor.manifest.run_id, 'stale target must rejoin the current audited successor');
+      assert(!fs.existsSync(path.join(path.dirname(successor.runDir), 'must-not-fork')));
+    });
+  },
+}, {
+  name: '9f6c2e41 successor content quota cannot refresh through notes reports or another successor beyond total budget',
+  async run() {
+    await withProject(async project => {
+      const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+      const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+      const origin = require(path.join(project.harnessDir, 'scripts/utils/delivery-origin')) as typeof import('../../scripts/utils/delivery-origin');
+      const old = seedExhaustedDesign(project, 7);
+      const input = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'codex', requirement: project.requirement };
+      const successor = entry.prepareGoalModeRun({ ...input, runId: 'quota-successor', supersede: [old.manifest.run_id] });
+      const step = { ...input, runId: successor.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: false } };
+      let next = await entry.runGoalModeSessionStep(step);
+      assert.equal(next.type, 'phase_execute_request', 'original author duty must not require additional autonomy in a successor');
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        assert.equal(next.type, 'phase_execute_request');
+        assert.deepEqual((await entry.runGoalModeSessionStep(step)).request, next.request);
+        const requestPath = (next.request as { path: string }).path;
+        const request = handoff.readSessionExecution(successor.runDir, requestPath)!;
+        fs.appendFileSync(old.note, `只增笔记${attempt}\n`);
+        next = await entry.runGoalModeSessionStep({ ...step, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: `本轮仍未交付蓝图${attempt}` } });
+      }
+      assert.equal(next.type, 'goal_session_result');
+      assert(handoff.sessionEvents(successor.runDir).some(event => event.halt_reason === 'content_retry_exhausted'));
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, successor.manifest)!.totalTurns, 6);
+      const last = entry.prepareGoalModeRun({ ...input, runId: 'last-budget-successor', supersede: [successor.manifest.run_id] });
+      const lastStep = { ...step, runId: last.manifest.run_id };
+      const lastNext = await entry.runGoalModeSessionStep(lastStep);
+      assert.equal(lastNext.type, 'phase_execute_request');
+      const requestPath = (lastNext.request as { path: string }).path;
+      const request = handoff.readSessionExecution(last.runDir, requestPath)!;
+      const exhausted = await entry.runGoalModeSessionStep({ ...lastStep, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: 'Still no blueprint.' } });
+      assert.equal(exhausted.type, 'goal_session_result');
+      assert(handoff.sessionEvents(last.runDir).some(event => event.halt_reason === 'budget_turns'));
+      assert.equal(origin.readOriginalDeliveryBudget(project.root, last.manifest)!.totalTurns, 7);
+      const empty = entry.prepareGoalModeRun({ ...input, runId: 'no-budget-successor', supersede: [last.manifest.run_id] });
+      assert.equal((await entry.runGoalModeSessionStep({ ...step, runId: empty.manifest.run_id })).type, 'goal_session_result');
+      assert.equal(handoff.sessionEvents(empty.runDir).filter(event => event.type === 'agent_invoke_start').length, 0);
+    });
+  },
+}, {
+  name: '9f6c2e41 public prepare CLI and runtime both honor explicit same-requirement supersede',
+  async run() {
+    for (const lane of ['prepare', 'runtime']) await withProject(async project => {
+      const old = seedExhaustedDesign(project);
+      const origin = require(path.join(project.harnessDir, 'scripts/utils/delivery-origin')) as typeof import('../../scripts/utils/delivery-origin');
+      if (lane === 'prepare') {
+        const launch = path.join(project.root, 'doc/successor-input.yaml');
+        fs.writeFileSync(launch, YAML.stringify({ ...old.manifest, adapter_model_pin: { adapter: 'codex', value: 'gpt-6.1-terra' } }));
+        const result = publicCli(project, 'goal-mode-entry', ['--prepare-run', '--manifest', launch, '--run-mode', 'attended', '--supersede', old.manifest.run_id]);
+        assert.equal(result.continuation, 'successor');
+        const manifest = JSON.parse(fs.readFileSync(result.manifest, 'utf8'));
+        assert.equal(manifest.successor_of, old.manifest.run_id);
+        assert.deepEqual(manifest.initial_design.requested_results, old.manifest.initial_design.requested_results);
+        assert.equal(manifest.adapter_model_pin.value, 'gpt-6.1-terra');
+        assert.equal(origin.readOriginalDeliveryBudget(project.root, manifest)!.totalTurns, 3);
+      } else {
+        const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
+        const stopped = new runtime.GoalPhaseRuntime({ args: ['--project-root', project.root, '--framework-root', project.frameworkRoot,
+          '--feature', project.feature, '--resume', old.manifest.run_id], executor: { async execute() { throw new Error('old run is exhausted'); } } });
+        assert.equal(await stopped.run(), 1);
+        const end = JSON.parse(fs.readFileSync(old.eventsPath, 'utf8').trim().split('\n').at(-1)!);
+        const command = String(end.halt_guidance).split('\n').at(-1)!;
+        const words = (command.match(/"[^"]*"|\S+/g) ?? []).map(word => word.replace(/^"|"$/g, ''));
+        const recoveryArgs = words.slice(words.indexOf('--') + 1);
+        assert(recoveryArgs.includes('--manifest') && recoveryArgs.includes('--supersede'));
+        assert(!recoveryArgs.includes('--requirement') && !recoveryArgs.includes('--authorize-autonomy'));
+        let calls = 0;
+        const driver = new runtime.GoalPhaseRuntime({ args: recoveryArgs,
+          executor: { async execute(context) { calls++; assert(context.instruction?.includes('事故原调用最终正文3'));
+            return { status: 'waiting', phase: context.phase, details: 'Bounded transport observation.', exitCode: 0, stdout: '', stderr: '', command: 'bounded-executor' }; } } });
+        assert.equal(await driver.run(), 1);
+        assert.equal(calls, 1);
+        const current = origin.currentOriginalDelivery(project.root, old.manifest as never);
+        assert.notEqual(current.run_id, old.manifest.run_id);
+        assert.equal(current.successor_of, old.manifest.run_id);
+        assert.equal(origin.readOriginalDeliveryBudget(project.root, current)!.totalTurns, 4);
+      }
+    });
+  },
+}, {
+  name: '9f6c2e41 stale supersede with changed requirement preserves the increment and succeeds from the current request',
+  async run() {
+    for (const lane of ['prepare', 'runtime']) await withProject(async project => {
+      const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+      const origin = require(path.join(project.harnessDir, 'scripts/utils/delivery-origin')) as typeof import('../../scripts/utils/delivery-origin');
+      const old = seedExhaustedDesign(project);
+      const common = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'codex', requirement: project.requirement };
+      const current = entry.prepareGoalModeRun({ ...common, runId: 'current-successor', supersede: [old.manifest.run_id] });
+      fs.appendFileSync(path.join(current.runDir, 'events.jsonl'), JSON.stringify({ type: 'run_start', run_id: current.manifest.run_id,
+        ts: new Date().toISOString() }) + '\n');
+      const increment = '新增要求：批量已读结果必须保留失败条目的原状态。';
+      if (lane === 'prepare') {
+        const next = entry.prepareGoalModeRun({ ...common, requirement: increment, runId: 'increment-successor', supersede: [old.manifest.run_id] });
+        assert.equal(next.manifest.successor_of, current.manifest.run_id);
+        assert(next.manifest.requirement!.includes(project.requirement) && next.manifest.requirement!.includes(increment));
+        assert.equal(next.continuation.kind, 'successor');
+        if (next.continuation.kind === 'successor') { assert.equal(next.continuation.change, 'requirement_increment'); assert.equal(next.continuation.explicit, false); }
+      } else {
+        const runtime = require(path.join(project.harnessDir, 'scripts/goal-phase-runtime')) as typeof import('../../scripts/goal-phase-runtime');
+        let calls = 0;
+        const driver = new runtime.GoalPhaseRuntime({ args: ['--project-root', project.root, '--framework-root', project.frameworkRoot,
+          '--feature', project.feature, '--adapter', 'codex', '--requirement', increment, '--supersede', old.manifest.run_id],
+          executor: { async execute(context) { calls++; assert(context.instruction?.includes(project.requirement) && context.instruction.includes(increment));
+            return { status: 'waiting', phase: context.phase, details: 'Only observe increment delivery.', exitCode: 0, stdout: '', stderr: '', command: 'bounded-executor' }; } } });
+        assert.equal(await driver.run(), 1);
+        assert.equal(calls, 1);
+        const next = origin.currentOriginalDelivery(project.root, old.manifest);
+        assert.equal(next.successor_of, current.manifest.run_id);
+        assert(next.requirement!.includes(increment));
+        assert.equal(origin.readOriginalDeliveryBudget(project.root, next)!.totalTurns, 4);
+      }
+    });
+  },
+});
+
+cases.push({
+  name: '9f6c2e41 equivalent provenance observation spellings preserve role boundaries while changed verdict source or instant remains rejected',
+  run() {
+    const { validateInitialDesignInvocation } = require('../../scripts/utils/initial-design-delivery') as typeof import('../../scripts/utils/initial-design-delivery');
+    const { validateProvenanceRecord } = require('../../scripts/utils/blueprint-provenance') as typeof import('../../scripts/utils/blueprint-provenance');
+    const { validateLiteSchema } = require('../../scripts/utils/lite-json-schema') as typeof import('../../scripts/utils/lite-json-schema');
+    const provenance = { source_kind: 'independent_review', source_ref: 'doc/requirement.md', observed_at: '2026-10-28T00:00:00Z', evidence_strength: 'observed', extraction_method: 'source_review' };
+    const before = { revision: 1, provenance, note: '2026-10-28T00:00:00Z', review_summary: { questioning: { status: 'complete', provider_id: 'independent-questioner',
+      items: [{ disposition: 'blocker', answer: '必须补齐真实交接', provenance: { ...provenance } }] } } };
+    const after = structuredClone(before);
+    after.revision = 2;
+    after.review_summary.questioning.items[0].provenance.observed_at = '2026-10-28 00:00:00+00:00';
+    const original = YAML.stringify(before);
+    assert.equal(validateInitialDesignInvocation('author', original, YAML.stringify(after)), null);
+    for (const change of [
+      (doc: typeof after) => { doc.review_summary.questioning.items[0].disposition = 'answered_with_evidence'; },
+      (doc: typeof after) => { doc.review_summary.questioning.provider_id = 'author'; },
+      (doc: typeof after) => { doc.review_summary.questioning.items[0].answer = '已通过'; },
+      (doc: typeof after) => { doc.review_summary.questioning.items[0].provenance.source_ref = 'different-source.md'; },
+      (doc: typeof after) => { doc.review_summary.questioning.items[0].provenance.observed_at = '2026-10-28 00:00:01+00:00'; },
+    ]) {
+      const changed = structuredClone(after); change(changed);
+      assert(validateInitialDesignInvocation('author', original, YAML.stringify(changed)), 'real questioning changes must remain unauthorized');
+    }
+    const questioned = structuredClone(before);
+    questioned.provenance.observed_at = '2026-10-28 00:00:00+00:00';
+    questioned.review_summary.questioning.items[0].answer = '本次新质询的真实结果';
+    assert.equal(validateInitialDesignInvocation('questioning', original, YAML.stringify(questioned)), null);
+    for (const change of [
+      (doc: typeof questioned) => { doc.provenance.observed_at = '2026-10-28 00:00:01+00:00'; },
+      (doc: typeof questioned) => { doc.provenance.source_ref = 'different-source.md'; },
+      (doc: typeof questioned) => { doc.note = '2026-10-28 00:00:00+00:00'; },
+    ]) {
+      const changed = structuredClone(questioned); change(changed);
+      assert(validateInitialDesignInvocation('questioning', original, YAML.stringify(changed)), 'only defined provenance timestamps may compare by instant');
+    }
+    for (const name of ['app-component-blueprint.schema.json', 'change-unit.schema.json']) {
+      const schema = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../schemas', name), 'utf8'));
+      assert.deepEqual(validateLiteSchema(questioned.provenance, schema.$defs.provenance), [], 'the same serialization must pass the actual provenance schema');
+    }
+    assert.deepEqual(validateProvenanceRecord(questioned.provenance, '$.provenance'), []);
+    assert.equal(YAML.stringify(before), original, 'comparison must not rewrite the original artifact');
+  },
+});
+
+cases.push({
+  name: '9f6c2e41 current authority reaches both roles and first versus repeat questioning keeps the existing reading contract',
+  async run() {
+    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'initial-authority-')));
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    const delivery = require('../../scripts/utils/initial-design-delivery') as typeof import('../../scripts/utils/initial-design-delivery');
+    const manifests = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
+    const { createGoalRun } = require('../../scripts/utils/goal-run-creation') as typeof import('../../scripts/utils/goal-run-creation');
+    const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
+    const { readSessionExecution } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
+    const { renderDesignAuthorityBoundary } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+    const { requiredQuestioningScopes } = require('../../scripts/utils/blueprint-questioning') as typeof import('../../scripts/utils/blueprint-questioning');
+    try {
+      fs.writeFileSync(path.join(directory, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: 'AuthorityPrompt',
+        project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', features_dir: 'doc/features' }));
+      clearFrameworkConfigCache();
+      const requirement = 'ORIGINAL_SOURCE_ONLY_AFTER_READING';
+      const manifest = manifests.buildInitialDesignGoalManifest({ feature: 'authority-design', run_id: 'authority-root', adapter: 'codex', requirement,
+        requirement_source_files: ['doc/requirement.md'], initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] },
+        budget: ORIGINAL_BUDGET, unattended: UNATTENDED }, { projectRoot: directory });
+      const blueprintPath = path.join(directory, 'doc/features/authority-design/blueprint/component-blueprint.yaml');
+      const candidatesPath = path.join(path.dirname(blueprintPath), 'change-unit-candidates.json');
+      fs.mkdirSync(path.dirname(blueprintPath), { recursive: true });
+      const blueprint = { blueprint_id: manifest.feature, design_views: ['logical', 'runtime', 'development', 'deployment', 'scenarios'].map((view_id, index) => ({
+        view_id, applicability: 'applicable', evolution_impact: 'changed', runtime_data_flows: index < 2 ? [{ flow_id: `flow-${index}` }] : [],
+      })), relations: [{ relation_id: 'r1' }, { relation_id: 'r2' }], review_summary: {} };
+      fs.writeFileSync(blueprintPath, YAML.stringify(blueprint));
+      const review = path.join(path.dirname(blueprintPath), 'component-blueprint.review.md');
+      fs.writeFileSync(review, '# 设计\n## 方案\n正文\n<a id="reference"></a>\n## 技术与追溯参考\n参考\n');
+      for (const authorized of [false, true]) for (const kind of ['author', 'questioning'] as const) {
+        const prompt = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest,
+          observation: { kind, blueprintPath, candidatesPath, issues: ['当前机器缺口'] }, autonomyAuthorized: authorized, deliveryRuns: [] });
+        assert.equal(prompt.includes('本次控制入口已核实可信原请求'), authorized, 'default never and goal mode must not supply authority');
+        for (const line of renderDesignAuthorityBoundary(kind)) assert.equal(prompt.includes(line), authorized);
+        assert.equal(prompt.includes('§9 自动决议'), authorized);
+        if (kind === 'questioning') {
+          assert(!prompt.includes(requirement), 'first reader receives source locations, not original requirement text');
+          assert(prompt.includes('doc/requirement.md') && prompt.includes('正文阅读后'));
+          assert(prompt.includes('这是首次独立阅读') && prompt.includes('第1–4行'));
+          assert(!prompt.includes('前次真实否定仍待复核'));
+          assert(!prompt.includes('执行前读取工程AGENTS'));
+          const scopes = requiredQuestioningScopes(blueprint);
+          assert.equal(scopes.size, 19);
+          for (const scope of scopes.keys()) assert(prompt.includes(`- ${scope}（`), 'all substantive scopes remain required');
+        }
+      }
+      for (const kind of ['decompose', 'scope'] as const) {
+        const scope = kind === 'scope' ? { feature: 'bounded-scope', candidatePath: path.join(directory, 'doc/features/bounded-scope/feature.yaml'), command: 'prepare-scope --overwrite' } : undefined;
+        const prompt = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: true,
+          observation: { kind, blueprintPath, candidatesPath, issues: [], ...(scope ? { scope } : {}) }, deliveryRuns: [] });
+        assert(prompt.includes('本次控制入口已核实可信原请求') && prompt.includes('§9 自动决议'));
+        assert(prompt.includes('留痕只记入当前写集内既有设计材料，不另写phase账本'));
+        assert(prompt.includes('只在本次签发写集内完成'));
+        assert(!prompt.includes('可补节点、选型、关系') && !prompt.includes('原文有不同表述时'));
+      }
+      const runDir = path.join(directory, manifest.report_dir);
+      const priorDir = path.join(runDir, 'phases/initial-design-questioning/previous-questioning');
+      fs.mkdirSync(priorDir, { recursive: true });
+      fs.writeFileSync(path.join(priorDir, 'draft-output.yaml'), YAML.stringify({ ...blueprint, review_summary: { questioning: {
+        status: 'complete', items: [{ disposition: 'blocker', scope_ref: 'view:runtime', question: '旧交接问题是否已修复？', answer: '前次真实否定仍待复核' }],
+      } } }));
+      const previous = { ...manifest, run_id: 'previous-root', unattended: { ...UNATTENDED, approval_mode: 'never' as const } };
+      const events = [{ type: 'agent_invoke_end', phase: 'initial-design-questioning', invoke_id: 'previous-questioning', status: 'passed', exit_code: 0 }];
+      // The published draft no longer contains questioning after the author repair; the archived role result still does.
+      const recheck = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: false,
+        observation: { kind: 'questioning', blueprintPath, candidatesPath, issues: [] }, deliveryRuns: [{ manifest: previous, events }] });
+      assert(recheck.includes('这是修订后的独立复核') && recheck.includes('不重做完整八问'));
+      assert(recheck.includes('第1–4行') && !recheck.includes('本次控制入口已核实可信原请求'));
+      assert(recheck.includes('前次真实否定仍待复核') && recheck.includes('view:runtime') && recheck.includes('旧交接问题是否已修复？'));
+      assert(recheck.includes(path.join(priorDir, 'draft-output.yaml')) && recheck.includes('不是当前结论'));
+      for (const scope of requiredQuestioningScopes(blueprint).keys()) assert(recheck.includes(`- ${scope}（`));
+      fs.unlinkSync(path.join(priorDir, 'draft-output.yaml'));
+      const unfinished = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: false,
+        observation: { kind: 'questioning', blueprintPath, candidatesPath, issues: [] }, deliveryRuns: [{ manifest: previous, events }] });
+      assert(unfinished.includes('这是首次独立阅读'), 'an exited call without a questioning artifact cannot skip the first reading');
+      assert(!unfinished.includes('前次真实否定仍待复核'));
+      for (const authorized of [false, true]) {
+        const live = manifests.buildInitialDesignGoalManifest({ ...manifest, feature: `authority-${authorized}`, run_id: `runtime-${authorized}`, report_dir: undefined }, { projectRoot: directory });
+        const born = createGoalRun({ projectRoot: directory, manifest: live, chain: [] });
+        const result = await entry.runGoalModeSessionStep({ projectRoot: directory, frameworkRoot, feature: live.feature, runId: live.run_id,
+          adapter: 'codex', runMode: 'attended', authorization: { mode: 'goal_mode', autonomyAuthorized: authorized } });
+        assert.equal(result.type, 'phase_execute_request', 'lack of autonomy must not block the original author duty');
+        const issued = readSessionExecution(path.dirname(born.manifestPath), (result.request as { path: string }).path)!;
+        assert.equal(issued.request.context.instruction!.includes('本次控制入口已核实可信原请求'), authorized, 'runtime passes current policy before transport dispatch');
+      }
+    } finally {
+      clearFrameworkConfigCache();
+      assert(directory.startsWith(fs.realpathSync(os.tmpdir()) + path.sep));
+      fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  },
+});
+
 export function getCases() { return cases; }
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];

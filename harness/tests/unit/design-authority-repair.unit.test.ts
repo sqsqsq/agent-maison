@@ -1312,13 +1312,17 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     run: () => withFreshCuHost(async s => {
       const runId = 'published-tail-unit';
       const runDir = runFile(s.root, SNAPSHOT_CU_FEATURE, runId, '');
-      fs.mkdirSync(runDir, { recursive: true });
+      const manifest = buildGoalManifestFromInput({ feature: SNAPSHOT_CU_FEATURE, run_id: runId, adapter: 'claude',
+        requirement: '保留已发布设计及其原事务恢复材料。', start_phase: 'spec', end_phase: 'spec',
+        budget: { max_total_turns: 30, wall_clock_minutes: 120, max_retries_per_phase: 2 },
+        unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } }, { projectRoot: s.root });
+      createGoalRun({ projectRoot: s.root, manifest, chain: ['spec'] });
       const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
       const input = { projectRoot: s.root, frameworkRoot: s.frameworkRoot, feature: SNAPSHOT_CU_FEATURE, phase: 'spec', runId,
         reportDir: path.relative(s.root, runDir).replace(/\\/g, '/'), signature: 'a'.repeat(64), brief: { class: 'B1' as const, items: [] },
         heldFeatureLock: null, runtimeWrites: [], emit, registerLockRelease: () => {}, recordEventLines: () => () => [] };
       const prepared = await runUnattendedDesignRepair({ ...input, invoke: async () => ({ started: true, ok: false, detail: 'request yielded', handoff: true }) });
-      assert.equal(prepared.outcome, 'handoff');
+      assert.equal(prepared.outcome, 'handoff', JSON.stringify(prepared));
       const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
       const published = readDoc(draft); published.revision = Number(published.revision) + 1;
       const bytes = YAML.stringify(published); fs.writeFileSync(draft, bytes); fs.writeFileSync(blueprintFile(s), bytes);

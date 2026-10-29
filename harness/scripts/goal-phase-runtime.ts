@@ -35,7 +35,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { randomUUID } from 'crypto';
-import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, projectInitialDesignDelivery, initialDesignAuthorInstruction, validateInitialDesignInvocation, initialDesignPhasePolicy, initialDesignScopeActionIssues, type InitialDesignObservation } from './utils/initial-design-delivery';
+import { findInitialDesignRun, prepareInitialDesignRun, readInitialDesignDelivery, projectInitialDesignDelivery, initialDesignAuthorInstruction, initialDesignInvocationLabel, validateInitialDesignInvocation, initialDesignPhasePolicy, initialDesignScopeActionIssues, type InitialDesignObservation } from './utils/initial-design-delivery';
 import { readOriginalDeliveryBudget, originalDeliveryForManifest } from './utils/delivery-origin';
 import { runChangeUnitProgression, buildChangeUnitGoalHandoff, buildChangeUnitGoalRequest, type ChangeUnitGoalHandoff } from './utils/change-unit-progress-loop';
 import { featureTrackDeclPath, resolveFeatureExecutionScope } from './utils/feature-track';
@@ -48,6 +48,7 @@ import { materializeBlueprintReview } from './utils/blueprint-review-materializa
 import { acceptChangeUnitDecomposition, deriveDesignPreparationReadiness } from './utils/change-unit-design-preparation';
 import type { ChangeUnitCandidate } from './utils/change-unit-provider-boundary';
 import { evaluateComponentClosure } from './utils/component-closure-validator';
+import { deriveChangeUnitBlockers } from './utils/change-unit-blockers';
 import { spawn, spawnSync } from 'child_process';
 import minimist from 'minimist';
 import {
@@ -114,6 +115,7 @@ import {
   designRepairInputFingerprint,
   designRepairTarget,
   replayDesignRepairInvocation,
+  designRepairAuthorStarts,
   recordDesignRepairInvocation,
   DESIGN_REPAIR_CONTRACT_DOC,
   runUnattendedDesignRepair,
@@ -4748,8 +4750,8 @@ async function runDetachLauncher(argv: minimist.ParsedArgs, runProbe?: (probe: s
     ...(designRequest?.requirement ? { requirement: designRequest.requirement } : {}),
     ...(raw.isResume && raw.runId ? { runId: raw.runId } : {}) }) : null;
   let isResume = raw.isResume;
-  let runId = raw.runId ?? originalDesign?.run_id ?? newRunId();
   const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
+  let runId = raw.runId ?? (originalDesign && !supersedeTargets.includes(originalDesign.run_id) ? originalDesign.run_id : newRunId());
   let launchArgs = process.argv.slice(2);
   // plan 9c3d7e1a §5.3：supervisor 只负责拉起 `--resume`；原 run 继续还是起后继由这里与子进程用同一判断决定。
   if (isResume && !raw.dryRun) {
@@ -5113,10 +5115,11 @@ export class GoalPhaseRuntime {
           const request = !priorRunId ? resolveDesignDeliveryRequest(argv, root) : null;
           const existing = located && isInitialDesignManifest(located) ? located : findInitialDesignRun({ projectRoot: root, feature,
             ...(request?.requirement ? { requirement: request.requirement } : {}) });
-          if (existing) return this.runInitialDesign(originalDeliveryForManifest(root, existing) ?? existing, root, frameworkRoot, argv);
+          const supersede = normalizeSupersedeTargets(argv.supersede);
+          if (existing && (!supersede.length || priorRunId)) return this.runInitialDesign(originalDeliveryForManifest(root, existing) ?? existing, root, frameworkRoot, argv);
           if (!priorRunId) {
             if (request && (findInitialDesignRun({ projectRoot: root, feature }) || designDeliveryNextStep({ projectRoot: root, frameworkRoot, feature, ...request }))) {
-              const source = argv.manifest ? loadGoalManifestFile(String(argv.manifest), root) : undefined;
+              const source = argv.manifest ? loadGoalManifestFile(String(argv.manifest), root) : existing ?? undefined;
               const adapter = String(argv.adapter ?? source?.adapter ?? 'generic');
               const pin = resolveFinalModelPin({ cliValue: normalizeAdapterModelCliValue(argv['adapter-model']), effectiveAdapter: adapter,
                 originalAdapter: source?.adapter, manifestPin: source?.adapter_model_pin, isResume: false, hasManifestFlag: !!argv.manifest,
@@ -5129,6 +5132,7 @@ export class GoalPhaseRuntime {
               const prepared = prepareInitialDesignRun({ projectRoot: root, frameworkRoot, feature,
                 requirement: request.requirement ?? '', requirementSourceFiles: request.requirementSourceFiles,
                 adapter, runId: typeof argv['run-id'] === 'string' ? argv['run-id'] : undefined,
+                supersede,
                 startPhase: request.startPhase, endPhase: request.endPhase,
                 requestedPhases: 'requestedPhases' in request ? request.requestedPhases : undefined,
                 requestedResults: 'requestedResults' in request ? request.requestedResults : undefined,
@@ -5388,9 +5392,40 @@ export class GoalPhaseRuntime {
           for (const unit of units) {
             const feature = deriveChangeUnitFeatureId(manifest.feature, String(unit.changeUnit.change_unit_id));
             const diagnosis = diagnoseDesignAuthority(projectRoot, frameworkRoot, feature, 'plan');
-            if (!diagnosis.findings.length) continue;
-            if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `设计责任在${feature}；需恢复原请求的自动设计修复授权。${diagnosis.findings.map(item => item.basis).join('\n')}`);
-            const brief: DesignRepairBriefLike = { class: diagnosis.findings.some(item => item.class === 'B2') ? 'B2' : 'B1', items: diagnosis.findings };
+            const findings = [...diagnosis.findings];
+            const currentUnit = observed.progression?.action === 'blocked' ? observed.progression.readySet.units.find(item =>
+              item.changeUnit.change_unit_id === unit.changeUnit.change_unit_id && item.completion.state !== 'VALID') : undefined;
+            if (currentUnit) {
+              const declarations = currentUnit.changeUnit.blockers.filter(blocker => blocker.gate === 'design'
+                && blocker.owner === 'component-design' && blocker.observation === 'machine');
+              const active = deriveChangeUnitBlockers({ ...currentUnit.changeUnit, blockers: declarations }, { projectRoot }).filter(item => item.active);
+              if (active.length) {
+                const published = loadCanonicalBlueprint(projectRoot, manifest.feature);
+                for (const observation of active) {
+                  const declaration = declarations.find(item => item.blocker_id === observation.blockerId)!;
+                  const blockerCode = `${feature}:${declaration.blocker_id}`;
+                  const retained = [...history()].reverse().find(event => event.type === 'design_authority_repair'
+                    && 'stage' in event && event.stage === 'published' && 'new_revision' in event && event.new_revision === published.blueprint.revision
+                    && 'checks' in event && Array.isArray(event.checks) && event.checks.some(check => {
+                      const row = asRecord(check);
+                      return row?.check === 'plan:cu:design-basis' && Array.isArray(row.codes) && row.codes.includes(blockerCode);
+                    }));
+                  if (retained) {
+                    const reason = `设计方已在rev${String(published.blueprint.revision)}核实并保留此声明：${declaration.blocker_id}；仍按真实probe/解除条件等待，不重复派修。`;
+                    if (!observed.progression!.reasons.includes(reason)) observed.progression!.reasons.push(reason);
+                    continue;
+                  }
+                  findings.push({ class: 'B2', check: 'plan:cu:design-basis', codes: [blockerCode],
+                    artifacts: [path.relative(projectRoot, unit.canonicalPath).replace(/\\/g, '/'), path.relative(projectRoot, published.canonicalPath).replace(/\\/g, '/')],
+                    basis: `当前已发布蓝图revision=${String(published.blueprint.revision)}、artifact_sha256=${published.artifactSha256}；canonical CU revision=${String(unit.changeUnit.revision)}。\n当前authority诊断（空finding不代表此设计声明已解除）：${JSON.stringify(diagnosis)}\n原设计声明及真实probe观察：${JSON.stringify({ declaration, observation })}`,
+                    needs: ['由当前CU设计owner依据当前已发布设计、原声明source_refs和unlock_condition核实是否已满足；过时声明仅在候选中有据修正或移除，经独立质询、原consumer与readiness重新判定。不得伪造探针成功、写active/resolved或删除仍真实的限制；外部、人工、设备、execution及其它owner条件不授清理权，无法在原授权内满足时如实等待。'],
+                  });
+                }
+              }
+            }
+            if (!findings.length) continue;
+            if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `设计责任在${feature}；需恢复原请求的自动设计修复授权。${findings.map(item => item.basis).join('\n')}`);
+            const brief: DesignRepairBriefLike = { class: findings.some(item => item.class === 'B2') ? 'B2' : 'B1', items: findings };
             const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, feature, brief, emit);
             if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
             if (repaired.outcome !== 'published') return repairStop(repaired);
@@ -5441,15 +5476,22 @@ export class GoalPhaseRuntime {
         const budget = checkRunBudget(spent.totalTurns, manifest.budget.max_total_turns, spent.priorActiveMs, wall - FINALIZE_RESERVE_MS);
         if (budget !== 'ok') return conclude(budget === 'turns' ? 'budget_turns' : 'budget_wall_clock', `原始请求剩余预算不足：${budget}`);
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
-        const label = observed.scope ? `initial-design-scope-${path.basename(path.dirname(observed.scope.candidatePath))}`
-          : observed.kind === 'decompose' ? 'initial-design-decomposition' : `initial-design-${purpose}`;
+        const label = initialDesignInvocationLabel(observed);
         const scopeWindow = observed.scope ? history().map((event, index) => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'published' ? index : -1).reduce((latest, index) => Math.max(latest, index), -1) : -1;
-        const starts = history().slice(scopeWindow + 1).filter(event => event.type === 'agent_invoke_start' && event.phase === label);
-        if (starts.length > manifest.budget.max_retries_per_phase) return conclude('content_retry_exhausted', observed.issues.join('\n'));
+        const callHistory = history();
+        const starts = callHistory.slice(scopeWindow + 1).filter(event => event.type === 'agent_invoke_start' && event.phase === label);
+        const ended = starts.map(start => callHistory.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id)).filter((event): event is GoalRunEvent => !!event);
+        const interrupted = (event: GoalRunEvent): boolean => event.timed_out === true || event.status === 'waiting'
+          || !!parseHeadlessApiError(path.join(runDir, 'phases', label, event.invoke_id!, 'agent-output.log'), manifest.adapter ?? '', event.terminal_error_excerpt);
+        if (ended.filter(event => !interrupted(event)).length > manifest.budget.max_retries_per_phase) {
+          const quote = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
+          const command = `npm --prefix ${quote(path.join(frameworkRoot, 'harness'))} run goal -- --project-root ${quote(projectRoot)} --framework-root ${quote(frameworkRoot)} --feature ${quote(manifest.feature)} --supersede ${quote(manifest.run_id)} --manifest ${quote(path.join(runDir, 'manifest.json'))}${automaticDesignRepair ? ' --authorize-autonomy' : ''}`;
+          return conclude('content_retry_exhausted', `${observed.issues.join('\n')}\n本run内容额度已用尽；修复输入后需明确起审计后继（保留原需求与累计预算），resume/force-resume不清零：\n${command}`);
+        }
         const invokeId = `${label}-i${spent.totalTurns + 1}`;
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
         fs.mkdirSync(invocationDir, { recursive: true });
-        const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed });
+        const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair, deliveryRuns: 'runs' in spent ? spent.runs : undefined });
         const promptFile = path.join(invocationDir, 'prompt.md');
         fs.writeFileSync(promptFile, prompt);
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
@@ -5567,12 +5609,15 @@ export class GoalPhaseRuntime {
     emit: (event: Record<string, unknown>) => void): Promise<DesignRepairInvokeOutcome> {
     const runDir = path.resolve(projectRoot, manifest.report_dir);
     const label = designRepairInvokeLabel(purpose);
-    const replay = replayDesignRepairInvocation(runDir, purpose, this.acceptedSessionInvokeId, this.options.sessionHandoff?.onRequest);
+    const replay = replayDesignRepairInvocation(runDir, purpose, this.acceptedSessionInvokeId, this.options.sessionHandoff?.onRequest, guard?.afterInvokeId);
     if (replay) return replay;
     const budget = readOriginalDeliveryBudget(projectRoot, manifest)!;
     const wall = resolveWallClockMs(manifest, initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest).domain);
     const available = checkRunBudget(budget.totalTurns, budget.budget.max_total_turns, budget.priorActiveMs, wall - FINALIZE_RESERVE_MS);
     if (available !== 'ok') return { started: false, ok: false, detail: available === 'turns' ? 'budget_turns' : 'budget_wall_clock' };
+    if (purpose === 'author' && designRepairAuthorStarts(loadEventsJsonlStrict(path.join(runDir, 'events.jsonl')).events) >= 1 + (budget.budget.max_retries_per_phase ?? 0)) {
+      return { started: false, ok: false, detail: 'content_retry_exhausted：本事务真实作者调用额度已用尽' };
+    }
     const timeoutMs = Math.min(resolvePhaseTimeoutMs('plan', manifest), wall - budget.priorActiveMs - FINALIZE_RESERVE_MS);
     const invokeId = `${label}-i${budget.totalTurns + 1}`;
     const dir = path.join(runDir, 'phases', label, invokeId);
@@ -5683,7 +5728,7 @@ export class GoalPhaseRuntime {
           return { status: 'paused' as const, reason: '原scope责任方明确本CU动作' };
         }
         const scope = resolveBirthExecutionScope(projectRoot, handoff.featureId, resolveWorkflowSpec(projectRoot, { frameworkRoot }), frameworkRoot, manifest.requirement, manifest.fidelity).scope;
-        if (!scope || scope.unresolved.length) {
+        if (!scope || !scope.phase_chain.length) {
           nextScope = scopeWork(handoff, scope?.unresolved.map(gap => `${gap.obligation_id}: ${gap.reason}`) ?? ['尚无合法范围候选']);
           return { status: 'paused' as const, reason: '原设计责任方继续准备当前真实CU的范围输入' };
         }
@@ -6763,7 +6808,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         registerLockRelease: release => { designRepairLockRelease = release; },
         recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; eventLineRecorder = (file, line) => lines.push({ file, line });
           return () => { eventLineRecorder = null; return lines; }; },
-        invoke: async purpose => replayDesignRepairInvocation(runDir, purpose, acceptedSessionInvokeId)
+        invoke: async (purpose, _text, guard) => replayDesignRepairInvocation(runDir, purpose, acceptedSessionInvokeId, undefined, guard?.afterInvokeId)
           ?? { started: false, ok: false, detail: 'publication recovery lacks a completed original invocation' },
       });
     }
@@ -10450,7 +10495,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const label = purpose === 'verifier_format_repair' ? `${phase}-verifier-format-repair` : designRepairInvokeLabel(purpose);
           if (purpose !== 'verifier_format_repair') {
             const replay = replayDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, acceptedSessionInvokeId,
-              options.sessionHandoff ? issued => { preserveSessionOwner = true; options.sessionHandoff!.onRequest(issued); } : undefined);
+              options.sessionHandoff ? issued => { preserveSessionOwner = true; options.sessionHandoff!.onRequest(issued); } : undefined, originalGuard?.afterInvokeId);
             if (replay) return replay;
           }
           if (options.sessionHandoff && purpose === 'verifier_format_repair') {
@@ -10481,6 +10526,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const timeoutMs = Math.min(effectiveAgentTimeoutMs, remainingWallMs());
           if (budgetNow !== 'ok' || !(timeoutMs > 0)) {
             return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
+          }
+          if (purpose === 'author' && designRepairAuthorStarts(loadAuthoritativeEvents(eventsPath)) >= 1 + (executionBudget.max_retries_per_phase ?? 0)) {
+            return { started: false, ok: false, detail: 'content_retry_exhausted：本事务真实作者调用额度已用尽' };
           }
           const undelivered = options.sessionHandoff ? undeliveredSessionInvocation(loadAuthoritativeEvents(eventsPath)) : undefined;
           const recoverOutOfChain = undelivered?.phase === label ? undelivered : undefined;
