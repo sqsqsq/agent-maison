@@ -2,9 +2,10 @@
 import { pendingPublishedDesignRepair } from './utils/design-repair-unattended';
 import { phaseInvocationStart } from './utils/goal-runner-phase';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
-import { issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { sessionExecutionDeadlineMs, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
-import { invocationCompleted, invocationWaitingDetail } from './utils/invocation-completion';
+import { applyIndependentQuestioningOutput } from './utils/blueprint-questioning';
+import { invocationCompleted, invocationEndFacts, invocationWaitingDetail } from './utils/invocation-completion';
 import { resumeIssuedSessionOwner } from './utils/goal-run-control';
 import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-containment';
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
@@ -293,6 +294,7 @@ import {
 import {
   invokeAgentHeadless,
   agentEventsLogPath,
+  extractProviderFinalText,
   createChildSettleWaiter,
   killProcessTree,
   probeAdapterVersion,
@@ -301,12 +303,16 @@ import {
   type InvokeTemplateVars,
 } from './utils/agent-invoke';
 import {
-  createPhaseExecutionContext,
+  createWorkUnitExecutionContext,
+  workUnitExecutionInputs,
+  workUnitExecutionRole,
+  workUnitNativeReadonly,
   DetachedGoalPhaseExecutor,
-  validatePhaseExecutionContext,
+  validateWorkUnitExecutionContext,
   type GoalPhaseExecutor,
   type GoalPhaseExecutorResult,
-  type PhaseExecutionContext,
+  type WorkUnitExecutionContext,
+  type WorkUnitExecutionControls,
 } from './utils/goal-phase-executor';
 import { parseClaudeInitModel, resolvePinVerifyMismatch } from './utils/claude-envelope';
 import {
@@ -366,6 +372,7 @@ import {
   findLatestInvokeHarnessFailure,
   isClosureOnlyRetryPending,
   loadAuthoritativeEvents,
+  invocationOutputLogPath,
   loadEventsJsonl,
   resolveEffectiveRunEnd,
   resolvePhaseHarnessVerdict,
@@ -558,6 +565,7 @@ import {
 } from './utils/product-source-snapshot';
 import {
   capturePhaseInvocationSnapshot,
+  workUnitProtectedRecordPaths,
   classifyPhaseInvocationChanges,
   diffPhaseInvocationSnapshots,
   renderPhaseWriteBoundaryGuidance,
@@ -753,6 +761,7 @@ export interface SummaryJson {
 
 /** Active agent tree-kill registered for SIGINT/SIGTERM orphan cleanup. */
 let activeAgentKill: (() => Promise<void>) | null = null;
+let activeExecutionControls: WorkUnitExecutionControls | undefined;
 /** Active harness-runner tree-kill (runHarnessPhase async spawn). */
 let activeHarnessKill: (() => Promise<void>) | null = null;
 let featureLock: { path: string; ownerId: string; interval?: NodeJS.Timeout } | null = null;
@@ -850,6 +859,11 @@ function setupSignalHandlers(): void {
   if (signalHandlersInstalled) return;
   signalHandlersInstalled = true;
   const handler = (signal: NodeJS.Signals): void => {
+    if (activeExecutionControls?.cancel) {
+      activeExecutionControls.cancel(`signal:${signal}`);
+      process.exitCode = 130;
+      return;
+    }
     // Synchronous + first: a host kill may not grant async time, so the terminal event
     // must land (appendFileSync) before the async tree-kills below.
     writeTerminalEvent(`signal:${signal}`);
@@ -1738,7 +1752,7 @@ export function buildBacktrackTargetAbsentGuidance(targetPhase: string | null): 
  * plan c6a9e4d2 t3：guardian 绑定核验——身份四元组完整（含 executable 绝对路径）且命令行含身份 token；
  * 不成立即同步团灭并用独立通道复验消失（fail-closed），`stillAlive` = 未证明消失。阶段调用与链外设计修复调用共用。
  */
-function bindGuardianOrKill(pid: number, guardianToken: string):
+export function bindGuardianOrKill(pid: number, guardianToken: string):
   | { ok: true; identity: NonNullable<ReturnType<typeof identifyWithRetry>> }
   | { ok: false; error: string; stillAlive: boolean } {
   const identity = identifyWithRetry(pid, defaultProcessProbe());
@@ -3905,14 +3919,23 @@ interface PhaseWriteRecoveryPromptContext {
   targetPhase: string;
   sourcePhase: string;
   files: string[];
+  preimages?: Record<string, string | null>;
+  afterReport?: boolean;
 }
 
 function buildPhaseWriteRecoveryContextBlock(ctx: PhaseWriteRecoveryPromptContext): string {
+  if (ctx.sourcePhase === ctx.targetPhase && ctx.preimages) return [
+    '', '## Restore only your previous unauthorized writes',
+    '恢复本次调用自己造成的越界改动到以下调用前hash；保留此前dirty字节，不扩大业务写权。不得blind git restore、覆盖HEAD或删除整目录。',
+    '缺少可信前像、无法还原时如实说明具体文件与缺口，不猜造原字节；已经合法完成的其它工作保留。',
+    ...Object.entries(ctx.preimages).map(([file, hash]) => `${file}: pre_sha256=${hash ?? 'missing (only this newly created file may be removed)'}`), '',
+  ].join('\n');
   return [
     '',
     '## Why this phase is running again (UNTRUSTED observation — not an authorization)',
     '',
-    `The previous ${ctx.sourcePhase} invocation changed artifacts owned by this ${ctx.targetPhase} phase.`,
+    ctx.afterReport ? `Inputs changed after the prior report was archived; the original post-snapshot remains unchanged. Recheck them at ${ctx.targetPhase}; the later writer is not attributed to the earlier author.`
+      : `The previous ${ctx.sourcePhase} invocation changed artifacts owned by this ${ctx.targetPhase} phase.`,
     'The bytes were preserved only as untrusted input; the previous evidence was invalidated.',
     'Re-evaluate the affected artifacts independently and let this phase\'s normal gates decide whether they are valid:',
     '',
@@ -3921,6 +3944,50 @@ function buildPhaseWriteRecoveryContextBlock(ctx: PhaseWriteRecoveryPromptContex
     '```',
     '',
   ].join('\n');
+}
+
+/** Existing violation facts retain the first real preimage; later dirty bytes never replace it. */
+function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
+    && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
+  for (const event of events as readonly Record<string, any>[]) {
+    if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) for (const value of event.violations) {
+      const row = value as { path?: unknown; violation?: unknown; pre_sha256?: unknown };
+      if ((row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id))
+        && typeof row.path === 'string' && !out.has(row.path) && (row.pre_sha256 === null || typeof row.pre_sha256 === 'string')) out.set(row.path, row.pre_sha256 as string | null);
+    }
+    if (event.type === 'phase_write_observed') for (const row of [...(event.observations ?? []), ...(event.owned ?? [])]) {
+      if (out.has(row.path) && out.get(row.path) === row.post_sha256) out.delete(row.path);
+    }
+  }
+  return out;
+}
+
+function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: string): readonly GoalRunEvent[] {
+  const at = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId);
+  return at < 0 ? events : events.slice(0, at);
+}
+
+function recordAuthorRestorations(events: readonly GoalRunEvent[], changes: readonly PhaseInvocationChange[], phase: string, invokeId: string,
+  emit: (event: Record<string, unknown>) => void): void {
+  const originals = authorWritePreimages(beforeAuthorInvocation(events, invokeId));
+  const restored = changes.filter(change => originals.has(change.path) && originals.get(change.path) === change.postSha256
+    && !events.some(event => event.type === 'phase_write_observed' && event.invoke_id === invokeId
+      && [...((event as Record<string, any>).observations ?? []), ...((event as Record<string, any>).owned ?? [])].some(row => row.path === change.path && row.post_sha256 === change.postSha256)));
+  if (restored.length) emit({ type: 'phase_write_observed', phase, invoke_id: invokeId,
+    observations: restored.map(change => ({ path: change.path, how: change.how, pre_sha256: change.preSha256, post_sha256: change.postSha256,
+      disposition: 'deferred_to_checker', owner: null, owner_candidates: [], roles: [] })), observed_count: restored.length });
+}
+
+function unrestoredAuthorWrites(projectRoot: string, events: readonly GoalRunEvent[]): Map<string, string | null> {
+  return new Map([...authorWritePreimages(events)].filter(([file, before]) => {
+    const absolute = path.resolve(projectRoot, file);
+    if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
+    if (!fs.existsSync(absolute)) return before !== null;
+    if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) return true;
+    return createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') !== before;
+  }));
 }
 
 /**
@@ -4094,16 +4161,6 @@ export function buildPhasePrompt(
       parts.push(
         '',
         'The runner process was restarted (--resume): trust the on-disk state over any assumption about the prior session.',
-      );
-    }
-    if (typeof effectiveTimeoutMs === 'number' && effectiveTimeoutMs > 0) {
-      const elapsedNote =
-        phasePrior && phasePrior.elapsedMs > 0
-          ? ` This phase has already consumed ~${Math.max(1, Math.round(phasePrior.elapsedMs / 60000))} minutes across ${phasePrior.attempts} prior attempt(s).`
-          : '';
-      parts.push(
-        '',
-        `Time budget: ~${Math.max(1, Math.round(effectiveTimeoutMs / 60000))} minutes before this attempt is forcibly killed — prioritize finishing artifacts + receipt/closure over re-exploration.${elapsedNote}`,
       );
     }
     parts.push('', 'Resume where the prior attempt left off, finish the remaining work, then re-run this phase harness.');
@@ -4487,8 +4544,9 @@ function setupProgressHooks(
   const writeHeartbeat = (): void => {
     if (!progressPhase) return;
     try {
-      const phaseDir = path.join(projectRoot, manifest.report_dir, 'phases', progressPhase);
-      const outputLog = path.join(phaseDir, 'agent-output.log');
+      const currentEvents = loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl'));
+      const currentInvoke = [...currentEvents].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === progressPhase);
+      const outputLog = invocationOutputLogPath(path.resolve(projectRoot, manifest.report_dir), progressPhase, currentInvoke?.invoke_id);
       let agentOutputMtime: string | null = null;
       let agentOutputBytes = 0;
       if (fs.existsSync(outputLog)) {
@@ -4904,6 +4962,8 @@ export interface GoalPhaseRuntimeLaunchOptions {
   ownerKind?: RunOwnerKind;
   /** Optional transport injection. The runtime remains the sole lifecycle owner. */
   executor?: GoalPhaseExecutor;
+  /** The completion coordinator observes native facts and cancels this owner-bound invocation. */
+  executionControls?: WorkUnitExecutionControls;
   /** Existing attended authorization contract, enforced by the runtime at phase boundaries. */
   authorization?: AssessAuthorizationContext;
   /** Session owner lease duration; ignored for process owners. */
@@ -4919,6 +4979,18 @@ export interface GoalPhaseRuntimeLaunchOptions {
     pollMs?: number;
     runProbe?: (probe: string, phase: string) => ConditionProbeResult;
   };
+}
+
+function withExecutionControls(options: GoalPhaseRuntimeLaunchOptions): GoalPhaseRuntimeLaunchOptions {
+  if (options.executionControls?.cancel) return options;
+  const controller = new AbortController();
+  const external = options.executionControls;
+  if (external?.signal?.aborted) controller.abort(external.signal.reason);
+  else external?.signal?.addEventListener('abort', () => controller.abort(external.signal!.reason), { once: true });
+  return { ...options, executionControls: { ...external, signal: controller.signal,
+    cancel: reason => controller.abort(reason),
+    onObservation: view => { external?.onObservation?.(view); progressHeartbeatHook?.(); },
+  } };
 }
 
 /**
@@ -5089,7 +5161,8 @@ function rejectsResumeRequirementFile(argv: minimist.ParsedArgs): boolean {
 }
 
 export class GoalPhaseRuntime {
-  constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}, private readonly deliveryParent?: InitialDesignGoalManifest) {}
+  private readonly options: GoalPhaseRuntimeLaunchOptions;
+  constructor(options: GoalPhaseRuntimeLaunchOptions = {}, private readonly deliveryParent?: InitialDesignGoalManifest) { this.options = withExecutionControls(options); }
 
   lastRunId?: string;
   private acceptedSessionInvokeId?: string;
@@ -5349,6 +5422,19 @@ export class GoalPhaseRuntime {
           const outputFile = path.join(invocationDir, 'draft-output.yaml');
           const output = original ? Buffer.from(original, 'base64').toString('utf8') : fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : fs.existsSync(state.blueprintPath) ? fs.readFileSync(state.blueprintPath, 'utf8') : '';
           if (fs.existsSync(beforeFile) && (latestPurpose === 'author' || latestPurpose === 'questioning')) {
+            const readonlyQuestioning = latestPurpose === 'questioning' && executionRequestForInvoke(runDir, latest.invoke_id)?.request.write_boundary?.executionRole === 'verifier';
+            if (readonlyQuestioning && invocationCompleted({ ...latest, exitCode: latest.exit_code })) {
+              const before = fs.readFileSync(beforeFile, 'utf8');
+              if (before !== output) return conclude('unauthorized_source_mutation', '独立质询修改了只读蓝图输入；结果不回填。');
+              const returned = latest.handoff_report
+                ? readHandoffMaterial<{ report: SessionExecutionReport }>(runDir, latest.handoff_report).report.details
+                : fs.existsSync(path.join(invocationDir, 'questioning-output.json'))
+                  ? fs.readFileSync(path.join(invocationDir, 'questioning-output.json'), 'utf8')
+                : fs.existsSync(path.join(invocationDir, 'agent-output.log'))
+                  ? extractProviderFinalText(fs.readFileSync(path.join(invocationDir, 'agent-output.log'), 'utf8'), manifest.adapter ?? 'generic') : undefined;
+              try { applyIndependentQuestioningOutput(state.blueprintPath, path.join(invocationDir, 'questioning-output.json'), returned ?? '', 'initial-design-questioning'); }
+              catch { /* The existing checker reports absent or invalid independent questioning; no PASS is synthesized. */ }
+            }
             const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
             if (latestPurpose === 'author' && output) {
@@ -5384,15 +5470,22 @@ export class GoalPhaseRuntime {
           if (issued?.request.pre_snapshot && saved.post_snapshot) {
             const diff = diffPhaseInvocationSnapshots(issued.request.pre_snapshot, saved.post_snapshot);
             const allowed = issued.request.snapshot_options?.ownedPrefixes ?? [];
-            if (diff.kind === 'unverifiable' || diff.kind === 'changed' && diff.changes.some(change => !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix.replace(/\\/g, '/') + '/')))) {
-              return conclude('unauthorized_source_mutation', '设计调用修改了授权设计目录之外的文件，或原写快照不可核实。');
-            }
+            if (diff.kind === 'unverifiable') return conclude('unauthorized_source_mutation', '设计调用原写快照不可核实；不能猜测恢复前像。');
+            const originals = authorWritePreimages(beforeAuthorInvocation(history(), latest.invoke_id));
+            if (diff.kind === 'changed') recordAuthorRestorations(history(), diff.changes, String(latest.phase), latest.invoke_id, emit);
+            const outside = diff.kind === 'changed' ? diff.changes.filter(change => !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix.replace(/\\/g, '/') + '/'))
+              && (!originals.has(change.path) || originals.get(change.path) !== change.postSha256)) : [];
+            if (outside.length && !history().some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) emit({
+              type: 'phase_write_violation', phase: latest.phase, invoke_id: latest.invoke_id,
+              violations: outside.map(change => ({ path: change.path, violation: 'outside_authority', pre_sha256: change.preSha256, post_sha256: change.postSha256 })),
+            });
           }
         }
         const received = current && current.request.invoke_id === this.acceptedSessionInvokeId ? acceptedSessionReport(runDir, current) : undefined;
         const acceptedWaitingDetail = received && invocationWaitingDetail(received.report);
         if (acceptedWaitingDetail) return conclude('execution_scope_unresolved', acceptedWaitingDetail);
         let observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
+        const restoration = unrestoredAuthorWrites(projectRoot, history());
         if (!enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
           && !observed.progression?.activeRun && fs.existsSync(state.blueprintPath)) {
           try {
@@ -5403,6 +5496,8 @@ export class GoalPhaseRuntime {
           } catch { /* The original validator gives the author the concrete parse/identity issue. */ }
           observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
         }
+        if (restoration.size) observed = { ...observed, kind: 'author', progression: undefined, designRepair: undefined,
+          issues: [...observed.issues, buildPhaseWriteRecoveryContextBlock({ sourcePhase: 'initial-design-author', targetPhase: 'initial-design-author', files: [...restoration.keys()], preimages: Object.fromEntries(restoration) })] };
         if (!observed.designRepair && (observed.kind === 'author' || observed.progression?.action === 'blocked')) {
           const units = enumerateCanonicalChangeUnits(projectRoot, manifest.feature);
           for (const unit of units) {
@@ -5531,7 +5626,9 @@ export class GoalPhaseRuntime {
         fs.writeFileSync(promptFile, prompt);
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
         fs.writeFileSync(path.join(invocationDir, 'blueprint-before.yaml'), beforeBlueprint, { flag: 'wx' });
-        const resolution = { projectRoot, protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
+        const resolution = { projectRoot, executionRole: workUnitExecutionRole({ phase: label }, purpose),
+          ...(purpose === 'questioning' ? { verifierResultPath: path.join(invocationDir, 'questioning-output.json') } : {}),
+          immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
         const snapshotOptions = { ownedPrefixes: [path.relative(projectRoot,
           observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/')], runtimeExcluded: [manifest.report_dir] };
         const pre = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
@@ -5541,7 +5638,7 @@ export class GoalPhaseRuntime {
         const childEnv: Record<string, string> = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: invokeId, MAISON_GOAL_ATTEMPT_PHASE: label,
           ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}) };
         applyGoalVisualProviderEnv(childEnv, manifest.visual_provider_pin);
-        const context = createPhaseExecutionContext({ runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full',
+        const context = createWorkUnitExecutionContext({ ...workUnitExecutionInputs(manifest, purpose, projectRoot), runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full',
           chain: [label], phase: label, attemptId: invokeId, owner: { ...token, kind: transport }, projectRoot, frameworkRoot,
           runDir, reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value,
           instruction: prompt, runtimeFacts: { receiptRequired: false, resume: !!argv.resume, successor: false }, childEnv });
@@ -5589,14 +5686,31 @@ export class GoalPhaseRuntime {
         if (fs.existsSync(observed.blueprintPath)) fs.writeFileSync(path.join(invocationDir, 'draft-output.yaml'), fs.readFileSync(observed.blueprintPath), { flag: 'wx' });
         emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
           command: result.command, usage: result.usage,
-          duration_ms: result.duration_ms, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
+          duration_ms: result.duration_ms, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
           silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
         if (guardianBound && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
         const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardCli || containmentError) return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!);
         const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
         const delta = diffPhaseInvocationSnapshots(pre, post);
-        if (delta.kind === 'unverifiable' || delta.kind === 'changed' && delta.changes.some(change => !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))) return conclude('unauthorized_source_mutation', '设计调用写界或原快照不可核实。');
+        if (delta.kind === 'unverifiable') return conclude('unauthorized_source_mutation', '设计调用原快照不可核实；不能猜测恢复前像。');
+        const originals = authorWritePreimages(beforeAuthorInvocation(history(), invokeId));
+        if (delta.kind === 'changed') recordAuthorRestorations(history(), delta.changes, label, invokeId, emit);
+        const outside = delta.kind === 'changed' ? delta.changes.filter(change => !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/'))
+          && (!originals.has(change.path) || originals.get(change.path) !== change.postSha256)) : [];
+        if (outside.length) {
+          const violations = outside.map(change => ({ path: change.path, violation: 'outside_authority', pre_sha256: change.preSha256, post_sha256: change.postSha256 }));
+          const repeated = history().some(event => event.type === 'phase_write_violation' && JSON.stringify((event as Record<string, any>).violations) === JSON.stringify(violations));
+          emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId, violations });
+          if (repeated) return conclude('phase_write_violation_repeat', '同一越界写入重复未恢复，保留成果和原前像hash。');
+          continue;
+        }
+        if (purpose === 'questioning' && invocationCompleted(result)) {
+          if (fs.readFileSync(observed.blueprintPath, 'utf8') !== beforeBlueprint) return conclude('unauthorized_source_mutation', '独立质询修改了只读蓝图输入。');
+          try { applyIndependentQuestioningOutput(observed.blueprintPath, path.join(invocationDir, 'questioning-output.json'),
+            result.details ?? extractProviderFinalText(result.stdout, manifest.adapter ?? 'generic') ?? '', 'initial-design-questioning'); }
+          catch { /* Original validation owns incomplete or malformed questioning output. */ }
+        }
         const waitingDetail = invocationWaitingDetail(result);
         if (waitingDetail) return conclude('execution_scope_unresolved', waitingDetail);
       }
@@ -5659,13 +5773,13 @@ export class GoalPhaseRuntime {
     const childEnv: Record<string, string> = { MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: invokeId, MAISON_GOAL_ATTEMPT_PHASE: label,
       ...(manifest.adapter_model_pin ? { [MAISON_GOAL_MODEL_PIN_ENV]: manifest.adapter_model_pin.value } : {}) };
     applyGoalVisualProviderEnv(childEnv, manifest.visual_provider_pin);
-    const context = createPhaseExecutionContext({ runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full', chain: [label], phase: label,
+    const context = createWorkUnitExecutionContext({ ...workUnitExecutionInputs(manifest, purpose, projectRoot), runId: manifest.run_id, feature: manifest.feature, workflowId: 'obligation-driven', track: 'full', chain: [label], phase: label,
       attemptId: invokeId, owner: { ...token, kind }, projectRoot, frameworkRoot, runDir, reportDir: manifest.report_dir,
       adapter: manifest.adapter ?? 'generic', adapterModel: manifest.adapter_model_pin?.value, instruction: text,
       runtimeFacts: { receiptRequired: false, resume: true, successor: false }, childEnv });
     emit({ type: 'agent_invoke_start', phase: label, purpose, invoke_id: invokeId, owner_id: token.owner_id, owner_epoch: token.epoch,
       command: kind === 'session' ? 'phase_execute_request' : 'headless', effective_timeout_ms: timeoutMs });
-    const boundary = guard ? { ...guard.resolution, feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null;
+    const boundary = guard ? { ...guard.resolution, executionRole: workUnitExecutionRole(context, purpose), immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null;
     if (this.options.sessionHandoff) {
       const issued = issueSessionExecution({ context, invokeId, purpose, timeoutMs, gateTimeoutMs: Math.max(1, wall - budget.priorActiveMs), cleanupReserveMs: FINALIZE_RESERVE_MS,
         preSnapshot: guard?.pre ?? null, writeBoundary: boundary, snapshotOptions: guard?.options, emit });
@@ -5697,10 +5811,11 @@ export class GoalPhaseRuntime {
     if (containmentError && containmentAlive) return { started: true, ok: false, containmentUnresolved: true, detail: containmentError };
     const post = guard ? capturePhaseInvocationSnapshot(guard.resolution, guard.options) : undefined;
     emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode, command: result.command,
-      duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+      duration_ms: result.duration_ms, usage: result.usage, timed_out: result.timed_out, provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
       terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
     if (bound && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode });
     const outcome: DesignRepairInvokeOutcome = { started: true, ok: invocationCompleted(result) && !containmentError, status: result.status,
+      ...(purpose === 'questioning' ? { output: result.details ?? extractProviderFinalText(result.stdout, manifest.adapter ?? 'generic') ?? '' } : {}),
       detail: containmentError ?? result.details ?? `exit=${result.exitCode}`, preSnapshot: guard?.pre, postSnapshot: post };
     recordDesignRepairInvocation(runDir, purpose, invokeId, outcome);
     return outcome;
@@ -5848,14 +5963,19 @@ export class GoalPhaseRuntime {
   }
 
   async executeExecutor(
-    context: PhaseExecutionContext,
+    context: WorkUnitExecutionContext,
     executor: GoalPhaseExecutor,
+    controls: WorkUnitExecutionControls | undefined = this.options.executionControls,
   ): Promise<GoalPhaseExecutorResult> {
-    validatePhaseExecutionContext(context);
+    setupSignalHandlers();
+    validateWorkUnitExecutionContext(context);
     if (context.owner.owner_id !== 'dry-run') {
       assertFencedOwner(context.runDir, context.owner, 'runtime_pre_executor');
     }
-    const result = await executor.execute(context);
+    activeExecutionControls = controls;
+    let result: GoalPhaseExecutorResult;
+    try { result = await executor.execute(context, controls); }
+    finally { if (activeExecutionControls === controls) activeExecutionControls = undefined; }
     if (context.owner.owner_id !== 'dry-run') {
       assertFencedOwner(context.runDir, context.owner, 'runtime_post_executor');
     }
@@ -5868,6 +5988,7 @@ export class GoalPhaseRuntime {
  * 生产路径仍由文件尾的 require.main 分支驱动，行为不变。
  */
 export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise<number> {
+  options = withExecutionControls(options);
   // Programmatic host bridges may run more than one lifecycle in the same Node process.
   // Reset only ephemeral process-local projection; persisted truth remains manifest/events/control.
   terminalEventCtx = null;
@@ -6716,7 +6837,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (!options.sessionHandoff.report && forceResume) {
       const resigned = resignSessionExecution(runControl.dir, sessionRequest, runControl.token, goalEvents.emit);
       sessionRequest = resigned;
-      if (Date.parse(resigned.request.deadline) > Date.now()) {
+      if (sessionExecutionDeadlineMs(resigned.request) > Date.now()) {
         preserveSessionOwner = true;
         options.sessionHandoff.onRequest(resigned);
         return 3;
@@ -6724,7 +6845,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     } else throw new Error('[session-handoff] stale owner result cannot be consumed after takeover');
   }
   if (sessionRequest && options.sessionHandoff && !acceptedSessionReport(path.resolve(projectRoot, manifest.report_dir), sessionRequest)) {
-    const expired = Date.parse(sessionRequest.request.deadline) <= Date.now();
+    const expired = sessionExecutionDeadlineMs(sessionRequest.request) <= Date.now();
     if (options.sessionHandoff.report || expired) {
       // An incomplete receipt transaction still belongs to this signed window.
       // I/O failure must not release its owner and strand a valid retry.
@@ -7202,7 +7323,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       goalEvents.emit({ type: 'agent_invoke_start', phase: 'vision-canary', chain_phase: String(chain[0]), purpose: 'vision_canary',
         invoke_id: canaryInvokeId, command: 'phase_execute_request', effective_timeout_ms: timeoutMs,
         owner_id: runControl.token.owner_id, owner_epoch: runControl.token.epoch });
-      const context = createPhaseExecutionContext({ runId: manifest.run_id, feature: manifest.feature, workflowId: workflow.name,
+      const context = createWorkUnitExecutionContext({ ...workUnitExecutionInputs(manifest, 'vision_canary', projectRoot), runId: manifest.run_id, feature: manifest.feature, workflowId: workflow.name,
         track: goalTrack, chain: [...chain.map(String), 'vision-canary'], phase: 'vision-canary', attemptId: canaryInvokeId,
         owner: { ...runControl.token, kind: runtimeOwnerKind }, projectRoot, frameworkRoot,
         runDir: path.resolve(projectRoot, manifest.report_dir), reportDir: manifest.report_dir, adapter: manifest.adapter ?? 'generic',
@@ -7218,11 +7339,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
         options.sessionHandoff.onRequest(issued);
         return { exitCode: 0, stdout: '', stderr: '', skipped: true, command: 'phase_execute_request' } as Awaited<ReturnType<InvokeAgentFn>>;
       }
-      const result = await attendedExecutor!.execute(context);
+      const result = await new GoalPhaseRuntime(options).executeExecutor(context, attendedExecutor!);
       goalEvents.emit({ type: 'agent_invoke_end', phase: 'vision-canary', invoke_id: canaryInvokeId, purpose: 'vision_canary',
         chain_phase: String(chain[0]), command: result.command, status: result.status, exit_code: result.exitCode,
         timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped,
-        completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+        provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
         ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}), duration_ms: Date.now() - timeoutStart });
       return { ...result, stdout: result.details ?? result.stdout, duration_ms: Date.now() - timeoutStart } as Awaited<ReturnType<InvokeAgentFn>>;
     } : undefined;
@@ -8988,6 +9109,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         try {
           phaseWriteBoundary = resolvePhaseWriteBoundary({
             authorityReaders: promptAuthorityReaders,
+            ...(phase !== 'review' ? { executionRole: workUnitExecutionRole({ phase: String(phase) }) } : {}),
+            ...(phase === 'review' ? { verifierResultPath: resolveFeatureArtifact(projectRoot, manifest.feature, 'review-report.md').actualPath } : {}),
             projectRoot,
             frameworkRoot,
             feature: manifest.feature,
@@ -9093,6 +9216,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         if (factsAdmissionError && !resumePostAgent) totalTurns--;
 
         // 批二确认轮遗留：提示词里写给执行者的时限取调用前的最终值——门禁里若等过、时限被再钳制，下方重渲染同一份提示词。
+        const pendingRestoration = unrestoredAuthorWrites(projectRoot, loadAuthoritativeEvents(eventsPath));
+        if (pendingRestoration.size) phaseWriteRecoveryContext = { targetPhase: String(phase), sourcePhase: String(phase), files: [...pendingRestoration.keys()], preimages: Object.fromEntries(pendingRestoration) };
         const renderPrompt = (promptTimeoutMs: number): string => (closureOnlyAttempt
           ? buildClosureOnlyPrompt(projectRoot, frameworkRoot, manifest.feature, String(phase), promptTimeoutMs)
           : buildPhasePrompt(
@@ -9302,7 +9427,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               cap.capability!,
               manifest.unattended,
               text,
-              vars,
+              { ...vars, PROMPT: text },
               manifest.adapter_model_pin?.value,
               // plan c4e8a1f7 T1a：正式 phase invoke 复用 session binary（probe/invoke 同一身份）
               sessionBinary?.binary ?? null,
@@ -9319,7 +9444,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
         }
 
-        const outputLogPath = path.join(phaseDir, 'agent-output.log');
+        const outputLogPath = path.join(phaseDir, invokeId, 'agent-output.log');
         // visualAttemptId=轮次账本的 attempt 身份：同一 invocation 的 agent 自跑 harness
         // 与外层 gate 共用；任何下一次 invocation（retry/detach/resume）必不同；崩溃恢复
         // 不重用（事件已落盘则 totalTurns 回放计入）。禁 phase 内 retries+1（resume 归零会
@@ -9652,7 +9777,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         };
         // 执行者内的自检与正式 gate 消费同一份冻结 provider 身份。
         applyGoalVisualProviderEnv(phaseChildEnv, manifest.visual_provider_pin);
-        const phaseExecutionContext = createPhaseExecutionContext({
+        const phaseExecutionContext = createWorkUnitExecutionContext({
+          ...workUnitExecutionInputs(manifest, undefined, projectRoot),
           runId: manifest.run_id,
           feature: manifest.feature,
           workflowId: workflow.name,
@@ -9670,10 +9796,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           adapter: manifest.adapter ?? 'generic',
           adapterModel: manifest.adapter_model_pin?.value,
           factsContext: archivedSession?.request.context.factsContext ?? phaseFactsContext,
-          instruction: prompt + (options.sessionHandoff ? (cap.capability?.phase_context_isolation
-            ? '\n阶段上下文安排：使用实际隔离阶段上下文；主 Agent 保留控制职责。'
-            : '\n阶段上下文安排：本适配器未声明阶段隔离；在主上下文按本请求执行并披露。')
-            + '\n原要求独立的 verifier/设计质询仍须实际独立上下文或独立 provider；普通阶段可用主上下文不构成豁免。' : ''),
+          instruction: prompt + '\n使用本工作单元的专用执行会话。主 Agent 负责观察与转交指示，不承担业务编辑；独立核验使用另一个会话并遵守其有界写集。',
           runtimeFacts: {
             // A2: same resolver as the diff baseline — birth value, or the one frozen by the first
             // coding/ut-bearing revision (D2 §3 问题 9).
@@ -9705,6 +9828,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             timeoutMs: effectiveAgentTimeoutMs, gateTimeoutMs: Math.max(1, remainingWallMs()),
             cleanupReserveMs: FINALIZE_RESERVE_MS, preSnapshot: preInvokeWriteSnap, writeBoundary: phaseWriteBoundary,
             emit: goalEvents.emit });
+          fs.writeFileSync(promptPath, issued.request.context.instruction ?? prompt, 'utf-8');
           preserveSessionOwner = true;
           options.sessionHandoff.onRequest(issued);
           return 3;
@@ -9716,6 +9840,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             timeoutMs: effectiveAgentTimeoutMs, gateTimeoutMs: Math.max(1, remainingWallMs()), cleanupReserveMs: FINALIZE_RESERVE_MS,
             preSnapshot: preInvokeWriteSnap, writeBoundary: phaseWriteBoundary });
         })() : null;
+        // The immutable request is the instruction actually sent to the executor, including rebuild guidance.
+        prompt = detachedRequest?.request.context.instruction ?? phaseExecutionContext.instruction ?? prompt;
+        fs.writeFileSync(promptPath, prompt, 'utf-8');
+        invokePlan = planFor(prompt);
         let invoke = skipExecutor
           ? ({
               exitCode: 0,
@@ -9731,7 +9859,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               usage: null,
               signal: null,
             } as unknown as Awaited<ReturnType<InvokeAgentFn>>)
-          : await new GoalPhaseRuntime().executeExecutor(
+          : await new GoalPhaseRuntime(options).executeExecutor(
               detachedRequest?.request.context ?? phaseExecutionContext,
               attendedExecutor ?? new DetachedGoalPhaseExecutor(
             () => ({ plan: invokePlan, cwd: projectRoot, options: {
@@ -9740,7 +9868,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           outputLogPath,
           // t4：确定性完成观测（与 settle/hard timeout/silent race）。判据注入自 runner，
           // 通用进程层不依赖 receipt schema。
-          deadlineMs: detachedRequest ? Date.parse(detachedRequest.request.deadline) : Date.now() + effectiveAgentTimeoutMs,
+          deadlineMs: detachedRequest ? sessionExecutionDeadlineMs(detachedRequest.request) : Date.now() + effectiveAgentTimeoutMs,
           // t1（f7a3d9c2）：轮次身份注入——agent 会话内自跑 harness 与外层 gate 同轮
           // t3（device-readiness）：设备目标经 extraEnv 注入子进程，**不写全局 process.env**
           //（全局写会让多 phase/多 run 串 target——凭据/操作打到别人的手机上）
@@ -9808,6 +9936,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const accepted = acceptedSessionReport(phaseExecutionContext.runDir, archivedSession)!;
           invoke = { ...invoke, exitCode: accepted.event.exit_code ?? 0, duration_ms: accepted.event.duration_ms ?? 0, timed_out: accepted.event.timed_out,
             skipped: accepted.event.skipped,
+            completion_observed: accepted.event.completion_observed, terminal_failure_observed: accepted.event.terminal_failure_observed,
+            interrupted: accepted.event.interrupted, silent_killed: accepted.event.silent_killed, spawn_error: (accepted.event as Record<string, any>).spawn_error,
             status: accepted.report.status, details: accepted.report.details,
             stderr: accepted.report.status === 'failed' ? accepted.report.details ?? 'session executor reported failure' : '', command: 'phase_execute_request' };
         }
@@ -9816,7 +9946,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const waitingDetail = invoke.details ?? 'attended executor is waiting for external input';
           if (!options.sessionHandoff && !skipExecutor) goalEvents.emit({
             type: 'agent_invoke_end', phase, invoke_id: invokeId, command: invoke.command,
-            status: 'waiting', exit_code: invoke.exitCode, detail: waitingDetail.slice(0, 1000),
+            status: 'waiting', detail: waitingDetail.slice(0, 1000),
+            duration_ms: invoke.duration_ms, ...invocationEndFacts(invoke),
           });
           goalEvents.emit({
             type: 'phase_halt',
@@ -9886,12 +10017,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             type: 'agent_invoke_end',
           phase,
           invoke_id: invokeId,
-          exit_code: invoke.exitCode,
-          skipped: invoke.skipped,
           command: invoke.command,
           duration_ms: invoke.duration_ms,
-          timed_out: invoke.timed_out,
-          silent_killed: invoke.silent_killed,
           // plan e6b3f8d2 t1：adapter terminal 契约事实。
           // · terminal_failure_observed —— codex `turn.failed`（失败终态，与
           //   completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零）。
@@ -9900,12 +10027,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           //   api_disconnected / failure classifier / retry 判据；唯一例外是下方 exit≠0 时的
           //   resolveInvokeHardCliFailure（400 信封 + 实采措辞表 → adapter_cli_hard_failure）。
           //   run_end.error（halt 引导首行）另是纯诊断，不进任何裁决。
-          terminal_failure_observed: invoke.terminal_failure_observed,
-          completion_observed: invoke.completion_observed,
-          terminal_error_excerpt: invoke.terminal_error_excerpt,
+          ...invocationEndFacts(invoke),
           lingering_pipe: invoke.lingering_pipe,
           // plan d7f3a9c4 t4：spawn race 结构化事实进事件（诊断保真；不改变任何裁决）。
-          ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
           kill_attempted: invoke.kill_attempted,
           kill_exit_code: invoke.kill_exit_code,
           kill_error: invoke.kill_error,
@@ -9914,7 +10038,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // （该文件是 interaction sentinel / critic outputHash / output bytes 三处证据源，
           // runner 写入=污染证据+消灭"0 字节"事实）。0 字节 + output_delivery=buffered/
           // unknown 即自解释：adapter 缓冲输出、被杀=日志空，非 agent 没干活。
-          kill_reason: invoke.timed_out === true ? 'agent_timeout' : undefined,
           effective_timeout_ms: effectiveAgentTimeoutMs,
           output_bytes: fs.existsSync(outputLogPath) ? fs.statSync(outputLogPath).size : 0,
           output_delivery: cap.capability?.output_delivery ?? 'unknown',
@@ -10050,8 +10173,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // registered artifact owned by an earlier phase: everything it could say about
         // product source is said again, with grading, by the checkers further down.
         if (preInvokeWriteSnap && phaseWriteBoundary) {
-          const postInvokeWriteSnap = capturePhaseInvocationSnapshot(phaseWriteBoundary);
-          const snapshotDiff = diffPhaseInvocationSnapshots(preInvokeWriteSnap, postInvokeWriteSnap);
+          const accepted = archivedSession ? acceptedSessionReport(phaseExecutionContext.runDir, archivedSession) : null;
+          const archivedPost = accepted?.event.handoff_report
+            ? readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(phaseExecutionContext.runDir, accepted.event.handoff_report).post_snapshot : undefined;
+          const postInvokeWriteSnap = archivedPost ?? capturePhaseInvocationSnapshot(phaseWriteBoundary);
+          const originalDiff = diffPhaseInvocationSnapshots(preInvokeWriteSnap, postInvokeWriteSnap);
+          const currentPost = archivedPost ? capturePhaseInvocationSnapshot(phaseWriteBoundary) : postInvokeWriteSnap;
+          const laterDiff = archivedPost ? diffPhaseInvocationSnapshots(archivedPost, currentPost) : null;
+          const laterChanges = laterDiff?.kind === 'changed' ? laterDiff.changes : [];
+          const laterPaths = new Set(laterChanges.map(change => change.path));
+          const snapshotDiff = laterChanges.length ? diffPhaseInvocationSnapshots(preInvokeWriteSnap, currentPost) : originalDiff;
+          const beforeInvoke = beforeAuthorInvocation(loadAuthoritativeEvents(eventsPath), invokeId);
+          const restoringOwnWritesApplicable = phaseWriteBoundary.executionRole === 'author' || phase === 'review';
+          const pendingRestorations = restoringOwnWritesApplicable ? unrestoredAuthorWrites(projectRoot, beforeInvoke) : new Map<string, string | null>();
           if (snapshotDiff.kind === 'unverifiable') {
             // Same reasoning as the pre-invocation snapshot: no attribution evidence is
             // not the same as evidence of a violation.
@@ -10059,8 +10193,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             goalEvents.emit({ type: 'phase_write_boundary_degraded', phase, invoke_id: invokeId, detail });
             console.warn(`[goal-runner] ⚠ ${detail}——本轮归因作废，阶段照常出 verdict。`);
           }
-          if (snapshotDiff.kind === 'changed') {
-            let attributableChanges: PhaseInvocationChange[] = [...snapshotDiff.changes];
+          if (snapshotDiff.kind === 'changed' || pendingRestorations.size && currentPost.sha256 !== 'unverifiable') {
+            let attributableChanges: PhaseInvocationChange[] = snapshotDiff.kind === 'changed' ? [...snapshotDiff.changes] : [];
+            for (const [file, original] of pendingRestorations) if (!attributableChanges.some(change => change.path === file)) {
+              const current = currentPost.entries.find(entry => entry.path === file)?.sha256 ?? null;
+              attributableChanges.push({ path: file, how: current === null ? 'removed' : original === null ? 'added' : 'modified', preSha256: original, postSha256: current });
+            }
             if (phase === 'testing') {
               const generatedPartition = partitionGeneratedSourceChanges(
                 projectRoot,
@@ -10087,6 +10225,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
               String(phase),
               attributableChanges,
             );
+            if (laterChanges.length) {
+              const later = classifyPhaseInvocationChanges({ ...phaseWriteBoundary, executionRole: undefined }, String(phase), attributableChanges.filter(change => laterPaths.has(change.path)));
+              classifiedWrites.allowed = classifiedWrites.allowed.filter(write => !laterPaths.has(write.path)).concat(later.allowed);
+              classifiedWrites.observed = classifiedWrites.observed.filter(write => !laterPaths.has(write.path)).concat(later.observed);
+              classifiedWrites.violations = classifiedWrites.violations.filter(write => !laterPaths.has(write.path)).concat(later.violations);
+            }
+            if (phase === 'review') {
+              classifiedWrites.violations.push(...classifiedWrites.observed.map(write => ({ ...write, violation: 'outside_authority' as const })));
+              classifiedWrites.observed = [];
+            }
+            if (restoringOwnWritesApplicable) {
+              const originals = authorWritePreimages(beforeInvoke);
+              classifiedWrites.violations = classifiedWrites.violations.filter(write =>
+                !originals.has(write.path) || originals.get(write.path) !== write.postSha256);
+              if (snapshotDiff.kind === 'changed') recordAuthorRestorations(loadAuthoritativeEvents(eventsPath), snapshotDiff.changes, String(phase), invokeId, goalEvents.emit);
+            }
             // plan f3b8d261 §3.1: UT's own source writes ride the same event so check-coding can
             // tell a UT output from a coding write.  Observations are persisted in full — a
             // truncated tail would hide the very rewrite that voids such a fact.
@@ -10095,7 +10249,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             // Coding source observations also bind the next invoke's facts admission;
             // their original roles keep other recovery consumers on the old baseline.
             const ownedWrites = classifiedWrites.allowed.filter((write) => write.roles.some((role) =>
-              role.kind === 'artifact' || ((phase === 'ut' || phase === 'coding') && role.kind === 'source')));
+              role.kind === 'artifact' || role.kind === 'source'));
             if ((classifiedWrites.observed.length > 0 || ownedWrites.length > 0) && !archivedSession) {
               // Attribution without adjudication: unresolved ownership is a gap in the
               // artifact registry (which describes skill narratives only), and a
@@ -10156,7 +10310,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 violations: violationFacts.slice(0, 50),
                 changed_count: violationFacts.length,
                 pre_snapshot: preInvokeWriteSnap.sha256,
-                post_snapshot: postInvokeWriteSnap.sha256,
+                post_snapshot: currentPost.sha256,
+                ...(pendingRestorations.size ? { detail: '仍有越界字节未回到首次真实前像；本轮没有新delta不表示已恢复。' }
+                  : laterPaths.size ? { detail: '报告后当前输入发生变化；旧post原件保留，后续写入不归因于先前作者。' } : {}),
               });
 
               // Every violation now carries a uniquely resolved artifact owner by
@@ -10164,7 +10320,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
               const owners = [...new Set(classifiedWrites.violations
                 .map((violation) => violation.owner)
                 .filter((owner): owner is string => owner !== null))];
-              const targetOwner = owners.sort((a, b) =>
+              const restoringOwnWrites = (phaseWriteBoundary.executionRole === 'author' || phase === 'review') && classifiedWrites.violations.every(write => !laterPaths.has(write.path));
+              const targetOwner = restoringOwnWrites ? String(phase) : owners.sort((a, b) =>
                 fullWorkflowChain.indexOf(a as FeaturePhase) - fullWorkflowChain.indexOf(b as FeaturePhase))[0] ?? null;
               let targetIdx = targetOwner ? chain.indexOf(targetOwner as FeaturePhase) : -1;
               const responsibility = resolveRepairResponsibility({ ...invocationResponsibility, currentPhase: String(phase),
@@ -10177,7 +10334,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
               let haltReason: string | null = null;
               if (repeated) haltReason = 'phase_write_violation_repeat';
-              else if (targetIdx < 0 || responsibility.action === 'unavailable') haltReason = 'backtrack_target_absent';
+              else if (targetIdx < 0 || !restoringOwnWrites && responsibility.action === 'unavailable') haltReason = 'backtrack_target_absent';
 
               if (haltReason) {
                 const detail =
@@ -10227,6 +10384,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   projectRoot,
                   violationFacts.map((fact) => fact.path).slice(0, 20),
                 ),
+                ...(restoringOwnWrites ? { preimages: Object.fromEntries(authorWritePreimages(loadAuthoritativeEvents(eventsPath))) } : {}),
+                ...(laterPaths.size ? { afterReport: true } : {}),
               };
               pendingBacktrackCompletion = {
                 toPhase: targetOwner!,
@@ -10245,6 +10404,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
               if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
               continue;
             }
+          }
+        }
+        if (phaseWriteBoundary && (phaseWriteBoundary.executionRole === 'author' || phase === 'review')) {
+          const pending = unrestoredAuthorWrites(projectRoot, loadAuthoritativeEvents(eventsPath));
+          if (pending.size) {
+            const detail = buildPhaseWriteRecoveryContextBlock({ targetPhase: String(phase), sourcePhase: String(phase), files: [...pending.keys()], preimages: Object.fromEntries(pending) });
+            goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'phase_write_violation_repeat', detail });
+            outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'phase_write_violation_repeat', halt_guidance: detail });
+            halted = true; phaseDone = true; continue;
           }
         }
         // C-ab-eval：usage 落盘进本 phase trace（agent 产出后 best-effort 合并；已有 usage 不覆盖）
@@ -10523,8 +10691,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const materialVerification = phase === 'spec' || phase === 'plan';
         const verifierRecoveryInvokeId = () => `${phase}-verifier-format-repair-${visualAttemptId}`
           + (materialVerification ? `-${summary?.verifier_subject_id?.slice(0, 12) ?? 'legacy'}` : '');
-        const invokeOutOfChain = async (purpose: DesignRepairPurpose | 'verifier_format_repair', text: string, originalGuard?: import('./utils/design-repair-unattended').DesignRepairInvocationGuard): Promise<DesignRepairInvokeOutcome> => {
+        const invokeOutOfChain = async (purpose: DesignRepairPurpose | 'verifier_format_repair', text: string, originalGuard?: import('./utils/design-repair-unattended').DesignRepairInvocationGuard, verifierReportPath?: string): Promise<DesignRepairInvokeOutcome> => {
           const label = purpose === 'verifier_format_repair' ? `${phase}-verifier-format-repair` : designRepairInvokeLabel(purpose);
+          if (verifierReportPath && !originalGuard) {
+            const resolution = { projectRoot, protectedRoots: phaseWriteBoundary?.protectedRoots ?? fs.readdirSync(projectRoot).filter(name => name !== '.git'),
+              executionRole: 'verifier' as const, verifierResultPath: verifierReportPath,
+              immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, path.resolve(projectRoot, manifest.report_dir)) };
+            const snapshotOptions = { runtimeExcluded: [manifest.report_dir] };
+            originalGuard = { resolution, options: snapshotOptions, pre: capturePhaseInvocationSnapshot(resolution, snapshotOptions) };
+          }
+          const bounded = (outcome: DesignRepairInvokeOutcome): DesignRepairInvokeOutcome => {
+            if (!verifierReportPath || !outcome.preSnapshot || !outcome.postSnapshot) return outcome;
+            const diff = diffPhaseInvocationSnapshots(outcome.preSnapshot, outcome.postSnapshot);
+            const exact = path.relative(projectRoot, verifierReportPath).replace(/\\/g, '/');
+            return diff.kind === 'unverifiable' || diff.kind === 'changed' && diff.changes.some(change => change.path !== exact)
+              ? { ...outcome, ok: false, status: 'waiting', detail: '独立格式修复超出本次报告写界或快照不可核实；保留原件，不将该结果当作正式核验通过。' } : outcome;
+          };
           if (purpose !== 'verifier_format_repair') {
             const replay = replayDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, acceptedSessionInvokeId,
               options.sessionHandoff ? issued => { preserveSessionOwner = true; options.sessionHandoff!.onRequest(issued); } : undefined, originalGuard?.afterInvokeId);
@@ -10548,8 +10730,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 }
               }
               if (received.report.status !== 'waiting' || prior?.invoke_id === acceptedSessionInvokeId) {
-                return { started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }), status: received.report.status,
-                  detail: received.report.details ?? `session reported ${received.report.status}`, preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: originalPostSnapshot };
+                return bounded({ started: true, ok: invocationCompleted({ ...received.event, status: received.report.status, exitCode: received.event.exit_code }), status: received.report.status,
+                  detail: received.report.details ?? `session reported ${received.report.status}`, preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: originalPostSnapshot });
               }
             }
           }
@@ -10575,7 +10757,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (!recoverOutOfChain) goalEvents.emit({ type: 'agent_invoke_start', ...(options.sessionHandoff && runControl ? { owner_id: runControl.token.owner_id, owner_epoch: runControl.token.epoch } : {}), phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId, command: outOfChainPlan.label, effective_timeout_ms: timeoutMs });
           flushProgress();
           if (options.sessionHandoff && runControl) {
-            const issued = issueSessionExecution({ context: createPhaseExecutionContext({ ...phaseExecutionContext,
+            const issued = issueSessionExecution({ context: createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
               phase: label, attemptId: outOfChainId, instruction: text + (purpose === 'questioning' ? '\n独立质询必须在实际独立上下文/独立provider执行，不能在作者主上下文自报完成。' : ''),
               owner: { ...runControl.token, kind: 'session' }, childEnv: {} }),
               invokeId: outOfChainId, chainPhase: String(phase), purpose, timeoutMs,
@@ -10588,21 +10770,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
             return { started: true, ok: false, detail: 'execution requested', handoff: true };
           }
           if (attendedExecutor) {
-            const result = await attendedExecutor.execute(createPhaseExecutionContext({ ...phaseExecutionContext,
-              phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} }));
+            const result = await new GoalPhaseRuntime(options).executeExecutor(createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
+              phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} }), attendedExecutor);
             goalEvents.emit({ type: 'agent_invoke_end', phase: label, chain_phase: String(phase), purpose, invoke_id: outOfChainId,
               status: result.status, exit_code: result.exitCode, duration_ms: result.duration_ms, command: result.command,
               timed_out: result.timed_out, silent_killed: result.silent_killed, skipped: result.skipped,
-              completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
+              provider_session_id: result.provider_session_id, interrupted: result.interrupted, nativeSessionRebuildReason: result.nativeSessionRebuildReason, readonly_enforced: result.readonly_enforced, readonly_diagnostic: result.readonly_diagnostic, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed,
               ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
             const outcome: DesignRepairInvokeOutcome = { started: true, ok: invocationCompleted(result), status: result.status, detail: result.details ?? result.status,
+              ...(purpose === 'questioning' ? { output: result.details ?? extractProviderFinalText(result.stdout, manifest.adapter ?? 'generic') ?? '' } : {}),
               ...(originalGuard ? { preSnapshot: originalGuard.pre, postSnapshot: capturePhaseInvocationSnapshot(originalGuard.resolution, originalGuard.options) } : {}) };
             if (purpose !== 'verifier_format_repair') recordDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, outOfChainId, outcome);
-            return outcome;
+            return bounded(outcome);
           }
           const originalStart = [...loadAuthoritativeEvents(eventsPath)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === outOfChainId);
           if (!originalStart?.ts) throw new Error('[goal-phase-runtime] invocation has not been started');
-          const detachedMaterial = writePhaseExecutionRequestMaterial({ context: createPhaseExecutionContext({ ...phaseExecutionContext,
+          const detachedMaterial = writePhaseExecutionRequestMaterial({ context: createWorkUnitExecutionContext({ ...phaseExecutionContext, ...workUnitExecutionInputs(manifest, purpose, projectRoot),
             phase: label, attemptId: outOfChainId, instruction: text, childEnv: {} }), invokeId: outOfChainId,
             chainPhase: String(phase), purpose, issuedAt: originalStart.ts, timeoutMs,
             gateTimeoutMs: Math.max(1, remainingWallMs()), cleanupReserveMs: FINALIZE_RESERVE_MS,
@@ -10613,8 +10796,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const contained = process.platform === 'win32' ? { runId: manifest.run_id, invokeId: outOfChainId } : null;
           let containmentError = null as string | null;
           let containmentStillAlive = false;
-          const result = await (injectedInvokeAgent ?? invokeAgentHeadless)(outOfChainPlan, projectRoot, {
-            timeoutMs, deadlineMs: Date.parse(detachedMaterial.request.deadline), outputLogPath: logFile, containment: contained,
+          const result = await new GoalPhaseRuntime(options).executeExecutor(detachedMaterial.request.context, new DetachedGoalPhaseExecutor(() => ({ plan: outOfChainPlan, cwd: projectRoot, options: {
+            timeoutMs, deadlineMs: sessionExecutionDeadlineMs(detachedMaterial.request), outputLogPath: logFile, containment: contained,
             extraEnv: purpose === 'verifier_format_repair' ? { ...phaseChildEnv,
               MAISON_GOAL_RUN_ID: manifest.run_id, MAISON_GOAL_ATTEMPT: visualAttemptId, MAISON_GOAL_ATTEMPT_PHASE: String(phase),
             } : {
@@ -10630,7 +10813,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
             },
             onChildExit: () => { activeAgentKill = null; },
-          });
+          } }), injectedInvokeAgent ?? invokeAgentHeadless));
           activeAgentKill = null;
           // 与阶段调用同一处置（plan c6a9e4d2 P0-2）：绑定失败且 guardian 未证明消失——不落 invoke_end / settled（旧进程仍可能在野，
           // 留给恢复对账），也不按普通失败收口；由决策梯走既有 agent_containment_unresolved 停机。
@@ -10649,10 +10832,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (contained && !containmentError && !result.spawn_error) goalEvents.emit({ type: 'agent_process_settled', phase: label, invoke_id: outOfChainId, run_id: manifest.run_id, exit_code: result.exitCode, ...(result.timed_out === true ? { timed_out: true } : {}) });
           flushProgress();
           const ok = invocationCompleted(result) && !containmentError;
-          const outcome: DesignRepairInvokeOutcome = { started: true, ok, ...(waitingDetail ? { status: 'waiting' } : {}), detail: containmentError ?? waitingDetail ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}`,
+          const outcome: DesignRepairInvokeOutcome = { started: true, ok, ...(purpose === 'questioning' ? { output: result.details ?? extractProviderFinalText(result.stdout, manifest.adapter ?? 'generic') ?? '' } : {}), ...(waitingDetail ? { status: 'waiting' } : {}), detail: containmentError ?? waitingDetail ?? `exit=${result.exitCode}${result.timed_out ? '（超时）' : ''}`,
             ...(originalGuard ? { preSnapshot: originalGuard.pre, postSnapshot: capturePhaseInvocationSnapshot(originalGuard.resolution, originalGuard.options) } : {}) };
           if (purpose !== 'verifier_format_repair') recordDesignRepairInvocation(path.resolve(projectRoot, manifest.report_dir), purpose, outOfChainId, outcome);
-          return outcome;
+          return bounded(outcome);
         };
         const harnessRun: HarnessPhaseResult = reusableHarnessEnd ? { exitCode: reusableHarnessEnd.exit_code ?? 1, timedOut: false, outputTail: undefined } : await runHarnessPhase(
           projectRoot,
@@ -10811,12 +10994,18 @@ Goal runner — tool-agnostic multi-phase orchestrator
             'If the raw reply contains the missing information, restore the exact transcript. Otherwise invoke the existing verifier ONCE using the complete current request JSON below as its Task prompt, then write its complete reply verbatim.',
             `Only write this verifier report: ${reportPath}. No new request, subject, registry or debt ledger. This invocation and its time count toward the existing run budget.`,
             requestText! ].join('\n');
-          const recovered = await invokeOutOfChain('verifier_format_repair', prompt);
+          const recovered = await invokeOutOfChain('verifier_format_repair', prompt, undefined, reportPath);
           if (recovered.handoff) return 3;
           if (recovered.containmentUnresolved) {
             halted = true; phaseDone = true;
             goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'agent_containment_unresolved', detail: recovered.detail });
             outcomes.push({ phase, verdict: 'FAIL', halted: true, retries, halt_reason: 'agent_containment_unresolved' });
+            break;
+          }
+          if (recovered.status === 'waiting') {
+            halted = true; phaseDone = true;
+            goalEvents.emit({ type: 'phase_halt', phase, halt_reason: 'executor_waiting', detail: recovered.detail });
+            outcomes.push({ phase, verdict: 'INCOMPLETE', halted: true, retries, halt_reason: 'executor_waiting', halt_guidance: recovered.detail });
             break;
           }
           if (recovered.started) {
@@ -12376,7 +12565,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agent_failed: resolved.agent_failed,
           // t4：完成观测收口——与 timed_out/agent_failed **互斥的独立原因码**。
           // 归错类会让上层按失败路径重试一个证据已完整的阶段（正是 07-28 事故的放大链）。
-          completion_observed: invoke.completion_observed,
+          provider_session_id: invoke.provider_session_id, interrupted: invoke.interrupted, nativeSessionRebuildReason: invoke.nativeSessionRebuildReason, readonly_enforced: invoke.readonly_enforced, readonly_diagnostic: invoke.readonly_diagnostic, completion_observed: invoke.completion_observed,
           blocking_class: meta.blocking_class,
           failure_kind: meta.failure_kind,
           // P1-8（plan d9b4f7e2）：PASS+advance 不输出 failure_kind_classified——07-13 案

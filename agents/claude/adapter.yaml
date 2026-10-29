@@ -108,14 +108,14 @@ visual_provider:
   model_replay: '--model'
 
 goal_capability:
-  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
-  # 隔离声明只决定阶段上下文；缺省 false 时主上下文执行，必需独立核验仍真实独立。
-  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
+  # 两运输交同一工作单元请求；隔离声明表示真实专用执行上下文能力。
+  # 原生会话定位取自调用事件流，--resume 使用准确 ID；权限/系统约束变化须重建。
   mode: native_goal
+  output_delivery: streaming
   in_session_reconcile: true
   phase_context_isolation: true
-  supports_resume: false
-  handoff: none
+  supports_resume: true
+  handoff: bidirectional
   # t3a（f7a3d9c2，2026-07-11 宿主实采回填）：claude -p 走 stream-json 事件流——
   # tool_use/Read 验读记录进 agent-events.jsonl（三文件分流），t3b runner attestation
   # 据此签发 verified 回执。运行时 SSOT：agent-invoke.ts claudeArgv 按本声明加
@@ -123,7 +123,7 @@ goal_capability:
   tool_event_provenance: structured_events
   native_goal:
     goal_condition_template: templates/goal-condition.md
-    supports_resume: false
+    supports_resume: true
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts defaultHeadlessInvokePlan
     # (claude -p …, prompt via STDIN — NOT the {{PROMPT}} argv below; a multi-line prompt as an argv

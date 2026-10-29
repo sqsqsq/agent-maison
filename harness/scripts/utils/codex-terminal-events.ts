@@ -25,8 +25,49 @@
 // ============================================================================
 
 /** 单行分类结果。'other' = 与终态收口无关（含 item 级错误、thread.started、turn.started…）。 */
-import { classifyResultEnvelope, parseEnvelopeLine } from './claude-envelope';
+import { classifyResultEnvelope, parseEnvelopeLine, extractClaudeFinalResultText } from './claude-envelope';
 import { isClaudeKernelAdapter } from './types';
+import * as fs from 'fs';
+
+/** Only provider envelopes locate native sessions; model prose is never a session source. */
+export function extractProviderSessionId(record: Record<string, unknown>, adapterName?: string): string | undefined {
+  const value = adapterName === 'codex' && record.type === 'thread.started' ? record.thread_id
+    : (adapterName === 'claude' || adapterName === 'codeagent')
+      && (record.type === 'system' && record.subtype === 'init'
+        || record.type === 'result' && record.subtype === 'success' && record.is_error !== true) ? record.session_id
+      : adapterName === 'deepseek-harness' && record.type === 'session' ? record.sessionId : undefined;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** A completed tool envelope is an observation boundary, never a progress or quality verdict. */
+export function isProviderToolResult(record: Record<string, unknown>, adapterName?: string): boolean {
+  if (adapterName === 'codex') {
+    const item = record.item as Record<string, unknown> | undefined;
+    return record.type === 'item.completed' && typeof item?.type === 'string'
+      && ['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].includes(item.type);
+  }
+  if (adapterName && isClaudeKernelAdapter(adapterName)) {
+    const content = (record.message as { content?: unknown } | undefined)?.content;
+    return record.type === 'user' && Array.isArray(content)
+      && content.some(block => block && typeof block === 'object' && block.type === 'tool_result');
+  }
+  return adapterName === 'deepseek-harness' && record.type === 'tool_result'
+    && typeof record.callId === 'string' && ['completed', 'error'].includes(String(record.status));
+}
+
+/** Recover from this invocation's existing raw stream; conflicting identities cannot be reused. */
+export function readProviderSessionId(logPath: string, adapterName?: string): string | undefined {
+  if (!fs.existsSync(logPath)) return undefined;
+  let id: string | undefined;
+  for (const line of fs.readFileSync(logPath, 'utf8').split(/\r?\n/)) {
+    const record = parseEnvelopeLine(line);
+    const next = record ? extractProviderSessionId(record, adapterName) : undefined;
+    if (!next) continue;
+    if (id && id !== next) throw new Error(`provider_session_id_conflict: ${adapterName}`);
+    id = next;
+  }
+  return id;
+}
 
 export type CodexTerminalLineKind = 'completed' | 'failed' | 'error' | 'other';
 
@@ -73,6 +114,15 @@ function excerptOf(raw: unknown, fallback: string): string {
   return String(text).slice(0, CODEX_TERMINAL_EXCERPT_MAX_CHARS);
 }
 
+function classifyDeepSeekTerminalEnvelope(record: Record<string, unknown> | null): CodexTerminalLineClassification {
+  if (record?.type === 'error') return { kind: 'failed', excerpt: excerptOf(record.message, 'DSH error') };
+  if (record?.type !== 'status' || record.phase !== 'turn_end') return { kind: 'other' };
+  const reason = record.reason as { kind?: unknown } | undefined;
+  if (reason?.kind === 'completed') return { kind: 'completed' };
+  if (reason?.kind === 'error') return { kind: 'failed', excerpt: excerptOf(reason, 'DSH turn failed') };
+  return { kind: 'other' };
+}
+
 /**
  * 单行分类（纯函数，供单测按真实落盘样本逐行断言）。
  * 非 JSON / 非对象 / 无 `type` 一律 'other'——解析失败不猜。
@@ -110,6 +160,7 @@ export interface CodexTerminalScannerHandlers {
   onCompleted?: () => void;
   /** `turn.failed` 首次命中（至多回调一次）。 */
   onFailed?: () => void;
+  onRecord?: (record: Record<string, unknown>) => void;
 }
 
 export interface CodexTerminalScanner {
@@ -138,10 +189,13 @@ export function createCodexTerminalScanner(
 
   const consumeLine = (line: string): void => {
     if (!line.trim()) return;
-    const record = parser === 'codex_turn_jsonl' ? null : parseEnvelopeLine(line);
-    const c: CodexTerminalLineClassification = parser === 'codex_turn_jsonl' ? classifyCodexTerminalLine(line)
-      : record ? { kind: classifyResultEnvelope(record, parser === 'cursor_result_jsonl'),
-        ...(record.is_error === true ? { excerpt: excerptOf(record.result ?? record.errors, 'result failed') } : {}) }
+    const envelope = parseEnvelopeLine(line);
+    if (envelope) handlers.onRecord?.(envelope);
+    const c: CodexTerminalLineClassification = parser === 'none' ? { kind: 'other' }
+      : parser === 'deepseek_run_jsonl' ? classifyDeepSeekTerminalEnvelope(envelope)
+      : parser === 'codex_turn_jsonl' ? classifyCodexTerminalLine(line)
+      : envelope ? { kind: classifyResultEnvelope(envelope, parser === 'cursor_result_jsonl'),
+        ...(envelope.is_error === true ? { excerpt: excerptOf(envelope.result ?? envelope.errors, 'result failed') } : {}) }
         : { kind: 'other' };
     if (c.kind === 'completed') {
       // 结构化防御：若异常流同时出现两个终态，failed 优先；scanner 自身也不输出双真。
@@ -192,10 +246,11 @@ export function createCodexTerminalScanner(
  * adapter → terminal 解析器选择。Codex 用 turn JSONL，Claude/CodeAgent/Cursor 用各自 result 契约；
  * 其余 adapter 一律 none——无契约的 FAIL 诚实接受 hard timeout 兜底，不造假信号。
  */
-export type TerminalEventParser = 'none' | 'codex_turn_jsonl' | 'claude_result_jsonl' | 'cursor_result_jsonl';
+export type TerminalEventParser = 'none' | 'codex_turn_jsonl' | 'claude_result_jsonl' | 'cursor_result_jsonl' | 'deepseek_run_jsonl';
 
 export function resolveTerminalEventParser(adapterName?: string): TerminalEventParser {
   if (adapterName === 'codex') return 'codex_turn_jsonl';
+  if (adapterName === 'deepseek-harness') return 'deepseek_run_jsonl';
   if (adapterName && isClaudeKernelAdapter(adapterName)) return 'claude_result_jsonl';
   return adapterName === 'cursor' ? 'cursor_result_jsonl' : 'none';
 }
@@ -239,4 +294,30 @@ export function extractCodexAgentMessageText(raw: string): string | null {
   }
   if (!sawCompleted) return null;
   return texts.join('\n');
+}
+
+/** Text projection only; callers retain the shared invocation completion decision. */
+export function extractProviderFinalText(raw: string, adapterName?: string): string | null {
+  if (adapterName === 'codex') {
+    let completed = false;
+    let failed = false;
+    let final: string | null = null;
+    for (const line of raw.split(/\r?\n/)) {
+      const record = parseEnvelopeLine(line);
+      if (record?.type === 'turn.completed') completed = true;
+      if (record?.type === 'turn.failed') failed = true;
+      const item = record?.type === 'item.completed' ? record.item as Record<string, unknown> | undefined : undefined;
+      if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text.trim()) final = item.text;
+    }
+    return completed && !failed ? final : null;
+  }
+  if (adapterName && isClaudeKernelAdapter(adapterName)) return extractClaudeFinalResultText(raw);
+  if (adapterName === 'cursor') return extractClaudeFinalResultText(raw, true);
+  if (adapterName !== 'deepseek-harness') return raw.trim() || null;
+  let final: string | null = null;
+  for (const line of raw.split(/\r?\n/)) {
+    const record = parseEnvelopeLine(line);
+    if (record?.type === 'final' && typeof record.text === 'string') final = record.text;
+  }
+  return final;
 }

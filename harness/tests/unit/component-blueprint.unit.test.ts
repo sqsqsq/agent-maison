@@ -22,7 +22,8 @@ import { generateMermaidViewGraph, generateMermaidPhaseGraph, generateMermaidMod
 import { buildDiscoveryBundle } from '../../scripts/utils/blueprint-discovery';
 import { reconcileP1DerivedResults } from '../../scripts/utils/blueprint-reconciliation';
 import { downstreamRefNeedsRecompute } from '../../scripts/utils/derived-conclusion-freshness';
-import { requiredQuestioningScopes, unchangedViewQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
+import { applyIndependentQuestioningOutput, independentQuestioningBlockers, requiredQuestioningScopes,
+  unchangedViewQuestioningScopes, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { isApplicableView, isChangedView } from '../../scripts/utils/blueprint-views';
 import { validateRuntimeDataFlows } from '../../scripts/utils/runtime-data-flow-check';
 import { checkCanonicalComponentBlueprint, resolveCliRefTarget } from '../../scripts/check-component-blueprint';
@@ -597,6 +598,44 @@ export function runAll(): UnitCaseResult[] {
   results.push(test('canonical fixture passes all P1 completeness checks', () => {
     const issues = validateFixture(validBlueprint());
     assert(issues.length === 1 && issues[0].id === 'blueprint_reader_guide_missing' && issues[0].severity === 'WARN', issues.map(item => `[${item.id}] ${item.path}: ${item.message}`).join('\n'));
+  }));
+
+  results.push(test('isolated questioning JSON is preserved and only its existing result fields are machine-applied', () => {
+    withTempProject((_projectRoot, filePath) => {
+      const before = readYaml(filePath);
+      const original = asRecord(asRecord(before.review_summary)!.questioning)!;
+      const items = clone(asRecords(original.items));
+      items[0].disposition = 'blocker';
+      items[0].answer = '真实独立否定必须保留';
+      const output = JSON.stringify({ ...original, provider_id: 'self-reported-provider', isolated_context: false, items });
+      const outputPath = path.join(path.dirname(filePath), 'questioning-output.json');
+      const actual = applyIndependentQuestioningOutput(filePath, outputPath, output, 'actual-isolated-invoke');
+      assert(fs.readFileSync(outputPath, 'utf8') === output, 'the real result original must remain byte-for-byte');
+      assert(actual.provider_id === 'actual-isolated-invoke' && actual.isolated_context === true && actual.writes_ssot === false,
+        'invocation identity fields are machine-owned');
+      const after = readYaml(filePath);
+      const denied = independentQuestioningBlockers(after);
+      assert(denied.length === 1 && denied[0].answer === '真实独立否定必须保留', 'a completed Q call cannot erase its blocker');
+      assert(!validateBlueprintQuestioning(after).some(issue => issue.id === 'blueprint_questioning_not_independent'),
+        'machine-applied envelope retains the existing questioning contract');
+      delete asRecord(before.review_summary)!.questioning;
+      delete asRecord(after.review_summary)!.questioning;
+      assert(JSON.stringify(after) === JSON.stringify(before), 'the Q writer may not alter product design or admission');
+    });
+  }));
+
+  results.push(test('questioning prose or malformed JSON cannot create a result and its raw original remains available', () => {
+    withTempProject((_projectRoot, filePath) => {
+      const before = fs.readFileSync(filePath);
+      for (const [index, output] of ['PASS: all done', '{}', '{"items":"PASS"}'].entries()) {
+        const outputPath = path.join(path.dirname(filePath), `invalid-questioning-${index}.json`);
+        let rejected = false;
+        try { applyIndependentQuestioningOutput(filePath, outputPath, output, 'actual-isolated-invoke'); }
+        catch { rejected = true; }
+        assert(rejected && fs.readFileSync(filePath).equals(before), 'unstructured summaries cannot change the blueprint');
+        assert(fs.readFileSync(outputPath, 'utf8') === output, 'unusable real output is still available for recovery');
+      }
+    });
   }));
 
   results.push(test('restart write-review renders an unquestioned unadmitted draft without clearing failures and rejects unparseable YAML', () => {

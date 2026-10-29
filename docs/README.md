@@ -4,6 +4,7 @@
 >
 > - **使用 framework**？先看 [`framework/README.md`](../README.md)（入门 + 命令清单）和各 Skill 的 SKILL.md
 > - **了解 framework 设计、向他人讲解、参考演进决策**？看本目录的文档
+> - **对齐部件职责与执行内核**？看 [architecture.md](architecture.md)（目标架构已定稿，尚未实施）
 > - **接入 / 升级 framework**？看 [`framework/MIGRATION.md`](../MIGRATION.md)
 >
 > 文档新鲜度由 [`DOC_INVENTORY.yaml`](DOC_INVENTORY.yaml) 跟踪，
@@ -18,6 +19,7 @@ framework/docs/
 ├── DOC_INVENTORY.yaml         ← 文档清单 + 各文档的源依赖（喂给 check-docs.ts）
 │
 ├── overview.md                ← 全景介绍：为什么做这个 framework、它解决什么问题、怎么接入
+├── architecture.md            ← 架构说明入口：目标、部件职责、事实归属与不变量（已定稿，未实施）
 │
 ├── profiles/                  ← 按 profile 拆出的宿主工具链专文（与 operations 交叉引用）
 │   └── hmos-app-harness-toolchain.md

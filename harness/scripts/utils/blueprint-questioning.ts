@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as YAML from 'yaml';
 import {
   BlueprintIssue,
   BlueprintRecord,
@@ -88,6 +91,44 @@ export function createIndependentQuestioningResult(input: {
     writes_ssot: false,
     items: input.items,
   };
+}
+
+/** Read only the existing structured result, never infer a verdict from prose. */
+export function parseIndependentQuestioningOutput(output: string): BlueprintRecord {
+  const parsed = asRecord(JSON.parse(output));
+  const result = asRecord(asRecord(parsed?.review_summary)?.questioning) ?? asRecord(parsed?.questioning) ?? parsed;
+  if (!result || !Array.isArray(result.items) || result.items.some(item => !asRecord(item))) {
+    throw new Error('独立质询必须返回现有 questioning JSON 对象及 items 数组；自然语言总结不能签发结果。');
+  }
+  return result;
+}
+
+export function independentQuestioningEnvelope(result: BlueprintRecord, providerId: string, authoredBy: unknown): BlueprintRecord {
+  if (!nonEmptyString(providerId) || providerId === authoredBy) throw new Error('质询 provider 必须独立于蓝图编写方。');
+  return { ...result, status: 'complete', provider_id: providerId, isolated_context: true, writes_ssot: false };
+}
+
+/** Called only after the caller confirms a real isolated invocation completed. */
+export function applyIndependentQuestioningOutput(
+  blueprintPath: string, outputPath: string, output: string, providerId: string,
+): BlueprintRecord {
+  if (path.resolve(blueprintPath) === path.resolve(outputPath)) throw new Error('质询原件不能覆盖蓝图。');
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  if (fs.existsSync(outputPath)) {
+    if (fs.readFileSync(outputPath, 'utf8') !== output) throw new Error('本次质询原件已存在且与真实返回不同。');
+  } else fs.writeFileSync(outputPath, output, { encoding: 'utf8', flag: 'wx' });
+  const result = parseIndependentQuestioningOutput(output);
+  const blueprint = asRecord(YAML.parse(fs.readFileSync(blueprintPath, 'utf8')));
+  if (!blueprint) throw new Error('蓝图不可解析，无法回填真实质询结果。');
+  const review = asRecord(blueprint.review_summary) ?? {};
+  const questioning = independentQuestioningEnvelope(result, providerId, review.authored_by);
+  blueprint.review_summary = { ...review, questioning };
+  const temporary = `${blueprintPath}.tmp-${process.pid}-questioning`;
+  try {
+    fs.writeFileSync(temporary, YAML.stringify(blueprint), { encoding: 'utf8', flag: 'wx' });
+    fs.renameSync(temporary, blueprintPath);
+  } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary); }
+  return questioning;
 }
 
 /** A complete report can still explicitly deny the design; schema success is not acceptance. */

@@ -168,8 +168,14 @@ const cases: Case[] = [
         checkGoalReconcileBoundarySource(runtime).join('; '));
       assert(runtime.includes('createGoalReconcileBoundary') && runtime.includes('loadEventsJsonl'),
         'runtime no longer writes and replays the authoritative event ledger');
-      assert(!/phase_verdict|phase_backtrack_requested|phase_halt/.test(executor),
+      const lifecycleEffect = (source: string): boolean =>
+        /\b(?:emit|appendEvent|writeEvent|push|appendFileSync|writeFileSync)\s*\([^;]*\btype\s*:\s*['"](?:phase_verdict|phase_backtrack_requested|phase_halt)['"]/.test(source)
+        || /\b(?:emitPhaseVerdict|decideAndEmit|finalizePhaseClosure|syncPhaseStateOnReceiptPassStrict|consumeHandoffAtBoundary|selectRunnerActionFromAssess|classifyPhaseVerdict)\s*\(/.test(source);
+      assert(!lifecycleEffect(executor),
         'executor acquired lifecycle transition authority');
+      assert(!lifecycleEffect("events.some(event => event.type === 'phase_halt')"), 'reading cancellation facts is not a lifecycle write');
+      assert(lifecycleEffect("sink.emit({ type: 'phase_halt' })") && lifecycleEffect("finalizePhaseClosure({ phase: 'coding' })"),
+        'executor must still be barred from publishing business transitions or signing closure');
       assert(!/goal-state\.json|phase-lifecycle-state\.json/.test(runtime),
         'a second persisted lifecycle authority was introduced');
     },

@@ -24,7 +24,12 @@ const cases: Array<{ name: string; run: () => void }> = [
       const codeagent = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'agents', 'codeagent', 'adapter.yaml'), 'utf-8');
       assert.ok(/template_dir: \.\.\/claude\/templates\/agents/.test(codeagent), 'codeagent 共享同一模板目录');
       const goalCondition = fs.readFileSync(path.join(FRAMEWORK_ROOT, 'agents', 'claude', 'templates', 'goal-condition.md'), 'utf-8');
-      assert.ok(/phase-executor/.test(goalCondition), 'goal-condition 须写明每阶段至多一个 phase-executor');
+      assert.ok(/Start only the issued execute_command/.test(goalCondition), '入口只执行已签发命令，不按每阶段另派 subagent');
+      assert.ok(/common executor owns the dedicated native session/.test(goalCondition), '专用原生会话由共同执行器持有');
+      assert.ok(/do not edit business artifacts in the main context/.test(goalCondition)
+        && /Required verification remains independent/.test(goalCondition), '主上下文只呈现，必需核验保持独立');
+      assert.ok(/one GoalPhaseRuntime/.test(goalCondition) && /must not select CUs\/phases independently/.test(goalCondition),
+        '阶段和CU推进仍只有一个runtime，原生持久化不得重复调度');
     },
   },
   {

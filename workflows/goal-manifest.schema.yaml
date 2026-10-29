@@ -19,6 +19,11 @@ fields:
   requirement:
     type: string
     description: User requirement text or path to requirement file
+  user_deadline_at:
+    type: string
+    description: >
+      Optional absolute UTC deadline explicitly supplied by the user. No default.
+      Resume preserves this timestamp; legacy budget numbers do not imply a user deadline.
   requirement_source_files:
     type: array
     items: string

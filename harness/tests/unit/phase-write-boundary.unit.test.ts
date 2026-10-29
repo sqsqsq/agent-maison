@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache } from '../../config';
 import {
@@ -9,9 +10,16 @@ import {
   diffPhaseInvocationSnapshots,
   resolvePhasePathOwnership,
   resolvePhaseWriteBoundary,
+  renderPhaseWriteBoundaryGuidance,
+  workUnitProtectedRecordPaths,
+  replayUtOwnedWrites,
   type PhaseWriteBoundaryResolution,
 } from '../../scripts/utils/phase-write-boundary';
 import type { UnitCaseResult } from '../run-unit';
+import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
+import type { ExecutionScope } from '../../scripts/utils/execution-scope';
+import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.test';
+import { emitHarnessPreflightGap, harnessPreflightPath } from '../../scripts/utils/capability-preflight';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..', '..', '..');
 const FEATURE = 'owner-fixture';
@@ -72,7 +80,7 @@ function makeHost(): string {
   return root;
 }
 
-function resolve(root: string, phaseOrder: readonly string[] = CHAIN): PhaseWriteBoundaryResolution {
+function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionRole?: 'author' | 'verifier'): PhaseWriteBoundaryResolution {
   return resolvePhaseWriteBoundary({
     projectRoot: root,
     frameworkRoot: FRAMEWORK_ROOT,
@@ -81,6 +89,7 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN): PhaseWrit
     track: 'full',
     profileDir: path.join(FRAMEWORK_ROOT, 'profiles', 'hmos-app'),
     productLayerDirs: ['02-Feature'],
+    executionRole,
     resolveUtSourceRoots: (projectRoot, modules) =>
       modules.map((module) => path.join(projectRoot, module.package_path, 'src', 'ohosTest')),
   });
@@ -205,6 +214,22 @@ export function runAll(): UnitCaseResult[] {
       `coding writing the UT root must stay observed/deferred: ${JSON.stringify(asCoding)}`);
   });
 
+  run(results, 'UT write replay consumes all owned rows and only a later real UT write can re-establish its fact', () => {
+    const target = 'app/tests/target.test.ts';
+    const original = { type: 'phase_write_observed', phase: 'ut', owned: [{ path: target, post_sha256: 'a'.repeat(64) }] };
+    const overwrite = { type: 'phase_write_observed', phase: 'coding', observations: [], owned: [
+      ...Array.from({ length: 55 }, (_, i) => ({ path: `app/tests/other-${i}.test.ts`, post_sha256: 'b'.repeat(64) })),
+      { path: target, post_sha256: 'a'.repeat(64) },
+    ] };
+    const facts = replayUtOwnedWrites([original, overwrite]);
+    assert(facts.get(target)?.voidedBy === 'coding', 'an owned coding rewrite past row 50 must void the earlier producer fact even at the same bytes');
+    assert(!facts.has('app/tests/other-0.test.ts'), 'a non-UT owned write cannot create a UT fact');
+    const restored = replayUtOwnedWrites([original, overwrite, { ...original, owned: [{ path: target, post_sha256: 'c'.repeat(64) }] }]);
+    assert(restored.get(target)?.sha256 === 'c'.repeat(64) && !restored.get(target)?.voidedBy, 'a new valid UT producer may establish the current fact');
+    const legacy = replayUtOwnedWrites([original, { type: 'phase_write_observed', phase: 'testing', observations: [{ path: target }] }]);
+    assert(legacy.get(target)?.voidedBy === 'testing', 'legacy observation replay keeps its existing semantics');
+  });
+
   run(results, 'harness-written feature-root records are observed as unattributed, never violations', () => {
     const root = makeHost();
     const boundary = resolve(root);
@@ -222,7 +247,8 @@ export function runAll(): UnitCaseResult[] {
     const classified = classifyPhaseInvocationChanges(boundary, 'spec', diff.changes);
     assert(classified.violations.length === 0,
       `unregistered paths must not be violations: ${JSON.stringify(classified.violations)}`);
-    for (const rel of ['visual-debt.json', 'visual-debt.md', 'revalidation.json', 'notes.md']) {
+    assert(classified.allowed.some(entry => entry.path === `doc/features/${FEATURE}/spec/notes.md`), 'the existing phase notes convention is an authored workspace output');
+    for (const rel of ['visual-debt.json', 'visual-debt.md', 'revalidation.json']) {
       const item = classified.observed.find((entry) => entry.path.endsWith(rel));
       assert(item?.disposition === 'unattributed', `${rel} must be observed as unattributed`);
       assert(/^[0-9a-f]{64}$/.test(item?.postSha256 ?? ''), `${rel} must keep an auditable post hash`);
@@ -248,6 +274,203 @@ export function runAll(): UnitCaseResult[] {
     assert(classified.violations.length === 0, 'multi-owner must not be a violation');
     assert(classified.observed[0]?.disposition === 'unattributed',
       `multi-owner must be observed as unattributed: ${JSON.stringify(classified.observed)}`);
+  });
+
+  run(results, 'unit author writes implementation and test sources across methods without signing test results', () => {
+    const root = makeHost();
+    const boundary = resolve(root, CHAIN, 'author');
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    write(root, '02-Feature/Card/src/main/ets/NewCard.ets', 'export const card = 1;\n');
+    write(root, '02-Feature/Card/src/ohosTest/ets/test/New.test.ets', 'expect(card).assertEqual(1);\n');
+    const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+    assert(diff.kind === 'changed', 'cross-method source changes must be captured');
+    if (diff.kind !== 'changed') return;
+    for (const method of ['coding', 'ut', 'testing']) {
+      const result = classifyPhaseInvocationChanges(boundary, method, diff.changes);
+      assert(result.allowed.length === 2 && result.violations.length === 0,
+        `source writes cannot be restricted by method ${method}: ${JSON.stringify(result)}`);
+      assert(result.allowed.some(row => row.owner === 'ut' && /^[0-9a-f]{64}$/.test(row.postSha256 ?? '')),
+        'source producer and byte attribution must survive cross-method execution');
+    }
+    const guidance = renderPhaseWriteBoundaryGuidance(boundary, 'coding').join('\n');
+    assert(guidance.includes('independent assessment') && !guidance.includes('New or changed test logic belongs to UT'),
+      'author guidance must preserve independent assertion checks without phase-exclusive test authorship');
+  });
+
+  run(results, 'author Skill outputs remain writable while runner products are excluded and completion stays protected', () => {
+    const root = makeHost();
+    const boundary = resolve(root, CHAIN, 'author');
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    const inputs = ['coding/notes.md', 'testing/scripts/smoke.ts', 'testing/inputs/cases.json', 'testing/test-plan.md', 'testing/test-report.md',
+      'device-testing/device-screenshots/shot-home.png', 'device-testing/device-screenshots/visual-diff.json'];
+    const runnerProducts = ['testing/reports/run-1/hylyre/trace.json', 'ut/reports/ac-coverage.json', 'testing/phase-state.json'];
+    const protectedWrites = ['feature-completion.json'];
+    for (const rel of [...inputs, ...runnerProducts, ...protectedWrites]) write(root, `doc/features/${FEATURE}/${rel}`, 'PASS\n');
+    const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+    assert(diff.kind === 'changed', 'testing changes must be captured');
+    if (diff.kind !== 'changed') return;
+    const result = classifyPhaseInvocationChanges(boundary, 'testing', diff.changes);
+    for (const rel of inputs) assert(result.allowed.some(row => row.path === `doc/features/${FEATURE}/${rel}`), `${rel} is an input`);
+    for (const rel of runnerProducts) assert(!diff.changes.some(row => row.path === `doc/features/${FEATURE}/${rel}`), `${rel} is handled by its existing writer/checker`);
+    for (const rel of protectedWrites) assert(result.violations.some(row => row.path === `doc/features/${FEATURE}/${rel}`
+      && row.violation === 'outside_authority'), `${rel} stays protected`);
+    const coverage = classifyPhaseInvocationChanges(boundary, 'coding', [{ path: `doc/features/${FEATURE}/ut/reports/ac-coverage.json`,
+      how: 'added', preSha256: null, postSha256: 'a'.repeat(64) }]);
+    assert(coverage.allowed.length === 1 && coverage.violations.length === 0, 'UT coverage-evidence is a declared Skill output, not a filename-based violation');
+  });
+
+  run(results, 'local design candidates are editable but original inputs, shared design and framework stay protected', () => {
+    const root = makeHost();
+    write(root, 'doc/architecture.md', '# Shared architecture\n');
+    write(root, 'framework/runtime.ts', 'export const runtime = 1;\n');
+    const boundary = { ...resolve(root, CHAIN, 'author'),
+      immutableInputPaths: [`doc/features/${FEATURE}/acceptance.yaml`] };
+    const paths = [`doc/features/${FEATURE}/contracts.yaml`, `doc/features/${FEATURE}/plan/plan.md`,
+      `doc/features/${FEATURE}/acceptance.yaml`, 'doc/architecture.md', 'framework/runtime.ts', '02-Feature/Other/src/X.ets'];
+    const result = classifyPhaseInvocationChanges(boundary, 'ut', paths.map(file => ({ path: file,
+      how: 'modified' as const, preSha256: 'a'.repeat(64), postSha256: 'b'.repeat(64) })));
+    assert(result.allowed.length === 2 && result.allowed.some(row => row.path.endsWith('contracts.yaml')),
+      'candidate designs are not protected merely because of their filename');
+    for (const file of paths.slice(2)) assert(result.violations.some(row => row.path === file), `${file} must remain protected`);
+  });
+
+  run(results, 'author runner exclusions do not relax independent verifier snapshots', () => {
+    const root = makeHost();
+    const boundary = resolve(root, CHAIN, 'author');
+    const verifier = { ...boundary, executionRole: 'verifier' as const };
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    const verifierPre = capturePhaseInvocationSnapshot(verifier);
+    for (const rel of ['plan/reports/summary.json', 'plan/phase-state.json', 'next.json', '.current-phase.json']) {
+      write(root, `doc/features/${FEATURE}/${rel}`, '{"actualTool":"PASS"}\n');
+    }
+    assert(diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary)).kind === 'clean',
+      'actual self-check runner products must not become author writes');
+    const verifierDiff = diffPhaseInvocationSnapshots(verifierPre, capturePhaseInvocationSnapshot(verifier));
+    assert(verifierDiff.kind === 'changed' && classifyPhaseInvocationChanges(verifier, 'questioning', verifierDiff.changes).violations.length === 4,
+      'independent read-only Q still cannot alter these files');
+  });
+
+  run(results, 'author preflight excludes only the existing machine writer location and explicit protected inputs still win', () => {
+    const root = makeHost();
+    const file = harnessPreflightPath(root);
+    const adjacent = path.join(path.dirname(file), 'framework-source.ts');
+    write(root, path.relative(root, adjacent), 'export const value = 1;\n');
+    const boundary = resolve(root, CHAIN, 'author');
+    const verifier = { ...boundary, executionRole: 'verifier' as const };
+    const protectedInput = { ...boundary, immutableInputPaths: [...(boundary.immutableInputPaths ?? []), file] };
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    const verifierPre = capturePhaseInvocationSnapshot(verifier);
+    const inputPre = capturePhaseInvocationSnapshot(protectedInput);
+    emitHarnessPreflightGap(root, 'coding', { ok: false, code: 'deveco_toolchain_capability_failed', prerequisites: ['deveco_toolchain'],
+      message: 'actual preflight gap', guidance_install: 'repair the fixture toolchain', guidance_stop: 'wait for the real prerequisite', evidence: [] });
+    assert(diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary)).kind === 'clean', 'a genuine capability preflight writer is not an author mutation');
+    assert(diffPhaseInvocationSnapshots(verifierPre, capturePhaseInvocationSnapshot(verifier)).kind === 'changed', 'read-only Q receives no preflight write grant');
+    const originalDiff = diffPhaseInvocationSnapshots(inputPre, capturePhaseInvocationSnapshot(protectedInput));
+    assert(originalDiff.kind === 'changed' && classifyPhaseInvocationChanges(protectedInput, 'coding', originalDiff.changes).violations.length === 1,
+      'a bound original at the machine path must remain explicitly protected');
+    fs.appendFileSync(adjacent, '// unauthorized framework write\n');
+    const adjacentDiff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+    assert(adjacentDiff.kind === 'changed' && adjacentDiff.changes.length === 1
+      && classifyPhaseInvocationChanges(boundary, 'coding', adjacentDiff.changes).violations.length === 1,
+      'machine preflight output cannot exempt adjacent framework sources');
+  });
+
+  run(results, 'independent verifier may return only its exact result original', () => {
+    const root = makeHost();
+    const own = `doc/features/${FEATURE}/review/reports/invoke-1/result.json`;
+    const boundary = { ...resolve(root), executionRole: 'verifier' as const, verifierResultPath: own };
+    const paths = [own, `doc/features/${FEATURE}/review/reports/invoke-2/result.json`,
+      '02-Feature/Card/src/main/ets/Card.ets', `doc/features/${FEATURE}/contracts.yaml`,
+      `doc/features/${FEATURE}/feature-completion.json`];
+    const result = classifyPhaseInvocationChanges(boundary, 'review', paths.map(file => ({ path: file,
+      how: 'added' as const, preSha256: null, postSha256: 'b'.repeat(64) })));
+    assert(result.allowed.length === 1 && result.allowed[0].path === own && result.violations.length === 4,
+      'Q result transport must grant no product/design/evidence signing rights');
+  });
+
+  run(results, 'selected original requirements stay immutable without freezing unsuccessful candidates or read-only research dependencies', () => {
+    const root = makeHost();
+    const original = `doc/features/${FEATURE}/context/original.md`;
+    const candidate = `doc/features/${FEATURE}/contracts.yaml`;
+    const researched = '02-Feature/Card/src/main/ets/Card.ets';
+    write(root, original, '# Original user request\n');
+    const scope: ExecutionScope = { schema_version: '1.0', completion_target: 'feature', requested_results: ['delivery'],
+      phase_chain: ['coding'], reused_phases: [], unresolved: [], policy_fingerprint: 'a'.repeat(64), obligations: [{
+        id: 'implementation', kind: 'implementation', owner_phase: 'coding', applicability: 'required', reason: 'bound unit',
+        basis: [original, researched].map((file, i) => ({ input_id: i === 0 ? 'requirement' : 'contracts',
+          source: { kind: 'derive', provider_id: i === 0 ? 'derive.requirement' : 'derive.blueprint-contracts' },
+          source_refs: [file], dependencies: [file, candidate].map(dependency => ({ path: path.join(root, dependency), exists: true, sha256: 'a'.repeat(64), role: 'derive' })),
+          content_fingerprint: 'a'.repeat(64) })),
+      }] };
+    freezeFeatureExecutionScope({ projectRoot: root, feature: FEATURE, scope, candidateFingerprint: 'a'.repeat(64) });
+    const boundary = resolve(root, CHAIN, 'author');
+    assert(boundary.immutableInputPaths?.includes(original) === true && !boundary.immutableInputPaths?.includes(candidate)
+      && !boundary.immutableInputPaths?.includes(researched), 'dependency attempts and research are not write authorization');
+    const pre = capturePhaseInvocationSnapshot(boundary);
+    write(root, original, '# Weakened request\n');
+    write(root, candidate, '# local design candidate\n');
+    write(root, researched, 'export class Card { improved = true; }\n');
+    const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+    assert(diff.kind === 'changed' && diff.changes.length === 3,
+      'bound input protection must not vanish because its directory is named context');
+    if (diff.kind !== 'changed') return;
+    const writes = classifyPhaseInvocationChanges(boundary, 'coding', diff.changes);
+    assert(writes.violations.length === 1 && writes.violations[0].path === original && writes.allowed.length === 2,
+      'only the actual original request is immutable; local candidate and implementation remain editable');
+  });
+
+  run(results, 'typed canonical CU and blueprint sources stay protected while their local projections remain editable', () => {
+    const f = blueprintFixture();
+    try {
+      const source = 'src/ledger/UnitSource.ts';
+      write(f.root, source, 'export const value = 1;\n');
+      const shared = 'doc/shared-contract.yaml';
+      write(f.root, shared, 'contract: original\n');
+      const blueprint = YAML.parse(fs.readFileSync(f.blueprintFile, 'utf8'));
+      blueprint.provenance.source_ref = shared;
+      blueprint.design_views.find((view: { nodes?: unknown[] }) => view.nodes?.length).nodes[0].provenance.source_ref = source;
+      fs.writeFileSync(f.blueprintFile, YAML.stringify(blueprint)); f.bind();
+      const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: f.feature,
+        phaseOrder: CHAIN, track: 'full', profileDir: path.join(FRAMEWORK_ROOT, 'profiles/generic'), productLayerDirs: ['src'],
+        executionRole: 'author', constructionModules: [{ name: 'ledger', package_path: 'src/ledger' }] });
+      const contracts = path.relative(f.root, path.join(path.dirname(f.cuFile), 'contracts.yaml')).replace(/\\/g, '/');
+      assert(boundary.immutableInputPaths?.includes(path.relative(f.root, f.blueprintFile).replace(/\\/g, '/')) === true
+        && boundary.immutableInputPaths?.includes(path.relative(f.root, f.cuFile).replace(/\\/g, '/')) === true,
+        'canonical paths come from existing CU identity and typed blueprint refs');
+      assert(!boundary.immutableInputPaths?.includes(contracts), 'a local derived contract is not the shared canonical source');
+      assert(boundary.immutableInputPaths?.includes(shared) === true && !boundary.immutableInputPaths?.includes(source),
+        'shared declared source fragments stay protected while ordinary implementation research remains editable');
+      const pre = capturePhaseInvocationSnapshot(boundary);
+      write(f.root, contracts, '# local projection refinement\n');
+      write(f.root, source, 'export const value = 2;\n');
+      fs.appendFileSync(f.blueprintFile, '\n# unauthorized shared write\n');
+      fs.appendFileSync(f.cuFile, '\n# unauthorized canonical write\n');
+      write(f.root, shared, 'contract: unauthorized\n');
+      const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary));
+      assert(diff.kind === 'changed', JSON.stringify(diff));
+      if (diff.kind !== 'changed') return;
+      const classified = classifyPhaseInvocationChanges(boundary, 'plan', diff.changes);
+      assert(classified.allowed.length === 2 && classified.violations.length === 3, JSON.stringify(classified));
+    } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  });
+
+  run(results, 'current run completion original is captured even when its parent run directory is runtime-excluded', () => {
+    const root = makeHost();
+    const runDir = `doc/features/${FEATURE}/goal-runs/current`;
+    const completion = `${runDir}/feature-completion.json`;
+    const boundary = { ...resolve(root, CHAIN, 'author'),
+      immutableInputPaths: workUnitProtectedRecordPaths(root, FEATURE, runDir) };
+    const options = { runtimeExcluded: [runDir] };
+    const pre = capturePhaseInvocationSnapshot(boundary, options);
+    write(root, `${runDir}/events.jsonl`, '{"type":"real_runtime_event"}\n');
+    write(root, completion, '{"verdict":"PASS"}\n');
+    const diff = diffPhaseInvocationSnapshots(pre, capturePhaseInvocationSnapshot(boundary, options));
+    assert(diff.kind === 'changed' && diff.changes.length === 1 && diff.changes[0].path === completion,
+      `formal completion cannot be hidden by its parent runtime exclusion: ${JSON.stringify(diff)}`);
+    if (diff.kind !== 'changed') return;
+    const result = classifyPhaseInvocationChanges(boundary, 'coding', diff.changes);
+    assert(result.violations.length === 1 && result.violations[0].violation === 'outside_authority',
+      'writing the actual completion original must be rejected');
   });
 
   return results;

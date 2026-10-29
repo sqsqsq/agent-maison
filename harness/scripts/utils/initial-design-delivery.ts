@@ -380,7 +380,8 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
         : '原文有不同表述时，在原需求内依据原文自身的条件或时间范围解释，保留全部本次适用要求，将有来源依据的设计决定及两方出处记入现有设计材料，再交独立质询；不改需求，不删验收，不伪称用户逐项确认。'] : []),
     ] : []),
     '只展开当前交付切片，复用已批准机器投影；按原P1契约声明稳定义务及真实内部/外部契约，不伪造质量结果。',
-    `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : observation.kind === 'questioning' ? observation.blueprintPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
+    questioning ? '本次独立质询只读；只通过结果运输返回本次JSON原件，不写蓝图或其它工程文件。'
+      : `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
     ...prior.lines,
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
@@ -394,7 +395,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     ] : []),
     ...(observation.kind === 'decompose' ? ['本次只提出新CU候选，保留全部已有canonical CU、蓝图及有效交付原件；现有CU内容修订必须交原正式设计发布事务。'] : []),
     observation.kind === 'questioning'
-      ? `必须在实际独立上下文/独立provider执行。只写本蓝图review_summary.questioning，不改设计/其它字段，不继承作者私有上下文。\n${questioningReadingInstruction(observation.blueprintPath, prior.questioned)}`
+      ? `必须在实际独立只读上下文/独立provider执行，不写蓝图/工程文件，不继承作者私有上下文。最终只返回既有questioning形状的JSON对象；框架保留本次原件并在完成与只读核对后回填review_summary.questioning。\n${questioningReadingInstruction(observation.blueprintPath, prior.questioned)}`
       : observation.kind === 'author'
         ? '按原始需求与真实工程事实设计当前切片，保留本次必要契约、数据闭环及风险。内部存储契约可direction: internal，不要求制造远程API。不得自写独立questioning；机器admission由runtime派生。'
         : '只在本次签发写集内完成前述候选或范围输入；蓝图设计缺口交原设计责任方，不自行补改蓝图，不扩大当前写集或删除真实义务。',

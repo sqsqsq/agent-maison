@@ -70,8 +70,9 @@ export type RunAdapterProvenance = (typeof RUN_ADAPTER_PROVENANCES)[number];
  * runner-owned gate、receipt/人签、journal 收编、设备与凭据规则一概不受影响。
  */
 export function effectiveHeadlessUnattended(raw?: UnattendedContract): UnattendedContract {
+  const { allowed_tools: _legacyApprovalList, ...current } = raw ?? ({} as UnattendedContract);
   return {
-    ...(raw ?? ({} as UnattendedContract)),
+    ...current,
     write_mode: 'full-access',
     approval_mode: 'never',
   };
@@ -89,6 +90,8 @@ export interface UnattendedContract {
 }
 
 export interface GoalManifest {
+  /** Absolute UTC deadline explicitly supplied by the user; never inferred from legacy budgets. */
+  user_deadline_at?: string;
   /** Immutable original delivery locator; it grants no authority. */
   delivery_origin?: { feature: string; run_id: string };
   execution_scope?: ExecutionScope;
@@ -187,6 +190,13 @@ export type InitialDesignGoalManifest = Omit<GoalManifest,
 
 export type GoalRunManifest = GoalManifest | InitialDesignGoalManifest;
 
+export function parseUserDeadlineAt(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value)
+    || !Number.isFinite(Date.parse(value))) throw new Error('[goal-manifest] user_deadline_at must be an explicit UTC timestamp');
+  return new Date(value).toISOString();
+}
+
 export function isInitialDesignManifest(manifest: GoalRunManifest): manifest is InitialDesignGoalManifest {
   return 'initial_design' in manifest;
 }
@@ -267,6 +277,7 @@ export function computeManifestIdentityFields(manifest: GoalRunManifest): Record
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
+  if (manifest.user_deadline_at !== undefined) fields.user_deadline_at = manifest.user_deadline_at;
   if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) fields.execution_scope = JSON.parse(JSON.stringify(manifest.execution_scope ?? null));
   if (isInitialDesignManifest(manifest)) fields.initial_design = manifest.initial_design;
   if (Object.prototype.hasOwnProperty.call(manifest, 'delivery_origin')) fields.delivery_origin = manifest.delivery_origin;
@@ -779,6 +790,7 @@ export function buildGoalManifestFromInput(
     : undefined;
 
   return {
+    ...(input.user_deadline_at === undefined ? {} : { user_deadline_at: parseUserDeadlineAt(input.user_deadline_at) }),
     ...(input.delivery_origin === undefined ? {} : { delivery_origin: validateDeliveryOrigin(input.delivery_origin) }),
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
@@ -1210,6 +1222,7 @@ export function validateLoadedGoalManifest(
       manifest.visual_provider_pin.model,
     );
   }
+  if (manifest.user_deadline_at !== undefined) parseUserDeadlineAt(manifest.user_deadline_at);
   if (manifest.run_base_sha !== undefined && !/^[0-9a-f]{40}$/.test(manifest.run_base_sha)) {
     throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
   }

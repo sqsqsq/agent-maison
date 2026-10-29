@@ -404,7 +404,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       'utf-8',
     );
     assert(
-      /exitCode: timedOut \|\| terminalFailureObserved \? \(exitCode === 0 \? 1 : exitCode\) : exitCode,/.test(src),
+      /exitCode: timedOut \|\| interrupted \|\| terminalFailureObserved \? \(exitCode === 0 \? 1 : exitCode\) : exitCode,/.test(src),
       'exit 0 规范化须与 timedOut 同款（保住 agentFailed 语义）',
     );
     assert(/terminal_failure_observed: terminalFailureObserved \|\| undefined,/.test(src), '结果须回传 terminal_failure_observed');

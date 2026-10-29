@@ -23,7 +23,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 'a7 executors: detached cleanup completes with original exit1; failures win and attended waiting remains waiting/exit0',
     run: async () => {
-      const context = { phase: 'plan' } as never;
+      const context = { phase: 'plan', runId: 'canary', feature: 'demo', workflowId: 'spec-driven', track: 'full', chain: ['plan'], attemptId: 'i1',
+        owner: { run_id: 'canary', owner_id: 'dry-run', epoch: 0, kind: 'process' }, projectRoot: os.tmpdir(), frameworkRoot: os.tmpdir(),
+        runDir: path.join(os.tmpdir(), 'no-canary-run'), reportDir: 'no-canary-run', adapter: 'codex',
+        runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {} } as never;
       const completed = { exitCode: 1, stdout: '', stderr: '', command: 'fake', completion_observed: true, kill_attempted: true };
       for (const negative of [{}, { timed_out: true }, { silent_killed: true }, { terminal_failure_observed: true },
         { skipped: true }, { spawn_error: { message: 'missing' } }]) {

@@ -758,8 +758,8 @@ export function repairAdapter(s: Snapshot, saved: () => Ev | undefined, opts: {
       const canonicalQuestioning = readDoc(blueprintFile(s)).review_summary.questioning;
       doc.review_summary.questioning = { ...structuredClone(canonicalQuestioning), provider_id: 'design-repair-questioning' };
       const override = await opts.questioning?.(doc, draft);
-      writeDoc(draft, doc);
-      return override ?? undefined;
+      const output = JSON.stringify(doc.review_summary.questioning ?? null);
+      return { stdout: output, details: output, ...override };
     },
   };
 }

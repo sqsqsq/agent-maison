@@ -328,8 +328,9 @@ function codingTestChanges(ctx: CheckContext, files: readonly string[], events: 
   const priorUt = loadPhaseEvidenceManifest(ctx.projectRoot, ctx.feature, 'ut');
   const codingWrites = new Map<string, string>();
   for (const event of events) {
-    if (event.phase !== 'coding' || event.type !== 'phase_write_observed') continue;
-    for (const row of (event as { observations?: Array<{ path: string }> }).observations ?? []) codingWrites.set(row.path, event.ts ?? '');
+    if (event.phase === 'ut' || event.type !== 'phase_write_observed') continue;
+    const writes = event as { owned?: Array<{ path: string }>; observations?: Array<{ path: string }> };
+    for (const row of [...(writes.owned ?? []), ...(writes.observations ?? [])]) codingWrites.set(row.path, event.ts ?? '');
   }
   return testPaths.flatMap(file => {
     if (runId && !owned.has(file) && !codingWrites.has(file)) return [];

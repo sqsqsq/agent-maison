@@ -39,6 +39,7 @@ import {
   resolveSurvivalFacet,
 } from '../../scripts/utils/goal-adapter-capability';
 import { evaluateDeviceReadinessProbe } from '../../scripts/utils/device-readiness-gate';
+import type { AgentInvokeOptions } from '../../scripts/utils/agent-invoke';
 
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -680,18 +681,19 @@ asyncCases.push(
     },
   },
   {
-    name: 'P3 批二遗留 运行时链：等待后再钳制的时限同步进写给执行者的提示词（不是门禁前的值）',
+    name: 'P1 运行时链：等待恢复后的真实请求不把旧余额变成作者默认截止或提示词配额',
     run: async () => {
       const { root } = setupGoalRuntimeHost();
       try {
-        // 时限只写在"上一次调用被中断、从半成品续作"的提示词段里：第一段让 coding 调用中途崩溃（留下未闭合调用），
-        // 恢复时它就是续作提示词。随后记下真实 wrapper 的能力失败，恢复会先在能力门前等待。
+        // 明确的操作中断已经settled；本例不模拟无法核实外部绑定的runner崩溃。
         const first = await runGoalRuntimeChain(root, {
           freshEndPhase: 'coding',
-          onCoding: () => { throw new Error('injected crash inside coding invoke'); },
+          invokeResultFor: phase => phase === 'coding'
+            ? { exitCode: 130, signal: 'SIGINT', interrupted: true, stderr: 'injected operator interruption' } : null,
         });
         const runId = path.basename(first.reportDir);
-        assert(first.events.some((e) => e.type === 'run_end' && e.status === 'INTERRUPTED'), `夹具：第一段须中断：${first.events.map((e) => e.type).join(',')}`);
+        assert(first.events.some(e => e.type === 'agent_invoke_end' && e.phase === 'coding' && e.exit_code === 130
+          && e.interrupted === true && e.completion_observed !== true), '夹具：第一段必须保留真实明确的未完成中断终态');
         recordHvigorBuildOutcome(root, {
           kind: 'capability_failed', fingerprint: 'p3-b3-fp', failure_code: 'sdk_component_missing',
           evidence: ['sdk_manifest_format=sdk-pkg.json'],
@@ -709,13 +711,26 @@ asyncCases.push(
           }
         }, 20);
         let resumed: Awaited<ReturnType<typeof runGoalRuntimeChain>>;
+        const runtime = require('../../scripts/goal-phase-runtime') as { __testing_setInvokeAgent: (fn: unknown) => void };
+        const installInvoke = runtime.__testing_setInvokeAgent;
+        let activeOptions: AgentInvokeOptions | undefined;
+        const actualInvokes: Array<{ prompt: string; options: AgentInvokeOptions }> = [];
+        runtime.__testing_setInvokeAgent = fn => installInvoke(typeof fn !== 'function' ? fn : async (plan: unknown, cwd: string, options: AgentInvokeOptions) => {
+          activeOptions = options;
+          return (fn as (...args: unknown[]) => Promise<unknown>)(plan, cwd, options);
+        });
         try {
           resumed = await runGoalRuntimeChain(root, {
             resume: runId, forceResume: true, freshEndPhase: 'coding',
             conditionWait: { maxWaitMs: 120_000, pollMs: 100 },
+            onCoding: ctx => {
+              assert(!!activeOptions, 'detached 调用必须实际收到原生运输选项');
+              actualInvokes.push({ prompt: ctx.prompt, options: activeOptions! });
+            },
           });
         } finally {
           clearInterval(fixer);
+          runtime.__testing_setInvokeAgent = installInvoke;
         }
         const thisSession = resumed.events.slice(resumed.events.map((e) => e.type).lastIndexOf('run_start'));
         const started = thisSession.find((e) => e.type === 'condition_wait_started');
@@ -725,9 +740,13 @@ asyncCases.push(
         assert(minutes(Number(started!.limit_ms)) === 2, `夹具：门禁前时限须四舍五入为 2 分钟，limit=${String(started!.limit_ms)}`);
         const effective = Number(invoke!.effective_timeout_ms);
         assert(minutes(effective) === 1, `夹具：等待后时限须四舍五入为 1 分钟，effective=${effective}`);
-        const prompt = resumed.codingPrompts[resumed.codingPrompts.length - 1] ?? '';
-        const shown = /Time budget: ~(\d+) minutes/.exec(prompt)?.[1];
-        assert(shown === String(minutes(effective)), `提示词时限须取最终钳制值：提示词=${shown} 分钟，实际=${effective}ms`);
+        assert(actualInvokes.length > 0, '等待恢复后必须真的调用执行者');
+        const observed = actualInvokes[0];
+        assert(observed.options.userDeadlineAt === undefined && observed.options.timeoutMs === undefined && observed.options.deadlineMs === undefined,
+          '没有用户明示时限时不得从旧余额推导作者截止或总时限');
+        const prompt = observed.prompt;
+        assert(prompt.length > 0, '实际调用必须消费非空指令');
+        assert(!/Time budget:/.test(prompt), '旧阶段/累计余额不能作为作者默认配额写入提示词');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -827,7 +846,7 @@ asyncCases.push(
         assert(!!started && started.phase === 'coding' && started.probe === 'capability_preflight_ready' &&
           started.blocked_by === 'await_human_capability_gap', `须在 coding 开始等待：${JSON.stringify(started)}`);
         assert(types.includes('condition_wait_ready') && !types.includes('condition_wait_timeout'), `须就绪恢复：${types.join(',')}`);
-        assert(!probe.events.some((e) => e.type === 'phase_halt'), '恢复后不得留下停机事件');
+        assert(!probe.events.some((e) => e.type === 'phase_halt'), `恢复后不得留下停机事件：${JSON.stringify(probe.events.filter(e => e.type === 'phase_halt'))}`);
         assert(probe.invokedPhases.includes('coding'), `coding 须真正执行：${probe.invokedPhases.join('→')}`);
         const codingVerdicts = probe.events.filter((e) => e.type === 'phase_verdict' && e.phase === 'coding');
         assert(codingVerdicts.every((e) => e.action !== 'retry'), '等待不消耗内容重试');

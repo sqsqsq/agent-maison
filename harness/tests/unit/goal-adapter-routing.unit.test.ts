@@ -62,15 +62,18 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'all eight command adapters share handoff without claiming isolation or native resume',
+    name: 'all eight command adapters share handoff and native isolation remains backed by validation',
     run: () => {
       const frameworkRoot = path.resolve(__dirname, '../../..');
       for (const adapter of ['claude', 'codex', 'cursor', 'codeagent', 'opencode', 'chrys', 'generic', 'deepseek-harness']) {
         const loaded = loadGoalCapability(frameworkRoot, adapter);
         assert(loaded.valid, `${adapter}: ${loaded.issues.join(', ')}`);
         assert(routeGoalCapability(loaded, 'attended').kind === 'in_session', `${adapter}: shared handoff`);
-        if (adapter !== 'claude' && adapter !== 'codex') {
+        if (!['claude', 'codex', 'deepseek-harness'].includes(adapter)) {
           assert(loaded.capability?.phase_context_isolation === false, `${adapter}: isolation must remain truthful`);
+        } else {
+          assert(loaded.capability?.phase_context_isolation === true && loaded.capability.supports_resume === true,
+            `${adapter}: verified native dedicated session and precise resume`);
         }
       }
     },

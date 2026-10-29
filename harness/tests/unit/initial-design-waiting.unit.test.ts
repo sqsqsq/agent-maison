@@ -193,9 +193,10 @@ async function repairWaiting(): Promise<void> {
     assert(!events(runDir).some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));
     assert.deepEqual(fs.readFileSync(canonical.canonicalPath), original, 'waiting never publishes a partial draft');
     const qRequest = JSON.parse(fs.readFileSync(qRetry.request.path, 'utf8'));
-    await adapter.onOutOfChain({ phase: qRetry.phase, prompt: qRequest.context.instruction, attempt: 1, runId: manifest.run_id });
+    const actual = await adapter.onOutOfChain({ phase: qRetry.phase, prompt: qRequest.context.instruction, attempt: 1, runId: manifest.run_id });
+    assert(typeof actual?.details === 'string', 'independent questioning must return its actual JSON result');
     await runGoalModeSessionStep({ ...options, requestPath: qRetry.request.path,
-      report: { status: 'passed', phase: qRetry.phase, details: '提供方已恢复；独立质询完成' } });
+      report: { status: 'passed', phase: qRetry.phase, details: actual!.details } });
     const after = events(runDir);
     assert.equal(after.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
     assert(!after.some(row => row.type === 'design_authority_repair' && row.stage === 'failed'));

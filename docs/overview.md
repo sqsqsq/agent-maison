@@ -1,5 +1,6 @@
 # Framework 全景介绍
 
+> 目标架构草稿见 [architecture.md](architecture.md)。
 > **文档角色**：面向**没接触过本 framework**的同事 / 跨部门协作者的**对外讲解**材料。
 >
 > **不是**：使用手册（使用手册见 [`../README.md`](../README.md) 与各 [`../skills/*/SKILL.md`](../skills/)）；

@@ -66,5 +66,27 @@ export function runAll(): UnitCaseResult[] {
     const finite = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, target: { files: ['app/tests/a.ts'], compatibilityPreserved: true } });
     assert.equal(finite.owner, 'coding'); assert.equal(finite.roles.verifier, 'ut'); assert.equal(finite.roles.introducedBy, null);
   });
+  check('work-unit authors repair code and tests in place while preserving independent verification responsibility', () => {
+    const contracts = { projectRoot: root, feature: 'f', phaseOrder: ['review'], executionRole: 'author' as const,
+      domains: [{ owner: 'coding', kind: 'source' as const, match: 'prefix' as const, path: 'app/src', source: 'bound module' },
+        { owner: 'ut', kind: 'source' as const, match: 'prefix' as const, path: 'app/tests', source: 'profile' }],
+      diagnostics: [], unresolvedSourcePhases: [], protectedRoots: [] };
+    for (const currentPhase of ['coding', 'ut', 'review']) {
+      const result = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, currentPhase,
+        target: { files: ['app/tests/a.ts'] } });
+      assert.equal(result.action, 'current');
+      assert.equal(result.roles.verifier, 'ut');
+      assert(result.reason.includes('独立核验'));
+    }
+    const denied = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, currentPhase: 'ut',
+      target: { files: ['framework/runtime.ts'] } });
+    assert.equal(denied.action, 'unavailable');
+    const shared = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts, currentPhase: 'ut',
+      target: { files: ['app/src/A.ts'], designAuthority: true } });
+    assert.equal(shared.action, 'design');
+    const verifier = resolveRepairResponsibility({ frameworkRoot: root, workflow, contracts,
+      executionRole: 'verifier', currentPhase: 'review', target: { files: ['app/src/A.ts'] } });
+    assert.equal(verifier.action, 'unavailable');
+  });
   return results;
 }

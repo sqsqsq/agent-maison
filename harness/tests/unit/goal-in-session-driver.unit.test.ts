@@ -309,7 +309,7 @@ const cases: TestCase[] = [
     },
   },
   {
-    name: 'attended adapter without phase isolation executes the shared session runtime and discloses its main context',
+    name: 'attended adapter without phase isolation executes the shared dedicated transport and preserves independent verification',
     run: async () => {
       const root = setupGoalRuntimeHost('generic').root;
       try {
@@ -318,7 +318,7 @@ const cases: TestCase[] = [
           freshEndPhase: 'spec', viaSessionStep: true, onSpec: ctx => { prompt = ctx.prompt; } });
         assert(probe.exitCode === 0, JSON.stringify(probe.events.filter(event => event.type === 'phase_halt')));
         assert(probe.invokedPhases.join(',') === 'spec' && probe.harnessPhases.join(',') === 'spec', 'main-context execution must still use the formal gate');
-        assert(prompt.includes('在主上下文按本请求执行并披露') && prompt.includes('仍须实际独立上下文或独立 provider'), 'isolation disclosure must preserve required independent verification');
+        assert(prompt.includes('专用执行会话') && prompt.includes('主 Agent 负责观察与转交指示') && prompt.includes('独立核验'), 'the host presents the dedicated execution and never falls back to main-context construction');
         assert(probe.events.some(event => event.type === 'agent_invoke_end' && event.handoff_report), 'the public session result must be archived');
         assert(!probe.events.some(event => event.type === 'agent_process_settled'), 'main context cannot manufacture process settlement');
         assert(readRunControl(probe.reportDir, 'host-main-context')?.owner?.state === 'released', 'completed session releases its owner');

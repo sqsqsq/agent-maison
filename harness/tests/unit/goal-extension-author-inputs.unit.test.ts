@@ -93,12 +93,10 @@ async function driveSpecRun(
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
   try {
     __testing_setInvokeAgent((async (_plan: unknown, _root: unknown, o: unknown) => {
-      const logPath = String((o as { outputLogPath?: string })?.outputLogPath ?? '');
-      const phase = /\/phases\/([a-z-]+)\//.exec(logPath.split(path.sep).join('/'))?.[1] ?? '';
+      const phase = (o as { extraEnv?: Record<string, string> })?.extraEnv?.MAISON_GOAL_ATTEMPT_PHASE;
       if (phase === 'spec') {
-        // 作者实收的 prompt 文件与 agent-output.log 同目录（runtime :6139 / :6679）
-        const promptPath = path.join(path.dirname(logPath), 'prompt.md');
-        prompts.push(fs.existsSync(promptPath) ? fs.readFileSync(promptPath, 'utf-8') : '');
+        const plan = _plan as { stdin?: string; argv?: string[] };
+        prompts.push(plan.stdin ?? (plan.argv ?? []).join('\n'));
       }
       return { exitCode: 0, stdout: 'done', stderr: '', command: 'fake-agent' };
     }) as never);

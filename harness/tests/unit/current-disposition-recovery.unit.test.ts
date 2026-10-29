@@ -24,7 +24,7 @@ import { fixture as requestFixture } from './request-entry.unit.test';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
 import { runGoalRuntimeChain, setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
 import { readRunControl } from '../../scripts/utils/goal-run-control';
-import type { PhaseExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
@@ -322,12 +322,13 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     let debtPath = '';
     try {
       const probe = await runGoalRuntimeChain(root, { frameworkRoot: FRAMEWORK_SOURCE_ROOT, freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true,
-        onSpec: () => {
+        onHarnessSummary: ({ phase }) => {
+          if (phase !== 'spec') return null;
+          // Inject the framework writer failure at its own seam, not as an author ledger write.
           debtPath = visualDebtJsonPath(root, 'bc-openCard');
           fs.mkdirSync(path.dirname(debtPath), { recursive: true }); fs.writeFileSync(debtPath, '{broken debt');
+          return { checks: [{ id: 'spec_file_exists', category: 'structure', description: 'actual successful check', status: 'PASS' as const, severity: 'BLOCKER' as const, details: 'spec exists' }] };
         },
-        onHarnessSummary: ({ phase }) => phase === 'spec' ? { checks: [{ id: 'spec_file_exists', category: 'structure', description: 'actual successful check',
-          status: 'PASS', severity: 'BLOCKER', details: 'spec exists' }] } : null,
       });
       const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(root, 'bc-openCard', 'spec'), 'summary.json'), 'utf8'));
       assert.equal(summary.verdict, 'PASS'); assert.equal(summary.completion_status, 'DEBT_PIPELINE_ERROR');
@@ -552,7 +553,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     const runDir = path.join(root, 'run'); fs.mkdirSync(runDir);
     try {
       const issuedAt = new Date(Date.now() - 1000).toISOString();
-      const context: PhaseExecutionContext = { runId: 'run', feature: 'demo', workflowId: 'spec-driven', track: 'full', chain: ['coding'],
+      const context: WorkUnitExecutionContext = { runId: 'run', feature: 'demo', workflowId: 'spec-driven', track: 'full', chain: ['coding'],
         phase: 'coding', attemptId: 'i1', owner: { run_id: 'run', owner_id: 'process-one', epoch: 1, kind: 'process' }, projectRoot: root,
         frameworkRoot: FRAMEWORK_SOURCE_ROOT, runDir, reportDir: 'run', adapter: 'claude', instruction: 'Original complete instruction including the self-check command.',
         runtimeFacts: { runBaseSha: 'a'.repeat(40), receiptRequired: true, resume: false, successor: false },
@@ -586,12 +587,12 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     let observed = false;
     try {
       const probe = await runGoalRuntimeChain(root, { freshEndPhase: 'spec', adapter: 'codex', viaRuntimeClass: true, onSpec: ctx => {
-        const directory = path.join(path.dirname(ctx.outputLogPath), `spec-${ctx.goalAttemptId}`);
+        const directory = path.dirname(ctx.outputLogPath);
         const file = fs.readdirSync(directory).find(name => /^request-e\d+\.json$/.test(name));
         assert(file, 'detached runtime must persist its common request before executing');
         const material = JSON.parse(fs.readFileSync(path.join(directory, file!), 'utf8'));
         assert.equal(material.type, 'phase_execute_request'); assert.equal(material.context.owner.kind, 'process');
-        assert.equal(material.context.instruction, fs.readFileSync(path.join(path.dirname(ctx.outputLogPath), 'prompt.md'), 'utf8'));
+        assert.equal(material.context.instruction, fs.readFileSync(path.join(material.context.runDir, 'phases', material.context.phase, 'prompt.md'), 'utf8'));
         assert(ctx.prompt.includes(material.context.instruction), 'CLI运输必须消费同一完整instruction');
         assert.equal(material.context.attemptId, ctx.goalAttemptId);
         assert.equal(material.invoke_id, `spec-${ctx.goalAttemptId}`);
@@ -599,11 +600,12 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         const events = fs.readFileSync(eventsFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
         const start = events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === material.invoke_id);
         assert.equal(material.issued_at, start.ts);
-        assert.equal(Date.parse(material.deadline) - Date.parse(material.issued_at), start.effective_timeout_ms);
+        assert.equal(material.deadline, material.context.user_deadline_at, 'only an explicit user deadline limits the author');
+        assert(Number.isFinite(material.gate_timeout_ms) && material.gate_timeout_ms > 0, 'the concrete formal tool timeout must remain bounded');
         assert(!events.some(event => event.driver === 'session' || event.handoff_request));
         observed = true;
       } });
-      assert(observed); assert.equal(probe.exitCode, 0);
+      assert(observed, JSON.stringify(probe.events.filter(event => event.type === 'run_end'))); assert.equal(probe.exitCode, 0);
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {

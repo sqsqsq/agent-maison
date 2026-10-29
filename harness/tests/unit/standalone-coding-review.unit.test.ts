@@ -162,8 +162,8 @@ function fixture(newFile = false, baselineTest = false, extraContractFiles: stri
  * 分类）从真实写入产出事实，按 runtime 事件形状追加进 run 的 events.jsonl（UT 的 source 角色
  * allowed 写 → `owned`，observed → `observations`）。事件序列化本身由 goal-runner R1 经 runtime 锁。
  */
-function recordInvocation(f: ReturnType<typeof fixture>, phase: 'ut' | 'coding', mutate: () => void, eventsPath?: string): void {
-  const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id, phaseOrder: workflow.auto_chain!, track: 'full', profileDir: f.profileDir, productLayerDirs: ['src'], resolveUtSourceRoots: tryLoadUtSourceRootResolver(f.profileDir) ?? undefined });
+function recordInvocation(f: ReturnType<typeof fixture>, phase: 'ut' | 'coding' | 'testing', mutate: () => void, eventsPath?: string, executionRole?: 'author'): void {
+  const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id, phaseOrder: workflow.auto_chain!, track: 'full', profileDir: f.profileDir, productLayerDirs: ['src'], executionRole, resolveUtSourceRoots: tryLoadUtSourceRootResolver(f.profileDir) ?? undefined });
   assert(!boundary.unresolvedSourcePhases.includes('ut'), boundary.diagnostics.join(' | '));
   const pre = capturePhaseInvocationSnapshot(boundary);
   mutate();
@@ -171,7 +171,7 @@ function recordInvocation(f: ReturnType<typeof fixture>, phase: 'ut' | 'coding',
   assert.equal(diff.kind, 'changed', JSON.stringify(diff));
   if (diff.kind !== 'changed') return;
   const classified = classifyPhaseInvocationChanges(boundary, phase, diff.changes);
-  const owned = phase === 'ut' ? classified.allowed.filter(write => write.roles.some(role => role.kind === 'source')) : [];
+  const owned = phase === 'ut' || executionRole === 'author' ? classified.allowed.filter(write => write.roles.some(role => role.kind === 'source')) : [];
   appendRunEvent(f, { type: 'phase_write_observed', phase, invoke_id: `${phase}-${Date.now()}`,
     ...(owned.length ? { owned: owned.map(write => ({ path: write.path, how: write.how, pre_sha256: write.preSha256, post_sha256: write.postSha256 })) } : {}),
     observations: classified.observed.map(item => ({ path: item.path, how: item.how, disposition: item.disposition, owner: item.owner, pre_sha256: item.preSha256, post_sha256: item.postSha256 })),
@@ -219,6 +219,27 @@ async function testWriteCheck(f: ReturnType<typeof fixture>) {
 }
 
 const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; extraContractFiles?: string[]; requirement?: string; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  { name: 'P1 M5 owned coding rewrites cannot revive an earlier UT fact by returning to its bytes', baselineTest: true, run(f) {
+    const body = 'const utVersion = true;\n' + fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
+    recordInvocation(f, 'ut', () => f.write(UT_BASELINE_TEST, body));
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const codingVersion = true;\n' + body), undefined, 'author');
+    recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, body), undefined, 'author');
+    const result = checkCodingExistingTestPreserved(f.context('coding'))[0];
+    assert.equal(result.status, 'FAIL', JSON.stringify(result));
+    assert.equal(result.severity, 'BLOCKER'); assert.equal(result.repair_owner, 'ut');
+    assert(result.details.includes('真实前置测试版本不在可读取的 Git 原件中'), result.details);
+  } },
+  ...(['coding', 'testing'] as const).map(phase => ({ name: `P1 M5 ${phase} owned test source still reaches the real assertion preservation gate`, baselineTest: true, run(f: ReturnType<typeof fixture>) {
+    const original = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
+    recordInvocation(f, phase, () => f.write(UT_BASELINE_TEST, original.replace('expect(1).assertEqual(1);', '')), undefined, 'author');
+    const event = fs.readFileSync(path.join(f.root, f.manifest.report_dir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).at(-1);
+    assert(event.owned.some((row: { path: string }) => row.path === UT_BASELINE_TEST) && event.observations.length === 0,
+      'the production work-unit classifier must place this legal source write in owned');
+    const result = checkCodingExistingTestPreserved(f.context('coding'))[0];
+    assert.equal(result.status, 'FAIL', JSON.stringify(result));
+    assert.equal(result.severity, 'BLOCKER'); assert.equal(result.repair_owner, 'ut');
+    assert(result.affected_files?.includes(UT_BASELINE_TEST), 'deleting an existing assertion cannot disappear at the consumer');
+  } })),
   { name: 'M1 repeated coding compatibility repairs preserve the first real test original through the formal gate', baselineTest: true, run(f) {
     const original = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
     recordInvocation(f, 'coding', () => f.write(UT_BASELINE_TEST, 'const fixture = { value: 1 };\n' + original));

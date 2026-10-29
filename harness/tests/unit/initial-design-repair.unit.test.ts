@@ -208,8 +208,9 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         }
         assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes);
         assert.deepEqual(fs.readFileSync(unit.canonicalPath), originalCuBytes, 'only the owner candidate may change before Q/consumer publication');
-        await adapter.onOutOfChain({ phase, prompt: request.request.context.instruction!, attempt: 1, runId });
-        next = await runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase, details: 'current owner verified the design declaration against published facts' } });
+        const actual = await adapter.onOutOfChain({ phase, prompt: request.request.context.instruction!, attempt: 1, runId });
+        next = await runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase,
+          details: typeof actual?.details === 'string' ? actual.details : 'current owner verified the design declaration against published facts' } });
       }
       if (mode === 'design-owner-retain') {
         assert.equal(next.type, 'goal_session_result');
@@ -261,8 +262,9 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
           assert.deepEqual(fs.readFileSync(candidate), partial);
           assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes);
         }
-        await adapter.onOutOfChain({ phase: request.request.context.phase, prompt: request.request.context.instruction!, attempt: index + 1, runId });
-        const report = { status: 'passed' as const, phase: request.request.context.phase, details: `bounded role ${index + 1} completed` };
+        const actual = await adapter.onOutOfChain({ phase: request.request.context.phase, prompt: request.request.context.instruction!, attempt: index + 1, runId });
+        const report = { status: 'passed' as const, phase: request.request.context.phase,
+          details: typeof actual?.details === 'string' ? actual.details : `bounded role ${index + 1} completed` };
         if (index === 1) previousQuestioning = { requestPath, report };
         next = await runGoalModeSessionStep({ ...options, requestPath, report });
       }
@@ -283,8 +285,9 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         assert.equal(next.type, 'phase_execute_request', JSON.stringify(next));
         const requestPath = (next.request as { path: string }).path;
         const request = readSessionExecution(runDir, requestPath)!;
-        await adapter.onOutOfChain({ phase: request.request.context.phase, prompt: request.request.context.instruction!, attempt: 1, runId });
-        return runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: 'actual role output persisted' } });
+        const actual = await adapter.onOutOfChain({ phase: request.request.context.phase, prompt: request.request.context.instruction!, attempt: 1, runId });
+        return runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase: request.request.context.phase,
+          details: typeof actual?.details === 'string' ? actual.details : 'actual role output persisted' } });
       };
       let next = await runGoalModeSessionStep(options);
       for (const label of ['design-repair-author', 'design-repair-questioning', 'design-repair-author']) {
@@ -333,7 +336,7 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       assert.deepEqual(repeated.request, next.request, 'pending continuation reuses the same real author request');
       next = await reportRole(next);
       if (mode === 'session-architecture-recovery') {
-        assert.equal(next.phase, 'design-repair-questioning', 'real candidate progress warrants one fresh Q');
+        assert.equal(next.phase, 'design-repair-questioning', `real candidate progress warrants one fresh Q: ${JSON.stringify(next)}`);
         next = await reportRole(next);
         assert.equal(next.phase, 'design-repair-author');
         next = await reportRole(next);
@@ -387,9 +390,13 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
         const invokeId = `${label}-${purposes.length}`;
         fs.mkdirSync(path.join(runDir, 'phases', label, invokeId), { recursive: true });
         emit({ type: 'agent_invoke_start', phase: label, invoke_id: invokeId, command: 'bounded-design-adapter' });
-        await adapter.onOutOfChain({ phase: label, prompt, attempt: 1, runId });
+        const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
+        const beforeQuestioning = purpose === 'questioning' ? fs.readFileSync(draft) : undefined;
+        const actual = await adapter.onOutOfChain({ phase: label, prompt, attempt: 1, runId });
+        if (beforeQuestioning) assert(fs.readFileSync(draft).equals(beforeQuestioning), 'the independent Q returns its original JSON without editing product design');
         emit({ type: 'agent_invoke_end', phase: label, invoke_id: invokeId, exit_code: 0 });
         const outcome: DesignRepairInvokeOutcome = { started: true, ok: true, detail: 'bounded author/questioning completed its requested draft work',
+          ...(purpose === 'questioning' && typeof actual?.stdout === 'string' ? { output: actual.stdout } : {}),
           preSnapshot: guard?.pre, postSnapshot: guard ? capturePhaseInvocationSnapshot(guard.resolution, guard.options) : undefined };
         recordDesignRepairInvocation(runDir, purpose, invokeId, outcome);
         return outcome;

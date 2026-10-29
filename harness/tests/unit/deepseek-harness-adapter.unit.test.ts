@@ -138,7 +138,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert.strictEqual(loaded.capability?.tool_event_provenance, 'none');
       assert.strictEqual(routeGoalCapability(loaded, 'unattended', { unattendedPreflightOk: true }).kind, 'external_runner');
       assert.strictEqual(routeGoalCapability(loaded, 'attended').kind, 'in_session');
-      assert.strictEqual(resolveTerminalEventParser(ADAPTER), 'none');
+      assert.strictEqual(resolveTerminalEventParser(ADAPTER), 'deepseek_run_jsonl');
       const patch = path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/headless-patch.yaml');
       assert.deepStrictEqual(YAML.parse(fs.readFileSync(patch, 'utf8')), [
         { id: 'permission', config: { defaultPreset: 'danger-full-access' } },
@@ -238,7 +238,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const prompt = '中文 "quoted" `literal` %PATH%\n' + 'long input\n'.repeat(1000);
       const plan = invocation(root, prompt, binary);
       const patch = path.join(FRAMEWORK_ROOT, 'agents/deepseek-harness/headless-patch.yaml');
-      assert.deepStrictEqual(plan.argv, [binary.path, '--profile', 'headless', '--patch', patch]);
+      assert.deepStrictEqual(plan.argv, [binary.path, '--profile', 'headless', '--patch', patch, '--json']);
       assert.strictEqual(plan.stdin, prompt);
       assert.strictEqual(plan.adapterName, ADAPTER);
       assert.strictEqual(diagnoseAdapterForBinaryIssue(plan), ADAPTER);
@@ -260,7 +260,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const received = JSON.parse(result.stdout);
         assert.strictEqual(received.input, prompt);
         assert.strictEqual(received.cwd.toLowerCase(), root.toLowerCase());
-        assert.deepStrictEqual(received.args, ['--profile', 'headless', '--patch', patch]);
+        assert.deepStrictEqual(received.args, ['--profile', 'headless', '--patch', patch, '--json']);
         assert.strictEqual(received.permission, 'danger-full-access');
         assert.deepStrictEqual(received.permissionKeys, ['DSH_PERMISSION_MODE']);
         assert.strictEqual(received.headless, '1');

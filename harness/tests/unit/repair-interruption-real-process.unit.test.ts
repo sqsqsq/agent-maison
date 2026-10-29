@@ -77,11 +77,14 @@ async function scriptedInvoke(cwd: string, o: AgentInvokeOptions, mode: Mode): P
   const observed = path.join(dir, 'observed');
   fs.writeFileSync(script, EXECUTOR_SCRIPT, 'utf-8');
   let pid = 0;
+  // This process replays terminal envelopes; it is not a resumable Codex CLI accepting vendor argv.
+  const { providerSessionId: _nativeSession, ...processOptions } = o;
   try {
     const running = invokeAgentHeadless(
-      { argv: [process.execPath, script, mode, COMPLETED_FIXTURE, ready, observed], label: 'scripted-codex exec --json', adapterName: 'codex' },
+      { argv: [process.execPath, script, mode, COMPLETED_FIXTURE, ready, observed], label: 'scripted terminal replay', adapterName: 'terminal-replay-fixture' },
       cwd,
-      { ...o, onActiveChild: (child) => { pid = child.pid; o.onActiveChild?.(child); fs.writeFileSync(observed, 'observed'); } },
+      { ...processOptions, terminalEventParser: 'codex_turn_jsonl', toolEventCapture: 'structured_events',
+        onActiveChild: (child) => { pid = child.pid; o.onActiveChild?.(child); fs.writeFileSync(observed, 'observed'); } },
     );
     if (mode !== 'kill') return await running;
     // 外部杀进程树（Windows 下 pid 是 guardian，KILL_ON_JOB_CLOSE 连带执行者）。就绪超时也照杀，保证有界。

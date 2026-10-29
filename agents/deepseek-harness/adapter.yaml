@@ -26,16 +26,19 @@ user_confirmation:
 image_input: none
 
 goal_capability:
-  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
-  # 隔离声明只决定阶段上下文；缺省 false 时主上下文执行，必需独立核验仍真实独立。
-  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
+  # 两运输交同一工作单元请求；隔离声明表示真实专用执行上下文能力。
+  # --session-id 使用本 run 调用事件流中的准确 sessionId。
   mode: external_runner
-  output_delivery: unknown
+  output_delivery: streaming
+  in_session_reconcile: true
+  phase_context_isolation: true
+  supports_resume: true
+  handoff: bidirectional
   usage_capture: none
   tool_event_provenance: none
   external_runner:
     # 环境变量提供兜底；固定 patch 覆盖已保存的 permission.defaultPreset，不写用户配置。
-    headless_invoke: 'dsh --profile headless --patch "{{FRAMEWORK_ROOT}}/agents/deepseek-harness/headless-patch.yaml"'
+    headless_invoke: 'dsh --profile headless --patch "{{FRAMEWORK_ROOT}}/agents/deepseek-harness/headless-patch.yaml" --json'
     unattended:
       write_mode: full-access
       approval_mode: never
@@ -48,11 +51,13 @@ notes: |
     共享 slug 允许的大写、下划线等在 DSH 中可能仅告警并被忽略，本 adapter 不自动改名。
   - DSH 会发现 .dsh/skills 和 .agents/skills，并可能同时加载 AGENTS.md、CLAUDE.md。
     .dsh/rules 是按需引用文档，不是自动加载规则入口。
-  - 默认文本模式：stdout 为终稿、stderr 为推理及诊断，完成与失败沿现有退出码判定。
-    output_delivery 保持 unknown，不能把 stdout 终稿或 stderr 推理等同于完整进度事件。
-  - 每次调用创建新 DSH 会话；Maison Goal 的恢复由既有 ledger/runner 处理，不传 --session-id。
+  - headless --json 输出 session/status/tool_call/tool_result/final 事件；session 首信封的
+    sessionId 立即进入既有 agent-events.jsonl，完成仅采信 turn_end.reason.kind=completed。
+  - 原生续接使用 --session-id <精确ID>；缺失/不可用时由执行协调器依当前事实重建专用上下文。
+    2026-10-29 CLI 0.2.1-rc.3 隔离验证：插入无关会话后精确续接原会话，产物与对话标记一致；
+    记录位于 harness/reports/72b6f0d9/p1/native/deepseek-harness/。
   - 不支持 --adapter-model 或自动替代模型；用户在 DSH 自身配置默认模型。
-    不声明原生 resume/handoff、verifier、视觉 provider、结构化 widget 或精确用量。
+    不声明 verifier、视觉 provider、结构化 widget 或精确用量。
   - Maison 不安装 DSH，不改用户 profile/home patch/.env，不复制 GUI 凭据。
   - Windows / npm 版 dsh 0.2.1-rc.2 已通过隔离接口探针（stdin/cwd/环境凭据及权限覆盖）。
     Windows 优先使用 PATH，未命中时通过官方安装记录发现桌面 CLI；均未找到时提示菜单注册。

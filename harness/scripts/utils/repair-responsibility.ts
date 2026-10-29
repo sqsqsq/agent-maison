@@ -15,6 +15,7 @@ import {
   featureDir,
   featureFilePath,
   receiptDirPath,
+  relFeaturesDir,
 } from '../../config';
 import type { FeatureTrack } from './runtime-policy';
 import { resolveModulePathPrefixes, resolveImplementationScope, projectImplementationModules } from './diff-scope';
@@ -71,6 +72,10 @@ export interface PhaseWriteBoundaryResolution {
   /** Source-producing phases whose existing resolver could not produce a domain. */
   unresolvedSourcePhases: string[];
   protectedRoots: string[];
+  /** Invocation-local views derived from the existing request/purpose and input bindings. */
+  executionRole?: 'author' | 'verifier';
+  verifierResultPath?: string;
+  immutableInputPaths?: string[];
 }
 
 export interface ResolvePhaseWriteBoundaryOptions {
@@ -84,6 +89,8 @@ export interface ResolvePhaseWriteBoundaryOptions {
   track: FeatureTrack;
   profileDir: string;
   productLayerDirs: readonly string[];
+  executionRole?: 'author' | 'verifier';
+  verifierResultPath?: string;
   /** Already-resolved construction authority for research attribution, not a write grant. */
   constructionModules?: ReadonlyArray<{ name: string; package_path: string }>;
   /** Test seam and profile-neutral custom-phase support. */
@@ -91,6 +98,31 @@ export interface ResolvePhaseWriteBoundaryOptions {
     projectRoot: string,
     modules: ReadonlyArray<{ name: string; package_path: string }>,
   ) => string[];
+}
+
+/** Existing completion writer locations; only the current run original is inspected. */
+export function workUnitProtectedRecordPaths(projectRoot: string, feature: string, runDir?: string): string[] {
+  const { FEATURE_COMPLETION_FILENAME } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  return [featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME),
+    ...(runDir ? [path.resolve(projectRoot, runDir, FEATURE_COMPLETION_FILENAME)] : [])]
+    .map(file => normalizeResponsibilityPath(projectRoot, file));
+}
+
+/** Write permission is a view of the unit's actual inputs/outputs, never its current method. */
+export function workUnitMayWritePath(resolution: PhaseWriteBoundaryResolution, candidate: string): boolean {
+  const normalized = normalizeResponsibilityPath(resolution.projectRoot, candidate);
+  const within = (prefix: string): boolean => normalized === prefix || normalized.startsWith(prefix + '/');
+  if (within('framework') || resolution.immutableInputPaths?.some(within)) return false;
+  if (resolution.executionRole === 'verifier') {
+    return !!resolution.verifierResultPath && normalized === resolution.verifierResultPath;
+  }
+  if (resolution.executionRole !== 'author') return false;
+  const domains = resolution.domains.filter(domain => (domain.match === 'exact' ? normalized === domain.path : within(domain.path))
+    && !(domain.excludedPrefixes ?? []).some(within));
+  // Skill outputs remain editable; the existing writers/checkers decide which evidence is valid.
+  if (domains.some(domain => domain.kind === 'artifact')) return true;
+  if (domains.some(domain => domain.kind === 'source')) return true;
+  return domains.some(domain => domain.kind === 'phase_workspace');
 }
 
 function toPosix(value: string): string {
@@ -238,7 +270,7 @@ export function readRepairResponsibilityContracts(
 
     // Existing per-phase agent workspace convention.  Runner-owned reports and
     // closure files are excluded from the invocation snapshot below.
-    for (const name of ['context-exploration.md', 'headless-assumptions.jsonl', 'headless-assumptions.md']) {
+    for (const name of ['context-exploration.md', 'headless-assumptions.jsonl', 'headless-assumptions.md', 'notes.md']) {
       addDomain(domains, seen, options.projectRoot, {
         owner: phase,
         kind: 'phase_workspace',
@@ -323,6 +355,62 @@ export function readRepairResponsibilityContracts(
       .filter((abs) => fs.existsSync(abs)),
   ].map((p) => normalizeResponsibilityPath(options.projectRoot, p));
 
+  const immutableInputPaths = new Set<string>();
+  if (options.executionRole) {
+    for (const file of workUnitProtectedRecordPaths(options.projectRoot, options.feature,
+      options.runId ? featureFilePath(options.projectRoot, options.feature, `goal-runs/${options.runId}`) : undefined)) immutableInputPaths.add(file);
+    const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+    const { resolveDependencyPath, inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+    const { collectRequirementSsotPaths } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+    for (const file of collectRequirementSsotPaths(options.projectRoot, options.feature, relFeaturesDir(options.projectRoot), { runId: options.runId })) {
+      try { immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, file)); }
+      catch { /* Project-external original inputs remain outside this write boundary. */ }
+    }
+    for (const obligation of scope?.obligations ?? []) {
+      for (const binding of [...obligation.basis, ...(obligation.satisfied_by ?? [])]) {
+        if (!('input_id' in binding) || binding.source.kind !== 'derive'
+          || binding.source.provider_id !== 'derive.requirement') continue;
+        // Dependencies include unsuccessful candidates; only the selected source is the original input.
+        for (const source of binding.source_refs) {
+          try { immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot,
+            resolveDependencyPath(options.projectRoot, source, scope ? inferLegacyProjectRoot(options.projectRoot, scope) : undefined))); }
+          catch { /* External inputs cannot be written through this project boundary. */ }
+        }
+      }
+    }
+    if (options.feature.startsWith('cu-')) {
+      const { parseChangeUnitFeatureId, changeUnitPath, loadCanonicalChangeUnit, asChangeUnitArtifact } = require('./change-unit-path') as typeof import('./change-unit-path');
+      const { componentBlueprintPath, loadCanonicalBlueprint } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
+      const { blueprintSourceRefFiles } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+      const identity = parseChangeUnitFeatureId(options.feature);
+      immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, changeUnitPath(options.projectRoot, identity.blueprintId, identity.changeUnitId)));
+      immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, componentBlueprintPath(options.projectRoot, identity.blueprintId)));
+      try {
+        const cu = asChangeUnitArtifact((options.authorityReaders?.loadChangeUnit ?? loadCanonicalChangeUnit)(options.projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit);
+        for (const blueprintId of new Set([identity.blueprintId, cu.component_blueprint_ref.blueprint_id, ...(cu.design_refs ?? []).map(ref => ref.blueprint_id)])) {
+          immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, componentBlueprintPath(options.projectRoot, blueprintId)));
+          const loaded = (options.authorityReaders?.loadBlueprint ?? loadCanonicalBlueprint)(options.projectRoot, blueprintId);
+          for (const file of blueprintSourceRefFiles(options.projectRoot, loaded.blueprint)) {
+            const rel = normalizeResponsibilityPath(options.projectRoot, file);
+            const localOutput = domains.some(domain => (domain.kind === 'source' || domain.kind === 'artifact')
+              && (domain.match === 'exact' ? rel === domain.path : rel === domain.path || rel.startsWith(domain.path + '/'))
+              && !(domain.excludedPrefixes ?? []).some(prefix => rel === prefix || rel.startsWith(prefix + '/')));
+            if (!localOutput) immutableInputPaths.add(rel);
+          }
+        }
+      } catch (error) { diagnostics.push(`shared design source resolution unavailable: ${(error as Error).message}`); }
+    }
+    const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+    const configured = loadFrameworkConfig(options.projectRoot).paths;
+    for (const candidate of [configured.architecture_md, configured.module_catalog, configured.glossary,
+      'framework.config.json', ...immutableInputPaths]) {
+      if (candidate && fs.existsSync(path.resolve(options.projectRoot, candidate))) {
+        protectedRoots.push(normalizeResponsibilityPath(options.projectRoot, candidate));
+      }
+    }
+  }
+
   return {
     projectRoot: options.projectRoot,
     feature: options.feature,
@@ -331,6 +419,8 @@ export function readRepairResponsibilityContracts(
     diagnostics,
     unresolvedSourcePhases: [...unresolvedSourcePhases].sort(),
     protectedRoots: [...new Set(protectedRoots)].sort(),
+    ...(options.executionRole ? { executionRole: options.executionRole, immutableInputPaths: [...immutableInputPaths].sort() } : {}),
+    ...(options.verifierResultPath ? { verifierResultPath: normalizeResponsibilityPath(options.projectRoot, options.verifierResultPath) } : {}),
   };
 }
 
@@ -359,6 +449,7 @@ export interface RepairResponsibilityContext {
   /** Action-local parsed contracts, never persisted. */
   skillContracts?: ReturnType<typeof phaseContractIndex>;
   profile?: HarnessResolvedProfile;
+  executionRole?: 'author' | 'verifier';
 }
 
 export interface RepairResponsibility {
@@ -442,7 +533,7 @@ export function repairResponsibilityContext(input: RepairResponsibilityContext):
   }
   const scope = input.executionScope ?? resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope;
   const contracts = input.contracts ?? readRepairResponsibilityContracts({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
-    feature: input.feature, runId: input.runId, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders,
+    feature: input.feature, runId: input.runId, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, executionRole: input.executionRole,
     phaseOrder: workflow.artifacts.map(artifact => artifact.id), track: 'full', profileDir: profile.profileDir,
     productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
@@ -503,15 +594,25 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   const verifierCheck = owner ? phaseContracts.get(owner)?.phase.verifies.check : undefined;
   const verifier = verifierCheck ? [...phaseContracts].find(([, indexed]) => indexed.phase.verifies.check === verifierCheck)?.[0] ?? null : null;
   let category = owner ? ownerCategory(owner, context) ?? target.category ?? null : target.category ?? null;
-  const compatible = target.compatibilityPreserved ?? (category === 'verification' && !!context.projectRoot && !!context.feature && !!target.files?.length
+  const workUnitRole = context.executionRole ?? context.contracts?.executionRole;
+  const compatible = !workUnitRole && (target.compatibilityPreserved ?? (category === 'verification' && !!context.projectRoot && !!context.feature && !!target.files?.length
     && target.files.every(file => (target.owner === 'coding' || hasImplementationTypeCompatibilityChange({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }))
-      && codingTestPreservation({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }).preserved));
+      && codingTestPreservation({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }).preserved)));
   if (category === 'verification' && compatible && context.workflow?.artifacts.some(artifact => ownerCategory(artifact.id, context) === 'coding')) {
     owner = context.workflow.artifacts.find(artifact => ownerCategory(artifact.id, context) === 'coding')!.id;
     category = 'coding';
   }
   const roles = { introducedBy: target.introducedBy ?? null, legalModifier: owner, verifier };
   const result = (action: RepairResponsibility['action'], reason: string): RepairResponsibility => ({ target, owner, category, roles, action, reason });
+  if (workUnitRole) {
+    if (target.designAuthority) return result('design', '共享设计沿原设计权威链裁决、发布并重绑');
+    const boundary = context.contracts && { ...context.contracts, executionRole: context.executionRole ?? context.contracts.executionRole };
+    if (!boundary || !target.files?.length || !target.files.every(file => workUnitMayWritePath(boundary, file))) {
+      return result('unavailable', '修复对象不在当前工作单元写权内，或属于原输入、共享发布、框架或正式核验结果');
+    }
+    if (boundary.executionRole === 'verifier') return result('unavailable', '独立核验只返回本次结果原件，产品修复交原工作单元作者');
+    return result('current', '当前工作单元作者可修复授权内实现、测试源码与设计候选；断言强度和适用验收仍需独立核验');
+  }
   if (targetConflict) return result('unavailable', '已核实责任声明与真实修复对象不一致；修复对象不能由报错/诊断文件替代，请原提出方更正对象后重新核实');
   if (target.designAuthority) return result('design', '由既有设计权威链裁决、发布并重绑');
   if (!owner) return result('unavailable', '修复对象没有唯一可核实负责方；需要补足真实产物或成因依据');

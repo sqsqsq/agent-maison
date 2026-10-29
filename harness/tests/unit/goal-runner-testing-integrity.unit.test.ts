@@ -1,3 +1,4 @@
+import { sealLegacyInvokes } from './goal-park-resume.unit.test';
 // ============================================================================
 // goal-runner-testing-integrity.unit.test.ts — v23 最小闭环验收
 // ----------------------------------------------------------------------------
@@ -341,7 +342,7 @@ interface AgentCtx {
   runId: string;
   /** plan 6644ea45：headless invoke 注入的 MAISON_GOAL_ATTEMPT（本 attempt 身份） */
   goalAttemptId?: string;
-  /** phases/<phase>/agent-output.log 绝对路径——agent-events.jsonl 由它派生（plan 8d2b4f60 V1/V2） */
+  /** phases/<phase>/<invoke>/agent-output.log 绝对路径——agent-events.jsonl 由它派生（plan 8d2b4f60 V1/V2） */
   outputLogPath: string;
   /**
    * plan 6279fcd7 T1：viaHostBridge 下 bridge 签发的 phase_execute_request 身份原样透传
@@ -1062,9 +1063,11 @@ export async function runGoalRuntimeChain(
           ? outcome.status : outcome?.exitCode && outcome.exitCode !== 0 ? 'failed' : 'passed';
         return { status, phase, ...(typeof outcome?.details === 'string' ? { details: outcome.details } : {}) };
       }
+      const transportDetails = opts.invokeResultFor?.(phase, n)?.details;
       return {
         status: opts.failExecutorFor?.(phase, n) ? 'failed' : 'passed',
         phase,
+        ...(typeof transportDetails === 'string' ? { details: transportDetails } : {}),
       };
     };
     const attendedExecutor = new AttendedGoalPhaseExecutor(async (context) => {
@@ -1097,34 +1100,7 @@ export async function runGoalRuntimeChain(
     }
     const useManifestPath = Boolean(opts.freshBudget || opts.freshManifestContent);
     if (opts.resume && !opts.skipLegacySeal && !opts.viaSessionStep) {
-      // plan c6a9e4d2 t3 适配：3.0.0 起 resume 前对账要求 run 有过 Job 绑定事件
-      // （agent_process_bound）。测试桩代际的 events 由基线 runner 产出、无该事件
-      // （旧版 run 语义）；追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态
-      // （真实 3.0.0 run 每次 invoke 都落），对账归 no_unclosed_bounds。
-      const resumeEventsPath = path.join(
-        root, 'doc/features', featureId, 'goal-runs', opts.resume, 'events.jsonl',
-      );
-      if (fs.existsSync(resumeEventsPath)) {
-        const raw = fs.readFileSync(resumeEventsPath, 'utf-8');
-        if (!raw.includes('agent_process_bound')) {
-          const now = new Date().toISOString();
-          fs.appendFileSync(
-            resumeEventsPath,
-            [
-              JSON.stringify({
-                type: 'agent_process_bound', phase: 'spec', invoke_id: 'legacy-close',
-                run_id: opts.resume, pid: 1, started_at_ms: 1,
-                executable: 'C:\\x\\powershell.exe', token: `${opts.resume}/legacy-close`, ts: now,
-              }),
-              JSON.stringify({
-                type: 'agent_process_settled', phase: 'spec', invoke_id: 'legacy-close',
-                run_id: opts.resume, exit_code: 0, ts: now,
-              }),
-            ].join('\n') + '\n',
-            'utf-8',
-          );
-        }
-      }
+      sealLegacyInvokes(root, featureId, opts.resume);
     }
     process.argv = opts.resume
       ? [
@@ -1500,7 +1476,8 @@ for (const guardian of ['gone', 'unknown'] as const) {
         assert(gateChecks.some(check => check.id === 'context_exploration_facts_source_stale' && check.status === 'WARN'), 'owned source registration remains advisory after real startup recovery');
       } else {
         assert(reclaimed.length === 0 && findUnclosedGuardianBounds(resumed.events).length === 1, 'an unverifiable live PID must not receive a fabricated close event');
-        assert(resumed.exitCode !== 0 && gateChecks.some(check => check.status === 'FAIL'), JSON.stringify({ exit: resumed.exitCode, gateChecks }));
+        assert(resumed.exitCode !== 0 && !resumed.invokedPhases.includes('ut'), 'unknown process identity must block a new UT invocation before its gate');
+        assert(!resumed.events.slice(interrupted.events.length).some(event => event.type === 'harness_start' && event.phase === 'ut'), 'unverified execution cannot borrow the preceding coding gate result');
       }
     } finally { __testing_setPidProbeExecutor(null); removeShimFramework(fw); clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -2367,11 +2344,10 @@ test('E2E-2a testing 改产品源码 → 记录观测事实并交 checker，不�
   assert(!hasEvent(probe.events, 'phase_write_violation'),
     `产品源码域不得判 violation：${JSON.stringify(probe.events.filter(e => e.type === 'phase_write_violation'))}`);
   const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
-    { observations?: Array<{ path?: string; owner?: string; disposition?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+    { owned?: Array<{ path?: string; pre_sha256?: string; post_sha256?: string }>; observations?: Array<{ path?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
   assert(!!observed, `须落 phase_write_observed：${probe.events.map(e => e.type).join(',')}`);
-  const item = (observed!.observations ?? []).find(c => c.path?.includes('AllBanksPage.ets'));
-  assert(item?.owner === 'coding' && item.disposition === 'deferred_to_checker',
-    `须精确点名文件、保留 coding owner 并标 deferred：${JSON.stringify(observed)}`);
+  const item = [...(observed!.owned ?? []), ...(observed!.observations ?? [])].find(c => c.path?.includes('AllBanksPage.ets'));
+  assert(!!item, `本单元作者的合法源码改动须精确留痕并交原 checker：${JSON.stringify(observed)}`);
   assert(/^[0-9a-f]{64}$/.test(item?.pre_sha256 ?? '') && /^[0-9a-f]{64}$/.test(item?.post_sha256 ?? ''),
     '事件须携安全 pre/post hash（留痕不减）');
   assert(!probe.events.some(e => e.type === 'phase_backtrack_requested'
@@ -2398,8 +2374,8 @@ test('E2E-2a-neg 漂移 + 真实门禁 FAIL → 仍然 FAIL，不因写归因放
   `真实 BLOCKER 在场时不得宣称完成：${runEndStatus(probe.events)}`);
   assert(probe.exitCode !== 0, '真实失败须以非零退出');
   const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
-    { observations?: Array<{ path?: string }> } | undefined;
-  assert((observed?.observations ?? []).some(c => c.path?.includes(PRODUCT_FILE)),
+    { owned?: Array<{ path?: string }>; observations?: Array<{ path?: string }> } | undefined;
+  assert([...(observed?.owned ?? []), ...(observed?.observations ?? [])].some(c => c.path?.includes(PRODUCT_FILE)),
     '漂移仍须留痕（放宽的是裁决，不是留痕）');
 });
 
@@ -2436,18 +2412,18 @@ test('f3b8d261 R1 runtime persists every observation, so a coding rewrite past r
   assert((utFact?.owned ?? []).some(o => o.path === target && /^[0-9a-f]{64}$/.test(o.post_sha256 ?? '')),
     `UT 调用须随事件落 owned 事实：${JSON.stringify(utFact)}`);
   const overflow = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'coding'
-    && Number(e.observed_count) > 50) as { observations?: Array<{ path?: string }>; observed_count?: number } | undefined;
-  assert(!!overflow, `须有一条超 50 条观测的 coding 事件：${probe.events.filter(e => e.type === 'phase_write_observed').map(e => `${e.phase}:${e.observed_count}`).join(',')}`);
-  assert(overflow!.observations!.length === overflow!.observed_count,
-    `observations 须完整落盘：${overflow!.observations!.length} vs ${overflow!.observed_count}`);
-  const at = overflow!.observations!.findIndex(o => o.path === target);
+    && (Array.isArray(e.owned) ? e.owned.length : 0) + (Array.isArray(e.observations) ? e.observations.length : 0) > 50) as
+    { owned?: Array<{ path?: string }>; observations?: Array<{ path?: string }> } | undefined;
+  assert(!!overflow, '须有一条含超50条owned/observation事实的coding事件');
+  const allWrites = [...(overflow!.owned ?? []), ...(overflow!.observations ?? [])];
+  const at = allWrites.findIndex(o => o.path === target);
   assert(at >= 50, `目标路径须排在第 50 条以后（否则本用例证明不了不截断），实得 ${at}`);
   assert(fs.readFileSync(path.join(root, target), 'utf-8') === utBody, '前提：目标文件已恢复 UT 原字节');
   const facts = replayUtOwnedWrites(probe.events);
   assert(facts.get(target)?.voidedBy === 'coding', `回放须判 UT 事实已被 coding 作废：${JSON.stringify(facts.get(target))}`);
 });
 
-test('E2E-2b testing 改 spec-owned acceptance → 自动回 spec，不落 display-only rerun 建议', async () => {
+test('E2E-2b testing 更新本单元 acceptance 候选 → 原上游检查重验，不落 display-only rerun 建议', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
     onTesting: ({ root: r, attempt }) => {
@@ -2460,20 +2436,15 @@ test('E2E-2b testing 改 spec-owned acceptance → 自动回 spec，不落 displ
       if (attempt > 1) writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria: []\n`);
     },
   });
-  const v = probe.events.find(e => e.type === 'phase_write_violation') as
-    { recovery_reason?: string; violations?: Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
-  assert((v?.violations ?? []).some(c => c.path?.includes('acceptance.yaml') && c.owner === 'spec'),
-    `SSOT 改写须被点名并归 spec：${JSON.stringify(v)}`);
-  const acceptanceChange = (v?.violations ?? []).find(c => c.path?.includes('acceptance.yaml'));
-  assert(v?.recovery_reason === 'phase_write_violation'
-    && /^[0-9a-f]{64}$/.test(acceptanceChange?.pre_sha256 ?? '')
-    && /^[0-9a-f]{64}$/.test(acceptanceChange?.post_sha256 ?? ''),
-  `bc-openCard 诊断须携稳定 reason 与安全 hashes：${JSON.stringify(v)}`);
-  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested' && (e as { reason?: string }).reason === 'phase_write_violation') as
-    { to_phase?: string; backtracks_used?: number; backtracks_limit?: number; fingerprint?: string } | undefined;
-  assert(bt?.to_phase === 'spec' && bt.backtracks_used === 1 && bt.backtracks_limit === undefined
-    && typeof bt.fingerprint === 'string' && bt.fingerprint.length > 0,
-  `须自动回 spec 并保留次数/指纹，不再写固定硬额度：${JSON.stringify(bt)}`);
+  const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
+    { owned?: Array<{ path?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  const acceptanceChange = (observed?.owned ?? []).find(c => c.path?.endsWith('acceptance.yaml'));
+  assert(/^[0-9a-f]{64}$/.test(acceptanceChange?.pre_sha256 ?? '') && /^[0-9a-f]{64}$/.test(acceptanceChange?.post_sha256 ?? ''),
+    '本单元候选写入须保留真实前后hash');
+  assert(!probe.events.some(e => e.type === 'phase_write_violation' && JSON.stringify(e).includes('acceptance.yaml')),
+    '本单元候选不能按旧阶段独占误判越权');
+  assert(probe.events.some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'spec'),
+    '候选可写不代表旧上游证据继续有效，仍须真实回spec重验');
   assert(!probe.events.some(e => String((e as { action?: string }).action ?? '').startsWith('rerun_phase:spec')),
     '不得留下 display-only rerun_phase:spec');
   assertRunReachedEnd(probe, 'E2E-2b recovery');
@@ -2526,7 +2497,7 @@ test('E2E-2b-plan-readonly plan 只读发现 scope 矛盾 → repair candidate �
   assertRunReachedEnd(probe, 'E2E-2b-plan-readonly');
 });
 
-test('E2E-2b-plan-violation plan 实际改 acceptance → 保留字节到 spec owner、失效后全链重验', async () => {
+test('E2E-2b-plan-violation plan 更新本单元 acceptance 候选 → 保留字节并由原checker重验', async () => {
   const { root } = setupHost();
   const acceptanceRel = `doc/features/${FEATURE}/acceptance.yaml`;
   const acceptancePath = path.join(root, acceptanceRel);
@@ -2547,18 +2518,15 @@ test('E2E-2b-plan-violation plan 实际改 acceptance → 保留字节到 spec o
   });
   assert(specSawUnauthorizedBytes,
     'runner 不得回滚越权字节；必须保留到责任阶段读取并重新取得机器信任');
-  const violation = probe.events.find(e => e.type === 'phase_write_violation' && e.phase === 'plan') as
-    { violations?: Array<{ path?: string; owner?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
-  const acceptanceChange = (violation?.violations ?? []).find(v => v.path?.endsWith('acceptance.yaml'));
-  assert(acceptanceChange?.owner === 'spec'
-    && /^[0-9a-f]{64}$/.test(acceptanceChange.pre_sha256 ?? '')
-    && /^[0-9a-f]{64}$/.test(acceptanceChange.post_sha256 ?? ''),
-  `plan 越权事件须记录 owner 与 pre/post hash：${JSON.stringify(violation)}`);
-  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested'
-    && e.reason === 'phase_write_violation' && e.phase === 'plan');
-  assert(bt?.to_phase === 'spec', `plan 越权必须自动回 spec：${JSON.stringify(bt)}`);
-  assert(probe.harnessPhases.filter(p => p === 'plan').length === 1,
-    `越权首轮 plan invocation evidence 必须作废且跳过 gate，实得 [${probe.harnessPhases.join(',')}]`);
+  const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'plan') as
+    { owned?: Array<{ path?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  const acceptanceChange = (observed?.owned ?? []).find(v => v.path?.endsWith('acceptance.yaml'));
+  assert(/^[0-9a-f]{64}$/.test(acceptanceChange?.pre_sha256 ?? '') && /^[0-9a-f]{64}$/.test(acceptanceChange?.post_sha256 ?? ''),
+    '合法候选写入须完整留痕');
+  assert(!probe.events.some(e => e.type === 'phase_write_violation' && JSON.stringify(e).includes('acceptance.yaml')),
+    '候选可写性不再按plan/spec阶段独占');
+  assert(probe.events.some(e => e.type === 'phase_backtrack_requested' && e.to_phase === 'spec'),
+    '修改已有验收输入后仍须按原checker重验上游');
   assert(
     /spec.*plan.*spec.*plan.*coding.*review.*ut.*testing/.test(probe.invokedPhases.join('→')),
     `须从 spec 重签并重走下游全链，实得 ${probe.invokedPhases.join('→')}`,
@@ -2867,25 +2835,20 @@ test('R-6b 上一 run 遗留但 build+截图一致的 must_fix → 仍回退（i
   assertRunReachedEnd(probe, 'R-6b');
 });
 
-// 熔断面改用**已登记的 artifact 域**（acceptance.yaml）：产品源码域已交 checker，
-// 只有 artifact 域仍走 violation → 回退，所以指纹熔断也只在这一面可测。
+// 本单元候选可写；重复越权熔断仍使用真实框架保护域。
 test('R-7 相同 phase_write_violation 第二次出现 → fingerprint fuse，不能无限回退', async () => {
   const { root } = setupHost();
   const probe = await runChain(root, {
     onTesting: ({ root: r }) => {
       writeCleanTesting(r);
-      writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria:\n  - relaxed\n`);
-    },
-    onSpec: ({ root: r, attempt }) => {
-      if (attempt > 1) writeFile(r, `doc/features/${FEATURE}/acceptance.yaml`, `feature: ${FEATURE}\ncriteria: []\n`);
+      writeFile(r, 'framework/unauthorized-probe.ts', 'export const unauthorized = true;\n');
     },
   });
   assert(probe.events.filter(e => e.type === 'phase_write_violation').length === 2,
-    '须记录两次相同 violation');
-  const halt = probe.events.find(e => e.type === 'phase_halt' &&
-    (e as { halt_reason?: string }).halt_reason === 'phase_write_violation_repeat');
-  assert(!!halt, `第二次须命中 fingerprint fuse：${probe.events.map(e => e.type).join(',')}`);
-  assert(probe.exitCode !== 0 && runEndStatus(probe.events) === 'HALTED', '重复不稳定写才诚实终止');
+    '须记录两次真实框架越权，不能把不恢复当作clean');
+  assert(probe.events.some(e => e.type === 'phase_halt' && e.halt_reason === 'phase_write_violation_repeat'),
+    '同一作者不恢复自己的越权必须触发原重复熔断');
+  assert(probe.exitCode !== 0 && runEndStatus(probe.events) === 'HALTED', '重复越权不能签完成');
 });
 
 test('R-8 进程重启后同 roundFingerprint 仍熔断；集合变化不熔断', async () => {
@@ -3224,12 +3187,13 @@ test('T1-2 混合场景（生成物 + 真源码改动）→ 生成物单列、�
       },
     });
     const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
-      { observations?: Array<{ path?: string; disposition?: string }> } | undefined;
+      { owned?: Array<{ path?: string }>; observations?: Array<{ path?: string }> } | undefined;
     assert(!!observed, `混合场景须留痕：${probe.events.map(e => e.type).join(',')}`);
-    assert((observed!.observations ?? []).some(c => c.path?.includes(PRODUCT_FILE) && c.disposition === 'deferred_to_checker'),
+    const writes = [...(observed!.owned ?? []), ...(observed!.observations ?? [])];
+    assert(writes.some(c => c.path?.includes(PRODUCT_FILE)),
       `真源码改动须点名并交 checker：${JSON.stringify(observed)}`);
     // 合法生成物走既有降级通道，不混进写归因的观测集。
-    assert(!(observed!.observations ?? []).some(c => c.path?.includes('BuildProfile.ets')),
+    assert(!writes.some(c => c.path?.includes('BuildProfile.ets')),
       `观测集不得混入合法生成物：${JSON.stringify(observed)}`);
     const generated = probe.events.find(e => e.type === 'testing_generated_file_change') as
       { files?: string[] } | undefined;
@@ -3252,9 +3216,8 @@ test('T1-3 篡改的生成物（常量与冻结配置不符）→ 不得降级�
     // 留痕并由 review_closure_attestation 分级，而不是静默通过。
     assert(!hasEvent(probe.events, 'testing_generated_file_change'), '篡改不得降级为合法生成物');
     const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'testing') as
-      { observations?: Array<{ path?: string; disposition?: string }> } | undefined;
-    assert((observed?.observations ?? []).some(c => c.path?.includes('BuildProfile.ets')
-      && c.disposition === 'deferred_to_checker'),
+      { owned?: Array<{ path?: string }>; observations?: Array<{ path?: string }> } | undefined;
+    assert([...(observed?.owned ?? []), ...(observed?.observations ?? [])].some(c => c.path?.includes('BuildProfile.ets')),
     `篡改生成物须留痕并交 checker：${JSON.stringify(observed)}`);
   });
 });
@@ -3608,15 +3571,14 @@ test('t5① coding 撞冻结白名单 → 自动回退 plan 重新裁决，再�
     'plan 重跑的 prompt 必须点名具体越界文件（否则 plan 不知道要裁决什么）',
   );
   assert(
-    /UNTRUSTED|not an authorization/i.test(replanPrompt),
+    /UNTRUSTED|not (?:an )?authorization/i.test(replanPrompt),
     '交接块必须显式标注为未受信观察、非授权——否则等于下游给自己授权',
   );
 });
 
-test('t5④post-agent coding 本轮改了 plan 产物 + gate 本会 PASS → gate 前自动回 plan，不得直接 advance', async () => {
+test('t5④post-agent coding 更新本单元 contracts 候选 → 保留真实delta并运行原gate', async () => {
   const { root } = setupHost();
-  // coding 第一轮 agent 偷改 plan 权责产物（contracts.yaml）。gate 侧**不做任何覆写**
-  // ——harness 会照常判 PASS。没有 post-agent 复检的话，这一轮会直接 advance 到 review。
+  // 阶段进度不再拆分本单元作者写权；候选可写仍须经过既有机器gate。
   const probe = await runChain(root, {
     onCoding: ({ root: hostRoot, attempt }) => {
       if (attempt !== 1) return;
@@ -3625,29 +3587,15 @@ test('t5④post-agent coding 本轮改了 plan 产物 + gate 本会 PASS → gat
     },
     onTesting: ({ root: hostRoot }) => writeCleanTesting(hostRoot),
   });
-  const bt = probe.events.find(e => e.type === 'phase_backtrack_requested'
-    && e.reason === 'phase_write_violation');
-  assert(!!bt, `须在 gate 之前拦下并回退 plan：${probe.events.map(e => e.type).join(',')}`);
-  assert(bt!.to_phase === 'plan', `contracts.yaml owner 应为 plan，实得 ${bt!.to_phase}`);
-  const violation = probe.events.find(e => e.type === 'phase_write_violation') as
-    | { violations?: Array<{ path?: string; owner?: string }> }
-    | undefined;
-  assert(
-    violation?.violations?.some(item => item.path === `doc/features/${FEATURE}/contracts.yaml` && item.owner === 'plan') === true,
-    `须记录 contracts.yaml 的 plan owner 归因：${JSON.stringify(violation)}`,
-  );
-  // **判别式断言**：plan gate 跑了两次 = 真的回去重跑了。
-  // 只数 coding gate 次数不行——没有本修复时 coding gate 同样只跑一次（PASS 后直接 advance）。
-  const planHarnessRuns = probe.harnessPhases.filter(p => p === 'plan').length;
-  assert(planHarnessRuns === 2, `plan gate 应重跑一次（共 2 次），实得 ${planHarnessRuns}`);
-  assert(
-    /plan.*coding.*plan.*coding/.test(probe.invokedPhases.join('→')),
-    `须 coding→回 plan→再 coding（实得 ${probe.invokedPhases.join('→')}）`,
-  );
-  assert(
-    probe.planPrompts[1]?.includes('contracts.yaml'),
-    'plan 重跑 prompt 须点名漂移的产物',
-  );
+  const observed = probe.events.find(e => e.type === 'phase_write_observed' && e.phase === 'coding') as
+    { owned?: Array<{ path?: string; pre_sha256?: string; post_sha256?: string }> } | undefined;
+  const contract = observed?.owned?.find(write => write.path === `doc/features/${FEATURE}/contracts.yaml`);
+  assert(/^[0-9a-f]{64}$/.test(contract?.pre_sha256 ?? '') && /^[0-9a-f]{64}$/.test(contract?.post_sha256 ?? ''),
+    '本单元contracts候选的真实delta须完整留痕');
+  assert(!probe.events.some(e => e.type === 'phase_write_violation' && JSON.stringify(e).includes('contracts.yaml')),
+    '本单元作者可维护候选contracts，不能按旧phase独占误拦');
+  assert(probe.harnessPhases.includes('coding'), '候选可写仍须走原coding gate，不能由作者自签完成');
+  assertRunReachedEnd(probe, 't5④合法contracts候选仍经原gate');
 });
 
 test('t5④负向 closure 缺失 resume：plan 重新闭环前 coding agent 调用次数必须为 0', async () => {
@@ -4815,11 +4763,12 @@ test('B02-V5③ 会话本次无工具审计时不覆盖 refs 回执，不把旧�
     seedB02SpecEvidence(root);
     // codex 实施 review 第 1 轮 finding 2：必须是**同一个未封卷 run 的接管**——换 run 会
     // 把指定现场（同 run 遗留日志 + 替换参考图）整个绕开。
-    // 第 1 段：detached 跑 spec，写出 phases/spec/agent-events.jsonl 与 1.1 回执，
+    // 第 1 段：detached 跑 spec，写出本次invoke的agent-events.jsonl与1.1回执，
     // 并让 spec gate 恒 FAIL（非视觉原因）直到内容重试耗尽 → run 停在 spec、可 resume。
+    let staleEvents = '';
     const first = await runGoalRuntimeChain(root, {
       adapter: 'claude',
-      onSpec: (ctx) => { writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(B02_REF_REL)]); },
+      onSpec: (ctx) => { writeAgentEvents(ctx.outputLogPath, [claudeReadEventLine(B02_REF_REL)]); staleEvents = path.join(path.dirname(ctx.outputLogPath), 'agent-events.jsonl'); },
       onHarnessSummary: ({ phase }) => (phase === 'spec' ? { blockers: [GENERIC_BLOCKER] } : null),
       onTesting: (ctx) => { writeCleanTesting(ctx.root); },
     });
@@ -4829,7 +4778,6 @@ test('B02-V5③ 会话本次无工具审计时不覆盖 refs 回执，不把旧�
     assert(before !== null, 'detached 轮应写出回执');
     assert(first.events.some(e => e.type === 'spec_refs_receipt_produced' && e.status === 'complete'),
       JSON.stringify(first.events.filter(e => e.type === 'spec_refs_receipt_produced')));
-    const staleEvents = path.join(first.reportDir, 'phases', 'spec', 'agent-events.jsonl');
     assert(fs.existsSync(staleEvents), `遗留 agent-events.jsonl 应仍在盘（本用例的攻击面）：${staleEvents}`);
     // cooldown 是独立硬防线（判定早于 forceResume）——按既有用例同法把 run_end 回拨 10 分钟
     {
@@ -6143,12 +6091,15 @@ for (const mode of ['related-change', 'unchanged', 'notes-only', 'unrelated-sour
         },
         testingGateChecks: relatedNativeFailure,
       });
-      const backtracks = probe.events.filter(e => e.type === 'phase_backtrack_requested');
+      const backtracks = probe.events.filter(e => e.type === 'phase_backtrack_requested' && e.reason !== 'phase_write_violation');
       assert(mode === 'related-change' ? backtracks.length >= 3 : backtracks.length === 1, `实际回退次数：${JSON.stringify(haltsOf(probe.events))}`);
       const first = backtracks[0] as { related_input_snapshot?: Record<string, { contentHash: string }> };
       assert(/^[0-9a-f]{64}$/.test(first.related_input_snapshot?.[PRODUCT_FILE]?.contentHash ?? ''), '原事件真实SHA落盘');
       assert(!Object.keys(first.related_input_snapshot ?? {}).some(p => /notes|reports|trace/.test(p)), '证据与notes不是源码进展');
-      if (mode !== 'related-change') assert(haltsOf(probe.events).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '可比未变及时停止');
+      if (mode === 'unrelated-source') {
+        assert(haltsOf(probe.events).some(e => e.halt_reason === 'phase_write_violation_repeat'), '未恢复的越权约束必须先收口，不能用无进展比较替代');
+        assert(probe.events.some(e => e.type === 'phase_write_violation' && JSON.stringify(e).includes('Other/src/main/ets/Unrelated.ets')), '必须保留真实未授权路径及恢复约束');
+      } else if (mode !== 'related-change') assert(haltsOf(probe.events).some(e => e.halt_reason === 'backtrack_fingerprint_repeat'), '可比未变及时停止');
       else {
         assert(probe.invokedPhases.filter(p => p === 'testing').length >= 2, '实际再验证发生');
         assert(backtracks.every((event, index) => event.backtracks_used === index + 1 && event.backtracks_limit === undefined), '观测序号连续，不把次数当硬额度');
@@ -7181,6 +7132,7 @@ for (const entry of ['foreground', 'detach', 'attended'] as const) {
       await requestVia(entry, root, { freshEndPhase: 'coding', onCoding: () => { throw new Error('injected crash inside coding'); } }).catch(() => undefined);
       const [run] = goalRunIds(root);
       assert(!!run && !lastRunEndOf(goalRunEvents(root, run))?.status?.toString().includes('COMPLETED'), '夹具：首个请求须中断');
+      sealLegacyInvokes(root, FEATURE, run);
       const dead = spawnSync(process.execPath, ['-e', '']).pid;
       const lock = tryAcquireLock(featureFilePath(root, FEATURE, `goal-runs/${FEATURE_LOCK_NAME}`), {
         run_id: run, run_mode: 'authoritative', report_dir: `doc/features/${FEATURE}/goal-runs/${run}`, pid: dead,

@@ -19,6 +19,7 @@ import {
 import { loadFeatureTrackDecl } from './feature-track';
 import {
   phaseInvocationStart,
+  invocationOutputLogPath,
   countAgentInvokeStarts,
   canRecheckLegacyBacktrackLimit,
   filterAuthoritativeEvents,
@@ -545,9 +546,7 @@ function getAgentOutputStat(
   if (!label) return { mtimeMs: null, bytes: 0, rel: null };
   const outOfChain = invocation && (invocation.phase !== label || typeof (invocation.start as { chain_phase?: unknown }).chain_phase === 'string');
   if (outOfChain && !invocation.start.invoke_id) return { mtimeMs: null, bytes: 0, rel: null };
-  const abs = outOfChain
-    ? path.join(projectRoot, reportDir, 'phases', label, invocation.start.invoke_id ?? '', 'agent-output.log')
-    : path.join(projectRoot, reportDir, 'phases', label, 'agent-output.log');
+  const abs = invocationOutputLogPath(path.resolve(projectRoot, reportDir), label, invocation?.start.invoke_id);
   if (!fs.existsSync(abs)) return { mtimeMs: null, bytes: 0, rel: null };
   const st = fs.statSync(abs);
   return { mtimeMs: st.mtimeMs, bytes: st.size, rel: relPath(projectRoot, abs) };

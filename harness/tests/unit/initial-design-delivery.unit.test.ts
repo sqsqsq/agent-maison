@@ -243,6 +243,10 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       await withProject(async project => {
         const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
         const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+        const absolute = path.join(project.root, target);
+        fs.appendFileSync(absolute, '\n// Legitimate user dirty bytes before the design author starts.\n');
+        const original = fs.readFileSync(absolute);
+        const originalSha = createHash('sha256').update(original).digest('hex');
         const prepared = entry.prepareGoalModeRun({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'claude',
           runId: 'initial-write-boundary', requirement: project.requirement, requirementSourceFiles: project.requirementSourceFiles,
           budget: ORIGINAL_BUDGET, unattended: UNATTENDED, autonomyAuthorized: true });
@@ -252,14 +256,36 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         assert.equal(request.type, 'phase_execute_request');
         const reference = request.request as { path: string };
         const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
-        fs.appendFileSync(path.join(project.root, target), '\n// Exact unauthorized write injected after the signed design request.\n');
+        fs.appendFileSync(absolute, '\n// Exact unauthorized write injected after the signed design request.\n');
+        const changed = fs.readFileSync(absolute);
         const rejected = await entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
           report: { status: 'passed', phase: issued.request.context.phase, details: 'A normal author exit cannot authorize the injected write.' } });
-        assert.equal(rejected.type, 'goal_session_result');
-        assert.equal(rejected.exit_code, 1);
+        assert.equal(rejected.type, 'phase_execute_request', 'the same unadmitted author must restore its own unauthorized delta');
+        const recoveryReference = rejected.request as { path: string };
+        const recovery = handoff.readSessionExecution(prepared.runDir, recoveryReference.path)!;
+        assert.equal(recovery.request.context.phase, issued.request.context.phase);
+        assert.equal(recovery.request.purpose, 'author');
+        assert(recovery.request.context.instruction?.includes('Restore only your previous unauthorized writes')
+          && recovery.request.context.instruction.includes(target) && recovery.request.context.instruction.includes(`pre_sha256=${originalSha}`),
+          'recovery must carry the first real dirty preimage, not HEAD or later unauthorized bytes');
+        assert(fs.readFileSync(absolute).equals(changed), 'runtime must preserve untrusted bytes for author recovery, not silently restore them');
+        assert.deepEqual((await entry.runGoalModeSessionStep(options)).request, rejected.request, 'an outstanding restoration request must be reused');
+        const beforeRestore = handoff.sessionEvents(prepared.runDir);
+        const violation = beforeRestore.find(event => event.type === 'phase_write_violation');
+        assert((violation as Record<string, any>)?.violations.some((row: Record<string, unknown>) => row.path === target && row.pre_sha256 === originalSha));
+        assert(!beforeRestore.some(event => event.type === 'phase_verdict' || event.type === 'feature_completion_generated'),
+          'unrestored unauthorized bytes cannot reach a construction gate or completion');
+        const manifest = JSON.parse(fs.readFileSync(prepared.manifestPath, 'utf8'));
+        assert(manifest.initial_design && !manifest.execution_scope && !manifest.phase_chain, 'recovery grants no construction scope');
+        fs.writeFileSync(absolute, original);
+        const restored = await entry.runGoalModeSessionStep({ ...options, requestPath: recoveryReference.path,
+          report: { status: 'passed', phase: recovery.request.context.phase, details: 'Restored only the original invocation preimage; the requested design remains incomplete.' } });
+        assert(fs.readFileSync(absolute).equals(original), 'legitimate pre-existing dirty bytes must survive recovery');
         const events = handoff.sessionEvents(prepared.runDir);
-        assert(events.some(event => event.type === 'run_end' && event.halt_reason === 'unauthorized_source_mutation'), target);
-        assert.equal(events.filter(event => event.type === 'agent_invoke_start').length, 1);
+        assert(events.some(event => event.type === 'phase_write_observed' && event.invoke_id === recovery.request.invoke_id
+          && ((event as Record<string, any>).observations ?? []).some((row: Record<string, unknown>) => row.path === target && row.post_sha256 === originalSha)),
+          'the real restored bytes must close the original write constraint');
+        assert(!events.some(event => ['unauthorized_source_mutation', 'phase_write_violation_repeat'].includes(String(event.halt_reason))), JSON.stringify(restored));
         assert(!events.some(event => event.type === 'run_end' && ['COMPLETED', 'CHAIN_SLICE_COMPLETED'].includes(String(event.status))));
       });
     }

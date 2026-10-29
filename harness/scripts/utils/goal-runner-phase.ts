@@ -42,6 +42,7 @@ export interface RepairInvocationEvent {
   silent_killed?: unknown;
   terminal_failure_observed?: unknown;
   completion_observed?: unknown;
+  interrupted?: unknown;
   agent_failed?: unknown;
   skipped?: unknown;
   spawn_error?: unknown;
@@ -261,6 +262,8 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  provider_session_id?: string;
+  interrupted?: boolean;
   command?: string;
   handoff_request?: import('./session-execution-handoff').HandoffReference;
   handoff_report?: import('./session-execution-handoff').HandoffReference & { request_sha256: string };
@@ -1185,6 +1188,12 @@ export function filterAuthoritativeEvents(events: GoalRunEvent[]): GoalRunEvent[
 
 export function loadAuthoritativeEvents(absPath: string): GoalRunEvent[] {
   return filterAuthoritativeEvents(loadEventsJsonl(absPath));
+}
+
+/** Current invocations own their stream; old records without that directory use the legacy path. */
+export function invocationOutputLogPath(runDir: string, phase: string, invokeId?: string): string {
+  const directory = invokeId ? path.join(runDir, 'phases', phase, invokeId) : null;
+  return directory && fs.existsSync(directory) ? path.join(directory, 'agent-output.log') : path.join(runDir, 'phases', phase, 'agent-output.log');
 }
 
 export interface ResumeState {

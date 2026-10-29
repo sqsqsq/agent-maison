@@ -39,7 +39,7 @@ import { loadEventsJsonl, type GoalRunEvent } from '../../scripts/utils/goal-run
 import type { UnitCaseResult } from '../run-unit';
 import { issueSessionExecution, acceptSessionExecution, acceptedSessionReport, readHandoffMaterial } from '../../scripts/utils/session-execution-handoff';
 import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
-import type { PhaseExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
@@ -2267,7 +2267,7 @@ cases.push({
     const acquired = casAcquireRunOwner(runDir, manifest.run_id, 0, { kind: 'session', owner_id: 'a7-progress-session', lease_ms: 120_000 });
     assert(acquired.ok, '沿现有session-handoff fixture建立真实owner');
     if (!acquired.ok) throw new Error('session owner unavailable');
-    const context: PhaseExecutionContext = {
+    const context: WorkUnitExecutionContext = {
       runId: manifest.run_id, feature: manifest.feature, workflowId: 'spec-driven', track: 'full', chain: ['plan'],
       phase: label, attemptId: invokeId, owner: { ...acquired.token, kind: 'session' }, projectRoot: root,
       frameworkRoot: FRAMEWORK_ROOT, runDir, reportDir: manifest.report_dir, adapter: 'codex',

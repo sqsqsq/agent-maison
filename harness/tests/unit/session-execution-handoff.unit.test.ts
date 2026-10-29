@@ -6,10 +6,11 @@ import { createHash } from 'crypto';
 import { issueSessionExecution, readSessionExecution, acceptSessionExecution, acceptedSessionReport,
   readHandoffMaterial, sessionValidationOnlyEligibility, sessionEvents, resignSessionExecution,
   sessionRunMaterialPath, sessionReportInputPath,
+  observeSessionExecution, interruptSessionExecution,
   type SessionExecutionReport } from '../../scripts/utils/session-execution-handoff';
 import { ensureRunControl, casAcquireRunOwner, readRunControl, releaseRunOwner, markExpiredSessionOrphaned } from '../../scripts/utils/goal-run-control';
 import { capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
-import type { PhaseExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import type { WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import { repairInvocationCompleted } from '../../scripts/utils/goal-runner-phase';
@@ -17,9 +18,13 @@ import { runGoalRuntimeChain, setupGoalRuntimeHost } from './goal-runner-testing
 import { runGoalModeSessionStep } from '../../scripts/goal-mode-entry';
 import { loadGoalManifestFromRun } from '../../scripts/utils/goal-manifest';
 import * as goalManifest from '../../scripts/utils/goal-manifest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
+import * as YAML from 'yaml';
+import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import { interruptedIssuanceCli, reusedGatePidCli, junctionSessionCli } from '../utils/session-recovery-cli';
 import { reconcileGuardianOwnership } from '../../scripts/utils/goal-containment-reconcile';
+import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
+import { invocationCompleted } from '../../scripts/utils/invocation-completion';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 function fixture() {
@@ -32,7 +37,7 @@ function fixture() {
   const boundary: PhaseWriteBoundaryResolution = { projectRoot: root, feature: 'demo', phaseOrder: ['coding', 'ut'],
     domains: [{ owner: 'coding', kind: 'source', match: 'prefix', path: 'src', source: 'fixture product source domain' }],
     protectedRoots: ['src'], diagnostics: [], unresolvedSourcePhases: [] };
-  const context: PhaseExecutionContext = { runId: 'run-1', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding', 'ut'],
+  const context: WorkUnitExecutionContext = { runId: 'run-1', feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['coding', 'ut'],
     phase: 'coding', attemptId: 'attempt-one', owner: { ...acquired.token, kind: 'session' }, projectRoot: root, frameworkRoot: path.join(root, 'framework'),
     runDir, reportDir: 'doc/features/demo/coding/reports', adapter: 'codex', instruction: 'Use the original issued snapshot and execute the requested coding change.',
     runtimeFacts: { runBaseSha: 'a'.repeat(40), receiptRequired: true, resume: false, successor: false },
@@ -49,6 +54,144 @@ function fixture() {
   return { root, runDir, context, boundary, emit, start, issue, report, files, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
+  name: 'P1 R3 execute recovery preserves real settled failure and completion-cleanup facts instead of trusting raw terminal text',
+  async run() {
+    const producer = fs.mkdtempSync(path.join(os.tmpdir(), 'p1-r3-natural-exit-'));
+    try {
+      const failed = await invokeAgentHeadless({ argv: [process.execPath, '-e', `process.stdout.write(JSON.stringify({type:'turn.completed'})+String.fromCharCode(10));process.exit(1);`],
+        label: 'real Node natural exit 1', adapterName: 'codex' }, producer,
+      { outputLogPath: path.join(producer, 'agent-output.log'), toolEventCapture: 'structured_events' });
+      assert.equal(failed.exitCode, 1); assert.equal(failed.kill_attempted, false); assert.equal(invocationCompleted(failed), false);
+      const vectors: Array<{ name: string; facts?: Record<string, unknown>; expected: string; complete: boolean }> = [
+        { name: 'natural-exit-1', facts: { status: 'failed', exit_code: failed.exitCode, completion_observed: failed.completion_observed, kill_attempted: failed.kill_attempted }, expected: 'failed', complete: false },
+        { name: 'completion-cleanup-1', facts: { status: 'passed', exit_code: 1, completion_observed: true, kill_attempted: true }, expected: 'passed', complete: true },
+        { name: 'timeout', facts: { status: 'failed', exit_code: 1, completion_observed: true, timed_out: true }, expected: 'failed', complete: false },
+        { name: 'interrupted', facts: { status: 'waiting', exit_code: 1, completion_observed: true, interrupted: true }, expected: 'waiting', complete: false },
+        { name: 'terminal-failure', facts: { status: 'failed', exit_code: 1, completion_observed: true, terminal_failure_observed: true }, expected: 'failed', complete: false },
+        { name: 'bare-terminal', expected: 'failed', complete: false },
+      ];
+      for (const vector of vectors) {
+        const f = fixture();
+        try {
+          const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'codex', start_phase: 'coding', end_phase: 'coding',
+            run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+          writeGoalManifest(manifest, f.root); Object.assign(f.context, { reportDir: manifest.report_dir });
+          f.start(); const issued = f.issue();
+          fs.copyFileSync(path.join(producer, 'agent-events.jsonl'), path.join(f.runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'));
+          if (vector.facts) f.emit({ type: 'agent_process_settled', phase: 'coding', invoke_id: 'invoke-one', ...vector.facts });
+          else f.emit({ type: 'agent_process_bound', phase: 'coding', invoke_id: 'invoke-one', run_id: 'run-1', pid: 2147483647,
+            started_at_ms: 1, executable: process.execPath, token: 'run-1/invoke-one' });
+          const result = await runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot: f.context.frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'codex', runMode: 'attended',
+            requestPath: path.resolve(f.runDir, issued.reference.path), action: 'execute' });
+          const accepted = acceptedSessionReport(f.runDir, issued)!;
+          assert.equal(result.status, vector.expected, vector.name);
+          assert.equal(repairInvocationCompleted(sessionEvents(f.runDir), 'coding', 'invoke-one'), vector.complete, vector.name);
+          if (vector.facts) assert.equal(accepted.event.exit_code, vector.facts.exit_code, `${vector.name} exit was rewritten`);
+          for (const field of ['completion_observed', 'timed_out', 'interrupted', 'terminal_failure_observed']) if (vector.facts?.[field] === true) {
+            assert.equal((accepted.event as Record<string, unknown>)[field], true, `${vector.name} lost ${field}`);
+          }
+          assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_start').length, 1, `${vector.name} spawned another author`);
+        } finally { f.cleanup(); }
+      }
+    } finally { fs.rmSync(producer, { recursive: true, force: true }); }
+  },
+}, {
+  name: 'P1 R2 real request CLI executes once and exposes the same running facts before owner-bound interruption',
+  async run() {
+    if (process.platform !== 'win32') return;
+    const f = fixture();
+    let child: ReturnType<typeof spawn> | undefined;
+    let stdout = '', stderr = '';
+    try {
+      const frameworkRoot = path.join(f.root, 'framework');
+      fs.mkdirSync(path.join(frameworkRoot, 'agents/generic'), { recursive: true });
+      const native = path.join(f.root, 'native-fixture.cjs');
+      fs.writeFileSync(native, `const fs=require('fs');fs.appendFileSync('execution-count.txt','once\\n');fs.writeFileSync('src/value.ts','actual partial write\\n');process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:'actual check',exit_code:1}})+'\\n');setTimeout(()=>{},30000);\n`);
+      const adapter = YAML.parse(fs.readFileSync(path.resolve(__dirname, '../../../agents/generic/adapter.yaml'), 'utf8'));
+      adapter.goal_capability.external_runner.headless_invoke = `${JSON.stringify(process.execPath.replace(/\\/g, '/'))} ${JSON.stringify(native.replace(/\\/g, '/'))}`;
+      adapter.goal_capability.tool_event_provenance = 'structured_events';
+      fs.writeFileSync(path.join(frameworkRoot, 'agents/generic/adapter.yaml'), YAML.stringify(adapter));
+      const manifest = buildGoalManifestFromInput({ feature: 'demo', run_id: 'run-1', adapter: 'generic', start_phase: 'coding', end_phase: 'coding',
+        run_base_sha: 'a'.repeat(40), unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: f.root });
+      writeGoalManifest(manifest, f.root);
+      Object.assign(f.context, { adapter: 'generic', frameworkRoot, reportDir: manifest.report_dir });
+      f.start(); const issued = f.issue();
+      const entry = path.resolve(__dirname, '../../scripts/goal-mode-entry.ts');
+      const args = ['-r', require.resolve('ts-node/register/transpile-only'), entry, '--feature', 'demo', '--run-id', 'run-1', '--adapter', 'generic', '--run-mode', 'attended',
+        '--project-root', f.root, '--framework-root', frameworkRoot, '--request', path.resolve(f.runDir, issued.reference.path)];
+      const cli = (action: string) => JSON.parse(execFileSync(process.execPath, [...args, action], { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 30000 }));
+      child = spawn(process.execPath, [...args, '--execute-request'], { cwd: path.resolve(__dirname, '../..'), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child.stdout!.on('data', chunk => { stdout += String(chunk); }); child.stderr!.on('data', chunk => { stderr += String(chunk); });
+      const done = new Promise<number | null>(resolve => child!.once('exit', resolve));
+      const deadline = Date.now() + 20000;
+      while ((!fs.existsSync(path.join(f.root, 'execution-count.txt')) || !sessionEvents(f.runDir).some(event => event.type === 'agent_process_bound')) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+      assert(fs.existsSync(path.join(f.root, 'execution-count.txt')), stderr || stdout);
+      const observed = cli('--observe').observation;
+      assert.equal(observed.settled, false); assert.equal(observed.toolEvents.length, 1); assert.equal(observed.changes.kind, 'changed');
+      assert.deepEqual(observed, JSON.parse(JSON.stringify(observeSessionExecution(f.runDir, issued))));
+      assert.equal(cli('--execute-request').status, 'execution_running');
+      const interrupted = cli('--interrupt'); assert.equal(interrupted.interrupted, true);
+      await done;
+      assert.equal(child.exitCode, 0, stderr + stdout);
+      const accepted = acceptedSessionReport(f.runDir, issued)!;
+      assert.equal(accepted.report.status, 'waiting');
+      assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end').length, 1);
+      assert.equal(fs.readFileSync(path.join(f.root, 'src/value.ts'), 'utf8'), 'actual partial write\n');
+      assert.equal(cli('--execute-request').duplicate, true);
+      assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\n');
+      Object.assign(f.context, { attemptId: 'attempt-two' }); f.start('invoke-two'); const second = f.issue('invoke-two');
+      const priorExitCode = process.exitCode;
+      try {
+        const execution = runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'generic', runMode: 'attended',
+          requestPath: path.resolve(f.runDir, second.reference.path), action: 'execute' });
+        const until = Date.now() + 20000;
+        while (fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8') !== 'once\nonce\n' && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50));
+        assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\nonce\n');
+        process.emit('SIGINT');
+        const result = await execution;
+        assert.equal(result.status, 'waiting');
+        assert.equal(acceptedSessionReport(f.runDir, second)!.event.interrupted, true);
+        assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_end' && event.invoke_id === 'invoke-two').length, 1);
+      } finally { process.exitCode = priorExitCode; }
+      Object.assign(f.context, { attemptId: 'attempt-three', authority: { write_mode: 'workspace-write', approval_mode: 'never' } });
+      f.start('invoke-three'); const third = f.issue('invoke-three');
+      const narrowed = await runGoalModeSessionStep({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId: 'run-1', adapter: 'generic', runMode: 'attended',
+        requestPath: path.resolve(f.runDir, third.reference.path), action: 'execute' });
+      assert.equal(narrowed.status, 'failed', 'legacy full-access defaults expanded this request’s narrower authorization');
+      assert.equal(fs.readFileSync(path.join(f.root, 'execution-count.txt'), 'utf8'), 'once\nonce\n', 'an adapter without the narrower permission capability was started at full access');
+    } finally {
+      if (child && child.exitCode === null) { child.kill(); await new Promise(resolve => child!.once('exit', resolve)); }
+      f.cleanup();
+    }
+  },
+}, {
+  name: 'P1 running observations reuse native facts and owner-bound interruption preserves writes without declaring completion',
+  async run() {
+    const f = fixture();
+    try {
+      f.start(); const issued = f.issue();
+      assert.equal(issued.request.deadline, undefined, 'a phase timeout must not become an implicit user deadline');
+      const raw = path.join(f.runDir, path.dirname(issued.reference.path), 'agent-events.jsonl');
+      fs.writeFileSync(raw, JSON.stringify({ type: 'thread.started', thread_id: 'precise-running-alpha' }) + '\n'
+        + JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'actual-check', exit_code: 1 } }) + '\n');
+      fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'partial legitimate work\n');
+      const one = observeSessionExecution(f.runDir, issued), two = observeSessionExecution(f.runDir, issued);
+      assert.deepEqual(two, one); assert.equal(one.provider_session_id, 'precise-running-alpha');
+      assert.equal(one.toolEvents.length, 2); assert.equal(one.settled, false); assert.equal(one.changes?.kind, 'changed');
+      await assert.rejects(interruptSessionExecution({ runDir: f.runDir, issued, reason: 'coordinator pause', stop: async () => false, emit: f.emit }), /unconfirmed/);
+      assert.equal(acceptedSessionReport(f.runDir, issued), null, 'unconfirmed stop cannot settle a live author');
+      let stopped = 0;
+      await interruptSessionExecution({ runDir: f.runDir, issued, reason: 'P2 supplied the pause decision', stop: async () => { stopped++; return true; }, emit: f.emit });
+      await interruptSessionExecution({ runDir: f.runDir, issued, reason: 'duplicate', stop: async () => { stopped++; return true; }, emit: f.emit });
+      assert.equal(stopped, 1); assert.equal(fs.readFileSync(path.join(f.root, 'src/value.ts'), 'utf8'), 'partial legitimate work\n');
+      const end = acceptedSessionReport(f.runDir, issued)!;
+      assert.equal(end.report.status, 'waiting'); assert.equal(end.event.interrupted, true);
+      assert.equal(end.event.provider_session_id, 'precise-running-alpha');
+      assert(!repairInvocationCompleted(sessionEvents(f.runDir), 'coding', issued.request.invoke_id));
+      assert.equal(sessionEvents(f.runDir).filter(row => row.type === 'phase_write_observed').length, 1);
+    } finally { f.cleanup(); }
+  },
+}, {
   name: '1804 real CLI junction project-root aliases share one signed request and waiting report without duplicate invocation',
   run: junctionSessionCli,
 }, {
@@ -222,7 +365,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(reissued.request.deadline, issued.request.deadline);
       assert.deepEqual(reissued.request.pre_snapshot, issued.request.pre_snapshot);
       assert.deepEqual(fs.readFileSync(path.join(f.runDir, issued.reference.path)), original);
-      assert.equal(readRunControl(f.runDir)!.owner!.lease_expires_at, issued.request.deadline, 're-sign cannot extend the issued execution window');
+      assert.equal(issued.request.deadline, undefined, 'owner lease is not a user deadline');
       const before = f.files();
       assert.throws(() => acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit }), /stale request/);
       assert.deepEqual(f.files(), before);
@@ -348,7 +491,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   run() {
     const f = fixture();
     try {
-      const startMs = Date.now() - 1000; f.start('invoke-one', new Date(startMs).toISOString()); const issued = f.issue('invoke-one', f.emit, 500);
+      const startMs = Date.now() - 1000;
+      Object.assign(f.context, { user_deadline_at: new Date(startMs + 500).toISOString() });
+      f.start('invoke-one', new Date(startMs).toISOString()); const issued = f.issue('invoke-one', f.emit, 500);
       const expires = Date.parse(readRunControl(f.runDir)!.owner!.lease_expires_at!);
       markExpiredSessionOrphaned(f.runDir, 'run-1', expires + 1);
       const result = acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit, nowMs: expires + 1 });
@@ -473,7 +618,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { exports.buildGoalManifestFromInput = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 production expired session reports close the original fence, account time and never reset the two-turn hard budget',
+  name: 'P1 production sessions do not inherit a default deadline from the old phase timeout',
   async run() {
     const root = setupGoalRuntimeHost('codex').root; const original = goalManifest.buildGoalManifestFromInput;
     const exports = goalManifest as unknown as Record<string, unknown>;
@@ -485,15 +630,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       });
       const starts = probe.events.filter(event => event.type === 'agent_invoke_start');
       const reports = probe.events.filter(event => event.type === 'agent_invoke_end' && event.handoff_report);
-      assert.equal(starts.length, 2, 'one expired window must produce exactly one new attempt inside the real two-turn budget');
+      assert.equal(starts.length, 1, 'an old phase timeout cannot create another dedicated author invocation');
       assert.equal(reports.length, starts.length);
-      assert(reports.every(event => event.timed_out === true && event.kill_reason === 'agent_timeout' && Number(event.duration_ms) >= 10));
+      assert(reports.every(event => event.timed_out === false && event.kill_reason === undefined));
       assert(!probe.events.some(event => event.type === 'agent_process_settled'));
       assert(!probe.events.some(event => event.type === 'force_takeover' || event.type === 'owner_force_takeover'));
       const signed = probe.events.filter(event => event.type === 'phase_start' && event.handoff_request);
-      assert.equal(signed.length, 2); assert.equal(Number(signed[1].owner_epoch), Number(signed[0].owner_epoch) + 1);
-      assert.equal(sessionValidationOnlyEligibility(probe.events), null);
-      assert.notEqual(probe.exitCode, 0, 'a timeout-only run must not claim completed delivery');
+      assert.equal(signed.length, 1);
+      assert.equal(probe.exitCode, 0, 'a completed original invocation still receives the real gate');
     } finally { exports.buildGoalManifestFromInput = original; fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
@@ -532,7 +676,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   },
 }, {
-  name: '1804 production next closes an expired unreported window without force and preserves its original signed request',
+  name: 'P1 production next reuses an unreported session beyond an old phase timeout without resigning it',
   async run() {
     const root = setupGoalRuntimeHost('codex').root; const original = goalManifest.buildGoalManifestFromInput; const runId = 'session-next-no-report';
     const exports = goalManifest as unknown as Record<string, unknown>;
@@ -548,12 +692,10 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert.equal(acceptedSessionReport(runDir, originalRequest), null);
       const probe = await runGoalRuntimeChain(root, { adapter: 'codex', resume: runId, viaSessionStep: true, skipLegacySeal: true });
       const accepted = acceptedSessionReport(runDir, originalRequest)!;
-      assert(accepted); assert.equal(accepted.event.timed_out, true); assert.equal(accepted.report.status, 'failed');
-      assert.match(accepted.report.details ?? '', /no executor report received/);
+      assert(accepted); assert.equal(accepted.event.timed_out, false); assert.equal(accepted.report.status, 'passed');
       assert.deepEqual(fs.readFileSync(path.join(runDir, originalRequest.reference.path)), requestBytes, 'timeout closure must not rewrite the signed original');
-      const starts = probe.events.filter(event => event.type === 'agent_invoke_start'); assert.equal(starts.length, 2);
-      const signed = probe.events.filter(event => event.type === 'phase_start' && event.handoff_request); assert.equal(signed.length, 2);
-      assert.equal(Number(signed[1].owner_epoch), Number(signed[0].owner_epoch) + 1);
+      const starts = probe.events.filter(event => event.type === 'agent_invoke_start'); assert.equal(starts.length, 1);
+      const signed = probe.events.filter(event => event.type === 'phase_start' && event.handoff_request); assert.equal(signed.length, 1);
       assert(!probe.events.some(event => event.type === 'agent_process_settled'), JSON.stringify(probe.events.filter(event => event.type === 'agent_process_settled')));
     } finally { exports.buildGoalManifestFromInput = original; fs.rmSync(root, { recursive: true, force: true }); }
   },

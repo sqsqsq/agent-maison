@@ -13,7 +13,19 @@ import {
   awaitPromiseWithTimeout,
   killProcessTree,
   probeAdapterVersion,
+  defaultHeadlessInvokePlan,
+  invokeAgentHeadless,
+  readProviderSessionId,
+  withProviderSession,
+  withInvocationAuthorization,
+  providerSessionRebuildReason,
+  providerSessionUnavailableReason,
+  extractProviderSessionId,
+  extractProviderFinalText,
 } from '../../scripts/utils/agent-invoke';
+import { createCodexTerminalScanner } from '../../scripts/utils/codex-terminal-events';
+import { extractCodexAgentMessageText } from '../../scripts/utils/codex-terminal-events';
+import { applyIndependentQuestioningOutput, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import type { UnitCaseResult } from '../run-unit';
 
 function assert(condition: boolean, message: string): void {
@@ -25,6 +37,240 @@ function fakeChild(): ChildProcess {
 }
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
+  {
+    name: 'P1 structured tool results publish persisted observations; commentary and text delta never trigger snapshots',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-native-tool-result-'));
+      const records: Record<string, unknown[]> = {
+        codex: [
+          { type: 'item.completed', item: { type: 'agent_message', text: 'tool_result: I will inspect files.' } },
+          { type: 'item.started', item: { type: 'command_execution', command: 'echo tool_result' } },
+          ...['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].map(type => ({ type: 'item.completed', item: { type, status: 'completed' } })),
+          { type: 'turn.completed' },
+        ],
+        claude: [
+          { type: 'assistant', message: { content: [{ type: 'text', text: 'tool_result' }, { type: 'tool_use', name: 'Read', id: 'call-1' }] } },
+          { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'tool_result' } } },
+          { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'real output' }] } },
+          { type: 'result', subtype: 'success', is_error: false, result: 'DONE' },
+        ],
+        'deepseek-harness': [
+          { type: 'text', text: 'tool_result' },
+          { type: 'thinking', text: 'I will run a tool_result check.' },
+          { type: 'tool_call', callId: 'call-1', tool: 'read', input: {} },
+          { type: 'tool_result', callId: 'call-1', status: 'completed', result: 'real output' },
+          { type: 'status', phase: 'turn_end', reason: { kind: 'completed' } },
+        ],
+      };
+      try {
+        for (const [adapter, events] of Object.entries(records)) {
+          const directory = path.join(root, adapter); fs.mkdirSync(directory);
+          const outputLogPath = path.join(directory, 'agent-output.log');
+          const raw = events.map(record => JSON.stringify(record)).join('\n') + '\n';
+          const completedTools = adapter === 'codex' ? events.slice(2, 6) : [events[adapter === 'claude' ? 2 : 3]];
+          let observations = 0;
+          const result = await invokeAgentHeadless({ argv: [process.execPath, '-e', `process.stdout.write(${JSON.stringify(raw)});`],
+            label: 'structured-tool-fixture', adapterName: adapter }, root, { outputLogPath, onObservation: observation => {
+              if (observation.type !== 'tool_result') return;
+              observations++;
+              assert(fs.readFileSync(path.join(directory, 'agent-events.jsonl'), 'utf8').includes(JSON.stringify(completedTools[observations - 1])),
+                'raw provider result must be persisted before observation');
+            } });
+          assert(result.exitCode === 0 && observations === (adapter === 'codex' ? 4 : 1), `${adapter}: only real structured tool results notify`);
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P1 Codex questioning consumes final JSON after commentary without changing canary projection',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-native-final-'));
+      try {
+        const blueprint = path.join(root, 'blueprint.yaml');
+        const initial = 'review_summary:\n  authored_by: author\n';
+        fs.writeFileSync(blueprint, initial);
+        const preamble = { type: 'item.completed', item: { type: 'agent_message', text: '我会先检查当前产物。' } };
+        const answer = JSON.stringify({ items: [{ question_id: 'q1' }] });
+        const message = { type: 'item.completed', item: { type: 'agent_message', text: answer } };
+        const stream = [preamble, message, { type: 'turn.completed' }].map(record => JSON.stringify(record)).join('\n');
+        const final = extractProviderFinalText(stream, 'codex');
+        assert(final === answer, 'commentary must not prefix final JSON');
+        const applied = applyIndependentQuestioningOutput(blueprint, path.join(root, 'questioning.json'), final!, 'independent-q');
+        assert(applied.provider_id === 'independent-q' && Array.isArray(applied.items), 'real questioning writer receives final JSON');
+        assert(extractCodexAgentMessageText(stream) === `${preamble.item.text}\n${answer}`, 'canary keeps ordered messages');
+        const onlyPreamble = [preamble, { type: 'turn.completed' }].map(record => JSON.stringify(record)).join('\n');
+        fs.writeFileSync(blueprint, initial);
+        let rejected = false;
+        try { applyIndependentQuestioningOutput(blueprint, path.join(root, 'missing.json'),
+          extractProviderFinalText(onlyPreamble, 'codex')!, 'independent-q'); } catch { rejected = true; }
+        assert(rejected && fs.readFileSync(blueprint, 'utf8') === initial, 'commentary alone cannot write questioning');
+        assert(validateBlueprintQuestioning({ review_summary: { authored_by: 'author' } })
+          .some(item => item.id === 'blueprint_questioning_provider_missing'), 'existing checker keeps missing result');
+        assert(extractProviderFinalText(JSON.stringify(message), 'codex') === null, 'no terminal cannot supply final');
+        assert(extractProviderFinalText(stream + '\n{"type":"turn.failed"}', 'codex') === null, 'failure cannot supply final');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P1 readonly is independent from review identity and unsupported native readonly is disclosed',
+    run: async () => {
+      const full = { write_mode: 'full-access' as const, approval_mode: 'never' as const };
+      const review = withInvocationAuthorization(defaultHeadlessInvokePlan('claude', full, 'review'), {
+        authorization: full, executionRole: 'verifier', readonlyInvocation: false,
+      });
+      assert(review.argv.includes('--dangerously-skip-permissions') && !review.argv.includes('--tools'), 'independent review keeps its original tools');
+      for (const adapter of ['deepseek-harness', 'codeagent', 'cursor', 'opencode', 'generic']) {
+        const plan = { argv: ['fixture-cli'], adapterName: adapter, label: 'fixture' };
+        assert(withInvocationAuthorization(plan, { authorization: full, executionRole: 'verifier', readonlyInvocation: true })
+          .argv.join(' ') === 'fixture-cli', `${adapter}: existing snapshot fallback keeps original native tools`);
+      }
+      const generic = await invokeAgentHeadless({ argv: [process.execPath, '-e', "process.stdout.write('OK')"],
+        adapterName: 'generic', label: 'fixture' }, process.cwd(), {
+        authorization: full, executionRole: 'verifier', readonlyInvocation: true,
+      });
+      assert(generic.exitCode === 0 && generic.readonly_enforced === false && !!generic.readonly_diagnostic,
+        'caller can apply its existing write snapshot; lack of native readonly is not permanent transport failure');
+    },
+  },
+  {
+    name: 'P1 completion before cancel stays completed; failure or cancel first never becomes completed',
+    run: async () => {
+      for (const first of ['completed', 'failed', 'cancelled']) {
+        const controller = new AbortController();
+        const event = first === 'cancelled' ? '{"type":"thread.started","thread_id":"cancel-first"}'
+          : `{"type":"turn.${first}"}`;
+        const source = `process.stdout.write(${JSON.stringify(event + '\n')}); setTimeout(() => { process.stdout.write('{"type":"turn.completed"}\\n'); process.exit(0); }, 80);`;
+        const result = await invokeAgentHeadless({ argv: [process.execPath, '-e', source], label: 'fixture', adapterName: 'codex' }, process.cwd(), {
+          signal: controller.signal, completionGraceMs: 150, timeoutMs: 2000,
+          onObservation: observation => {
+            if (observation.type === 'terminal' || first === 'cancelled' && observation.type === 'provider_session') controller.abort();
+          },
+        });
+        assert(first === 'completed' ? result.completion_observed === true && !result.interrupted
+          : result.exitCode !== 0 && !result.completion_observed, JSON.stringify({ first, result }));
+      }
+    },
+  },
+  {
+    name: 'P1 missing native sessions use exact sampled errors, never auth/quota failure or model prose',
+    run: () => {
+      const id = 'exact-42';
+      assert(providerSessionUnavailableReason('codex', id, '', `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)`) === 'provider_session_not_found', 'codex missing');
+      assert(providerSessionUnavailableReason('claude', id, JSON.stringify({ type: 'result', is_error: true, errors: [`No conversation found with session ID: ${id}`] }), '') === 'provider_session_not_found', 'Claude missing');
+      assert(providerSessionUnavailableReason('deepseek-harness', id, JSON.stringify({ type: 'error', message: `session "${id}" does not exist; omit --session-id to start a new Session` }), '') === 'provider_session_not_found', 'DSH missing');
+      for (const adapter of ['codex', 'claude', 'deepseek-harness']) {
+        assert(!providerSessionUnavailableReason(adapter, id, '{"type":"error","message":"429 quota unavailable"}', '401 authentication failed'), 'environment failure stays environment');
+      }
+      assert(!extractProviderSessionId({ type: 'result', is_error: true, subtype: 'error_during_execution', session_id: id }, 'claude'), 'failed lookup echoes no live session');
+      assert(!extractProviderSessionId({ type: 'assistant', content: `session_id=${id}` }, 'codex'), 'no prose identity');
+    },
+  },
+  {
+    name: 'P1 DSH final text and waiting are not completion; committed turn terminal is shared fact',
+    run: () => {
+      const scanner = createCodexTerminalScanner({}, 'deepseek_run_jsonl');
+      scanner.push('{"type":"session","sessionId":"session-42"}\n{"type":"final","text":"PASS"}\n');
+      assert(!scanner.state().completionObserved, 'text is not completion');
+      scanner.push('{"type":"status","phase":"turn_end","reason":{"kind":"waiting"}}\n');
+      assert(!scanner.state().completionObserved, 'waiting unfinished');
+      scanner.push('{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}\n');
+      assert(scanner.state().completionObserved, 'native completed');
+      scanner.push('{"type":"error","message":"real terminal failure"}\n');
+      assert(!scanner.state().completionObserved && scanner.state().terminalFailureObserved, 'failure wins');
+      assert(extractProviderFinalText('{"type":"final","text":"actual answer"}\n', 'deepseek-harness') === 'actual answer', 'text projection');
+    },
+  },
+  {
+    name: 'P1 exact native resume keeps current sandbox/model and never selects --last',
+    run: () => {
+      const authority = { write_mode: 'full-access' as const, approval_mode: 'never' as const, max_turns: 1 };
+      for (const adapter of ['codex', 'claude', 'deepseek-harness']) {
+        const plan = defaultHeadlessInvokePlan(adapter, authority, 'continue', undefined, 'pinned-model');
+        const resumed = withProviderSession(plan, 'exact-id-42');
+        assert(!resumed.argv.includes('--last'), adapter);
+        assert(!resumed.argv.includes('--max-turns') && !resumed.argv.includes('--max-budget-usd'), 'no quota');
+        assert(resumed.argv.includes('exact-id-42'), 'exact ID');
+        if (adapter === 'codex') {
+          assert(resumed.argv.includes('resume') && resumed.argv.includes('sandbox_mode="danger-full-access"'), 'codex resume sandbox');
+          assert(resumed.argv.includes('pinned-model'), 'model preserved');
+        } else assert(resumed.argv.includes(adapter === 'claude' ? '--resume' : '--session-id'), 'native flag');
+      }
+      let refused = false;
+      try { withProviderSession({ argv: ['custom'], label: 'custom', adapterName: 'generic' }, 'exact-id'); }
+      catch { refused = true; }
+      assert(refused, 'unknown resume is not invented');
+    },
+  },
+  {
+    name: 'P1 current permissions are real native flags and changed authority rebuilds',
+    run: () => {
+      const full = { write_mode: 'full-access' as const, approval_mode: 'never' as const };
+      const narrow = { write_mode: 'workspace-write' as const, approval_mode: 'never' as const };
+      const codex = withInvocationAuthorization(defaultHeadlessInvokePlan('codex', full, 'p'), { authorization: narrow });
+      assert(codex.argv[codex.argv.indexOf('--sandbox') + 1] === 'workspace-write', 'current sandbox');
+      const implicit = withInvocationAuthorization({ argv: ['codex', 'exec', '--json'], adapterName: 'codex', label: 'codex exec' }, { authorization: narrow });
+      assert(implicit.argv[implicit.argv.indexOf('--sandbox') + 1] === 'workspace-write'
+        && implicit.argv.indexOf('--ask-for-approval') < implicit.argv.indexOf('exec'), 'valid implicit defaults compile to current explicit authorization');
+      let invalidCodex = false;
+      try { withInvocationAuthorization({ argv: [process.execPath, 'script.js'], adapterName: 'codex', label: 'invalid' }, { authorization: full }); }
+      catch { invalidCodex = true; }
+      assert(invalidCodex, 'vendor authorization is not silently ignored for a non-Codex command');
+      const q = withInvocationAuthorization(defaultHeadlessInvokePlan('claude', full, 'p'), { executionRole: 'verifier', readonlyInvocation: true });
+      assert(!q.argv.includes('--dangerously-skip-permissions'), 'readonly cannot inherit bypass');
+      assert(q.argv.includes('Read,Glob,Grep') && q.argv.includes('--strict-mcp-config'), 'readonly tools, no MCP write route');
+      assert(providerSessionRebuildReason('claude', { previousAuthorization: full, authorization: narrow }) === 'provider_session_authorization_changed', 'authority rebuild');
+      assert(providerSessionRebuildReason('claude', { previousAuthorization: full, authorization: full, instructionsChanged: true }) === 'provider_session_system_prompt_snapshot', 'Claude snapshot rebuild');
+      assert(providerSessionRebuildReason('codex', { previousAuthorization: full, authorization: full }) === undefined, 'ordinary continuation');
+      assert(providerSessionRebuildReason('claude', { previousAuthorization: full, authorization: { ...full, allowed_tools: [] } }) === 'provider_session_authorization_changed', 'empty tools narrow from unrestricted');
+    },
+  },
+  {
+    name: 'P1 identity envelope persists before observation, survives memory truncation and recovers from same stream',
+    run: async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-native-id-'));
+      try {
+        const output = path.join(root, 'agent-output.log');
+        let observed = false;
+        const source = `process.stdout.write('{"type":"thread.started","thread_id":"exact-42"}\\n'); setTimeout(() => { process.stdout.write('x'.repeat(70000)+'\\n'); process.stdout.write('{"type":"turn.completed"}\\n'); }, 30);`;
+        const result = await invokeAgentHeadless({ argv: [process.execPath, '-e', source], label: 'fixture', adapterName: 'codex' }, root, {
+          timeoutMs: 2000,
+          outputLogPath: output,
+          onObservation: observation => {
+            if (observation.type !== 'provider_session') return;
+            observed = true;
+            assert(readProviderSessionId(path.join(root, 'agent-events.jsonl'), 'codex') === 'exact-42', 'already on disk');
+          },
+        });
+        assert(observed && result.provider_session_id === 'exact-42', 'live ID');
+        assert(result.completion_observed === true && !result.stdout.includes('thread.started'), 'memory truncation does not lose persisted ID');
+        fs.appendFileSync(path.join(root, 'agent-events.jsonl'), '{"type":"thread.started","thread_id":"other"}\n');
+        let conflict = false;
+        try { readProviderSessionId(path.join(root, 'agent-events.jsonl'), 'codex'); } catch { conflict = true; }
+        assert(conflict, 'conflicting stream is not borrowed');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'P1 coordinator interruption keeps native ID, reports unfinished, and deadline is absolute',
+    run: async () => {
+      const controller = new AbortController();
+      const result = await invokeAgentHeadless({
+        argv: [process.execPath, '-e', `process.stdout.write('{"type":"thread.started","thread_id":"interrupt-42"}\\n'); setTimeout(() => process.exit(0), 1000);`],
+        label: 'fixture', adapterName: 'codex',
+      }, process.cwd(), {
+        timeoutMs: 2000,
+        signal: controller.signal,
+        onObservation: observation => { if (observation.type === 'provider_session') controller.abort(); },
+      });
+      assert(result.interrupted === true && result.provider_session_id === 'interrupt-42', 'interrupted native facts');
+      assert(result.exitCode !== 0 && !result.completion_observed, 'interruption is not completion');
+      let spawned = false;
+      const expired = await invokeAgentHeadless({ argv: [process.execPath], label: 'never' }, process.cwd(), {
+        userDeadlineAt: '2000-01-01T00:00:00Z', onActiveChild: () => { spawned = true; },
+      });
+      assert(expired.timed_out === true && !spawned, 'expired request never starts');
+    },
+  },
   {
     name: 'normalizeChildExitCode: null code with signal → 1',
     run: () => {
@@ -314,9 +560,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   },
 ];
 
-export async function runAgentInvokeSettleUnitTests(): Promise<UnitCaseResult[]> {
+export async function runAgentInvokeSettleUnitTests(selector?: string): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  for (const c of cases) {
+  for (const c of cases.filter(candidate => !selector || candidate.name.includes(selector))) {
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
@@ -329,4 +575,9 @@ export async function runAgentInvokeSettleUnitTests(): Promise<UnitCaseResult[]>
 
 export function runAll(): UnitCaseResult[] | Promise<UnitCaseResult[]> {
   return runAgentInvokeSettleUnitTests();
+}
+
+export async function runSelectedCases(selector?: string) {
+  const results = await runAgentInvokeSettleUnitTests(selector);
+  return { results, matchedCaseCount: results.length, executionTimings: [] };
 }

@@ -24,34 +24,36 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { RESULT_MARK, setupMinimalHost, type GoalRunOutcome } from '../helpers/goal-run-driver';
 import type { UnitCaseResult } from '../run-unit';
+import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
+import { findUnclosedGuardianBounds } from '../../scripts/utils/goal-containment-reconcile';
 
 const DRIVER = path.resolve(__dirname, '..', 'helpers', 'goal-run-driver.ts');
 const TS_NODE = path.resolve(__dirname, '..', '..', 'node_modules', 'ts-node', 'dist', 'bin.js');
 
 /**
- * plan c6a9e4d2 t3 适配：3.0.0 起 resume 前对账要求 run 有过 Job 绑定事件
- * （agent_process_bound）。测试桩代际的 events 由基线 runner 产出（无该事件）；
- * 追补一对闭合的 bound/settled 模拟 3.0.0 干净收尾形态（对账归 no_unclosed_bounds）。
+ * Only for controlled fake callbacks that have already returned or thrown without an external process.
+ * Close their exact outstanding invocation; never fabricate a process binding or borrow another settlement.
  */
 export function sealLegacyInvokes(host: string, feature: string, runId: string): void {
   const eventsPath = path.join(host, 'doc', 'features', feature, 'goal-runs', runId, 'events.jsonl');
   if (!fs.existsSync(eventsPath)) return;
-  const raw = fs.readFileSync(eventsPath, 'utf-8');
-  if (raw.includes('agent_process_bound')) return;
+  const events = loadAuthoritativeEvents(eventsPath);
+  const open = new Map<string, { phase: string; invoke_id: string }>();
+  for (const event of events) {
+    if (!event.invoke_id) continue;
+    if (event.type === 'agent_invoke_start' && event.phase) open.set(event.invoke_id, { phase: event.phase, invoke_id: event.invoke_id });
+    else if (['agent_invoke_end', 'agent_invoke_recovered', 'agent_process_settled', 'orphan_reclaimed'].includes(event.type ?? '')) open.delete(event.invoke_id);
+  }
+  if (!open.size) return;
+  if (findUnclosedGuardianBounds(events).some(bound => open.has(bound.invoke_id))) {
+    throw new Error('test callback settlement cannot close an outstanding native binding');
+  }
   const now = new Date().toISOString();
   fs.appendFileSync(
     eventsPath,
-    [
-      JSON.stringify({
-        type: 'agent_process_bound', phase: 'spec', invoke_id: 'legacy-close',
-        run_id: runId, pid: 1, started_at_ms: 1,
-        executable: 'C:\\x\\powershell.exe', token: `${runId}/legacy-close`, ts: now,
-      }),
-      JSON.stringify({
-        type: 'agent_process_settled', phase: 'spec', invoke_id: 'legacy-close',
-        run_id: runId, exit_code: 0, ts: now,
-      }),
-    ].join('\n') + '\n',
+    [...open.values()].map(invoke => JSON.stringify({ type: 'agent_invoke_end', ...invoke,
+      run_id: runId, exit_code: 130, interrupted: true, status: 'failed', ts: now,
+      detail: 'controlled test callback has settled without an external process' })).join('\n') + '\n',
     'utf-8',
   );
 }

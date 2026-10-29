@@ -241,7 +241,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'goal_capability 与 claude 逐字段等值（headless_invoke 仅差二进制名）；runner 校验通过',
+    name: 'goal_capability 共用Claude执行契约，原生resume各按实测能力声明；runner 校验通过',
     run: () => {
       const claude = loadGoalCapability(FRAMEWORK_ROOT, 'claude');
       const codeagent = loadGoalCapability(FRAMEWORK_ROOT, 'codeagent');
@@ -251,10 +251,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         codeagent.capability!.tool_event_provenance,
         claude.capability!.tool_event_provenance,
       );
-      assert.strictEqual(
-        codeagent.capability!.native_goal?.supports_resume,
-        claude.capability!.native_goal?.supports_resume,
-      );
+      assert.strictEqual(codeagent.capability!.native_goal?.supports_resume, false);
+      assert.strictEqual(claude.capability!.native_goal?.supports_resume, true);
       assert.deepStrictEqual(
         codeagent.capability!.external_runner?.unattended,
         claude.capability!.external_runner?.unattended,

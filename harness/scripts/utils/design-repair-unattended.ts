@@ -24,7 +24,7 @@ import * as YAML from 'yaml';
 import { deriveBlueprintAdmission, currentBlueprintSliceId } from './blueprint-admission';
 import { shouldHaltNoProgress, compareRelatedInputSnapshots, type ArtifactSnapshot } from './goal-failure-classifier';
 import { reconcileP1DerivedResults } from './blueprint-reconciliation';
-import { renderQuestioningResultInstructions, independentQuestioningBlockers } from './blueprint-questioning';
+import { renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, independentQuestioningEnvelope } from './blueprint-questioning';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import { blueprintSourceRefFiles, type DesignAuthorityFinding, type DesignRepairClass } from './blueprint-skill-projection';
 import {
@@ -52,6 +52,7 @@ import { probeDesignAuthorityRecovered } from './condition-wait';
 import {
   PhaseInvocationChange,
   capturePhaseInvocationSnapshot,
+  workUnitProtectedRecordPaths,
   diffPhaseInvocationSnapshots,
 } from './phase-write-boundary';
 import { stableStringify } from './phase-evidence-manifest';
@@ -192,7 +193,7 @@ export function designRepairAttempted(events: ReadonlyArray<object>, signature: 
 }
 
 /** `containmentUnresolved`：子进程收容绑定失败且没能证明它已消失——不是普通失败，由运行时走既有 agent_containment_unresolved 处置。 */
-export interface DesignRepairInvokeOutcome { started: boolean; ok: boolean; detail: string; status?: import('./goal-phase-executor').GoalPhaseExecutorStatus; containmentUnresolved?: boolean; handoff?: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }
+export interface DesignRepairInvokeOutcome { started: boolean; ok: boolean; detail: string; output?: string; status?: import('./goal-phase-executor').GoalPhaseExecutorStatus; containmentUnresolved?: boolean; handoff?: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }
 
 /** Reuse actual role output; a historical waiting report never becomes a permanent result. */
 function repairRoleStart(events: GoalRunEvent[], purpose: DesignRepairPurpose, afterInvokeId?: string | null): GoalRunEvent | undefined {
@@ -223,6 +224,7 @@ export function replayDesignRepairInvocation(runDir: string, purpose: DesignRepa
     restore(saved.draft_outputs ?? {});
     if (accepted.report.status !== 'waiting' || prior.invoke_id === acceptedInvokeId) {
       return { started: true, ok: invocationCompleted({ ...accepted.event, exitCode: accepted.event.exit_code, status: accepted.report.status }),
+        ...(purpose === 'questioning' ? { output: accepted.report.details } : {}),
         status: accepted.report.status, detail: accepted.report.details ?? accepted.report.status,
         preSnapshot: issued.request.pre_snapshot ?? undefined, postSnapshot: saved.post_snapshot };
     }
@@ -272,11 +274,13 @@ function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { r
   const source = accepted?.event.handoff_report ? path.resolve(runDir, accepted.event.handoff_report.path)
     : path.join(runDir, 'phases', designRepairInvokeLabel('questioning'), start.invoke_id, 'design-result.json');
   try {
-    const saved = accepted?.event.handoff_report ? readHandoffMaterial<{ draft_outputs?: Record<string, string> }>(runDir, accepted.event.handoff_report)
-      : JSON.parse(fs.readFileSync(source, 'utf8')) as { draft_outputs?: Record<string, string> };
+    const saved = accepted?.event.handoff_report ? readHandoffMaterial<{ draft_outputs?: Record<string, string>; report?: { details?: string }; outcome?: DesignRepairInvokeOutcome }>(runDir, accepted.event.handoff_report)
+      : JSON.parse(fs.readFileSync(source, 'utf8')) as { draft_outputs?: Record<string, string>; report?: { details?: string }; outcome?: DesignRepairInvokeOutcome };
     const draft = saved.draft_outputs?.['component-blueprint.yaml'];
     const doc = draft && asRecord(YAML.parse(Buffer.from(draft, 'base64').toString('utf8')));
-    const denied = doc ? independentQuestioningBlockers(doc) : [];
+    const returned = saved.outcome?.output ?? saved.report?.details;
+    const denied = returned ? independentQuestioningBlockers({ review_summary: { questioning: parseIndependentQuestioningOutput(returned) } })
+      : doc ? independentQuestioningBlockers(doc) : [];
     return denied.length ? [`前次同请求事务的真实质询差额（仅待核线索，不恢复失败草稿、不沿用旧结论）：${source}\n${JSON.stringify(denied.map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer })), null, 2)}`] : [];
   } catch {
     return [`前次质询原件暂不可读：${source}；原失败说明仅作线索：${String('reason' in failed.event ? failed.event.reason : '')}`];
@@ -528,7 +532,7 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
     `草稿文件：${draftFile}`,
     `当前待发布蓝图草稿revision=${String(draft.revision)}，不是canonical已发布版本。`,
     ...transactionTiming,
-    '只允许写入草稿里的 `review_summary.questioning`，草稿其余内容与工程里任何其它文件都不得改动。',
+    '本次实际只读，不写草稿或工程文件。最终只返回既有questioning形状的JSON对象；框架保留本次原件并在调用完成与只读核对后回填review_summary.questioning。',
     ...renderQuestioningResultInstructions(draft, DESIGN_REPAIR_QUESTIONING_PROVIDER),
     ...(input.requirement ? ['', '## 原始请求与候选一致性', input.requirement,
       renderGoalBrief(assembleGoalBrief(input.projectRoot, input.feature, { runId: input.runId }), { requirementInContext: true }),
@@ -637,8 +641,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const relOf = (file: string): string => path.relative(projectRoot, file).replace(/\\/g, '/');
     const baselineRefs = blueprintSourceRefFiles(projectRoot, baseDoc).map(relOf);
     const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[], afterInvokeId: string | null): Promise<ReturnType<typeof capturePhaseInvocationSnapshot> | { handoff: true }> => {
+      const readonlyInputs = purpose === 'questioning' ? new Map(authorDrafts.map(file => [file, fs.readFileSync(file)] as const)) : null;
       // 根在调用前后各列一次：调用里新建的顶层条目也要进差集。
-      const resolution = { projectRoot, protectedRoots: snapshotRoots(projectRoot) };
+      const resolution = { projectRoot, protectedRoots: snapshotRoots(projectRoot),
+        executionRole: purpose === 'questioning' ? 'verifier' as const : 'author' as const,
+        immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, input.feature, runDir) };
       const snapshotOptions = { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: referenced };
       const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(resolution, snapshotOptions);
       let pre = capture();
@@ -680,6 +687,17 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       }
       if (result.status === 'waiting') throw new AttemptWaiting(purpose, result.detail);
       if (!result.ok) throw new AttemptFailure(purpose, `调用失败：${result.detail}`);
+      if (readonlyInputs) {
+        if ([...readonlyInputs].some(([file, bytes]) => !fs.existsSync(file) || !fs.readFileSync(file).equals(bytes))) {
+          throw new AttemptFailure(purpose, '独立质询修改了只读设计输入；结果不回填。');
+        }
+        const start = repairRoleStart(sessionEvents(runDir), 'questioning', afterInvokeId);
+        if (!start?.invoke_id) throw new AttemptFailure(purpose, '独立质询缺少真实调用标识。');
+        try { applyIndependentQuestioningOutput(draftFile,
+          path.join(runDir, 'phases', designRepairInvokeLabel('questioning'), start.invoke_id, 'questioning-output.json'),
+          result.output ?? '', DESIGN_REPAIR_QUESTIONING_PROVIDER); }
+        catch (error) { throw new AttemptFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`); }
+      }
       return pre;
     };
     const readDraft = (step: string): BlueprintRecord => {
@@ -717,8 +735,15 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
             : JSON.parse(fs.readFileSync(path.join(runDir, 'phases', designRepairInvokeLabel('questioning'), latestQuestion.invoke_id, 'design-result.json'), 'utf8'));
           if (authorDrafts.every(file => typeof saved.draft_outputs?.[path.basename(file)] === 'string')) {
             const contents = Object.fromEntries(authorDrafts.map(file => [file, Buffer.from(saved.draft_outputs[path.basename(file)], 'base64').toString('utf8')]));
-            savedWork = designWorkSnapshot(authorDrafts, contents);
             questioned = YAML.parse(contents[draftFile]) as BlueprintRecord;
+            const returned = accepted?.report.details ?? saved.outcome?.output;
+            if (returned) {
+              const review = reviewOf(questioned);
+              questioned.review_summary = { ...review, questioning: independentQuestioningEnvelope(
+                parseIndependentQuestioningOutput(returned), DESIGN_REPAIR_QUESTIONING_PROVIDER, review.authored_by) };
+              contents[draftFile] = YAML.stringify(questioned);
+            }
+            savedWork = designWorkSnapshot(authorDrafts, contents);
             writeBackAdmission(questioned, context);
           }
         }

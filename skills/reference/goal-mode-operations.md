@@ -86,13 +86,13 @@ npx ts-node scripts/goal-mode-entry.ts --prepare-run --run-mode attended --featu
 
 有人在场使用同一 runtime 的非驻留交接。所有可命令适配器共用以下入口，`--adapter` 必须与 manifest 一致；阶段隔离仅决定执行上下文，必需独立核验不取消。`--next` 原子保存请求并签发后退出，不等 stdin；stdout 只回请求路径/sha、phase/attempt、真实状态、下一命令、`gate_timeout_ms` 与 `cleanup_reserve_ms`。完整 instruction、精确身份与自检/收口命令只在原件，执行者按路径读，不能从摘要猜上下文。
 
-原始设计到 CU 的请求仍返回 `phase_execute_request`。其中 `run_id` / `feature` 是本次实际执行者；`delivery_run_id` 只定位原始请求，不授予权限。原样使用返回的 `request.path`、`request.sha256`、`deadline` 与 `next_command`，报告命令会把真实 child 结果交回原请求，不能把原请求的 fence/路径手抄到 child。
+原始设计到 CU 的请求仍返回 `phase_execute_request`。其中 `run_id` / `feature` 是本次实际执行者；`delivery_run_id` 只定位原始请求，不授予权限。主会话原样启动返回的 `execute_command`，由共同 executor 启动专用原生会话、保存结果并归档；再按 `next_command` 交回原 runtime。运行中 `observe_command` 读取同一调用的工具原件、写入快照与进程事实，`interrupt_command` 只停止当前 owner 的真实绑定。主会话不自行编辑业务产物或构造通过结果。`request.path` / sha、可选用户 `deadline` 仍属本次原件，不把 root 的 fence 手抄到 child。
 
 ```bash
 npx ts-node scripts/goal-mode-entry.ts --next --run-mode attended --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework [--authorize-autonomy] [--override-manifest]
 ```
 
-完成本请求工作后严格按用途 instruction 报告：普通 phase 按原件参数自检与 `--sync-closure`，exit 0 且 summary `PASS/open` 可报告 passed，closed 仍由 runtime 正式 gate/finalizer 决定；初始设计/质询等链外调用不运行普通 phase harness 或签 Feature receipt。以下 JSON 例仅表示真实阶段结果，不能预填通过；实际路径、身份和命令均使用本次返回原件：
+专用执行者严格按用途 instruction 自检：普通 phase 按原件参数运行检查与 `--sync-closure`，closed 仍由 runtime 正式 gate/finalizer 决定；初始设计/质询等链外调用不运行普通 phase harness 或签 Feature receipt。通常直接执行返回的 `execute_command`，不手写结果。以下 JSON 仅兼容已有真实结果的外部执行运输，不能让主会话替代施工、预填通过或覆盖已写完整报告；实际路径、身份和命令均使用本次返回原件：
 
 ```powershell
 $requestPath = '<已签发请求绝对路径>'

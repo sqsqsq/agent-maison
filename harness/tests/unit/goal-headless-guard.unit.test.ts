@@ -1375,7 +1375,7 @@ export function runAll(): UnitCaseResult[] {
       },
     },
     {
-      name: 'buildPhasePrompt: P0-1 PASS+timeout 空 partial 也出续作块（空清单即信息）+ 预算提示',
+      name: 'buildPhasePrompt: P1 PASS+timeout 空 partial 保留续作信息，不把旧阶段时限写成强杀预算',
       run: () => {
         const prompt = buildPhasePrompt(
           MINIMAL_MANIFEST, FRAMEWORK_ROOT, 'spec', FRAMEWORK_ROOT, [],
@@ -1383,11 +1383,12 @@ export function runAll(): UnitCaseResult[] {
           undefined,
           { cause: 'agent_timeout', process_resumed: false },
           null,   // plan e6b3f8d2 t5：无同 invoke 质量事实 = 纯超时，既有文案不变
-          2700_000,
+          2700_000, // 旧阶段时限不是用户明确截止，不能宣称本次作者会据此被强杀。
         );
         assert(prompt.includes('TIMED OUT'), 'PASS+timeout（无 priorFailure）也须出续作块');
         assert(prompt.includes('No partial phase artifacts'), '空清单须有 closure 提示行');
-        assert(prompt.includes('Time budget: ~45 minutes'), `缺预算提示: ${prompt.match(/Time budget[^\n]*/)?.[0]}`);
+        assert(prompt.includes('do NOT redo exploration/analysis from scratch'), '空清单也须保留续作而非从零重做的指引');
+        assert(!prompt.includes('Time budget:') && !prompt.includes('before this attempt is forcibly killed'), '旧阶段时限不得伪装为作者默认强杀预算');
       },
     },
     {

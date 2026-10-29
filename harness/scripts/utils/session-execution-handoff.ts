@@ -1,24 +1,29 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
-import type { PhaseExecutionContext } from './goal-phase-executor';
+import type { WorkUnitExecutionContext } from './goal-phase-executor';
 import { featureFilePath } from '../../config';
 import { assertFencedOwner, readRunControl, setSessionExecutionLease, type RunFenceToken } from './goal-run-control';
-import { loadEventsJsonlStrict, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
+import { loadEventsJsonlStrict, loadAuthoritativeEvents, resolveValidationOnlyEligibility, type GoalRunEvent } from './goal-runner-phase';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges,
   type PhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from './phase-write-boundary';
 import { parseCredentialRef } from './device-credential-store';
+import { readProviderSessionId } from './agent-invoke';
+import { createCodexTerminalScanner, resolveTerminalEventParser } from './codex-terminal-events';
+import { reconcileGuardianOwnership, terminateGuardianProcessOnly, awaitGuardianGone } from './goal-containment-reconcile';
+import { defaultProcessProbe } from './device-session';
+import { invocationCompleted, invocationEndFacts } from './invocation-completion';
 
 export interface HandoffReference { path: string; sha256: string }
 export interface SessionExecutionReport { status: 'passed' | 'failed' | 'waiting'; phase: string; details?: string }
 export interface SessionExecutionRequest {
   type: 'phase_execute_request';
-  context: PhaseExecutionContext;
+  context: WorkUnitExecutionContext;
   invoke_id: string;
   chain_phase: string;
   purpose?: string;
   issued_at: string;
-  deadline: string;
+  deadline?: string;
   gate_timeout_ms: number;
   cleanup_reserve_ms: number;
   pre_snapshot: PhaseInvocationSnapshot | null;
@@ -26,6 +31,9 @@ export interface SessionExecutionRequest {
   snapshot_options?: Parameters<typeof capturePhaseInvocationSnapshot>[1];
 }
 export interface IssuedSessionExecution { request: SessionExecutionRequest; reference: HandoffReference; event: GoalRunEvent }
+export function sessionExecutionDeadlineMs(request: SessionExecutionRequest): number {
+  return request.deadline ? Date.parse(request.deadline) : Infinity;
+}
 const digest = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const HANDOFF_ENV_KEYS = [
@@ -35,7 +43,7 @@ const HANDOFF_ENV_KEYS = [
 ] as const;
 
 /** Only runtime-issued identifiers are durable; no ambient environment or secret values. */
-function handoffEnvironment(context: PhaseExecutionContext): Record<string, string> {
+function handoffEnvironment(context: WorkUnitExecutionContext): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of HANDOFF_ENV_KEYS) if (context.childEnv[key] !== undefined) env[key] = context.childEnv[key];
   const reference = context.childEnv.MAISON_DEVICE_CREDENTIAL_REF;
@@ -71,10 +79,14 @@ export function inspectSessionExecutionBeforeRuntime(options: {
   let reusable: IssuedSessionExecution | null = null;
   if (current && !accepted) {
     const control = readRunControl(options.runDir, current.request.context.runId);
+    if (options.forceTakeover && !report && (control?.owner?.state === 'released' || control?.owner?.state === 'orphaned_session')) {
+      const stopped = stopBoundExecution(options.runDir, current, event => fs.appendFileSync(path.join(options.runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n'), { allowReleased: true });
+      if (!stopped.stopped) throw new Error(stopped.detail ?? '原生执行已完成但尚在收尾，等待原结果；不重签仍运行的调用。');
+    }
     const releasedForTakeover = options.forceTakeover && !report && control?.owner?.state === 'released'
       && control.current_epoch === current.request.context.owner.epoch && control.owner.owner_id === current.request.context.owner.owner_id;
     if (!releasedForTakeover) assertSessionRequestFence(options.runDir, current);
-    if (!releasedForTakeover && !report && Date.parse(current.request.deadline) > Date.now()) reusable = current;
+    if (!releasedForTakeover && !report && sessionExecutionDeadlineMs(current.request) > Date.now()) reusable = current;
   }
   return { current, report, accepted, reusable };
 }
@@ -159,6 +171,108 @@ export function acceptedSessionReport(runDir: string, issued: IssuedSessionExecu
   return { report: archived.report, event };
 }
 
+/** A repeat read returns the same original facts, never another business progress assessment. */
+export function observeSessionExecution(runDir: string, issued: IssuedSessionExecution) {
+  const { request } = issued;
+  const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+  const settled = events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === request.invoke_id);
+  if (!settled) assertSessionRequestFence(runDir, issued);
+  const log = inside(runDir, path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'));
+  const toolEvents: unknown[] = [];
+  if (fs.existsSync(log)) {
+    const lines = fs.readFileSync(log, 'utf8').split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      try { toolEvents.push(JSON.parse(lines[i])); }
+      catch { /* Keep the original stream; unstructured or incomplete text is not a tool fact. */ }
+    }
+  }
+  const postSnapshot = request.pre_snapshot && request.write_boundary
+    ? capturePhaseInvocationSnapshot(request.write_boundary, request.snapshot_options) : null;
+  const changes = request.pre_snapshot && postSnapshot ? diffPhaseInvocationSnapshots(request.pre_snapshot, postSnapshot) : null;
+  return { invoke_id: request.invoke_id,
+    provider_session_id: readProviderSessionId(log, request.context.adapter),
+    toolEvents, postSnapshot, changes,
+    writes: changes?.kind === 'changed' && request.write_boundary
+      ? classifyPhaseInvocationChanges(request.write_boundary, request.context.phase, changes.changes) : null,
+    invocation: [...events].reverse().find(event => event.invoke_id === request.invoke_id && (event.type === 'agent_invoke_end' || event.type === 'agent_process_settled' || event.type === 'agent_invoke_start')),
+    settled };
+}
+
+/** The same saved request locates process and session observations; it grants no new authority. */
+export function executionRequestForInvoke(runDir: string, invokeId?: string): IssuedSessionExecution | null {
+  const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+  const start = [...events].reverse().find(event => event.type === 'agent_invoke_start' && (!invokeId || event.invoke_id === invokeId));
+  if (!start?.invoke_id || !start.phase) return null;
+  const signed = sessionExecutionForInvoke(runDir, start.invoke_id);
+  if (signed) return signed;
+  const directory = inside(runDir, path.join(runDir, 'phases', start.phase, start.invoke_id, 'request'));
+  if (!fs.existsSync(path.dirname(directory))) return null;
+  const files = fs.readdirSync(path.dirname(directory)).filter(file => /^request-e\d+\.json$/.test(file)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]));
+  if (!files[0]) return null;
+  const bytes = fs.readFileSync(inside(runDir, path.join(path.dirname(directory), files[0])));
+  const request = JSON.parse(bytes.toString('utf8')) as SessionExecutionRequest;
+  if (request.invoke_id !== start.invoke_id || request.context.phase !== start.phase) throw new Error('[session-handoff] execution request identity mismatch');
+  if (path.resolve(request.context.runDir) !== path.resolve(runDir)) return null; // Historical copied material is evidence, never current execution authority.
+  return { request, event: start, reference: { path: path.relative(runDir, path.join(path.dirname(directory), files[0])).replace(/\\/g, '/'), sha256: digest(bytes) } };
+}
+
+/** Stop only an exact existing native binding. Unknown external executions cannot be force-re-signed. */
+export function stopBoundExecution(runDir: string, issued: IssuedSessionExecution,
+  emit: (event: Record<string, unknown>) => void, options: { allowReleased?: boolean } = {}): { stopped: boolean; completed: boolean; detail?: string } {
+  const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+  if (events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id)) return { stopped: true, completed: true };
+  const control = readRunControl(runDir, issued.request.context.runId);
+  const released = options.allowReleased && control?.owner?.state === 'released'
+    && control.owner.owner_id === issued.request.context.owner.owner_id && control.current_epoch === issued.request.context.owner.epoch;
+  if (!released) assertSessionRequestFence(runDir, issued);
+  if (nativeExecutionCompleted(runDir, issued)) return { stopped: false, completed: true };
+  const own = events.filter(event => event.invoke_id === issued.request.invoke_id);
+  if (own.some(event => event.type === 'agent_process_settled' || event.type === 'orphan_reclaimed')) return { stopped: true, completed: false };
+  const reconciled = reconcileGuardianOwnership(own, defaultProcessProbe());
+  if (reconciled.kind !== 'outcomes' || !reconciled.items.length) return { stopped: false, completed: false, detail: '没有可核实的原生进程绑定；旧外部执行必须先明确停止，不能仅凭租约重签。' };
+  if (reconciled.items.some(item => item.kind === 'guardian_alive_matching') && !own.some(event => event.type === 'phase_halt' && event.halt_reason === 'executor_waiting')) emit({
+    type: 'phase_halt', phase: issued.request.context.phase, invoke_id: issued.request.invoke_id, halt_reason: 'executor_waiting',
+    owner_id: issued.request.context.owner.owner_id, owner_epoch: issued.request.context.owner.epoch,
+    detail: '协调器请求中断当前绑定执行；实际停止和写入保全以随后调用事实为准。',
+  });
+  for (const item of reconciled.items) {
+    if (item.kind === 'guardian_alive_matching' && (!terminateGuardianProcessOnly(item.bound.pid) || !awaitGuardianGone(item.bound.pid))) return { stopped: false, completed: false, detail: '当前绑定执行尚未确认停止。' };
+    if (item.kind === 'guardian_identity_unverifiable' && !item.identity_mismatch) return { stopped: false, completed: false, detail: item.reason };
+  }
+  emit({ type: 'agent_process_settled', phase: issued.request.context.phase, invoke_id: issued.request.invoke_id,
+    owner_id: issued.request.context.owner.owner_id, owner_epoch: issued.request.context.owner.epoch, interrupted: true, exit_code: 1 });
+  return { stopped: true, completed: false };
+}
+
+export function nativeExecutionCompleted(runDir: string, issued: IssuedSessionExecution): boolean {
+  const settled = [...loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))].reverse().find(event => event.type === 'agent_process_settled'
+    && event.invoke_id === issued.request.invoke_id) as Record<string, unknown> | undefined;
+  if (settled) return invocationCompleted({ ...settled, exitCode: settled.exit_code });
+  const stream = inside(runDir, path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'));
+  const parser = resolveTerminalEventParser(issued.request.context.adapter);
+  if (parser === 'none' || !fs.existsSync(stream)) return false;
+  const scanner = createCodexTerminalScanner({}, parser); scanner.push(fs.readFileSync(stream, 'utf8')); scanner.flush();
+  return scanner.state().completionObserved && !scanner.state().terminalFailureObserved;
+}
+
+/** The caller uses its existing owner-bound process/session cancellation primitive. */
+export async function interruptSessionExecution(input: {
+  runDir: string; issued: IssuedSessionExecution; reason: string;
+  stop: (request: SessionExecutionRequest) => Promise<boolean>;
+  emit: (event: Record<string, unknown>) => void;
+}): Promise<{ duplicate: boolean; timedOut: boolean }> {
+  const prior = acceptedSessionReport(input.runDir, input.issued);
+  if (prior) return { duplicate: true, timedOut: prior.event.timed_out === true };
+  assertSessionRequestFence(input.runDir, input.issued);
+  if (!await input.stop(input.issued.request)) throw new Error('[session-handoff] execution stop is unconfirmed; retain the outstanding request');
+  assertSessionRequestFence(input.runDir, input.issued);
+  return acceptSessionExecution({ ...input, interrupted: true, report: {
+    status: 'waiting', phase: input.issued.request.context.phase,
+    details: input.reason,
+  } });
+}
+
 export function sessionExecutionForInvoke(runDir: string, invokeId: string): IssuedSessionExecution | null {
   const event = [...sessionEvents(runDir)].reverse().find(row => row.type === 'phase_start' && row.invoke_id === invokeId && row.handoff_request);
   return event?.handoff_request ? { event, reference: event.handoff_request, request: readHandoffMaterial(runDir, event.handoff_request) } : null;
@@ -172,9 +286,9 @@ export function undeliveredSessionInvocation(events: readonly GoalRunEvent[]): G
 }
 
 export interface PhaseExecutionRequestMaterialInput {
-  context: PhaseExecutionContext; invokeId: string; chainPhase?: string; purpose?: string;
+  context: WorkUnitExecutionContext; invokeId: string; chainPhase?: string; purpose?: string;
   issuedAt: string;
-  timeoutMs: number; gateTimeoutMs: number; cleanupReserveMs: number;
+  timeoutMs?: number; gateTimeoutMs: number; cleanupReserveMs: number;
   preSnapshot: PhaseInvocationSnapshot | null; writeBoundary: PhaseWriteBoundaryResolution | null;
   snapshotOptions?: Parameters<typeof capturePhaseInvocationSnapshot>[1];
 }
@@ -182,10 +296,11 @@ export interface PhaseExecutionRequestMaterialInput {
 /** 两运输共用的调用原件；保存材料本身不签发session权限、不写lease或事件。 */
 export function writePhaseExecutionRequestMaterial(input: PhaseExecutionRequestMaterialInput): { request: SessionExecutionRequest; reference: HandoffReference } {
   const { context } = input;
+  const { executionRole: _derivedRole, ...durableContext } = context;
   let request: SessionExecutionRequest = {
-    type: 'phase_execute_request', context: { ...context, childEnv: handoffEnvironment(context) }, invoke_id: input.invokeId,
+    type: 'phase_execute_request', context: { ...durableContext, childEnv: handoffEnvironment(context) }, invoke_id: input.invokeId,
     chain_phase: input.chainPhase ?? context.phase, ...(input.purpose ? { purpose: input.purpose } : {}),
-    issued_at: input.issuedAt, deadline: new Date(Date.parse(input.issuedAt) + input.timeoutMs).toISOString(),
+    issued_at: input.issuedAt, ...(context.user_deadline_at ? { deadline: context.user_deadline_at } : {}),
     gate_timeout_ms: input.gateTimeoutMs, cleanup_reserve_ms: input.cleanupReserveMs,
     pre_snapshot: input.preSnapshot, write_boundary: input.writeBoundary,
     ...(input.snapshotOptions ? { snapshot_options: input.snapshotOptions } : {}),
@@ -210,7 +325,7 @@ export function issueSessionExecution(input: Omit<PhaseExecutionRequestMaterialI
   if (current && !acceptedSessionReport(context.runDir, current)) throw new Error('[session-handoff] an execution request is already outstanding');
   const start = [...sessionEvents(context.runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.invoke_id === input.invokeId);
   if (!start?.ts) throw new Error('[session-handoff] invocation has not been started');
-  setSessionExecutionLease(context.runDir, context.owner, Date.parse(start.ts) + input.timeoutMs);
+  setSessionExecutionLease(context.runDir, context.owner, context.user_deadline_at ? Date.parse(context.user_deadline_at) : Date.now() + 60_000);
   const { request, reference } = writePhaseExecutionRequestMaterial({ ...input, issuedAt: start.ts, context: { ...context,
     instruction: `${context.instruction ?? ''}\n执行本次命令时同时传递 context.childEnv 中的冻结标识（run/attempt、设备目标、provider 与合法 opaque 凭据引用）；不要改读当前默认目标，不读取或打印凭据值。\n实际执行者若能导出原生结构化工具事件，将本次调用的原始事件流保存到 ${path.join(context.runDir, 'phases', context.phase, input.invokeId, 'agent-events.jsonl')}；只接受实际工具事件，不从自然语言说明构造记录。没有可导出的审计材料时如实保持未验证。` } });
   const event: GoalRunEvent = { type: 'phase_start', phase: context.phase, driver: 'session', attempt_id: context.attemptId,
@@ -231,7 +346,7 @@ export function resignSessionExecution(runDir: string, issued: IssuedSessionExec
     .replace(new RegExp(`(--goal-owner-epoch\\s+)${old.epoch}(?=\\s|$)`, 'g'), `$1${token.epoch}`);
   const request: SessionExecutionRequest = { ...issued.request, context: { ...issued.request.context,
     owner: { ...token, kind: 'session' }, instruction } };
-  setSessionExecutionLease(runDir, token, Date.parse(request.deadline));
+  setSessionExecutionLease(runDir, token, request.deadline ? Date.parse(request.deadline) : Date.now() + 60_000);
   const file = path.join(runDir, 'phases', request.context.phase, request.invoke_id, `request-e${token.epoch}.json`);
   const reference = immutableJson(runDir, file, request);
   const event: GoalRunEvent = { type: 'phase_start', phase: request.context.phase, driver: 'session',
@@ -277,6 +392,7 @@ export function uncommittedSessionReport(runDir: string, issued: IssuedSessionEx
 /** Called under the runtime's physical run/feature locks, before any new dispatch. */
 export function acceptSessionExecution(input: {
   runDir: string; issued: IssuedSessionExecution; report: SessionExecutionReport;
+  interrupted?: boolean;
   emit: (event: Record<string, unknown>) => void; nowMs?: number;
 }): { duplicate: boolean; timedOut: boolean } {
   const { runDir, issued } = input;
@@ -295,7 +411,8 @@ export function acceptSessionExecution(input: {
   if (!control?.owner || control.current_epoch !== token.epoch || control.owner.owner_id !== token.owner_id
     || !['active', 'orphaned_session'].includes(control.owner.state)) throw new Error('[session-handoff] stale owner fence');
   const nowMs = input.nowMs ?? Date.now();
-  const timedOut = nowMs >= Date.parse(issued.request.deadline);
+  const nativeEnd = [...sessionEvents(runDir)].reverse().find(event => event.type === 'agent_process_settled' && event.invoke_id === issued.request.invoke_id) as Record<string, unknown> | undefined;
+  const timedOut = nativeEnd ? nativeEnd.timed_out === true : nowMs >= sessionExecutionDeadlineMs(issued.request);
   if (control.owner.state !== 'active' && !timedOut) throw new Error('[session-handoff] inactive execution window');
   const saved = readUncommittedReport(runDir, issued);
   if (saved && json(saved.material.report) !== json(report)) throw new Error('[session-handoff] conflicting execution report');
@@ -328,12 +445,11 @@ export function acceptSessionExecution(input: {
   }
   // Persist the replay input before any observation can refer to its post-snapshot.
   const archive = saved?.reference ?? immutableJson(runDir, file, { report, post_snapshot: post, ...(Object.keys(draftOutputs).length ? { draft_outputs: draftOutputs } : {}) });
-  if (pre && boundary && post && !issued.request.purpose) {
+  if (pre && boundary && post) {
     const diff = diffPhaseInvocationSnapshots(pre, post);
     if (diff.kind === 'changed') {
       const writes = classifyPhaseInvocationChanges(boundary, report.phase, diff.changes);
-      const owned = writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact'
-        || (report.phase === 'ut' || report.phase === 'coding') && role.kind === 'source'));
+      const owned = writes.allowed.filter(write => write.roles.some(role => role.kind === 'artifact' || role.kind === 'source'));
       if ((writes.observed.length || owned.length) && !sessionEvents(runDir).some(event => event.type === 'phase_write_observed'
         && event.invoke_id === issued.request.invoke_id)) input.emit({
         type: 'phase_write_observed', phase: report.phase, invoke_id: issued.request.invoke_id,
@@ -347,10 +463,13 @@ export function acceptSessionExecution(input: {
   input.emit({ type: 'agent_invoke_end', phase: report.phase, invoke_id: issued.request.invoke_id,
     status: report.status,
     ...(issued.request.purpose ? { purpose: issued.request.purpose, chain_phase: issued.request.chain_phase } : {}),
-    command: 'phase_execute_request', exit_code: report.status === 'failed' || timedOut ? 1 : 0,
-    duration_ms: Math.max(0, nowMs - Date.parse(issued.request.issued_at)), timed_out: timedOut,
-    ...(timedOut ? { kill_reason: 'agent_timeout' } : {}),
-    effective_timeout_ms: Date.parse(issued.request.deadline) - Date.parse(issued.request.issued_at),
+    command: 'phase_execute_request',
+    ...invocationEndFacts({ ...nativeEnd,
+      exit_code: typeof nativeEnd?.exit_code === 'number' ? nativeEnd.exit_code : report.status === 'failed' || timedOut ? 1 : 0,
+      interrupted: input.interrupted || nativeEnd?.interrupted === true ? true : undefined,
+      provider_session_id: readProviderSessionId(toolEvents, issued.request.context.adapter), timed_out: timedOut }),
+    duration_ms: Math.max(0, nowMs - Date.parse(issued.request.issued_at)),
+    ...(issued.request.deadline ? { effective_timeout_ms: Date.parse(issued.request.deadline) - Date.parse(issued.request.issued_at) } : {}),
     handoff_report: { ...archive, request_sha256: issued.reference.sha256 },
   });
   return { duplicate: false, timedOut };

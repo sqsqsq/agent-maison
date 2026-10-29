@@ -35,11 +35,31 @@ docs:
   # --------------------------------------------------------------------------
   # 全景介绍（顶层入口）
   # --------------------------------------------------------------------------
+  - path: framework/docs/architecture.md
+    role: Maison 已定稿目标架构；P3切换及开发验收后转为现状，真实宿主验收单独记录
+    audience: 框架维护者 / 方案与代码检视者
+    sources:
+      - framework/docs/overview.md
+      - framework/harness/scripts/goal-phase-runtime.ts
+      - framework/harness/scripts/goal-mode-entry.ts
+      - framework/harness/scripts/utils/goal-phase-executor.ts
+      - framework/harness/scripts/utils/agent-invoke.ts
+      - framework/harness/scripts/utils/check-disposition.ts
+      - framework/harness/scripts/utils/verify-feature-completion.ts
+      - framework/harness/scripts/utils/phase-write-boundary.ts
+      - framework/harness/harness-runner.ts
+      - framework/agents/adapter-schema.yaml
+    update_triggers:
+      - 部件职责、权威事实、执行循环或允许停止类型改变
+      - 工作单元、专用会话、检查工具与完成消费者接口改变
+      - 用户审定目标架构或P3实现及开发验收完成后调整文档状态，保留未完成联合验收说明
+
   - path: framework/docs/overview.md
     role: 框架全景介绍 / 对外宣讲材料
     audience: 跨部门同事 / 新接入工程的开发者 / 决策者
     sources:
-      # 每个 Skill 的核心定位（overview 引用了它们的总览定位）
+      # overview 本轮保留原文；P3只清理旧执行流程，保留三层分离、能力拆解与常见问题教训。
+      - framework/docs/architecture.md
       - framework/skills/project/framework-init/SKILL.md
       - framework/skills/project/catalog-bootstrap/SKILL.md
       - framework/skills/feature/spec/SKILL.md
@@ -74,6 +94,7 @@ docs:
       - docs-rules.yaml 中 profile_skill_assets_resolvable 或 docs 阶段追溯规则变更
       - 三层分离 / 双 harness 等核心设计理念调整
       - workflow DAG（`spec-driven.workflow.yaml`）或 feature-compat 能力与 overview §1.3.1 / §2 叙事不一致
+      - 四条总原则或架构文档的定位与状态改变
 
   # --------------------------------------------------------------------------
   # Skill 阶段讲解
