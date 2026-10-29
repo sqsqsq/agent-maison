@@ -1,0 +1,23 @@
+# 实例扩展 ut 阶段规则 overlay（constraints 消费）
+# 经 manifest provides.phase_rules_overlays.ut 注册；semantic_checks 由 AI verifier 消费。
+#
+# 本文件只问「适用矩阵里本阶段该消费的域，用例有没有覆盖」——不复述域名、编号与维度。
+phase: ut
+version: "1.0"
+semantic_checks:
+  ut_constraint_cases:
+    description: >
+      应用域约束在本阶段的消费形态是**用例**：读
+      doc/extensions/knowledge/constraints/README.md 的适用矩阵，取 ut 那一列，
+      逐个非「—」的格子核对——该域是否已按格子写明的用例类型产出了对应的业务级用例
+      （命中该域时；未命中的写明依据）。命中判据与条目内容以该域文件为准。
+      判据是**用例是否真的覆盖了那个场景**，不是用例名里有没有出现该域的词。
+      矩阵中标「—」的域本阶段不消费，不必为其硬造用例。
+    severity: MAJOR
+    ai_prompt_hint: >
+      打开 doc/extensions/knowledge/constraints/README.md 找到适用矩阵，记下 ut 列所有
+      非「—」的域及其用例类型。对照本 feature 的业务级用例清单逐域核对：
+      该类型的场景有没有对应用例，用例的前置条件与断言是否真的落在那个场景上。
+      **上游阶段声明会覆盖、而用例清单里找不到对应场景的，即 FAIL**——
+      声明与验证之间的缺口正是本阶段该堵的。
+      域文件里 `<待补充>` 的部分按 README「读条目时须知」处理：定性评估，不臆造数值。

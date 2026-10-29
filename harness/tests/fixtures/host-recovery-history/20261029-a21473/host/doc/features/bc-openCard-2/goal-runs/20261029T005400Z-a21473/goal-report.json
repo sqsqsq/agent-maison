@@ -1,0 +1,29 @@
+{
+  "kind": "initial_design_delivery",
+  "feature": "bc-openCard-2",
+  "run_id": "20261029T005400Z-a21473",
+  "status": "HALTED",
+  "stage": "author",
+  "complete": false,
+  "halt_reason": "content_retry_exhausted",
+  "recovery": {
+    "run_disposition": "TERMINAL",
+    "halt_guidance": "blueprint_admission_current_slice_not_ready $.review_summary.admission.current_slice: 当前切片必须冻结契约和 design refs，或显式声明受控 fake。\n本run内容额度已用尽；修复输入后需明确起审计后继（保留原需求与累计预算），resume/force-resume不清零：\nnpm --prefix \"D:\\1.code\\SimulatedWalletForHmos\\framework\\harness\" run goal -- --project-root \"D:\\1.code\\SimulatedWalletForHmos\" --framework-root \"D:\\1.code\\SimulatedWalletForHmos\\framework\" --feature \"bc-openCard-2\" --supersede \"20261029T005400Z-a21473\" --manifest \"D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\goal-runs\\20261029T005400Z-a21473\\manifest.json\" --authorize-autonomy"
+  },
+  "current": {
+    "feature": "bc-openCard-2",
+    "run_id": "20261029T005400Z-a21473"
+  },
+  "issues": [
+    "blueprint_admission_current_slice_not_ready $.review_summary.admission.current_slice: 当前切片必须冻结契约和 design refs，或显式声明受控 fake。\n本run内容额度已用尽；修复输入后需明确起审计后继（保留原需求与累计预算），resume/force-resume不清零：\nnpm --prefix \"D:\\1.code\\SimulatedWalletForHmos\\framework\\harness\" run goal -- --project-root \"D:\\1.code\\SimulatedWalletForHmos\" --framework-root \"D:\\1.code\\SimulatedWalletForHmos\\framework\" --feature \"bc-openCard-2\" --supersede \"20261029T005400Z-a21473\" --manifest \"D:\\1.code\\SimulatedWalletForHmos\\doc\\features\\bc-openCard-2\\goal-runs\\20261029T005400Z-a21473\\manifest.json\" --authorize-autonomy",
+    "blueprint_admission_current_slice_not_ready $.review_summary.admission.current_slice: 当前切片必须冻结契约和 design refs，或显式声明受控 fake。"
+  ],
+  "budget": {
+    "total_turns": 6,
+    "active_ms": 983058,
+    "max_total_turns": 30,
+    "wall_clock_minutes": 585
+  },
+  "next_action": "author",
+  "event_count": 27
+}

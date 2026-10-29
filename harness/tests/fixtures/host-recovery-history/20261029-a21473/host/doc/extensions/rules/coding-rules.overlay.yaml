@@ -1,0 +1,23 @@
+# 实例扩展 coding 阶段规则 overlay（constraints 消费）
+# 经 manifest provides.phase_rules_overlays.coding 注册；semantic_checks 由 AI verifier 消费。
+#
+# 本文件只问「适用矩阵里本阶段该消费的域，代码有没有落实」——不复述域名、编号与维度。
+phase: coding
+version: "1.0"
+semantic_checks:
+  coding_constraint_landing:
+    description: >
+      应用域约束在本阶段的落实须体现在代码里：读
+      doc/extensions/knowledge/constraints/README.md 的适用矩阵，取 coding 那一列，
+      逐个非「—」的格子核对——该域是否已按格子写明的维度真正落到本次 diff 的代码/资源/配置中
+      （不是在文档里再声明一遍）。命中判据与具体条目以该域文件为准。
+      与 profile 自带编码规范重复的部分以规范为准，不重复要求。
+      矩阵中标「—」的域本阶段不消费。
+    severity: MAJOR
+    ai_prompt_hint: >
+      打开 doc/extensions/knowledge/constraints/README.md 找到适用矩阵，记下 coding 列
+      所有非「—」的域及其消费维度。对照本次变更涉及的文件逐域核对：该维度对应的落法
+      在代码里能指出具体位置吗（资源文件、配置项、调用点、清理逻辑等）。
+      **只在文档里写「已考虑」而代码无对应落点的，即 FAIL**——本阶段的证据是代码本身。
+      域文件给出具体落法（API、资源机制、配置字段）的，按其落法核对；
+      只给方向没给落法的，核对是否有等效实现并说明。

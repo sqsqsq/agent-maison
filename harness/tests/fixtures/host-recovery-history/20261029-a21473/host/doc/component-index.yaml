@@ -1,0 +1,103 @@
+# 机器生成，勿手编。重跑：npm run bootstrap:component-index -- --project-root <root>
+schema_version: "1.0"
+components:
+  - id: CommUI/src/main/ets/presentation/components/ActionListItem.ets#ActionListItem
+    module: CommUI
+    file: 05-SystemBase/CommUI/src/main/ets/presentation/components/ActionListItem.ets
+    symbol: ActionListItem
+    kind: component
+    props:
+      - icon
+      - title
+    deprecated: false
+    source_fingerprint: sha256:4bc6399ca67f965d6736d38b63fdb6b077e572f3066b5ba2380a1c5c6245045f
+    static_checks:
+      scalable_font_unit: fail
+      no_hardcoded_hex_color: pass
+      declared_touch_target: fail
+  - id: CommUI/src/main/ets/presentation/components/SectionCard.ets#SectionCard
+    module: CommUI
+    file: 05-SystemBase/CommUI/src/main/ets/presentation/components/SectionCard.ets
+    symbol: SectionCard
+    kind: component
+    props:
+      - content
+    deprecated: false
+    source_fingerprint: sha256:5476b33b3e55ec1d5e9b39c7ab7e363ab3aa6b5635da6408d804b970638738a6
+    static_checks:
+      scalable_font_unit: unknown
+      no_hardcoded_hex_color: pass
+      declared_touch_target: unknown
+  - id: WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets#buildAddBankCardPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AddBankCardPage.ets
+    symbol: buildAddBankCardPage
+    kind: builder
+    props: []
+    deprecated: false
+    source_fingerprint: sha256:5f636c6081094d08660774afa9ecdccabbcb7cb751ecfd474b540877cc08e754
+    static_checks:
+      scalable_font_unit: unknown
+      no_hardcoded_hex_color: pass
+      declared_touch_target: unknown
+  - id: WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets#buildAddCardEntryPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets
+    symbol: buildAddCardEntryPage
+    kind: builder
+    props: []
+    deprecated: false
+    source_fingerprint: sha256:b06696e280d9aac073ab7fc546bc7eb4d6cfa324119aed3cfa19792923598e9a
+    static_checks:
+      scalable_font_unit: unknown
+      no_hardcoded_hex_color: pass
+      declared_touch_target: unknown
+  - id: WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets#buildAllBanksPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/AllBanksPage.ets
+    symbol: buildAllBanksPage
+    kind: builder
+    props: []
+    deprecated: false
+    source_fingerprint: sha256:0c7ee06f6bf8e8a23fc0de0b566a4014b36f3816ab97cbeee2eb10031b7411c4
+    static_checks:
+      scalable_font_unit: unknown
+      no_hardcoded_hex_color: pass
+      declared_touch_target: unknown
+  - id: WalletMain/src/main/ets/presentation/pages/CardPackPage.ets#buildCardPackPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+    symbol: buildCardPackPage
+    kind: builder
+    props: []
+    deprecated: false
+    source_fingerprint: sha256:3326dedfc930f8aba0d2874d7c5ac305994e23f1420f1a4ab537a83cddb31c68
+    static_checks:
+      scalable_font_unit: unknown
+      no_hardcoded_hex_color: pass
+      declared_touch_target: unknown
+  - id: WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets#HomeTabPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/HomeTabPage.ets
+    symbol: HomeTabPage
+    kind: component
+    props:
+      - navPathStack
+    deprecated: false
+    source_fingerprint: sha256:492ba2d6abcdfb25a43b032c3113b2a21ecbd25649a6e8cb3c295b8c1a82b6b8
+    static_checks:
+      scalable_font_unit: unknown
+      no_hardcoded_hex_color: pass
+      declared_touch_target: unknown
+  - id: WalletMain/src/main/ets/presentation/pages/MineTabPage.ets#MineTabPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+    symbol: MineTabPage
+    kind: component
+    props: []
+    deprecated: false
+    source_fingerprint: sha256:a2c83893ce0dde879bbe55e7209022edadb1e42e99c251eaaf3079bd48d5843e
+    static_checks:
+      scalable_font_unit: fail
+      no_hardcoded_hex_color: pass
+      declared_touch_target: fail

@@ -1,0 +1,118 @@
+# 实例扩展 spec 阶段规则 overlay（story / constraints）
+# 经 manifest provides.phase_rules_overlays.spec 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
+phase: spec
+version: "1.0"
+semantic_checks:
+  spec_constraint_echo:
+    description: >
+      合规判定的三个出口须各就各位（判定在 spec 阶段做，产物分三处落）：
+      (1) 结论回显——AR/story.md「影响面与合规」章的应用域约束符合性表须与
+      doc/extensions/knowledge/constraints/ 各约束文件一致：每行「是/否」判定与该文件 applies_when 相符；
+      「是」的行处置结论覆盖该域适用的 rule id；「否」的行有判定依据；无整域漏判
+      （constraints/README.md 文件清单中的域均有对应行，或由本 feature 其他章节承载——
+      某些域的承载方式见 skills/story/reference/constraint-usage.md）。
+      **小结的数字须与表格一致**——写「涉及五项」就必须恰好五行为「是」。
+      (2) 代码要求回落——判定中凡产生编码约束的条目，须在 spec §7 有对应要求行；
+      只写在 story 里等于编码永远看不到。哪些条目会产生编码约束，看该条目自身的处置与落法。
+      (3) 待定项联动——判定中得出「待产品/合规/某方确认」的事项，须在 AR/review.md 的
+      「二、待定项」有对应登记，且 story 叙述中以「（待定项 N）」显式绑定。
+      **story 的回显表不得引入 spec 中不存在的代码要求**——出现即说明 (2) 漏了。
+      **未走 /story 的 feature（无 AR/story-flow.json）只做 (2)**——(1)(3) 的落点是
+      story 归档件与决策件，那种场景下不存在，SKIP。
+    severity: MAJOR
+    ai_prompt_hint: >
+      读 doc/extensions/knowledge/constraints/README.md 获取约束域清单与编号体系，
+      逐行核对 doc/features/{module}/AR/story.md 影响面与合规章的回显表：末列的规约编号能否在对应约束文件中找到；
+      处置结论是否回答了该条目的命中判据与处置要求；有无该域明显适用却标「否」的漏判。
+      再回看 doc/features/{module}/spec/spec.md 的 §7：回显表里凡属编码约束的条目，
+      spec §7 是否有对应要求行；没有即 FAIL（要求到不了编码）。
+      **判定所引事实须与该规约的语义域匹配，不得用相邻概念搪塞**——判定时回到条目自身的
+      命中条件逐字对照，凡以相邻概念替代（拿一个语义相近但不是该条目所指的事实来充数）
+      凑出「已声明」的，即 FAIL。条目一律平权，不因来源不同而调整举证强度。
+  spec_ext_conclusion_validity:
+    description: >
+      spec §9 技术契约与 story 影响面回显两表的结论须真实、具体、可按名回查：结论中写全了它谈论的东西的名字
+      （接口名/存储键/事件名/配置项名/模块名/错误码），且该名字在 spec、SR 或代码中确实存在、
+      语义一致；「不涉及」条目附有判断依据（现状扫描或 Scope 声明）；无凭空推断。
+      **spec 不写文档坐标**（见 evidence-rules §0 独立审计原则）——核对靠按名回查，不靠产物给出处。
+      **未走 /story 的 feature（无 AR/story-flow.json）本检查 SKIP**——§9 技术契约与 story
+      回显表都是扩展新增的落点，那种场景下两者都不存在。
+    severity: MAJOR
+    ai_prompt_hint: >
+      抽查 spec §9 技术契约与 story 影响面回显两表中至少 3 条事实（优先抽「新增/修改」类结论）：取出结论里的具体名字
+      （如 createBusinessOrder、last_business_context、feature_entry_enabled），到
+      doc/features/{module}/spec/spec.md、SR/design.md、RR/prd.md 与 in_scope 模块源码中检索该名字，
+      判断结论是否被支撑。**特别核查数值，且两个产物判据不同**（形态真源见
+      skills/story/reference/evidence-rules.md 的证据表）：
+      spec 侧——阈值/时长类数字须在正文三选一标来源，标「上游约束」的必须在 SR/RR 原文中
+      找到该数值，找不到即 FAIL（伪造出处）；标「本工程设定」的检查是否确实上游无据。
+      story 侧——上游约束/平台基线的数值写正文+出处；**本工程设定的值不在正文标来源，
+      而是登记决策件后由正文引用**。所以 story 正文出现「（本工程设定，无上游依据）」这类
+      括注反而是错的（装配器的数值溯源守恒也会拦），别按 spec 的写法要求 story。
+      结论只写「新增了一个开关」这类无名字的空话，同样 FAIL——无从核对。
+      证据为「检索式零命中」类时，判断该检索式是否合理覆盖了该维度。
+  story_reader_fitness:
+    description: >
+      叙事件 AR/story.md 是否适合它的读者。评审者手里只有它与《决策与评审记录》——需求规格不随归档，
+      他打不开，也不关心实现怎么落地。三条：
+      (1) **独立可读**——不看需求规格/PRD/SE，读完能说出：要做什么、为什么这么做、动了哪些存量、
+      哪里可能出问题；出现只有读过规格才懂的指代（模块内部结构、函数签名、仓内路径、
+      「现状无 X 封装」这类扫描结论）即不达标。
+      (2) **叙述是它自己的**——顺序服务于人的理解：先为什么 → 再是什么 → 再怎么做 →
+      再哪里会坏 → 最后怎么算做对。story 由章节合同逐章装配而成，
+      **原封不动照搬规格的章节顺序与表格排布**即不达标：那说明只做了搬运，没做改写。
+      (3) **表达贴合内容**——能一句话说清的不建表；并列多项且需逐条比对的才建表；流程用图。
+      通篇是表、叙述只在表间做连接词，即不达标。
+      本项**不规定章节号、标题名与表头**——形式由内容定，只看它是否让评审者判断得成。
+      **未走 /story 的 feature（无 AR/story-flow.json）本检查 SKIP**——本条查的是 story 归档件，那种场景下不存在。
+    severity: MAJOR
+    ai_prompt_hint: >
+      通读 doc/features/{module}/AR/story.md，先不看 spec.md，回答：要做什么、为什么这么做、
+      动了哪些存量、哪里可能出问题——有答不上来的，指出是哪一处缺失导致的。
+      再比对 spec/spec.md：story 的章节顺序、标题、表格排布若与规格高度重合（多数章节同序同表头），
+      判 FAIL 并举出两处「照搬而未改写」的原文。
+      最后粗估叙述与表格的比例：全文若几乎只有表格、叙述性段落不足以支撑上面四个问题，判 FAIL。
+      **不要因为它没有某个章节号或某张表而判 FAIL**——门禁与本项都不规定形式。
+  story_decision_substance:
+    description: >
+      story 的方案取舍与设计选择须真的是**决策**：每行写清「选了什么、否了什么、为什么不是另一种」。
+      需求规格只有结论，story 存在的意义就是补上理由——只复述效果的不算理由，例如
+      「用 Preferences 缓存 30 分钟，因为支付中断后可恢复」等于说「做了 X 因为想要 X」，
+      没有回答为什么不是 10 分钟、为什么不用内存。
+      **写不出被否决的备选，该行就不是决策**，应删掉或降级为事实陈述，不该占据设计选择的位置；
+      上游已定的方案照实标「上游已定」，不得包装成本部件的取舍（那会让评审者以为这里有得商量）。
+      **未走 /story 的 feature（无 AR/story-flow.json）本检查 SKIP**——本条查的是 story 归档件，那种场景下不存在。
+    severity: MAJOR
+    ai_prompt_hint: >
+      取 doc/features/{module}/AR/story.md 中方案取舍/设计选择的每一行，逐行判断理由是否
+      指出了**被否决的备选或被排除的另一种做法**。仅复述所选方案带来的好处、或把方案本身
+      换个说法重讲一遍的，记为「无取舍」。无取舍行数超过半数即 FAIL，并逐条列出原文与
+      「它没有回答的问题」（如：为什么不是更短的有效期？为什么不放内存？）。
+      再核对标「上游已定」的行是否确实在 AR/design.md 或 SR/design.md 中有据；
+      本部件自己做的选择被写成「上游已定」，同样 FAIL。
+  upstream_inputs_coverage:
+    description: >
+      上游输入覆盖（信息守恒）：doc/features/{module}/ 下存在 SR/design.md 或 RR/prd.md 时，
+      spec/context-exploration.md 的 key_inputs_read 须包含它们；spec 业务流程图与 §9.1 端云接口
+      的端云结论不得与 SR/design.md 的端云声明矛盾。
+    severity: MAJOR
+    ai_prompt_hint: >
+      检查 doc/features/{module}/SR/design.md 与 RR/prd.md 是否存在；存在则核对
+      context-exploration.md key_inputs_read 是否覆盖；再比对 SR 中与本部件相关的端云接口
+      声明与 spec 流程图/§9.1 端云接口：SR 声明了本部件要调用的接口而 spec 完全未体现，
+      或两者接口清单矛盾，即 FAIL。SR/RR 均不存在时本检查 SKIP。
+  split_boundary_consistency:
+    description: >
+      拆分边界一致性：AR/story-flow.json 的 split.decided = "split" 时，spec 的功能清单、
+      Scope 与验收标准须与 AR/design.md「本 AR 范围与拆分说明」的拆分表一致——
+      表里归兄弟 AR 或「待立项」的份额不属于本次，其功能不得进入本 AR 的功能清单与验收；
+      这些内容涉及的模块若登记 out_of_scope_modules，rationale 须写明归属（「归属 ARxxxx」
+      或「待立项」），而不是笼统的「本需求不做」。**split.decided != "split" 时本检查 SKIP。**
+    severity: MAJOR
+    ai_prompt_hint: >
+      先读 doc/features/{module}/AR/story-flow.json 的 split 字段：decided 不是 "split" 即 SKIP。
+      是 "split" 时取 parts（或 AR/design.md §1.2 的拆分表），列出 carrier 不是本 feature 的
+      那几份及其 scope。再逐条核对 doc/features/{module}/spec/spec.md 的功能清单与验收标准：
+      是否有功能实质属于那几份的 scope——有即 FAIL（把兄弟 AR 的活揽进了本次范围）。
+      再看 Scope 的 out_of_scope_modules：涉及那些份额的模块，rationale 是否写明了归属；
+      只写「本需求不做」而不说归谁，同样记为 FAIL——评审者分不清「有人接」与「没人接」。

@@ -64,11 +64,63 @@ async function initialWaiting(): Promise<void> {
       assert(String(rows.at(-1)!.error).includes(detail));
       assert(!rows.some(row => row.type === 'run_end' && row.status === 'COMPLETED'));
     }
-    const next = await runGoalModeSessionStep(session.options) as Json;
-    assert.equal(next.type, 'phase_execute_request', 'a future explicit continuation must not replay the historical waiting report');
-    assert.notEqual(next.attempt_id, first.attempt_id);
-    assert.equal(readOriginalDeliveryBudget(session.projectRoot, session.manifest)!.totalTurns, 2);
+    for (const lane of [callback, session]) {
+      const next = await runGoalModeSessionStep(lane.options) as Json;
+      assert.equal(next.type, 'phase_execute_request', 'a future explicit continuation must not replay the historical waiting report');
+      assert.equal(readOriginalDeliveryBudget(lane.projectRoot, lane.manifest)!.totalTurns, 2);
+      assert.equal(events(lane.runDir).filter(row => row.type === 'agent_invoke_start').length, 2);
+      if (lane === session) assert.notEqual(next.attempt_id, first.attempt_id);
+    }
+    const history = fixture('completed-then-waiting');
+    const args = ['--feature', history.manifest.feature, '--resume', history.manifest.run_id,
+      '--project-root', history.projectRoot, '--framework-root', frameworkRoot, '--foreground-ok'];
+    let completedCalls = 0;
+    await new GoalPhaseRuntime({ args, authorization, executor: { async execute(context) {
+      completedCalls++; return { status: 'passed', phase: context.phase, exitCode: 1, completion_observed: true,
+        kill_attempted: true, stdout: '', stderr: '', command: 'completed-with-cleanup-exit' };
+    } } }).run();
+    assert.equal(completedCalls, 1, 'completion=true with exit1 is completed content and must pause without a duplicate author');
+    assert.equal(events(history.runDir).at(-1)!.halt_reason, 'no_progress_guard');
+    let waitingCalls = 0;
+    await new GoalPhaseRuntime({ args: [...args, '--force-resume'], authorization, executor: { async execute(context) {
+      waitingCalls++; return { status: 'waiting', phase: context.phase, details: detail, exitCode: 0, stdout: '', stderr: '', command: 'later-waiting' };
+    } } }).run();
+    assert.equal(waitingCalls, 1);
+    const resumed = await runGoalModeSessionStep(history.options) as Json;
+    assert.equal(resumed.type, 'phase_execute_request', 'the latest waiting fact makes the content baseline unknown; do not skip it to reuse older completed content');
+    assert.equal(readOriginalDeliveryBudget(history.projectRoot, history.manifest)!.totalTurns, 3);
+    assert.equal(events(history.runDir).filter(row => row.type === 'agent_invoke_start').length, 3);
+
   } finally { fs.rmSync(parent, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+}
+
+async function unfinishedContentBaseline(kind: 'timeout' | 'terminal-failure' | 'transport'): Promise<void> {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), `initial-${kind}-baseline-`));
+  try {
+    fs.mkdirSync(path.join(projectRoot, 'doc/features'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: kind,
+      project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', features_dir: 'doc/features' }));
+    clearFrameworkConfigCache();
+    const prepared = prepareGoalModeRun({ projectRoot, frameworkRoot, feature: 'unfinished-blueprint', runId: 'unfinished-root', adapter: 'claude',
+      requirement: '正式完成本地未读消息设计与交付。', budget: { max_total_turns: 3, wall_clock_minutes: 120 },
+      unattended: { write_mode: 'full-access', approval_mode: 'never', timeout_seconds: 900 } });
+    let calls = 0;
+    await new GoalPhaseRuntime({ args: ['--feature', prepared.manifest.feature, '--resume', prepared.manifest.run_id,
+      '--project-root', projectRoot, '--framework-root', frameworkRoot, '--foreground-ok'], authorization,
+      executor: { async execute(context) {
+        calls++;
+        if (calls > 1) return { status: 'waiting', phase: context.phase, details: detail, exitCode: 0, stdout: '', stderr: '', command: 'safe-test-cut' };
+        return { status: 'passed', phase: context.phase, exitCode: 0, completion_observed: true, stdout: '', stderr: '', command: kind,
+          ...(kind === 'timeout' ? { timed_out: true } : kind === 'terminal-failure' ? { terminal_failure_observed: true }
+            : { spawn_error: { code: 'EPIPE', message: 'transport could not deliver the request' } }) };
+      } } }).run();
+    assert(!events(prepared.runDir).some(row => row.halt_reason === 'no_progress_guard'), `${kind} must not become completed content even with exit0/completion=true`);
+    assert.equal(calls, kind === 'transport' ? 1 : 2, 'failed content does not prevent the next real responsibility from being attempted');
+    const next = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature: prepared.manifest.feature, runId: prepared.manifest.run_id,
+      adapter: 'claude', runMode: 'attended', authorization }) as Json;
+    assert.equal(next.type, 'phase_execute_request');
+    assert.equal(readOriginalDeliveryBudget(projectRoot, prepared.manifest)!.totalTurns, calls + 1);
+  } finally { fs.rmSync(projectRoot, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 }
 
 async function repairWaiting(): Promise<void> {
@@ -202,6 +254,7 @@ async function normalQuestioningWaiting(): Promise<void> {
 
 const cases = [
   { name: 'f3b8e6a1 waiting: original session and executor pause once then a later entry can continue', run: initialWaiting },
+  ...(['timeout', 'terminal-failure', 'transport'] as const).map(kind => ({ name: `d18f6c42 ${kind} invocation cannot establish a completed-content no-progress baseline`, run: () => unfinishedContentBaseline(kind) })),
   { name: 'f3b8e6a1 waiting: design author and independent questioning keep one open transaction across waiting', run: repairWaiting },
   { name: 'f3b8e6a1 waiting: normal questioning resumes its original transaction without replaying a successful author', run: normalQuestioningWaiting },
 ];

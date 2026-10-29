@@ -1,0 +1,36 @@
+{
+  "routerMap": [
+    {
+      "name": "CardPackPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/CardPackPage.ets",
+      "buildFunction": "buildCardPackPage",
+      "data": {
+        "description": ""
+      }
+    },
+    {
+      "name": "AddCardEntryPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/AddCardEntryPage.ets",
+      "buildFunction": "buildAddCardEntryPage",
+      "data": {
+        "description": ""
+      }
+    },
+    {
+      "name": "AddBankCardPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/AddBankCardPage.ets",
+      "buildFunction": "buildAddBankCardPage",
+      "data": {
+        "description": ""
+      }
+    },
+    {
+      "name": "AllBanksPage",
+      "pageSourceFile": "src/main/ets/presentation/pages/AllBanksPage.ets",
+      "buildFunction": "buildAllBanksPage",
+      "data": {
+        "description": ""
+      }
+    }
+  ]
+}

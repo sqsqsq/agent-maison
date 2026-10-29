@@ -115,7 +115,8 @@ import {
   designRepairInputFingerprint,
   designRepairTarget,
   replayDesignRepairInvocation,
-  designRepairAuthorStarts,
+  designWorkSnapshot,
+  designWorkHasNoProgress,
   recordDesignRepairInvocation,
   DESIGN_REPAIR_CONTRACT_DOC,
   runUnattendedDesignRepair,
@@ -5251,7 +5252,8 @@ export class GoalPhaseRuntime {
       return conclude(available === 'turns' ? 'budget_turns' : available === 'wall_clock' ? 'budget_wall_clock'
         : result.outcome === 'containment_unresolved' ? 'agent_containment_unresolved'
         : result.outcome === 'violation' ? 'unauthorized_source_mutation'
-        : result.outcome === 'not_dispatched' || result.outcome === 'waiting' ? 'execution_scope_unresolved' : 'content_retry_exhausted', result.reason);
+        : result.outcome === 'failed' && result.step === 'no_progress_guard' ? 'no_progress_guard'
+        : 'execution_scope_unresolved', result.reason);
     };
     const automaticDesignRepair = resolveTaskAutomationPolicy({ fullDelivery: true,
       autonomyAuthorized: resolveEntryAuthorization(this.options, argv)?.autonomyAuthorized }).automaticDesignRepair;
@@ -5308,6 +5310,8 @@ export class GoalPhaseRuntime {
         && projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest }).complete) { runConcluded = true; return 0; }
       try { writeLivenessBeacon({ projectRoot, reportDir: manifest.report_dir, runId: manifest.run_id }); }
       catch { /* Same conservative liveness writer as normal runs; no synthetic process identity. */ }
+      const previousEnd = resolveEffectiveRunEnd(history());
+      let resumeDesignWork = previousEnd?.halt_reason === 'no_progress_guard' && Boolean(argv['force-resume']);
       emit({ type: 'run_start', session_started_at: new Date(sessionStart).toISOString(), manifest_identity_fields: computeManifestIdentityFields(manifest), phase_chain: [] });
       if (transport === 'process' && process.platform === 'win32' && recoverRuntimeGuardians(history(), manifest.run_id, Boolean(argv['force-resume']), emit, conclude)) return 1;
       for (;;) {
@@ -5326,7 +5330,7 @@ export class GoalPhaseRuntime {
           const blueprint = asRecord(YAML.parse(Buffer.from(original.baseline, 'base64').toString('utf8')));
           if (typeof blueprint?.blueprint_id !== 'string' || cu && (typeof cu.blueprint_id !== 'string' || typeof cu.change_unit_id !== 'string')) return conclude('framework_bug', '原设计事务缺少可恢复的真实设计身份。');
           const target = cu ? deriveChangeUnitFeatureId(String(cu.blueprint_id), String(cu.change_unit_id)) : blueprint.blueprint_id;
-          const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, target, original.brief, emit, String(activeAttempt.signature));
+          const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, target, original.brief, emit, String(activeAttempt.signature), Boolean(argv['force-resume']));
           if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
           if (repaired.outcome === 'published') {
             if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
@@ -5351,9 +5355,21 @@ export class GoalPhaseRuntime {
               try {
                 const before = asRecord(YAML.parse(fs.readFileSync(beforeFile, 'utf8')));
                 const after = asRecord(YAML.parse(output));
+                const currentBlueprint = asRecord(YAML.parse(fs.readFileSync(state.blueprintPath, 'utf8')));
+                if (currentBlueprint) {
+                  const review = asRecord(currentBlueprint.review_summary) ?? {};
+                  const oldAdmission = asRecord(before?.review_summary)?.admission;
+                  if (oldAdmission === undefined) delete review.admission; else review.admission = oldAdmission;
+                  currentBlueprint.review_summary = review;
+                  fs.writeFileSync(state.blueprintPath, YAML.stringify(currentBlueprint));
+                }
                 if (asRecord(before?.review_summary)) delete asRecord(before!.review_summary)!.questioning;
                 if (asRecord(after?.review_summary)) delete asRecord(after!.review_summary)!.questioning;
-                if (stableStringify(before) !== stableStringify(after) && fs.existsSync(state.blueprintPath)) {
+                if (asRecord(before?.review_summary)) delete asRecord(before!.review_summary)!.admission;
+                if (asRecord(after?.review_summary)) delete asRecord(after!.review_summary)!.admission;
+                const inputHash = designWorkSnapshot([state.blueprintPath], { [state.blueprintPath]: YAML.stringify(before) })[state.blueprintPath]?.contentHash;
+                const outputHash = designWorkSnapshot([state.blueprintPath], { [state.blueprintPath]: YAML.stringify(after) })[state.blueprintPath]?.contentHash;
+                if (inputHash !== outputHash && fs.existsSync(state.blueprintPath)) {
                   const currentBlueprint = asRecord(YAML.parse(fs.readFileSync(state.blueprintPath, 'utf8')));
                   const review = asRecord(currentBlueprint?.review_summary);
                   if (review?.questioning) { delete review.questioning; fs.writeFileSync(state.blueprintPath, YAML.stringify(currentBlueprint)); }
@@ -5426,7 +5442,7 @@ export class GoalPhaseRuntime {
             if (!findings.length) continue;
             if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `设计责任在${feature}；需恢复原请求的自动设计修复授权。${findings.map(item => item.basis).join('\n')}`);
             const brief: DesignRepairBriefLike = { class: findings.some(item => item.class === 'B2') ? 'B2' : 'B1', items: findings };
-            const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, feature, brief, emit);
+            const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, feature, brief, emit, undefined, Boolean(argv['force-resume']));
             if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
             if (repaired.outcome !== 'published') return repairStop(repaired);
             if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
@@ -5462,7 +5478,7 @@ export class GoalPhaseRuntime {
         }
         if (observed.designRepair) {
           if (!automaticDesignRepair) return conclude('execution_scope_unresolved', `当前设计权威需要原责任方修复；需恢复原请求的自动设计修复授权。${observed.issues.join('\n')}`);
-          const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, observed.designRepair.feature, observed.designRepair.brief, emit);
+          const repaired = await this.repairInitialDesignOwner(manifest, projectRoot, frameworkRoot, token!, observed.designRepair.feature, observed.designRepair.brief, emit, undefined, Boolean(argv['force-resume']));
           if (repaired.outcome === 'handoff') { preserveOwner = true; runConcluded = true; return 3; }
           if (repaired.outcome === 'published') {
             if (repaired.step === 'reconcile') return conclude('execution_scope_unresolved', repaired.reason);
@@ -5477,17 +5493,36 @@ export class GoalPhaseRuntime {
         if (budget !== 'ok') return conclude(budget === 'turns' ? 'budget_turns' : 'budget_wall_clock', `原始请求剩余预算不足：${budget}`);
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
         const label = initialDesignInvocationLabel(observed);
-        const scopeWindow = observed.scope ? history().map((event, index) => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'published' ? index : -1).reduce((latest, index) => Math.max(latest, index), -1) : -1;
-        const callHistory = history();
-        const starts = callHistory.slice(scopeWindow + 1).filter(event => event.type === 'agent_invoke_start' && event.phase === label);
-        const ended = starts.map(start => callHistory.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id)).filter((event): event is GoalRunEvent => !!event);
-        const interrupted = (event: GoalRunEvent): boolean => event.timed_out === true || event.status === 'waiting'
-          || !!parseHeadlessApiError(path.join(runDir, 'phases', label, event.invoke_id!, 'agent-output.log'), manifest.adapter ?? '', event.terminal_error_excerpt);
-        if (ended.filter(event => !interrupted(event)).length > manifest.budget.max_retries_per_phase) {
-          const quote = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
-          const command = `npm --prefix ${quote(path.join(frameworkRoot, 'harness'))} run goal -- --project-root ${quote(projectRoot)} --framework-root ${quote(frameworkRoot)} --feature ${quote(manifest.feature)} --supersede ${quote(manifest.run_id)} --manifest ${quote(path.join(runDir, 'manifest.json'))}${automaticDesignRepair ? ' --authorize-autonomy' : ''}`;
-          return conclude('content_retry_exhausted', `${observed.issues.join('\n')}\n本run内容额度已用尽；修复输入后需明确起审计后继（保留原需求与累计预算），resume/force-resume不清零：\n${command}`);
+        const workFiles = [observed.blueprintPath, observed.candidatesPath, ...(observed.scope ? [observed.scope.candidatePath] : [])];
+        const workNow = designWorkSnapshot(workFiles, {}, purpose === 'questioning');
+        const previous = [...history()].reverse().find(event => event.type === 'agent_invoke_end' && event.phase === label && event.invoke_id);
+        let priorIssues: string[] | undefined;
+        let workBefore: ReturnType<typeof designWorkSnapshot> | undefined;
+        if (previous?.invoke_id && invocationCompleted({ ...previous, exitCode: previous.exit_code })) {
+          try {
+            const previousDir = path.join(runDir, 'phases', label, previous.invoke_id);
+            const prompt = fs.readFileSync(path.join(previousDir, 'prompt.md'), 'utf8');
+            const files = fs.readdirSync(previousDir).filter(file => /^request-e\d+\.json$/.test(file)).sort((a, b) => Number(a.slice(9, -5)) - Number(b.slice(9, -5)));
+            const request = files.map(file => JSON.parse(fs.readFileSync(path.join(previousDir, file), 'utf8')) as import('./utils/session-execution-handoff').SessionExecutionRequest)
+              .find(request => request.invoke_id === previous.invoke_id && request.context.phase === label && request.context.runId === manifest.run_id);
+            if (!request?.pre_snapshot || request.pre_snapshot.failureReason) throw new Error('原调用缺少可比写快照');
+            if (prompt.endsWith(`当前职责=${observed.kind}。问题：\n${observed.issues.join('\n')}`)) priorIssues = observed.issues;
+            const beforeText = fs.readFileSync(path.join(previousDir, 'blueprint-before.yaml'), 'utf8');
+            workBefore = beforeText ? designWorkSnapshot([observed.blueprintPath], { [observed.blueprintPath]: beforeText }, purpose === 'questioning')
+              : { [observed.blueprintPath]: { exists: false, contentHash: '' } };
+            for (const file of workFiles.filter(file => file !== observed.blueprintPath)) {
+              const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
+              const entry = request.pre_snapshot.entries.find(item => item.path === relative);
+              if (!entry) workBefore[file] = { exists: false, contentHash: '' };
+              else if (fs.existsSync(file) && createHash('sha256').update(fs.readFileSync(file)).digest('hex') === entry.sha256) workBefore[file] = workNow[file];
+              // Changed bytes without a saved content preimage are unknown, never proof of zero progress.
+            }
+          } catch { workBefore = undefined; }
         }
+        if (!resumeDesignWork && designWorkHasNoProgress(priorIssues, observed.issues, workBefore, workNow)) {
+          return conclude('no_progress_guard', `当前全部问题与可比设计产物均无变化；后台对原请求使用 --force-resume、会话使用 --force-takeover 明确继续，或补充真实信息/产物后重发；原预算与历史保留。\n${observed.issues.join('\n')}`);
+        }
+        resumeDesignWork = false;
         const invokeId = `${label}-i${spent.totalTurns + 1}`;
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
         fs.mkdirSync(invocationDir, { recursive: true });
@@ -5555,7 +5590,7 @@ export class GoalPhaseRuntime {
         emit({ type: 'agent_invoke_end', phase: label, purpose, invoke_id: invokeId, status: result.status, exit_code: result.exitCode,
           command: result.command, usage: result.usage,
           duration_ms: result.duration_ms, completion_observed: result.completion_observed, terminal_failure_observed: result.terminal_failure_observed, timed_out: result.timed_out,
-          kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
+          silent_killed: result.silent_killed, skipped: result.skipped, kill_attempted: result.kill_attempted, terminal_error_excerpt: result.terminal_error_excerpt, ...(result.spawn_error ? { spawn_error: result.spawn_error } : {}) });
         if (guardianBound && !containmentError) emit({ type: 'agent_process_settled', phase: label, invoke_id: invokeId, exit_code: result.exitCode, timed_out: result.timed_out });
         const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardCli || containmentError) return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!);
@@ -5576,7 +5611,7 @@ export class GoalPhaseRuntime {
 
   private async repairInitialDesignOwner(manifest: InitialDesignGoalManifest, projectRoot: string, frameworkRoot: string,
     token: RunFenceToken, designFeature: string, brief: DesignRepairBriefLike, emit: (event: Record<string, unknown>) => void,
-    priorSignature?: string): Promise<UnattendedDesignRepairResult> {
+    priorSignature?: string, forceResume = false): Promise<UnattendedDesignRepairResult> {
     const runDir = path.resolve(projectRoot, manifest.report_dir);
     if (!this.options.executor && !this.options.sessionHandoff) {
       try {
@@ -5589,9 +5624,9 @@ export class GoalPhaseRuntime {
     }
     const signature = priorSignature ?? designRepairSignature(designFeature, 'initial-design', brief.items, designRepairInputFingerprint(projectRoot, designFeature));
     const events = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl')).events;
-    if (!priorSignature && designRepairAttempted(events, signature)) return { outcome: 'failed', step: 'runtime', reason: '同一设计输入/签名已尝试且未收敛，保留原预算和产物；需要真实新事实或按原有有界恢复处理。' };
+
     return runUnattendedDesignRepair({ projectRoot, frameworkRoot, feature: manifest.feature, designTarget: designRepairTarget(projectRoot, designFeature), phase: 'initial-design',
-      runId: manifest.run_id, reportDir: manifest.report_dir, requirement: manifest.requirement, brief, signature,
+      runId: manifest.run_id, reportDir: manifest.report_dir, requirement: manifest.requirement, brief, signature, forceResume,
       heldFeatureLock: null, runtimeWrites: [manifest.report_dir], emit,
       invoke: (purpose, prompt, guard) => this.invokeInitialDesignOwner(manifest, projectRoot, frameworkRoot, token, purpose, prompt, guard, emit),
       registerLockRelease: release => { designRepairLockRelease = release; },
@@ -5615,9 +5650,6 @@ export class GoalPhaseRuntime {
     const wall = resolveWallClockMs(manifest, initialDesignPhasePolicy(projectRoot, frameworkRoot, manifest).domain);
     const available = checkRunBudget(budget.totalTurns, budget.budget.max_total_turns, budget.priorActiveMs, wall - FINALIZE_RESERVE_MS);
     if (available !== 'ok') return { started: false, ok: false, detail: available === 'turns' ? 'budget_turns' : 'budget_wall_clock' };
-    if (purpose === 'author' && designRepairAuthorStarts(loadEventsJsonlStrict(path.join(runDir, 'events.jsonl')).events) >= 1 + (budget.budget.max_retries_per_phase ?? 0)) {
-      return { started: false, ok: false, detail: 'content_retry_exhausted：本事务真实作者调用额度已用尽' };
-    }
     const timeoutMs = Math.min(resolvePhaseTimeoutMs('plan', manifest), wall - budget.priorActiveMs - FINALIZE_RESERVE_MS);
     const invokeId = `${label}-i${budget.totalTurns + 1}`;
     const dir = path.join(runDir, 'phases', label, invokeId);
@@ -10527,9 +10559,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (budgetNow !== 'ok' || !(timeoutMs > 0)) {
             return { started: false, ok: false, detail: `剩余${budgetNow === 'turns' ? '调用次数' : '墙钟'}不足，不启动（${budgetNow}，timeout=${timeoutMs}ms）` };
           }
-          if (purpose === 'author' && designRepairAuthorStarts(loadAuthoritativeEvents(eventsPath)) >= 1 + (executionBudget.max_retries_per_phase ?? 0)) {
-            return { started: false, ok: false, detail: 'content_retry_exhausted：本事务真实作者调用额度已用尽' };
-          }
           const undelivered = options.sessionHandoff ? undeliveredSessionInvocation(loadAuthoritativeEvents(eventsPath)) : undefined;
           const recoverOutOfChain = undelivered?.phase === label ? undelivered : undefined;
           if (!recoverOutOfChain) totalTurns++;
@@ -11395,7 +11424,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           const history = loadAuthoritativeEvents(eventsPath);
           const attempted = [...history].reverse().find(event => event.type === 'design_authority_repair' && (event as Record<string, unknown>).stage === 'attempted' && (event as Record<string, unknown>).signature === signature);
           const ongoing = !!(attempted as Record<string, unknown> | undefined)?.handoff_context && !history.slice(history.indexOf(attempted!) + 1).some(event => event.type === 'design_authority_repair' && ['failed', 'published'].includes(String((event as Record<string, unknown>).stage)) && (event as Record<string, unknown>).signature === signature);
-          return ongoing || !designRepairAttempted([...ancestorBudgetEvents, ...history], signature);
+          const paused = [...history].reverse().find(event => event.type === 'design_authority_repair' && (event as Record<string, unknown>).signature === signature && (event as Record<string, unknown>).stage === 'failed');
+          return ongoing || (paused as Record<string, unknown> | undefined)?.failed_step === 'no_progress_guard' || !designRepairAttempted([...ancestorBudgetEvents, ...history], signature);
         };
         const currentDesignRepairSignature = (): string => {
           const history = loadAuthoritativeEvents(eventsPath);
@@ -11681,7 +11711,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           designOwnerBlockers(decisionSummary?.blockers).length > 0 &&
           retries < executionBudget.max_retries_per_phase &&
           contentRepairEligible() &&
-          (contentRepair = await runUnattendedDesignRepair({
+          (contentRepair = await runUnattendedDesignRepair({ forceResume: Boolean(argv['force-resume']),
             projectRoot, frameworkRoot, feature: manifest.feature, phase: String(phase), runId: manifest.run_id,
             requirement: manifest.requirement,
             reportDir: manifest.report_dir, brief: designBriefNow(),
@@ -11704,6 +11734,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           console.log(`\n[design-authority] 无人值守修复：${contentRepair.reason}——冻结绑定仍有效，当前阶段原地重评。\n`);
         } else if (contentRepair?.outcome === 'handoff') {
           return 3;
+        } else if (contentRepair?.outcome === 'failed' && contentRepair.step === 'no_progress_guard') {
+          driverGuardAction = 'halt';
+          haltReason = 'no_progress_guard';
+          awaitConfirmGuidance = contentRepair.reason;
+          postVerdictHaltEvent = { type: 'phase_halt', phase, halt_reason: haltReason, detail: contentRepair.reason };
         } else if (contentRepair?.outcome === 'waiting') {
           driverGuardAction = 'halt';
           haltReason = 'execution_scope_unresolved';

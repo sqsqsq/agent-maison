@@ -1888,14 +1888,31 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     }),
   },
   {
-    name: 'S16-c3d 修复后准入不通过（质询结果缺必答范围）→ 机器派生不过，不发布',
+    name: 'S16-c3d 缺必答质询范围完整反馈后仍无进展 → no_progress_guard 暂停，不发布',
     run: () => withFreshCuHost(async s => {
       // codex t6 第五轮之后，编写调用改指纹等定位之外的内容在授权边界就被拒（见 S16-r7）；准入派生不过改由质询结果触发。
-      const b = await s16Born(s, { adapter: { questioning: doc => { doc.review_summary.questioning.items = [];
+      let canonicalBefore: Buffer | undefined;
+      let questioningCalls = 0;
+      const b = await s16Born(s, { beforeBirth: async () => { canonicalBefore = fs.readFileSync(blueprintFile(s)); }, adapter: { questioning: doc => { questioningCalls++; doc.review_summary.questioning.items = []; doc.review_summary.questioning.summary = `本次独立质询措辞-${questioningCalls}`;
         return { exitCode: 1, completion_observed: true, kill_attempted: true }; } } });
       console.log(`[design-authority-repair] S16-c3d ${describeS16(b)}`);
-      const failed = assertNotPublished(s, b, 'validation', '准入不过');
-      assert(/准入（blocker）/.test(String(failed.reason)) && failed.admission_after_questioning === 'blocker', JSON.stringify(failed));
+      const repairs_ = contentRepairs(b.events);
+      const failed = repairs_.find(e => e.stage === 'failed');
+      assert(repairs_[0]?.stage === 'attempted' && failed?.failed_step === 'no_progress_guard' && !repairs_.some(e => e.stage === 'published'), describeS16(b));
+      assert.equal(failed.admission_after_questioning, 'blocker', '缺少必答范围仍不能准入');
+      assert.deepEqual(fs.readFileSync(blueprintFile(s)), canonicalBefore, 'canonical 蓝图与原质询历史不得被未通过的草稿覆盖');
+      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning', 'design-repair-author']);
+      const authorPrompts = b.log.prompts['design-repair-author'];
+      assert.equal(authorPrompts.length, 2, '完整反馈须实际送达第二轮作者');
+      assert.equal(b.log.prompts['design-repair-questioning']?.length, 1, '作者没有业务变化，不得再派质询消耗预算');
+      assert.equal(questioningCalls, 1);
+      const issues = String(failed.reason).split('\n').slice(1);
+      assert(issues.length > 1 && issues.every(issue => authorPrompts[1].includes(issue)), '全部当前机器问题须在同一次作者调用中送达');
+      for (const event of [haltOf(b.events), endOf(b.events)]) {
+        assert(event?.halt_reason === 'no_progress_guard' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'human', JSON.stringify(event));
+      }
+      assert(fs.existsSync(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair/component-blueprint.yaml')), '暂停保留未发布候选供原责任方继续');
+      assertAttemptCleanedUp(s);
     }),
   },
   {
@@ -1914,20 +1931,23 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     name: 'S16-c3f 已完成质询对当前必需scope给合法blocker：保留完整材料，拒绝降低验收的草稿且不发布',
     run: () => withFreshCuHost(async s => {
       let approved: string | undefined;
+      let questioningCalls = 0;
+      let canonicalBefore: Buffer | undefined;
       const completed = { exitCode: 1, completion_observed: true, kill_attempted: true };
       const p = project(s, SNAPSHOT_CU_FEATURE);
-      const b = await s16Born(s, { beforeBirth: async saved => { approved = saved.acceptance.criteria[0].expected_result; },
+      const b = await s16Born(s, { beforeBirth: async saved => { approved = saved.acceptance.criteria[0].expected_result; canonicalBefore = fs.readFileSync(blueprintFile(s)); },
         adapter: { author: doc => {
           ledgerDomain(doc).acceptance.criteria[0].expected_result = '刷新请求不改变任何账目，也不要求恢复结果。';
           return completed;
         }, questioning: doc => {
+          questioningCalls++;
           assert(requiredQuestioningScopes(doc).has('view:logical'), '否定必须指向本次必需质询范围');
           const item = doc.review_summary.questioning.items.find((q: Ev) => q.scope_ref === 'view:logical');
           const current = loadCanonicalChangeUnit(s.root, BLUEPRINT_ID, CU);
           assert((current.changeUnit.design_refs as Ev[]).some(ref => ref.target.view_id === 'logical' && ref.target.id === 'ledger-domain'), '当前CU实际依赖被否定的scope');
           assert(item?.verification_refs?.length > 0, '保留完整合法质询材料，不能靠缺字段制造否定');
           item.disposition = 'blocker';
-          item.answer = `当前ledger-refresh切片依赖的ledger-domain验收被降为无需刷新/恢复，与原批准结果「${approved}」矛盾；当前必需映射未获独立认可，不能发布。`;
+          item.answer = `本次独立质询措辞-${questioningCalls}：当前ledger-refresh切片依赖的ledger-domain验收被降为无需刷新/恢复，与原批准结果「${approved}」矛盾；当前必需映射未获独立认可，不能发布。`;
           item.verification_refs.push(path.relative(s.root, current.canonicalPath).replace(/\\/g, '/'));
           assert.equal(doc.review_summary.questioning.status, 'complete');
           return completed;
@@ -1935,9 +1955,24 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           assert.equal(ctx.attempt, 1, '已否定设计不得发布后回到作者执行下游');
           p.runId = ctx.runId; writeCuSpecDraft(p);
         } } });
-      const failed = contentRepairs(b.events).find(e => e.stage === 'failed');
-      assert(failed && ['questioning', 'validation'].includes(String(failed.failed_step)), describeS16(b));
-      assertNotPublished(s, b, String(failed.failed_step), '已完成质询的当前scope否定');
+      const repairs_ = contentRepairs(b.events);
+      const failed = repairs_.find(e => e.stage === 'failed');
+      assert(repairs_[0]?.stage === 'attempted' && failed?.failed_step === 'no_progress_guard' && !repairs_.some(e => e.stage === 'published'), describeS16(b));
+      assert.deepEqual(fs.readFileSync(blueprintFile(s)), canonicalBefore, '被否定的降标草稿不得覆盖 canonical 原验收与质询历史');
+      assert.deepEqual(outOfChainStarts(b.events).map(e => e.phase), ['design-repair-author', 'design-repair-questioning', 'design-repair-author']);
+      assert.equal(b.log.prompts['design-repair-author']?.length, 2);
+      assert.equal(b.log.prompts['design-repair-questioning']?.length, 1);
+      assert.equal(questioningCalls, 1, '即使真实质询会改写措辞，无业务变化也不重派');
+      const denial = String(failed.reason).split('\n').slice(1);
+      assert(denial.length > 0 && denial.every(issue => b.log.prompts['design-repair-author'][1].includes(issue)), '当前scope、问题和完整否定理由须实际送达返修作者');
+      assert(String(failed.reason).includes(`原批准结果「${approved}」`), '否定仍以真实原验收为依据');
+      for (const event of [haltOf(b.events), endOf(b.events)]) {
+        assert(event?.halt_reason === 'no_progress_guard' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'human', JSON.stringify(event));
+      }
+      const candidate = readDoc(path.join(path.dirname(runFile(s.root, b.feature, b.runId, 'events.jsonl')), 'design-repair/component-blueprint.yaml'));
+      assert.equal(candidate.review_summary.questioning.status, 'complete');
+      assert(candidate.review_summary.questioning.items.some((item: Ev) => item.scope_ref === 'view:logical' && item.disposition === 'blocker' && String(item.answer).includes(`原批准结果「${approved}」`)), '暂停保留完整合法质询否定，不降低验收');
+      assertAttemptCleanedUp(s);
       assert(b.events.some(e => e.type === 'agent_invoke_end' && e.phase === 'design-repair-questioning'
         && e.exit_code === 1 && e.completion_observed === true), '调用完成与质询业务否定必须同时被真实runtime观察');
     }),

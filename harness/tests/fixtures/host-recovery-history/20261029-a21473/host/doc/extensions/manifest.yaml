@@ -1,0 +1,48 @@
+schema_version: "1.0"
+name: wallet-sdk-demo
+version: "0.21.0"
+description: 演示用实例扩展包（钱包 SDK 接入向导 + knowledge + hooks；路径对齐 plan §7.13 白名单）
+provides:
+  skills:
+    - wallet-sdk-onboarding
+    - story
+  knowledge:
+    - knowledge/component-profile.md
+    - knowledge/codebase-facts.md
+    - knowledge/constraints/README.md
+    - knowledge/constraints/ux-consistency.md
+    - knowledge/constraints/security-privacy.md
+    - knowledge/constraints/dfx-baseline.md
+    - knowledge/constraints/compatibility-checklist.md
+    - knowledge/constraints/env-exceptions.md
+    - knowledge/constraints/deliverables.md
+  hooks:
+    spec:
+      on_context_load:
+        - hooks/constraint-application.md
+        - hooks/spec/on_context_load.md
+        - hooks/spec/story_on_context_load.mjs
+      post_check:
+        - hooks/spec/post_check.mjs
+    plan:
+      on_context_load:
+        - hooks/constraint-application.md
+    coding:
+      on_context_load:
+        - hooks/constraint-application.md
+    review:
+      on_context_load:
+        - hooks/constraint-application.md
+    ut:
+      on_context_load:
+        - hooks/constraint-application.md
+    testing:
+      on_context_load:
+        - hooks/constraint-application.md
+  phase_rules_overlays:
+    spec: rules/spec-rules.overlay.yaml
+    plan: rules/plan-rules.overlay.yaml
+    coding: rules/coding-rules.overlay.yaml
+    review: rules/review-rules.overlay.yaml
+    ut: rules/ut-rules.overlay.yaml
+    testing: rules/testing-rules.overlay.yaml

@@ -25,3 +25,10 @@ Enforcement: `harness/scripts/utils/design-delivery-entry.ts`, `harness/scripts/
 
 - **WHEN** the request is design-only, maintenance, single-duty or uses a profile without the required design lens
 - **THEN** entry SHALL preserve the authorized endpoint and actual capability boundary rather than force App design or construction
+
+#### Scenario: Admission metadata belongs to the machine
+
+- **WHEN** a new managed design starts or a legacy blueprint lacks current_slice
+- **THEN** runtime SHALL provide the new current slice technical ID before authoring and own the entire admission block; authors SHALL only reference that ID in business gap.needed_by
+- **AND** existing IDs SHALL remain stable; legacy empty gaps MAY receive the blueprint-derived ID, while legacy nonempty gaps SHALL receive the machine label while retaining their original needed_by/status and invalidating old questioning for real independent clarification, without guessing current versus future or hiding a real blocker
+- **AND** writeback, complete validation and consumers SHALL share the same derivation, with accurate metadata diagnostics instead of claiming unfrozen business contracts

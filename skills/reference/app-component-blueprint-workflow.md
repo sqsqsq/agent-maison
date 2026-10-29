@@ -343,3 +343,10 @@ checker 无 BLOCKER，独立质询完成，当前切片可施工，P1 派生结�
 无 UI 维度可 not_applicable；有 UI 缺索引必须 unknown|degraded + unknown gap（verification_refs 含 provider:component-assets），owner/needed_by/unlock_condition 齐全。远期 open_decision 可继续，当前切片依赖则 blocker，不伪造选型。依赖预检复用 componentDependencyAllowed；顺序换选>plan 声明下沉>用户批新边。无人值守原需求内由设计方静默裁决新边并经原配置 writer 重签；有人在场保持原确认。真实授权未成立时保留 open_decision/blocker 及原因。Story publication 由同一 renderer 输出四个选型字段并跑 --projection。
 
 无人值守时 evolution_candidate.human_decision 仍用原字段和值域，由设计责任方依据原请求和事实填写，provenance 不伪称用户逐项确认。typed UI 与独立节点消费同一选型事实；带 asset_resolution 的类型错写在设计期指出，普通业务 kind 不封闭成枚举。
+
+
+### 机器准入与设计续作
+
+`review_summary.admission` 整块由 runtime 写回，包含当前切片技术编号；新受管请求在作者动笔前提供编号，作者只在业务 `gap.needed_by` 引用，不写 admission。已有编号和 gap 关联保持；旧蓝图缺编号且 `gaps=[]` 时由机器按 blueprint_id 补齐，有 gap 时机器分配标签但保留原 needed_by/status，作废旧质询并重新独立核实归属；歧义或真实 blocker 交作者修业务 gap，不推断当前/远期或把真实 blocker 洗成通过。机器元数据缺失不等于业务契约未冻结。
+
+初建及设计修订每轮把全部当前机器问题和独立质询否定一次交真正责任方；机器异常由框架处理，作者不修机器准入、不自签质询。只守原请求累计总预算与既有无进展规则，超过局部次数但问题或实际候选仍有进展即可继续。同问题且可比实际候选无变化沿 `no_progress_guard` 暂停，用户明确继续或真实条件变化可接回；时间到不算变化，读失败或无基线为未知，机器元数据变化不算业务进展。

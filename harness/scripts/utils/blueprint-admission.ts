@@ -20,12 +20,19 @@ export interface DerivedBlueprintAdmission {
   asset_blocker_gap_indexes: number[];
 }
 
+/** Preserve existing associations; legacy gaps without an ID retain their declared disposition. */
+export function currentBlueprintSliceId(blueprint: BlueprintRecord): string | undefined {
+  const existing = asRecord(asRecord(asRecord(blueprint.review_summary)?.admission)?.current_slice)?.slice_id;
+  if (nonEmptyString(existing)) return existing;
+  return nonEmptyString(blueprint.blueprint_id) ? `${blueprint.blueprint_id}:current` : undefined;
+}
+
 /**
  * 准入的唯一派生（plan 9c3d7e1a §5.5 第 4 步）：校验器与无人值守修复的运行时写回同源。
- * `current_slice.slice_id` 是作者字段，这里只读不改。
+ * admission 整块由机器维护；已有切片编号和业务 gap 关联保持。
  */
 export function deriveBlueprintAdmission(blueprint: BlueprintRecord, upstreamIssues: BlueprintIssue[] = []): DerivedBlueprintAdmission {
-  const currentSlice = asRecord(asRecord(asRecord(blueprint.review_summary)?.admission)?.current_slice);
+  const sliceId = currentBlueprintSliceId(blueprint);
   const blockerIds = upstreamIssues.filter(item => item.severity === 'BLOCKER').map(item => item.id);
   const rootQuestionsComplete = !blockerIds.some(id => id.startsWith('app_lens_') || id.startsWith('blueprint_questioning_'));
   const contractsReady = asRecords(blueprint.contracts).length > 0
@@ -43,7 +50,7 @@ export function deriveBlueprintAdmission(blueprint: BlueprintRecord, upstreamIss
     || id === 'blueprint_relations_empty',
   );
   const assetGaps = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps).flatMap((gap, index) =>
-    gap.needed_by === currentSlice?.slice_id && gap.status === 'blocker'
+    (sliceId ? gap.needed_by === sliceId : gap.status === 'blocker') && gap.status === 'blocker'
       && asStrings(gap.verification_refs).includes('provider:component-assets') ? [index] : []);
   for (const _index of assetGaps) blockerIds.push('blueprint_current_asset_blocker');
   return {
@@ -69,7 +76,10 @@ export function validateBlueprintAdmission(
   }
   const currentSlice = asRecord(admission.current_slice);
   if (!currentSlice || !nonEmptyString(currentSlice.slice_id)) {
-    out.push(issue('blueprint_admission_current_slice_not_ready', '$.review_summary.admission.current_slice', '当前切片必须冻结契约和 design refs，或显式声明受控 fake。'));
+    const gaps = asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps);
+    out.push(issue('blueprint_admission_current_slice_not_ready', gaps.length ? '$.decisions_and_gaps.gaps' : '$.review_summary.admission.current_slice', gaps.length
+      ? `旧设计缺少可核实的当前切片关联；机器候选标签=${String(blueprint.blueprint_id)}:current。设计责任方按真实业务核实 gap.needed_by，不猜当前/远期：${gaps.map(gap => `${String(gap.gap_id)} needed_by=${String(gap.needed_by)} status=${String(gap.status)}`).join('；')}`
+      : '机器准入元数据缺少当前切片编号；由运行时补齐，不代表业务契约未冻结。'));
   } else {
     if (currentSlice.contracts_ready !== derived.contracts_ready) {
       out.push(issue('blueprint_admission_self_asserted', '$.review_summary.admission.current_slice.contracts_ready', `contracts_ready 必须由契约 checker 派生为 ${derived.contracts_ready}。`));
@@ -79,6 +89,7 @@ export function validateBlueprintAdmission(
     }
   }
   asRecords(asRecord(blueprint.decisions_and_gaps)?.gaps).forEach((gap, index) => {
+
     if (gap.status === 'not_applicable' && gap.knowledge_state === 'unknown') {
       out.push(issue('blueprint_unknown_erased_by_na', `$.decisions_and_gaps.gaps[${index}]`, 'unknown 不得被 not_applicable 洗掉。'));
     }

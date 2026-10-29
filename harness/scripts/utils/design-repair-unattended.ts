@@ -21,7 +21,8 @@ import * as fs from 'fs';
 import { BlueprintReviewResult, materializeBlueprintReview, summarizeBlueprintReviewResults } from './blueprint-review-materialization';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { deriveBlueprintAdmission } from './blueprint-admission';
+import { deriveBlueprintAdmission, currentBlueprintSliceId } from './blueprint-admission';
+import { shouldHaltNoProgress, compareRelatedInputSnapshots, type ArtifactSnapshot } from './goal-failure-classifier';
 import { reconcileP1DerivedResults } from './blueprint-reconciliation';
 import { renderQuestioningResultInstructions, independentQuestioningBlockers } from './blueprint-questioning';
 import { resolveBlueprintTarget } from './blueprint-addressing';
@@ -132,6 +133,55 @@ export function designRepairInputFingerprint(projectRoot: string, feature: strin
   } catch { return undefined; }
 }
 
+/** Compare the actual work files, with the same narrow publication exclusions as design repair. */
+export function designWorkSnapshot(files: readonly string[], contents: Record<string, string> = {}, includeQuestioning = false): ArtifactSnapshot {
+  const out: ArtifactSnapshot = {};
+  for (const file of files) {
+    try {
+      const text = Object.prototype.hasOwnProperty.call(contents, file) ? contents[file] : fs.readFileSync(file, 'utf8');
+      let value: unknown;
+      try { value = YAML.parse(text); } catch { value = text; }
+      const normalize = (input: unknown): unknown => {
+        const record = asRecord(input);
+        if (!record) return input;
+        const copy = structuredClone(record);
+        if (copy.artifact === 'component-blueprint@1') {
+          for (const key of ['revision', 'provenance', 'derived_results']) delete copy[key];
+          const review = asRecord(copy.review_summary);
+          if (review) { delete review.admission; if (!includeQuestioning) delete review.questioning; if (!Object.keys(review).length) delete copy.review_summary; }
+        } else if (copy.artifact === 'change-unit@1') {
+          delete copy.revision;
+          for (const ref of blueprintIdentityPointers(copy)) {
+            if (ref) for (const key of ['revision', 'source_fingerprint', 'artifact_sha256']) delete ref[key];
+          }
+          const provenance = asRecord(copy.provenance);
+          if (provenance) for (const key of ['source_revision', 'observed_at', 'extraction_method']) delete provenance[key];
+        }
+        return copy;
+      };
+      // Candidate arrays wrap the exact artifact; business children with matching key names are retained.
+      if (Array.isArray(value)) value = value.map(item => {
+        const candidate = asRecord(item);
+        return candidate && asRecord(candidate.artifact) ? { ...candidate, artifact: normalize(candidate.artifact) } : normalize(item);
+      });
+      else value = normalize(value);
+      out[file] = { exists: true, contentHash: crypto.createHash('sha256').update(stableStringify(value)).digest('hex') };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') out[file] = { exists: false, contentHash: '' };
+      else return {}; // A failed read cannot establish no progress, even on a repeated failure.
+    }
+  }
+  return out;
+}
+
+export function designWorkHasNoProgress(priorIssues: readonly string[] | undefined, issues: readonly string[],
+  before: ArtifactSnapshot | undefined, after: ArtifactSnapshot): boolean {
+  if (!priorIssues || compareRelatedInputSnapshots(before, after) === 'unknown') return false;
+  return shouldHaltNoProgress({ failureKind: 'code_regression', relevantEvidenceKnown: true,
+    priorBlockerSignature: stableStringify([...priorIssues].sort()), currentBlockerSignature: stableStringify([...issues].sort()),
+    priorArtifactSnapshot: before ?? null, currentArtifactSnapshot: after });
+}
+
 /**
  * 同一签名是否已经尝试过：只认 `attempted`（落盘在派发之前；调用期间被删会由 events.jsonl 的只追加核对检出并补回）。
  * 事件来自当前 run 与既有祖先回放，不建账本。
@@ -153,11 +203,6 @@ function repairRoleStart(events: GoalRunEvent[], purpose: DesignRepairPurpose, a
   const opposite = designRepairInvokeLabel(purpose === 'author' ? 'questioning' : 'author');
   const upper = events.findIndex((event, index) => index > lower && event.type === 'agent_invoke_start' && event.phase === opposite);
   return [...events.slice(lower + 1, upper < 0 ? undefined : upper)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel(purpose));
-}
-
-export function designRepairAuthorStarts(events: readonly GoalRunEvent[]): number {
-  const at = events.map(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').lastIndexOf(true);
-  return events.slice(at + 1).filter(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('author')).length;
 }
 
 export function replayDesignRepairInvocation(runDir: string, purpose: DesignRepairPurpose, acceptedInvokeId?: string,
@@ -263,6 +308,8 @@ export interface UnattendedDesignRepairInput {
   recordEventLines: () => () => Array<{ file: string; line: string }>;
   /** Root requests return to the existing P1/P2 readiness reader instead of probing a fictional CU run. */
   recheckReadiness?: () => { ready: boolean; reason?: string };
+  /** Trusted existing force-resume input; never inferred from transport or elapsed time. */
+  forceResume?: boolean;
 }
 
 export type UnattendedDesignRepairResult =
@@ -395,17 +442,23 @@ function snapshotRoots(projectRoot: string): string[] {
 
 /** 运行时写回准入：只用校验器同源的派生函数；不复用作者对象（YAML 别名可能共享节点），整段换成新对象。 */
 export function writeBackAdmission(draft: BlueprintRecord, context: { projectRoot: string; canonicalPath: string; architecture?: ArchitectureDsl }): ReturnType<typeof deriveBlueprintAdmission> {
+
+  const existingSlice = asRecord(asRecord(reviewOf(draft).admission)?.current_slice)?.slice_id;
+  if (typeof existingSlice !== 'string' || !existingSlice.trim()) {
+    // A legacy gap's association is semantic work: preserve it and require fresh independent questioning.
+    if (asRecords(asRecord(draft.decisions_and_gaps)?.gaps).length) {
+      const review = { ...reviewOf(draft) }; delete review.questioning; draft.review_summary = review;
+    }
+  }
   const derived = deriveBlueprintAdmission(draft, validateComponentBlueprintUpstream(draft, context));
   const review = reviewOf(draft);
-  const admission = asRecord(review.admission) ?? {};
-  const slice = asRecord(admission.current_slice);
+  const sliceId = currentBlueprintSliceId(draft);
   draft.review_summary = {
     ...review,
     admission: {
-      ...admission,
       status: derived.status,
       root_questions_complete: derived.root_questions_complete,
-      ...(slice ? { current_slice: { ...slice, contracts_ready: derived.contracts_ready, design_refs_ready: derived.design_refs_ready } } : {}),
+      ...(sliceId ? { current_slice: { slice_id: sliceId, contracts_ready: derived.contracts_ready, design_refs_ready: derived.design_refs_ready } } : {}),
       blocker_refs: derived.status === 'pass' ? [] : [...new Set(derived.blocker_ids)],
     },
   };
@@ -518,7 +571,6 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const historyRuns = family?.runs ?? [{ manifest, events: currentEvents }, ...(lineage?.ancestorRuns ?? []).map(run => ({
       manifest: loadGoalRunManifestFromRun(projectRoot, run.run_id, { feature: input.feature }), events: run.events,
     }))];
-    const maxContentRetries = (family?.budget ?? manifest.budget).max_retries_per_phase ?? 0;
     let authorFeedback = priorRepairFeedback(projectRoot, historyRuns, input.signature);
     const priorAttempt = [...sessionEvents(runDir)].reverse().find(event => event.type === 'design_authority_repair'
       && (event as Record<string, unknown>).signature === input.signature && (event as Record<string, unknown>).stage === 'attempted') as Record<string, unknown> | undefined;
@@ -646,7 +698,49 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     let text = '';
     let authorPreimage = structuredClone(baseDoc);
     let afterQuestioning: string | null = null;
-    for (let round = 0; round <= maxContentRetries; round++) {
+    let previousIssues: string[] | undefined;
+    let previousWork: ArtifactSnapshot | undefined;
+    const repairEvents = sessionEvents(runDir);
+    const paused = [...repairEvents].reverse().find(event => event.type === 'design_authority_repair' && 'signature' in event && event.signature === input.signature && 'stage' in event && event.stage === 'failed');
+    if (paused && 'failed_step' in paused && paused.failed_step === 'no_progress_guard' && 'reason' in paused) {
+      authorFeedback.push(String(paused.reason));
+      const pausedAt = repairEvents.indexOf(paused);
+      const latestQuestion = repairRoleStart(repairEvents.slice(0, pausedAt), 'questioning');
+      const continuing = repairEvents.slice(pausedAt + 1).some(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('author'));
+      if (input.requirement) context.architecture = JSON.parse(fs.readFileSync(architectureDraftFile, 'utf8')) as ArchitectureDsl;
+      let savedWork: ArtifactSnapshot | undefined;
+      try {
+        if (latestQuestion?.invoke_id) {
+          const issued = sessionExecutionForInvoke(runDir, latestQuestion.invoke_id);
+          const accepted = issued && acceptedSessionReport(runDir, issued);
+          const saved = accepted ? readHandoffMaterial<{ draft_outputs: Record<string, string> }>(runDir, accepted.event.handoff_report!)
+            : JSON.parse(fs.readFileSync(path.join(runDir, 'phases', designRepairInvokeLabel('questioning'), latestQuestion.invoke_id, 'design-result.json'), 'utf8'));
+          if (authorDrafts.every(file => typeof saved.draft_outputs?.[path.basename(file)] === 'string')) {
+            const contents = Object.fromEntries(authorDrafts.map(file => [file, Buffer.from(saved.draft_outputs[path.basename(file)], 'base64').toString('utf8')]));
+            savedWork = designWorkSnapshot(authorDrafts, contents);
+            questioned = YAML.parse(contents[draftFile]) as BlueprintRecord;
+            writeBackAdmission(questioned, context);
+          }
+        }
+      } catch { /* Missing original role outputs are an unknown comparison baseline. */ }
+      if (!input.forceResume && !continuing) {
+        const current = readDraft('author');
+        writeBackAdmission(current, context);
+        const issues = [...blockerIssues(validateComponentBlueprint(current, context)).map(issue => `${issue.id}@${issue.path}: ${issue.message}`),
+          ...independentQuestioningBlockers(current).map(item => `${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? '')}`)];
+        const reason = `当前全部机器问题与独立质询否定仍相同，实际未发布设计候选无变化；后台对原请求使用 --force-resume、会话使用 --force-takeover 明确继续，或补充真实信息/产物后重发；原预算与历史保留。\n${issues.join('\n')}`;
+        if (String(paused.reason).split('\n').slice(1).join('\n') === issues.join('\n') && designWorkHasNoProgress(issues, issues, savedWork, designWorkSnapshot(authorDrafts))) {
+          throw new AttemptFailure('no_progress_guard', reason);
+        }
+      }
+      previousIssues = String(paused.reason).split('\n').slice(1);
+      previousWork = savedWork;
+      authorPreimage = continuing ? structuredClone(questioned) : readDraft('author');
+      delete asRecord(authorPreimage.review_summary)!.questioning;
+      if (!continuing) writeDraft(authorPreimage);
+      afterQuestioning = repairEvents.slice(0, pausedAt).filter(event => event.type === 'agent_invoke_start' && (event.phase === designRepairInvokeLabel('author') || event.phase === designRepairInvokeLabel('questioning'))).at(-1)?.invoke_id ?? null;
+    }
+    for (let round = 0; ; round++) {
       // Re-entry replays prior rounds from their real role archives, never from the author's output as preimage.
       const currentCuInput = originalCu ? round === 0 ? originalCu.changeUnit : asRecord(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8'))) : undefined;
       const currentRefs = [...new Set([...baselineRefs, ...blueprintSourceRefFiles(projectRoot, authorPreimage).map(relOf)])];
@@ -702,6 +796,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         : outOfScopePaths(authorPreimage, authored, blueprintId, input.brief.items);
       if (outside.length) {
         throw new AttemptFailure('author_scope', `编写调用改了本次 B1 发现项定位之外的蓝图内容（越权，不发布）：${outside.slice(0, 20).join('、')}${outside.length > 20 ? ` 等 ${outside.length} 处` : ''}`);
+      }
+      if (designWorkHasNoProgress(previousIssues, previousIssues ?? [], previousWork, designWorkSnapshot(authorDrafts))) {
+        writeDraft(questioned);
+        throw new AttemptFailure('no_progress_guard', `当前全部机器问题与独立质询否定仍相同，实际未发布设计候选无变化；后台对原请求使用 --force-resume、会话使用 --force-takeover 明确继续，或补充真实信息/产物后重发；原预算与历史保留。\n${previousIssues!.join('\n')}`);
       }
       // ③ 运行时：作废草稿整份旧质询（canonical 历史不动）；登记新 revision 与修订依据（根 provenance）；旧派生结论标 stale；机器派生并写回准入。
       const review = { ...reviewOf(authored) };
@@ -768,17 +866,20 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       // ⑤ 机器裁决：发布的就是这份字节——对它的解析结果（草稿对象）按真实宿主根与 canonical 路径校验。
       text = YAML.stringify(questioned);
       const blockers = blockerIssues(validateComponentBlueprint(YAML.parse(text), context));
-      if (derived.status !== 'pass' || blockers.length) {
-        throw new AttemptFailure('validation', `草稿未通过校验 / 准入（${derived.status}）：${blockers.map(issue => `${issue.id}@${issue.path}`).slice(0, 12).join(', ')}`);
-      }
-      // 报告完整不代表质询认可；显式否定走既有失败出口，远期 open_decision 仍沿原规则。
       const denied = independentQuestioningBlockers(questioned);
-      if (denied.length) {
-        if (round === maxContentRetries) throw new AttemptFailure('questioning', `独立质询否定草稿，原内容返修额度已用尽，不发布：${denied.map(item => `${String(item.scope_ref)}：${String(item.answer ?? item.question)}`).join('；')}`);
+      const issues = [...blockers.map(issue => `${issue.id}@${issue.path}: ${issue.message}`),
+        ...denied.map(item => `${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}`)];
+      if (derived.status !== 'pass' || issues.length) {
+        const work = designWorkSnapshot(authorDrafts);
+        if (designWorkHasNoProgress(previousIssues, issues, previousWork, work)) {
+          writeDraft(questioned);
+          throw new AttemptFailure('no_progress_guard', `当前全部机器问题与独立质询否定仍相同，实际未发布设计候选无变化；后台对原请求使用 --force-resume、会话使用 --force-takeover 明确继续，或补充真实信息/产物后重发；原预算与历史保留。\n${issues.join('\n')}`);
+        }
+        previousIssues = issues; previousWork = work;
         const questionStart = repairRoleStart(sessionEvents(runDir), 'questioning', authorStart.invoke_id);
         if (!questionStart?.invoke_id) throw new AttemptFailure('questioning', '缺本轮真实质询调用标识，不能凭摘要返修。');
         const source = path.join(runDir, 'phases', designRepairInvokeLabel('questioning'), questionStart.invoke_id);
-        authorFeedback = [`本事务当前独立质询的完整未过项：${source}\n${JSON.stringify(denied.map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer })), null, 2)}\n保留当前未发布候选，在原授权写集内修复并由同一独立职责重新核实；不要改写质询或准入结果，不把旧运输成功当作本轮完成。`];
+        authorFeedback = [`本事务当前全部机器问题与独立质询未过项：${source}\n${issues.join('\n')}\n保留当前未发布候选，在原授权写集内修复并由同一独立职责重新核实；不要改写质询或准入结果，不把旧运输成功当作本轮完成。`];
         authorPreimage = structuredClone(questioned);
         delete asRecord(authorPreimage.review_summary)!.questioning;
         writeDraft(authorPreimage);
@@ -898,7 +999,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         outcome: 'unrecovered', failed_step: failure.step, reason, ...evidence });
       return { outcome: 'published', recovered: false, step: failure.step, revision: published.revision, reason };
     }
-    fs.rmSync(path.join(projectRoot, input.reportDir, 'design-repair'), { recursive: true, force: true });
+    if (failure.step !== 'no_progress_guard') fs.rmSync(path.join(projectRoot, input.reportDir, 'design-repair'), { recursive: true, force: true });
     const files = failure.violation?.changes.slice(0, 50).map(change => ({ path: change.path, how: change.how, pre_sha256: change.preSha256, post_sha256: change.postSha256 }));
     input.emit({ ...base, stage: 'failed', failed_step: failure.step, reason: failure.message, ...(files?.length ? { files } : {}), ...evidence });
     if (failure.containmentUnresolved) return { outcome: 'containment_unresolved', step: failure.step as DesignRepairPurpose, reason: failure.message };

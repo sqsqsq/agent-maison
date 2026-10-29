@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { createHash } from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
-import { asRecord, asRecords } from './component-blueprint-model';
+import { asRecord, asRecords, ComponentBlueprintResolutionError } from './component-blueprint-model';
 import { loadFrameworkConfig, relFeaturesDir, featureFilePath } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
@@ -31,7 +31,8 @@ import { extractCodexAgentMessageText } from './codex-terminal-events';
 import { extractClaudeFinalResultText } from './claude-envelope';
 import { isClaudeKernelAdapter } from './types';
 import { invocationCompleted } from './invocation-completion';
-import { renderDesignAuthorityBoundary } from './design-repair-unattended';
+import { renderDesignAuthorityBoundary, writeBackAdmission } from './design-repair-unattended';
+import { currentBlueprintSliceId } from './blueprint-admission';
 import type { ProviderRef } from './types';
 
 export interface InitialDesignRunInput {
@@ -249,13 +250,16 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       return { ...base, kind: 'construction', progression, issues: progression.reasons };
     }
     const loaded = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature);
+    writeBackAdmission(loaded.blueprint, { projectRoot: input.projectRoot, canonicalPath: blueprintPath });
     const denied = independentQuestioningBlockers(loaded.blueprint);
-    if (denied.length) return { ...base, kind: 'author', issues: denied.map(item => `独立质询否定 ${String(item.scope_ref)}：${String(item.answer ?? item.question)}；由设计作者修复，原独立质询再核。`) };
     const issues = validateComponentBlueprint(loaded.blueprint, { projectRoot: input.projectRoot, canonicalPath: blueprintPath }).filter(issue => issue.severity === 'BLOCKER');
-    const authorIssues = issues.filter(issue => !issue.id.startsWith('blueprint_questioning_') && !issue.id.startsWith('blueprint_admission_'));
-    if (authorIssues.length) return { ...base, kind: 'author', issues: issues.map(issue => `${issue.id} ${issue.path}: ${issue.message}`) };
-    if (issues.some(issue => issue.id.startsWith('blueprint_questioning_'))) return { ...base, kind: 'questioning', issues: issues.map(issue => `${issue.id} ${issue.path}: ${issue.message}`) };
-    if (issues.length) return { ...base, kind: 'author', issues: issues.map(issue => `${issue.id} ${issue.path}: ${issue.message}`) };
+    const feedback = [...issues.map(issue => `${issue.id} ${issue.path}: ${issue.message}`),
+      ...denied.map(item => `独立质询否定 ${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}；由设计作者修复，原独立质询再核。`)];
+    // Ownership follows the failing field, including derived admission issues; IDs are not a routing protocol.
+    const authorIssues = issues.filter(issue => !issue.path.startsWith('$.review_summary.questioning') && !issue.path.startsWith('$.review_summary.admission'));
+    if (authorIssues.length || denied.length) return { ...base, kind: 'author', issues: feedback };
+    if (issues.some(issue => issue.path.startsWith('$.review_summary.questioning'))) return { ...base, kind: 'questioning', issues: feedback };
+    if (issues.length) throw new Error(`机器准入派生未收敛：${feedback.join('\n')}`);
     if (!units.length) return { ...base, kind: 'decompose', issues: ['已准入蓝图尚无canonical CU，提出ChangeUnitCandidate[]供原consumer原子接受。'] };
     const readySet = deriveChangeUnitReadySet(input.projectRoot, input.manifest.feature);
     const progression = deriveChangeUnitProgressionDecision(readySet, inspection);
@@ -272,7 +276,10 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       }
     }
     return { ...base, kind: 'construction', progression, issues: progression.reasons };
-  } catch (error) { return { ...base, kind: 'author', issues: [(error as Error).message] }; }
+  } catch (error) {
+    if (!(error instanceof ComponentBlueprintResolutionError)) throw error;
+    return { ...base, kind: 'author', issues: [(error as Error).message] };
+  }
 }
 
 export function initialDesignInvocationLabel(observation: InitialDesignObservation): string {
@@ -342,7 +349,7 @@ function questioningReadingInstruction(blueprintPath: string, recheck: boolean):
     : `评审文档：${review}；正文止于“技术与追溯参考”入口。当前未定位到准确截止行，先在该现有文档定位边界，不猜测读取整篇。`;
   return `${range}\n${recheck
     ? '这是修订后的独立复核：按P1 §4/§5收尾顺序，从头通读当前正文，核既有意见、修法直接影响及跨段一致性；需要依据时再定向核相关原文、事实与精确验收。不重做完整八问、全需求/全源码或架构评审，不仅看diff或凭初稿记忆。'
-    : '这是首次独立阅读：先只读首屏和上述正文范围，按P1 §5逐题回答八问并定位仍看不懂之处；完成前不读参考区、YAML、需求原文或项目源码，不用作者解释替正文补全含义。'}\n正文阅读后再读取以下来源位置、当前YAML/schema及必要源码核源，按当前必答scope完成实质质询；前次结论不能代替本轮核验。`;
+    : '这是首次独立阅读：先只读首屏和上述正文范围，按P1 §5逐题回答八问并定位仍看不懂之处；完成前不读参考区、YAML、需求原文或项目源码，不用作者解释替正文补全含义。'}\n正文阅读后再读取以下来源位置、当前YAML/schema及必要源码核源，按当前必答scope完成实质质询；特别核实每个gap.needed_by按真实业务属于当前切片还是受控远期，机器编号不改变原gap.status，仍不明确或原blocker未解除就否定并交作者澄清业务gap；前次结论不能代替本轮核验。`;
 }
 
 export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[] }): string {
@@ -350,6 +357,9 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
   const questioning = observation.kind === 'questioning';
   const designRole = questioning || observation.kind === 'author';
   const prior = previousDesignWork(input);
+  let sliceId = `${manifest.feature}:current`;
+  try { sliceId = currentBlueprintSliceId(loadCanonicalBlueprint(input.projectRoot, manifest.feature).blueprint) ?? sliceId; }
+  catch { /* A missing or malformed author draft still receives the machine-allocated ID. */ }
   const sources = (manifest.requirement_source_files ?? []).join('、') || `${manifest.report_dir}/manifest.json#requirement`;
   const schemas = ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json'];
   return [
@@ -358,6 +368,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     ]),
     `需求原件${questioning ? '位置（正文阅读后核源）' : ''}：${sources}`,
     `固定blueprint_id=${manifest.feature}；产品工程根=${input.projectRoot}；框架根=${frameworkRoot}。`,
+    ...(observation.kind === 'author' ? [`机器分配的当前切片技术标识=${sliceId}。作者只在业务gap.needed_by引用；admission整块（含current_slice和编号）由runtime维护，作者不得写入。`] : []),
     `读取 ${path.join(frameworkRoot, 'skills/project/component-design/SKILL.md')} 及其P1工作流；${questioning ? '工程AGENTS、catalog/glossary/architecture和必要源码在正文阅读后按核源步骤读取。' : '执行前读取工程AGENTS、catalog/glossary/architecture和相关真实源码。'}`,
     `当前准确schema：${schemas.map(name => path.join(frameworkRoot, 'harness/schemas', name)).join('；')}。${questioning ? '正文阅读后核源时' : ''}读取schema原文与相关跨视图检查规则，不猜字段、不复制示例答案。`,
     ...(input.autonomyAuthorized ? [
@@ -370,7 +381,6 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     ] : []),
     '只展开当前交付切片，复用已批准机器投影；按原P1契约声明稳定义务及真实内部/外部契约，不伪造质量结果。',
     `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : observation.kind === 'questioning' ? observation.blueprintPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
-    `当前职责=${observation.kind}。问题：\n${observation.issues.join('\n')}`,
     ...prior.lines,
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
@@ -392,6 +402,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     `蓝图位置：${observation.blueprintPath}；候选位置：${observation.candidatesPath}。候选形状为[{providerId,artifact}]，已有CU不重复创建。`,
     `实际检查命令（cwd=${path.join(frameworkRoot, 'harness')}）：npm run check:component-blueprint -- --project-root "${input.projectRoot}" --blueprint "${manifest.feature}" ${observation.kind === 'author' ? '--write-review ' : ''}--json。检查仍待质询不等于任务停止，报告真实产物/问题后由runtime继续。`,
     '完成本职工作后真实报告；作者调用结束不是原始交付完成。runtime负责真实检查、独立质询、CU接受/readiness与后续施工，不要自选阶段或伪造CU身份。',
+    `当前职责=${observation.kind}。问题：\n${observation.issues.join('\n')}`,
   ].join('\n\n');
 }
 

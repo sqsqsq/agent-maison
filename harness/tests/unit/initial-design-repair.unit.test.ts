@@ -37,7 +37,7 @@ import type { UnitCaseResult } from '../run-unit';
 
 type Host = Parameters<Parameters<typeof withFreshCuHost>[0]>[0];
 type Document = Record<string, any>;
-type Scenario = 'root' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'exhausted' | 'self-signed-retry' | 'session-retry' | 'session-budget' | 'design-owner' | 'design-owner-external' | 'design-owner-budget' | 'design-owner-retain';
+type Scenario = 'root' | 'outside-write' | 'readiness-blocked' | 'normal' | 'retry' | 'exhausted' | 'self-signed-retry' | 'session-retry' | 'session-budget' | 'design-owner' | 'design-owner-external' | 'design-owner-budget' | 'design-owner-retain' | 'session-progress-recovery' | 'session-architecture-recovery';
 const CU = deriveChangeUnitFeatureId(BLUEPRINT_ID, 'ledger-refresh');
 const requirement = '在已准入账目蓝图的原目标内补齐CU设计引用，再继续账目刷新与恢复的完整交付；不得降低验收或修改框架。';
 const read = (file: string): Document => YAML.parse(fs.readFileSync(file, 'utf8'));
@@ -53,6 +53,7 @@ function assertNoChildRun(host: Host): void {
 }
 
 async function scenario(host: Host, mode: Scenario): Promise<void> {
+  const recovery = mode === 'session-progress-recovery' || mode === 'session-architecture-recovery';
   const workspace = featureFilePath(host.root, BLUEPRINT_ID, '');
   for (const unit of enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID)) {
     if (unit.changeUnit.change_unit_id === 'ledger-refresh') continue;
@@ -147,15 +148,29 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
     authorCalls++;
     if (authorCalls > 1) {
       assert.equal(doc.review_summary.questioning, undefined, 'next author input is the actual prior Q output with questioning removed');
-      doc.review_summary.summary = String(doc.review_summary.summary ?? '') + ' 第二轮已补原范围失败恢复说明';
+      if (!recovery && (mode !== 'exhausted' || authorCalls <= 4)) doc.review_summary.summary = String(doc.review_summary.summary ?? '') + ' 第二轮已补原范围失败恢复说明';
       if (mode === 'self-signed-retry') doc.review_summary.questioning = { status: 'complete', provider_id: 'author', items: [] };
+    }
+    if (mode === 'session-architecture-recovery' && authorCalls === 1) {
+      const file = path.join(path.dirname(draft), 'architecture.json');
+      const architecture = JSON.parse(fs.readFileSync(file, 'utf8'));
+      architecture.outer_layers.push({ id: '05-Recovery', can_depend_on: [], intra_layer_deps: 'forbid' });
+      fs.writeFileSync(file, JSON.stringify(architecture));
+      doc.decisions_and_gaps.decisions.push({ decision_id: 'add-recovery-module', kind: 'architecture_impact', change: 'add_module',
+        module: 'recovery-helper', layer: '05-Recovery', status: 'decided_with_authority', rationale: '原恢复设计职责的真实模块归属',
+        owner: 'design-owner', verification_refs: ['view:development'], provenance: structuredClone(doc.provenance) });
+    }
+    if (mode === 'session-progress-recovery' && authorCalls === 2) {
+      // Exercise the post-Q pause: author changes machine fingerprints, then runtime restores them.
+      doc.source_fingerprint = doc.discovery.source_fingerprint = 'regenerated-by-runtime';
     }
     write(path.join(path.dirname(draft), 'change-unit.yaml'), mode === 'design-owner-retain' ? defective : approvedCu);
     if (mode === 'outside-write') fs.appendFileSync(path.join(host.root, 'src/ledger/LedgerFeature.ets'), '\n// unauthorized product edit\n');
   }, questioning: doc => {
     questioningCalls++;
-    if (mode === 'exhausted' || (['retry', 'self-signed-retry', 'session-retry', 'session-budget'].includes(mode) && questioningCalls === 1)) {
-      Object.assign(doc.review_summary.questioning.items[0], { disposition: 'blocker', question: '当前范围失败恢复验收是否完整？', answer: `真实内容差额-${questioningCalls}` });
+    const evidenceRound = mode === 'session-progress-recovery' ? 1 : questioningCalls;
+    if (recovery || mode === 'exhausted' || (['retry', 'self-signed-retry', 'session-retry', 'session-budget'].includes(mode) && questioningCalls === 1)) {
+      Object.assign(doc.review_summary.questioning.items[0], { disposition: 'blocker', question: '当前范围失败恢复验收是否完整？', answer: `真实内容差额-${evidenceRound}\n\n当前独立核实的第二段证据-${evidenceRound}` });
     } else if (mode === 'retry') assert(String(doc.review_summary.summary).includes('第二轮已补'));
   } });
   try {
@@ -261,6 +276,78 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       else assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes);
       return;
     }
+    if (recovery) {
+      const options = { projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature, runId, adapter: 'claude', runMode: 'attended',
+        authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const reportRole = async (next: Record<string, any>): Promise<Record<string, any>> => {
+        assert.equal(next.type, 'phase_execute_request', JSON.stringify(next));
+        const requestPath = (next.request as { path: string }).path;
+        const request = readSessionExecution(runDir, requestPath)!;
+        await adapter.onOutOfChain({ phase: request.request.context.phase, prompt: request.request.context.instruction!, attempt: 1, runId });
+        return runGoalModeSessionStep({ ...options, requestPath, report: { status: 'passed', phase: request.request.context.phase, details: 'actual role output persisted' } });
+      };
+      let next = await runGoalModeSessionStep(options);
+      for (const label of ['design-repair-author', 'design-repair-questioning', 'design-repair-author']) {
+        assert.equal(next.phase, label); next = await reportRole(next);
+      }
+      if (mode === 'session-progress-recovery') {
+        assert.equal(next.phase, 'design-repair-questioning', 'runtime normalization makes the unchanged candidate comparable after Q');
+        next = await reportRole(next);
+      }
+      assert.equal(next.type, 'goal_session_result');
+      assert.equal(authorCalls, 2); assert.equal(questioningCalls, mode === 'session-progress-recovery' ? 2 : 1, 'both pre-Q and post-Q pauses must retain their actual role history');
+      const events = () => fs.readFileSync(eventFile, 'utf8').trim().split('\n').map(line => JSON.parse(line) as Document);
+      const paused = events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!;
+      assert(paused && paused.reason.includes('第二段证据-1'));
+      const [guidance, ...issueLines] = String(paused.reason).split('\n');
+      assert(guidance.includes('--force-resume') && guidance.includes('--force-takeover') && guidance.includes('原预算与历史保留'));
+      assert(issueLines.some(line => line.includes('第二段证据-1')) && issueLines.every(line => !line.includes('--force-resume') && !line.includes('--force-takeover')), 'full Q answers remain intact and continuation operations never enter the issue list');
+      const draftFile = path.join(runDir, 'design-repair/component-blueprint.yaml');
+      const retained = fs.readFileSync(draftFile);
+      assert.equal(read(draftFile).review_summary.questioning.status, 'complete', 'pause restores the last actual questioning output');
+      assert(events().some(event => event.halt_reason === 'no_progress_guard' && event.run_disposition === 'WAITING'));
+      if (mode === 'session-progress-recovery') {
+        const legacyHeader = '当前全部机器问题与独立质询否定仍相同，实际未发布设计候选无变化；暂停等待明确继续或真实条件变化，原预算保留。';
+        assert.notEqual(guidance, legacyHeader);
+        fs.writeFileSync(eventFile, fs.readFileSync(eventFile, 'utf8').split(guidance).join(legacyHeader));
+        assert.equal(String(events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!.reason).split('\n')[0], legacyHeader);
+      }
+      const starts = events().filter(event => event.type === 'agent_invoke_start').length;
+      assert.equal((await runGoalModeSessionStep(options)).type, 'goal_session_result');
+      assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, starts, 'ordinary public next cannot resume unchanged work');
+      assert.deepEqual(fs.readFileSync(draftFile), retained);
+      const repeatedPause = events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!;
+      assert.deepEqual(String(repeatedPause.reason).split('\n').slice(1), issueLines, 'a historical guidance change cannot become a new author issue or wake unchanged work');
+      paused.reason = repeatedPause.reason;
+      if (mode === 'session-architecture-recovery') {
+        const architecture = JSON.parse(fs.readFileSync(path.join(runDir, 'design-repair/architecture.json'), 'utf8'));
+        assert(architecture.outer_layers.some((layer: Document) => layer.id === '05-Recovery'));
+        assert(!JSON.parse(fs.readFileSync(path.join(host.root, 'framework.config.json'), 'utf8')).architecture.outer_layers.some((layer: Document) => layer.id === '05-Recovery'), 'the architecture is still an unpublished candidate');
+        const changed = read(draftFile); changed.review_summary.summary += ' 当前实际候选增加了真实恢复说明'; write(draftFile, changed);
+        next = await runGoalModeSessionStep(options);
+      } else next = await runGoalModeSessionStep({ ...options, forceTakeover: true });
+      assert.equal(next.type, 'phase_execute_request', JSON.stringify(next)); assert.equal(next.phase, 'design-repair-author');
+      const resumed = readSessionExecution(runDir, (next.request as { path: string }).path)!;
+      assert(String(resumed.request.context.instruction).includes(paused.reason), 'first resumed author receives every original machine issue and Q answer, including blank lines');
+      const repeated = await runGoalModeSessionStep(options);
+      assert.deepEqual(repeated.request, next.request, 'pending continuation reuses the same real author request');
+      next = await reportRole(next);
+      if (mode === 'session-architecture-recovery') {
+        assert.equal(next.phase, 'design-repair-questioning', 'real candidate progress warrants one fresh Q');
+        next = await reportRole(next);
+        assert.equal(next.phase, 'design-repair-author');
+        next = await reportRole(next);
+        assert.equal(authorCalls, 4); assert.equal(questioningCalls, 2);
+      } else { assert.equal(authorCalls, 3); assert.equal(questioningCalls, 2, 'explicit continue after a post-Q pause must issue a fresh author but no extra Q without design progress'); }
+      assert.equal(next.type, 'goal_session_result');
+      if (mode === 'session-progress-recovery') {
+        const lastPause = events().filter(event => event.type === 'design_authority_repair' && event.failed_step === 'no_progress_guard').at(-1)!;
+        assert.deepEqual(String(lastPause.reason).split('\n').slice(1), issueLines, 'continuation instructions stay outside the original complete problem body after recovery');
+      }
+      assert.deepEqual(fs.readFileSync(canonical.canonicalPath), originalBytes, 'no defective design may publish');
+      assert.equal(readOriginalDeliveryBudget(host.root, manifest)!.totalTurns, authorCalls + questioningCalls, 'all actual calls remain charged to the original request');
+      return;
+    }
     const result = await runUnattendedDesignRepair({ projectRoot: host.root, frameworkRoot: host.frameworkRoot, feature,
       ...(!normal ? { designTarget: designRepairTarget(host.root, CU) } : {}), phase, runId, reportDir: manifest.report_dir, requirement, brief,
       signature: designRepairSignature(feature, phase, brief.items), heldFeatureLock: { path: lockPath, ownerId: lock.ownerId }, runtimeWrites: [path.relative(host.root, lockPath)], emit,
@@ -320,9 +407,10 @@ async function scenario(host: Host, mode: Scenario): Promise<void> {
       assert.equal(rows.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 1);
       assert(!rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published'));
       if (mode === 'exhausted') {
-        assert.equal(authorCalls, 1 + (manifest.budget.max_retries_per_phase ?? 0));
-        assert.equal(questioningCalls, authorCalls);
-        assert(result.reason.includes(`真实内容差额-${questioningCalls}`));
+        assert.equal(authorCalls, 5);
+        assert(result.outcome === 'failed' && result.step === 'no_progress_guard');
+        assert.equal(questioningCalls, authorCalls - 1);
+        assert(result.reason.includes(`真实内容差额-${questioningCalls}\n\n当前独立核实的第二段证据-${questioningCalls}`));
       } else { assert.equal(authorCalls, 2); assert.equal(questioningCalls, 1); assert(result.reason.includes('自报')); }
     } else {
       assert.equal(result.outcome, 'published', JSON.stringify(result));
@@ -359,7 +447,9 @@ const cases = [
   { name: 'f3b8e6a1 initial repair: actual readiness failure after publication remains unrecovered for an initial-design phase', mode: 'readiness-blocked' },
   { name: 'f3b8e6a1 initial repair: normal canonical run retains its default design subject and original recovery probe', mode: 'normal' },
   { name: '9f6c2e41 bounded process repair sends full denial to A2 and publishes once after four calls', mode: 'retry' },
-  { name: '9f6c2e41 bounded repeated denials exhaust the original local quota without publication', mode: 'exhausted' },
+  { name: 'd18f6c42 progressing drafts continue beyond three calls then identical full issues and content pause', mode: 'exhausted' },
+  { name: 'd18f6c42 M2 M4 public post-Q pause blocks next and forced continuation delivers complete feedback to a fresh author', mode: 'session-progress-recovery' },
+  { name: 'd18f6c42 M3 M4 unpublished new architecture layer stays paused until real candidate progress and retains full feedback', mode: 'session-architecture-recovery' },
   { name: '9f6c2e41 bounded second author cannot self-sign questioning against its real input', mode: 'self-signed-retry' },
   { name: '9f6c2e41 bounded session replay preserves pending partial work and never reuses A1 or Q1', mode: 'session-retry' },
   { name: '9f6c2e41 bounded session total budget stops before a new questioning call', mode: 'session-budget' },
@@ -504,8 +594,60 @@ function roleCacheWindows(): void {
   }
 }
 
+function actualWorkComparison(): void {
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'design-work-')));
+  try {
+    const files = ['blueprint.yaml', 'cu.yaml', 'architecture.json', 'absent.yaml'].map(name => path.join(directory, name));
+    const blueprint: Document = { artifact: 'component-blueprint@1', revision: 1, provenance: { observed_at: 'old' },
+      review_summary: { admission: { status: 'blocker' }, questioning: { status: 'complete' } },
+      design_views: [{ view_id: 'runtime', nodes: [{ id: 'business', revision: 1, provenance: { observed_at: 'business' } }] }] };
+    const cu: Document = { artifact: 'change-unit@1', revision: 1, provenance: { observed_at: 'old' }, component_blueprint_ref: { blueprint_id: 'bp', revision: 1 }, design_refs: [], touches: [], goal: 'first' };
+    write(files[0], blueprint); write(files[1], cu); write(files[2], { modules: ['one'] });
+    const { designWorkSnapshot, designWorkHasNoProgress } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+    const before = designWorkSnapshot(files);
+    blueprint.revision++; blueprint.provenance.observed_at = 'new'; blueprint.review_summary.admission.status = 'pass'; blueprint.review_summary.questioning.status = 'incomplete';
+    cu.revision++; cu.provenance.observed_at = 'new'; cu.component_blueprint_ref.revision++;
+    write(files[0], blueprint); write(files[1], cu);
+    assert(designWorkHasNoProgress(['machine', 'denial'], ['denial', 'machine'], before, designWorkSnapshot(files)), 'metadata alone cannot become business progress');
+    cu.goal = 'second'; write(files[1], cu);
+    assert(!designWorkHasNoProgress(['same'], ['same'], before, designWorkSnapshot(files)), 'CU-only unpublished progress is real');
+    const questioningBefore = designWorkSnapshot(files, {}, true);
+    blueprint.review_summary.questioning.items = [{ question_id: 'one', answer: 'real new evidence' }]; write(files[0], blueprint);
+    assert(!designWorkHasNoProgress(['same'], ['same'], questioningBefore, designWorkSnapshot(files, {}, true)), 'questioning compares its actual result rather than requiring design edits');
+    const cuChanged = designWorkSnapshot(files);
+    blueprint.design_views[0].nodes[0].revision++; write(files[0], blueprint);
+    assert(!designWorkHasNoProgress(['same'], ['same'], cuChanged, designWorkSnapshot(files)), 'nested business keys are retained');
+    assert(!designWorkHasNoProgress(['old'], ['new'], before, before), 'all current problems participate in the signature');
+    assert(!designWorkHasNoProgress(['same'], ['same'], undefined, before), 'no baseline is unknown');
+    assert.equal(before[files[3]].exists, false, 'a missing file is a known absence');
+    const unreadable = designWorkSnapshot([...files, directory]);
+    assert(!designWorkHasNoProgress(['same'], ['same'], unreadable, unreadable), 'failed reads must not prove no progress');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+
+function machineAdmissionCompatibility(): void {
+  const { currentBlueprintSliceId, deriveBlueprintAdmission } = require('../../scripts/utils/blueprint-admission') as typeof import('../../scripts/utils/blueprint-admission');
+  const { writeBackAdmission } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
+  const base: Document = { artifact: 'component-blueprint@1', blueprint_id: 'legacy', contracts: [{}], decisions_and_gaps: { gaps: [] }, review_summary: { questioning: { status: 'complete' } } };
+  assert.equal(currentBlueprintSliceId(base), 'legacy:current');
+  const withGap = structuredClone(base);
+  withGap.decisions_and_gaps.gaps = [{ gap_id: 'real-gap', status: 'blocker', needed_by: 'old-current', owner: 'design', unlock_condition: 'resolve the real dependency' }];
+  const declaredGap = structuredClone(withGap.decisions_and_gaps.gaps[0]);
+  writeBackAdmission(withGap, { projectRoot: os.tmpdir(), canonicalPath: path.join(os.tmpdir(), 'not-canonical.yaml') });
+  assert.equal(withGap.review_summary.admission.current_slice.slice_id, 'legacy:current');
+  assert.equal(withGap.decisions_and_gaps.gaps[0].needed_by, 'old-current');
+  assert.equal(withGap.review_summary.questioning, undefined, 'legacy gap association requires fresh independent questioning');
+  assert.equal(withGap.review_summary.admission.root_questions_complete, false, 'the old result cannot authorize the new association');
+  assert.deepEqual(withGap.decisions_and_gaps.gaps[0], declaredGap, 'migration does not wash the declared blocker');
+  withGap.review_summary.admission.current_slice.slice_id = 'original-number';
+  assert.equal(currentBlueprintSliceId(withGap), 'original-number', 'existing associations keep their original ID');
+  assert.equal(deriveBlueprintAdmission(withGap).status, 'pass', 'an explicitly future non-asset gap on an existing ID retains the old admission semantics');
+}
+
 export function getCases() { return [...cases.map(test => ({ name: test.name, run: () => withFreshCuHost(host => scenario(host, test.mode)) })),
   { name: '9f6c2e41 repair candidate sets use actual transaction authority and reject canonical foreign CU and product writes', run: candidateWriteContract },
+  { name: 'd18f6c42 machine admission preserves old IDs and real gaps while requiring fresh questioning', run: machineAdmissionCompatibility },
+  { name: 'd18f6c42 actual candidate comparison covers metadata CU-only nested business fields and unknown baselines', run: actualWorkComparison },
   { name: '9f6c2e41 role cache has both bounds and selects the latest start after waiting', run: roleCacheWindows }]; }
 export async function runSelectedCases(filter?: string) {
   const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];

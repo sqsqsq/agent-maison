@@ -102,6 +102,7 @@ const CORE_SUITES: Array<{ id: string; modulePath: string; releaseOnly?: boolean
   { id: 'component-design-host-seams', modulePath: './unit/component-design-host-seams.unit.test' },
   { id: 'component-design-handoff', modulePath: './unit/component-design-handoff.unit.test' },
   { id: 'initial-design-delivery', modulePath: './unit/initial-design-delivery.unit.test' },
+  { id: 'initial-design-progress-recovery', modulePath: './unit/initial-design-progress-recovery.unit.test' },
   { id: 'initial-design-budget', modulePath: './unit/initial-design-budget.unit.test' },
   { id: 'initial-design-repair', modulePath: './unit/initial-design-repair.unit.test' },
   { id: 'initial-design-supervisor', modulePath: './unit/initial-design-supervisor.unit.test' },

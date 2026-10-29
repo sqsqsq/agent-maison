@@ -1,0 +1,24 @@
+# 实例扩展 testing 阶段规则 overlay（constraints 消费）
+# 经 manifest provides.phase_rules_overlays.testing 注册；semantic_checks 由 AI verifier 消费。
+#
+# 本文件只问「适用矩阵里本阶段该消费的域，实机验证有没有走到」——不复述域名、编号与维度。
+phase: testing
+version: "1.0"
+semantic_checks:
+  testing_constraint_walkthrough:
+    description: >
+      应用域约束在本阶段的消费形态是**实机验证**：读
+      doc/extensions/knowledge/constraints/README.md 的适用矩阵，取 testing 那一列，
+      逐个非「—」的格子核对——该域是否已按格子写明的方式在真机上走查/测量/核对过，
+      并给出结论（命中该域时；未命中的写明依据）。命中判据与条目内容以该域文件为准。
+      **本阶段是这些约束的最后一道关**：前面几个阶段能验的是「声明了」「写进代码了」，
+      只有这里能验「在真机上确实是那样」。结论须具体到走查了什么、看到了什么，
+      「已验证」三个字不构成结论。
+      矩阵中标「—」的域本阶段不消费。
+    severity: MAJOR
+    ai_prompt_hint: >
+      打开 doc/extensions/knowledge/constraints/README.md 找到适用矩阵，记下 testing 列
+      所有非「—」的域及其验证方式（走查/测量/核对/故障注入各有各的做法，按格子字面执行）。
+      逐域核对测试报告：做了没有、结论是什么、证据是什么（截图、数值、日志）。
+      **只写「符合要求」而没有可复核证据的，记为未验证**。
+      需要人工在真机上操作而本轮未做的，如实记为待验证并说明阻塞原因，不要写成已通过。

@@ -1,0 +1,25 @@
+# 实例扩展 plan 阶段规则 overlay（constraints 消费）
+# 经 manifest provides.phase_rules_overlays.plan 注册；semantic_checks 由 AI verifier 消费（零脚本改动）。
+#
+# 本文件只问「适用矩阵里本阶段该消费的域，产物有没有回答」——不复述域名、编号与维度。
+# 规约内容改了（增删域、调消费维度、改条目），这里一个字都不用动。
+phase: plan
+version: "1.0"
+semantic_checks:
+  plan_constraint_coverage:
+    description: >
+      应用域约束在本阶段的处置须落进本阶段产物：读
+      doc/extensions/knowledge/constraints/README.md 的适用矩阵，取 plan 那一列，
+      逐个非「—」的格子核对——该域是否已按格子写明的维度在 plan 产物（plan.md /
+      contracts.yaml / use-cases.yaml）中给出设计结论或明确说明为何不适用。
+      命中判据与条目内容以该域文件为准。
+      **不要求另建台账**：结论写在它自然该在的设计段落里即可，产物即证据。
+      矩阵中标「—」的域本阶段不消费，不必为其写任何内容。
+    severity: MAJOR
+    ai_prompt_hint: >
+      打开 doc/extensions/knowledge/constraints/README.md 找到适用矩阵，
+      记下 plan 列所有非「—」的域及其消费维度。再读 doc/features/{module}/plan/plan.md
+      与同目录 contracts.yaml / use-cases.yaml：逐域回答「这个维度的设计结论在哪一段」。
+      找不到落点且该域按其 applies_when 与本需求相关的，即 FAIL——
+      说明约束在设计阶段就已丢失，后面编码不可能补回来。
+      域文件里 `<待补充>` 的部分按 README「读条目时须知」处理：定性评估，不臆造数值。

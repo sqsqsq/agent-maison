@@ -1,0 +1,148 @@
+{
+  "color": [
+    {
+      "name": "brand_primary",
+      "value": "#007DFF"
+    },
+    {
+      "name": "text_primary",
+      "value": "#000000"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#888888"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#C7C7CC"
+    },
+    {
+      "name": "bg_page",
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "bg_surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "wallet_primary",
+      "value": "#007DFF"
+    },
+    {
+      "name": "wallet_text_primary",
+      "value": "#000000"
+    },
+    {
+      "name": "wallet_text_secondary",
+      "value": "#888888"
+    },
+    {
+      "name": "wallet_text_tertiary",
+      "value": "#C7C7CC"
+    },
+    {
+      "name": "wallet_page_bg",
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "wallet_surface_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "brand_bank_orange",
+      "value": "#FF9500"
+    },
+    {
+      "name": "brand_bank_pink",
+      "value": "#FF6B81"
+    },
+    {
+      "name": "brand_fuel_green",
+      "value": "#34C759"
+    },
+    {
+      "name": "brand_id_yellow",
+      "value": "#FFCC00"
+    },
+    {
+      "name": "brand_danger",
+      "value": "#FF3B30"
+    },
+    {
+      "name": "wallet_badge_gray",
+      "value": "#8E8E93"
+    },
+    {
+      "name": "promo_placeholder",
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "button_tonal_bg",
+      "value": "#E8F3FF"
+    },
+    {
+      "name": "home_banner_end",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "card_stack_cmb",
+      "value": "#E8A317"
+    },
+    {
+      "name": "card_stack_transit",
+      "value": "#1E6FD9"
+    },
+    {
+      "name": "card_stack_fund",
+      "value": "#2E8B57"
+    },
+    {
+      "name": "card_stack_access",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "color_page_bg",
+      "value": "#F2F3F5"
+    },
+    {
+      "name": "color_card_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "color_text_primary",
+      "value": "#1A1A1A"
+    },
+    {
+      "name": "color_text_secondary",
+      "value": "#606163"
+    },
+    {
+      "name": "color_line_divider",
+      "value": "#CCCCCC"
+    },
+    {
+      "name": "color_icon_chevron",
+      "value": "#CCCCCC"
+    },
+    {
+      "name": "color_nav_btn_bg",
+      "value": "#E7E8EA"
+    },
+    {
+      "name": "color_pill_bg",
+      "value": "#F2F3F5"
+    },
+    {
+      "name": "color_link_blue",
+      "value": "#1F57C8"
+    },
+    {
+      "name": "color_badge_border",
+      "value": "#D87639"
+    },
+    {
+      "name": "color_badge_bg",
+      "value": "#FFFBEF"
+    }
+  ]
+}
